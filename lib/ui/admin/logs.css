@@ -1,0 +1,225 @@
+/* Logs app styling */
+
+#logs-app {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Filter controls */
+#logs-app [role="group"] {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding: 0.75rem;
+  background: #fafafa;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  align-items: center;
+}
+
+#logs-app [role="group"] button {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #ccc;
+  background: white;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+#logs-app [role="group"] button:hover {
+  border-color: #999;
+  background: #f5f5f5;
+}
+
+#logs-app [role="group"] button[data-selected="true"] {
+  background: #007bff;
+  color: white;
+  border-color: #0056b3;
+}
+
+/* Search bar */
+#logs-app input[type="text"] {
+  flex: 1;
+  min-width: 250px;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-family: monospace;
+}
+
+#logs-app input[type="text"]:focus {
+  outline: none;
+  border-color: #0066cc;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
+}
+
+/* Chips/tags in search bar */
+#logs-app [role="listbox"],
+#logs-app ul[role="listbox"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+#logs-app li,
+#logs-app [role="option"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  background: #e3f2fd;
+  color: #01579b;
+  border: 1px solid #90caf9;
+  border-radius: 16px;
+  font-size: 0.85rem;
+}
+
+#logs-app li button,
+#logs-app [role="option"] button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+/* Date pickers */
+#logs-app input[type="date"],
+#logs-app input[type="time"] {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+/* Buttons */
+#logs-refresh {
+  padding: 0.75rem 1.5rem;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+#logs-refresh:hover:not(:disabled) {
+  background: #0056b3;
+}
+
+#logs-refresh:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Table styling */
+#logs-app table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+#logs-app thead {
+  background: #f5f5f5;
+  border-bottom: 2px solid #ddd;
+}
+
+#logs-app th {
+  padding: 0.75rem;
+  text-align: left;
+  font-weight: 600;
+  color: #333;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+#logs-app th:hover {
+  background: #eeeeee;
+}
+
+#logs-app th::after {
+  content: '';
+  display: inline-block;
+  width: 0.6em;
+  height: 0.6em;
+  margin-left: 0.4em;
+  opacity: 0.5;
+}
+
+#logs-app td {
+  padding: 0.75rem;
+  border-bottom: 1px solid #eee;
+  word-break: break-word;
+}
+
+#logs-app tbody tr:hover {
+  background: #fafafa;
+}
+
+#logs-app tbody tr:nth-child(odd) {
+  background: #fafafa;
+}
+
+/* Empty state */
+#logs-app tr[style*="text-align: center"] {
+  background: #f9f9f9 !important;
+  color: #666;
+}
+
+#logs-app tr[style*="text-align: center"] td {
+  padding: 3rem 0.75rem;
+  border: none;
+}
+
+/* Help text */
+#logs-app dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.5rem 1rem;
+  padding: 1rem;
+  background: #f5f5f5;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+#logs-app dt {
+  font-weight: 600;
+  color: #333;
+  font-family: monospace;
+}
+
+#logs-app dd {
+  margin: 0;
+  color: #666;
+}
+
+/* Info box */
+#logs-app > div:last-child {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #f0f7ff;
+  border-left: 4px solid #0066cc;
+  border-radius: 4px;
+}
+
+#logs-app > div:last-child p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #003d99;
+}
+
+#logs-app code {
+  font-family: monospace;
+  background: rgba(0, 0, 0, 0.05);
+  padding: 0.2em 0.4em;
+  border-radius: 2px;
+}
