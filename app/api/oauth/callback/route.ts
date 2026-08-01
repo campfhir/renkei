@@ -93,21 +93,44 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // TODO: Verify state matches a pending sign-in stored in database
-    // For now, accept any state. In production:
-    // 1. Query pending_oidc_signin table for this state
-    // 2. Verify state is fresh (not expired)
-    // 3. Extract tenant_id from pending record
-    // 4. Get OIDC config for that tenant
+    // Verify state matches a pending sign-in stored in database (CSRF protection)
+    const pendingSignIn = await db
+      .selectFrom('pending_oidc_signin')
+      .select(['tenant_id', 'nonce', 'expires_at'])
+      .where('state', '=', state)
+      .executeTakeFirst();
 
-    // For MVP, extract tenant from URL or header
-    // This should come from stored pending state
-    const tenantSlug = 'test'; // TODO: Get from pending state
+    if (!pendingSignIn) {
+      return NextResponse.json(
+        { error: 'Invalid or expired state' },
+        { status: 400 }
+      );
+    }
 
+    // Verify state is not expired
+    const expiresAt = new Date(pendingSignIn.expires_at);
+    if (expiresAt < new Date()) {
+      // Clean up expired state
+      try {
+        await db
+          .deleteFrom('pending_oidc_signin')
+          .where('state', '=', state)
+          .execute();
+      } catch (err) {
+        console.error('Failed to clean up expired state:', err);
+      }
+
+      return NextResponse.json(
+        { error: 'State expired' },
+        { status: 400 }
+      );
+    }
+
+    // Get tenant info
     const tenant = await db
       .selectFrom('tenants')
       .select(['id', 'slug'])
-      .where('slug', '=', tenantSlug)
+      .where('id', '=', pendingSignIn.tenant_id)
       .executeTakeFirst();
 
     if (!tenant) {
@@ -209,6 +232,17 @@ export async function GET(request: NextRequest) {
     } catch (err) {
       console.error('Failed to store operator session:', err);
       // Continue anyway - cookie session will still work
+    }
+
+    // Clean up used state to prevent replay attacks
+    try {
+      await db
+        .deleteFrom('pending_oidc_signin')
+        .where('state', '=', state)
+        .execute();
+    } catch (err) {
+      console.error('Failed to clean up state:', err);
+      // Continue anyway - state is already expired
     }
 
     // Set session cookie

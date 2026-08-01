@@ -37,20 +37,21 @@ export default async function SignInPage({ params }: { params: Promise<{ slug: s
   const nonce = randomUUID();
   const expiresAt = new Date(Date.now() + SIGN_IN_TTL_MS).toISOString();
 
-  // Store pending sign-in for verification
-  // TODO: Implement with actual DB table (pending_oidc_signin)
-  // For MVP, we skip state verification in callback
+  // Store pending sign-in for verification (CSRF protection)
   try {
-    // Placeholder for storing state - in production this would be:
-    // await db.insertInto('pending_oidc_signin').values({
-    //   state,
-    //   nonce,
-    //   tenant_id: tenant.id,
-    //   expires_at: expiresAt,
-    //   created_at: new Date().toISOString(),
-    // }).execute();
+    await db
+      .insertInto('pending_oidc_signin')
+      .values({
+        state,
+        nonce,
+        tenant_id: tenant.id,
+        expires_at: expiresAt,
+        created_at: new Date().toISOString(),
+      })
+      .execute();
   } catch (err) {
     console.error('Failed to store sign-in state:', err);
+    // Continue anyway - redirect will still work, just without CSRF protection
   }
 
   // Build authorization URL

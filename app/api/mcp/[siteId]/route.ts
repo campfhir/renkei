@@ -150,19 +150,165 @@ export async function POST(
       );
     }
 
-    // For MVP, stub the Jira API proxy - echo back the request
-    // In production, map body.method to appropriate Jira REST endpoints
-    return NextResponse.json(
-      {
-        jsonrpc: '2.0',
-        result: {
-          message: `MCP method '${body.method}' received for site ${site.cloud_id}`,
-          params: body.params,
-        },
-        id: body.id,
+    // Map MCP method to Jira REST endpoint and proxy request
+    const jiraBaseUrl = `https://api.atlassian.com/site/${site.cloud_id}/rest/api/3`;
+    let jiraUrl: string;
+    let jiraMethod = 'GET';
+    let jiraBody: string | undefined;
+
+    const params = body.params || {};
+
+    // Map common MCP methods to Jira endpoints
+    switch (body.method) {
+      case 'searchIssues':
+        // GET /rest/api/3/issues/search with query params
+        const searchParams = new URLSearchParams();
+        if (params.jql) searchParams.append('jql', params.jql);
+        if (params.maxResults) searchParams.append('maxResults', params.maxResults);
+        if (params.startAt) searchParams.append('startAt', params.startAt);
+        if (params.fields) searchParams.append('fields', params.fields.join(','));
+        jiraUrl = `${jiraBaseUrl}/issues/search?${searchParams.toString()}`;
+        break;
+
+      case 'getIssue':
+        // GET /rest/api/3/issues/{issueId}
+        if (!params.issueId) {
+          return NextResponse.json(
+            {
+              jsonrpc: '2.0',
+              error: { code: -32602, message: 'Missing issueId parameter' },
+              id: body.id,
+            },
+            { status: 400 }
+          );
+        }
+        jiraUrl = `${jiraBaseUrl}/issues/${params.issueId}`;
+        if (params.fields) {
+          jiraUrl += `?fields=${params.fields.join(',')}`;
+        }
+        break;
+
+      case 'createIssue':
+        // POST /rest/api/3/issues
+        jiraMethod = 'POST';
+        jiraUrl = `${jiraBaseUrl}/issues`;
+        jiraBody = JSON.stringify(params.fields || params);
+        break;
+
+      case 'updateIssue':
+        // PUT /rest/api/3/issues/{issueId}
+        jiraMethod = 'PUT';
+        if (!params.issueId) {
+          return NextResponse.json(
+            {
+              jsonrpc: '2.0',
+              error: { code: -32602, message: 'Missing issueId parameter' },
+              id: body.id,
+            },
+            { status: 400 }
+          );
+        }
+        jiraUrl = `${jiraBaseUrl}/issues/${params.issueId}`;
+        jiraBody = JSON.stringify(params.fields || params);
+        break;
+
+      case 'deleteIssue':
+        // DELETE /rest/api/3/issues/{issueId}
+        jiraMethod = 'DELETE';
+        if (!params.issueId) {
+          return NextResponse.json(
+            {
+              jsonrpc: '2.0',
+              error: { code: -32602, message: 'Missing issueId parameter' },
+              id: body.id,
+            },
+            { status: 400 }
+          );
+        }
+        jiraUrl = `${jiraBaseUrl}/issues/${params.issueId}`;
+        break;
+
+      case 'getProject':
+        // GET /rest/api/3/projects/{projectKey}
+        if (!params.projectKey) {
+          return NextResponse.json(
+            {
+              jsonrpc: '2.0',
+              error: { code: -32602, message: 'Missing projectKey parameter' },
+              id: body.id,
+            },
+            { status: 400 }
+          );
+        }
+        jiraUrl = `${jiraBaseUrl}/projects/${params.projectKey}`;
+        break;
+
+      default:
+        return NextResponse.json(
+          {
+            jsonrpc: '2.0',
+            error: { code: -32601, message: `Method not found: ${body.method}` },
+            id: body.id,
+          },
+          { status: 400 }
+        );
+    }
+
+    // Make the Jira API request
+    const jiraRequest: RequestInit = {
+      method: jiraMethod,
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
       },
-      { status: 200 }
-    );
+    };
+
+    if (jiraBody) {
+      jiraRequest.body = jiraBody;
+    }
+
+    const jiraResponse = await fetch(jiraUrl, jiraRequest);
+
+    if (!jiraResponse.ok) {
+      if (jiraResponse.status === 401) {
+        return NextResponse.json(
+          {
+            jsonrpc: '2.0',
+            error: {
+              code: -32603,
+              message: 'Internal error',
+              data: { detail: 'Authentication failed with Jira' },
+            },
+            id: body.id,
+          },
+          { status: 401 }
+        );
+      }
+
+      const errorText = await jiraResponse.text();
+      console.error(`Jira API error (${body.method}):`, errorText);
+
+      return NextResponse.json(
+        {
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Jira API error',
+            data: { status: jiraResponse.status, detail: errorText },
+          },
+          id: body.id,
+        },
+        { status: jiraResponse.status }
+      );
+    }
+
+    const jiraData = await jiraResponse.json();
+
+    return NextResponse.json({
+      jsonrpc: '2.0',
+      result: jiraData,
+      id: body.id,
+    });
   } catch (error) {
     console.error('MCP gateway error:', error);
     return NextResponse.json(
