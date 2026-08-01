@@ -1,4 +1,9 @@
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { getConfig } from './env';
+
+const ALGORITHM = 'aes-256-gcm';
+const NONCE_LENGTH = 12; // 12 bytes for GCM
+const TAG_LENGTH = 16; // 16 bytes for GCM
 
 /**
  * Decrypt data encrypted with AES-256-GCM.
@@ -6,18 +11,42 @@ import { getConfig } from './env';
  */
 export function decrypt(encryptedData: string): string {
   const config = getConfig();
-  // TODO: Implement AES-256-GCM decryption
-  // Uses config.TOKEN_ENCRYPTION_KEY (32-byte key)
-  // Parses base64 input to extract nonce, ciphertext, tag
-  // Returns decrypted plaintext as string
-  throw new Error('decrypt not yet implemented');
+  const key = Buffer.from(config.TOKEN_ENCRYPTION_KEY, 'base64');
+
+  try {
+    const buffer = Buffer.from(encryptedData, 'base64');
+
+    const nonce = buffer.slice(0, NONCE_LENGTH);
+    const tag = buffer.slice(buffer.length - TAG_LENGTH);
+    const ciphertext = buffer.slice(NONCE_LENGTH, buffer.length - TAG_LENGTH);
+
+    const decipher = createDecipheriv(ALGORITHM, key, nonce);
+    decipher.setAuthTag(tag);
+
+    const decrypted = Buffer.concat([
+      decipher.update(ciphertext),
+      decipher.final(),
+    ]);
+
+    return decrypted.toString('utf-8');
+  } catch (err) {
+    throw new Error(`Decryption failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 
 export function encrypt(plaintext: string): string {
   const config = getConfig();
-  // TODO: Implement AES-256-GCM encryption
-  // Generates random 12-byte nonce
-  // Encrypts plaintext with config.TOKEN_ENCRYPTION_KEY
-  // Returns base64(nonce || ciphertext || tag)
-  throw new Error('encrypt not yet implemented');
+  const key = Buffer.from(config.TOKEN_ENCRYPTION_KEY, 'base64');
+  const nonce = randomBytes(NONCE_LENGTH);
+
+  const cipher = createCipheriv(ALGORITHM, key, nonce);
+  const encrypted = Buffer.concat([
+    cipher.update(plaintext, 'utf-8'),
+    cipher.final(),
+  ]);
+
+  const tag = cipher.getAuthTag();
+  const combined = Buffer.concat([nonce, encrypted, tag]);
+
+  return combined.toString('base64');
 }

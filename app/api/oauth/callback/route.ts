@@ -3,6 +3,7 @@ import { getConfig } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { setOperatorCookie, OperatorSession } from '@/lib/auth-utils';
 import { randomUUID } from 'crypto';
+import { jwtVerify, importJWKS } from 'jose';
 
 interface OidcTokenResponse {
   access_token: string;
@@ -27,17 +28,33 @@ interface OidcIdToken {
 }
 
 /**
- * Decode JWT without verification (for demo purposes).
- * In production, verify signature using JWKS from OIDC provider.
+ * Verify JWT signature using OIDC provider's JWKS
  */
-function decodeJwt(token: string): OidcIdToken | null {
+async function verifyIdToken(
+  token: string,
+  issuer: string,
+  audience: string,
+  jwksUri: string
+): Promise<OidcIdToken | null> {
   try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
+    const jwksResponse = await fetch(jwksUri);
+    if (!jwksResponse.ok) {
+      console.error('Failed to fetch JWKS:', jwksResponse.statusText);
+      return null;
+    }
 
-    const payload = Buffer.from(parts[1], 'base64').toString('utf-8');
-    return JSON.parse(payload) as OidcIdToken;
-  } catch {
+    const jwks = await jwksResponse.json();
+    const key = await importJWKS(jwks);
+
+    const verified = await jwtVerify(token, key, {
+      issuer,
+      audience,
+      clockTolerance: 30,
+    });
+
+    return verified.payload as unknown as OidcIdToken;
+  } catch (err) {
+    console.error('ID token verification failed:', err);
     return null;
   }
 }
@@ -100,7 +117,7 @@ export async function GET(request: NextRequest) {
     // Get OIDC config
     const oidcConfig = await db
       .selectFrom('tenant_oidc')
-      .select(['issuer', 'client_id', 'client_secret', 'token_endpoint'])
+      .select(['issuer', 'client_id', 'client_secret', 'token_endpoint', 'jwks_uri'])
       .where('tenant_id', '=', tenant.id)
       .executeTakeFirst();
 
@@ -131,17 +148,25 @@ export async function GET(request: NextRequest) {
     }
 
     const tokenData = (await tokenResponse.json()) as OidcTokenResponse;
-    const idTokenClaims = decodeJwt(tokenData.id_token);
+
+    if (!oidcConfig.jwks_uri) {
+      return NextResponse.json(
+        { error: 'OIDC JWKS URI not configured' },
+        { status: 400 }
+      );
+    }
+
+    // Verify ID token signature and audience
+    const idTokenClaims = await verifyIdToken(
+      tokenData.id_token,
+      oidcConfig.issuer,
+      oidcConfig.client_id,
+      oidcConfig.jwks_uri
+    );
 
     if (!idTokenClaims) {
       return NextResponse.json({ error: 'Invalid ID token' }, { status: 400 });
     }
-
-    // TODO: Verify ID token signature using tenant's OIDC JWKS
-    // For MVP, we trust the token from the OIDC provider
-
-    // TODO: Verify audience matches this application
-    // For MVP, skip this check
 
     // Verify token not expired
     const now = Math.floor(Date.now() / 1000);
@@ -155,19 +180,36 @@ export async function GET(request: NextRequest) {
     // Create operator session
     const sessionId = randomUUID();
     const displayName = extractDisplayName(idTokenClaims);
-    const expiresAt = Date.now() + 4 * 60 * 60 * 1000; // 4 hours
+    const issuedAt = Date.now();
+    const expiresAt = issuedAt + 4 * 60 * 60 * 1000; // 4 hours
 
     const session: OperatorSession = {
       sessionId,
       subject: idTokenClaims.sub,
       operator: displayName,
       tenantId: tenant.id,
-      issuedAt: Date.now(),
+      issuedAt,
       expiresAt,
     };
 
-    // TODO: Store session in database (operator_sessions table)
-    // For MVP, rely on cookie storage only
+    // Store session in database
+    try {
+      await db
+        .insertInto('operator_sessions')
+        .values({
+          session_id: sessionId,
+          tenant_id: tenant.id,
+          subject: idTokenClaims.sub,
+          operator_name: displayName,
+          issued_at: new Date(issuedAt).toISOString(),
+          expires_at: new Date(expiresAt).toISOString(),
+          created_at: new Date().toISOString(),
+        })
+        .execute();
+    } catch (err) {
+      console.error('Failed to store operator session:', err);
+      // Continue anyway - cookie session will still work
+    }
 
     // Set session cookie
     const response = NextResponse.redirect(

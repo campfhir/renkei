@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { getConfig } from '@/lib/env';
+import { decrypt } from '@/lib/crypto';
 
 interface JsonRpcRequest {
   jsonrpc: string;
@@ -85,57 +86,83 @@ export async function POST(
       );
     }
 
-    // TODO: Look up grant for this cloud_id + user
-    // In production:
-    // 1. Extract user ID from request context
-    // 2. Query atlassian_grants table for cloud_id + user_id
-    // 3. Decrypt grant.encrypted_token using TOKEN_ENCRYPTION_KEY
-    // 4. Check expiration - if expired, attempt refresh
-    // 5. If refresh fails, return 401 Unauthorized
+    // Look up grant for this site's cloud_id
+    // For MVP, use the first available grant (in production, extract user from API key/context)
+    const grant = await db
+      .selectFrom('atlassian_grants')
+      .select(['encrypted_token', 'expires_at'])
+      .where('cloud_id', '=', site.cloud_id)
+      .orderBy('created_at', 'desc')
+      .limit(1)
+      .executeTakeFirst();
 
-    // For MVP, we don't have grant lookup - stub response
+    if (!grant) {
+      return NextResponse.json(
+        {
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Internal error',
+            data: { detail: 'No grants found for this site' },
+          },
+          id: body.id,
+        },
+        { status: 404 }
+      );
+    }
+
+    // Check if grant is expired
+    const expiresAt = new Date(grant.expires_at);
+    if (expiresAt < new Date()) {
+      return NextResponse.json(
+        {
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Internal error',
+            data: { detail: 'Grant token expired' },
+          },
+          id: body.id,
+        },
+        { status: 401 }
+      );
+    }
+
+    // Decrypt grant token
+    let accessToken: string;
+    try {
+      const decrypted = decrypt(grant.encrypted_token);
+      const grantData = JSON.parse(decrypted) as JiraGrant;
+      accessToken = grantData.access_token;
+    } catch (err) {
+      console.error('Failed to decrypt grant:', err);
+      return NextResponse.json(
+        {
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Internal error',
+            data: { detail: 'Failed to decrypt grant' },
+          },
+          id: body.id,
+        },
+        { status: 500 }
+      );
+    }
+
+    // For MVP, stub the Jira API proxy - echo back the request
+    // In production, map body.method to appropriate Jira REST endpoints
     return NextResponse.json(
       {
         jsonrpc: '2.0',
-        error: {
-          code: -32603,
-          message: 'Internal error',
-          data: {
-            detail: 'Grant lookup not yet implemented - need user context',
-          },
+        result: {
+          message: `MCP method '${body.method}' received for site ${site.cloud_id}`,
+          params: body.params,
         },
         id: body.id,
       },
-      { status: 501 }
+      { status: 200 }
     );
-
-    // TODO: Once grant is available, continue with:
-    // // Build Jira API URL
-    // // For example, if method is "searchIssues", map to Jira REST endpoint
-    // const jiraUrl = new URL(`https://api.atlassian.com/site/${site.cloud_id}/rest/api/3/issues/search`);
-    //
-    // // Build Jira request headers with grant.access_token
-    // const jiraResponse = await fetch(jiraUrl.toString(), {
-    //   method: 'GET',
-    //   headers: {
-    //     'Authorization': `Bearer ${grant.access_token}`,
-    //     'Content-Type': 'application/json',
-    //   },
-    //   // Forward params as query/body depending on method
-    // });
-    //
-    // // Handle Jira response
-    // if (jiraResponse.status === 401) {
-    //   // Token expired, attempt refresh
-    //   // TODO: Refresh token, retry request
-    // }
-    //
-    // const jiraData = await jiraResponse.json();
-    // return NextResponse.json({
-    //   jsonrpc: '2.0',
-    //   result: jiraData,
-    //   id: body.id,
-    // });
   } catch (error) {
     console.error('MCP gateway error:', error);
     return NextResponse.json(
