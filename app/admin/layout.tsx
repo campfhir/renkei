@@ -49,6 +49,9 @@ export default async function AdminLayout({
             <a href={`/admin/${slug}/people`} style={linkStyle as React.CSSProperties}>
               People
             </a>
+            <a href={`/admin/${slug}/grants`} style={linkStyle as React.CSSProperties}>
+              Grants
+            </a>
             <a href={`/admin/${slug}/logs`} style={linkStyle as React.CSSProperties}>
               Logs
             </a>
