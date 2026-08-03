@@ -27,16 +27,35 @@ function CreateOrganizationContent() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!tenantId) {
-      setMessage({ type: 'error', text: 'Tenant ID is required' });
-      return;
-    }
 
     setIsLoading(true);
     setMessage(null);
 
     try {
-      const response = await fetch(`/api/tenant/${tenantId}/oidc`, {
+      let actualTenantId = tenantId;
+
+      // If no tenant ID, create one for this domain
+      if (!actualTenantId && domain) {
+        const createResponse = await fetch(`/api/home-realm/create`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ domain }),
+        });
+
+        if (!createResponse.ok) {
+          const error = await createResponse.json();
+          throw new Error(error.error || 'Failed to create tenant');
+        }
+
+        const { tenantId: newTenantId } = await createResponse.json();
+        actualTenantId = newTenantId;
+      }
+
+      if (!actualTenantId) {
+        throw new Error('Unable to determine tenant ID');
+      }
+
+      const response = await fetch(`/api/tenant/${actualTenantId}/oidc`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
@@ -47,9 +66,9 @@ function CreateOrganizationContent() {
         throw new Error(error.error || 'Failed to save OIDC configuration');
       }
 
-      setMessage({ type: 'success', text: 'OIDC configuration saved successfully!' });
+      setMessage({ type: 'success', text: 'Organization configured successfully!' });
       setTimeout(() => {
-        window.location.href = `/mcp/${tenantId}`;
+        window.location.href = `/mcp/${actualTenantId}`;
       }, 1500);
     } catch (error) {
       setMessage({

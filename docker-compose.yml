@@ -22,20 +22,22 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: production
     image: renkei:latest
     container_name: renkei-app
+    env_file:
+      - .env.development
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       PORT: 3000
       HOST: 0.0.0.0
       NODE_ENV: production
+      MIGRATIONS_DIR: dist/lib/migrations
     ports:
       - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -c "node -r tsx scripts/migrate.ts && npm start"
+    command: sh -c "node dist/migrate.cjs && pnpm start"
 
 volumes:
   postgres_data:

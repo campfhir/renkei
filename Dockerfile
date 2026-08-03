@@ -1,5 +1,5 @@
 # Build stage
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 WORKDIR /app
 
@@ -7,7 +7,7 @@ WORKDIR /app
 RUN npm install -g pnpm
 
 # Copy package files
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
@@ -15,11 +15,14 @@ RUN pnpm install --frozen-lockfile
 # Copy source code
 COPY . .
 
+# Compile migrations with esbuild (handles aliases)
+RUN node scripts/build-migrations.js
+
 # Build the application
 RUN npm run build
 
 # Production stage
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
@@ -27,7 +30,7 @@ WORKDIR /app
 RUN apk add --no-cache dumb-init && npm install -g pnpm
 
 # Copy package files
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
 # Install only production dependencies
 RUN pnpm install --frozen-lockfile --prod
@@ -35,6 +38,7 @@ RUN pnpm install --frozen-lockfile --prod
 # Copy built application from builder stage
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
+COPY --from=builder /app/dist ./dist
 
 # Create a non-root user for security
 RUN addgroup -g 1001 -S nodejs && \

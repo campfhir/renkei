@@ -31,43 +31,21 @@ export async function POST(request: NextRequest) {
     const db = getDatabase();
 
     // Check if tenant exists for this domain via tenant_domains table
-    let tenant = await db
+    const tenant = await db
       .selectFrom('tenants')
       .leftJoin('tenant_domains', 'tenants.id', 'tenant_domains.tenant_id')
       .where('tenant_domains.domain', '=', domain)
       .select(['tenants.id', 'tenants.slug'])
       .executeTakeFirst();
 
-    // If no tenant exists yet, create one for this domain
     if (!tenant) {
-      const tenantId = randomUUID();
-      const slug = domain.replace(/\./g, '-'); // Simple slug from domain
-
-      await db
-        .insertInto('tenants')
-        .values({
-          id: tenantId,
-          slug,
-          created_at: new Date().toISOString(),
-        })
-        .execute();
-
-      // Map domain to tenant
-      await db
-        .insertInto('tenant_domains')
-        .values({
-          id: randomUUID(),
-          tenant_id: tenantId,
-          domain,
-          created_at: new Date().toISOString(),
-        })
-        .execute();
-
-      tenant = { id: tenantId, slug };
+      // Domain not found - redirect to create organization flow
+      return NextResponse.redirect(
+        new URL(`/create-organization?domain=${encodeURIComponent(domain)}`, request.url)
+      );
     }
 
-    // Redirect to the tenant's MCP endpoint for Jira authorization
-    // The MCP endpoint should handle the Jira OAuth flow
+    // Tenant exists - redirect to MCP endpoint
     return NextResponse.redirect(new URL(`/mcp/${tenant.id}`, request.url));
   } catch (error) {
     console.error('Home-realm discovery error:', error);
