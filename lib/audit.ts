@@ -8,16 +8,6 @@ interface SessionInfo {
   ipAddress?: string;
 }
 
-interface AuditLog {
-  tenantId: string;
-  accountId: string;
-  toolName: string;
-  userAgent?: string;
-  ipAddress?: string;
-  status: 'success' | 'failure';
-  errorMessage?: string;
-}
-
 /**
  * Track or update a Jira session for a user
  */
@@ -44,32 +34,6 @@ export async function recordSession(session: SessionInfo): Promise<void> {
       .execute();
   } catch (error) {
     console.error('Failed to record session:', error);
-  }
-}
-
-/**
- * Log a tool call with result
- */
-export async function logToolCall(audit: AuditLog): Promise<void> {
-  const db = getDatabase();
-
-  try {
-    await db
-      .insertInto('mcp_audit_logs')
-      .values({
-        id: randomUUID(),
-        tenant_id: audit.tenantId,
-        account_id: audit.accountId,
-        tool_name: audit.toolName,
-        user_agent: audit.userAgent,
-        ip_address: audit.ipAddress,
-        status: audit.status,
-        error_message: audit.errorMessage,
-        created_at: new Date().toISOString(),
-      })
-      .execute();
-  } catch (error) {
-    console.error('Failed to log tool call:', error);
   }
 }
 
@@ -117,74 +81,4 @@ export async function revokeSession(sessionId: string, tenantId: string): Promis
     console.error('Failed to revoke session:', error);
     return false;
   }
-}
-
-/**
- * Get audit logs for a tenant
- */
-export async function getTenantAuditLogs(
-  tenantId: string,
-  limit = 100,
-  offset = 0
-): Promise<
-  Array<{
-    id: string;
-    accountId: string;
-    toolName: string;
-    userAgent: string | null;
-    ipAddress: string | null;
-    status: string;
-    errorMessage: string | null;
-    createdAt: string;
-  }>
-> {
-  const db = getDatabase();
-
-  return db
-    .selectFrom('mcp_audit_logs')
-    .select([
-      'id',
-      'account_id as accountId',
-      'tool_name as toolName',
-      'user_agent as userAgent',
-      'ip_address as ipAddress',
-      'status',
-      'error_message as errorMessage',
-      'created_at as createdAt',
-    ])
-    .where('tenant_id', '=', tenantId)
-    .orderBy('created_at', 'desc')
-    .limit(limit)
-    .offset(offset)
-    .execute();
-}
-
-/**
- * Get audit logs for a specific user
- */
-export async function getUserAuditLogs(
-  tenantId: string,
-  accountId: string,
-  limit = 50,
-  offset = 0
-): Promise<
-  Array<{
-    id: string;
-    toolName: string;
-    status: string;
-    errorMessage: string | null;
-    createdAt: string;
-  }>
-> {
-  const db = getDatabase();
-
-  return db
-    .selectFrom('mcp_audit_logs')
-    .select(['id', 'tool_name as toolName', 'status', 'error_message as errorMessage', 'created_at as createdAt'])
-    .where('tenant_id', '=', tenantId)
-    .where('account_id', '=', accountId)
-    .orderBy('created_at', 'desc')
-    .limit(limit)
-    .offset(offset)
-    .execute();
 }

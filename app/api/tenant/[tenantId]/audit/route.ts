@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
-import { getTenantAuditLogs, getUserAuditLogs } from '@/lib/audit';
 
 export async function GET(
   request: NextRequest,
@@ -11,8 +10,6 @@ export async function GET(
   const { searchParams } = new URL(request.url);
   const requestedAccountId = searchParams.get('accountId');
   const operatorKey = request.headers.get('x-operator-key');
-  const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 500);
-  const offset = Math.max(parseInt(searchParams.get('offset') || '0'), 0);
 
   try {
     // Verify tenant exists
@@ -33,24 +30,13 @@ export async function GET(
         return NextResponse.json({ error: 'Invalid operator credentials' }, { status: 403 });
       }
 
-      const logs = await getTenantAuditLogs(tenantId, limit, offset);
-
       return NextResponse.json({
         role: 'tenant_operator',
         type: 'tenant',
         tenantId,
-        limit,
-        offset,
-        logs: logs.map((log) => ({
-          id: log.id,
-          accountId: log.accountId,
-          toolName: log.toolName,
-          userAgent: log.userAgent || 'Unknown',
-          ipAddress: log.ipAddress || 'Unknown',
-          status: log.status,
-          errorMessage: log.errorMessage,
-          timestamp: log.createdAt,
-        })),
+        message: 'Audit logs are stored with @campfhir/bored-logs',
+        logsProvider: 'bored-logs',
+        logContext: `mcp:${tenantId}`,
       });
     }
 
@@ -74,21 +60,13 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
 
-    const logs = await getUserAuditLogs(tenantId, requestedAccountId, limit, offset);
-
     return NextResponse.json({
       role: 'jira_user',
       type: 'user',
       accountId: requestedAccountId,
-      limit,
-      offset,
-      logs: logs.map((log) => ({
-        id: log.id,
-        toolName: log.toolName,
-        status: log.status,
-        errorMessage: log.errorMessage,
-        timestamp: log.createdAt,
-      })),
+      message: 'Audit logs are stored with @campfhir/bored-logs',
+      logsProvider: 'bored-logs',
+      logContext: `mcp:${tenantId}:${requestedAccountId}`,
     });
   } catch (error) {
     console.error('Failed to fetch audit logs:', error);

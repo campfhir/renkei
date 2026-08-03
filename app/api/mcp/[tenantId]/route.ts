@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { getJiraGrant } from '@/lib/tenant-operations';
-import { recordSession, logToolCall } from '@/lib/audit';
+import { recordSession } from '@/lib/audit';
+import { createLogger } from '@campfhir/bored-logs';
 
 interface JiraIssue {
   key: string;
@@ -231,16 +232,28 @@ export async function POST(
       toolError = toolErr instanceof Error ? toolErr.message : 'Unknown error';
     }
 
-    // Log tool call
-    await logToolCall({
-      tenantId,
-      accountId,
-      toolName: method,
-      userAgent,
-      ipAddress,
-      status: toolError ? 'failure' : 'success',
-      errorMessage: toolError,
-    });
+    // Log tool call with bored-logs
+    const logger = createLogger();
+    if (toolError) {
+      logger.error('[mcp:{tenantId}] Tool error: {method}', {
+        tenantId,
+        method,
+        accountId,
+        userAgent,
+        ipAddress,
+        status: 'failure',
+        error: toolError,
+      });
+    } else {
+      logger.info('[mcp:{tenantId}] Tool call: {method}', {
+        tenantId,
+        method,
+        accountId,
+        userAgent,
+        ipAddress,
+        status: 'success',
+      });
+    }
 
     if (toolError) {
       return NextResponse.json({ error: toolError }, { status: 400 });
@@ -257,7 +270,7 @@ export async function POST(
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
     console.error('MCP tool execution error:', error);
 
-    // Try to log the error
+    // Try to log the error with bored-logs
     try {
       const body = await request.json().catch(() => ({}));
       const grants = await db
@@ -268,14 +281,15 @@ export async function POST(
         .execute();
 
       if (grants.length > 0) {
-        await logToolCall({
+        const logger = createLogger();
+        logger.error('[mcp:{tenantId}] Tool error: {method}', {
           tenantId,
+          method: body.method || 'unknown',
           accountId: grants[0].account_id,
-          toolName: body.method || 'unknown',
           userAgent,
           ipAddress,
           status: 'failure',
-          errorMessage: errorMsg,
+          error: errorMsg,
         });
       }
     } catch {
