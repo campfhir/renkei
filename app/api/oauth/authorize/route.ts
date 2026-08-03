@@ -26,5 +26,16 @@ export async function GET(request: NextRequest) {
     authUrl.searchParams.append('state', state);
   }
 
+  console.log('[OAuth Authorize] Sending to Atlassian:', {
+    audience,
+    client_id,
+    redirect_uri,
+    response_type,
+    scope: scope.substring(0, 100) + '...', // truncate for readability
+    prompt,
+    state: state ? 'present' : 'absent',
+    full_url: authUrl.toString(),
+  });
+
   return NextResponse.redirect(authUrl.toString());
 }
