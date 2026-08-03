@@ -10,8 +10,10 @@ export async function GET(request: NextRequest) {
   const scope = config.ATLASSIAN_SCOPES;
   const response_type = 'code';
   const prompt = 'consent';
+  const audience = 'api.atlassian.com';
 
   const authUrl = new URL('https://auth.atlassian.com/authorize');
+  authUrl.searchParams.append('audience', audience);
   authUrl.searchParams.append('client_id', client_id);
   authUrl.searchParams.append('redirect_uri', redirect_uri);
   authUrl.searchParams.append('response_type', response_type);
