@@ -1,19 +1,17 @@
-import { Migrator, FileMigrationProvider } from 'kysely';
-import { dirname, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { FileMigrationProvider, Migrator } from 'kysely/migration';
+import { resolve } from 'path';
 import { getDatabase } from '@/lib/db';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
-export async function runMigrations() {
+export async function runMigrations(migrationsDir?: string) {
   const db = getDatabase();
+  const migrationFolder = migrationsDir || resolve(process.cwd(), 'lib/migrations');
 
   const migrator = new Migrator({
     db,
     provider: new FileMigrationProvider({
       fs: await import('fs').then((m) => m.promises),
       path: await import('path'),
-      migrationFolder: resolve(__dirname),
+      migrationFolder,
     }),
   });
 

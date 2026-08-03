@@ -6,13 +6,31 @@ export default function Home() {
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!email) return;
 
     setIsLoading(true);
-    // Redirect to OAuth authorization
-    window.location.href = `/api/oauth/authorize?email=${encodeURIComponent(email)}`;
+    try {
+      // Home-realm discovery: checks if domain has a tenant
+      const response = await fetch(`/api/home-realm?email=${encodeURIComponent(email)}`, {
+        method: 'POST',
+        redirect: 'manual',
+      });
+
+      if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+        // Redirect from server - follow it
+        window.location.href = response.headers.get('location') || '/';
+      } else if (!response.ok) {
+        const error = await response.json();
+        alert(error.error || 'An error occurred. Please try again.');
+        setIsLoading(false);
+      }
+    } catch (error) {
+      console.error('Home-realm discovery error:', error);
+      alert('An error occurred. Please try again.');
+      setIsLoading(false);
+    }
   };
 
   return (

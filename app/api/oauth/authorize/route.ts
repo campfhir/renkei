@@ -1,16 +1,60 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/env';
+import { getDatabase } from '@/lib/db';
 import { randomUUID } from 'crypto';
 
 export async function GET(request: NextRequest) {
   const config = getConfig();
+  const db = getDatabase();
 
   const client_id = config.ATLASSIAN_CLIENT_ID;
   const redirect_uri = config.ATLASSIAN_REDIRECT_URI;
   const scope = config.ATLASSIAN_SCOPES;
   const response_type = 'code';
   const audience = 'api.atlassian.com';
-  const state = randomUUID(); // Always generate state for CSRF protection
+  const state = randomUUID();
+  const nonce = randomUUID();
+
+  // Store state in database for CSRF validation on callback
+  // For MVP, we use ATLASSIAN_CLOUD_ID as the tenant ID since it's environment-specific
+  const tenantId = config.ATLASSIAN_CLOUD_ID || randomUUID();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+  try {
+    // Ensure tenant exists (create if needed for MVP)
+    const existingTenant = await db
+      .selectFrom('tenants')
+      .select('id')
+      .where('id', '=', tenantId)
+      .executeTakeFirst();
+
+    if (!existingTenant) {
+      await db
+        .insertInto('tenants')
+        .values({
+          id: tenantId,
+          slug: 'default',
+          created_at: new Date().toISOString(),
+        })
+        .execute();
+    }
+
+    // Store state for CSRF validation
+    await db
+      .insertInto('pending_oidc_signin')
+      .values({
+        id: randomUUID(),
+        state,
+        nonce,
+        tenant_id: tenantId,
+        expires_at: expiresAt.toISOString(),
+        created_at: new Date().toISOString(),
+      })
+      .execute();
+  } catch (err) {
+    console.error('Failed to store OIDC state:', err);
+    return NextResponse.json({ error: 'Failed to initiate OAuth flow' }, { status: 500 });
+  }
 
   const authUrl = new URL('https://auth.atlassian.com/authorize');
   authUrl.searchParams.append('audience', audience);

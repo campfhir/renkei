@@ -1,67 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
-import { setOperatorCookie, OperatorSession } from '@/lib/auth-utils';
+import { setJiraGrant } from '@/lib/tenant-operations';
 import { randomUUID } from 'crypto';
-import { jwtVerify, createRemoteJWKSet } from 'jose';
 
-interface OidcTokenResponse {
+interface JiraTokenResponse {
   access_token: string;
-  id_token: string;
   token_type: string;
-  expires_in?: number;
+  expires_in: number;
   refresh_token?: string;
 }
 
-// Simplified ID token interface (JWT payload)
-interface OidcIdToken {
-  sub: string;
-  email?: string;
-  email_verified?: boolean;
-  name?: string;
-  given_name?: string;
-  family_name?: string;
-  iat: number;
-  exp: number;
-  aud: string | string[];
-  iss: string;
-}
-
-/**
- * Verify JWT signature using OIDC provider's JWKS
- */
-async function verifyIdToken(
-  token: string,
-  issuer: string,
-  audience: string,
-  jwksUri: string
-): Promise<OidcIdToken | null> {
-  try {
-    const key = await createRemoteJWKSet(new URL(jwksUri));
-
-    const verified = await jwtVerify(token, key, {
-      issuer,
-      audience,
-      clockTolerance: 30,
-    });
-
-    return verified.payload as unknown as OidcIdToken;
-  } catch (err) {
-    console.error('ID token verification failed:', err);
-    return null;
-  }
-}
-
-/**
- * Extract human-readable name from ID token claims
- */
-function extractDisplayName(claims: OidcIdToken): string {
-  if (claims.name) return claims.name;
-  if (claims.email) return claims.email.split('@')[0];
-  if (claims.given_name || claims.family_name) {
-    return `${claims.given_name || ''} ${claims.family_name || ''}`.trim();
-  }
-  return claims.sub.substring(0, 12);
+interface JiraUserInfo {
+  account_id: string;
+  display_name: string;
 }
 
 export async function GET(request: NextRequest) {
@@ -73,7 +25,7 @@ export async function GET(request: NextRequest) {
   const error = searchParams.get('error');
   const errorDescription = searchParams.get('error_description');
 
-  // Handle OIDC error response
+  // Handle Jira OAuth error response
   if (error) {
     return NextResponse.json(
       { error, error_description: errorDescription || 'Unknown error' },
@@ -86,10 +38,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Verify state matches a pending sign-in stored in database (CSRF protection)
+    // Look up pending Jira authorization by state (single-use token)
+    // The pending record tells us which tenant this authorization is for
     const pendingSignIn = await db
       .selectFrom('pending_oidc_signin')
-      .select(['tenant_id', 'nonce', 'expires_at'])
+      .select(['tenant_id', 'expires_at'])
       .where('state', '=', state)
       .executeTakeFirst();
 
@@ -100,26 +53,22 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Delete pending record (single-use) to prevent replay attacks
+    await db
+      .deleteFrom('pending_oidc_signin')
+      .where('state', '=', state)
+      .execute();
+
     // Verify state is not expired
     const stateExpiresAt = new Date(pendingSignIn.expires_at);
     if (stateExpiresAt < new Date()) {
-      // Clean up expired state
-      try {
-        await db
-          .deleteFrom('pending_oidc_signin')
-          .where('state', '=', state)
-          .execute();
-      } catch (err) {
-        console.error('Failed to clean up expired state:', err);
-      }
-
       return NextResponse.json(
         { error: 'State expired' },
         { status: 400 }
       );
     }
 
-    // Get tenant info
+    // Verify tenant exists
     const tenant = await db
       .selectFrom('tenants')
       .select(['id', 'slug'])
@@ -130,123 +79,87 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Tenant not found' }, { status: 400 });
     }
 
-    // Get OIDC config
-    const oidcConfig = await db
-      .selectFrom('tenant_oidc')
-      .select(['issuer', 'client_id', 'client_secret', 'token_endpoint', 'jwks_uri'])
-      .where('tenant_id', '=', tenant.id)
-      .executeTakeFirst();
+    console.log(`[MCP ${tenant.id}] Jira OAuth callback`);
 
-    if (!oidcConfig) {
-      return NextResponse.json(
-        { error: 'OIDC not configured for this tenant' },
-        { status: 400 }
-      );
-    }
-
-    // Exchange code for tokens with OIDC provider
-    const tokenResponse = await fetch(oidcConfig.token_endpoint, {
+    // Exchange authorization code for Jira tokens
+    const tokenResponse = await fetch('https://auth.atlassian.com/oauth/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         grant_type: 'authorization_code',
+        client_id: config.ATLASSIAN_CLIENT_ID,
+        client_secret: config.ATLASSIAN_CLIENT_SECRET,
         code,
-        client_id: oidcConfig.client_id,
-        client_secret: oidcConfig.client_secret,
-        redirect_uri: `${config.PUBLIC_BASE_URL}/api/oauth/callback`,
-      }).toString(),
+        redirect_uri: config.ATLASSIAN_REDIRECT_URI,
+      }),
     });
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      console.error('Token exchange failed:', errorText);
-      return NextResponse.json({ error: 'Token exchange failed' }, { status: 400 });
-    }
-
-    const tokenData = (await tokenResponse.json()) as OidcTokenResponse;
-
-    if (!oidcConfig.jwks_uri) {
+      console.error('Jira token exchange failed:', errorText);
       return NextResponse.json(
-        { error: 'OIDC JWKS URI not configured' },
+        { error: 'Failed to exchange authorization code' },
         { status: 400 }
       );
     }
 
-    // Verify ID token signature and audience
-    const idTokenClaims = await verifyIdToken(
-      tokenData.id_token,
-      oidcConfig.issuer,
-      oidcConfig.client_id,
-      oidcConfig.jwks_uri
-    );
+    const tokenData = (await tokenResponse.json()) as JiraTokenResponse;
 
-    if (!idTokenClaims) {
-      return NextResponse.json({ error: 'Invalid ID token' }, { status: 400 });
+    // Get user info from Jira
+    const userResponse = await fetch('https://api.atlassian.com/me', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    if (!userResponse.ok) {
+      console.error('Failed to fetch user info from Jira');
+      return NextResponse.json({ error: 'Failed to get user info' }, { status: 400 });
     }
 
-    // Verify token not expired
-    const now = Math.floor(Date.now() / 1000);
-    if (idTokenClaims.exp < now) {
-      return NextResponse.json({ error: 'Token expired' }, { status: 400 });
+    const userInfo = (await userResponse.json()) as JiraUserInfo;
+
+    // Get accessible resources (cloud IDs) to find the site
+    const resourcesResponse = await fetch('https://api.atlassian.com/oauth/token/accessible-resources', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+
+    if (!resourcesResponse.ok) {
+      console.error('Failed to fetch accessible resources');
+      return NextResponse.json(
+        { error: 'Failed to get accessible resources' },
+        { status: 400 }
+      );
     }
 
-    // TODO: Check if required role claim is present
-    // For MVP, accept any authenticated user
+    const resources = (await resourcesResponse.json()) as Array<{
+      id: string;
+      url: string;
+      name: string;
+    }>;
 
-    // Create operator session
-    const sessionId = randomUUID();
-    const displayName = extractDisplayName(idTokenClaims);
-    const issuedAt = Date.now();
-    const expiresAt = issuedAt + 4 * 60 * 60 * 1000; // 4 hours
-
-    const session: OperatorSession = {
-      sessionId,
-      subject: idTokenClaims.sub,
-      operator: displayName,
-      tenantId: tenant.id,
-      issuedAt,
-      expiresAt,
-    };
-
-    // Store session in database
-    try {
-      await db
-        .insertInto('operator_sessions')
-        .values({
-          session_id: sessionId,
-          tenant_id: tenant.id,
-          subject: idTokenClaims.sub,
-          operator_name: displayName,
-          issued_at: new Date(issuedAt).toISOString(),
-          expires_at: new Date(expiresAt).toISOString(),
-          created_at: new Date().toISOString(),
-        })
-        .execute();
-    } catch (err) {
-      console.error('Failed to store operator session:', err);
-      // Continue anyway - cookie session will still work
+    // For MVP, use the first accessible resource (cloud ID)
+    const resource = resources[0];
+    if (!resource) {
+      return NextResponse.json(
+        { error: 'No Jira sites accessible' },
+        { status: 400 }
+      );
     }
 
-    // Clean up used state to prevent replay attacks
-    try {
-      await db
-        .deleteFrom('pending_oidc_signin')
-        .where('state', '=', state)
-        .execute();
-    } catch (err) {
-      console.error('Failed to clean up state:', err);
-      // Continue anyway - state is already expired
-    }
+    // Store encrypted Jira grant
+    await setJiraGrant(tenant.id, {
+      accountId: userInfo.account_id,
+      atlassianClientId: config.ATLASSIAN_CLIENT_ID,
+      cloudId: resource.id,
+      siteUrl: resource.url,
+      displayName: userInfo.display_name,
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token || '',
+      expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
+      scopes: ['read:jira-work', 'write:jira-work', 'read:jira-user'],
+    });
 
-    // Set session cookie
-    const response = NextResponse.redirect(
-      new URL(`/admin/${tenant.slug}`, request.url),
-      { status: 302 }
-    );
-
-    await setOperatorCookie(session);
-
-    return response;
+    // Redirect back to MCP endpoint dashboard
+    return NextResponse.redirect(new URL(`/mcp/${tenant.id}`, request.url));
   } catch (err) {
     console.error('OAuth callback error:', err);
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });

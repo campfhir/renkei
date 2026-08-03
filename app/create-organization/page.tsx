@@ -1,8 +1,13 @@
 'use client';
 
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { Suspense } from 'react';
 
-export default function CreateOrganization() {
+function CreateOrganizationContent() {
+  const searchParams = useSearchParams();
+  const domain = searchParams.get('domain') || '';
+
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:bg-black px-4">
       <main style={{ maxWidth: '30rem' }} className="w-full">
@@ -15,8 +20,9 @@ export default function CreateOrganization() {
 
         <h1 className="text-3xl font-bold mb-2">Create your organization</h1>
         <p className="text-gray-600 dark:text-gray-400 mb-6">
-          To create a new organization, you'll need to be invited by an existing admin or contact
-          your system administrator.
+          {domain
+            ? `Create a new organization for ${domain}.`
+            : 'To create a new organization, you can contact your system administrator.'}
         </p>
 
         <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
@@ -37,5 +43,13 @@ export default function CreateOrganization() {
         </p>
       </main>
     </div>
+  );
+}
+
+export default function CreateOrganization() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <CreateOrganizationContent />
+    </Suspense>
   );
 }
