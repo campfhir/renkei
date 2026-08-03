@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { getJiraGrant } from '@/lib/tenant-operations';
+import { recordSession, logToolCall } from '@/lib/audit';
 
 interface JiraIssue {
   key: string;
@@ -159,6 +160,10 @@ export async function POST(
 ) {
   const { tenantId } = await params;
   const db = getDatabase();
+  const userAgent = request.headers.get('user-agent') || undefined;
+  const ipAddress = request.headers.get('x-forwarded-for')?.split(',')[0].trim() ||
+                   request.headers.get('x-real-ip') ||
+                   undefined;
 
   try {
     const body = await request.json();
@@ -190,26 +195,55 @@ export async function POST(
       );
     }
 
-    const grant = await getJiraGrant(tenantId, grants[0].account_id);
+    const accountId = grants[0].account_id;
+    const grant = await getJiraGrant(tenantId, accountId);
     if (!grant) {
       return NextResponse.json({ error: 'Failed to retrieve Jira grant' }, { status: 500 });
     }
 
+    // Record session
+    await recordSession({
+      tenantId,
+      accountId,
+      userAgent,
+      ipAddress,
+    });
+
     let result: MCPToolResult | null = null;
+    let toolError: string | undefined;
 
     // Route to appropriate MCP tool handler
-    if (method === 'list_issues') {
-      result = await handleListIssues(grant, toolParams);
-    } else if (method === 'get_issue') {
-      result = await handleGetIssue(grant, toolParams);
-    } else if (method === 'get_boards') {
-      result = await handleGetBoards(grant, toolParams);
-    } else {
-      return NextResponse.json({ error: `Unknown method: ${method}` }, { status: 400 });
+    try {
+      if (method === 'list_issues') {
+        result = await handleListIssues(grant, toolParams);
+      } else if (method === 'get_issue') {
+        result = await handleGetIssue(grant, toolParams);
+      } else if (method === 'get_boards') {
+        result = await handleGetBoards(grant, toolParams);
+      } else {
+        toolError = `Unknown method: ${method}`;
+      }
+
+      if (!result && !toolError) {
+        toolError = 'Failed to process request';
+      }
+    } catch (toolErr) {
+      toolError = toolErr instanceof Error ? toolErr.message : 'Unknown error';
     }
 
-    if (!result) {
-      return NextResponse.json({ error: 'Failed to process request' }, { status: 500 });
+    // Log tool call
+    await logToolCall({
+      tenantId,
+      accountId,
+      toolName: method,
+      userAgent,
+      ipAddress,
+      status: toolError ? 'failure' : 'success',
+      errorMessage: toolError,
+    });
+
+    if (toolError) {
+      return NextResponse.json({ error: toolError }, { status: 400 });
     }
 
     console.log(`[MCP ${tenantId}] Tool executed: ${method}`);
@@ -220,7 +254,34 @@ export async function POST(
       content: [result],
     });
   } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
     console.error('MCP tool execution error:', error);
+
+    // Try to log the error
+    try {
+      const body = await request.json().catch(() => ({}));
+      const grants = await db
+        .selectFrom('atlassian_grants')
+        .select(['account_id'])
+        .where('tenant_id', '=', tenantId)
+        .limit(1)
+        .execute();
+
+      if (grants.length > 0) {
+        await logToolCall({
+          tenantId,
+          accountId: grants[0].account_id,
+          toolName: body.method || 'unknown',
+          userAgent,
+          ipAddress,
+          status: 'failure',
+          errorMessage: errorMsg,
+        });
+      }
+    } catch {
+      // Silently fail logging
+    }
+
     return NextResponse.json(
       {
         type: 'tool_result',
@@ -228,7 +289,7 @@ export async function POST(
         content: [
           {
             type: 'text',
-            text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            text: `Error: ${errorMsg}`,
           },
         ],
       },
