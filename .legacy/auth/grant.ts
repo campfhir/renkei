@@ -13,9 +13,8 @@
  * Atlassian's consent screen is the only thing that can say.
  */
 
-import type { AtlassianConfig } from '../config.js';
-import { JiraClient } from '../jira/client.js';
-import { asString } from '../util/coerce.js';
+import type { AtlassianConfig } from '@/lib/config';
+import { asString } from '@/lib/util/coerce';
 import {
   assertCloudIdInGrant,
   exchangeAuthorizationCode,
@@ -88,12 +87,17 @@ export async function discoverAtlassianAuthorization(
   // against config: on the portal's path the two are not the same, and calling
   // `/myself` on a site the grant does not cover would 401 for a reason that
   // looks nothing like the actual mistake.
-  const client = new JiraClient({
-    cloudId: site.id,
-    getAccessToken: () => Promise.resolve(tokens.accessToken),
-    fetchImpl,
+  const url = new URL('/rest/api/3/myself', site.url);
+  const response = await fetchImpl(url.toString(), {
+    headers: {
+      Authorization: `Bearer ${tokens.accessToken}`,
+      Accept: 'application/json',
+    },
   });
-  const me = await client.get<Record<string, unknown>>('/rest/api/3/myself');
+  if (!response.ok) {
+    throw new AuthorizationIncompleteError(`Failed to identify user: ${response.statusText}`);
+  }
+  const me = (await response.json()) as Record<string, unknown>;
   const accountId = asString(me.accountId);
 
   if (accountId === '') {

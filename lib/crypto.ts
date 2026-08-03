@@ -9,9 +9,9 @@ const TAG_LENGTH = 16; // 16 bytes for GCM
  * Decrypt data encrypted with AES-256-GCM.
  * Data format: base64(nonce || ciphertext || tag)
  */
-export function decrypt(encryptedData: string): string {
-  const config = getConfig();
-  const key = Buffer.from(config.TOKEN_ENCRYPTION_KEY, 'base64');
+export function decrypt(encryptedData: string, keyBuffer?: Buffer): string {
+  // @ts-ignore - Buffer type conflict between crypto and global Buffer
+  const key = keyBuffer || Buffer.from(getConfig().TOKEN_ENCRYPTION_KEY, 'base64');
 
   try {
     const buffer = Buffer.from(encryptedData, 'base64');
@@ -34,9 +34,9 @@ export function decrypt(encryptedData: string): string {
   }
 }
 
-export function encrypt(plaintext: string): string {
-  const config = getConfig();
-  const key = Buffer.from(config.TOKEN_ENCRYPTION_KEY, 'base64');
+export function encrypt(plaintext: string, keyBuffer?: Buffer): string {
+  // @ts-ignore - Buffer type conflict between crypto and global Buffer
+  const key = keyBuffer || Buffer.from(getConfig().TOKEN_ENCRYPTION_KEY, 'base64');
   const nonce = randomBytes(NONCE_LENGTH);
 
   const cipher = createCipheriv(ALGORITHM, key, nonce);

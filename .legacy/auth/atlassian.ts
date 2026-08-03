@@ -11,8 +11,8 @@
  * window closes, or the grant is unrecoverable and the user has to re-consent.
  */
 
-import type { AtlassianConfig } from '../config.js';
-import { asString } from '../util/coerce.js';
+import type { AtlassianConfig } from '@/lib/config';
+import { asString } from '@/lib/util/coerce';
 
 export const ATLASSIAN_AUTH_BASE = 'https://auth.atlassian.com';
 export const ATLASSIAN_API_BASE = 'https://api.atlassian.com';

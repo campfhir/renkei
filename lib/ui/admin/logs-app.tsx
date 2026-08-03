@@ -6,8 +6,8 @@ import {
   LogDateRangePicker,
   LogSearchSyntaxHelp,
   DEFAULT_QUICK_RANGES,
-} from '../../logging/bored-logger.js';
-import type { LogDateRange } from '../../logging/bored-logger.js';
+} from '../../logging/bored-logger-client';
+import type { LogDateRange } from '../../logging/bored-logger-client';
 
 interface LogsAppProps {
   tenantSlug: string;

@@ -9,8 +9,8 @@ import {
   LogDateRangePicker,
   LogSearchSyntaxHelp,
   DEFAULT_QUICK_RANGES,
-} from '@/lib/logging/bored-logger';
-import type { LogDateRange, SortState } from '@/lib/logging/bored-logger';
+} from '@/lib/logging/bored-logger-client';
+import type { LogDateRange, SortState } from '@/lib/logging/bored-logger-client';
 
 interface LogsClientAppProps {
   tenantSlug: string;

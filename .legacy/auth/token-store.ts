@@ -15,7 +15,7 @@
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { z } from 'zod';
-import { decrypt, encrypt } from '../crypto/secretbox.js';
+import { decrypt, encrypt } from '@/lib/crypto';
 
 /** A grant with tokens in plaintext. Never serialize this directly. */
 export interface Grant {

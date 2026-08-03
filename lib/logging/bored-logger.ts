@@ -14,38 +14,6 @@
 
 import { createLogger, type Logger } from '@campfhir/bored-logs';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
-// Re-export UI components and utilities for admin console
-export {
-  LogTable,
-  LogSearchBar,
-  LogLevelFilter,
-  LogDateRangePicker,
-  LogCard,
-  PurgeLogsDialog,
-  LogTableRow,
-  LogTableRowExpanded,
-  LogTableRowGroup,
-  LogSearchSyntaxHelp,
-  formatTimestamp,
-  DEFAULT_QUICK_RANGES,
-} from '@campfhir/bored-logs/components';
-export type {
-  LogTableProps,
-  LogSearchBarProps,
-  LogLevelFilterProps,
-  LogDateRangePickerProps,
-  LogCardProps,
-  LogTableRowProps,
-  LogTableRowExpandedProps,
-  LogTableRowGroupProps,
-  ExtraColumn,
-  LogCardField,
-  LogDateRange,
-  QuickRange,
-  SortState,
-  FilterExpr,
-  LogQueryToken,
-} from '@campfhir/bored-logs/components';
 
 import { Kysely, PostgresDialect } from 'kysely';
 import type { Pool } from 'pg';

@@ -3,7 +3,7 @@ import { getConfig } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { setOperatorCookie, OperatorSession } from '@/lib/auth-utils';
 import { randomUUID } from 'crypto';
-import { jwtVerify, importJWKS } from 'jose';
+import { jwtVerify, createRemoteJWKSet } from 'jose';
 
 interface OidcTokenResponse {
   access_token: string;
@@ -37,14 +37,7 @@ async function verifyIdToken(
   jwksUri: string
 ): Promise<OidcIdToken | null> {
   try {
-    const jwksResponse = await fetch(jwksUri);
-    if (!jwksResponse.ok) {
-      console.error('Failed to fetch JWKS:', jwksResponse.statusText);
-      return null;
-    }
-
-    const jwks = await jwksResponse.json();
-    const key = await importJWKS(jwks);
+    const key = await createRemoteJWKSet(new URL(jwksUri));
 
     const verified = await jwtVerify(token, key, {
       issuer,
@@ -108,8 +101,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Verify state is not expired
-    const expiresAt = new Date(pendingSignIn.expires_at);
-    if (expiresAt < new Date()) {
+    const stateExpiresAt = new Date(pendingSignIn.expires_at);
+    if (stateExpiresAt < new Date()) {
       // Clean up expired state
       try {
         await db

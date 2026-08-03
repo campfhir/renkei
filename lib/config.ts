@@ -346,19 +346,10 @@ export function loadBaseConfig(env: NodeJS.ProcessEnv = process.env): BaseConfig
   // Optional in the shared schema because the gateway never reads it, but
   // stdio pins the stored grant's site against it — see toBaseConfig.
   if (parsed.ATLASSIAN_CLOUD_ID === undefined) {
-    throw new ZodError([
-      {
-        code: z.ZodIssueCode.too_small,
-        minimum: 1,
-        type: 'string',
-        inclusive: true,
-        exact: false,
-        path: ['ATLASSIAN_CLOUD_ID'],
-        message:
-          'Required for the stdio entrypoint. Find it at ' +
-          'https://<site>.atlassian.net/_edge/tenant_info',
-      },
-    ]);
+    throw new Error(
+      'Required for the stdio entrypoint: ATLASSIAN_CLOUD_ID. Find it at ' +
+      'https://<site>.atlassian.net/_edge/tenant_info'
+    );
   }
 
   return toBaseConfig(parsed);

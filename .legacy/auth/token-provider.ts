@@ -13,10 +13,10 @@
  *      that is not a design.)
  */
 
-import type { AtlassianConfig } from '../config.js';
+import type { AtlassianConfig } from '@/lib/config';
 import { refreshAccessToken, type FetchLike } from './atlassian.js';
 import type { Grant, TokenStore } from './token-store.js';
-import { withRetry } from '../util/retry.js';
+import { withRetry } from '@/lib/util/retry';
 
 /** Refresh this far ahead of expiry so an in-flight request never races it. */
 const DEFAULT_REFRESH_SKEW_SECONDS = 120;
