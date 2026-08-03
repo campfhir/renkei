@@ -3,11 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "docker-compose up",
-    "dev:local": "next dev",
+    "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "docker:build": "docker-compose build"
+    "start": "next start"
   },
   "dependencies": {
     "@campfhir/bored-logs": "^0.3.2",
