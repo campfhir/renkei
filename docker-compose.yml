@@ -27,6 +27,7 @@ services:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       PORT: 3000
       HOST: 0.0.0.0
+      CI: "true"
     ports:
       - "3000:3000"
     volumes:
