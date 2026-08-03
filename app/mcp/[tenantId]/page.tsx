@@ -46,6 +46,13 @@ export default function MCPEndpoint() {
           Connect Jira
         </button>
 
+        <Link
+          href={`/tenant/${tenantId}/logs`}
+          className="w-full block text-center bg-gray-600 hover:bg-gray-700 text-white font-medium py-3 px-4 rounded-lg transition-colors mb-4"
+        >
+          View Logs
+        </Link>
+
         <p className="text-sm text-gray-600 dark:text-gray-400">
           Tenant ID: <code className="text-gray-800 dark:text-gray-200">{tenantId}</code>
         </p>
