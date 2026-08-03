@@ -40,6 +40,8 @@ export async function setTenantOidc(tenantId: string, oidc: TenantOidc): Promise
       issuer: oidc.issuer,
       client_id: oidc.clientId,
       client_secret: encryptedSecret,
+      role_claim: oidc.roleClaim,
+      required_role: oidc.requiredRole,
       created_at: new Date().toISOString(),
     })
     .onConflict((oc) =>
@@ -47,6 +49,8 @@ export async function setTenantOidc(tenantId: string, oidc: TenantOidc): Promise
         issuer: oidc.issuer,
         client_id: oidc.clientId,
         client_secret: encryptedSecret,
+        role_claim: oidc.roleClaim,
+        required_role: oidc.requiredRole,
       })
     )
     .execute();

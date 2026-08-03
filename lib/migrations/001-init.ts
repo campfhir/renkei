@@ -17,9 +17,8 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('issuer', 'varchar(255)', (col) => col.notNull())
     .addColumn('client_id', 'varchar(255)', (col) => col.notNull())
     .addColumn('client_secret', 'varchar(255)', (col) => col.notNull())
-    .addColumn('authorization_endpoint', 'varchar(255)', (col) => col.notNull())
-    .addColumn('token_endpoint', 'varchar(255)', (col) => col.notNull())
-    .addColumn('jwks_uri', 'varchar(255)', (col) => col.notNull())
+    .addColumn('role_claim', 'varchar(255)')
+    .addColumn('required_role', 'varchar(255)')
     .addColumn('created_at', 'timestamp', (col) => col.notNull().defaultTo(sql`NOW()`))
     .addUniqueConstraint('tenant_oidc_tenant_id_unique', ['tenant_id'])
     .execute();
