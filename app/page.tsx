@@ -15,12 +15,11 @@ export default function Home() {
       // Home-realm discovery: checks if domain has a tenant
       const response = await fetch(`/api/home-realm?email=${encodeURIComponent(email)}`, {
         method: 'POST',
-        redirect: 'manual',
       });
 
-      if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
-        // Redirect from server - follow it
-        window.location.href = response.headers.get('location') || '/';
+      if (response.redirected) {
+        // Fetch automatically followed redirect
+        window.location.href = response.url;
       } else if (!response.ok) {
         const error = await response.json();
         alert(error.error || 'An error occurred. Please try again.');
