@@ -5,28 +5,14 @@ import { FormEvent, useState } from 'react';
 export default function Home() {
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
 
-  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!email) return;
+
     setIsLoading(true);
-    setError('');
-
-    try {
-      const response = await fetch('/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-      });
-
-      if (!response.ok) {
-        setError('Failed to sign in. Please try again.');
-      }
-    } catch (err) {
-      setError('An error occurred. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
+    // Redirect to OAuth authorization
+    window.location.href = `/api/oauth/authorize?email=${encodeURIComponent(email)}`;
   };
 
   return (
@@ -53,10 +39,6 @@ export default function Home() {
               className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-black dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
-
-          {error && (
-            <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
-          )}
 
           <button
             type="submit"
