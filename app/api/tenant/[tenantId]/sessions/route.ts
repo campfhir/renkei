@@ -10,10 +10,7 @@ export async function GET(
   const db = getDatabase();
   const { searchParams } = new URL(request.url);
   const accountId = searchParams.get('accountId');
-
-  if (!accountId) {
-    return NextResponse.json({ error: 'accountId query parameter required' }, { status: 400 });
-  }
+  const operatorKey = request.headers.get('x-operator-key');
 
   try {
     // Verify tenant exists
@@ -27,7 +24,58 @@ export async function GET(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
-    // Verify user has a grant in this tenant
+    // Check permissions
+    if (!operatorKey && !accountId) {
+      return NextResponse.json(
+        { error: 'Either x-operator-key header or accountId parameter required' },
+        { status: 400 }
+      );
+    }
+
+    // Tenant operator: can see all sessions in tenant
+    if (operatorKey) {
+      const expectedKey = process.env[`OPERATOR_KEY_${tenantId}`.toUpperCase()];
+      if (!expectedKey || operatorKey !== expectedKey) {
+        return NextResponse.json({ error: 'Invalid operator credentials' }, { status: 403 });
+      }
+
+      // Return all sessions for this tenant
+      const allSessions = await db
+        .selectFrom('jira_sessions')
+        .select([
+          'id',
+          'account_id as accountId',
+          'user_agent as userAgent',
+          'ip_address as ipAddress',
+          'last_used_at as lastUsedAt',
+          'created_at as createdAt',
+        ])
+        .where('tenant_id', '=', tenantId)
+        .orderBy('last_used_at', 'desc')
+        .execute();
+
+      return NextResponse.json({
+        role: 'tenant_operator',
+        tenantId,
+        sessions: allSessions.map((s) => ({
+          id: s.id,
+          accountId: s.accountId,
+          userAgent: s.userAgent || 'Unknown',
+          ipAddress: s.ipAddress || 'Unknown',
+          lastUsedAt: s.lastUsedAt,
+          createdAt: s.createdAt,
+        })),
+      });
+    }
+
+    // Jira user: can only see their own sessions
+    if (!accountId) {
+      return NextResponse.json(
+        { error: 'accountId parameter required for jira_user access' },
+        { status: 400 }
+      );
+    }
+
     const grant = await db
       .selectFrom('atlassian_grants')
       .select('account_id')
@@ -36,12 +84,13 @@ export async function GET(
       .executeTakeFirst();
 
     if (!grant) {
-      return NextResponse.json({ error: 'User not found in this tenant' }, { status: 403 });
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
     }
 
     const sessions = await getUserSessions(tenantId, accountId);
 
     return NextResponse.json({
+      role: 'jira_user',
       accountId,
       sessions: sessions.map((s) => ({
         id: s.id,
@@ -65,13 +114,11 @@ export async function DELETE(
   const db = getDatabase();
   const { searchParams } = new URL(request.url);
   const sessionId = searchParams.get('sessionId');
-  const accountId = searchParams.get('accountId');
+  const targetAccountId = searchParams.get('accountId');
+  const operatorKey = request.headers.get('x-operator-key');
 
-  if (!sessionId || !accountId) {
-    return NextResponse.json(
-      { error: 'sessionId and accountId query parameters required' },
-      { status: 400 }
-    );
+  if (!sessionId) {
+    return NextResponse.json({ error: 'sessionId query parameter required' }, { status: 400 });
   }
 
   try {
@@ -86,39 +133,58 @@ export async function DELETE(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
-    // Verify user has a grant in this tenant
-    const grant = await db
-      .selectFrom('atlassian_grants')
-      .select('account_id')
-      .where('tenant_id', '=', tenantId)
-      .where('account_id', '=', accountId)
-      .executeTakeFirst();
-
-    if (!grant) {
-      return NextResponse.json({ error: 'User not found in this tenant' }, { status: 403 });
-    }
-
-    // Verify session belongs to this user
+    // Verify session exists and get its owner
     const session = await db
       .selectFrom('jira_sessions')
-      .select('id')
+      .select(['id', 'account_id as accountId'])
       .where('id', '=', sessionId)
       .where('tenant_id', '=', tenantId)
-      .where('account_id', '=', accountId)
       .executeTakeFirst();
 
     if (!session) {
       return NextResponse.json({ error: 'Session not found' }, { status: 404 });
     }
 
-    // Revoke the session
-    const success = await revokeSession(sessionId, tenantId);
-
-    if (!success) {
-      return NextResponse.json({ error: 'Failed to revoke session' }, { status: 500 });
+    // Check permissions
+    if (!operatorKey && !targetAccountId) {
+      return NextResponse.json(
+        { error: 'Either x-operator-key header or accountId parameter required' },
+        { status: 400 }
+      );
     }
 
-    console.log(`[Tenant ${tenantId}] User ${accountId} revoked session ${sessionId}`);
+    // Tenant operator: can revoke any session
+    if (operatorKey) {
+      const expectedKey = process.env[`OPERATOR_KEY_${tenantId}`.toUpperCase()];
+      if (!expectedKey || operatorKey !== expectedKey) {
+        return NextResponse.json({ error: 'Invalid operator credentials' }, { status: 403 });
+      }
+
+      await revokeSession(sessionId, tenantId);
+      console.log(`[Tenant ${tenantId}] Operator revoked session ${sessionId} (user: ${session.accountId})`);
+
+      return NextResponse.json({ success: true, revokedSession: sessionId });
+    }
+
+    // Jira user: can only revoke their own sessions
+    if (targetAccountId !== session.accountId) {
+      return NextResponse.json({ error: 'Cannot revoke other users sessions' }, { status: 403 });
+    }
+
+    // Verify user has a grant
+    const grant = await db
+      .selectFrom('atlassian_grants')
+      .select('account_id')
+      .where('tenant_id', '=', tenantId)
+      .where('account_id', '=', targetAccountId)
+      .executeTakeFirst();
+
+    if (!grant) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+
+    await revokeSession(sessionId, tenantId);
+    console.log(`[Tenant ${tenantId}] User ${targetAccountId} revoked their session ${sessionId}`);
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -9,7 +9,8 @@ export async function GET(
   const { tenantId } = await params;
   const db = getDatabase();
   const { searchParams } = new URL(request.url);
-  const accountId = searchParams.get('accountId');
+  const requestedAccountId = searchParams.get('accountId');
+  const operatorKey = request.headers.get('x-operator-key');
   const limit = Math.min(parseInt(searchParams.get('limit') || '50'), 500);
   const offset = Math.max(parseInt(searchParams.get('offset') || '0'), 0);
 
@@ -25,52 +26,67 @@ export async function GET(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
-    // If accountId provided, verify user exists in this tenant
-    if (accountId) {
-      const grant = await db
-        .selectFrom('atlassian_grants')
-        .select('account_id')
-        .where('tenant_id', '=', tenantId)
-        .where('account_id', '=', accountId)
-        .executeTakeFirst();
-
-      if (!grant) {
-        return NextResponse.json({ error: 'User not found in this tenant' }, { status: 403 });
+    // Tenant operator: can see all audit logs in tenant
+    if (operatorKey) {
+      const expectedKey = process.env[`OPERATOR_KEY_${tenantId}`.toUpperCase()];
+      if (!expectedKey || operatorKey !== expectedKey) {
+        return NextResponse.json({ error: 'Invalid operator credentials' }, { status: 403 });
       }
 
-      const logs = await getUserAuditLogs(tenantId, accountId, limit, offset);
+      const logs = await getTenantAuditLogs(tenantId, limit, offset);
 
       return NextResponse.json({
-        type: 'user',
-        accountId,
+        role: 'tenant_operator',
+        type: 'tenant',
+        tenantId,
         limit,
         offset,
         logs: logs.map((log) => ({
           id: log.id,
+          accountId: log.accountId,
           toolName: log.toolName,
+          userAgent: log.userAgent || 'Unknown',
+          ipAddress: log.ipAddress || 'Unknown',
           status: log.status,
-          error: log.errorMessage,
+          errorMessage: log.errorMessage,
           timestamp: log.createdAt,
         })),
       });
     }
 
-    // Return tenant-wide logs
-    const logs = await getTenantAuditLogs(tenantId, limit, offset);
+    // Jira user: can only see their own audit logs
+    if (!requestedAccountId) {
+      return NextResponse.json(
+        { error: 'Either x-operator-key header or accountId parameter required' },
+        { status: 400 }
+      );
+    }
+
+    // Verify user has a grant in this tenant
+    const grant = await db
+      .selectFrom('atlassian_grants')
+      .select('account_id')
+      .where('tenant_id', '=', tenantId)
+      .where('account_id', '=', requestedAccountId)
+      .executeTakeFirst();
+
+    if (!grant) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    }
+
+    const logs = await getUserAuditLogs(tenantId, requestedAccountId, limit, offset);
 
     return NextResponse.json({
-      type: 'tenant',
-      tenantId,
+      role: 'jira_user',
+      type: 'user',
+      accountId: requestedAccountId,
       limit,
       offset,
       logs: logs.map((log) => ({
         id: log.id,
-        accountId: log.accountId,
         toolName: log.toolName,
-        userAgent: log.userAgent || 'Unknown',
-        ipAddress: log.ipAddress || 'Unknown',
         status: log.status,
-        error: log.errorMessage,
+        errorMessage: log.errorMessage,
         timestamp: log.createdAt,
       })),
     });
