@@ -151,7 +151,7 @@ export async function GET(request: NextRequest) {
       atlassianClientId: config.ATLASSIAN_CLIENT_ID,
       cloudId: resource.id,
       siteUrl: resource.url,
-      displayName: userInfo.display_name,
+      displayName: userInfo.display_name || userInfo.account_id,
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token || '',
       expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),

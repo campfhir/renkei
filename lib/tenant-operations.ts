@@ -97,7 +97,7 @@ export async function setJiraGrant(tenantId: string, grant: JiraGrant): Promise<
       atlassian_client_id: grant.atlassianClientId,
       cloud_id: grant.cloudId,
       site_url: grant.siteUrl,
-      operator_name: grant.displayName,
+      operator_name: grant.displayName || grant.accountId,
       encrypted_access_token: encryptedAccessToken,
       encrypted_refresh_token: encryptedRefreshToken,
       expires_at: grant.expiresAt,
