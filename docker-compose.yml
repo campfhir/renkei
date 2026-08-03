@@ -37,7 +37,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -c "pnpm install && pnpm tsx scripts/migrate.ts && pnpm dev"
+    command: sh -c "pnpm tsx scripts/migrate.ts && pnpm dev"
 
 volumes:
   postgres_data:

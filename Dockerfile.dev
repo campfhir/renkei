@@ -1,4 +1,5 @@
-FROM node:20-alpine
+# Build stage - install dependencies
+FROM node:20-alpine AS deps
 
 WORKDIR /app
 
@@ -11,11 +12,22 @@ COPY package.json pnpm-lock.yaml ./
 # Install dependencies
 RUN pnpm install
 
-# Copy source code
-COPY . .
+# Development stage - run app with dev dependencies
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm
+
+# Copy dependencies from build stage
+COPY --from=deps /app/node_modules ./node_modules
+
+# Copy package files (needed by pnpm)
+COPY package.json pnpm-lock.yaml ./
 
 # Expose port
 EXPOSE 3000
 
-# Start dev server
+# Start dev server (source code will be mounted as volume)
 CMD ["pnpm", "dev"]
