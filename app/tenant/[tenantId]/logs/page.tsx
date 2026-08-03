@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
-import { Suspense, useState } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 
 function LogsViewerContent() {
   const params = useParams();
@@ -10,8 +10,52 @@ function LogsViewerContent() {
   const tenantId = params.tenantId as string;
   const accountId = searchParams.get('accountId');
   const operatorKey = searchParams.get('operatorKey');
+  const query = searchParams.get('q'); // Accept q=key:value query param
 
   const [isOperator] = useState(!!operatorKey);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch logs from API
+  useEffect(() => {
+    const fetchLogs = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+
+        // Build query options from q parameter
+        const queryOptions: Record<string, any> = {};
+        if (query) {
+          // Parse q=key:value format (bored-logs query syntax)
+          queryOptions.filter = query;
+        }
+
+        const response = await fetch(`/api/tenant/${tenantId}/logs`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(operatorKey ? { 'x-operator-key': operatorKey } : {}),
+          },
+          body: JSON.stringify(queryOptions),
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to fetch logs');
+        }
+
+        const data = await response.json();
+        setLogs(data.logs || []);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch logs');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchLogs();
+  }, [tenantId, accountId, operatorKey, query]);
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-black px-4 py-8">
@@ -106,9 +150,74 @@ function LogsViewerContent() {
             </div>
           </div>
 
+          {error && (
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+              <p className="text-sm text-red-800 dark:text-red-200">
+                <strong>Error:</strong> {error}
+              </p>
+            </div>
+          )}
+
+          {isLoading && (
+            <div className="text-center py-8">
+              <p className="text-gray-600 dark:text-gray-400">Loading logs...</p>
+            </div>
+          )}
+
+          {!isLoading && logs.length === 0 && !error && (
+            <div className="text-center py-8">
+              <p className="text-gray-600 dark:text-gray-400">No logs found</p>
+            </div>
+          )}
+
+          {!isLoading && logs.length > 0 && (
+            <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 space-y-2 max-h-96 overflow-y-auto">
+              <div className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                Found {logs.length} log{logs.length !== 1 ? 's' : ''}
+              </div>
+              <table className="w-full text-xs border-collapse">
+                <thead className="sticky top-0 bg-gray-100 dark:bg-gray-700">
+                  <tr>
+                    <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left font-semibold">Timestamp</th>
+                    <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left font-semibold">Level</th>
+                    <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left font-semibold">Message</th>
+                    <th className="border border-gray-300 dark:border-gray-600 px-2 py-1 text-left font-semibold">Context</th>
+                  </tr>
+                </thead>
+                <tbody className="text-gray-700 dark:text-gray-300">
+                  {logs.map((log: any, idx: number) => (
+                    <tr key={idx} className="border-t border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700">
+                      <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 font-mono whitespace-nowrap">
+                        {log.logged_timestamp ? new Date(log.logged_timestamp).toISOString().slice(11, 19) : '—'}
+                      </td>
+                      <td className="border border-gray-300 dark:border-gray-600 px-2 py-1">
+                        <span className={`px-1 rounded text-xs font-semibold ${
+                          log.level === 'error' ? 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100' :
+                          log.level === 'warn' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-100' :
+                          'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100'
+                        }`}>
+                          {log.level || '—'}
+                        </span>
+                      </td>
+                      <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 truncate max-w-xs">
+                        {log.message || '—'}
+                      </td>
+                      <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 truncate max-w-xs font-mono text-xs">
+                        {log.context ? JSON.stringify(log.context).slice(0, 50) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6">
+            <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-2">
+              <strong>Query syntax:</strong> Pass <code className="bg-yellow-100 dark:bg-yellow-900 px-1 rounded">?q=key:value</code> to filter logs (bored-logs query format)
+            </p>
             <p className="text-sm text-yellow-800 dark:text-yellow-200">
-              <strong>Note:</strong> Logs are stored with @campfhir/bored-logs, a PostgreSQL-backed structured logging system with React UI components. Access control is enforced server-side to ensure users can only view logs appropriate for their role.
+              <strong>Note:</strong> Logs are stored with @campfhir/bored-logs, a PostgreSQL-backed structured logging system. Access control is enforced server-side to ensure users can only view logs appropriate for their role.
             </p>
           </div>
         </div>
