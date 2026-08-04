@@ -41,6 +41,25 @@ interface MCPToolResult {
   mimeType?: string;
 }
 
+interface MCPMessage {
+  jsonrpc: '2.0';
+  id?: string | number;
+  method?: string;
+  params?: any;
+}
+
+interface MCPInitializeRequest extends MCPMessage {
+  method: 'initialize';
+  params: {
+    protocolVersion: string;
+    capabilities: any;
+    clientInfo: {
+      name: string;
+      version: string;
+    };
+  };
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
@@ -166,11 +185,35 @@ export async function POST(
                    request.headers.get('x-real-ip') ||
                    undefined;
 
-  try {
-    const body = await request.json();
-    const { method, params: toolParams } = body;
+  let body: MCPMessage | undefined;
 
-    // Verify tenant exists
+  try {
+    body = await request.json() as MCPMessage;
+    const { jsonrpc = '2.0', id, method, params: toolParams } = body;
+
+    // Handle MCP initialization
+    if (method === 'initialize') {
+      const initReq = body as MCPInitializeRequest;
+      console.log(`[MCP ${tenantId}] Initialize from ${initReq.params?.clientInfo?.name || 'unknown'}`);
+
+      return NextResponse.json({
+        jsonrpc,
+        id,
+        result: {
+          protocolVersion: '2024-11-05',
+          capabilities: {
+            resources: {},
+            tools: {},
+          },
+          serverInfo: {
+            name: 'Jira Renkei MCP',
+            version: '1.0.0',
+          },
+        },
+      });
+    }
+
+    // For non-initialize methods, verify tenant and get Jira grant
     const tenant = await db
       .selectFrom('tenants')
       .select('id')
@@ -178,10 +221,13 @@ export async function POST(
       .executeTakeFirst();
 
     if (!tenant) {
-      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+      return NextResponse.json({
+        jsonrpc,
+        id,
+        error: { code: -32000, message: 'Tenant not found' },
+      }, { status: 404 });
     }
 
-    // Get Jira grant
     const grants = await db
       .selectFrom('atlassian_grants')
       .select(['account_id'])
@@ -190,16 +236,21 @@ export async function POST(
       .execute();
 
     if (grants.length === 0) {
-      return NextResponse.json(
-        { error: 'No Jira grant configured' },
-        { status: 400 }
-      );
+      return NextResponse.json({
+        jsonrpc,
+        id,
+        error: { code: -32000, message: 'No Jira grant configured' },
+      }, { status: 400 });
     }
 
     const accountId = grants[0].account_id;
     const grant = await getJiraGrant(tenantId, accountId);
     if (!grant) {
-      return NextResponse.json({ error: 'Failed to retrieve Jira grant' }, { status: 500 });
+      return NextResponse.json({
+        jsonrpc,
+        id,
+        error: { code: -32000, message: 'Failed to retrieve Jira grant' },
+      }, { status: 500 });
     }
 
     // Record session
@@ -244,6 +295,12 @@ export async function POST(
         status: 'failure',
         error: toolError,
       });
+
+      return NextResponse.json({
+        jsonrpc,
+        id,
+        error: { code: -32000, message: toolError },
+      }, { status: 400 });
     } else {
       logger.info('[mcp:{tenantId}] Tool call: {method}', {
         tenantId,
@@ -255,24 +312,24 @@ export async function POST(
       });
     }
 
-    if (toolError) {
-      return NextResponse.json({ error: toolError }, { status: 400 });
-    }
-
     console.log(`[MCP ${tenantId}] Tool executed: ${method}`);
 
     return NextResponse.json({
-      type: 'tool_result',
-      isError: false,
-      content: [result],
+      jsonrpc,
+      id,
+      result: {
+        type: 'tool_result',
+        isError: false,
+        content: [result],
+      },
     });
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    console.error('MCP tool execution error:', error);
+    console.error('MCP execution error:', error);
 
     // Try to log the error with bored-logs
     try {
-      const body = await request.json().catch(() => ({}));
+      const bodyData = await request.json().catch(() => ({})) as any;
       const grants = await db
         .selectFrom('atlassian_grants')
         .select(['account_id'])
@@ -282,9 +339,9 @@ export async function POST(
 
       if (grants.length > 0) {
         const logger = createLogger();
-        logger.error('[mcp:{tenantId}] Tool error: {method}', {
+        logger.error('[mcp:{tenantId}] Execution error: {method}', {
           tenantId,
-          method: body.method || 'unknown',
+          method: bodyData.method || 'unknown',
           accountId: grants[0].account_id,
           userAgent,
           ipAddress,
@@ -298,14 +355,9 @@ export async function POST(
 
     return NextResponse.json(
       {
-        type: 'tool_result',
-        isError: true,
-        content: [
-          {
-            type: 'text',
-            text: `Error: ${errorMsg}`,
-          },
-        ],
+        jsonrpc: '2.0',
+        id: body?.id,
+        error: { code: -32603, message: `Internal error: ${errorMsg}` },
       },
       { status: 500 }
     );
