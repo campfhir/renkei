@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
+import { getOrigin } from '@/lib/get-origin';
 import { randomUUID } from 'crypto';
 
 function emailDomain(email: string): string | null {
@@ -40,13 +41,15 @@ export async function POST(request: NextRequest) {
 
     if (!tenant) {
       // Domain not found - redirect to create organization flow
+      const origin = getOrigin(request);
       return NextResponse.redirect(
-        new URL(`/create-organization?domain=${encodeURIComponent(domain)}`, request.url)
+        new URL(`/create-organization?domain=${encodeURIComponent(domain)}`, origin)
       );
     }
 
     // Tenant exists - redirect to MCP endpoint
-    return NextResponse.redirect(new URL(`/mcp/${tenant.id}`, request.url));
+    const origin = getOrigin(request);
+    return NextResponse.redirect(new URL(`/mcp/${tenant.id}`, origin));
   } catch (error) {
     console.error('Home-realm discovery error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

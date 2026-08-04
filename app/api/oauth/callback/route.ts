@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { setJiraGrant } from '@/lib/tenant-operations';
+import { getOrigin } from '@/lib/get-origin';
 import { randomUUID } from 'crypto';
 
 interface JiraTokenResponse {
@@ -158,8 +159,11 @@ export async function GET(request: NextRequest) {
       scopes: ['read:jira-work', 'write:jira-work', 'read:jira-user'],
     });
 
-    // Redirect back to MCP endpoint dashboard
-    return NextResponse.redirect(new URL(`/mcp/${tenant.id}`, request.url));
+    // Redirect to logs page with authenticated user's accountId
+    const origin = getOrigin(request);
+    const logsUrl = new URL(`/tenant/${tenant.id}/logs`, origin);
+    logsUrl.searchParams.set('accountId', userInfo.account_id);
+    return NextResponse.redirect(logsUrl);
   } catch (err) {
     console.error('OAuth callback error:', err);
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
