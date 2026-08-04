@@ -1,0 +1,76 @@
+# docker-compose.yaml — for a target/production machine.
+#
+# Pulls the pre-built images pushed via scripts/docker-push.sh instead of
+# building from source: this file and a `.env` next to it are all a target
+# machine needs, no repository checkout required.
+#
+#   docker compose -f docker-compose.yaml up -d postgres
+#   docker compose -f docker-compose.yaml run --rm migrate
+#   docker compose -f docker-compose.yaml up -d renkei
+#
+# PUBLIC_BASE_URL in .env must match whatever address actually reaches this
+# host on port 80. That same URL must be registered as the Atlassian app's
+# callback — the gateway refuses to start if they disagree.
+#
+# Port 80 is exposed directly here as the requested default. That means
+# bearer tokens travel in plaintext to anyone who can reach this host on 80 —
+# fine on a private/internal network, not fine on the open internet. For a
+# public deployment, put a TLS-terminating reverse proxy in front instead and
+# publish 3000 on 127.0.0.1 only.
+
+x-database-urls: &database-urls
+  DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: renkei-postgres
+    environment:
+      POSTGRES_USER: renkei
+      POSTGRES_PASSWORD: renkei
+      POSTGRES_DB: renkei
+    volumes:
+      - renkei-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U renkei -d renkei']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    image: scotteremiaroden/jira-work-items-mcp-next:0.1.0-migrate
+    container_name: renkei-migrate
+    env_file:
+      - .env
+    environment: *database-urls
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Kept out of `docker compose up` so starting the gateway never re-runs
+    # migrations as a side effect. Run manually with:
+    # docker compose -f docker-compose.yaml run --rm migrate
+    profiles: ['tools']
+
+  renkei:
+    image: scotteremiaroden/jira-work-items-mcp-next:0.1.0
+    container_name: renkei-app
+    env_file:
+      - .env
+    environment:
+      <<: *database-urls
+      # Whitelist proxy IPs that are allowed to set X-Forwarded-* headers
+      # Default (if not set): 127.0.0.1,::1 (localhost only)
+      # For Docker: 172.17.0.1 (Docker bridge gateway)
+      # For Kubernetes/overlay networks: add the pod/service IP range
+      # Example: TRUSTED_PROXY_IPS=127.0.0.1,172.17.0.1,10.0.0.0/24
+      # TRUSTED_PROXY_IPS: ""  # Set in .env file instead
+    ports:
+      - '80:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  renkei-postgres:

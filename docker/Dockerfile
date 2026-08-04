@@ -21,8 +21,8 @@ RUN node scripts/build-migrations.js
 # Build the application
 RUN npm run build
 
-# Production stage
-FROM node:24-alpine
+# Production stage (runtime)
+FROM node:24-alpine AS runtime
 
 WORKDIR /app
 
@@ -39,6 +39,7 @@ RUN pnpm install --frozen-lockfile --prod
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/proxy.ts ./proxy.ts
 
 # Create a non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
@@ -67,3 +68,26 @@ ENTRYPOINT ["dumb-init", "--"]
 
 # Start the application
 CMD ["pnpm", "start"]
+
+# Migration stage - runs migrations only
+FROM node:24-alpine AS migrate
+
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm
+
+# Copy package files
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+
+# Install only production dependencies
+RUN pnpm install --frozen-lockfile --prod
+
+# Copy built migrations from builder stage
+COPY --from=builder /app/dist ./dist
+
+# Set environment variable to point to compiled migrations
+ENV MIGRATIONS_DIR=/app/dist/lib/migrations
+
+# Run migrations
+CMD ["node", "dist/migrate.cjs"]

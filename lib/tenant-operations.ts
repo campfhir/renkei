@@ -7,7 +7,8 @@ export interface TenantOidc {
   clientId: string;
   clientSecret: string;
   roleClaim?: string;
-  requiredRole?: string | null;
+  operatorIdpValue?: string | null;
+  userIdpValue?: string | null;
 }
 
 export interface JiraGrant {
@@ -41,7 +42,8 @@ export async function setTenantOidc(tenantId: string, oidc: TenantOidc): Promise
       client_id: oidc.clientId,
       client_secret: encryptedSecret,
       role_claim: oidc.roleClaim,
-      required_role: oidc.requiredRole,
+      operator_idp_value: oidc.operatorIdpValue || null,
+      user_idp_value: oidc.userIdpValue || null,
       created_at: new Date().toISOString(),
     })
     .onConflict((oc) =>
@@ -50,10 +52,54 @@ export async function setTenantOidc(tenantId: string, oidc: TenantOidc): Promise
         client_id: oidc.clientId,
         client_secret: encryptedSecret,
         role_claim: oidc.roleClaim,
-        required_role: oidc.requiredRole,
+        operator_idp_value: oidc.operatorIdpValue || null,
+        user_idp_value: oidc.userIdpValue || null,
       })
     )
     .execute();
+}
+
+/**
+ * Store OIDC role mapping (IDP role -> renkei role).
+ */
+export async function setOidcRoleMapping(
+  tenantId: string,
+  idpRole: string,
+  renkeiRole: string
+): Promise<void> {
+  const db = getDatabase();
+
+  await db
+    .insertInto('oidc_role_mappings')
+    .values({
+      id: randomUUID(),
+      tenant_id: tenantId,
+      idp_role: idpRole,
+      renkei_role: renkeiRole,
+      created_at: new Date().toISOString(),
+    })
+    .onConflict((oc) =>
+      oc.columns(['tenant_id', 'idp_role']).doUpdateSet({
+        renkei_role: renkeiRole,
+      })
+    )
+    .execute();
+}
+
+/**
+ * Get renkei role for an IDP role.
+ */
+export async function getOidcRoleMapping(tenantId: string, idpRole: string): Promise<string | null> {
+  const db = getDatabase();
+
+  const row = await db
+    .selectFrom('oidc_role_mappings')
+    .select('renkei_role')
+    .where('tenant_id', '=', tenantId)
+    .where('idp_role', '=', idpRole)
+    .executeTakeFirst();
+
+  return row?.renkei_role || null;
 }
 
 /**
@@ -66,7 +112,7 @@ export async function getTenantOidc(tenantId: string): Promise<TenantOidc | null
 
   const row = await db
     .selectFrom('tenant_oidc')
-    .select(['issuer', 'client_id', 'client_secret'])
+    .select(['issuer', 'client_id', 'client_secret', 'role_claim', 'operator_idp_value', 'user_idp_value'])
     .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
 
@@ -76,6 +122,9 @@ export async function getTenantOidc(tenantId: string): Promise<TenantOidc | null
     issuer: row.issuer,
     clientId: row.client_id,
     clientSecret: decrypt(row.client_secret, encryptionKey),
+    roleClaim: row.role_claim || undefined,
+    operatorIdpValue: row.operator_idp_value || undefined,
+    userIdpValue: row.user_idp_value || undefined,
   };
 }
 

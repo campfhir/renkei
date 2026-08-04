@@ -3,11 +3,12 @@ import { getDatabase } from '@/lib/db';
 import { setTenantOidc } from '@/lib/tenant-operations';
 
 interface OidcConfigRequest {
-  issuer: string;
+  discoveryEndpoint: string;
   clientId: string;
   clientSecret: string;
   roleClaim?: string;
-  requiredRole?: string;
+  operatorIdpValue?: string;
+  userIdpValue?: string;
 }
 
 export async function POST(
@@ -32,20 +33,51 @@ export async function POST(
     const body = (await request.json()) as OidcConfigRequest;
 
     // Validate required fields
-    if (!body.issuer || !body.clientId || !body.clientSecret) {
+    if (!body.discoveryEndpoint || !body.clientId || !body.clientSecret) {
       return NextResponse.json(
-        { error: 'Missing required fields: issuer, clientId, clientSecret' },
+        { error: 'Missing required fields: discoveryEndpoint, clientId, clientSecret' },
+        { status: 400 }
+      );
+    }
+
+    // Fetch and validate discovery endpoint
+    let issuer: string;
+    try {
+      const discoveryResponse = await fetch(body.discoveryEndpoint);
+      if (!discoveryResponse.ok) {
+        return NextResponse.json(
+          { error: `Failed to fetch discovery endpoint: ${discoveryResponse.status}` },
+          { status: 400 }
+        );
+      }
+
+      const discovery = await discoveryResponse.json();
+      issuer = discovery.issuer;
+
+      if (!issuer) {
+        return NextResponse.json(
+          { error: 'Discovery endpoint missing issuer field' },
+          { status: 400 }
+        );
+      }
+
+      console.log(`[Tenant ${tenantId}] Fetched issuer from discovery: ${issuer}`);
+    } catch (error) {
+      console.error(`[Tenant ${tenantId}] Failed to fetch discovery endpoint:`, error);
+      return NextResponse.json(
+        { error: 'Failed to fetch OIDC discovery endpoint' },
         { status: 400 }
       );
     }
 
     // Store OIDC configuration
     await setTenantOidc(tenantId, {
-      issuer: body.issuer,
+      issuer,
       clientId: body.clientId,
       clientSecret: body.clientSecret,
       roleClaim: body.roleClaim,
-      requiredRole: body.requiredRole || null,
+      operatorIdpValue: body.operatorIdpValue || null,
+      userIdpValue: body.userIdpValue || null,
     });
 
     console.log(`[Tenant ${tenantId}] OIDC configuration updated`);
@@ -79,7 +111,7 @@ export async function GET(
     // Get OIDC configuration
     const oidc = await db
       .selectFrom('tenant_oidc')
-      .select(['issuer', 'client_id', 'role_claim', 'required_role'])
+      .select(['issuer', 'client_id', 'role_claim', 'operator_idp_value', 'user_idp_value'])
       .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
 
@@ -92,7 +124,8 @@ export async function GET(
       issuer: oidc.issuer,
       clientId: oidc.client_id,
       roleClaim: oidc.role_claim,
-      requiredRole: oidc.required_role,
+      operatorIdpValue: oidc.operator_idp_value,
+      userIdpValue: oidc.user_idp_value,
     });
   } catch (error) {
     console.error('OIDC config fetch error:', error);

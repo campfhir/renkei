@@ -80,29 +80,6 @@ export async function up(db: Kysely<any>): Promise<void> {
 
   await db.schema.createIndex('idx_pending_signin_state').on('pending_oidc_signin').column('state').execute();
 
-  // Logs
-  await db.schema
-    .createTable('logs')
-    .addColumn('log_id', 'uuid', (col) => col.primaryKey())
-    .addColumn('tenant_id', 'uuid')
-    .addColumn('message', 'text', (col) => col.notNull())
-    .addColumn('level', 'varchar(50)')
-    .addColumn('logged_timestamp', 'timestamp', (col) => col.notNull())
-    .addColumn('created_at', 'timestamp', (col) => col.notNull().defaultTo(sql`NOW()`))
-    .execute();
-
-  await db.schema.createIndex('idx_logs_level').on('logs').column('level').execute();
-  await db.schema.createIndex('idx_logs_timestamp').on('logs').column('logged_timestamp').execute();
-
-  // Log attributes
-  await db.schema
-    .createTable('log_attributes')
-    .addColumn('id', 'uuid', (col) => col.primaryKey())
-    .addColumn('log_id', 'uuid', (col) => col.notNull().references('logs.log_id'))
-    .addColumn('key', 'varchar(255)', (col) => col.notNull())
-    .addColumn('value', 'varchar(255)')
-    .execute();
-
   // Platform audit log
   await db.schema
     .createTable('platform_audit_log')
@@ -117,8 +94,6 @@ export async function up(db: Kysely<any>): Promise<void> {
 
 export async function down(db: Kysely<any>): Promise<void> {
   await db.schema.dropTable('platform_audit_log').execute();
-  await db.schema.dropTable('log_attributes').execute();
-  await db.schema.dropTable('logs').execute();
   await db.schema.dropTable('pending_oidc_signin').execute();
   await db.schema.dropTable('operator_sessions').execute();
   await db.schema.dropTable('atlassian_grants').execute();

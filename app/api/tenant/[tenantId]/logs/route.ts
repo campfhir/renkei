@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
+import { buildLogQueryOptions } from '@/lib/log-query';
+import { parseRolesFromCookie, hasAnyRole } from '@/lib/oidc-roles';
 
 export async function POST(
   request: NextRequest,
@@ -10,7 +12,11 @@ export async function POST(
   const db = getDatabase();
   const { searchParams } = new URL(request.url);
   const requestedAccountId = searchParams.get('accountId');
-  const operatorKey = request.headers.get('x-operator-key');
+
+  // Get user roles from cookie (set by OIDC callback)
+  // Stored as comma-separated string, parsed into a Set
+  const userRolesStr = request.cookies.get(`oidc_roles_${tenantId}`)?.value;
+  const userRoles = parseRolesFromCookie(userRolesStr);
 
   try {
     // Verify tenant exists
@@ -24,42 +30,55 @@ export async function POST(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
-    // Check permissions
-    if (!operatorKey && !requestedAccountId) {
-      return NextResponse.json(
-        { error: 'Either x-operator-key header or accountId parameter required' },
-        { status: 400 }
-      );
-    }
-
-    // Parse query from request body
-    let queryOptions: Record<string, any> = {};
+    // Parse user query from request body
+    let userQuery: string | null = null;
     try {
       const body = await request.json();
-      queryOptions = body || {};
+      userQuery = body?.query || body?.filter || null;
     } catch {
-      // If no body, use empty query options
+      // If no body, use empty query
     }
 
-    // Initialize context filters based on role
-    const contextFilters: Record<string, string> = {
-      tenantId,
-    };
+    // Enforce role-based access control
+    // renkei-operator: can view aggregated logs for entire tenant
+    // renkei-user: can view only their own logs (requires accountId)
 
-    // Tenant operator: can see all logs, filter by tenant only
-    if (operatorKey) {
-      const expectedKey = process.env[`OPERATOR_KEY_${tenantId}`.toUpperCase()];
-      if (!expectedKey || operatorKey !== expectedKey) {
-        return NextResponse.json({ error: 'Invalid operator credentials' }, { status: 403 });
+    // Check for operator role
+    if (userRoles.has('renkei-operator')) {
+      // Operator can view all logs, filter by tenant only
+      const queryOptions = buildLogQueryOptions(userQuery, tenantId);
+      const adapter = new PostgresAdapter({ db });
+      const result = await adapter.query(queryOptions);
+
+      if (!result.ok) {
+        console.error('Query error:', result.err);
+        return NextResponse.json(
+          { error: result.err.message || 'Failed to query logs' },
+          { status: 500 }
+        );
       }
 
-      // Overload context to ensure tenant filter
-      queryOptions.context = {
-        ...queryOptions.context,
-        tenantId, // Force tenant filter
-      };
-    } else {
-      // Jira user: can only see their own logs
+      return NextResponse.json({
+        role: 'renkei-operator',
+        roles: [...userRoles],
+        tenantId,
+        query: userQuery || undefined,
+        logs: result.val,
+        count: result.val.length,
+      });
+    }
+
+    // Check for user role
+    if (userRoles.has('renkei-user')) {
+      // User must have accountId to view their own logs
+      if (!requestedAccountId) {
+        return NextResponse.json(
+          { error: 'accountId required to view logs' },
+          { status: 400 }
+        );
+      }
+
+      // Verify user has a Jira grant for this tenant
       const grant = await db
         .selectFrom('atlassian_grants')
         .select('account_id')
@@ -71,33 +90,35 @@ export async function POST(
         return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
       }
 
-      // Overload context to ensure tenant and accountId filters
-      queryOptions.context = {
-        ...queryOptions.context,
-        tenantId, // Force tenant filter
-        accountId: requestedAccountId, // Force account filter
-      };
+      // User can view only their own logs
+      const queryOptions = buildLogQueryOptions(userQuery, tenantId, requestedAccountId);
+      const adapter = new PostgresAdapter({ db });
+      const result = await adapter.query(queryOptions);
+
+      if (!result.ok) {
+        console.error('Query error:', result.err);
+        return NextResponse.json(
+          { error: result.err.message || 'Failed to query logs' },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        role: 'renkei-user',
+        roles: [...userRoles],
+        tenantId,
+        accountId: requestedAccountId,
+        query: userQuery || undefined,
+        logs: result.val,
+        count: result.val.length,
+      });
     }
 
-    // Query logs from bored-logs
-    const adapter = new PostgresAdapter({ db });
-    const result = await adapter.query(queryOptions);
-
-    if (!result.ok) {
-      console.error('Query error:', result.err);
-      return NextResponse.json(
-        { error: result.err.message || 'Failed to query logs' },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      role: operatorKey ? 'tenant_operator' : 'jira_user',
-      tenantId,
-      accountId: requestedAccountId || undefined,
-      logs: result.val,
-      count: result.val.length,
-    });
+    // No recognized role
+    return NextResponse.json(
+      { error: 'Invalid user role' },
+      { status: 403 }
+    );
   } catch (error) {
     console.error('Failed to fetch logs:', error);
     return NextResponse.json(
