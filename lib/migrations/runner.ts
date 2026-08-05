@@ -1,7 +1,7 @@
 import { FileMigrationProvider, Migrator } from 'kysely/migration';
 import { resolve } from 'path';
 import { getDatabase } from '@/lib/db';
-import { ok, err } from '@campfhir/safe-functions/helpers';
+import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
 export async function runMigrations(migrationsDir?: string): Promise<Result<void, 'MIGRATION_ERROR'>> {
@@ -10,40 +10,49 @@ export async function runMigrations(migrationsDir?: string): Promise<Result<void
   const db = dbResult.val;
   const migrationFolder = migrationsDir || resolve(process.cwd(), 'lib/migrations');
 
-  try {
-    const migrator = new Migrator({
-      db,
-      provider: new FileMigrationProvider({
-        fs: await import('fs').then((m) => m.promises),
-        path: await import('path'),
-        migrationFolder,
-      }),
-    });
+  const fsResult = await wrapAsync(() => import('fs').then((m) => m.promises), 'MIGRATION_ERROR' as const);
+  if (!fsResult.ok) return fsResult;
+  const fs = fsResult.val;
 
-    console.log('[Migrations] Running migrations...');
-    const { error, results } = await migrator.migrateToLatest();
+  const pathResult = await wrapAsync(() => import('path'), 'MIGRATION_ERROR' as const);
+  if (!pathResult.ok) return pathResult;
 
-    if (error) {
-      console.error('[Migrations] Error running migrations:', error);
-      return err('MIGRATION_ERROR' as const);
-    }
+  const migrator = new Migrator({
+    db,
+    provider: new FileMigrationProvider({
+      fs,
+      path: pathResult.val,
+      migrationFolder,
+    }),
+  });
 
-    if (results?.length === 0) {
-      console.log('[Migrations] No migrations to run');
-    } else {
-      results?.forEach((result) => {
-        if (result.status === 'Success') {
-          console.log(`[Migrations] ✓ ${result.migrationName}`);
-        } else {
-          console.log(`[Migrations] ✗ ${result.migrationName}: ${result.status}`);
-        }
-      });
-    }
+  console.log('[Migrations] Running migrations...');
+  const migrateResult = await wrapAsync(() => migrator.migrateToLatest(), 'MIGRATION_ERROR' as const);
 
-    console.log('[Migrations] Done');
-    return ok();
+  if (!migrateResult.ok) {
+    console.error('[Migrations] Error running migrations');
+    return migrateResult;
+  }
 
-  } catch  {
+  const { error, results } = migrateResult.val;
+
+  if (error) {
+    console.error('[Migrations] Error running migrations:', error);
     return err('MIGRATION_ERROR' as const);
   }
+
+  if (results?.length === 0) {
+    console.log('[Migrations] No migrations to run');
+  } else {
+    results?.forEach((result) => {
+      if (result.status === 'Success') {
+        console.log(`[Migrations] ✓ ${result.migrationName}`);
+      } else {
+        console.log(`[Migrations] ✗ ${result.migrationName}: ${result.status}`);
+      }
+    });
+  }
+
+  console.log('[Migrations] Done');
+  return ok();
 }
