@@ -12,8 +12,12 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # Install dependencies
 RUN pnpm install --frozen-lockfile
 
-# Copy source code
-COPY . .
+# Copy only necessary source files (exclude node_modules, .next, dist, etc.)
+COPY app ./app
+COPY lib ./lib
+COPY public ./public
+COPY scripts ./scripts
+COPY middleware.ts next.config.js tsconfig.json tailwind.config.js postcss.config.mjs ./
 
 # Compile migrations with esbuild (handles aliases)
 RUN node scripts/build-migrations.js
