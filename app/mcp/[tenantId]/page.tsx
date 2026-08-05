@@ -50,7 +50,7 @@ export default function MCPEndpoint() {
     window.location.href = `/api/mcp/${tenantId}/authorize`;
   };
 
-  const mcpEndpointUrl = `${baseUrl}/api/mcp/${tenantId}/sse`;
+  const mcpEndpointUrl = `${baseUrl}/api/mcp/${tenantId}/http`;
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:bg-black px-4">
@@ -68,21 +68,29 @@ export default function MCPEndpoint() {
 
         {/* Full MCP Endpoint URL */}
         <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-6 mb-6">
-          <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-semibold">MCP Endpoint URL</p>
-          <code className="text-sm text-gray-800 dark:text-gray-200 break-all block font-mono">{mcpEndpointUrl}</code>
+          <p className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-semibold">
+            MCP Endpoint URL
+          </p>
+          <code className="text-sm text-gray-800 dark:text-gray-200 break-all block font-mono">
+            {mcpEndpointUrl}
+          </code>
         </div>
 
         {/* Jira Connection Status */}
-        <div className={`rounded-lg p-4 mb-6 border ${
-          jiraStatus.connected
-            ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-            : 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
-        }`}>
-          <h2 className={`font-semibold mb-2 ${
+        <div
+          className={`rounded-lg p-4 mb-6 border ${
             jiraStatus.connected
-              ? 'text-green-900 dark:text-green-100'
-              : 'text-yellow-900 dark:text-yellow-100'
-          }`}>
+              ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+              : 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+          }`}
+        >
+          <h2
+            className={`font-semibold mb-2 ${
+              jiraStatus.connected
+                ? 'text-green-900 dark:text-green-100'
+                : 'text-yellow-900 dark:text-yellow-100'
+            }`}
+          >
             {jiraStatus.connected ? '✓ Jira Connected' : '⚠ Jira Not Connected'}
           </h2>
           {jiraStatus.connected && jiraStatus.displayName ? (
