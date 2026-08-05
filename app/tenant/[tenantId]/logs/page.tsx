@@ -1,3 +1,4 @@
+import React from 'react';
 import { Suspense } from 'react';
 import { cookies } from 'next/headers';
 import { getDatabase } from '@/lib/db';
@@ -74,7 +75,7 @@ export default async function LogsPage({
 }: {
   params: Promise<{ tenantId: string }>;
   searchParams: Promise<{ accountId?: string; q?: string }>;
-}): Promise<JSX.Element> {
+}): Promise<React.ReactNode> {
   const { tenantId } = await params;
   const { accountId, q } = await searchParams;
 

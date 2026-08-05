@@ -1,3 +1,4 @@
+import React from 'react';
 import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 import { getDatabase } from '@/lib/db';
@@ -7,7 +8,7 @@ interface User {
   last_used_at: Date;
 }
 
-export default async function PeoplePage({ params }: { params: Promise<{ slug: string }> }): Promise<JSX.Element> {
+export default async function PeoplePage({ params }: { params: Promise<{ slug: string }> }): Promise<React.ReactNode> {
   const session = await getOperatorSession();
   const { slug } = await params;
 

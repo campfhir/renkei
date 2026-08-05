@@ -1,3 +1,4 @@
+import React from 'react';
 import { getDatabase } from '@/lib/db';
 import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
@@ -6,7 +7,7 @@ export default async function GrantsPage({
   params,
 }: {
   params: Promise<{ slug: string }>;
-}): Promise<JSX.Element> {
+}): Promise<React.ReactNode> {
   const session = await getOperatorSession();
   if (!session) {
     const { slug } = await params;

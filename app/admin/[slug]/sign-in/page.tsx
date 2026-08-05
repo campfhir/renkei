@@ -1,3 +1,4 @@
+import React from 'react';
 import { getDatabase } from '@/lib/db';
 import { redirect } from 'next/navigation';
 import { getConfig } from '@/lib/env';
@@ -13,7 +14,7 @@ function isDiscoveryResponse(data: unknown): data is { authorization_endpoint: s
   return typeof obj.authorization_endpoint === 'string';
 }
 
-export default async function SignInPage({ params }: { params: Promise<{ slug: string }> }): Promise<JSX.Element> {
+export default async function SignInPage({ params }: { params: Promise<{ slug: string }> }): Promise<React.ReactNode> {
   const { slug } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {

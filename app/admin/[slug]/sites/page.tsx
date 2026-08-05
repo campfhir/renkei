@@ -1,3 +1,4 @@
+import React from 'react';
 import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 import { getDatabase } from '@/lib/db';
@@ -10,7 +11,7 @@ interface JiraSite {
   claimed_at: Date | null;
 }
 
-export default async function SitesPage({ params }: { params: Promise<{ slug: string }> }): Promise<JSX.Element> {
+export default async function SitesPage({ params }: { params: Promise<{ slug: string }> }): Promise<React.ReactNode> {
   const session = await getOperatorSession();
   const { slug } = await params;
 
