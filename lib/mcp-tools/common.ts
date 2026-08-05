@@ -181,29 +181,51 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-async function describeFailure(response: Response): Promise<string> {
+interface Failure {
+  reason: string;
+  /**
+   * Jira's per-field complaints, keyed by field id. Kept structured as well as
+   * flattened into `reason`, because a caller that can retry without a refused
+   * field needs to know which field that was, and the prose is not parseable.
+   */
+  fieldErrors: Record<string, string>;
+}
+
+async function describeFailure(response: Response): Promise<Failure> {
   const body = await response.text().catch(() => '');
-  if (!body) return response.statusText || `HTTP ${response.status}`;
+  if (!body) return { reason: response.statusText || `HTTP ${response.status}`, fieldErrors: {} };
 
   try {
     const parsed: unknown = JSON.parse(body);
     if (isPlainObject(parsed)) {
+      const fieldErrors: Record<string, string> = {};
+      if (isPlainObject(parsed.errors)) {
+        for (const [field, message] of Object.entries(parsed.errors)) {
+          fieldErrors[field] = String(message);
+        }
+      }
+
+      // errorMessages first, as before: it holds the whole-request complaint,
+      // while `errors` details individual fields. Both are reported.
+      const parts: string[] = [];
       if (Array.isArray(parsed.errorMessages) && parsed.errorMessages.length > 0) {
-        return parsed.errorMessages.join('; ');
+        parts.push(parsed.errorMessages.join('; '));
       }
       if (typeof parsed.errorMessage === 'string' && parsed.errorMessage) {
-        return parsed.errorMessage;
+        parts.push(parsed.errorMessage);
       }
-      if (isPlainObject(parsed.errors)) {
-        const entries = Object.entries(parsed.errors);
-        if (entries.length > 0) return entries.map(([k, v]) => `${k}: ${String(v)}`).join('; ');
-      }
+      const fieldPart = Object.entries(fieldErrors)
+        .map(([field, message]) => `${field}: ${message}`)
+        .join('; ');
+      if (fieldPart) parts.push(fieldPart);
+
+      if (parts.length > 0) return { reason: parts.join(' | '), fieldErrors };
     }
   } catch {
     // Not JSON — fall through to the truncated raw body.
   }
 
-  return body.slice(0, 300);
+  return { reason: body.slice(0, 300), fieldErrors: {} };
 }
 
 /**
@@ -330,16 +352,21 @@ export async function jiraFetch(
   }
 
   if (!response.ok) {
-    const reason = await describeFailure(response);
+    const failure = await describeFailure(response);
     logger.warn('[jiraFetch] Non-OK response', {
       tenantId: metadata?.tenantId,
       accountId: metadata?.accountId,
       url,
       method: options?.method || 'GET',
       status: response.status,
-      reason,
+      reason: failure.reason,
     });
-    throw new JiraApiError(`Jira API ${response.status}: ${reason}`, response.status);
+    throw new JiraApiError(
+      `Jira API ${response.status}: ${failure.reason}`,
+      response.status,
+      response.status === 401,
+      failure.fieldErrors
+    );
   }
 
   return response;
@@ -349,7 +376,9 @@ export class JiraApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public isAuthError: boolean = status === 401
+    public isAuthError: boolean = status === 401,
+    /** Jira's per-field complaints, so a caller can retry without them. */
+    public fieldErrors: Record<string, string> = {}
   ) {
     super(message);
     this.name = 'JiraApiError';

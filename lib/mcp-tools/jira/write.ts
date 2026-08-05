@@ -14,6 +14,12 @@ import {
   isJiraDuration,
   loadFieldSchema,
 } from './field-schema';
+import {
+  unwrittenFieldsComment,
+  writeWithFieldFallback,
+  type FieldWritePlan,
+  type UnwrittenField,
+} from './field-write';
 import { logger } from '@/lib/logger';
 
 // Type guard functions
@@ -33,6 +39,152 @@ function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+/** The extra-field arguments create_issue and update_issue both accept. */
+const extraFieldSchema = {
+  storyPoints: z
+    .number()
+    .describe(
+      'Story point estimate. The field is found by name on this site, whether it is called ' +
+        '"Story Points" or "Story point estimate".'
+    )
+    .optional(),
+  originalEstimate: z
+    .string()
+    .describe('Original time estimate in Jira duration form, e.g. "3d", "4h", "1w 2d"')
+    .optional(),
+  fields: z
+    .record(z.string(), z.unknown())
+    .describe(
+      'Any other fields, keyed by name or id: {"Decision of Change Request": "Approved", ' +
+        '"customfield_12016": 3}. Values are shaped to match each field\'s schema — a select ' +
+        'field gets {value: …}, a number gets a number — so pass the plain value.'
+    )
+    .optional(),
+};
+
+interface ExtraFields {
+  /** Resolved and shaped, keyed by field id. Droppable. */
+  fields: Record<string, unknown>;
+  /** Field id -> `Story Points → 5`. */
+  labels: Record<string, string>;
+  /** Values that never reached a request: unresolvable names, bad formats. */
+  unwritten: UnwrittenField[];
+}
+
+/**
+ * Turn the extra-field arguments into something sendable.
+ *
+ * Nothing here can fail the call. A name this site does not have, or a duration
+ * Jira would not parse, becomes an unwritten value to record rather than a
+ * refusal — the issue is worth creating either way, and the reply says plainly
+ * what did not land.
+ */
+async function collectExtraFields(
+  context: MCPToolContext,
+  args: Record<string, unknown>
+): Promise<ExtraFields> {
+  const fields: Record<string, unknown> = {};
+  const labels: Record<string, string> = {};
+  const unwritten: UnwrittenField[] = [];
+
+  if (isNumber(args.storyPoints)) {
+    const label = `Story points → ${args.storyPoints}`;
+    // The id differs per site, so it is looked up by name rather than assumed.
+    const lookup = findStoryPointsField(await loadFieldSchema(context));
+    if (lookup.ok) {
+      fields[lookup.field.id] = args.storyPoints;
+      labels[lookup.field.id] = `${lookup.field.name} → ${args.storyPoints}`;
+    } else {
+      unwritten.push({ label, reason: lookup.message });
+    }
+  }
+
+  if (isString(args.originalEstimate)) {
+    const label = `Original estimate → ${args.originalEstimate}`;
+    if (isJiraDuration(args.originalEstimate)) {
+      // A partial timetracking object leaves the remaining estimate alone,
+      // which is what setting only the original is meant to do.
+      fields.timetracking = { originalEstimate: args.originalEstimate };
+      labels.timetracking = label;
+    } else {
+      unwritten.push({
+        label,
+        reason: 'not a Jira duration — expected something like "3d", "4h" or "1w 2d"',
+      });
+    }
+  }
+
+  if (isRecord(args.fields)) {
+    const updates = await buildFieldUpdates(context, args.fields);
+    Object.assign(fields, updates.fields);
+    for (const [id, value] of Object.entries(updates.fields)) {
+      const applied = updates.applied.find((entry) => entry.includes(id));
+      labels[id] = `${applied ?? id} → ${JSON.stringify(value)}`;
+    }
+    for (const problem of updates.problems) {
+      unwritten.push({ label: 'A field that could not be resolved', reason: problem });
+    }
+  }
+
+  return { fields, labels, unwritten };
+}
+
+/**
+ * Leave the unwritten values on the issue as a comment.
+ *
+ * A failure here is reported but never raised: the issue was written, and losing
+ * the note is not worth undoing that.
+ */
+async function recordUnwritten(
+  context: MCPToolContext,
+  issueKey: string,
+  unwritten: readonly UnwrittenField[]
+): Promise<boolean> {
+  try {
+    await jiraFetch(
+      `${context.apiBaseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`,
+      context.accessToken,
+      {
+        method: 'POST',
+        body: JSON.stringify({ body: markdownToAdf(unwrittenFieldsComment(unwritten)) }),
+      }
+    );
+    return true;
+  } catch (error) {
+    logger.warn('[Tool] could not record unwritten fields', {
+      tenantId: context.tenantId,
+      issueKey,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return false;
+  }
+}
+
+/** The trailing section of a reply: what was set, and what was not. */
+function describeOutcome(
+  applied: readonly string[],
+  unwritten: readonly UnwrittenField[],
+  commented: boolean
+): string {
+  const lines: string[] = [];
+
+  if (applied.length > 0) {
+    lines.push('', ...applied.map((entry) => `• ${entry}`));
+  }
+
+  if (unwritten.length > 0) {
+    lines.push(
+      '',
+      commented
+        ? 'Not set (recorded as a comment on the issue):'
+        : 'Not set (and the comment recording them also failed):',
+      ...unwritten.map((field) => `• ${field.label} — ${field.reason}`)
+    );
+  }
+
+  return lines.join('\n');
+}
+
 export async function registerWriteTools(
   server: McpServer,
   context: MCPToolContext
@@ -42,7 +194,11 @@ export async function registerWriteTools(
     'create_issue',
     {
       title: 'Create a Jira issue',
-      description: 'Create a new Jira issue in a project.',
+      description:
+        'Create a new Jira issue in a project, including story points, an original estimate ' +
+        "and any custom field — field names are resolved against this site's own schema. A " +
+        'field the project will not accept on creation is dropped and recorded as a comment ' +
+        'rather than failing the whole issue.',
       inputSchema: z.object({
         projectKey: z.string().describe('Project key, e.g. SCRUM'),
         issueType: z.string().describe('Issue type: Task, Bug, Story, Subtask, Epic, etc.'),
@@ -51,6 +207,7 @@ export async function registerWriteTools(
         priority: z.string().describe('Priority: Highest, High, Medium, Low, Lowest').optional(),
         assignee: z.string().describe('Email address or account ID to assign to').optional(),
         labels: z.array(z.string()).describe('Labels to apply').optional(),
+        ...extraFieldSchema,
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -76,46 +233,72 @@ export async function registerWriteTools(
         const issueTypeStr = isString(issueType) ? issueType : String(issueType);
         const summaryStr = isString(summary) ? summary : String(summary);
 
-        const fields: Record<string, unknown> = {
-          project: { key: projectKeyStr },
-          issuetype: { name: issueTypeStr },
-          summary: summaryStr.substring(0, 255),
+        const extra = await collectExtraFields(context, args);
+
+        // The issue's identity is what cannot be given up. Everything else,
+        // including the built-in optional fields, is droppable if the project
+        // refuses it — a create that fails because priority is off the screen
+        // has lost the whole issue for nothing.
+        const plan: FieldWritePlan = {
+          required: {
+            project: { key: projectKeyStr },
+            issuetype: { name: issueTypeStr },
+            summary: summaryStr.substring(0, 255),
+          },
+          optional: { ...extra.fields },
+          labels: { ...extra.labels },
         };
 
         if (description && isString(description)) {
-          fields.description = markdownToAdf(description);
+          plan.optional.description = markdownToAdf(description);
+          plan.labels.description = 'Description';
         }
-
         if (priority && isString(priority)) {
-          fields.priority = { name: priority };
+          plan.optional.priority = { name: priority };
+          plan.labels.priority = `Priority → ${priority}`;
         }
-
         if (assignee && isString(assignee)) {
-          fields.assignee = { name: assignee };
+          plan.optional.assignee = { name: assignee };
+          plan.labels.assignee = `Assignee → ${assignee}`;
         }
-
         if (labels && isArray(labels)) {
-          fields.labels = labels;
+          plan.optional.labels = labels;
+          plan.labels.labels = `Labels → ${labels.join(', ')}`;
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue`,
-          context.accessToken,
-          {
-            method: 'POST',
-            body: JSON.stringify({ fields }),
-          }
-        );
+        const outcome = await writeWithFieldFallback(plan, async (fields) => {
+          const response = await jiraFetch(
+            `${context.apiBaseUrl}/rest/api/3/issue`,
+            context.accessToken,
+            { method: 'POST', body: JSON.stringify({ fields }) }
+          );
+          return response.json();
+        });
 
-        const result = await response.json();
-        if (!isRecord(result)) {
+        // `sent` is always true here: the mandatory fields are never droppable,
+        // so the loop cannot empty the payload out.
+        if (!isRecord(outcome.result)) {
           return {
             content: [{ type: 'text' as const, text: 'Invalid response from API' }],
             isError: true,
           };
         }
-        const resultKey = isString(result.key) ? result.key : String(result.key);
-        const text = `Created issue ${result.key}\n\n[Open in Jira](${issueUrl(context.siteUrl, resultKey)})`;
+        const resultKey = isString(outcome.result.key)
+          ? outcome.result.key
+          : String(outcome.result.key);
+
+        const unwritten = [...extra.unwritten, ...outcome.dropped];
+        const commented =
+          unwritten.length > 0 ? await recordUnwritten(context, resultKey, unwritten) : false;
+
+        const applied = Object.keys(plan.labels)
+          .filter((id) => !outcome.dropped.some((field) => plan.labels[id] === field.label))
+          .map((id) => plan.labels[id] ?? id);
+
+        const text =
+          `Created issue ${resultKey}` +
+          describeOutcome(applied, unwritten, commented) +
+          `\n\n[Open in Jira](${issueUrl(context.siteUrl, resultKey)})`;
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         return {
@@ -136,7 +319,8 @@ export async function registerWriteTools(
       description:
         'Update an existing Jira issue. Story points, the original estimate, and any custom ' +
         "field can be set: field names are resolved against this site's own schema, so no " +
-        'customfield id needs to be known in advance.',
+        'customfield id needs to be known in advance. A field this project will not accept is ' +
+        'dropped and recorded as a comment rather than failing the whole update.',
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
         summary: z.string().describe('New title (optional)').optional(),
@@ -144,25 +328,7 @@ export async function registerWriteTools(
         priority: z.string().describe('New priority (optional)').optional(),
         assignee: z.string().describe('New assignee email or account ID (optional)').optional(),
         labels: z.array(z.string()).describe('New labels (optional, replaces existing)').optional(),
-        storyPoints: z
-          .number()
-          .describe(
-            'Story point estimate. The field is found by name on this site, whether it is ' +
-              'called "Story Points" or "Story point estimate".'
-          )
-          .optional(),
-        originalEstimate: z
-          .string()
-          .describe('Original time estimate in Jira duration form, e.g. "3d", "4h", "1w 2d"')
-          .optional(),
-        fields: z
-          .record(z.string(), z.unknown())
-          .describe(
-            'Any other fields, keyed by name or id: {"Decision of Change Request": "Approved", ' +
-              '"customfield_12016": 3}. Values are shaped to match each field\'s schema — a ' +
-              'select field gets {value: …}, a number gets a number — so pass the plain value.'
-          )
-          .optional(),
+        ...extraFieldSchema,
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -182,92 +348,89 @@ export async function registerWriteTools(
           };
         }
 
-        const fields: Record<string, unknown> = {};
-        const applied: string[] = [];
+        const extra = await collectExtraFields(context, args);
+
+        // Nothing is mandatory on an update: every field is droppable, so a
+        // refused custom field costs that field rather than the summary next to it.
+        const plan: FieldWritePlan = {
+          required: {},
+          optional: { ...extra.fields },
+          labels: { ...extra.labels },
+        };
 
         if (summary && isString(summary)) {
-          fields.summary = summary.substring(0, 255);
+          plan.optional.summary = summary.substring(0, 255);
+          plan.labels.summary = `Summary → ${summary.substring(0, 60)}`;
         }
-
         if (description && isString(description)) {
-          fields.description = markdownToAdf(description);
+          plan.optional.description = markdownToAdf(description);
+          plan.labels.description = 'Description';
         }
-
         if (priority && isString(priority)) {
-          fields.priority = { name: priority };
+          plan.optional.priority = { name: priority };
+          plan.labels.priority = `Priority → ${priority}`;
         }
-
         if (assignee && isString(assignee)) {
-          fields.assignee = { name: assignee };
+          plan.optional.assignee = { name: assignee };
+          plan.labels.assignee = `Assignee → ${assignee}`;
         }
-
         if (labels && isArray(labels)) {
-          fields.labels = labels;
+          plan.optional.labels = labels;
+          plan.labels.labels = `Labels → ${labels.join(', ')}`;
         }
 
-        // Story points live in a per-instance custom field, so the id is looked
-        // up by name against this site rather than assumed.
-        if (isNumber(args.storyPoints)) {
-          const schema = await loadFieldSchema(context);
-          const lookup = findStoryPointsField(schema);
-          if (!lookup.ok) {
-            return { content: [{ type: 'text' as const, text: lookup.message }], isError: true };
-          }
-          fields[lookup.field.id] = args.storyPoints;
-          applied.push(`${lookup.field.name} → ${args.storyPoints}`);
-        }
-
-        if (isString(args.originalEstimate)) {
-          if (!isJiraDuration(args.originalEstimate)) {
+        // Everything the caller asked for turned out to be unwritable, so there
+        // is no request to make. The comment is then the whole point of the call.
+        if (Object.keys(plan.optional).length === 0) {
+          if (extra.unwritten.length === 0) {
             return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: `originalEstimate must be a Jira duration like "3d", "4h" or "1w 2d", got "${args.originalEstimate}"`,
-                },
-              ],
+              content: [{ type: 'text' as const, text: `Nothing to update on ${issueKey}` }],
               isError: true,
             };
           }
-          // A partial timetracking object leaves the remaining estimate alone,
-          // which is what setting only the original is meant to do.
-          fields.timetracking = { originalEstimate: args.originalEstimate };
-          applied.push(`Original estimate → ${args.originalEstimate}`);
-        }
 
-        if (isRecord(args.fields)) {
-          const updates = await buildFieldUpdates(context, args.fields);
-          if (updates.problems.length > 0) {
-            // Nothing is sent when a name does not resolve: a caller told "3 of 4
-            // fields were set" has to work out which, and a half-applied update
-            // is worse than one that plainly failed.
-            return {
-              content: [
-                { type: 'text' as const, text: `Nothing updated.\n${updates.problems.join('\n')}` },
-              ],
-              isError: true,
-            };
-          }
-          Object.assign(fields, updates.fields);
-          applied.push(...updates.applied);
-        }
-
-        if (Object.keys(fields).length === 0) {
+          const noted = await recordUnwritten(context, issueKey, extra.unwritten);
           return {
-            content: [{ type: 'text' as const, text: `Nothing to update on ${issueKey}` }],
+            content: [
+              {
+                type: 'text' as const,
+                text:
+                  `Nothing could be written to ${issueKey}` +
+                  describeOutcome([], extra.unwritten, noted) +
+                  `\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`,
+              },
+            ],
             isError: true,
           };
         }
 
-        await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
-          method: 'PUT',
-          body: JSON.stringify({ fields }),
+        const outcome = await writeWithFieldFallback(plan, async (fields) => {
+          await jiraFetch(
+            `${context.apiBaseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}`,
+            context.accessToken,
+            { method: 'PUT', body: JSON.stringify({ fields }) }
+          );
         });
 
-        const detail =
-          applied.length > 0 ? `\n${applied.map((line) => `• ${line}`).join('\n')}` : '';
-        const text = `Updated ${issueKey}${detail}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
-        return { content: [{ type: 'text' as const, text }] };
+        const unwritten = [...extra.unwritten, ...outcome.dropped];
+        const commented =
+          unwritten.length > 0 ? await recordUnwritten(context, issueKey, unwritten) : false;
+
+        const applied = Object.keys(plan.labels)
+          .filter((id) => !outcome.dropped.some((field) => plan.labels[id] === field.label))
+          .map((id) => plan.labels[id] ?? id);
+
+        const headline = outcome.sent
+          ? `Updated ${issueKey}`
+          : `Nothing could be written to ${issueKey}`;
+        const text =
+          headline +
+          describeOutcome(applied, unwritten, commented) +
+          `\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        return {
+          content: [{ type: 'text' as const, text }],
+          ...(outcome.sent ? {} : { isError: true }),
+        };
       } catch (error) {
         return {
           content: [
