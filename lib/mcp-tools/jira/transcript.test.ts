@@ -294,30 +294,63 @@ describe('sprint planning material', () => {
   });
 });
 
-describe('observations for what no tool can do', () => {
-  it('reports story points rather than recommending a call', () => {
-    const { actions, observations } = analyzeTranscript('CHG-20 is 5 story points');
-    expect(observations).toHaveLength(1);
-    expect(observations[0]?.detail).toContain('5 story points');
-    expect(observations[0]?.blocked).toContain('list_fields');
-    // Crucially, no tool call was invented for it.
-    expect(actions.some((action) => JSON.stringify(action.arguments).includes('5'))).toBe(false);
+describe('estimation', () => {
+  it('recommends setting story points, without guessing a field id', () => {
+    const [action] = forTool('CHG-20 is 5 story points', 'update_issue', {
+      meetingType: 'sprint-planning',
+    });
+    expect(action?.arguments).toEqual({ issueKey: 'CHG-20', storyPoints: 5 });
+    expect(action?.summary).toContain('5 story points');
+    // The per-instance id is update_issue's job to resolve, not this one's.
+    expect(JSON.stringify(action?.arguments)).not.toContain('customfield');
   });
 
   it('reads points phrased the other way round', () => {
-    const { observations } = analyzeTranscript('8 points for CHG-21');
-    expect(observations[0]?.detail).toContain('CHG-21');
+    const [action] = forTool('8 points for CHG-21', 'update_issue', {
+      meetingType: 'sprint-planning',
+    });
+    expect(action?.arguments).toEqual({ issueKey: 'CHG-21', storyPoints: 8 });
   });
 
-  it('separates an original estimate from time already spent', () => {
-    const { observations } = analyzeTranscript('estimate for CHG-20 is 3 days');
-    expect(observations[0]?.detail).toContain('original estimate of 3 days');
-    expect(observations[0]?.blocked).toContain('log_work records time already spent');
+  it('takes a fractional estimate', () => {
+    const [action] = forTool('CHG-22 is 0.5 points', 'update_issue', {
+      meetingType: 'sprint-planning',
+    });
+    expect(action?.arguments.storyPoints).toBe(0.5);
   });
 
-  it('does not repeat the same observation', () => {
-    const { observations } = analyzeTranscript('CHG-20 is 5 points. Again, 5 points for CHG-20.');
-    expect(observations).toHaveLength(1);
+  it('recommends an original estimate in Jira duration form', () => {
+    const [action] = forTool('estimate for CHG-20 is 3 days', 'update_issue', {
+      meetingType: 'sprint-planning',
+    });
+    expect(action?.arguments).toEqual({ issueKey: 'CHG-20', originalEstimate: '3d' });
+  });
+
+  it('reads "will take" as an estimate', () => {
+    const [action] = forTool('CHG-20 will take 4 hours', 'update_issue', {
+      meetingType: 'sprint-planning',
+    });
+    expect(action?.arguments.originalEstimate).toBe('4h');
+  });
+
+  it('keeps an estimate distinct from time already spent', () => {
+    const estimate = forTool('CHG-20 will take 4 hours', 'update_issue', {
+      meetingType: 'sprint-planning',
+    });
+    const spent = forTool('I spent 4 hours on CHG-20', 'log_work');
+
+    expect(estimate[0]?.arguments).toHaveProperty('originalEstimate');
+    expect(spent[0]?.arguments).toHaveProperty('timeSpent');
+  });
+
+  it('weakens estimation heard in a standup', () => {
+    const planning = forTool('CHG-20 is 5 points', 'update_issue', {
+      meetingType: 'sprint-planning',
+    });
+    const standup = forTool('CHG-20 is 5 points', 'update_issue', { meetingType: 'standup' });
+
+    expect(planning[0]?.confidence).toBe('high');
+    expect(standup[0]?.confidence).toBe('medium');
   });
 });
 
@@ -356,10 +389,10 @@ describe('formatActionsAsMarkdown', () => {
     expect(stated).not.toContain('inferred from');
   });
 
-  it('lists what it heard but cannot do', () => {
+  it('renders an estimate as a callable update', () => {
     const markdown = formatActionsAsMarkdown(analyzeTranscript('CHG-20 is 5 story points'));
-    expect(markdown).toContain('Heard, but not possible with these tools');
-    expect(markdown).toContain('5 story points');
+    expect(markdown).toContain('`update_issue`');
+    expect(markdown).toContain('"storyPoints": 5');
   });
 });
 

@@ -34,6 +34,11 @@ export interface RecommendedAction {
  */
 interface Candidate extends RecommendedAction {
   span: readonly [number, number];
+  /**
+   * Which meetings this reading belongs in, when the tool alone does not say.
+   * Assignment and estimation both call update_issue but fit different rooms.
+   */
+  fit?: MeetingType[];
 }
 
 /** The meeting shapes this distinguishes. */
@@ -44,14 +49,6 @@ export type MeetingType = (typeof MEETING_TYPES)[number];
 /** Narrow an argument that arrived from a tool call. */
 export function isMeetingType(value: unknown): value is MeetingType {
   return typeof value === 'string' && MEETING_TYPES.some((type) => type === value);
-}
-
-/** Something the transcript asks for that no tool here can carry out. */
-export interface Observation {
-  detail: string;
-  excerpt: string;
-  /** What is missing, so the gap is actionable rather than just noted. */
-  blocked: string;
 }
 
 export interface MeetingContext {
@@ -65,7 +62,6 @@ export interface MeetingContext {
 export interface TranscriptAnalysis {
   meeting: MeetingContext;
   actions: RecommendedAction[];
-  observations: Observation[];
 }
 
 export interface TranscriptOptions {
@@ -89,6 +85,12 @@ const TARGET = `(${ISSUE_KEY}|this|it|that)`;
 const PRONOUNS = new Set(['this', 'it', 'that']);
 
 const EXCERPT_LENGTH = 120;
+
+/**
+ * A spoken duration. Longest unit first: an alternation that offers `d` before
+ * `days` matches just the `d` and truncates the capture to "3 d".
+ */
+const DURATION = '(\\d+(?:\\.\\d+)?\\s*(?:minutes?|mins?|hours?|hrs?|weeks?|days?|m|h|d|w))';
 
 /**
  * Statuses worth normalising. Anything else is passed through as written and
@@ -227,7 +229,7 @@ export function analyzeTranscript(
   const meeting = detectMeeting(transcript, options);
 
   if (!transcript || transcript.trim().length === 0) {
-    return { meeting, actions: [], observations: [] };
+    return { meeting, actions: [] };
   }
 
   const candidates = [
@@ -237,12 +239,14 @@ export function analyzeTranscript(
     ...findBlockers(transcript, options),
     ...findWorkLogged(transcript, options),
     ...findSprintMoves(transcript, options),
+    ...findEstimates(transcript, options),
   ].map((candidate) => weighForMeeting(candidate, meeting.type));
 
   return {
     meeting,
-    actions: sortByConfidence(dedupe(candidates)).map(({ span: _span, ...action }) => action),
-    observations: findUnsupported(transcript, options),
+    actions: sortByConfidence(dedupe(candidates)).map(
+      ({ span: _span, fit: _fit, ...action }) => action
+    ),
   };
 }
 
@@ -445,9 +449,6 @@ function findBlockers(transcript: string, options: TranscriptOptions): Candidate
 
 /** "I spent two hours on CHG-20" -> a worklog. */
 function findWorkLogged(transcript: string, options: TranscriptOptions): Candidate[] {
-  // Longest unit first: an alternation that offers `d` before `days` matches
-  // just the `d` and truncates the capture to "3 d".
-  const DURATION = '(\\d+(?:\\.\\d+)?\\s*(?:minutes?|mins?|hours?|hrs?|weeks?|days?|m|h|d|w))';
   const patterns = [
     new RegExp(`(?:spent|logged|put)\\s+${DURATION}\\s+(?:in\\s+)?on\\s+${TARGET}`, 'gi'),
     new RegExp(`${TARGET}\\s+took\\s+(?:me\\s+)?${DURATION}`, 'gi'),
@@ -532,77 +533,91 @@ function findSprintMoves(transcript: string, options: TranscriptOptions): Candid
 }
 
 /**
- * Estimation talk, which planning is largely made of and which nothing here can
- * carry out.
+ * Estimation, which is most of what planning does.
  *
- * Story points live in a per-instance custom field, and no tool on this server
- * sets an arbitrary field or a time estimate — update_issue takes summary,
- * description, priority, assignee and labels. Inventing a field id would
- * produce a call that fails, or worse, writes to the wrong field, so these are
- * reported as heard and named as blocked instead.
+ * Story points and the original estimate are both settable through update_issue
+ * now, which resolves the per-instance field by name, so these are ordinary
+ * recommendations rather than something to report as impossible. The field id
+ * deliberately does not appear here: this function has no API access, and
+ * guessing one is how you write to the wrong field.
  */
-function findUnsupported(transcript: string, options: TranscriptOptions): Observation[] {
-  const POINTS_BLOCKED =
-    'Story points are a per-instance custom field. Call list_fields for its id; ' +
-    'no tool here writes arbitrary fields yet.';
-  const ESTIMATE_BLOCKED =
-    'No tool here sets originalEstimate. log_work records time already spent, ' +
-    'which is a different field.';
-
+function findEstimates(transcript: string, options: TranscriptOptions): Candidate[] {
+  const POINTS = '(\\d+(?:\\.\\d+)?)';
   const readings: {
     regex: RegExp;
     target: number;
     value: number;
-    label: (v: string) => string;
-    blocked: string;
+    build: (value: string) => { args: Record<string, unknown>; summary: string };
   }[] = [
     {
-      regex: new RegExp(
-        `${TARGET}\\s+(?:is|at|=)\\s*(\\d+(?:\\.\\d+)?)\\s*(?:story\\s+)?points?`,
-        'gi'
-      ),
+      regex: new RegExp(`${TARGET}\\s+(?:is|at|=)\\s*${POINTS}\\s*(?:story\\s+)?points?`, 'gi'),
       target: 1,
       value: 2,
-      label: (v) => `${v} story points`,
-      blocked: POINTS_BLOCKED,
+      build: (value) => ({
+        args: { storyPoints: Number(value) },
+        summary: `${value} story points`,
+      }),
     },
     {
-      regex: new RegExp(
-        `(\\d+(?:\\.\\d+)?)\\s*(?:story\\s+)?points?\\s+(?:for|on)\\s+${TARGET}`,
-        'gi'
-      ),
+      regex: new RegExp(`${POINTS}\\s*(?:story\\s+)?points?\\s+(?:for|on)\\s+${TARGET}`, 'gi'),
       target: 2,
       value: 1,
-      label: (v) => `${v} story points`,
-      blocked: POINTS_BLOCKED,
+      build: (value) => ({
+        args: { storyPoints: Number(value) },
+        summary: `${value} story points`,
+      }),
     },
     {
       regex: new RegExp(
-        `estimate\\s+(?:for\\s+)?${TARGET}\\s+(?:is|at)\\s*(\\d+(?:\\.\\d+)?\\s*(?:minutes?|mins?|hours?|hrs?|weeks?|days?|m|h|d|w))`,
+        `(?:estimate|estimating)\\s+(?:for\\s+)?${TARGET}\\s+(?:is|at)\\s*${DURATION}`,
         'gi'
       ),
       target: 1,
       value: 2,
-      label: (v) => `an original estimate of ${v.trim()}`,
-      blocked: ESTIMATE_BLOCKED,
+      build: (value) => {
+        const spent = normaliseDuration(value) ?? value.trim();
+        return { args: { originalEstimate: spent }, summary: `an original estimate of ${spent}` };
+      },
+    },
+    {
+      regex: new RegExp(`${TARGET}\\s+(?:will|should)\\s+take\\s+${DURATION}`, 'gi'),
+      target: 1,
+      value: 2,
+      build: (value) => {
+        const spent = normaliseDuration(value) ?? value.trim();
+        return { args: { originalEstimate: spent }, summary: `an original estimate of ${spent}` };
+      },
     },
   ];
 
-  const observations: Observation[] = [];
-  const seen = new Set<string>();
+  const actions: Candidate[] = [];
 
-  for (const { regex, target, value, label, blocked } of readings) {
+  for (const { regex, target, value, build } of readings) {
     for (const match of matchAll(transcript, [regex])) {
       const resolved = resolveTarget(match[target], options);
-      const detail = `${resolved.label} — ${label(match[value] ?? '')}`;
-      if (seen.has(detail)) continue;
-      seen.add(detail);
+      const raw = match[value] ?? '';
+      if (raw.trim().length === 0) continue;
 
-      observations.push({ detail, excerpt: excerptOf(match), blocked });
+      const { args, summary } = build(raw);
+
+      actions.push({
+        confidence: resolved.confidence,
+        tool: 'update_issue',
+        summary: `Set ${summary} on ${resolved.label}`,
+        arguments: {
+          ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}),
+          ...args,
+        },
+        excerpt: excerptOf(match),
+        span: spanOf(match),
+        // Estimation happens in planning. Heard in a standup it is more likely a
+        // recollection than an instruction.
+        fit: ['sprint-planning', 'ad-hoc'],
+      });
     }
   }
 
-  return observations;
+  return actions;
 }
 
 /** Jira accepts "2h" and "30m"; spoken forms need the unit shortened. */
@@ -640,7 +655,7 @@ const EXPECTED_IN: Record<string, MeetingType[]> = {
 };
 
 function weighForMeeting(candidate: Candidate, type: MeetingType): Candidate {
-  const expected = EXPECTED_IN[candidate.tool];
+  const expected = candidate.fit ?? EXPECTED_IN[candidate.tool];
   if (!expected || expected.includes(type)) return candidate;
 
   const weakened: RecommendedAction['confidence'] =
@@ -763,7 +778,7 @@ function sortByConfidence(candidates: readonly Candidate[]): Candidate[] {
 
 /** Format the analysis as markdown for human review. */
 export function formatActionsAsMarkdown(analysis: TranscriptAnalysis): string {
-  const { meeting, actions, observations } = analysis;
+  const { meeting, actions } = analysis;
 
   const lines = [`# Transcript analysis`, ''];
 
@@ -791,7 +806,7 @@ export function formatActionsAsMarkdown(analysis: TranscriptAnalysis): string {
     lines.push(
       'No actionable items detected. This looks for phrasings like "create a task for…",',
       '"assign PROJ-12 to dana", "move PROJ-12 to done", "blocked on…", "spent 2h on PROJ-12",',
-      'and "pull PROJ-12 into the sprint".'
+      '"PROJ-12 is 5 points" and "pull PROJ-12 into the sprint".'
     );
   } else {
     lines.push(`Found ${actions.length} suggested action${actions.length === 1 ? '' : 's'}:`, '');
@@ -809,19 +824,6 @@ export function formatActionsAsMarkdown(analysis: TranscriptAnalysis): string {
         ''
       );
     });
-  }
-
-  if (observations.length > 0) {
-    lines.push(
-      '## Heard, but not possible with these tools',
-      '',
-      ...observations.flatMap((observation) => [
-        `- ${observation.detail}`,
-        `  - Heard as: "${observation.excerpt}"`,
-        `  - ${observation.blocked}`,
-      ]),
-      ''
-    );
   }
 
   if (actions.length > 0) {

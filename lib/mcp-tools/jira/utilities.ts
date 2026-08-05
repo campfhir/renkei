@@ -31,9 +31,9 @@ export async function registerUtilityTools(
         '"move PROJ-12 to done", "blocked on the vendor", "spent 2h on PROJ-12" and "pull ' +
         'PROJ-12 into the sprint". Identifies whether the meeting was a standup, sprint ' +
         'planning, a retro or ad-hoc, and weighs each recommendation by how well it fits. ' +
-        'Anything the transcript asks for that no tool here can do — story points, original ' +
-        'estimates — is reported separately rather than guessed at. These are recommendations ' +
-        'only: no tools are executed. You must review and call them yourself.',
+        'Story points and original estimates are recommended as update_issue calls, which ' +
+        'resolve the field by name against the site. These are recommendations only: no tools ' +
+        'are executed. You must review and call them yourself.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         transcript: z.string().min(1).describe('Meeting or conversation transcript'),
@@ -93,7 +93,6 @@ export async function registerUtilityTools(
           meetingType: analysis.meeting.type,
           meetingSource: analysis.meeting.source,
           actions: analysis.actions.length,
-          observations: analysis.observations.length,
         });
 
         return {

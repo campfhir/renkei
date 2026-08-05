@@ -8,6 +8,12 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { jiraFetch, issueUrl, getCachedDisplayName } from '../common';
 import { markdownToAdf } from './markdown';
+import {
+  buildFieldUpdates,
+  findStoryPointsField,
+  isJiraDuration,
+  loadFieldSchema,
+} from './field-schema';
 import { logger } from '@/lib/logger';
 
 // Type guard functions
@@ -21,6 +27,10 @@ function isString(value: unknown): value is string {
 
 function isArray(value: unknown): value is unknown[] {
   return Array.isArray(value);
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }
 
 export async function registerWriteTools(
@@ -123,7 +133,10 @@ export async function registerWriteTools(
     'update_issue',
     {
       title: 'Update a Jira issue',
-      description: 'Update an existing Jira issue.',
+      description:
+        'Update an existing Jira issue. Story points, the original estimate, and any custom ' +
+        "field can be set: field names are resolved against this site's own schema, so no " +
+        'customfield id needs to be known in advance.',
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
         summary: z.string().describe('New title (optional)').optional(),
@@ -131,6 +144,25 @@ export async function registerWriteTools(
         priority: z.string().describe('New priority (optional)').optional(),
         assignee: z.string().describe('New assignee email or account ID (optional)').optional(),
         labels: z.array(z.string()).describe('New labels (optional, replaces existing)').optional(),
+        storyPoints: z
+          .number()
+          .describe(
+            'Story point estimate. The field is found by name on this site, whether it is ' +
+              'called "Story Points" or "Story point estimate".'
+          )
+          .optional(),
+        originalEstimate: z
+          .string()
+          .describe('Original time estimate in Jira duration form, e.g. "3d", "4h", "1w 2d"')
+          .optional(),
+        fields: z
+          .record(z.string(), z.unknown())
+          .describe(
+            'Any other fields, keyed by name or id: {"Decision of Change Request": "Approved", ' +
+              '"customfield_12016": 3}. Values are shaped to match each field\'s schema — a ' +
+              'select field gets {value: …}, a number gets a number — so pass the plain value.'
+          )
+          .optional(),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -151,6 +183,7 @@ export async function registerWriteTools(
         }
 
         const fields: Record<string, unknown> = {};
+        const applied: string[] = [];
 
         if (summary && isString(summary)) {
           fields.summary = summary.substring(0, 255);
@@ -172,12 +205,68 @@ export async function registerWriteTools(
           fields.labels = labels;
         }
 
+        // Story points live in a per-instance custom field, so the id is looked
+        // up by name against this site rather than assumed.
+        if (isNumber(args.storyPoints)) {
+          const schema = await loadFieldSchema(context);
+          const lookup = findStoryPointsField(schema);
+          if (!lookup.ok) {
+            return { content: [{ type: 'text' as const, text: lookup.message }], isError: true };
+          }
+          fields[lookup.field.id] = args.storyPoints;
+          applied.push(`${lookup.field.name} → ${args.storyPoints}`);
+        }
+
+        if (isString(args.originalEstimate)) {
+          if (!isJiraDuration(args.originalEstimate)) {
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `originalEstimate must be a Jira duration like "3d", "4h" or "1w 2d", got "${args.originalEstimate}"`,
+                },
+              ],
+              isError: true,
+            };
+          }
+          // A partial timetracking object leaves the remaining estimate alone,
+          // which is what setting only the original is meant to do.
+          fields.timetracking = { originalEstimate: args.originalEstimate };
+          applied.push(`Original estimate → ${args.originalEstimate}`);
+        }
+
+        if (isRecord(args.fields)) {
+          const updates = await buildFieldUpdates(context, args.fields);
+          if (updates.problems.length > 0) {
+            // Nothing is sent when a name does not resolve: a caller told "3 of 4
+            // fields were set" has to work out which, and a half-applied update
+            // is worse than one that plainly failed.
+            return {
+              content: [
+                { type: 'text' as const, text: `Nothing updated.\n${updates.problems.join('\n')}` },
+              ],
+              isError: true,
+            };
+          }
+          Object.assign(fields, updates.fields);
+          applied.push(...updates.applied);
+        }
+
+        if (Object.keys(fields).length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: `Nothing to update on ${issueKey}` }],
+            isError: true,
+          };
+        }
+
         await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
           method: 'PUT',
           body: JSON.stringify({ fields }),
         });
 
-        const text = `Updated ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        const detail =
+          applied.length > 0 ? `\n${applied.map((line) => `• ${line}`).join('\n')}` : '';
+        const text = `Updated ${issueKey}${detail}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         return {
