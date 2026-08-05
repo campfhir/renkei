@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { setTenantOidc } from '@/lib/tenant-operations';
-import { createLogger } from '@campfhir/bored-logs';
+import { logger } from '@/lib/logger';
 
 interface OidcConfigRequest {
   discoveryEndpoint: string;
@@ -27,7 +27,6 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const logger = createLogger();
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -134,7 +133,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
-  const logger = createLogger();
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {

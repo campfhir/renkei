@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { createLogger } from '@campfhir/bored-logs';
+import { logger } from '@/lib/logger';
 
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
-  const logger = createLogger();
 
   // Log all incoming requests
   logger.info('[proxy] Incoming request: {method} {pathname}', {

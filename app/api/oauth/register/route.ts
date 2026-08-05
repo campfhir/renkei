@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConfig, isDcrEnabled } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { randomUUID } from 'crypto';
-import { createLogger } from '@campfhir/bored-logs';
+import { logger } from '@/lib/logger';
 
 /**
  * Dynamic Client Registration endpoint (RFC 7591)
@@ -19,8 +19,6 @@ import { createLogger } from '@campfhir/bored-logs';
  *   }
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const logger = createLogger();
-
   const configResult = getConfig();
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });

@@ -18,11 +18,9 @@ import { getDatabase } from '@/lib/db';
 import { getConfig } from '@/lib/env';
 import { getJiraGrant } from '@/lib/tenant-operations';
 import { recordSession } from '@/lib/audit';
-import { createLogger } from '@campfhir/bored-logs';
+import { logger } from '@/lib/logger';
 import { getAllToolDefinitions, executeTool } from '@/lib/mcp-tools';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
-
-const logger = createLogger();
 
 const handler = async (
   request: NextRequest,

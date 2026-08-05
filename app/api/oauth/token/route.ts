@@ -4,7 +4,7 @@ import { getDatabase } from '@/lib/db';
 import { randomUUID, createHash } from 'crypto';
 import type { Kysely } from 'kysely';
 import type { DB } from '@/lib/db.types';
-import { createLogger } from '@campfhir/bored-logs';
+import { logger } from '@/lib/logger';
 
 /**
  * OAuth 2.0 Token endpoint (RFC 6749)
@@ -15,8 +15,6 @@ import { createLogger } from '@campfhir/bored-logs';
  *   - refresh_token grant (token refresh)
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const logger = createLogger();
-
   const configResult = getConfig();
   if (!configResult.ok) {
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
@@ -200,7 +198,6 @@ async function handleAuthorizationCodeGrant(
       scope: authCode.scope || 'openid profile email',
     });
   } catch (error) {
-    const logger = createLogger();
     logger.error('[OAuth Token] Authorization code grant error: {error}', {
       error: error instanceof Error ? error.message : String(error),
       clientId: client_id,
@@ -276,7 +273,6 @@ async function handleRefreshTokenGrant(
       scope: token.scope || 'openid profile email',
     });
   } catch (error) {
-    const logger = createLogger();
     logger.error('[OAuth Token] Refresh token grant error: {error}', {
       error: error instanceof Error ? error.message : String(error),
       clientId: client_id,
