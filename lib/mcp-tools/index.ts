@@ -1,16 +1,13 @@
 /**
  * MCP Tools Registry
  *
- * Central export for all available Jira tools adapted from renkei.
+ * Central registry for all available MCP tools.
+ * Tools are organized by product/service for modularity.
  */
 
 import type { MCPToolContext, MCPToolResult } from './common';
-import { readTools } from './read';
-import { writeTools } from './write';
-import { bulkTools } from './bulk';
-import { sprintTools } from './sprints';
-import { projectTools } from './project';
-import { jsmTools } from './jsm';
+import { jiraTools } from './jira';
+import { jiraServiceManagementTools } from './jira-service-management';
 
 export type { MCPToolContext, MCPToolResult };
 export { ok, okWithLink, toolError } from './common';
@@ -28,14 +25,10 @@ export interface ToolHandler {
   handler: (context: MCPToolContext, params: any) => Promise<MCPToolResult>;
 }
 
-// All available tools
+// All available tools from all product categories
 export const allTools = [
-  ...readTools,
-  ...writeTools,
-  ...bulkTools,
-  ...sprintTools,
-  ...projectTools,
-  ...jsmTools,
+  ...jiraTools,
+  ...jiraServiceManagementTools,
 ];
 
 /**

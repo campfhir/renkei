@@ -3,8 +3,8 @@
  * Handle customer requests, service desks, and support operations.
  */
 
-import type { MCPToolContext, MCPToolResult } from './common';
-import { ok, toolError, jiraFetch, requestUrl } from './common';
+import type { MCPToolContext, MCPToolResult } from '../common';
+import { ok, toolError, jiraFetch, requestUrl } from '../common';
 
 export interface JSMToolHandler {
   name: string;

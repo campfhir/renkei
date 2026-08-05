@@ -4,8 +4,8 @@
  */
 
 import { z } from 'zod';
-import type { MCPToolContext, MCPToolResult } from './common';
-import { issueKeySchema, ok, okWithLink, toolError, jiraFetch, issueUrl } from './common';
+import type { MCPToolContext, MCPToolResult } from '../common';
+import { issueKeySchema, ok, okWithLink, toolError, jiraFetch, issueUrl } from '../common';
 
 export interface ReadToolHandler {
   name: string;

@@ -2,8 +2,8 @@
  * Sprint and board management tools for Jira MCP.
  */
 
-import type { MCPToolContext, MCPToolResult } from './common';
-import { ok, okWithLink, toolError, jiraFetch, sprintUrl } from './common';
+import type { MCPToolContext, MCPToolResult } from '../common';
+import { ok, okWithLink, toolError, jiraFetch, sprintUrl } from '../common';
 
 export interface SprintToolHandler {
   name: string;

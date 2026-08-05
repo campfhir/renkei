@@ -3,8 +3,8 @@
  * Adapted from renkei for Next.js.
  */
 
-import type { MCPToolContext, MCPToolResult } from './common';
-import { ok, okWithLink, toolError, jiraFetch, issueUrl } from './common';
+import type { MCPToolContext, MCPToolResult } from '../common';
+import { ok, okWithLink, toolError, jiraFetch, issueUrl } from '../common';
 
 export interface WriteToolHandler {
   name: string;

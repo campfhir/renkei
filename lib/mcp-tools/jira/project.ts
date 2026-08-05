@@ -3,8 +3,8 @@
  * Discover components, fields, versions, and users.
  */
 
-import type { MCPToolContext, MCPToolResult } from './common';
-import { ok, toolError, jiraFetch } from './common';
+import type { MCPToolContext, MCPToolResult } from '../common';
+import { ok, toolError, jiraFetch } from '../common';
 
 export interface ProjectToolHandler {
   name: string;
