@@ -2,11 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/env';
 
 /**
- * OAuth Authorization Server Metadata endpoint (RFC 8414)
- * Published at /.well-known/oauth-authorization-server
- *
- * Advertises the MCP server's OAuth endpoints and capabilities to clients
- * so they can self-register via Dynamic Client Registration (RFC 7591).
+ * OAuth Authorization Server Metadata endpoint (RFC 8414) - System level
+ * This is a generic endpoint at the root level. For tenant-specific servers,
+ * use the tenant-scoped endpoint at /api/mcp/[tenantId]/.well-known/oauth-authorization-server
  */
 export async function GET(_request: NextRequest): Promise<NextResponse> {
   const configResult = getConfig();
@@ -18,6 +16,9 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
   const baseUrl = config.PUBLIC_BASE_URL;
   const dcrEnabled = config.ENABLE_DCR !== 'false';
 
+  // Note: These are placeholder endpoints. For MCP connections, use tenant-scoped endpoints.
+  // When connecting via /api/mcp/{tenantId}/http, the OAuth discovery should use
+  // /api/mcp/{tenantId}/.well-known/oauth-authorization-server
   const metadata = {
     issuer: baseUrl,
     authorization_endpoint: `${baseUrl}/api/oauth/authorize`,
@@ -31,8 +32,6 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
       ? ['authorization_code', 'refresh_token']
       : ['authorization_code'],
     token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
-    revocation_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
-    introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
     code_challenge_methods_supported: ['S256', 'plain'],
     scopes_supported: ['openid', 'profile', 'email'],
     claims_supported: ['sub', 'name', 'email', 'email_verified'],
