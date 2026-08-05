@@ -4,45 +4,43 @@
  * Handle request approvals, SLA, participants, and attachments.
  */
 
-import type { MCPToolContext, MCPToolResult } from '../common';
-import { ok, toolError, jiraFetch } from '../common';
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MCPToolContext } from '../common';
+import { jiraFetch } from '../common';
 
-export interface RequestDetailsToolHandler {
-  name: string;
-  description: string;
-  inputSchema?: Record<string, any>;
-  handler: (context: MCPToolContext, params: any) => Promise<MCPToolResult>;
-}
-
-export const requestDetailsTools: RequestDetailsToolHandler[] = [
-  {
-    name: 'get_request_type_fields',
-    description: 'Get the form fields for a request type.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        serviceDeskId: {
-          type: 'string',
-          description: 'Service desk ID',
-        },
-        requestTypeId: {
-          type: 'string',
-          description: 'Request type ID',
-        },
-      },
-      required: ['serviceDeskId', 'requestTypeId'],
+export async function registerRequestDetailsTools(
+  server: McpServer,
+  context: MCPToolContext
+): Promise<void> {
+  // get_request_type_fields
+  server.registerTool(
+    'get_request_type_fields',
+    {
+      title: 'Describe the form for a request type',
+      description: 'Get the form fields for a request type.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        serviceDeskId: z.string().describe('Service desk ID'),
+        requestTypeId: z.string().describe('Request type ID'),
+      }),
     },
-    handler: async (context, params) => {
-      const { serviceDeskId, requestTypeId } = params;
-
-      if (!serviceDeskId || !requestTypeId) {
-        return toolError('serviceDeskId and requestTypeId are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { serviceDeskId, requestTypeId } = args;
+
+        if (!serviceDeskId || !requestTypeId) {
+          return {
+            content: [
+              { type: 'text' as const, text: 'serviceDeskId and requestTypeId are required' },
+            ],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype/${requestTypeId}/field`,
-          context.accessToken,
+          context.accessToken
         );
 
         const fields = (await response.json()) as any;
@@ -54,42 +52,46 @@ export const requestDetailsTools: RequestDetailsToolHandler[] = [
 
         const lines = [
           `Request type has ${fieldList.length} fields:`,
-          ...fieldList.map(
-            (f: any) => `• ${f.name} (${f.id})${f.required ? ' [REQUIRED]' : ''}`,
-          ),
+          ...fieldList.map((f: any) => `• ${f.name} (${f.id})${f.required ? ' [REQUIRED]' : ''}`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(`Failed to get request type fields: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // list_request_approvals
+  server.registerTool(
+    'list_request_approvals',
+    {
+      title: 'List approvals on a customer request',
+      description: 'List pending approvals on a request.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        issueKey: z.string().describe('Request key, e.g. SUP-1'),
+      }),
     },
-  },
-
-  {
-    name: 'list_request_approvals',
-    description: 'List pending approvals on a request.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Request key, e.g. SUP-1',
-        },
-      },
-      required: ['issueKey'],
-    },
-    handler: async (context, params) => {
-      const { issueKey } = params;
-
-      if (!issueKey) {
-        return toolError('issueKey is required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey } = args;
+
+        if (!issueKey) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/approval`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = (await response.json()) as any;
@@ -104,37 +106,43 @@ export const requestDetailsTools: RequestDetailsToolHandler[] = [
           ...approvals.map((a: any) => `• ${a.name} [${a.status}]`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(`Failed to list approvals: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // get_request_sla
+  server.registerTool(
+    'get_request_sla',
+    {
+      title: 'Read the SLA clocks on a customer request',
+      description: 'Get SLA information for a request.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        issueKey: z.string().describe('Request key, e.g. SUP-1'),
+      }),
     },
-  },
-
-  {
-    name: 'get_request_sla',
-    description: 'Get SLA information for a request.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Request key, e.g. SUP-1',
-        },
-      },
-      required: ['issueKey'],
-    },
-    handler: async (context, params) => {
-      const { issueKey } = params;
-
-      if (!issueKey) {
-        return toolError('issueKey is required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey } = args;
+
+        if (!issueKey) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/sla`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = (await response.json()) as any;
@@ -149,37 +157,43 @@ export const requestDetailsTools: RequestDetailsToolHandler[] = [
           ...slas.map((s: any) => `• ${s.name}: ${s.status} (breach: ${s.breachTime})`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(`Failed to get SLA: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // list_request_participants
+  server.registerTool(
+    'list_request_participants',
+    {
+      title: 'List participants on a customer request',
+      description: 'List participants on a request.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        issueKey: z.string().describe('Request key, e.g. SUP-1'),
+      }),
     },
-  },
-
-  {
-    name: 'list_request_participants',
-    description: 'List participants on a request.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Request key, e.g. SUP-1',
-        },
-      },
-      required: ['issueKey'],
-    },
-    handler: async (context, params) => {
-      const { issueKey } = params;
-
-      if (!issueKey) {
-        return toolError('issueKey is required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey } = args;
+
+        if (!issueKey) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/participant`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = (await response.json()) as any;
@@ -193,38 +207,40 @@ export const requestDetailsTools: RequestDetailsToolHandler[] = [
           ...participants.map((p: any) => `• ${p.name} (${p.email})`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(`Failed to list participants: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // add_request_participant
+  server.registerTool(
+    'add_request_participant',
+    {
+      title: 'Add a participant to a customer request',
+      description: 'Add a participant to a request.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Request key, e.g. SUP-1'),
+        accountId: z.string().describe('Account ID of user to add'),
+      }),
     },
-  },
-
-  {
-    name: 'add_request_participant',
-    description: 'Add a participant to a request.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Request key, e.g. SUP-1',
-        },
-        accountId: {
-          type: 'string',
-          description: 'Account ID of user to add',
-        },
-      },
-      required: ['issueKey', 'accountId'],
-    },
-    handler: async (context, params) => {
-      const { issueKey, accountId } = params;
-
-      if (!issueKey || !accountId) {
-        return toolError('issueKey and accountId are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey, accountId } = args;
+
+        if (!issueKey || !accountId) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey and accountId are required' }],
+            isError: true,
+          };
+        }
+
         await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/participant`,
           context.accessToken,
@@ -233,86 +249,91 @@ export const requestDetailsTools: RequestDetailsToolHandler[] = [
             body: JSON.stringify({
               accountIds: [accountId],
             }),
-          },
+          }
         );
 
-        return ok(`Added participant to ${issueKey}`);
+        return { content: [{ type: 'text' as const, text: `Added participant to ${issueKey}` }] };
       } catch (error) {
-        return toolError(`Failed to add participant: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // remove_request_participant
+  server.registerTool(
+    'remove_request_participant',
+    {
+      title: 'Remove a participant from a customer request',
+      description: 'Remove a participant from a request.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Request key, e.g. SUP-1'),
+        accountId: z.string().describe('Account ID of user to remove'),
+      }),
     },
-  },
-
-  {
-    name: 'remove_request_participant',
-    description: 'Remove a participant from a request.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Request key, e.g. SUP-1',
-        },
-        accountId: {
-          type: 'string',
-          description: 'Account ID of user to remove',
-        },
-      },
-      required: ['issueKey', 'accountId'],
-    },
-    handler: async (context, params) => {
-      const { issueKey, accountId } = params;
-
-      if (!issueKey || !accountId) {
-        return toolError('issueKey and accountId are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey, accountId } = args;
+
+        if (!issueKey || !accountId) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey and accountId are required' }],
+            isError: true,
+          };
+        }
+
         await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/participant/${accountId}`,
           context.accessToken,
           {
             method: 'DELETE',
-          },
+          }
         );
 
-        return ok(`Removed participant from ${issueKey}`);
+        return {
+          content: [{ type: 'text' as const, text: `Removed participant from ${issueKey}` }],
+        };
       } catch (error) {
-        return toolError(`Failed to remove participant: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // add_request_attachment
+  server.registerTool(
+    'add_request_attachment',
+    {
+      title: 'Attach a file to a customer request',
+      description: 'Upload a file attachment to a request.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Request key, e.g. SUP-1'),
+        filename: z.string().describe('File name'),
+        contentBase64: z.string().describe('File content as base64'),
+      }),
     },
-  },
-
-  {
-    name: 'add_request_attachment',
-    description: 'Upload a file attachment to a request.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Request key, e.g. SUP-1',
-        },
-        filename: {
-          type: 'string',
-          description: 'File name',
-        },
-        contentBase64: {
-          type: 'string',
-          description: 'File content as base64',
-        },
-      },
-      required: ['issueKey', 'filename', 'contentBase64'],
-    },
-    handler: async (context, params) => {
-      const { issueKey, filename, contentBase64 } = params;
-
-      if (!issueKey || !filename || !contentBase64) {
-        return toolError('issueKey, filename, and contentBase64 are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
-        const binaryString = Buffer.from(contentBase64, 'base64').toString('binary');
+        const { issueKey, filename, contentBase64 } = args;
+
+        if (!issueKey || !filename || !contentBase64) {
+          return {
+            content: [
+              { type: 'text' as const, text: 'issueKey, filename, and contentBase64 are required' },
+            ],
+            isError: true,
+          };
+        }
+
+        const binaryString = Buffer.from(contentBase64 as string, 'base64').toString('binary');
         const blob = Buffer.from(binaryString, 'binary');
         const formData = new FormData();
         formData.append('file', new Blob([blob]), filename);
@@ -325,17 +346,24 @@ export const requestDetailsTools: RequestDetailsToolHandler[] = [
               Authorization: `Bearer ${context.accessToken}`,
             },
             body: formData,
-          },
+          }
         );
 
         if (!response.ok) {
           throw new Error(`Upload failed: ${response.statusText}`);
         }
 
-        return ok(`Attached ${filename} to ${issueKey}`);
+        return {
+          content: [{ type: 'text' as const, text: `Attached ${filename} to ${issueKey}` }],
+        };
       } catch (error) {
-        return toolError(`Failed to add attachment: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
-    },
-  },
-];
+    }
+  );
+}

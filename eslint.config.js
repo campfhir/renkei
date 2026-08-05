@@ -12,6 +12,7 @@ export default [
       '*.config.js',
       '*.config.mjs',
       'scripts/build-migrations.js',
+      'scripts/fix-async-warnings.ts',
       'postcss.config.mjs',
     ],
   },

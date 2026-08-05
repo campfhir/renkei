@@ -4,46 +4,39 @@
  * Handle file uploads and downloads.
  */
 
-import type { MCPToolContext, MCPToolResult } from '../common';
-import { ok, toolError } from '../common';
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MCPToolContext } from '../common';
 
-export interface AttachmentToolHandler {
-  name: string;
-  description: string;
-  inputSchema?: Record<string, any>;
-  handler: (context: MCPToolContext, params: any) => Promise<MCPToolResult>;
-}
-
-export const attachmentTools: AttachmentToolHandler[] = [
-  {
-    name: 'add_attachment',
-    description: 'Upload a file attachment to a Jira issue.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Issue key, e.g. PROJ-123',
-        },
-        filename: {
-          type: 'string',
-          description: 'File name to store as',
-        },
-        contentBase64: {
-          type: 'string',
-          description: 'File content as base64',
-        },
-      },
-      required: ['issueKey', 'filename', 'contentBase64'],
+export async function registerAttachmentTools(
+  server: McpServer,
+  context: MCPToolContext
+): Promise<void> {
+  // add_attachment
+  server.registerTool(
+    'add_attachment',
+    {
+      title: 'Attach a file to a Jira issue',
+      description: 'Upload a file attachment to a Jira issue.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+        filename: z.string().describe('File name to store as'),
+        contentBase64: z.string().describe('File content as base64'),
+      }),
     },
-    handler: async (context, params) => {
-      const { issueKey, filename, contentBase64 } = params;
-
-      if (!issueKey || !filename || !contentBase64) {
-        return toolError('issueKey, filename, and contentBase64 are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey, filename, contentBase64 } = args;
+
+        if (!issueKey || !filename || !contentBase64) {
+          return {
+            content: [
+              { type: 'text' as const, text: 'issueKey, filename, and contentBase64 are required' },
+            ],
+            isError: true,
+          };
+        }
+
         // Decode base64 to binary
         const binaryString = Buffer.from(contentBase64, 'base64').toString('binary');
         const blob = Buffer.from(binaryString, 'binary');
@@ -61,17 +54,24 @@ export const attachmentTools: AttachmentToolHandler[] = [
               'X-Atlassian-Token': 'no-check',
             },
             body: formData,
-          },
+          }
         );
 
         if (!response.ok) {
           throw new Error(`Upload failed: ${response.statusText}`);
         }
 
-        return ok(`Attached ${filename} to ${issueKey}`);
+        return {
+          content: [{ type: 'text' as const, text: `Attached ${filename} to ${issueKey}` }],
+        };
       } catch (error) {
-        return toolError(`Failed to add attachment: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
-    },
-  },
-];
+    }
+  );
+}

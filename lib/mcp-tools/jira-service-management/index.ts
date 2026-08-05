@@ -4,12 +4,17 @@
  * Tools for managing customer requests, service desks, and support operations.
  */
 
-import { jsmTools } from './jsm';
-import { requestDetailsTools } from './request-details';
-import { customerTools } from './customers';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MCPToolContext } from '../common';
+import { registerJsmTools } from './jsm';
+import { registerRequestDetailsTools } from './request-details';
+import { registerJsmCustomerTools } from './customers';
 
-export const jiraServiceManagementTools = [
-  ...jsmTools,
-  ...requestDetailsTools,
-  ...customerTools,
-];
+export async function registerJiraServiceManagementTools(
+  server: McpServer,
+  context: MCPToolContext
+): Promise<void> {
+  await registerJsmTools(server, context);
+  await registerRequestDetailsTools(server, context);
+  await registerJsmCustomerTools(server, context);
+}

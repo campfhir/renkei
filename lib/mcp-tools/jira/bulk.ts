@@ -4,42 +4,34 @@
  * Handle multiple issues at once.
  */
 
-import type { MCPToolContext, MCPToolResult } from '../common';
-import { ok, toolError, jiraFetch } from '../common';
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MCPToolContext } from '../common';
+import { jiraFetch } from '../common';
 
-export interface BulkToolHandler {
-  name: string;
-  description: string;
-  inputSchema?: Record<string, any>;
-  handler: (context: MCPToolContext, params: any) => Promise<MCPToolResult>;
-}
-
-export const bulkTools: BulkToolHandler[] = [
-  {
-    name: 'bulk_update_issues',
-    description: 'Update multiple issues at once with the same changes.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        jql: {
-          type: 'string',
-          description: 'JQL query to select issues to update',
-        },
-        fields: {
-          type: 'object',
-          description: 'Fields to update on all matched issues',
-        },
-      },
-      required: ['jql', 'fields'],
+export async function registerBulkTools(server: McpServer, context: MCPToolContext): Promise<void> {
+  // bulk_update_issues (not in renkei_tools.json but keeping for now)
+  server.registerTool(
+    'bulk_update_issues',
+    {
+      title: 'Update multiple Jira issues',
+      description: 'Update multiple issues at once with the same changes.',
+      inputSchema: z.object({
+        jql: z.string().describe('JQL query to select issues to update'),
+        fields: z.record(z.string(), z.any()).describe('Fields to update on all matched issues'),
+      }),
     },
-    handler: async (context, params) => {
-      const { jql, fields } = params;
-
-      if (!jql || !fields) {
-        return toolError('jql and fields are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { jql, fields } = args;
+
+        if (!jql || !fields) {
+          return {
+            content: [{ type: 'text' as const, text: 'jql and fields are required' }],
+            isError: true,
+          };
+        }
+
         // First search for issues matching the JQL
         const searchResponse = await jiraFetch(
           `${context.siteUrl}/rest/api/3/search`,
@@ -51,14 +43,14 @@ export const bulkTools: BulkToolHandler[] = [
               maxResults: 100,
               fields: ['key'],
             }),
-          },
+          }
         );
 
         const searchData = (await searchResponse.json()) as any;
         const issueKeys = (searchData.issues || []).map((i: any) => i.key);
 
         if (issueKeys.length === 0) {
-          return ok('No issues matched the JQL query');
+          return { content: [{ type: 'text' as const, text: 'No issues matched the JQL query' }] };
         }
 
         // Update each issue
@@ -67,52 +59,57 @@ export const bulkTools: BulkToolHandler[] = [
 
         for (const key of issueKeys) {
           try {
-            await jiraFetch(
-              `${context.siteUrl}/rest/api/3/issue/${key}`,
-              context.accessToken,
-              {
-                method: 'PUT',
-                body: JSON.stringify({ fields }),
-              },
-            );
+            await jiraFetch(`${context.siteUrl}/rest/api/3/issue/${key}`, context.accessToken, {
+              method: 'PUT',
+              body: JSON.stringify({ fields }),
+            });
             updated++;
           } catch {
             failed++;
           }
         }
 
-        return ok(`Updated ${updated} issues, ${failed} failed (total: ${issueKeys.length})`);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Updated ${updated} issues, ${failed} failed (total: ${issueKeys.length})`,
+            },
+          ],
+        };
       } catch (error) {
-        return toolError(`Bulk update failed: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // bulk_transition_issues
+  server.registerTool(
+    'bulk_transition_issues',
+    {
+      title: 'Move multiple Jira issues through workflow',
+      description: 'Transition multiple issues to the same status.',
+      inputSchema: z.object({
+        jql: z.string().describe('JQL query to select issues'),
+        transitionName: z.string().describe('Transition name to apply to all issues'),
+      }),
     },
-  },
-
-  {
-    name: 'bulk_transition_issues',
-    description: 'Transition multiple issues to the same status.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        jql: {
-          type: 'string',
-          description: 'JQL query to select issues',
-        },
-        transitionName: {
-          type: 'string',
-          description: 'Transition name to apply to all issues',
-        },
-      },
-      required: ['jql', 'transitionName'],
-    },
-    handler: async (context, params) => {
-      const { jql, transitionName } = params;
-
-      if (!jql || !transitionName) {
-        return toolError('jql and transitionName are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { jql, transitionName } = args;
+
+        if (!jql || !transitionName) {
+          return {
+            content: [{ type: 'text' as const, text: 'jql and transitionName are required' }],
+            isError: true,
+          };
+        }
+
         // Search for issues
         const searchResponse = await jiraFetch(
           `${context.siteUrl}/rest/api/3/search`,
@@ -124,14 +121,14 @@ export const bulkTools: BulkToolHandler[] = [
               maxResults: 100,
               fields: ['key'],
             }),
-          },
+          }
         );
 
         const searchData = (await searchResponse.json()) as any;
         const issueKeys = (searchData.issues || []).map((i: any) => i.key);
 
         if (issueKeys.length === 0) {
-          return ok('No issues matched the JQL query');
+          return { content: [{ type: 'text' as const, text: 'No issues matched the JQL query' }] };
         }
 
         let transitioned = 0;
@@ -142,12 +139,12 @@ export const bulkTools: BulkToolHandler[] = [
             // Get available transitions
             const transResponse = await jiraFetch(
               `${context.siteUrl}/rest/api/3/issue/${key}/transitions`,
-              context.accessToken,
+              context.accessToken
             );
             const transData = (await transResponse.json()) as any;
 
             const transition = transData.transitions?.find(
-              (t: any) => t.name.toLowerCase() === transitionName.toLowerCase(),
+              (t: any) => t.name.toLowerCase() === transitionName.toLowerCase()
             );
 
             if (transition) {
@@ -159,7 +156,7 @@ export const bulkTools: BulkToolHandler[] = [
                   body: JSON.stringify({
                     transition: { id: transition.id },
                   }),
-                },
+                }
               );
               transitioned++;
             } else {
@@ -170,12 +167,22 @@ export const bulkTools: BulkToolHandler[] = [
           }
         }
 
-        return ok(
-          `Transitioned ${transitioned} issues to "${transitionName}", ${failed} failed (total: ${issueKeys.length})`,
-        );
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Transitioned ${transitioned} issues to "${transitionName}", ${failed} failed (total: ${issueKeys.length})`,
+            },
+          ],
+        };
       } catch (error) {
-        return toolError(`Bulk transition failed: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
-    },
-  },
-];
+    }
+  );
+}

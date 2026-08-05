@@ -14,9 +14,8 @@ import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@/lib/db';
 import { getConfig } from '@/lib/env';
 import { getJiraGrant } from '@/lib/tenant-operations';
-import { recordSession } from '@/lib/audit';
 import { logger } from '@/lib/logger';
-import { getAllToolDefinitions, executeTool } from '@/lib/mcp-tools';
+import { registerAllTools } from '@/lib/mcp-tools';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 
 const handler = async (
@@ -35,12 +34,6 @@ const handler = async (
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const config = configResult.val;
-
-  const userAgent = request.headers.get('user-agent') || undefined;
-  const ipAddress =
-    request.headers.get('x-forwarded-for')?.split(',')[0].trim() ||
-    request.headers.get('x-real-ip') ||
-    undefined;
 
   try {
     // Verify tenant exists
@@ -112,80 +105,11 @@ const handler = async (
             config,
           };
 
-          // Register all tools individually
-          const toolDefinitions = getAllToolDefinitions();
-          for (const toolDef of toolDefinitions) {
-            server.registerTool(
-              toolDef.name,
-              {
-                title: toolDef.name,
-                description: toolDef.description,
-                inputSchema: toolDef.inputSchema,
-              },
-              async (args: Record<string, unknown>) => {
-                try {
-                  // Record session
-                  const recordResult = await recordSession({
-                    tenantId,
-                    accountId,
-                    userAgent,
-                    ipAddress,
-                  });
-
-                  if (!recordResult.ok) {
-                    logger.error('Failed to record session: {error}', {
-                      error: recordResult,
-                    });
-                  }
-
-                  // Execute tool with arguments
-                  const result = await executeTool(toolDef.name, context, args);
-
-                  // Log success
-                  logger.info('[MCP] Tool call success: {toolName}', {
-                    tenantId,
-                    toolName: toolDef.name,
-                    accountId,
-                    userAgent,
-                    ipAddress,
-                  });
-
-                  return {
-                    content: [
-                      {
-                        type: 'text' as const,
-                        text: result.text || '',
-                      },
-                    ],
-                  };
-                } catch (error) {
-                  // Log error
-                  logger.error('[MCP] Tool call error: {toolName}', {
-                    tenantId,
-                    toolName: toolDef.name,
-                    accountId,
-                    userAgent,
-                    ipAddress,
-                    error: error instanceof Error ? error.message : String(error),
-                  });
-
-                  return {
-                    content: [
-                      {
-                        type: 'text' as const,
-                        text: error instanceof Error ? error.message : String(error),
-                      },
-                    ],
-                    isError: true,
-                  };
-                }
-              }
-            );
-          }
+          // Register all tools
+          await registerAllTools(server, context);
 
           logger.info('[MCP] All tools registered', {
             tenantId,
-            toolCount: toolDefinitions.length,
           });
 
           return server;

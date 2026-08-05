@@ -3,8 +3,10 @@
  * Adapted from renkei for Next.js.
  */
 
-import type { MCPToolContext, MCPToolResult } from '../common';
-import { okWithLink, toolError, jiraFetch, issueUrl } from '../common';
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MCPToolContext } from '../common';
+import { jiraFetch, issueUrl } from '../common';
 
 // Type guard functions
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -19,64 +21,39 @@ function isArray(value: unknown): value is unknown[] {
   return Array.isArray(value);
 }
 
-export interface WriteToolHandler {
-  name: string;
-  description: string;
-  inputSchema?: Record<string, unknown>;
-  handler: (context: MCPToolContext, params: unknown) => Promise<MCPToolResult>;
-}
-
-export const writeTools: WriteToolHandler[] = [
-  {
-    name: 'create_issue',
-    description: 'Create a new Jira issue in a project.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectKey: {
-          type: 'string',
-          description: 'Project key, e.g. SCRUM',
-        },
-        issueType: {
-          type: 'string',
-          description: 'Issue type: Task, Bug, Story, Subtask, Epic, etc.',
-        },
-        summary: {
-          type: 'string',
-          description: 'Issue title (max 255 characters)',
-        },
-        description: {
-          type: 'string',
-          description: 'Issue description (markdown format)',
-        },
-        priority: {
-          type: 'string',
-          description: 'Priority: Highest, High, Medium, Low, Lowest',
-        },
-        assignee: {
-          type: 'string',
-          description: 'Email address or account ID to assign to',
-        },
-        labels: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Labels to apply',
-        },
-      },
-      required: ['projectKey', 'issueType', 'summary'],
+export async function registerWriteTools(
+  server: McpServer,
+  context: MCPToolContext
+): Promise<void> {
+  // create_issue
+  server.registerTool(
+    'create_issue',
+    {
+      title: 'Create a Jira issue',
+      description: 'Create a new Jira issue in a project.',
+      inputSchema: z.object({
+        projectKey: z.string().describe('Project key, e.g. SCRUM'),
+        issueType: z.string().describe('Issue type: Task, Bug, Story, Subtask, Epic, etc.'),
+        summary: z.string().describe('Issue title (max 255 characters)'),
+        description: z.string().describe('Issue description (markdown format)').optional(),
+        priority: z.string().describe('Priority: Highest, High, Medium, Low, Lowest').optional(),
+        assignee: z.string().describe('Email address or account ID to assign to').optional(),
+        labels: z.array(z.string()).describe('Labels to apply').optional(),
+      }),
     },
-    handler: async (context, params) => {
-      if (!isRecord(params)) {
-        return toolError('Invalid parameters');
-      }
-      const p = params;
-      const { projectKey, issueType, summary, description, priority, assignee, labels } = p;
-
-      if (!projectKey || !issueType || !summary) {
-        return toolError('projectKey, issueType, and summary are required');
-      }
-
+    async (args: Record<string, unknown>) => {
       try {
+        const { projectKey, issueType, summary, description, priority, assignee, labels } = args;
+
+        if (!projectKey || !issueType || !summary) {
+          return {
+            content: [
+              { type: 'text' as const, text: 'projectKey, issueType, and summary are required' },
+            ],
+            isError: true,
+          };
+        }
+
         const projectKeyStr = isString(projectKey) ? projectKey : String(projectKey);
         const issueTypeStr = isString(issueType) ? issueType : String(issueType);
         const summaryStr = isString(summary) ? summary : String(summary);
@@ -88,7 +65,11 @@ export const writeTools: WriteToolHandler[] = [
         };
 
         if (description && isString(description)) {
-          fields.description = { content: [{ content: [{ text: description }], type: 'paragraph' }], type: 'doc', version: 1 };
+          fields.description = {
+            content: [{ content: [{ text: description }], type: 'paragraph' }],
+            type: 'doc',
+            version: 1,
+          };
         }
 
         if (priority && isString(priority)) {
@@ -109,67 +90,56 @@ export const writeTools: WriteToolHandler[] = [
           {
             method: 'POST',
             body: JSON.stringify({ fields }),
-          },
+          }
         );
 
         const result = await response.json();
         if (!isRecord(result)) {
-          return toolError('Invalid response from API');
+          return {
+            content: [{ type: 'text' as const, text: 'Invalid response from API' }],
+            isError: true,
+          };
         }
         const resultKey = isString(result.key) ? result.key : String(result.key);
-        return okWithLink(`Created issue ${result.key}`, issueUrl(context.siteUrl, resultKey));
+        const text = `Created issue ${result.key}\n\n[Open in Jira](${issueUrl(context.siteUrl, resultKey)})`;
+        return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
-        return toolError(`Failed to create issue: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // update_issue
+  server.registerTool(
+    'update_issue',
+    {
+      title: 'Update a Jira issue',
+      description: 'Update an existing Jira issue.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+        summary: z.string().describe('New title (optional)').optional(),
+        description: z.string().describe('New description in markdown (optional)').optional(),
+        priority: z.string().describe('New priority (optional)').optional(),
+        assignee: z.string().describe('New assignee email or account ID (optional)').optional(),
+        labels: z.array(z.string()).describe('New labels (optional, replaces existing)').optional(),
+      }),
     },
-  },
-
-  {
-    name: 'update_issue',
-    description: 'Update an existing Jira issue.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Issue key, e.g. PROJ-123',
-        },
-        summary: {
-          type: 'string',
-          description: 'New title (optional)',
-        },
-        description: {
-          type: 'string',
-          description: 'New description in markdown (optional)',
-        },
-        priority: {
-          type: 'string',
-          description: 'New priority (optional)',
-        },
-        assignee: {
-          type: 'string',
-          description: 'New assignee email or account ID (optional)',
-        },
-        labels: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'New labels (optional, replaces existing)',
-        },
-      },
-      required: ['issueKey'],
-    },
-    handler: async (context, params) => {
-      if (!isRecord(params)) {
-        return toolError('Invalid parameters');
-      }
-      const p = params;
-      const { issueKey, summary, description, priority, assignee, labels } = p;
-
-      if (!isString(issueKey)) {
-        return toolError('issueKey is required');
-      }
-
+    async (args: Record<string, unknown>) => {
       try {
+        const { issueKey, summary, description, priority, assignee, labels } = args;
+
+        if (!isString(issueKey)) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey is required' }],
+            isError: true,
+          };
+        }
+
         const fields: Record<string, unknown> = {};
 
         if (summary && isString(summary)) {
@@ -177,7 +147,11 @@ export const writeTools: WriteToolHandler[] = [
         }
 
         if (description && isString(description)) {
-          fields.description = { content: [{ content: [{ text: description }], type: 'paragraph' }], type: 'doc', version: 1 };
+          fields.description = {
+            content: [{ content: [{ text: description }], type: 'paragraph' }],
+            type: 'doc',
+            version: 1,
+          };
         }
 
         if (priority && isString(priority)) {
@@ -192,51 +166,46 @@ export const writeTools: WriteToolHandler[] = [
           fields.labels = labels;
         }
 
-        await jiraFetch(
-          `${context.siteUrl}/rest/api/3/issue/${issueKey}`,
-          context.accessToken,
-          {
-            method: 'PUT',
-            body: JSON.stringify({ fields }),
-          },
-        );
+        await jiraFetch(`${context.siteUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
+          method: 'PUT',
+          body: JSON.stringify({ fields }),
+        });
 
-        return okWithLink(`Updated ${issueKey}`, issueUrl(context.siteUrl, issueKey));
+        const text = `Updated ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
-        return toolError(`Failed to update issue: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // add_comment
+  server.registerTool(
+    'add_comment',
+    {
+      title: 'Comment on a Jira issue',
+      description: 'Add a comment to a Jira issue.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+        comment: z.string().describe('Comment text (markdown format)'),
+      }),
     },
-  },
-
-  {
-    name: 'add_comment',
-    description: 'Add a comment to a Jira issue.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Issue key, e.g. PROJ-123',
-        },
-        comment: {
-          type: 'string',
-          description: 'Comment text (markdown format)',
-        },
-      },
-      required: ['issueKey', 'comment'],
-    },
-    handler: async (context, params) => {
-      if (!isRecord(params)) {
-        return toolError('Invalid parameters');
-      }
-      const p = params;
-      const { issueKey, comment } = p;
-
-      if (!isString(issueKey) || !isString(comment)) {
-        return toolError('issueKey and comment are required');
-      }
-
+    async (args: Record<string, unknown>) => {
       try {
+        const { issueKey, comment } = args;
+
+        if (!isString(issueKey) || !isString(comment)) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey and comment are required' }],
+            isError: true,
+          };
+        }
+
         const commentStr = comment;
         await jiraFetch(
           `${context.siteUrl}/rest/api/3/issue/${issueKey}/comments`,
@@ -244,59 +213,64 @@ export const writeTools: WriteToolHandler[] = [
           {
             method: 'POST',
             body: JSON.stringify({
-              body: { content: [{ content: [{ text: commentStr }], type: 'paragraph' }], type: 'doc', version: 1 },
+              body: {
+                content: [{ content: [{ text: commentStr }], type: 'paragraph' }],
+                type: 'doc',
+                version: 1,
+              },
             }),
-          },
+          }
         );
 
-        return okWithLink(`Comment added to ${issueKey}`, issueUrl(context.siteUrl, issueKey));
+        const text = `Comment added to ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
-        return toolError(`Failed to add comment: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // transition_issue
+  server.registerTool(
+    'transition_issue',
+    {
+      title: 'Move a Jira issue through its workflow',
+      description: 'Transition an issue to a different status.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+        transitionName: z
+          .string()
+          .describe('Transition name, e.g. "Start Progress", "Resolve Issue"'),
+        comment: z.string().describe('Optional comment to add during transition').optional(),
+      }),
     },
-  },
-
-  {
-    name: 'transition_issue',
-    description: 'Transition an issue to a different status.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Issue key, e.g. PROJ-123',
-        },
-        transitionName: {
-          type: 'string',
-          description: 'Transition name, e.g. "Start Progress", "Resolve Issue"',
-        },
-        comment: {
-          type: 'string',
-          description: 'Optional comment to add during transition',
-        },
-      },
-      required: ['issueKey', 'transitionName'],
-    },
-    handler: async (context, params) => {
-      if (!isRecord(params)) {
-        return toolError('Invalid parameters');
-      }
-      const p = params;
-      const { issueKey, transitionName, comment } = p;
-
-      if (!isString(issueKey) || !isString(transitionName)) {
-        return toolError('issueKey and transitionName are required');
-      }
-
+    async (args: Record<string, unknown>) => {
       try {
+        const { issueKey, transitionName, comment } = args;
+
+        if (!isString(issueKey) || !isString(transitionName)) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey and transitionName are required' }],
+            isError: true,
+          };
+        }
+
         // First, get available transitions
         const transResponse = await jiraFetch(
           `${context.siteUrl}/rest/api/3/issue/${issueKey}/transitions`,
-          context.accessToken,
+          context.accessToken
         );
         const transData = await transResponse.json();
         if (!isRecord(transData)) {
-          return toolError('Invalid response from transitions API');
+          return {
+            content: [{ type: 'text' as const, text: 'Invalid response from transitions API' }],
+            isError: true,
+          };
         }
 
         // Find the matching transition
@@ -314,14 +288,23 @@ export const writeTools: WriteToolHandler[] = [
             .map((t: unknown) => (isRecord(t) && isString(t.name) ? t.name : null))
             .filter((name): name is string => name !== null)
             .join(', ');
-          return toolError(
-            `Transition "${transitionNameStr}" not found. Available: ${availableNames || 'none'}`,
-          );
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Transition "${transitionNameStr}" not found. Available: ${availableNames || 'none'}`,
+              },
+            ],
+            isError: true,
+          };
         }
 
         // Execute the transition
         if (!isRecord(transition)) {
-          return toolError('Invalid transition object');
+          return {
+            content: [{ type: 'text' as const, text: 'Invalid transition object' }],
+            isError: true,
+          };
         }
         const body: Record<string, unknown> = {
           transition: { id: transition.id },
@@ -332,7 +315,11 @@ export const writeTools: WriteToolHandler[] = [
             comment: [
               {
                 add: {
-                  body: { content: [{ content: [{ text: comment }], type: 'paragraph' }], type: 'doc', version: 1 },
+                  body: {
+                    content: [{ content: [{ text: comment }], type: 'paragraph' }],
+                    type: 'doc',
+                    version: 1,
+                  },
                 },
               },
             ],
@@ -345,49 +332,45 @@ export const writeTools: WriteToolHandler[] = [
           {
             method: 'POST',
             body: JSON.stringify(body),
-          },
+          }
         );
 
-        return okWithLink(`Transitioned ${issueKey} to ${transitionName}`, issueUrl(context.siteUrl, issueKey));
+        const text = `Transitioned ${issueKey} to ${transitionName}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
-        return toolError(`Failed to transition issue: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // log_work
+  server.registerTool(
+    'log_work',
+    {
+      title: 'Log work against a Jira issue',
+      description: 'Log time spent on a Jira issue.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+        timeSpent: z.string().describe('Time spent in Jira format: 1d, 2h, 30m, 1w'),
+        comment: z.string().describe('Optional comment (what was done)').optional(),
+      }),
     },
-  },
-
-  {
-    name: 'log_work',
-    description: 'Log time spent on a Jira issue.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Issue key, e.g. PROJ-123',
-        },
-        timeSpent: {
-          type: 'string',
-          description: 'Time spent in Jira format: 1d, 2h, 30m, 1w',
-        },
-        comment: {
-          type: 'string',
-          description: 'Optional comment (what was done)',
-        },
-      },
-      required: ['issueKey', 'timeSpent'],
-    },
-    handler: async (context, params) => {
-      if (!isRecord(params)) {
-        return toolError('Invalid parameters');
-      }
-      const p = params;
-      const { issueKey, timeSpent, comment } = p;
-
-      if (!isString(issueKey) || !isString(timeSpent)) {
-        return toolError('issueKey and timeSpent are required');
-      }
-
+    async (args: Record<string, unknown>) => {
       try {
+        const { issueKey, timeSpent, comment } = args;
+
+        if (!isString(issueKey) || !isString(timeSpent)) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey and timeSpent are required' }],
+            isError: true,
+          };
+        }
+
         const timeSpentStr = timeSpent;
         const body: Record<string, unknown> = {
           timeSpent: timeSpentStr,
@@ -407,13 +390,19 @@ export const writeTools: WriteToolHandler[] = [
           {
             method: 'POST',
             body: JSON.stringify(body),
-          },
+          }
         );
 
-        return okWithLink(`Logged ${timeSpent} on ${issueKey}`, issueUrl(context.siteUrl, issueKey));
+        const text = `Logged ${timeSpent} on ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
-        return toolError(`Failed to log work: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
-    },
-  },
-];
+    }
+  );
+}

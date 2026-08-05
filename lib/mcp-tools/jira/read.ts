@@ -3,8 +3,10 @@
  * Adapted from renkei for Next.js.
  */
 
-import type { MCPToolContext, MCPToolResult } from '../common';
-import { ok, okWithLink, toolError, jiraFetch, issueUrl } from '../common';
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MCPToolContext } from '../common';
+import { jiraFetch, issueUrl } from '../common';
 
 // Type guard functions
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -23,69 +25,78 @@ function isNumber(value: unknown): value is number {
   return typeof value === 'number';
 }
 
-export interface ReadToolHandler {
-  name: string;
-  description: string;
-  inputSchema?: Record<string, unknown>;
-  handler: (context: MCPToolContext, params: unknown) => Promise<MCPToolResult>;
-}
-
-export const readTools: ReadToolHandler[] = [
-  {
-    name: 'whoami',
-    description:
-      'Returns the Atlassian account this connection acts as and the site it is pinned to.',
-    handler: async (context) => {
-      const response = await jiraFetch(`${context.siteUrl}/rest/api/3/myself`, context.accessToken);
-      const me = await response.json();
-      if (!isRecord(me)) {
-        return toolError('Invalid response from API');
-      }
-      const lines = [
-        `Account: ${me.displayName || 'unknown'}`,
-        `Email: ${me.emailAddress || 'not shared'}`,
-        `Account ID: ${me.accountId || 'unknown'}`,
-        `Site: ${context.siteUrl}`,
-      ];
-      return ok(lines.join('\n'));
+export async function registerReadTools(server: McpServer, context: MCPToolContext): Promise<void> {
+  // whoami
+  server.registerTool(
+    'whoami',
+    {
+      title: 'Who am I in Jira',
+      description:
+        'Returns the Atlassian account this connection acts as and the site it is pinned to.',
+      annotations: { readOnlyHint: true },
     },
-  },
-
-  {
-    name: 'search_issues',
-    description:
-      'Runs a JQL query and returns matching issues. Results are capped at 100. ' +
-      'Use `project = SCRUM` for a specific project or `status != Done` for filtering.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        jql: {
-          type: 'string',
-          description: 'JQL query, e.g. "project = SCRUM AND status != Done ORDER BY updated DESC"',
-        },
-        maxResults: {
-          type: 'number',
-          description: 'Maximum results (1-100, default 50)',
-        },
-      },
-      required: ['jql'],
-    },
-    handler: async (context, params) => {
-      if (!isRecord(params)) {
-        return toolError('Invalid parameters');
-      }
-      const p = params;
-      const { jql } = p;
-      const maxResults = Math.min(
-        (isNumber(p.maxResults) ? p.maxResults : 50) || 50,
-        context.maxJqlResults
-      );
-
-      if (!jql) {
-        return toolError('JQL query is required');
-      }
-
+    async (_args: Record<string, unknown>) => {
       try {
+        const response = await jiraFetch(
+          `${context.siteUrl}/rest/api/3/myself`,
+          context.accessToken
+        );
+        const me = await response.json();
+        if (!isRecord(me)) {
+          return {
+            content: [{ type: 'text' as const, text: 'Invalid response from API' }],
+            isError: true,
+          };
+        }
+        const lines = [
+          `Account: ${me.displayName || 'unknown'}`,
+          `Email: ${me.emailAddress || 'not shared'}`,
+          `Account ID: ${me.accountId || 'unknown'}`,
+          `Site: ${context.siteUrl}`,
+        ];
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+      } catch (error) {
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // search_issues
+  server.registerTool(
+    'search_issues',
+    {
+      title: 'Search Jira issues with JQL',
+      description:
+        'Runs a JQL query and returns matching issues. Results are capped at 100. ' +
+        'Use `project = SCRUM` for a specific project or `status != Done` for filtering.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        jql: z
+          .string()
+          .describe('JQL query, e.g. "project = SCRUM AND status != Done ORDER BY updated DESC"'),
+        maxResults: z.number().describe('Maximum results (1-100, default 50)').optional(),
+      }),
+    },
+    async (_args: Record<string, unknown>) => {
+      try {
+        const { jql } = args;
+        const maxResults = Math.min(
+          (isNumber(args.maxResults) ? args.maxResults : 50) || 50,
+          context.maxJqlResults
+        );
+
+        if (!jql) {
+          return {
+            content: [{ type: 'text' as const, text: 'JQL query is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/search`,
           context.accessToken,
@@ -110,10 +121,16 @@ export const readTools: ReadToolHandler[] = [
 
         const data = await response.json();
         if (!isRecord(data)) {
-          return toolError('Invalid API response');
+          return {
+            content: [{ type: 'text' as const, text: 'Invalid API response' }],
+            isError: true,
+          };
         }
         if (!isArray(data.issues)) {
-          return toolError('Expected issues array in response');
+          return {
+            content: [{ type: 'text' as const, text: 'Expected issues array in response' }],
+            isError: true,
+          };
         }
         const issues = data.issues
           .map((issue: unknown) => {
@@ -144,40 +161,40 @@ export const readTools: ReadToolHandler[] = [
           ),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(
-          `Search failed: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // get_issue
+  server.registerTool(
+    'get_issue',
+    {
+      title: 'Read a Jira issue',
+      description: 'Get detailed information about a specific Jira issue.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+      }),
     },
-  },
-
-  {
-    name: 'get_issue',
-    description: 'Get detailed information about a specific Jira issue.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Issue key, e.g. PROJ-123',
-        },
-      },
-      required: ['issueKey'],
-    },
-    handler: async (context, params) => {
-      if (!isRecord(params)) {
-        return toolError('Invalid parameters');
-      }
-      const p = params;
-      const { issueKey } = p;
-
-      if (!issueKey) {
-        return toolError('Issue key is required');
-      }
-
+    async (_args: Record<string, unknown>) => {
       try {
+        const { issueKey } = args;
+
+        if (!issueKey) {
+          return {
+            content: [{ type: 'text' as const, text: 'Issue key is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/issue/${issueKey}`,
           context.accessToken
@@ -185,10 +202,16 @@ export const readTools: ReadToolHandler[] = [
 
         const issue = await response.json();
         if (!isRecord(issue)) {
-          return toolError('Invalid API response');
+          return {
+            content: [{ type: 'text' as const, text: 'Invalid API response' }],
+            isError: true,
+          };
         }
         if (!isRecord(issue.fields)) {
-          return toolError('Expected fields object in issue');
+          return {
+            content: [{ type: 'text' as const, text: 'Expected fields object in issue' }],
+            isError: true,
+          };
         }
         const fields = issue.fields;
         const lines = [
@@ -206,35 +229,34 @@ export const readTools: ReadToolHandler[] = [
         }
 
         const resolvedIssueKey = isString(issue.key) ? issue.key : String(issue.key);
-        return okWithLink(lines.join('\n'), issueUrl(context.siteUrl, resolvedIssueKey));
+        const text = `${lines.join('\n')}\n\n[Open in Jira](${issueUrl(context.siteUrl, resolvedIssueKey)})`;
+        return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
-        return toolError(
-          `Failed to get issue: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
-    },
-  },
+    }
+  );
 
-  {
-    name: 'list_boards',
-    description: 'List Jira Software boards (Scrum and Kanban).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        maxResults: {
-          type: 'number',
-          description: 'Maximum results (1-100, default 25)',
-        },
-      },
+  // list_boards
+  server.registerTool(
+    'list_boards',
+    {
+      title: 'List Jira Software boards (use this when looking for sprints)',
+      description: 'List Jira Software boards (Scrum and Kanban).',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        maxResults: z.number().describe('Maximum results (1-100, default 25)').optional(),
+      }),
     },
-    handler: async (context, params) => {
-      if (!isRecord(params)) {
-        return toolError('Invalid parameters');
-      }
-      const p = params;
-      const maxResults = Math.min((isNumber(p.maxResults) ? p.maxResults : 25) || 25, 100);
-
+    async (_args: Record<string, unknown>) => {
       try {
+        const maxResults = Math.min((isNumber(args.maxResults) ? args.maxResults : 25) || 25, 100);
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/agile/1.0/board?maxResults=${maxResults}`,
           context.accessToken
@@ -242,10 +264,16 @@ export const readTools: ReadToolHandler[] = [
 
         const data = await response.json();
         if (!isRecord(data)) {
-          return toolError('Invalid API response');
+          return {
+            content: [{ type: 'text' as const, text: 'Invalid API response' }],
+            isError: true,
+          };
         }
         if (!isArray(data.values)) {
-          return toolError('Expected values array in response');
+          return {
+            content: [{ type: 'text' as const, text: 'Expected values array in response' }],
+            isError: true,
+          };
         }
         const boards = data.values
           .map((board: unknown) => {
@@ -265,40 +293,40 @@ export const readTools: ReadToolHandler[] = [
           ...boards.map((b: Record<string, unknown>) => `• ${b.name} (${b.type})`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(
-          `Failed to list boards: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // list_sprints
+  server.registerTool(
+    'list_sprints',
+    {
+      title: 'List sprints on a board',
+      description: 'List sprints for a Jira Software board.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        boardId: z.string().describe('Board ID'),
+      }),
     },
-  },
-
-  {
-    name: 'list_sprints',
-    description: 'List sprints for a Jira Software board.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        boardId: {
-          type: 'string',
-          description: 'Board ID',
-        },
-      },
-      required: ['boardId'],
-    },
-    handler: async (context, params) => {
-      if (!isRecord(params)) {
-        return toolError('Invalid parameters');
-      }
-      const p = params;
-      const { boardId } = p;
-
-      if (!boardId) {
-        return toolError('Board ID is required');
-      }
-
+    async (_args: Record<string, unknown>) => {
       try {
+        const { boardId } = args;
+
+        if (!boardId) {
+          return {
+            content: [{ type: 'text' as const, text: 'Board ID is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/agile/1.0/board/${boardId}/sprint`,
           context.accessToken
@@ -306,7 +334,10 @@ export const readTools: ReadToolHandler[] = [
 
         const data = await response.json();
         if (!isRecord(data)) {
-          return toolError('Invalid API response');
+          return {
+            content: [{ type: 'text' as const, text: 'Invalid API response' }],
+            isError: true,
+          };
         }
         const sprints = isArray(data.values) ? data.values : [];
 
@@ -322,12 +353,15 @@ export const readTools: ReadToolHandler[] = [
             .filter((line): line is string => line !== null),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(
-          `Failed to list sprints: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
-    },
-  },
-];
+    }
+  );
+}

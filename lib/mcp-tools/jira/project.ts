@@ -4,38 +4,37 @@
  * Discover components, fields, versions, and users.
  */
 
-import type { MCPToolContext, MCPToolResult } from '../common';
-import { ok, toolError, jiraFetch } from '../common';
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MCPToolContext } from '../common';
+import { jiraFetch } from '../common';
 
-export interface ProjectToolHandler {
-  name: string;
-  description: string;
-  inputSchema?: Record<string, any>;
-  handler: (context: MCPToolContext, params: any) => Promise<MCPToolResult>;
-}
-
-export const projectTools: ProjectToolHandler[] = [
-  {
-    name: 'list_components',
-    description: 'List components in a Jira project.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectKey: {
-          type: 'string',
-          description: 'Project key, e.g. SCRUM',
-        },
-      },
-      required: ['projectKey'],
+export async function registerProjectTools(
+  server: McpServer,
+  context: MCPToolContext
+): Promise<void> {
+  // list_components
+  server.registerTool(
+    'list_components',
+    {
+      title: 'List components in a project',
+      description: 'List components in a Jira project.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        projectKey: z.string().describe('Project key, e.g. SCRUM'),
+      }),
     },
-    handler: async (context, params) => {
-      const { projectKey } = params;
-
-      if (!projectKey) {
-        return toolError('projectKey is required');
-      }
-
+    async (_args: Record<string, unknown>) => {
       try {
+        const { projectKey } = args;
+
+        if (!projectKey) {
+          return {
+            content: [{ type: 'text' as const, text: 'projectKey is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/project/${projectKey}/components`,
           context.accessToken
@@ -49,28 +48,30 @@ export const projectTools: ProjectToolHandler[] = [
           ...components.map((c: any) => `• ${c.name} (ID: ${c.id})`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(
-          `Failed to list components: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
-    },
-  },
+    }
+  );
 
-  {
-    name: 'list_fields',
-    description: 'List all fields available in a Jira project.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        projectKey: {
-          type: 'string',
-          description: 'Project key, e.g. SCRUM (optional)',
-        },
-      },
+  // list_fields
+  server.registerTool(
+    'list_fields',
+    {
+      title: 'List all issue fields (standard and custom)',
+      description: 'List all fields available in a Jira project.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        projectKey: z.string().describe('Project key, e.g. SCRUM (optional)').optional(),
+      }),
     },
-    handler: async (context) => {
+    async (_args: Record<string, unknown>) => {
       try {
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/field`,
@@ -87,42 +88,40 @@ export const projectTools: ProjectToolHandler[] = [
           fields.length > 50 ? `... and ${fields.length - 50} more` : '',
         ];
 
-        return ok(lines.filter(Boolean).join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.filter(Boolean).join('\n') }] };
       } catch (error) {
-        return toolError(
-          `Failed to list fields: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // search_users
+  server.registerTool(
+    'search_users',
+    {
+      title: 'Search Jira users by name or email',
+      description: 'Search for Jira users by email or name.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        query: z.string().describe('Email or name to search for'),
+        maxResults: z.number().describe('Maximum results (1-50, default 10)').optional(),
+      }),
     },
-  },
-
-  {
-    name: 'search_users',
-    description: 'Search for Jira users by email or name.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: {
-          type: 'string',
-          description: 'Email or name to search for',
-        },
-        maxResults: {
-          type: 'number',
-          description: 'Maximum results (1-50, default 10)',
-        },
-      },
-      required: ['query'],
-    },
-    handler: async (context, params) => {
-      const { query, maxResults = 10 } = params;
-
-      if (!query) {
-        return toolError('query is required');
-      }
-
+    async (_args: Record<string, unknown>) => {
       try {
+        const { query, maxResults = 10 } = args;
+
+        if (!query) {
+          return { content: [{ type: 'text' as const, text: 'query is required' }], isError: true };
+        }
+
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/user/search?query=${encodeURIComponent(query)}&maxResults=${Math.min(maxResults, 50)}`,
+          `${context.siteUrl}/rest/api/3/user/search?query=${encodeURIComponent(query as string)}&maxResults=${Math.min(maxResults as number, 50)}`,
           context.accessToken
         );
 
@@ -133,36 +132,40 @@ export const projectTools: ProjectToolHandler[] = [
           ...users.map((u: any) => `• ${u.displayName} (${u.emailAddress}) - ${u.accountId}`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(
-          `Failed to search users: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // list_transitions
+  server.registerTool(
+    'list_transitions',
+    {
+      title: 'List available Jira transitions',
+      description: 'List available transitions for an issue.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+      }),
     },
-  },
-
-  {
-    name: 'list_transitions',
-    description: 'List available transitions for an issue.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Issue key, e.g. PROJ-123',
-        },
-      },
-      required: ['issueKey'],
-    },
-    handler: async (context, params) => {
-      const { issueKey } = params;
-
-      if (!issueKey) {
-        return toolError('issueKey is required');
-      }
-
+    async (_args: Record<string, unknown>) => {
       try {
+        const { issueKey } = args;
+
+        if (!issueKey) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/issue/${issueKey}/transitions`,
           context.accessToken
@@ -176,12 +179,15 @@ export const projectTools: ProjectToolHandler[] = [
           ...transitions.map((t: any) => `• ${t.name}`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(
-          `Failed to list transitions: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
-    },
-  },
-];
+    }
+  );
+}

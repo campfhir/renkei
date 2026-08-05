@@ -4,45 +4,40 @@
  * Miscellaneous helpful operations.
  */
 
-import type { MCPToolContext, MCPToolResult } from '../common';
-import { ok, toolError } from '../common';
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MCPToolContext } from '../common';
 
-export interface UtilityToolHandler {
-  name: string;
-  description: string;
-  inputSchema?: Record<string, any>;
-  handler: (context: MCPToolContext, params: any) => Promise<MCPToolResult>;
-}
-
-export const utilityTools: UtilityToolHandler[] = [
-  {
-    name: 'analyze_transcript',
-    description:
-      'Analyze a transcript and extract action items, decisions, and key discussion points.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        transcript: {
-          type: 'string',
-          description: 'Meeting or conversation transcript',
-        },
-        issueKey: {
-          type: 'string',
-          description: 'Optional issue key to associate with findings',
-        },
-      },
-      required: ['transcript'],
+export async function registerUtilityTools(
+  server: McpServer,
+  context: MCPToolContext
+): Promise<void> {
+  // analyze_transcript
+  server.registerTool(
+    'analyze_transcript',
+    {
+      title: 'Analyze a meeting transcript for Jira actions',
+      description:
+        'Analyze a transcript and extract action items, decisions, and key discussion points.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        transcript: z.string().describe('Meeting or conversation transcript'),
+        issueKey: z.string().describe('Optional issue key to associate with findings').optional(),
+      }),
     },
-    handler: async (context, params) => {
-      const { transcript, issueKey } = params;
-
-      if (!transcript) {
-        return toolError('transcript is required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { transcript, issueKey } = args;
+
+        if (!transcript) {
+          return {
+            content: [{ type: 'text' as const, text: 'transcript is required' }],
+            isError: true,
+          };
+        }
+
         // Simple transcript analysis - extract lines that look like action items
-        const lines = transcript.split('\n');
+        const lines = String(transcript).split('\n');
         const actionItems = lines.filter(
           (line: string) =>
             line.toLowerCase().includes('action item') ||
@@ -87,26 +82,38 @@ export const utilityTools: UtilityToolHandler[] = [
           summary.push(`\n*Analysis for ${issueKey}*`);
         }
 
-        return ok(summary.join('\n'));
+        return { content: [{ type: 'text' as const, text: summary.join('\n') }] };
       } catch (error) {
-        return toolError(
-          `Failed to analyze transcript: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // connect_jira
+  server.registerTool(
+    'connect_jira',
+    {
+      title: 'Get Jira authentication URL',
+      description:
+        'Get the Jira authentication URL to connect your Jira workspace to this tenant. Call this if Jira is not yet connected.',
+      annotations: { readOnlyHint: true },
     },
-  },
-  {
-    name: 'connect_jira',
-    description:
-      'Get the Jira authentication URL to connect your Jira workspace to this tenant. Call this if Jira is not yet connected.',
-    handler: async (context) => {
-      const { db, tenantId, config } = context;
-
-      if (!db || !config) {
-        return toolError('Database or config not available');
-      }
-
+    async (_args: Record<string, any>) => {
       try {
+        const { db, tenantId, config } = context;
+
+        if (!db || !config) {
+          return {
+            content: [{ type: 'text' as const, text: 'Database or config not available' }],
+            isError: true,
+          };
+        }
+
         // Check if a Jira grant already exists for this tenant
         const existingGrant = await db
           .selectFrom('atlassian_grants')
@@ -115,9 +122,14 @@ export const utilityTools: UtilityToolHandler[] = [
           .executeTakeFirst();
 
         if (existingGrant) {
-          return ok(
-            `Jira is already connected as ${existingGrant.operator_name} at ${existingGrant.site_url}`
-          );
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Jira is already connected as ${existingGrant.operator_name} at ${existingGrant.site_url}`,
+              },
+            ],
+          };
         }
 
         // Generate the Jira authorization URL
@@ -132,17 +144,21 @@ export const utilityTools: UtilityToolHandler[] = [
 
         const authUrl = `https://auth.atlassian.com/authorize?${params.toString()}`;
 
-        return ok(
+        const text =
           `**Jira is not connected yet.**\n\n` +
-            `Please visit this URL to authenticate and connect your Jira workspace:\n\n` +
-            `${authUrl}\n\n` +
-            `After authentication, you'll be redirected back to complete the connection.`
-        );
+          `Please visit this URL to authenticate and connect your Jira workspace:\n\n` +
+          `${authUrl}\n\n` +
+          `After authentication, you'll be redirected back to complete the connection.`;
+
+        return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
-        return toolError(
-          `Failed to get Jira auth URL: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
-    },
-  },
-];
+    }
+  );
+}

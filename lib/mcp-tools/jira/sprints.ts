@@ -3,103 +3,85 @@
  * Sprint and board management tools for Jira MCP.
  */
 
-import type { MCPToolContext, MCPToolResult } from '../common';
-import { ok, okWithLink, toolError, jiraFetch, sprintUrl } from '../common';
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MCPToolContext } from '../common';
+import { jiraFetch, sprintUrl } from '../common';
 
-export interface SprintToolHandler {
-  name: string;
-  description: string;
-  inputSchema?: Record<string, any>;
-  handler: (context: MCPToolContext, params: any) => Promise<MCPToolResult>;
-}
-
-export const sprintTools: SprintToolHandler[] = [
-  {
-    name: 'create_sprint',
-    description: 'Create a new sprint on a Jira Software board.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        boardId: {
-          type: 'string',
-          description: 'Board ID',
-        },
-        name: {
-          type: 'string',
-          description: 'Sprint name',
-        },
-        startDate: {
-          type: 'string',
-          description: 'Sprint start date (ISO format, optional)',
-        },
-        endDate: {
-          type: 'string',
-          description: 'Sprint end date (ISO format, optional)',
-        },
-        goal: {
-          type: 'string',
-          description: 'Sprint goal (optional)',
-        },
-      },
-      required: ['boardId', 'name'],
+export async function registerSprintTools(
+  server: McpServer,
+  context: MCPToolContext
+): Promise<void> {
+  // create_sprint
+  server.registerTool(
+    'create_sprint',
+    {
+      title: 'Create a sprint',
+      description: 'Create a new sprint on a Jira Software board.',
+      inputSchema: z.object({
+        boardId: z.string().describe('Board ID'),
+        name: z.string().describe('Sprint name'),
+        startDate: z.string().describe('Sprint start date (ISO format, optional)').optional(),
+        endDate: z.string().describe('Sprint end date (ISO format, optional)').optional(),
+        goal: z.string().describe('Sprint goal (optional)').optional(),
+      }),
     },
-    handler: async (context, params) => {
-      const { boardId, name, startDate, endDate, goal } = params;
-
-      if (!boardId || !name) {
-        return toolError('boardId and name are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
-        const body: any = { name, originBoardId: parseInt(boardId) };
+        const { boardId, name, startDate, endDate, goal } = args;
+
+        if (!boardId || !name) {
+          return {
+            content: [{ type: 'text' as const, text: 'boardId and name are required' }],
+            isError: true,
+          };
+        }
+
+        const body: any = { name, originBoardId: parseInt(String(boardId)) };
         if (startDate) body.startDate = startDate;
         if (endDate) body.endDate = endDate;
         if (goal) body.goal = goal;
 
-        const response = await jiraFetch(
-          `${context.siteUrl}/rest/agile/1.0/sprint`,
-          context.accessToken,
-          {
-            method: 'POST',
-            body: JSON.stringify(body),
-          }
-        );
+        await jiraFetch(`${context.siteUrl}/rest/agile/1.0/sprint`, context.accessToken, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
 
-        await response.json();
-        return okWithLink(`Created sprint "${name}"`, sprintUrl(context.siteUrl, boardId));
+        const text = `Created sprint "${name}"\n\n[Open in Jira](${sprintUrl(context.siteUrl, String(boardId))})`;
+        return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
-        return toolError(
-          `Failed to create sprint: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // move_issue_to_sprint
+  server.registerTool(
+    'move_issue_to_sprint',
+    {
+      title: 'Move a Jira issue to a sprint',
+      description: 'Move an issue to a sprint.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+        sprintId: z.string().describe('Target sprint ID'),
+      }),
     },
-  },
-
-  {
-    name: 'move_issue_to_sprint',
-    description: 'Move an issue to a sprint.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Issue key, e.g. PROJ-123',
-        },
-        sprintId: {
-          type: 'string',
-          description: 'Target sprint ID',
-        },
-      },
-      required: ['issueKey', 'sprintId'],
-    },
-    handler: async (context, params) => {
-      const { issueKey, sprintId } = params;
-
-      if (!issueKey || !sprintId) {
-        return toolError('issueKey and sprintId are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey, sprintId } = args;
+
+        if (!issueKey || !sprintId) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey and sprintId are required' }],
+            isError: true,
+          };
+        }
+
         await jiraFetch(`${context.siteUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
           method: 'PUT',
           body: JSON.stringify({
@@ -109,36 +91,41 @@ export const sprintTools: SprintToolHandler[] = [
           }),
         });
 
-        return ok(`Moved ${issueKey} to sprint ${sprintId}`);
+        return {
+          content: [{ type: 'text' as const, text: `Moved ${issueKey} to sprint ${sprintId}` }],
+        };
       } catch (error) {
-        return toolError(
-          `Failed to move issue: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // remove_issue_from_sprint
+  server.registerTool(
+    'remove_issue_from_sprint',
+    {
+      title: 'Remove an issue from a sprint',
+      description: 'Remove an issue from its current sprint.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+      }),
     },
-  },
-
-  {
-    name: 'remove_issue_from_sprint',
-    description: 'Remove an issue from its current sprint.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Issue key, e.g. PROJ-123',
-        },
-      },
-      required: ['issueKey'],
-    },
-    handler: async (context, params) => {
-      const { issueKey } = params;
-
-      if (!issueKey) {
-        return toolError('issueKey is required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey } = args;
+
+        if (!issueKey) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey is required' }],
+            isError: true,
+          };
+        }
+
         await jiraFetch(`${context.siteUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
           method: 'PUT',
           body: JSON.stringify({
@@ -148,40 +135,40 @@ export const sprintTools: SprintToolHandler[] = [
           }),
         });
 
-        return ok(`Removed ${issueKey} from sprint`);
+        return { content: [{ type: 'text' as const, text: `Removed ${issueKey} from sprint` }] };
       } catch (error) {
-        return toolError(
-          `Failed to remove issue: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // complete_sprint
+  server.registerTool(
+    'complete_sprint',
+    {
+      title: 'Complete a Scrum sprint',
+      description: 'Complete (close) a sprint.',
+      inputSchema: z.object({
+        boardId: z.string().describe('Board ID'),
+        sprintId: z.string().describe('Sprint ID to complete'),
+      }),
     },
-  },
-
-  {
-    name: 'complete_sprint',
-    description: 'Complete (close) a sprint.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        boardId: {
-          type: 'string',
-          description: 'Board ID',
-        },
-        sprintId: {
-          type: 'string',
-          description: 'Sprint ID to complete',
-        },
-      },
-      required: ['boardId', 'sprintId'],
-    },
-    handler: async (context, params) => {
-      const { sprintId } = params;
-
-      if (!sprintId) {
-        return toolError('sprintId is required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { sprintId } = args;
+
+        if (!sprintId) {
+          return {
+            content: [{ type: 'text' as const, text: 'sprintId is required' }],
+            isError: true,
+          };
+        }
+
         await jiraFetch(
           `${context.siteUrl}/rest/agile/1.0/sprint/${sprintId}`,
           context.accessToken,
@@ -191,12 +178,15 @@ export const sprintTools: SprintToolHandler[] = [
           }
         );
 
-        return ok(`Completed sprint ${sprintId}`);
+        return { content: [{ type: 'text' as const, text: `Completed sprint ${sprintId}` }] };
       } catch (error) {
-        return toolError(
-          `Failed to complete sprint: ${error instanceof Error ? error.message : String(error)}`
-        );
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
-    },
-  },
-];
+    }
+  );
+}

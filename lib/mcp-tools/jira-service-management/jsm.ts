@@ -4,36 +4,30 @@
  * Handle customer requests, service desks, and support operations.
  */
 
-import type { MCPToolContext, MCPToolResult } from '../common';
-import { ok, toolError, jiraFetch } from '../common';
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { MCPToolContext } from '../common';
+import { jiraFetch } from '../common';
 
-export interface JSMToolHandler {
-  name: string;
-  description: string;
-  inputSchema?: Record<string, any>;
-  handler: (context: MCPToolContext, params: any) => Promise<MCPToolResult>;
-}
-
-export const jsmTools: JSMToolHandler[] = [
-  {
-    name: 'list_service_desks',
-    description: 'List all Jira Service Management service desks.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        maxResults: {
-          type: 'number',
-          description: 'Maximum results (1-100, default 25)',
-        },
-      },
+export async function registerJsmTools(server: McpServer, context: MCPToolContext): Promise<void> {
+  // list_service_desks
+  server.registerTool(
+    'list_service_desks',
+    {
+      title: 'List Jira Service Management service desks',
+      description: 'List all Jira Service Management service desks.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        maxResults: z.number().describe('Maximum results (1-100, default 25)').optional(),
+      }),
     },
-    handler: async (context, params) => {
-      const maxResults = Math.min(params.maxResults || 25, 100);
-
+    async (args: Record<string, any>) => {
       try {
+        const maxResults = Math.min(args.maxResults || 25, 100);
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/servicedesk?limit=${maxResults}`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = (await response.json()) as any;
@@ -48,37 +42,43 @@ export const jsmTools: JSMToolHandler[] = [
           ...desks.map((d: any) => `• ${d.name} (${d.key})`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(`Failed to list service desks: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // list_request_types
+  server.registerTool(
+    'list_request_types',
+    {
+      title: 'List all request types for a service desk',
+      description: 'List request types available on a service desk.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        serviceDeskId: z.string().describe('Service desk ID'),
+      }),
     },
-  },
-
-  {
-    name: 'list_request_types',
-    description: 'List request types available on a service desk.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        serviceDeskId: {
-          type: 'string',
-          description: 'Service desk ID',
-        },
-      },
-      required: ['serviceDeskId'],
-    },
-    handler: async (context, params) => {
-      const { serviceDeskId } = params;
-
-      if (!serviceDeskId) {
-        return toolError('serviceDeskId is required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { serviceDeskId } = args;
+
+        if (!serviceDeskId) {
+          return {
+            content: [{ type: 'text' as const, text: 'serviceDeskId is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = (await response.json()) as any;
@@ -92,41 +92,42 @@ export const jsmTools: JSMToolHandler[] = [
           ...types.map((t: any) => `• ${t.name} (ID: ${t.id})`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(`Failed to list request types: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // list_requests
+  server.registerTool(
+    'list_requests',
+    {
+      title: 'List Jira Service Management customer requests',
+      description: 'List customer requests in a service desk.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        serviceDeskId: z.string().describe('Service desk ID (optional)').optional(),
+        maxResults: z.number().describe('Maximum results (1-100, default 25)').optional(),
+      }),
     },
-  },
-
-  {
-    name: 'list_requests',
-    description: 'List customer requests in a service desk.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        serviceDeskId: {
-          type: 'string',
-          description: 'Service desk ID (optional)',
-        },
-        maxResults: {
-          type: 'number',
-          description: 'Maximum results (1-100, default 25)',
-        },
-      },
-    },
-    handler: async (context, params) => {
-      const maxResults = Math.min(params.maxResults || 25, 100);
-      const query = new URLSearchParams({ limit: String(maxResults) });
-
-      if (params.serviceDeskId) {
-        query.append('serviceDeskId', params.serviceDeskId);
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const maxResults = Math.min(args.maxResults || 25, 100);
+        const query = new URLSearchParams({ limit: String(maxResults) });
+
+        if (args.serviceDeskId) {
+          query.append('serviceDeskId', args.serviceDeskId);
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/request?${query}`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = (await response.json()) as any;
@@ -141,37 +142,43 @@ export const jsmTools: JSMToolHandler[] = [
           ...requests.map((r: any) => `• ${r.key}: ${r.summary} [${r.status}]`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(`Failed to list requests: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // get_request
+  server.registerTool(
+    'get_request',
+    {
+      title: 'Read a customer request',
+      description: 'Get details for a customer request.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        issueKey: z.string().describe('Request key, e.g. SUP-1'),
+      }),
     },
-  },
-
-  {
-    name: 'get_request',
-    description: 'Get details for a customer request.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Request key, e.g. SUP-1',
-        },
-      },
-      required: ['issueKey'],
-    },
-    handler: async (context, params) => {
-      const { issueKey } = params;
-
-      if (!issueKey) {
-        return toolError('issueKey is required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey } = args;
+
+        if (!issueKey) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}?expand=requestType,serviceDesk`,
-          context.accessToken,
+          context.accessToken
         );
 
         const request = (await response.json()) as any;
@@ -188,46 +195,47 @@ export const jsmTools: JSMToolHandler[] = [
           lines.push(`\nDescription:\n${request.description}`);
         }
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(`Failed to get request: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // create_request
+  server.registerTool(
+    'create_request',
+    {
+      title: 'Create a customer or internal request',
+      description: 'Create a customer request in a service desk.',
+      inputSchema: z.object({
+        serviceDeskId: z.string().describe('Service desk ID'),
+        requestTypeId: z.string().describe('Request type ID'),
+        summary: z.string().describe('Request summary/title'),
+        description: z.string().describe('Request description (optional)').optional(),
+      }),
     },
-  },
-
-  {
-    name: 'create_request',
-    description: 'Create a customer request in a service desk.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        serviceDeskId: {
-          type: 'string',
-          description: 'Service desk ID',
-        },
-        requestTypeId: {
-          type: 'string',
-          description: 'Request type ID',
-        },
-        summary: {
-          type: 'string',
-          description: 'Request summary/title',
-        },
-        description: {
-          type: 'string',
-          description: 'Request description (optional)',
-        },
-      },
-      required: ['serviceDeskId', 'requestTypeId', 'summary'],
-    },
-    handler: async (context, params) => {
-      const { serviceDeskId, requestTypeId, summary, description } = params;
-
-      if (!serviceDeskId || !requestTypeId || !summary) {
-        return toolError('serviceDeskId, requestTypeId, and summary are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { serviceDeskId, requestTypeId, summary, description } = args;
+
+        if (!serviceDeskId || !requestTypeId || !summary) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: 'serviceDeskId, requestTypeId, and summary are required',
+              },
+            ],
+            isError: true,
+          };
+        }
+
         const body: any = {
           serviceDeskId,
           requestTypeId,
@@ -244,46 +252,48 @@ export const jsmTools: JSMToolHandler[] = [
           {
             method: 'POST',
             body: JSON.stringify(body),
-          },
+          }
         );
 
         const result = (await response.json()) as any;
-        return ok(`Created request ${result.issueKey}`);
+        return { content: [{ type: 'text' as const, text: `Created request ${result.issueKey}` }] };
       } catch (error) {
-        return toolError(`Failed to create request: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // add_request_comment
+  server.registerTool(
+    'add_request_comment',
+    {
+      title: 'Comment on a customer request',
+      description: 'Add a comment to a customer request.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Request key, e.g. SUP-1'),
+        comment: z.string().describe('Comment text'),
+        isInternal: z
+          .boolean()
+          .describe('Is this internal only (not visible to customer)?')
+          .optional(),
+      }),
     },
-  },
-
-  {
-    name: 'add_request_comment',
-    description: 'Add a comment to a customer request.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Request key, e.g. SUP-1',
-        },
-        comment: {
-          type: 'string',
-          description: 'Comment text',
-        },
-        isInternal: {
-          type: 'boolean',
-          description: 'Is this internal only (not visible to customer)?',
-        },
-      },
-      required: ['issueKey', 'comment'],
-    },
-    handler: async (context, params) => {
-      const { issueKey, comment, isInternal = false } = params;
-
-      if (!issueKey || !comment) {
-        return toolError('issueKey and comment are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey, comment, isInternal = false } = args;
+
+        if (!issueKey || !comment) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey and comment are required' }],
+            isError: true,
+          };
+        }
+
         await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/comment`,
           context.accessToken,
@@ -293,40 +303,53 @@ export const jsmTools: JSMToolHandler[] = [
               body: comment,
               internal: isInternal,
             }),
-          },
+          }
         );
 
-        return ok(`Comment added to ${issueKey}${isInternal ? ' (internal)' : ''}`);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Comment added to ${issueKey}${isInternal ? ' (internal)' : ''}`,
+            },
+          ],
+        };
       } catch (error) {
-        return toolError(`Failed to add comment: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // list_request_transitions
+  server.registerTool(
+    'list_request_transitions',
+    {
+      title: 'List customer transitions on a request',
+      description: 'List available transitions for a customer request.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        issueKey: z.string().describe('Request key, e.g. SUP-1'),
+      }),
     },
-  },
-
-  {
-    name: 'list_request_transitions',
-    description: 'List available transitions for a customer request.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Request key, e.g. SUP-1',
-        },
-      },
-      required: ['issueKey'],
-    },
-    handler: async (context, params) => {
-      const { issueKey } = params;
-
-      if (!issueKey) {
-        return toolError('issueKey is required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey } = args;
+
+        if (!issueKey) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/transition`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = (await response.json()) as any;
@@ -337,53 +360,61 @@ export const jsmTools: JSMToolHandler[] = [
           ...transitions.map((t: string) => `• ${t}`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(`Failed to list transitions: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // transition_request
+  server.registerTool(
+    'transition_request',
+    {
+      title: 'Transition a customer request',
+      description: 'Transition a customer request to a new status.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Request key, e.g. SUP-1'),
+        transitionName: z.string().describe('Transition name'),
+      }),
     },
-  },
-
-  {
-    name: 'transition_request',
-    description: 'Transition a customer request to a new status.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        issueKey: {
-          type: 'string',
-          description: 'Request key, e.g. SUP-1',
-        },
-        transitionName: {
-          type: 'string',
-          description: 'Transition name',
-        },
-      },
-      required: ['issueKey', 'transitionName'],
-    },
-    handler: async (context, params) => {
-      const { issueKey, transitionName } = params;
-
-      if (!issueKey || !transitionName) {
-        return toolError('issueKey and transitionName are required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { issueKey, transitionName } = args;
+
+        if (!issueKey || !transitionName) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey and transitionName are required' }],
+            isError: true,
+          };
+        }
+
         // Get available transitions
         const transResponse = await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/transition`,
-          context.accessToken,
+          context.accessToken
         );
         const transData = (await transResponse.json()) as any;
 
         const transition = transData.transitions?.find(
-          (t: any) => t.name.toLowerCase() === transitionName.toLowerCase(),
+          (t: any) => t.name.toLowerCase() === transitionName.toLowerCase()
         );
 
         if (!transition) {
-          return toolError(
-            `Transition "${transitionName}" not found. Available: ${transData.transitions?.map((t: any) => t.name).join(', ') || 'none'}`,
-          );
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Transition "${transitionName}" not found. Available: ${transData.transitions?.map((t: any) => t.name).join(', ') || 'none'}`,
+              },
+            ],
+            isError: true,
+          };
         }
 
         // Execute transition
@@ -395,44 +426,51 @@ export const jsmTools: JSMToolHandler[] = [
             body: JSON.stringify({
               transition: { id: transition.id },
             }),
-          },
+          }
         );
 
-        return ok(`Transitioned ${issueKey} to "${transitionName}"`);
+        return {
+          content: [
+            { type: 'text' as const, text: `Transitioned ${issueKey} to "${transitionName}"` },
+          ],
+        };
       } catch (error) {
-        return toolError(`Failed to transition request: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
+    }
+  );
+
+  // list_customers
+  server.registerTool(
+    'list_customers',
+    {
+      title: 'List customers in a service desk',
+      description: 'List customers in a service desk.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        serviceDeskId: z.string().describe('Service desk ID'),
+        maxResults: z.number().describe('Maximum results (1-50, default 10)').optional(),
+      }),
     },
-  },
-
-  {
-    name: 'list_customers',
-    description: 'List customers in a service desk.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        serviceDeskId: {
-          type: 'string',
-          description: 'Service desk ID',
-        },
-        maxResults: {
-          type: 'number',
-          description: 'Maximum results (1-50, default 10)',
-        },
-      },
-      required: ['serviceDeskId'],
-    },
-    handler: async (context, params) => {
-      const { serviceDeskId, maxResults = 10 } = params;
-
-      if (!serviceDeskId) {
-        return toolError('serviceDeskId is required');
-      }
-
+    async (args: Record<string, any>) => {
       try {
+        const { serviceDeskId, maxResults = 10 } = args;
+
+        if (!serviceDeskId) {
+          return {
+            content: [{ type: 'text' as const, text: 'serviceDeskId is required' }],
+            isError: true,
+          };
+        }
+
         const response = await jiraFetch(
           `${context.siteUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer?limit=${Math.min(maxResults, 50)}`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = (await response.json()) as any;
@@ -447,10 +485,15 @@ export const jsmTools: JSMToolHandler[] = [
           ...customers.map((c: any) => `• ${c.name} (${c.email})`),
         ];
 
-        return ok(lines.join('\n'));
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        return toolError(`Failed to list customers: ${error instanceof Error ? error.message : String(error)}`);
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
       }
-    },
-  },
-];
+    }
+  );
+}
