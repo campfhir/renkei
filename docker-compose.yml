@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:15-alpine
+    # Matches docker-compose.yaml (the deploy stack). Postgres majors are not
+    # binary compatible, so a dev/prod split here means testing migrations on a
+    # different engine than they run on.
+    image: postgres:16-alpine
     container_name: renkei-postgres
     environment:
       POSTGRES_USER: renkei
