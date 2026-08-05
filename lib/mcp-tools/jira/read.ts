@@ -33,13 +33,10 @@ export interface ReadToolHandler {
 export const readTools: ReadToolHandler[] = [
   {
     name: 'whoami',
-    description: 'Returns the Atlassian account this connection acts as and the site it is pinned to.',
+    description:
+      'Returns the Atlassian account this connection acts as and the site it is pinned to.',
     handler: async (context) => {
-      // eslint-disable-next-line result/no-throw -- MCP handler framework catches exceptions
-      const response = await jiraFetch(
-        `${context.siteUrl}/rest/api/3/myself`,
-        context.accessToken,
-      );
+      const response = await jiraFetch(`${context.siteUrl}/rest/api/3/myself`, context.accessToken);
       const me = await response.json();
       if (!isRecord(me)) {
         return toolError('Invalid response from API');
@@ -79,7 +76,10 @@ export const readTools: ReadToolHandler[] = [
       }
       const p = params;
       const { jql } = p;
-      const maxResults = Math.min((isNumber(p.maxResults) ? p.maxResults : 50) || 50, context.maxJqlResults);
+      const maxResults = Math.min(
+        (isNumber(p.maxResults) ? p.maxResults : 50) || 50,
+        context.maxJqlResults
+      );
 
       if (!jql) {
         return toolError('JQL query is required');
@@ -105,7 +105,7 @@ export const readTools: ReadToolHandler[] = [
                 'issuetype',
               ],
             }),
-          },
+          }
         );
 
         const data = await response.json();
@@ -115,35 +115,40 @@ export const readTools: ReadToolHandler[] = [
         if (!isArray(data.issues)) {
           return toolError('Expected issues array in response');
         }
-        const issues = data.issues.map((issue: unknown) => {
-          if (!isRecord(issue)) {
-            return null;
-          }
-          if (!isRecord(issue.fields)) {
-            return null;
-          }
-          const fields = issue.fields;
-          return {
-            key: issue.key,
-            summary: fields.summary,
-            status: (isRecord(fields.status) ? fields.status.name : null) || 'Unknown',
-            priority: (isRecord(fields.priority) ? fields.priority.name : null) || 'No Priority',
-            assignee: (isRecord(fields.assignee) ? fields.assignee.displayName : null) || 'Unassigned',
-            updated: fields.updated,
-          };
-        }).filter((issue): issue is NonNullable<typeof issue> => issue !== null);
+        const issues = data.issues
+          .map((issue: unknown) => {
+            if (!isRecord(issue)) {
+              return null;
+            }
+            if (!isRecord(issue.fields)) {
+              return null;
+            }
+            const fields = issue.fields;
+            return {
+              key: issue.key,
+              summary: fields.summary,
+              status: (isRecord(fields.status) ? fields.status.name : null) || 'Unknown',
+              priority: (isRecord(fields.priority) ? fields.priority.name : null) || 'No Priority',
+              assignee:
+                (isRecord(fields.assignee) ? fields.assignee.displayName : null) || 'Unassigned',
+              updated: fields.updated,
+            };
+          })
+          .filter((issue): issue is NonNullable<typeof issue> => issue !== null);
 
         const lines = [
           `Found ${data.total} issues (showing ${issues.length}):`,
           ...issues.map(
             (i: Record<string, unknown>) =>
-              `• ${i.key}: ${i.summary} [${i.status}] (${i.priority}) assigned to ${i.assignee}`,
+              `• ${i.key}: ${i.summary} [${i.status}] (${i.priority}) assigned to ${i.assignee}`
           ),
         ];
 
         return ok(lines.join('\n'));
       } catch (error) {
-        return toolError(`Search failed: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Search failed: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },
@@ -175,7 +180,7 @@ export const readTools: ReadToolHandler[] = [
       try {
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/issue/${issueKey}`,
-          context.accessToken,
+          context.accessToken
         );
 
         const issue = await response.json();
@@ -203,7 +208,9 @@ export const readTools: ReadToolHandler[] = [
         const resolvedIssueKey = isString(issue.key) ? issue.key : String(issue.key);
         return okWithLink(lines.join('\n'), issueUrl(context.siteUrl, resolvedIssueKey));
       } catch (error) {
-        return toolError(`Failed to get issue: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Failed to get issue: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },
@@ -230,7 +237,7 @@ export const readTools: ReadToolHandler[] = [
       try {
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/boards?maxResults=${maxResults}`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = await response.json();
@@ -240,16 +247,18 @@ export const readTools: ReadToolHandler[] = [
         if (!isArray(data.values)) {
           return toolError('Expected values array in response');
         }
-        const boards = data.values.map((board: unknown) => {
-          if (!isRecord(board)) {
-            return null;
-          }
-          return {
-            id: board.id,
-            name: board.name,
-            type: board.type,
-          };
-        }).filter((board): board is NonNullable<typeof board> => board !== null);
+        const boards = data.values
+          .map((board: unknown) => {
+            if (!isRecord(board)) {
+              return null;
+            }
+            return {
+              id: board.id,
+              name: board.name,
+              type: board.type,
+            };
+          })
+          .filter((board): board is NonNullable<typeof board> => board !== null);
 
         const lines = [
           `Found ${data.total || 0} boards (showing ${boards.length}):`,
@@ -258,7 +267,9 @@ export const readTools: ReadToolHandler[] = [
 
         return ok(lines.join('\n'));
       } catch (error) {
-        return toolError(`Failed to list boards: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Failed to list boards: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },
@@ -290,7 +301,7 @@ export const readTools: ReadToolHandler[] = [
       try {
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/board/${boardId}/sprints`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = await response.json();
@@ -301,17 +312,21 @@ export const readTools: ReadToolHandler[] = [
 
         const lines = [
           `Board ${boardId} has ${sprints.length} sprints:`,
-          ...sprints.map((s: unknown) => {
-            if (!isRecord(s)) {
-              return null;
-            }
-            return `• ${s.name} (${s.state})`;
-          }).filter((line): line is string => line !== null),
+          ...sprints
+            .map((s: unknown) => {
+              if (!isRecord(s)) {
+                return null;
+              }
+              return `• ${s.name} (${s.state})`;
+            })
+            .filter((line): line is string => line !== null),
         ];
 
         return ok(lines.join('\n'));
       } catch (error) {
-        return toolError(`Failed to list sprints: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Failed to list sprints: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },

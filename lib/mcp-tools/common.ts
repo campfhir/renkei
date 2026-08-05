@@ -85,7 +85,7 @@ export function requestUrl(siteUrl: string, requestKey: string): string {
 export async function jiraFetch(
   url: string,
   accessToken: string,
-  options?: RequestInit,
+  options?: RequestInit
 ): Promise<Response> {
   const headers = {
     Authorization: `Bearer ${accessToken}`,
@@ -101,7 +101,6 @@ export async function jiraFetch(
 
   if (!response.ok) {
     const error = await response.text();
-    // eslint-disable-next-line result/no-throw -- Low-level utility; callers must wrap with try-catch
     throw new Error(`Jira API error (${response.status}): ${error}`);
   }
 
@@ -112,7 +111,7 @@ export class JiraApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public isAuthError: boolean = status === 401,
+    public isAuthError: boolean = status === 401
   ) {
     super(message);
     this.name = 'JiraApiError';

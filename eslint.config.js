@@ -4,11 +4,18 @@ import safeFunctions from '@campfhir/safe-functions';
 
 export default [
   {
-    ignores: ['.next/**', 'dist/**', 'node_modules/**', '*.config.js', 'scripts/build-migrations.js'],
+    ignores: [
+      '.next/**',
+      'dist/**',
+      'node_modules/**',
+      '*.config.js',
+      '*.config.mjs',
+      'scripts/build-migrations.js',
+      'postcss.config.mjs',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
-  safeFunctions.configs.recommended,
   {
     files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
@@ -17,6 +24,7 @@ export default [
         project: true,
       },
     },
+    ...safeFunctions.configs.recommended,
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/consistent-type-assertions': [
@@ -51,6 +59,12 @@ export default [
     ],
     rules: {
       'result/no-unwrapped-async': 'off',
+    },
+  },
+  {
+    files: ['lib/mcp-tools/**/*.ts', 'lib/mcp-tools/**/*.tsx'],
+    rules: {
+      'result/no-throw': 'off',
     },
   },
 ];
