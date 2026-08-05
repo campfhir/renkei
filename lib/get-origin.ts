@@ -1,5 +1,7 @@
 import { NextRequest } from 'next/server';
 import { getConfig } from './env';
+import { ok, err } from '@campfhir/safe-functions/helpers';
+import type { Result } from '@campfhir/safe-functions/types';
 
 /**
  * Get the origin/base URL for the application, respecting reverse proxies securely.
@@ -14,20 +16,20 @@ import { getConfig } from './env';
  * - Both X-Forwarded-Proto and X-Forwarded-Host are present
  * - App is NOT in development mode with direct access
  */
-export function getOrigin(request?: NextRequest): string {
+export function getOrigin(request?: NextRequest): Result<string, 'CONFIG_ERROR'> {
   const configResult = getConfig();
-  if (!configResult.ok) throw new Error("Config error");
+  if (!configResult.ok) return err('CONFIG_ERROR' as const);
   const config = configResult.val;
 
   if (!request) {
     // Fallback to env var when no request available
-    return config.PUBLIC_BASE_URL || 'http://localhost:3000';
+    return ok(config.PUBLIC_BASE_URL || 'http://localhost:3000');
   }
 
   // Priority 1: PUBLIC_BASE_URL is the single source of truth (if configured)
   // This should always be set in production
   if (config.PUBLIC_BASE_URL) {
-    return config.PUBLIC_BASE_URL;
+    return ok(config.PUBLIC_BASE_URL);
   }
 
   // Priority 2: Check X-Forwarded headers ONLY from trusted proxies
@@ -37,7 +39,7 @@ export function getOrigin(request?: NextRequest): string {
   if (forwardedProto && forwardedHost && isTrustedProxy(request)) {
     const origin = `${forwardedProto}://${forwardedHost}`;
     console.log(`[getOrigin] Using X-Forwarded headers from trusted proxy: ${origin}`);
-    return origin;
+    return ok(origin);
   }
 
   // Priority 3: Extract from request URL (development fallback)
@@ -52,7 +54,7 @@ export function getOrigin(request?: NextRequest): string {
     );
   }
 
-  return origin;
+  return ok(origin);
 }
 
 /**

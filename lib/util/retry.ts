@@ -5,6 +5,9 @@
  * Gives up on auth errors (401) and client errors (4xx except 429).
  */
 
+import { ok, err } from '@campfhir/safe-functions/helpers';
+import type { Result } from '@campfhir/safe-functions/types';
+
 export interface RetryOptions {
   maxAttempts?: number;
   initialDelayMs?: number;
@@ -32,7 +35,7 @@ export class RetryExhaustedError extends Error {
   }
 }
 
-export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<T> {
+export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions = {}): Promise<Result<T, 'RETRY_ERROR'>> {
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const initialDelayMs = options.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS;
   const maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
@@ -44,12 +47,16 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await fn();
+      const result = await fn();
+      return ok(result);
     } catch (error) {
       lastError = error;
 
       if (!isRetryable(error) || attempt === maxAttempts) {
-        throw error;
+        return err('RETRY_ERROR' as const, {
+          message: error instanceof Error ? error.message : String(error),
+          cause: error,
+        });
       }
 
       await sleep(delayMs);
@@ -57,7 +64,10 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
     }
   }
 
-  throw new RetryExhaustedError(lastError, maxAttempts);
+  return err('RETRY_ERROR' as const, {
+    message: `Retry exhausted after ${maxAttempts} attempts: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+    cause: lastError,
+  });
 }
 
 function defaultIsRetryable(error: unknown): boolean {

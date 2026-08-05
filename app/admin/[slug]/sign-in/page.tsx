@@ -17,12 +17,22 @@ export default async function SignInPage({ params }: { params: Promise<{ slug: s
   const { slug } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    throw new Error("Database error");
+    return (
+      <div style={{ padding: '2rem', maxWidth: '500px' }}>
+        <h2>Error</h2>
+        <p>Unable to connect to the database. Please try again later.</p>
+      </div>
+    );
   }
   const db = dbResult.val;
   const configResult = getConfig();
   if (!configResult.ok) {
-    throw new Error("Config error");
+    return (
+      <div style={{ padding: '2rem', maxWidth: '500px' }}>
+        <h2>Error</h2>
+        <p>Configuration error. Please contact your administrator.</p>
+      </div>
+    );
   }
   const config = configResult.val;
 

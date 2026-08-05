@@ -17,7 +17,12 @@ export default async function PeoplePage({ params }: { params: Promise<{ slug: s
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    throw new Error("Database error");
+    return (
+      <div>
+        <h2>Error</h2>
+        <p>Unable to connect to the database. Please try again later.</p>
+      </div>
+    );
   }
   const db = dbResult.val;
 

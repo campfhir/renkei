@@ -44,14 +44,22 @@ export async function POST(request: NextRequest) {
 
     if (!tenant) {
       // Domain not found - redirect to create organization flow
-      const origin = getOrigin(request);
+      const originResult = getOrigin(request);
+      if (!originResult.ok) {
+        return NextResponse.json({ error: 'Config error' }, { status: 500 });
+      }
+      const origin = originResult.val;
       return NextResponse.redirect(
         new URL(`/create-organization?domain=${encodeURIComponent(domain)}`, origin)
       );
     }
 
     // Tenant exists - redirect to MCP endpoint
-    const origin = getOrigin(request);
+    const originResult = getOrigin(request);
+    if (!originResult.ok) {
+      return NextResponse.json({ error: 'Config error' }, { status: 500 });
+    }
+    const origin = originResult.val;
     return NextResponse.redirect(new URL(`/mcp/${tenant.id}`, origin));
   } catch (error) {
     console.error('Home-realm discovery error:', error);

@@ -1,6 +1,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { ok, err } from '@campfhir/safe-functions/helpers';
+import type { Result } from '@campfhir/safe-functions/types';
 
 /**
  * Two deployment shapes read from the same environment:
@@ -340,45 +342,57 @@ function toBaseConfig(parsed: BaseEnv): BaseConfig {
 }
 
 /** Config for the stdio MCP entrypoint and the `auth` CLI. No HTTP, no database. */
-export function loadBaseConfig(env: NodeJS.ProcessEnv = process.env): BaseConfig {
-  const parsed = baseEnvSchema.parse(env);
+export function loadBaseConfig(env: NodeJS.ProcessEnv = process.env): Result<BaseConfig, 'CONFIG_ERROR'> {
+  const parsed = baseEnvSchema.safeParse(env);
+
+  if (!parsed.success) {
+    return err('CONFIG_ERROR' as const, {
+      message: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+    });
+  }
 
   // Optional in the shared schema because the gateway never reads it, but
   // stdio pins the stored grant's site against it — see toBaseConfig.
-  if (parsed.ATLASSIAN_CLOUD_ID === undefined) {
-    throw new Error(
-      'Required for the stdio entrypoint: ATLASSIAN_CLOUD_ID. Find it at ' +
-      'https://<site>.atlassian.net/_edge/tenant_info'
-    );
+  if (parsed.data.ATLASSIAN_CLOUD_ID === undefined) {
+    return err('CONFIG_ERROR' as const, {
+      message: 'Required for the stdio entrypoint: ATLASSIAN_CLOUD_ID. Find it at https://<site>.atlassian.net/_edge/tenant_info',
+    });
   }
 
-  return toBaseConfig(parsed);
+  return ok(toBaseConfig(parsed.data));
 }
 
 /** Config for the HTTP gateway. */
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = serverEnvSchema.parse(env);
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): Result<Config, 'CONFIG_ERROR'> {
+  const parsed = serverEnvSchema.safeParse(env);
 
-  return {
-    ...toBaseConfig(parsed),
-    port: parsed.PORT,
-    host: parsed.HOST,
-    publicBaseUrl: parsed.PUBLIC_BASE_URL,
-    databaseUrl: parsed.DATABASE_URL,
-    migrationDatabaseUrl: parsed.MIGRATION_DATABASE_URL ?? parsed.DATABASE_URL,
+  if (!parsed.success) {
+    return err('CONFIG_ERROR' as const, {
+      message: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+    });
+  }
+
+  const data = parsed.data;
+  return ok({
+    ...toBaseConfig(data),
+    port: data.PORT,
+    host: data.HOST,
+    publicBaseUrl: data.PUBLIC_BASE_URL,
+    databaseUrl: data.DATABASE_URL,
+    migrationDatabaseUrl: data.MIGRATION_DATABASE_URL ?? data.DATABASE_URL,
     sharesMigrationIdentity:
-      parsed.MIGRATION_DATABASE_URL === undefined ||
-      parsed.MIGRATION_DATABASE_URL === parsed.DATABASE_URL,
-    sessionInactivityTimeoutMinutes: parsed.SESSION_INACTIVITY_TIMEOUT_MINUTES,
-    accessTokenTtlMinutes: parsed.ACCESS_TOKEN_TTL_MINUTES,
-    refreshTokenTtlDays: parsed.REFRESH_TOKEN_TTL_DAYS,
-    authorizationCodeTtlSeconds: parsed.AUTHORIZATION_CODE_TTL_SECONDS,
-    enableDcr: parsed.ENABLE_DCR,
+      data.MIGRATION_DATABASE_URL === undefined ||
+      data.MIGRATION_DATABASE_URL === data.DATABASE_URL,
+    sessionInactivityTimeoutMinutes: data.SESSION_INACTIVITY_TIMEOUT_MINUTES,
+    accessTokenTtlMinutes: data.ACCESS_TOKEN_TTL_MINUTES,
+    refreshTokenTtlDays: data.REFRESH_TOKEN_TTL_DAYS,
+    authorizationCodeTtlSeconds: data.AUTHORIZATION_CODE_TTL_SECONDS,
+    enableDcr: data.ENABLE_DCR,
     platformOidc:
-      parsed.PLATFORM_OIDC_ISSUER === undefined ||
-      parsed.PLATFORM_OIDC_CLIENT_ID === undefined ||
-      parsed.PLATFORM_OIDC_CLIENT_SECRET === undefined ||
-      parsed.PLATFORM_OIDC_REQUIRED_ROLE === undefined
+      data.PLATFORM_OIDC_ISSUER === undefined ||
+      data.PLATFORM_OIDC_CLIENT_ID === undefined ||
+      data.PLATFORM_OIDC_CLIENT_SECRET === undefined ||
+      data.PLATFORM_OIDC_REQUIRED_ROLE === undefined
         ? null
         : {
             // Verbatim, whitespace aside. OIDC Discovery §4.3 compares this for
@@ -386,20 +400,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
             // and Auth0 and Entra both describe themselves with a trailing slash —
             // so normalizing one away is the single edit that guarantees no
             // sign-in can ever succeed.
-            issuer: parsed.PLATFORM_OIDC_ISSUER.trim(),
-            clientId: parsed.PLATFORM_OIDC_CLIENT_ID,
-            clientSecret: parsed.PLATFORM_OIDC_CLIENT_SECRET,
-            roleClaim: parsed.PLATFORM_OIDC_ROLE_CLAIM,
-            requiredRole: parsed.PLATFORM_OIDC_REQUIRED_ROLE,
-            redirectUri: `${parsed.PUBLIC_BASE_URL.replace(/\/+$/, '')}/platform/callback`,
+            issuer: data.PLATFORM_OIDC_ISSUER.trim(),
+            clientId: data.PLATFORM_OIDC_CLIENT_ID,
+            clientSecret: data.PLATFORM_OIDC_CLIENT_SECRET,
+            roleClaim: data.PLATFORM_OIDC_ROLE_CLAIM,
+            requiredRole: data.PLATFORM_OIDC_REQUIRED_ROLE,
+            redirectUri: `${data.PUBLIC_BASE_URL.replace(/\/+$/, '')}/platform/callback`,
           },
     platformDatabaseUrl:
-      parsed.PLATFORM_DATABASE_URL ?? parsed.MIGRATION_DATABASE_URL ?? parsed.DATABASE_URL,
+      data.PLATFORM_DATABASE_URL ?? data.MIGRATION_DATABASE_URL ?? data.DATABASE_URL,
     sharesPlatformIdentity:
-      parsed.PLATFORM_DATABASE_URL === undefined ||
-      parsed.PLATFORM_DATABASE_URL === (parsed.MIGRATION_DATABASE_URL ?? parsed.DATABASE_URL) ||
-      parsed.PLATFORM_DATABASE_URL === parsed.DATABASE_URL,
-  };
+      data.PLATFORM_DATABASE_URL === undefined ||
+      data.PLATFORM_DATABASE_URL === (data.MIGRATION_DATABASE_URL ?? data.DATABASE_URL) ||
+      data.PLATFORM_DATABASE_URL === data.DATABASE_URL,
+  });
 }
 
 /**
@@ -423,15 +437,24 @@ const platformEnvSchema = z.object({
   TOKEN_ENCRYPTION_KEY: encryptionKeySchema,
 });
 
-export function loadPlatformConfig(env: NodeJS.ProcessEnv = process.env): PlatformConfig {
-  const parsed = platformEnvSchema.parse(env);
-  // The privileged identity by preference: creating a tenant writes rows the
-  // request path's role cannot see, which is the policy working.
-  const databaseUrl = parsed.MIGRATION_DATABASE_URL ?? parsed.DATABASE_URL;
+export function loadPlatformConfig(env: NodeJS.ProcessEnv = process.env): Result<PlatformConfig, 'CONFIG_ERROR'> {
+  const parsed = platformEnvSchema.safeParse(env);
 
-  if (databaseUrl === undefined) {
-    throw new Error('set MIGRATION_DATABASE_URL (preferred) or DATABASE_URL');
+  if (!parsed.success) {
+    return err('CONFIG_ERROR' as const, {
+      message: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+    });
   }
 
-  return { databaseUrl, tokenEncryptionKey: parsed.TOKEN_ENCRYPTION_KEY };
+  // The privileged identity by preference: creating a tenant writes rows the
+  // request path's role cannot see, which is the policy working.
+  const databaseUrl = parsed.data.MIGRATION_DATABASE_URL ?? parsed.data.DATABASE_URL;
+
+  if (databaseUrl === undefined) {
+    return err('CONFIG_ERROR' as const, {
+      message: 'set MIGRATION_DATABASE_URL (preferred) or DATABASE_URL',
+    });
+  }
+
+  return ok({ databaseUrl, tokenEncryptionKey: parsed.data.TOKEN_ENCRYPTION_KEY });
 }

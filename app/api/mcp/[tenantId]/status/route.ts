@@ -41,8 +41,16 @@ export const GET = async (
     }
 
     const { account_id, operator_name } = grants[0];
-    const grant = await getJiraGrant(tenantId, account_id);
+    const grantResult = await getJiraGrant(tenantId, account_id);
 
+    if (!grantResult.ok) {
+      return NextResponse.json({
+        connected: false,
+        message: 'Failed to retrieve grant',
+      });
+    }
+
+    const grant = grantResult.val;
     if (!grant) {
       return NextResponse.json({
         connected: false,

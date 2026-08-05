@@ -13,13 +13,15 @@ const envSchema = z.object({
   ATLASSIAN_CLOUD_ID: z.string().optional(),
 
   // Encryption
-  TOKEN_ENCRYPTION_KEY: z.string().transform((key) => {
-    const decoded = Buffer.from(key, 'base64');
-    if (decoded.byteLength !== 32) {
-      throw new Error('TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key');
+  TOKEN_ENCRYPTION_KEY: z.string().refine(
+    (key) => {
+      const decoded = Buffer.from(key, 'base64');
+      return decoded.byteLength === 32;
+    },
+    {
+      message: 'TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key',
     }
-    return decoded;
-  }),
+  ).transform((key) => Buffer.from(key, 'base64')),
 
   // Database
   DATABASE_URL: z.string().url(),

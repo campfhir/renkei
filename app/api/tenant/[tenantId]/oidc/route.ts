@@ -88,7 +88,7 @@ export async function POST(
     }
 
     // Store OIDC configuration
-    await setTenantOidc(tenantId, {
+    const setResult = await setTenantOidc(tenantId, {
       issuer,
       clientId: body.clientId,
       clientSecret: body.clientSecret,
@@ -96,6 +96,14 @@ export async function POST(
       operatorIdpValue: body.operatorIdpValue || null,
       userIdpValue: body.userIdpValue || null,
     });
+
+    if (!setResult.ok) {
+      console.error(`[Tenant ${tenantId}] Failed to save OIDC configuration:`, setResult);
+      return NextResponse.json(
+        { error: 'Failed to save OIDC configuration' },
+        { status: 500 }
+      );
+    }
 
     console.log(`[Tenant ${tenantId}] OIDC configuration updated`);
 

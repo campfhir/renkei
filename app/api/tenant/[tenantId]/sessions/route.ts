@@ -81,7 +81,11 @@ export async function GET(
         return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
       }
 
-      const sessions = await getUserSessions(tenantId, accountId);
+      const sessionsResult = await getUserSessions(tenantId, accountId);
+      if (!sessionsResult.ok) {
+        return NextResponse.json({ error: 'Database error' }, { status: 500 });
+      }
+      const sessions = sessionsResult.val;
 
       return NextResponse.json({
         role: 'renkei-user',
@@ -150,7 +154,10 @@ export async function DELETE(
 
     // renkei-operator: can revoke any session
     if (userRoles.has('renkei-operator')) {
-      await revokeSession(sessionId, tenantId);
+      const revokeResult = await revokeSession(sessionId, tenantId);
+      if (!revokeResult.ok) {
+        return NextResponse.json({ error: 'Database error' }, { status: 500 });
+      }
       console.log(`[Tenant ${tenantId}] Operator revoked session ${sessionId} (user: ${session.accountId})`);
       return NextResponse.json({ success: true, revokedSession: sessionId });
     }
@@ -180,7 +187,10 @@ export async function DELETE(
         return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
       }
 
-      await revokeSession(sessionId, tenantId);
+      const revokeResult = await revokeSession(sessionId, tenantId);
+      if (!revokeResult.ok) {
+        return NextResponse.json({ error: 'Database error' }, { status: 500 });
+      }
       console.log(`[Tenant ${tenantId}] User ${targetAccountId} revoked their session ${sessionId}`);
       return NextResponse.json({ success: true });
     }

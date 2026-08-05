@@ -80,7 +80,14 @@ export async function GET(request: NextRequest) {
     const tenantId = pendingSignIn.tenant_id;
 
     // Get OIDC config
-    const oidc = await getTenantOidc(tenantId);
+    const oidcResult = await getTenantOidc(tenantId);
+    if (!oidcResult.ok) {
+      return NextResponse.json(
+        { error: 'Failed to retrieve OIDC configuration' },
+        { status: 500 }
+      );
+    }
+    const oidc = oidcResult.val;
     if (!oidc) {
       return NextResponse.json(
         { error: 'OIDC not configured' },
@@ -116,7 +123,11 @@ export async function GET(request: NextRequest) {
     }
 
     // Exchange code for token
-    const origin = getOrigin(request);
+    const originResult = getOrigin(request);
+    if (!originResult.ok) {
+      return NextResponse.json({ error: 'Config error' }, { status: 500 });
+    }
+    const origin = originResult.val;
     const tokenResponse = await fetch(tokenEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

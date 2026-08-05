@@ -16,7 +16,12 @@ export default async function GrantsPage({
   const { slug } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    throw new Error("Database error");
+    return (
+      <div style={{ padding: '2rem', maxWidth: '1000px' }}>
+        <h2>Error</h2>
+        <p>Unable to connect to the database. Please try again later.</p>
+      </div>
+    );
   }
   const db = dbResult.val;
 

@@ -1,5 +1,7 @@
 import { getDatabase } from '@/lib/db';
 import { randomUUID } from 'crypto';
+import { ok, err } from '@campfhir/safe-functions/helpers';
+import type { Result } from '@campfhir/safe-functions/types';
 
 interface SessionInfo {
   tenantId: string;
@@ -11,9 +13,9 @@ interface SessionInfo {
 /**
  * Track or update a Jira session for a user
  */
-export async function recordSession(session: SessionInfo): Promise<void> {
+export async function recordSession(session: SessionInfo): Promise<Result<void, 'DB_ERROR'>> {
   const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error("Database error");
+  if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
 
   try {
@@ -34,8 +36,10 @@ export async function recordSession(session: SessionInfo): Promise<void> {
         })
       )
       .execute();
+    return ok();
   } catch (error) {
     console.error('Failed to record session:', error);
+    return err('DB_ERROR' as const);
   }
 }
 
@@ -46,33 +50,41 @@ export async function getUserSessions(
   tenantId: string,
   accountId: string
 ): Promise<
-  Array<{
-    id: string;
-    userAgent: string | null;
-    ipAddress: string | null;
-    lastUsedAt: Date;
-    createdAt: Date;
-  }>
+  Result<
+    Array<{
+      id: string;
+      userAgent: string | null;
+      ipAddress: string | null;
+      lastUsedAt: Date;
+      createdAt: Date;
+    }>,
+    'DB_ERROR'
+  >
 > {
   const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error("Database error");
+  if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
 
-  return db
-    .selectFrom('jira_sessions')
-    .select(['id', 'user_agent as userAgent', 'ip_address as ipAddress', 'last_used_at as lastUsedAt', 'created_at as createdAt'])
-    .where('tenant_id', '=', tenantId)
-    .where('account_id', '=', accountId)
-    .orderBy('last_used_at', 'desc')
-    .execute();
+  try {
+    const result = await db
+      .selectFrom('jira_sessions')
+      .select(['id', 'user_agent as userAgent', 'ip_address as ipAddress', 'last_used_at as lastUsedAt', 'created_at as createdAt'])
+      .where('tenant_id', '=', tenantId)
+      .where('account_id', '=', accountId)
+      .orderBy('last_used_at', 'desc')
+      .execute();
+    return ok(result);
+  } catch (error) {
+    return err('DB_ERROR' as const);
+  }
 }
 
 /**
  * Revoke a session
  */
-export async function revokeSession(sessionId: string, tenantId: string): Promise<boolean> {
+export async function revokeSession(sessionId: string, tenantId: string): Promise<Result<boolean, 'DB_ERROR'>> {
   const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error("Database error");
+  if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
 
   try {
@@ -82,9 +94,9 @@ export async function revokeSession(sessionId: string, tenantId: string): Promis
       .where('tenant_id', '=', tenantId)
       .execute();
 
-    return true;
+    return ok(true);
   } catch (error) {
     console.error('Failed to revoke session:', error);
-    return false;
+    return err('DB_ERROR' as const);
   }
 }

@@ -28,6 +28,8 @@
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { decrypt, DecryptionError, encrypt } from './secretbox.js';
+import { ok, err } from '@campfhir/safe-functions/helpers';
+import type { Result } from '@campfhir/safe-functions/types';
 
 const ALGORITHM = 'aes-256-gcm';
 const VERSION = 'v2';
@@ -54,9 +56,11 @@ function wrapKey(dek: Buffer, kek: Buffer): Buffer {
   return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
 }
 
-function unwrapKey(blob: Buffer, kek: Buffer): Buffer {
+function unwrapKey(blob: Buffer, kek: Buffer): Result<Buffer, 'DECRYPTION_ERROR'> {
   if (blob.byteLength !== IV_BYTES + TAG_BYTES + KEY_BYTES) {
-    throw new DecryptionError('malformed wrapped key');
+    return err('DECRYPTION_ERROR' as const, {
+      message: 'malformed wrapped key',
+    });
   }
 
   const iv = blob.subarray(0, IV_BYTES);
@@ -66,11 +70,14 @@ function unwrapKey(blob: Buffer, kek: Buffer): Buffer {
   try {
     const decipher = createDecipheriv(ALGORITHM, kek, iv);
     decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    return ok(Buffer.concat([decipher.update(ciphertext), decipher.final()]));
   } catch (cause) {
     // The authentication tag is what makes this the *right* failure: a grant
     // written under another tenant's key does not decrypt to garbage, it refuses.
-    throw new DecryptionError('could not unwrap the data key (wrong tenant key?)', { cause });
+    return err('DECRYPTION_ERROR' as const, {
+      message: 'could not unwrap the data key (wrong tenant key?)',
+      cause,
+    });
   }
 }
 
@@ -95,7 +102,7 @@ export function sealToken(plaintext: string, keys: KeySet): string {
   ].join('.');
 }
 
-export function openToken(payload: string, keys: KeySet): string {
+export function openToken(payload: string, keys: KeySet): Result<string, 'DECRYPTION_ERROR'> {
   if (!payload.startsWith(`${VERSION}.`)) {
     // v1, or something malformed that `decrypt` will reject with its own message.
     return decrypt(payload, keys.deployment);
@@ -103,7 +110,9 @@ export function openToken(payload: string, keys: KeySet): string {
 
   const parts = payload.split('.');
   if (parts.length !== 5) {
-    throw new DecryptionError('malformed ciphertext: expected 5 dot-separated parts');
+    return err('DECRYPTION_ERROR' as const, {
+      message: 'malformed ciphertext: expected 5 dot-separated parts',
+    });
   }
 
   const [, wrapped, ivPart, tagPart, ciphertextPart] = parts;
@@ -113,7 +122,9 @@ export function openToken(payload: string, keys: KeySet): string {
     tagPart === undefined ||
     ciphertextPart === undefined
   ) {
-    throw new DecryptionError('malformed ciphertext: missing part');
+    return err('DECRYPTION_ERROR' as const, {
+      message: 'malformed ciphertext: missing part',
+    });
   }
 
   if (keys.tenant === null) {
@@ -124,31 +135,43 @@ export function openToken(payload: string, keys: KeySet): string {
      * removed, or a KMS holding it is unreachable. It needs to be a specific
      * error with a runbook rather than a 500 that looks like a database problem.
      */
-    throw new DecryptionError(
-      'this grant is encrypted under a tenant key that is not available — the tenant key was ' +
-        'removed or its key service is unreachable',
-    );
+    return err('DECRYPTION_ERROR' as const, {
+      message: 'this grant is encrypted under a tenant key that is not available — the tenant key was removed or its key service is unreachable',
+    });
   }
 
-  const dek = unwrapKey(Buffer.from(wrapped, 'base64'), keys.tenant);
+  const dekResult = unwrapKey(Buffer.from(wrapped, 'base64'), keys.tenant);
+  if (!dekResult.ok) {
+    return dekResult;
+  }
+  const dek = dekResult.val;
+
   const iv = Buffer.from(ivPart, 'base64');
   const tag = Buffer.from(tagPart, 'base64');
 
   if (iv.byteLength !== IV_BYTES) {
-    throw new DecryptionError(`malformed ciphertext: iv must be ${IV_BYTES} bytes`);
+    return err('DECRYPTION_ERROR' as const, {
+      message: `malformed ciphertext: iv must be ${IV_BYTES} bytes`,
+    });
   }
   if (tag.byteLength !== TAG_BYTES) {
-    throw new DecryptionError(`malformed ciphertext: auth tag must be ${TAG_BYTES} bytes`);
+    return err('DECRYPTION_ERROR' as const, {
+      message: `malformed ciphertext: auth tag must be ${TAG_BYTES} bytes`,
+    });
   }
 
   try {
     const decipher = createDecipheriv(ALGORITHM, dek, iv);
     decipher.setAuthTag(tag);
-    return Buffer.concat([
+    const decrypted = Buffer.concat([
       decipher.update(Buffer.from(ciphertextPart, 'base64')),
       decipher.final(),
     ]).toString('utf8');
+    return ok(decrypted);
   } catch (cause) {
-    throw new DecryptionError('token decryption failed (wrong key or tampered payload)', { cause });
+    return err('DECRYPTION_ERROR' as const, {
+      message: 'token decryption failed (wrong key or tampered payload)',
+      cause,
+    });
   }
 }

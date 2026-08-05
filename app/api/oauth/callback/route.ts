@@ -201,7 +201,11 @@ export async function GET(request: NextRequest) {
     });
 
     // Redirect back to MCP endpoint page to show updated Jira connection status
-    const origin = getOrigin(request);
+    const originResult = getOrigin(request);
+    if (!originResult.ok) {
+      return NextResponse.json({ error: 'Config error' }, { status: 500 });
+    }
+    const origin = originResult.val;
     const mcpUrl = new URL(`/mcp/${tenant.id}`, origin);
     return NextResponse.redirect(mcpUrl);
   } catch (err) {

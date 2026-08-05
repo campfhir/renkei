@@ -17,6 +17,8 @@ import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 
 import { Kysely, PostgresDialect } from 'kysely';
 import type { Pool } from 'pg';
+import { ok, err } from '@campfhir/safe-functions/helpers';
+import type { Result } from '@campfhir/safe-functions/types';
 
 /** Tenant-agnostic application logger. Logs can be filtered by tenant_id attribute. */
 let instance: Logger | null = null;
@@ -46,13 +48,15 @@ export function initializeLogger(pool: Pool): Logger {
 }
 
 /**
- * Get the initialized logger. Throws if not yet initialized.
+ * Get the initialized logger. Returns an error if not yet initialized.
  */
-export function getLogger(): Logger {
+export function getLogger(): Result<Logger, 'LOGGER_NOT_INITIALIZED'> {
   if (!instance) {
-    throw new Error('Logger not initialized. Call initializeLogger() at startup.');
+    return err('LOGGER_NOT_INITIALIZED' as const, {
+      message: 'Logger not initialized. Call initializeLogger() at startup.',
+    });
   }
-  return instance;
+  return ok(instance);
 }
 
 /**
@@ -82,8 +86,12 @@ export function logJiraError(attrs: {
   statusCode: number;
   statusText?: string;
   message?: string;
-}): void {
-  getLogger().error('Jira API error: {method} {path} returned {statusCode}', {
+}): Result<void, 'LOGGER_NOT_INITIALIZED'> {
+  const loggerResult = getLogger();
+  if (!loggerResult.ok) return loggerResult;
+  const logger = loggerResult.val;
+
+  logger.error('Jira API error: {method} {path} returned {statusCode}', {
     tenantId: attrs.tenantId,
     accountId: attrs.accountId || undefined,
     method: attrs.method,
@@ -91,6 +99,7 @@ export function logJiraError(attrs: {
     statusCode: attrs.statusCode,
     statusText: attrs.statusText,
   });
+  return ok();
 }
 
 /** Log a grant/auth error. */
@@ -98,7 +107,11 @@ export function logAuthError(attrs: {
   tenantId: string;
   accountId?: string;
   reason: 'grant_missing' | 'grant_expired' | 'invalid_token' | 'token_revoked';
-}): void {
+}): Result<void, 'LOGGER_NOT_INITIALIZED'> {
+  const loggerResult = getLogger();
+  if (!loggerResult.ok) return loggerResult;
+  const logger = loggerResult.val;
+
   const messages = {
     grant_missing: 'Atlassian grant is missing',
     grant_expired: 'Atlassian grant has expired',
@@ -106,12 +119,13 @@ export function logAuthError(attrs: {
     token_revoked: 'Token was revoked by operator',
   };
 
-  getLogger().warn('Auth error: {reason}', {
+  logger.warn('Auth error: {reason}', {
     tenantId: attrs.tenantId,
     accountId: attrs.accountId || undefined,
     reason: attrs.reason,
     message: messages[attrs.reason],
   });
+  return ok();
 }
 
 /** Log a rate limit hit. */
@@ -120,13 +134,18 @@ export function logRateLimit(attrs: {
   accountId: string;
   limit: number;
   windowMinutes: number;
-}): void {
-  getLogger().warn('Rate limit exceeded: {accountId} hit {limit} calls', {
+}): Result<void, 'LOGGER_NOT_INITIALIZED'> {
+  const loggerResult = getLogger();
+  if (!loggerResult.ok) return loggerResult;
+  const logger = loggerResult.val;
+
+  logger.warn('Rate limit exceeded: {accountId} hit {limit} calls', {
     tenantId: attrs.tenantId,
     accountId: attrs.accountId,
     limit: attrs.limit,
     windowMinutes: attrs.windowMinutes,
   });
+  return ok();
 }
 
 /** Log an MCP tool error. */
@@ -136,12 +155,17 @@ export function logToolError(attrs: {
   tool: string;
   errorCode?: string;
   message: string;
-}): void {
-  getLogger().error('MCP tool error: {tool} - {message}', {
+}): Result<void, 'LOGGER_NOT_INITIALIZED'> {
+  const loggerResult = getLogger();
+  if (!loggerResult.ok) return loggerResult;
+  const logger = loggerResult.val;
+
+  logger.error('MCP tool error: {tool} - {message}', {
     tenantId: attrs.tenantId,
     accountId: attrs.accountId,
     tool: attrs.tool,
     errorCode: attrs.errorCode || undefined,
     message: attrs.message,
   });
+  return ok();
 }

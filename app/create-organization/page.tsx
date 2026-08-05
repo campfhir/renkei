@@ -35,13 +35,27 @@ function CreateOrganizationContent() {
     try {
       const response = await fetch(formData.discoveryEndpoint);
       if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
+        setDiscoveryValidated(false);
+        setDiscoveryInfo(null);
+        setMessage({
+          type: 'error',
+          text: `Server returned ${response.status}`,
+        });
+        setIsLoading(false);
+        return;
       }
 
       const discovery = await response.json();
 
       if (!discovery.issuer) {
-        throw new Error('Discovery endpoint missing issuer field');
+        setDiscoveryValidated(false);
+        setDiscoveryInfo(null);
+        setMessage({
+          type: 'error',
+          text: 'Discovery endpoint missing issuer field',
+        });
+        setIsLoading(false);
+        return;
       }
 
       setDiscoveryInfo({
@@ -87,7 +101,12 @@ function CreateOrganizationContent() {
 
         if (!createResponse.ok) {
           const error = await createResponse.json();
-          throw new Error(error.error || 'Failed to create tenant');
+          setMessage({
+            type: 'error',
+            text: error.error || 'Failed to create tenant',
+          });
+          setIsLoading(false);
+          return;
         }
 
         const { tenantId: newTenantId } = await createResponse.json();
@@ -95,7 +114,12 @@ function CreateOrganizationContent() {
       }
 
       if (!actualTenantId) {
-        throw new Error('Unable to determine tenant ID');
+        setMessage({
+          type: 'error',
+          text: 'Unable to determine tenant ID',
+        });
+        setIsLoading(false);
+        return;
       }
 
       const response = await fetch(`/api/tenant/${actualTenantId}/oidc`, {
@@ -113,7 +137,12 @@ function CreateOrganizationContent() {
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || 'Failed to configure OIDC');
+        setMessage({
+          type: 'error',
+          text: error.error || 'Failed to configure OIDC',
+        });
+        setIsLoading(false);
+        return;
       }
 
       setMessage({ type: 'success', text: 'Organization configured successfully!' });
@@ -125,7 +154,6 @@ function CreateOrganizationContent() {
         type: 'error',
         text: error instanceof Error ? error.message : 'An error occurred',
       });
-    } finally {
       setIsLoading(false);
     }
   };

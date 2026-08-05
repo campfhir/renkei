@@ -59,7 +59,8 @@ export default function LogsViewerContent({ initialLogs, initialRole, initialErr
 
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to fetch logs');
+          setError(errorData.error || 'Failed to fetch logs');
+          return;
         }
 
         const data = await response.json();

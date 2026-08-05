@@ -71,7 +71,9 @@ export function LogsClientApp({ tenantSlug }: LogsClientAppProps) {
 
       const response = await fetch(`/api/admin/${tenantSlug}/logs?${params.toString()}`);
       if (!response.ok) {
-        throw new Error(`Failed to fetch logs: ${response.statusText}`);
+        setError(`Failed to fetch logs: ${response.statusText}`);
+        setIsLoading(false);
+        return;
       }
       const data = await response.json();
       if (isLogsResponse(data) && Array.isArray(data.logs)) {

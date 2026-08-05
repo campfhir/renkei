@@ -24,10 +24,10 @@ async function fetchInitialLogs(
     }
 
     const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    throw new Error("Database error");
-  }
-  const db = dbResult.val;
+    if (!dbResult.ok) {
+      return { logs: [], role: null, error: 'Failed to connect to database' };
+    }
+    const db = dbResult.val;
     const tenant = await db
       .selectFrom('tenants')
       .select('id')

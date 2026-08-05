@@ -9,10 +9,15 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
   if (!session) {
     // Fetch tenant to check for OIDC configuration
     const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    throw new Error("Database error");
-  }
-  const db = dbResult.val;
+    if (!dbResult.ok) {
+      return (
+        <div style={{ padding: '2rem', maxWidth: '500px' }}>
+          <h2>Error</h2>
+          <p>Unable to connect to the database. Please try again later.</p>
+        </div>
+      );
+    }
+    const db = dbResult.val;
     let oidcConfigured = false;
     try {
       const tenant = await db

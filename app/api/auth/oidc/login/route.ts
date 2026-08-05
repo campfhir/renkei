@@ -31,7 +31,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Get OIDC config
-    const oidc = await getTenantOidc(tenantId);
+    const oidcResult = await getTenantOidc(tenantId);
+    if (!oidcResult.ok) {
+      return NextResponse.json(
+        { error: 'Failed to retrieve OIDC configuration' },
+        { status: 500 }
+      );
+    }
+    const oidc = oidcResult.val;
     if (!oidc) {
       return NextResponse.json(
         { error: 'OIDC not configured for this tenant' },
@@ -83,7 +90,11 @@ export async function GET(request: NextRequest) {
     }
 
     // Build OIDC authorization URL
-    const origin = getOrigin(request);
+    const originResult = getOrigin(request);
+    if (!originResult.ok) {
+      return NextResponse.json({ error: 'Config error' }, { status: 500 });
+    }
+    const origin = originResult.val;
     const authUrl = new URL(authorizationEndpoint);
     authUrl.searchParams.set('client_id', oidc.clientId);
     authUrl.searchParams.set('redirect_uri', `${origin}/api/auth/oidc/callback`);

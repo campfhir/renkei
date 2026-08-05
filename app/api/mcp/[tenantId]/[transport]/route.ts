@@ -74,7 +74,14 @@ const handler = async (
     }
 
     const accountId = grants[0].account_id;
-    const grant = await getJiraGrant(tenantId, accountId);
+    const grantResult = await getJiraGrant(tenantId, accountId);
+    if (!grantResult.ok) {
+      return new Response(
+        JSON.stringify({ error: 'Failed to retrieve Jira grant' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    const grant = grantResult.val;
     if (!grant) {
       return new Response(
         JSON.stringify({ error: 'Failed to retrieve Jira grant' }),
@@ -109,7 +116,15 @@ const handler = async (
         const toolArgs = request.params.arguments || {};
 
         if (!toolName) {
-          throw new Error('Tool name is required');
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'Tool name is required',
+              },
+            ],
+            isError: true,
+          };
         }
 
         const context: MCPToolContext = {
@@ -122,12 +137,16 @@ const handler = async (
 
         try {
           // Record session
-          await recordSession({
+          const recordResult = await recordSession({
             tenantId,
             accountId,
             userAgent,
             ipAddress,
           });
+
+          if (!recordResult.ok) {
+            console.error('Failed to record session:', recordResult);
+          }
 
           // Execute tool
           const result = await executeTool(toolName, context, toolArgs);
@@ -167,7 +186,15 @@ const handler = async (
             error: error instanceof Error ? error.message : String(error),
           });
 
-          throw error;
+          return {
+            content: [
+              {
+                type: 'text',
+                text: error instanceof Error ? error.message : String(error),
+              },
+            ],
+            isError: true,
+          };
         }
       });
 

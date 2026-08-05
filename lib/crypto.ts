@@ -1,5 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 import { getConfig } from './env';
+import { ok, err } from '@campfhir/safe-functions/helpers';
+import type { Result } from '@campfhir/safe-functions/types';
 
 const ALGORITHM = 'aes-256-gcm';
 const NONCE_LENGTH = 12; // 12 bytes for GCM
@@ -9,7 +11,7 @@ const TAG_LENGTH = 16; // 16 bytes for GCM
  * Decrypt data encrypted with AES-256-GCM.
  * Data format: base64(nonce || ciphertext || tag)
  */
-export function decrypt(encryptedData: string, keyBuffer?: Buffer): string {
+export function decrypt(encryptedData: string, keyBuffer?: Buffer): Result<string, 'DECRYPTION_ERROR'> {
   // @ts-expect-error - Buffer type conflict between crypto and global Buffer
   const key = keyBuffer || Buffer.from(getConfig().TOKEN_ENCRYPTION_KEY, 'base64');
 
@@ -28,9 +30,12 @@ export function decrypt(encryptedData: string, keyBuffer?: Buffer): string {
       decipher.final(),
     ]);
 
-    return decrypted.toString('utf-8');
-  } catch (err) {
-    throw new Error(`Decryption failed: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+    return ok(decrypted.toString('utf-8'));
+  } catch (decryptErr) {
+    return err('DECRYPTION_ERROR', {
+      message: `Decryption failed: ${decryptErr instanceof Error ? decryptErr.message : String(decryptErr)}`,
+      cause: decryptErr,
+    });
   }
 }
 
