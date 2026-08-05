@@ -82,7 +82,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         maxResults: z.number().describe('Maximum results (1-100, default 50)').optional(),
       }),
     },
-    async (_args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>) => {
       try {
         const { jql } = args;
         const maxResults = Math.min(
@@ -184,7 +184,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
       }),
     },
-    async (_args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>) => {
       try {
         const { issueKey } = args;
 
@@ -253,7 +253,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         maxResults: z.number().describe('Maximum results (1-100, default 25)').optional(),
       }),
     },
-    async (_args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>) => {
       try {
         const maxResults = Math.min((isNumber(args.maxResults) ? args.maxResults : 25) || 25, 100);
 
@@ -316,7 +316,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         boardId: z.string().describe('Board ID'),
       }),
     },
-    async (_args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>) => {
       try {
         const { boardId } = args;
 

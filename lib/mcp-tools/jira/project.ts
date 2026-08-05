@@ -24,7 +24,7 @@ export async function registerProjectTools(
         projectKey: z.string().describe('Project key, e.g. SCRUM'),
       }),
     },
-    async (_args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>) => {
       try {
         const { projectKey } = args;
 
@@ -112,7 +112,7 @@ export async function registerProjectTools(
         maxResults: z.number().describe('Maximum results (1-50, default 10)').optional(),
       }),
     },
-    async (_args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>) => {
       try {
         const { query, maxResults = 10 } = args;
 
@@ -155,7 +155,7 @@ export async function registerProjectTools(
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
       }),
     },
-    async (_args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>) => {
       try {
         const { issueKey } = args;
 
