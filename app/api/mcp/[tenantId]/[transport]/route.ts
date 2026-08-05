@@ -11,6 +11,8 @@ import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@/lib/db';
 import { getConfig } from '@/lib/env';
 import { getJiraGrant } from '@/lib/tenant-operations';
+import { getOrigin } from '@/lib/get-origin';
+import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
 import { registerAllTools, cacheTokenMetadata } from '@/lib/mcp-tools';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
@@ -40,6 +42,14 @@ const handler = async (
   }
   const config = configResult.val;
 
+  // request.url is the internal URL behind a reverse proxy (localhost:3000), so any
+  // link built from it is unreachable for the user. getOrigin resolves the public one.
+  const originResult = getOrigin(request);
+  if (!originResult.ok) {
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
+  const origin = originResult.val;
+
   try {
     // Verify tenant exists
     const tenant = await db
@@ -55,15 +65,34 @@ const handler = async (
       });
     }
 
-    // Get Jira grant
+    // Identify the caller. Without this the server cannot tell one user of a
+    // tenant from another and previously acted as whichever grant came back
+    // first — attributing every comment, transition and worklog to that account.
+    const bearer = getBearerToken(request);
+    if (!bearer) {
+      logger.warn('[MCP] Request without bearer token', { tenantId });
+      return unauthorizedResponse(tenantId, origin, 'Authorization required');
+    }
+
+    const tokenRecord = await resolveAccessToken(bearer, tenantId);
+    if (!tokenRecord) {
+      logger.warn('[MCP] Request with unknown or expired bearer token', { tenantId });
+      return unauthorizedResponse(tenantId, origin, 'Invalid or expired access token');
+    }
+
+    const subject = tokenRecord.subject;
+
+    // This caller's own Jira grant. A grant with a NULL subject predates per-user
+    // ownership and is deliberately not matched: we cannot prove it belongs to
+    // this caller, and serving it would let one user act as another in Jira.
     const grants = await db
-      .selectFrom('atlassian_grants')
-      .select(['account_id'])
+      .selectFrom('provider_grants')
+      .select(['provider_account_id as account_id'])
       .where('tenant_id', '=', tenantId)
+      .where('provider', '=', 'atlassian')
+      .where('subject', '=', subject)
       .limit(1)
       .execute();
-
-    const authUrl = `${request.url.split('/api/')[0]}/api/mcp/${tenantId}/oauth/authorize`;
 
     if (grants.length === 0) {
       // No grant found - register only the connect_jira tool
@@ -75,14 +104,14 @@ const handler = async (
               title: 'Connect Jira',
               description:
                 'Jira is not connected. Click this link to authenticate: [Connect Jira](' +
-                authUrl +
+                origin +
                 ')',
             },
             async () => ({
               content: [
                 {
                   type: 'text' as const,
-                  text: `Jira is not connected. Please authenticate: [Connect Jira](${authUrl})`,
+                  text: `Jira is not connected. Please authenticate: [Connect Jira](${origin})`,
                 },
               ],
             })
@@ -111,12 +140,13 @@ const handler = async (
     }
     const grant = grantResult.val;
     if (!grant) {
-      // Grant was deleted during refresh (GRANT_REVOKED) - direct user to re-authenticate
-      const authUrl = `${request.url.split('/api/')[0]}/api/mcp/${tenantId}/oauth/authorize`;
+      // Grant was deleted during refresh (GRANT_REVOKED) - direct user to re-authenticate.
+      // Link to the origin, not the Jira authorize endpoint: the user has to sign in to
+      // the MCP first, otherwise the Atlassian grant would be bound without authentication.
       return new Response(
         JSON.stringify({
           error: 'Jira grant revoked',
-          message: `Your Jira authentication has expired or was revoked. Please re-authenticate: [Connect Jira](${authUrl})`,
+          message: `Your Jira authentication has expired or was revoked. Please re-authenticate: [Connect Jira](${origin})`,
         }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
@@ -142,6 +172,7 @@ const handler = async (
               tenantId,
               accountId,
               siteUrl: grant.siteUrl,
+              apiBaseUrl: `https://api.atlassian.com/ex/jira/${grant.cloudId}`,
               accessToken: grant.accessToken,
               maxJqlResults: 100,
               db,

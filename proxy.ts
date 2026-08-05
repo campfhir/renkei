@@ -5,19 +5,22 @@ import { logger } from '@/lib/logger';
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
-  // Log all incoming requests
-  logger.info('[proxy] Incoming request: {method} {pathname}', {
-    method: request.method,
-    pathname,
-    url: request.nextUrl.toString(),
-    userAgent: request.headers.get('user-agent'),
-    referer: request.headers.get('referer'),
-    origin: request.headers.get('origin'),
-    contentType: request.headers.get('content-type'),
-    query: request.nextUrl.search,
-    ip: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip'),
-    timestamp: new Date().toISOString(),
-  });
+  // Skip logging health checks
+  if (pathname !== '/api/health') {
+    // Log all incoming requests
+    logger.info('[proxy] Incoming request: {method} {pathname}', {
+      method: request.method,
+      pathname,
+      url: request.nextUrl.toString(),
+      userAgent: request.headers.get('user-agent'),
+      referer: request.headers.get('referer'),
+      origin: request.headers.get('origin'),
+      contentType: request.headers.get('content-type'),
+      query: request.nextUrl.search,
+      ip: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip'),
+      timestamp: new Date().toISOString(),
+    });
+  }
 
   try {
     // Allow public routes: API, static pages, etc.
@@ -51,8 +54,10 @@ export async function proxy(request: NextRequest) {
     const pathParts = pathname.split('/').filter(Boolean);
     const tenantId = pathParts[1];
 
-    // Check for OIDC token
-    const token = request.cookies.get(`oidc_token_${tenantId}`)?.value;
+    // Presence check only — this runs before the database is reachable, so it
+    // cannot validate the session. It exists to redirect signed-out users to
+    // login; actual authorization happens in the page/route via getSession*.
+    const token = request.cookies.get(`renkei_session_${tenantId}`)?.value;
 
     if (!token) {
       logger.info(

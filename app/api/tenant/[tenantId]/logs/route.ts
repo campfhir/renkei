@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { buildLogQueryOptions } from '@/lib/log-query';
-import { parseRolesFromCookie } from '@/lib/oidc-roles';
+import { getSessionFromRequest } from '@/lib/session';
 
 export async function POST(
   request: NextRequest,
@@ -11,16 +11,18 @@ export async function POST(
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
   const { searchParams } = new URL(request.url);
   const requestedAccountId = searchParams.get('accountId');
 
-  // Get user roles from cookie (set by OIDC callback)
-  // Stored as comma-separated string, parsed into a Set
-  const userRolesStr = request.cookies.get(`oidc_roles_${tenantId}`)?.value;
-  const userRoles = parseRolesFromCookie(userRolesStr);
+  // Roles come from the server-side session, never from a client-supplied cookie.
+  const session = await getSessionFromRequest(request, tenantId);
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const userRoles = new Set(session.roles);
 
   try {
     // Verify tenant exists
@@ -76,18 +78,16 @@ export async function POST(
     if (userRoles.has('renkei-user')) {
       // User must have accountId to view their own logs
       if (!requestedAccountId) {
-        return NextResponse.json(
-          { error: 'accountId required to view logs' },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: 'accountId required to view logs' }, { status: 400 });
       }
 
       // Verify user has a Jira grant for this tenant
       const grant = await db
-        .selectFrom('atlassian_grants')
-        .select('account_id')
+        .selectFrom('provider_grants')
+        .select('provider_account_id')
         .where('tenant_id', '=', tenantId)
-        .where('account_id', '=', requestedAccountId)
+        .where('provider', '=', 'atlassian')
+        .where('provider_account_id', '=', requestedAccountId)
         .executeTakeFirst();
 
       if (!grant) {
@@ -119,10 +119,7 @@ export async function POST(
     }
 
     // No recognized role
-    return NextResponse.json(
-      { error: 'Invalid user role' },
-      { status: 403 }
-    );
+    return NextResponse.json({ error: 'Invalid user role' }, { status: 403 });
   } catch (error) {
     console.error('Failed to fetch logs:', error);
     return NextResponse.json(

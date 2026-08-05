@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { getUserSessions, revokeSession } from '@/lib/audit';
-import { parseRolesFromCookie } from '@/lib/oidc-roles';
+import { getSessionFromRequest } from '@/lib/session';
 
 export async function GET(
   request: NextRequest,
@@ -10,13 +10,16 @@ export async function GET(
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
   const { searchParams } = new URL(request.url);
   const accountId = searchParams.get('accountId');
-  const userRolesStr = request.cookies.get(`oidc_roles_${tenantId}`)?.value;
-  const userRoles = parseRolesFromCookie(userRolesStr);
+  const session = await getSessionFromRequest(request, tenantId);
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const userRoles = new Set(session.roles);
 
   try {
     // Verify tenant exists
@@ -64,17 +67,15 @@ export async function GET(
     // renkei-user: can only see their own sessions
     if (userRoles.has('renkei-user')) {
       if (!accountId) {
-        return NextResponse.json(
-          { error: 'accountId parameter required' },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: 'accountId parameter required' }, { status: 400 });
       }
 
       const grant = await db
-        .selectFrom('atlassian_grants')
-        .select('account_id')
+        .selectFrom('provider_grants')
+        .select('provider_account_id')
         .where('tenant_id', '=', tenantId)
-        .where('account_id', '=', accountId)
+        .where('provider', '=', 'atlassian')
+        .where('provider_account_id', '=', accountId)
         .executeTakeFirst();
 
       if (!grant) {
@@ -115,14 +116,17 @@ export async function DELETE(
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
   const { searchParams } = new URL(request.url);
   const sessionId = searchParams.get('sessionId');
   const targetAccountId = searchParams.get('accountId');
-  const userRolesStr = request.cookies.get(`oidc_roles_${tenantId}`)?.value;
-  const userRoles = parseRolesFromCookie(userRolesStr);
+  const session = await getSessionFromRequest(request, tenantId);
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  const userRoles = new Set(session.roles);
 
   if (!sessionId) {
     return NextResponse.json({ error: 'sessionId query parameter required' }, { status: 400 });
@@ -158,17 +162,16 @@ export async function DELETE(
       if (!revokeResult.ok) {
         return NextResponse.json({ error: 'Database error' }, { status: 500 });
       }
-      console.log(`[Tenant ${tenantId}] Operator revoked session ${sessionId} (user: ${session.accountId})`);
+      console.log(
+        `[Tenant ${tenantId}] Operator revoked session ${sessionId} (user: ${session.accountId})`
+      );
       return NextResponse.json({ success: true, revokedSession: sessionId });
     }
 
     // renkei-user: can only revoke their own sessions
     if (userRoles.has('renkei-user')) {
       if (!targetAccountId) {
-        return NextResponse.json(
-          { error: 'accountId parameter required' },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: 'accountId parameter required' }, { status: 400 });
       }
 
       if (targetAccountId !== session.accountId) {
@@ -177,10 +180,11 @@ export async function DELETE(
 
       // Verify user has a grant
       const grant = await db
-        .selectFrom('atlassian_grants')
-        .select('account_id')
+        .selectFrom('provider_grants')
+        .select('provider_account_id')
         .where('tenant_id', '=', tenantId)
-        .where('account_id', '=', targetAccountId)
+        .where('provider', '=', 'atlassian')
+        .where('provider_account_id', '=', targetAccountId)
         .executeTakeFirst();
 
       if (!grant) {
@@ -191,7 +195,9 @@ export async function DELETE(
       if (!revokeResult.ok) {
         return NextResponse.json({ error: 'Database error' }, { status: 500 });
       }
-      console.log(`[Tenant ${tenantId}] User ${targetAccountId} revoked their session ${sessionId}`);
+      console.log(
+        `[Tenant ${tenantId}] User ${targetAccountId} revoked their session ${sessionId}`
+      );
       return NextResponse.json({ success: true });
     }
 

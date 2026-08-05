@@ -6,7 +6,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, sprintUrl } from '../common';
+import { jiraFetch, sprintUrl, getCachedDisplayName } from '../common';
+import { logger } from '@/lib/logger';
 
 export async function registerSprintTools(
   server: McpServer,
@@ -27,6 +28,12 @@ export async function registerSprintTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] create_sprint invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { boardId, name, startDate, endDate, goal } = args;
 
@@ -42,7 +49,7 @@ export async function registerSprintTools(
         if (endDate) body.endDate = endDate;
         if (goal) body.goal = goal;
 
-        await jiraFetch(`${context.siteUrl}/rest/agile/1.0/sprint`, context.accessToken, {
+        await jiraFetch(`${context.apiBaseUrl}/rest/agile/1.0/sprint`, context.accessToken, {
           method: 'POST',
           body: JSON.stringify(body),
         });
@@ -72,6 +79,12 @@ export async function registerSprintTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] move_issue_to_sprint invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey, sprintId } = args;
 
@@ -82,7 +95,7 @@ export async function registerSprintTools(
           };
         }
 
-        await jiraFetch(`${context.siteUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
+        await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
           method: 'PUT',
           body: JSON.stringify({
             fields: {
@@ -116,6 +129,12 @@ export async function registerSprintTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] remove_issue_from_sprint invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey } = args;
 
@@ -126,7 +145,7 @@ export async function registerSprintTools(
           };
         }
 
-        await jiraFetch(`${context.siteUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
+        await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
           method: 'PUT',
           body: JSON.stringify({
             fields: {
@@ -159,6 +178,12 @@ export async function registerSprintTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] complete_sprint invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { sprintId } = args;
 
@@ -170,7 +195,7 @@ export async function registerSprintTools(
         }
 
         await jiraFetch(
-          `${context.siteUrl}/rest/agile/1.0/sprint/${sprintId}`,
+          `${context.apiBaseUrl}/rest/agile/1.0/sprint/${sprintId}`,
           context.accessToken,
           {
             method: 'POST',

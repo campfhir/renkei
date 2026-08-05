@@ -4,6 +4,7 @@ import { getDatabase } from '@/lib/db';
 import { randomUUID, createHash } from 'crypto';
 import type { Kysely } from 'kysely';
 import type { DB } from '@/lib/db.types';
+import { storeAccessToken, generateSecret, hashToken, digestsMatch } from '@/lib/mcp-token';
 
 /**
  * Tenant-scoped OAuth 2.0 Token endpoint (RFC 6749)
@@ -174,8 +175,8 @@ async function handleAuthorizationCodeGrant(
     }
 
     // Generate tokens
-    const accessToken = generateToken(48);
-    const refreshToken = generateToken(48);
+    const accessToken = generateSecret(32);
+    const refreshToken = generateSecret(32);
     const tokenExpiresIn = config.ACCESS_TOKEN_TTL_MINUTES * 60;
 
     // Store refresh token
@@ -192,10 +193,23 @@ async function handleAuthorizationCodeGrant(
         client_id,
         subject: authCode.subject,
         scope: authCode.scope,
-        encrypted_token: refreshToken,
+        // Only the digest is kept; the token itself exists solely in the
+        // response below and in the client that receives it.
+        token_hash: hashToken(refreshToken),
         expires_at: refreshTokenExpiresAt,
       })
       .execute();
+
+    // Persist the access token so the MCP transport can identify its caller.
+    // Only the digest is stored; this is the sole record binding the token to a user.
+    await storeAccessToken({
+      token: accessToken,
+      tenantId,
+      clientId: client_id,
+      subject: authCode.subject,
+      scope: authCode.scope,
+      ttlSeconds: tokenExpiresIn,
+    });
 
     // Delete the authorization code (one-time use)
     await db.deleteFrom('oauth_authorization_codes').where('code', '=', code).execute();
@@ -241,15 +255,17 @@ async function handleRefreshTokenGrant(
       return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
     }
 
-    // Find the refresh token for this tenant
+    // Find the refresh token for this tenant. Matched on the digest — the
+    // presented token is never compared against anything stored in the clear.
+    const presentedHash = hashToken(refresh_token);
     const token = await db
       .selectFrom('oauth_refresh_tokens')
       .selectAll()
-      .where('encrypted_token', '=', refresh_token)
+      .where('token_hash', '=', presentedHash)
       .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
 
-    if (!token) {
+    if (!token || !digestsMatch(token.token_hash, presentedHash)) {
       return NextResponse.json(
         { error: 'invalid_grant', error_description: 'Refresh token not found' },
         { status: 400 }
@@ -272,8 +288,19 @@ async function handleRefreshTokenGrant(
     }
 
     // Generate new access token
-    const accessToken = generateToken(48);
+    const accessToken = generateSecret(32);
     const tokenExpiresIn = config.ACCESS_TOKEN_TTL_MINUTES * 60;
+
+    // Carry the original grant's subject forward — the refreshed token must act
+    // as the same person, not as whoever holds the refresh token.
+    await storeAccessToken({
+      token: accessToken,
+      tenantId,
+      clientId: client_id,
+      subject: token.subject,
+      scope: token.scope,
+      ttlSeconds: tokenExpiresIn,
+    });
 
     return NextResponse.json({
       access_token: accessToken,
@@ -285,10 +312,6 @@ async function handleRefreshTokenGrant(
     console.error('[OAuth Token] Refresh token grant error:', error);
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
-}
-
-function generateToken(length: number): string {
-  return Array.from({ length }, () => Math.floor(Math.random() * 16).toString(16)).join('');
 }
 
 function computeS256(codeVerifier: string): string {

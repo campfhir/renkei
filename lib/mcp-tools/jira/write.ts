@@ -6,7 +6,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, issueUrl } from '../common';
+import { jiraFetch, issueUrl, getCachedDisplayName } from '../common';
+import { logger } from '@/lib/logger';
 
 // Type guard functions
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -42,6 +43,12 @@ export async function registerWriteTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] create_issue invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { projectKey, issueType, summary, description, priority, assignee, labels } = args;
 
@@ -85,7 +92,7 @@ export async function registerWriteTools(
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/issue`,
+          `${context.apiBaseUrl}/rest/api/3/issue`,
           context.accessToken,
           {
             method: 'POST',
@@ -130,6 +137,12 @@ export async function registerWriteTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] update_issue invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey, summary, description, priority, assignee, labels } = args;
 
@@ -166,7 +179,7 @@ export async function registerWriteTools(
           fields.labels = labels;
         }
 
-        await jiraFetch(`${context.siteUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
+        await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
           method: 'PUT',
           body: JSON.stringify({ fields }),
         });
@@ -196,6 +209,12 @@ export async function registerWriteTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] add_comment invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey, comment } = args;
 
@@ -208,7 +227,7 @@ export async function registerWriteTools(
 
         const commentStr = comment;
         await jiraFetch(
-          `${context.siteUrl}/rest/api/3/issue/${issueKey}/comments`,
+          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/comment`,
           context.accessToken,
           {
             method: 'POST',
@@ -250,6 +269,12 @@ export async function registerWriteTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] transition_issue invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey, transitionName, comment } = args;
 
@@ -262,7 +287,7 @@ export async function registerWriteTools(
 
         // First, get available transitions
         const transResponse = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/issue/${issueKey}/transitions`,
+          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/transitions`,
           context.accessToken
         );
         const transData = await transResponse.json();
@@ -327,7 +352,7 @@ export async function registerWriteTools(
         }
 
         await jiraFetch(
-          `${context.siteUrl}/rest/api/3/issue/${issueKey}/transitions`,
+          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/transitions`,
           context.accessToken,
           {
             method: 'POST',
@@ -361,6 +386,12 @@ export async function registerWriteTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] log_work invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey, timeSpent, comment } = args;
 
@@ -385,7 +416,7 @@ export async function registerWriteTools(
         }
 
         await jiraFetch(
-          `${context.siteUrl}/rest/api/3/issue/${issueKey}/worklog`,
+          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/worklog`,
           context.accessToken,
           {
             method: 'POST',

@@ -7,7 +7,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch } from '../common';
+import { jiraFetch, getCachedDisplayName } from '../common';
+import { logger } from '@/lib/logger';
 
 export async function registerJsmTools(server: McpServer, context: MCPToolContext): Promise<void> {
   // list_service_desks
@@ -22,11 +23,17 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_service_desks invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const maxResults = Math.min(args.maxResults || 25, 100);
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/servicedesk?limit=${maxResults}`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk?limit=${maxResults}`,
           context.accessToken
         );
 
@@ -38,7 +45,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }));
 
         const lines = [
-          `Found ${data.total || 0} service desks (showing ${desks.length}):`,
+          `Found ${data.size ?? 0} service desks (showing ${desks.length}):`,
           ...desks.map((d: any) => `• ${d.name} (${d.key})`),
         ];
 
@@ -66,6 +73,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_request_types invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { serviceDeskId } = args;
 
@@ -77,7 +90,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype`,
           context.accessToken
         );
 
@@ -117,6 +130,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_requests invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const maxResults = Math.min(args.maxResults || 25, 100);
         const query = new URLSearchParams({ limit: String(maxResults) });
@@ -126,7 +145,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request?${query}`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request?${query}`,
           context.accessToken
         );
 
@@ -138,7 +157,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }));
 
         const lines = [
-          `Found ${data.total || 0} requests (showing ${requests.length}):`,
+          `Found ${data.size ?? 0} requests (showing ${requests.length}):`,
           ...requests.map((r: any) => `• ${r.key}: ${r.summary} [${r.status}]`),
         ];
 
@@ -166,6 +185,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] get_request invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey } = args;
 
@@ -177,7 +202,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}?expand=requestType,serviceDesk`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}?expand=requestType,serviceDesk`,
           context.accessToken
         );
 
@@ -221,6 +246,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] create_request invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { serviceDeskId, requestTypeId, summary, description } = args;
 
@@ -247,7 +278,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request`,
           context.accessToken,
           {
             method: 'POST',
@@ -284,6 +315,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] add_request_comment invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey, comment, isInternal = false } = args;
 
@@ -295,7 +332,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }
 
         await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/comment`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/comment`,
           context.accessToken,
           {
             method: 'POST',
@@ -337,6 +374,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_request_transitions invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey } = args;
 
@@ -348,12 +391,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/transition`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/transition`,
           context.accessToken
         );
 
         const data = (await response.json()) as any;
-        const transitions = (data.transitions || []).map((t: any) => t.name);
+        const transitions = (data.values || []).map((t: any) => t.name);
 
         const lines = [
           `${issueKey} has ${transitions.length} available transitions:`,
@@ -384,6 +427,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] transition_request invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey, transitionName } = args;
 
@@ -396,12 +445,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
 
         // Get available transitions
         const transResponse = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/transition`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/transition`,
           context.accessToken
         );
         const transData = (await transResponse.json()) as any;
 
-        const transition = transData.transitions?.find(
+        const transition = transData.values?.find(
           (t: any) => t.name.toLowerCase() === transitionName.toLowerCase()
         );
 
@@ -410,7 +459,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
             content: [
               {
                 type: 'text' as const,
-                text: `Transition "${transitionName}" not found. Available: ${transData.transitions?.map((t: any) => t.name).join(', ') || 'none'}`,
+                text: `Transition "${transitionName}" not found. Available: ${transData.values?.map((t: any) => t.name).join(', ') || 'none'}`,
               },
             ],
             isError: true,
@@ -419,7 +468,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
 
         // Execute transition
         await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/transition`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/transition`,
           context.accessToken,
           {
             method: 'POST',
@@ -458,6 +507,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_customers invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { serviceDeskId, maxResults = 10 } = args;
 
@@ -469,7 +524,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer?limit=${Math.min(maxResults, 50)}`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer?limit=${Math.min(maxResults, 50)}`,
           context.accessToken
         );
 
@@ -481,7 +536,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }));
 
         const lines = [
-          `Service desk has ${data.total || 0} customers (showing ${customers.length}):`,
+          `Service desk has ${data.size ?? 0} customers (showing ${customers.length}):`,
           ...customers.map((c: any) => `• ${c.name} (${c.email})`),
         ];
 

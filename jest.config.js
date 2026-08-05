@@ -1,4 +1,4 @@
-module.exports = {
+export default {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>'],
@@ -7,15 +7,15 @@ module.exports = {
     '^@/(.*)$': '<rootDir>/$1',
   },
   transform: {
-    '^.+\\.tsx?$': ['ts-jest', {
-      tsconfig: {
-        jsx: 'preserve',
-        esModuleInterop: true,
+    '^.+\\.tsx?$': [
+      'ts-jest',
+      {
+        tsconfig: {
+          jsx: 'preserve',
+          esModuleInterop: true,
+        },
       },
-    }],
+    ],
   },
-  collectCoverageFrom: [
-    'lib/**/*.ts',
-    '!lib/**/*.test.ts',
-  ],
+  collectCoverageFrom: ['lib/**/*.ts', '!lib/**/*.test.ts'],
 };

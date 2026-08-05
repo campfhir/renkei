@@ -7,7 +7,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch } from '../common';
+import { jiraFetch, getCachedDisplayName } from '../common';
+import { logger } from '@/lib/logger';
 
 export async function registerBulkTools(server: McpServer, context: MCPToolContext): Promise<void> {
   // bulk_update_issues (not in renkei_tools.json but keeping for now)
@@ -22,6 +23,12 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] bulk_update_issues invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { jql, fields } = args;
 
@@ -34,7 +41,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
 
         // First search for issues matching the JQL
         const searchResponse = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/search`,
+          `${context.apiBaseUrl}/rest/api/3/search/jql`,
           context.accessToken,
           {
             method: 'POST',
@@ -59,7 +66,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
 
         for (const key of issueKeys) {
           try {
-            await jiraFetch(`${context.siteUrl}/rest/api/3/issue/${key}`, context.accessToken, {
+            await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${key}`, context.accessToken, {
               method: 'PUT',
               body: JSON.stringify({ fields }),
             });
@@ -100,6 +107,12 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] bulk_transition_issues invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { jql, transitionName } = args;
 
@@ -112,7 +125,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
 
         // Search for issues
         const searchResponse = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/search`,
+          `${context.apiBaseUrl}/rest/api/3/search/jql`,
           context.accessToken,
           {
             method: 'POST',
@@ -138,7 +151,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
           try {
             // Get available transitions
             const transResponse = await jiraFetch(
-              `${context.siteUrl}/rest/api/3/issue/${key}/transitions`,
+              `${context.apiBaseUrl}/rest/api/3/issue/${key}/transitions`,
               context.accessToken
             );
             const transData = (await transResponse.json()) as any;
@@ -149,7 +162,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
 
             if (transition) {
               await jiraFetch(
-                `${context.siteUrl}/rest/api/3/issue/${key}/transitions`,
+                `${context.apiBaseUrl}/rest/api/3/issue/${key}/transitions`,
                 context.accessToken,
                 {
                   method: 'POST',

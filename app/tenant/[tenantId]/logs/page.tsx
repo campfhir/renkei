@@ -1,25 +1,28 @@
 import React from 'react';
 import { Suspense } from 'react';
-import { cookies } from 'next/headers';
 import { getDatabase } from '@/lib/db';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { buildLogQueryOptions } from '@/lib/log-query';
-import { parseRolesFromCookie } from '@/lib/oidc-roles';
+import { getSessionFromCookies } from '@/lib/session';
 import LogsViewerContent from '../logs-viewer';
 
 async function fetchInitialLogs(
   tenantId: string,
-  accountId: string | null,
+  requestedAccountId: string | null,
   query: string | null
 ) {
   try {
-    const cookieStore = await cookies();
-    const userRolesStr = cookieStore.get(`oidc_roles_${tenantId}`)?.value;
-    const userRoles = parseRolesFromCookie(userRolesStr);
+    const session = await getSessionFromCookies(tenantId);
+    if (!session) {
+      return { logs: [], role: null, error: 'Not signed in' };
+    }
 
+    const userRoles = new Set(session.roles);
     let userRole = null;
+    let isOperator = false;
     if (userRoles.has('renkei-operator')) {
       userRole = 'renkei-operator';
+      isOperator = true;
     } else if (userRoles.has('renkei-user')) {
       userRole = 'renkei-user';
     }
@@ -39,7 +42,27 @@ async function fetchInitialLogs(
       return { logs: [], role: null, error: 'Tenant not found' };
     }
 
-    const queryOptions = buildLogQueryOptions(query, tenantId, accountId || undefined);
+    // This user's own Jira account, resolved via the grant they personally
+    // connected. Keyed on subject rather than "first grant in the tenant", which
+    // would have shown one user another user's activity.
+    const currentGrant = await db
+      .selectFrom('provider_grants')
+      .select('provider_account_id')
+      .where('tenant_id', '=', tenantId)
+      .where('provider', '=', 'atlassian')
+      .where('subject', '=', session.subject)
+      .executeTakeFirst();
+
+    const currentUserAccountId = currentGrant?.provider_account_id || null;
+
+    // Determine which accountId to filter by:
+    // - Non-operators: always their own accountId (ignore requestedAccountId)
+    // - Operators: requested accountId if provided, otherwise their own
+    const filterAccountId = !isOperator
+      ? currentUserAccountId
+      : requestedAccountId || currentUserAccountId;
+
+    const queryOptions = buildLogQueryOptions(query, tenantId, filterAccountId || undefined);
     const adapter = new PostgresAdapter({ db });
 
     try {
@@ -79,11 +102,11 @@ export default async function LogsPage({
   const { tenantId } = await params;
   const { accountId, q } = await searchParams;
 
-  const { logs: initialLogs, role: initialRole, error: initialError } = await fetchInitialLogs(
-    tenantId,
-    accountId || null,
-    q || null
-  );
+  const {
+    logs: initialLogs,
+    role: initialRole,
+    error: initialError,
+  } = await fetchInitialLogs(tenantId, accountId || null, q || null);
 
   return (
     <Suspense

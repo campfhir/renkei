@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConfig, isDcrEnabled } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { randomUUID } from 'crypto';
+import { generateSecret } from '@/lib/mcp-token';
 
 /**
  * Tenant-scoped Dynamic Client Registration endpoint (RFC 7591)
@@ -87,9 +88,7 @@ export async function POST(
 
     // Generate client credentials
     const clientId = `client_${randomUUID()}`;
-    const clientSecret = Array.from({ length: 32 }, () =>
-      Math.floor(Math.random() * 16).toString(16)
-    ).join('');
+    const clientSecret = generateSecret(32);
 
     // Store the client for this tenant
     await db

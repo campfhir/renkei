@@ -7,7 +7,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch } from '../common';
+import { jiraFetch, getCachedDisplayName } from '../common';
+import { logger } from '@/lib/logger';
 
 export async function registerProjectTools(
   server: McpServer,
@@ -25,6 +26,12 @@ export async function registerProjectTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_components invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { projectKey } = args;
 
@@ -36,7 +43,7 @@ export async function registerProjectTools(
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/project/${projectKey}/components`,
+          `${context.apiBaseUrl}/rest/api/3/project/${projectKey}/components`,
           context.accessToken
         );
 
@@ -72,9 +79,15 @@ export async function registerProjectTools(
       }),
     },
     async (_args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_fields invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/field`,
+          `${context.apiBaseUrl}/rest/api/3/field`,
           context.accessToken
         );
 
@@ -113,6 +126,12 @@ export async function registerProjectTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] search_users invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { query, maxResults = 10 } = args;
 
@@ -121,7 +140,7 @@ export async function registerProjectTools(
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/user/search?query=${encodeURIComponent(query as string)}&maxResults=${Math.min(maxResults as number, 50)}`,
+          `${context.apiBaseUrl}/rest/api/3/user/search?query=${encodeURIComponent(query as string)}&maxResults=${Math.min(maxResults as number, 50)}`,
           context.accessToken
         );
 
@@ -156,6 +175,12 @@ export async function registerProjectTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_transitions invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey } = args;
 
@@ -167,7 +192,7 @@ export async function registerProjectTools(
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/issue/${issueKey}/transitions`,
+          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/transitions`,
           context.accessToken
         );
 

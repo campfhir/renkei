@@ -7,6 +7,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
+import { getCachedDisplayName } from '../common';
+import { logger } from '@/lib/logger';
 
 export async function registerUtilityTools(
   server: McpServer,
@@ -26,6 +28,12 @@ export async function registerUtilityTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] analyze_transcript invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { transcript, issueKey } = args;
 
@@ -104,6 +112,12 @@ export async function registerUtilityTools(
       annotations: { readOnlyHint: true },
     },
     async (_args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] connect_jira invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { db, tenantId, config } = context;
 
@@ -116,17 +130,24 @@ export async function registerUtilityTools(
 
         // Check if a Jira grant already exists for this tenant
         const existingGrant = await db
-          .selectFrom('atlassian_grants')
-          .select(['operator_name', 'site_url'])
+          .selectFrom('provider_grants')
+          .select(['display_name', 'metadata'])
           .where('tenant_id', '=', tenantId)
+          .where('provider', '=', 'atlassian')
           .executeTakeFirst();
 
         if (existingGrant) {
+          const metadata: Record<string, unknown> =
+            typeof existingGrant.metadata === 'object' && existingGrant.metadata !== null
+              ? { ...existingGrant.metadata }
+              : {};
+          const siteUrl =
+            typeof metadata.siteUrl === 'string' ? metadata.siteUrl : 'the connected site';
           return {
             content: [
               {
                 type: 'text' as const,
-                text: `Jira is already connected as ${existingGrant.operator_name} at ${existingGrant.site_url}`,
+                text: `Jira is already connected as ${existingGrant.display_name} at ${siteUrl}`,
               },
             ],
           };

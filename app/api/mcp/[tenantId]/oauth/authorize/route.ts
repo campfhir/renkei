@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { randomUUID } from 'crypto';
+import { getSessionFromRequest } from '@/lib/session';
 
 /**
  * Tenant-scoped OAuth 2.0 Authorization endpoint (RFC 6749 section 3.1)
@@ -91,6 +92,17 @@ export async function GET(
       );
     }
 
+    // The code we are about to mint becomes a bearer token that acts as a
+    // specific person in Jira, so it has to be bound to a signed-in user. This
+    // is a browser redirect flow, so bounce through login and come back.
+    const session = await getSessionFromRequest(request, tenantId);
+    if (!session) {
+      const loginUrl = new URL('/api/auth/oidc/login', request.nextUrl.origin);
+      loginUrl.searchParams.set('tenantId', tenantId);
+      loginUrl.searchParams.set('redirect', `${request.nextUrl.pathname}${request.nextUrl.search}`);
+      return NextResponse.redirect(loginUrl);
+    }
+
     // Generate authorization code
     const code = `code_${randomUUID()}`;
     const expiresAt = new Date(Date.now() + (config.AUTHORIZATION_CODE_TTL_SECONDS || 60) * 1000);
@@ -102,7 +114,7 @@ export async function GET(
         code,
         tenant_id: tenantId,
         client_id: clientId,
-        subject: 'system',
+        subject: session.subject,
         scope: scope || 'openid profile email',
         redirect_uri: redirectUri,
         code_challenge: codeChallenge || null,

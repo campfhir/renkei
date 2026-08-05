@@ -8,7 +8,7 @@ export async function GET(
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
   const { searchParams } = new URL(request.url);
@@ -54,10 +54,11 @@ export async function GET(
 
     // Verify user has a grant in this tenant
     const grant = await db
-      .selectFrom('atlassian_grants')
-      .select('account_id')
+      .selectFrom('provider_grants')
+      .select('provider_account_id')
       .where('tenant_id', '=', tenantId)
-      .where('account_id', '=', requestedAccountId)
+      .where('provider', '=', 'atlassian')
+      .where('provider_account_id', '=', requestedAccountId)
       .executeTakeFirst();
 
     if (!grant) {

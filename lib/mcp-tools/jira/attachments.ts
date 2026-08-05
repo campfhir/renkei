@@ -7,6 +7,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
+import { getCachedDisplayName } from '../common';
+import { logger } from '@/lib/logger';
 
 export async function registerAttachmentTools(
   server: McpServer,
@@ -25,6 +27,12 @@ export async function registerAttachmentTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] add_attachment invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey, filename, contentBase64 } = args;
 
@@ -46,7 +54,7 @@ export async function registerAttachmentTools(
         formData.append('file', new Blob([blob]), filename);
 
         const response = await fetch(
-          `${context.siteUrl}/rest/api/3/issue/${issueKey}/attachments`,
+          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/attachments`,
           {
             method: 'POST',
             headers: {

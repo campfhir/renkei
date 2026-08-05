@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
+import { createSession, sessionCookieName, sessionCookieOptions } from '@/lib/session';
 
 interface OIDCTokenResponse {
   access_token: string;
@@ -31,13 +32,17 @@ function isOIDCTokenResponse(data: unknown): data is OIDCTokenResponse {
   if (typeof data !== 'object' || data === null) return false;
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   const obj = data as Record<string, unknown>;
-  return typeof obj.access_token === 'string' && typeof obj.token_type === 'string' && typeof obj.expires_in === 'number';
+  return (
+    typeof obj.access_token === 'string' &&
+    typeof obj.token_type === 'string' &&
+    typeof obj.expires_in === 'number'
+  );
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
   const { searchParams } = new URL(request.url);
@@ -46,10 +51,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const error = searchParams.get('error');
 
   if (error) {
-    return NextResponse.json(
-      { error: `OIDC error: ${error}` },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: `OIDC error: ${error}` }, { status: 400 });
   }
 
   if (!code || !state) {
@@ -65,10 +67,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .executeTakeFirst();
 
     if (!pendingSignIn) {
-      return NextResponse.json(
-        { error: 'Invalid or expired state' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid or expired state' }, { status: 400 });
     }
 
     // Verify state is not expired
@@ -82,17 +81,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Get OIDC config
     const oidcResult = await getTenantOidc(tenantId);
     if (!oidcResult.ok) {
-      return NextResponse.json(
-        { error: 'Failed to retrieve OIDC configuration' },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: 'Failed to retrieve OIDC configuration' }, { status: 500 });
     }
     const oidc = oidcResult.val;
     if (!oidc) {
-      return NextResponse.json(
-        { error: 'OIDC not configured' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'OIDC not configured' }, { status: 400 });
     }
 
     // Fetch OIDC discovery document to get the token endpoint
@@ -108,7 +101,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         tokenEndpoint = discovery.token_endpoint;
         console.log(`[OIDC] Discovery successful, using token endpoint: ${tokenEndpoint}`);
       } else {
-        console.log(`[OIDC] Discovery failed with status ${discoveryResponse.status}, using Azure AD fallback`);
+        console.log(
+          `[OIDC] Discovery failed with status ${discoveryResponse.status}, using Azure AD fallback`
+        );
         // For Azure AD specifically, use the OAuth2 v2.0 endpoint
         // Strip trailing /v2.0 from issuer if present to avoid duplication
         const baseIssuer = oidc.issuer.endsWith('/v2.0') ? oidc.issuer.slice(0, -5) : oidc.issuer;
@@ -143,29 +138,36 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
       console.error('OIDC token exchange failed:', errorText);
-      return NextResponse.json(
-        { error: 'Failed to exchange code for token' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Failed to exchange code for token' }, { status: 400 });
     }
 
     const tokenData = await tokenResponse.json();
     if (!isOIDCTokenResponse(tokenData)) {
+      return NextResponse.json({ error: 'Invalid token response' }, { status: 400 });
+    }
+
+    // The id_token is the only trustworthy source of the user's identity here.
+    // Without it we cannot say who this session belongs to, and a session with
+    // no subject would put us back to acting as an arbitrary account.
+    const decoded = tokenData.id_token ? decodeJWT(tokenData.id_token) : null;
+    const subject = typeof decoded?.sub === 'string' ? decoded.sub : null;
+
+    if (!subject) {
+      console.error(`[OIDC ${tenantId}] No 'sub' claim in id_token; cannot establish session`);
       return NextResponse.json(
-        { error: 'Invalid token response' },
+        { error: 'Identity provider did not return a subject claim' },
         { status: 400 }
       );
     }
 
     // Decode and mint standardized renkei roles from IDP claims
     const userRoles = new Set<string>();
-    if (tokenData.id_token) {
-      const decoded = decodeJWT(tokenData.id_token);
+    {
       if (decoded && oidc.roleClaim) {
         const idpClaim = decoded[oidc.roleClaim];
 
         // Handle both single value string and array of values
-        const idpValues = Array.isArray(idpClaim) ? idpClaim : (idpClaim ? [idpClaim] : []);
+        const idpValues = Array.isArray(idpClaim) ? idpClaim : idpClaim ? [idpClaim] : [];
 
         for (const value of idpValues) {
           if (value === oidc.operatorIdpValue) {
@@ -196,27 +198,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const redirectCookie = request.cookies.get(`oidc_redirect_${tenantId}`)?.value;
     const redirect = redirectCookie || `/mcp/${tenantId}`;
 
-    // Set token cookie and redirect
-    const response = NextResponse.redirect(new URL(redirect, origin));
-    response.cookies.set(`oidc_token_${tenantId}`, tokenData.access_token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: tokenData.expires_in || 3600, // Use token expiry
-    });
-
-    // Store user roles in a separate cookie (not httpOnly so client can read it)
-    // Convert Set to comma-separated string for cookie storage
-    if (userRoles.size > 0) {
-      const rolesStr = Array.from(userRoles).join(',');
-      response.cookies.set(`oidc_roles_${tenantId}`, rolesStr, {
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: tokenData.expires_in || 3600,
-      });
+    // Create a server-side session. Subject and roles are stored in the database
+    // and never sent to the client; the cookie holds only an opaque id. Previously
+    // roles rode in a non-httpOnly unsigned cookie, which anyone could rewrite.
+    const ttlSeconds = tokenData.expires_in || 3600;
+    const sessionResult = await createSession(tenantId, subject, Array.from(userRoles), ttlSeconds);
+    if (!sessionResult.ok) {
+      return NextResponse.json({ error: 'Failed to establish session' }, { status: 500 });
     }
 
-    // Clear redirect cookie
+    const response = NextResponse.redirect(new URL(redirect, origin));
+    response.cookies.set(
+      sessionCookieName(tenantId),
+      sessionResult.val.id,
+      sessionCookieOptions(ttlSeconds)
+    );
+
+    // Retire the forgeable cookies from the previous scheme.
+    response.cookies.delete(`oidc_token_${tenantId}`);
+    response.cookies.delete(`oidc_roles_${tenantId}`);
     response.cookies.delete(`oidc_redirect_${tenantId}`);
 
     return response;

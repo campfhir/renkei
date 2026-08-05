@@ -7,7 +7,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch } from '../common';
+import { jiraFetch, getCachedDisplayName } from '../common';
+import { logger } from '@/lib/logger';
 
 export async function registerRequestDetailsTools(
   server: McpServer,
@@ -26,6 +27,12 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] get_request_type_fields invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { serviceDeskId, requestTypeId } = args;
 
@@ -39,7 +46,7 @@ export async function registerRequestDetailsTools(
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype/${requestTypeId}/field`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype/${requestTypeId}/field`,
           context.accessToken
         );
 
@@ -79,6 +86,12 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_request_approvals invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey } = args;
 
@@ -90,7 +103,7 @@ export async function registerRequestDetailsTools(
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/approval`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/approval`,
           context.accessToken
         );
 
@@ -130,6 +143,12 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] get_request_sla invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey } = args;
 
@@ -141,7 +160,7 @@ export async function registerRequestDetailsTools(
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/sla`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/sla`,
           context.accessToken
         );
 
@@ -181,6 +200,12 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_request_participants invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey } = args;
 
@@ -192,7 +217,7 @@ export async function registerRequestDetailsTools(
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/participant`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/participant`,
           context.accessToken
         );
 
@@ -231,6 +256,12 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] add_request_participant invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey, accountId } = args;
 
@@ -242,7 +273,7 @@ export async function registerRequestDetailsTools(
         }
 
         await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/participant`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/participant`,
           context.accessToken,
           {
             method: 'POST',
@@ -276,6 +307,12 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] remove_request_participant invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey, accountId } = args;
 
@@ -286,11 +323,15 @@ export async function registerRequestDetailsTools(
           };
         }
 
+        // The account id goes in the body, not the path: there is no
+        // .../participant/{accountId} route, so the old form 404'd and the tool
+        // still reported success because nothing checked the status.
         await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/participant/${accountId}`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/participant`,
           context.accessToken,
           {
             method: 'DELETE',
+            body: JSON.stringify({ accountIds: [accountId] }),
           }
         );
 
@@ -321,6 +362,12 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] add_request_attachment invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey, filename, contentBase64 } = args;
 
@@ -339,7 +386,7 @@ export async function registerRequestDetailsTools(
         formData.append('file', new Blob([blob]), filename);
 
         const response = await fetch(
-          `${context.siteUrl}/rest/servicedeskapi/request/${issueKey}/attachment`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/attachment`,
           {
             method: 'POST',
             headers: {

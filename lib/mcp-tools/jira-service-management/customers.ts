@@ -7,7 +7,9 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch } from '../common';
+import { jiraFetch, getCachedDisplayName } from '../common';
+import { resolveAccountId } from '../user-resolver';
+import { logger } from '@/lib/logger';
 
 export async function registerJsmCustomerTools(
   server: McpServer,
@@ -25,6 +27,14 @@ export async function registerJsmCustomerTools(
       }),
     },
     async (args: Record<string, any>) => {
+      // Named distinctly: this handler also destructures a `displayName` from
+      // args, which is the *customer's* name, not the caller's.
+      const invokerDisplayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] create_customer invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName: invokerDisplayName,
+      });
       try {
         const { email, displayName } = args;
 
@@ -33,7 +43,7 @@ export async function registerJsmCustomerTools(
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/customer`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/customer`,
           context.accessToken,
           {
             method: 'POST',
@@ -69,37 +79,52 @@ export async function registerJsmCustomerTools(
     'add_customer_to_servicedesk',
     {
       title: 'Add customers to a service desk',
-      description: 'Add a customer to a service desk.',
+      description:
+        'Add an existing customer to a service desk, by email address or Atlassian account ID. ' +
+        'Use invite_customers_to_servicedesk instead for someone who does not have an account yet.',
       inputSchema: z.object({
         serviceDeskId: z.string().describe('Service desk ID'),
-        email: z.string().describe('Customer email address'),
+        user: z
+          .string()
+          .describe('Email address, or an Atlassian accountId such as "5b10a2844c20165700ede21g"'),
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] add_customer_to_servicedesk invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
-        const { serviceDeskId, email } = args;
+        const { serviceDeskId, user } = args;
 
-        if (!serviceDeskId || !email) {
+        if (!serviceDeskId || !user) {
           return {
-            content: [{ type: 'text' as const, text: 'serviceDeskId and email are required' }],
+            content: [{ type: 'text' as const, text: 'serviceDeskId and user are required' }],
             isError: true,
           };
         }
 
+        // This endpoint takes account IDs only, so an email has to be resolved
+        // first. It previously passed the email straight through as an
+        // accountId, which Atlassian rejects.
+        const accountId = await resolveAccountId(context, user);
+
         await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
           context.accessToken,
           {
             method: 'POST',
             body: JSON.stringify({
-              accountIds: [email],
+              accountIds: [accountId],
             }),
           }
         );
 
         return {
           content: [
-            { type: 'text' as const, text: `Added ${email} to service desk ${serviceDeskId}` },
+            { type: 'text' as const, text: `Added ${accountId} to service desk ${serviceDeskId}` },
           ],
         };
       } catch (error) {
@@ -118,34 +143,50 @@ export async function registerJsmCustomerTools(
     'remove_customer_from_servicedesk',
     {
       title: 'Remove customers from a service desk',
-      description: 'Remove a customer from a service desk.',
+      description:
+        'Remove a customer from a service desk, by email address or Atlassian account ID.',
       inputSchema: z.object({
         serviceDeskId: z.string().describe('Service desk ID'),
-        email: z.string().describe('Customer email address'),
+        user: z
+          .string()
+          .describe('Email address, or an Atlassian accountId such as "5b10a2844c20165700ede21g"'),
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] remove_customer_from_servicedesk invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
-        const { serviceDeskId, email } = args;
+        const { serviceDeskId, user } = args;
 
-        if (!serviceDeskId || !email) {
+        if (!serviceDeskId || !user) {
           return {
-            content: [{ type: 'text' as const, text: 'serviceDeskId and email are required' }],
+            content: [{ type: 'text' as const, text: 'serviceDeskId and user are required' }],
             isError: true,
           };
         }
 
+        const accountId = await resolveAccountId(context, user);
+
+        // Account ids go in the body; this endpoint accepts no query parameters.
         await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer?accountId=${encodeURIComponent(email as string)}`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
           context.accessToken,
           {
             method: 'DELETE',
+            body: JSON.stringify({ accountIds: [accountId] }),
           }
         );
 
         return {
           content: [
-            { type: 'text' as const, text: `Removed ${email} from service desk ${serviceDeskId}` },
+            {
+              type: 'text' as const,
+              text: `Removed ${accountId} from service desk ${serviceDeskId}`,
+            },
           ],
         };
       } catch (error) {
@@ -171,6 +212,12 @@ export async function registerJsmCustomerTools(
       }),
     },
     async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] invite_customers_to_servicedesk invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { serviceDeskId, emails } = args;
 
@@ -184,7 +231,7 @@ export async function registerJsmCustomerTools(
         }
 
         await jiraFetch(
-          `${context.siteUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
+          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
           context.accessToken,
           {
             method: 'POST',

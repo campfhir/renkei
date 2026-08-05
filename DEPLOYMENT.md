@@ -84,17 +84,34 @@ CREATE TABLE tenant_jira_sites (
   claimed_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- Atlassian Grants (Access Tokens)
-CREATE TABLE atlassian_grants (
-  grant_id UUID PRIMARY KEY,
-  tenant_id UUID NOT NULL REFERENCES tenants(id),
-  cloud_id VARCHAR(255) NOT NULL,
-  account_id VARCHAR(255) NOT NULL,
-  account_display_name VARCHAR(255),
-  encrypted_token TEXT NOT NULL,
+-- Provider Grants (OAuth credentials held on a user's behalf)
+--
+-- One row per (tenant, provider, provider account). `provider` is the
+-- credential's issuer -- 'atlassian', 'microsoft' -- not the product: Jira and
+-- Confluence share one Atlassian grant, as SharePoint and Outlook share one
+-- Microsoft Graph grant. The product a caller asks for lives on the issued MCP
+-- token (oauth_access_tokens.application) instead.
+--
+-- Provider-specific coordinates go in `metadata` rather than becoming columns,
+-- since Atlassian needs {cloudId, siteUrl} and Microsoft needs {tenantId, upn}.
+CREATE TABLE provider_grants (
+  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  provider VARCHAR(50) NOT NULL,
+  provider_account_id VARCHAR(255) NOT NULL,
+  -- Which signed-in user owns this grant. Nullable only to carry across rows
+  -- predating per-user ownership; NULL must be treated as unusable, never
+  -- matched to a caller.
+  subject VARCHAR(255),
+  client_id VARCHAR(255) NOT NULL,
+  display_name VARCHAR(255) NOT NULL,
+  encrypted_access_token TEXT NOT NULL,
+  encrypted_refresh_token TEXT NOT NULL,
   expires_at TIMESTAMP NOT NULL,
+  scopes TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
   created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (tenant_id, provider, provider_account_id)
 );
 
 -- Operator Sessions
@@ -147,8 +164,11 @@ CREATE TABLE platform_audit_log (
 
 -- Create Indexes
 CREATE INDEX idx_tenant_jira_sites_cloud_id ON tenant_jira_sites(cloud_id);
-CREATE INDEX idx_grants_cloud_id ON atlassian_grants(cloud_id);
-CREATE INDEX idx_grants_expires_at ON atlassian_grants(expires_at);
+CREATE INDEX idx_provider_grants_tenant_subject_provider
+  ON provider_grants(tenant_id, subject, provider);
+CREATE INDEX idx_provider_grants_expires_at ON provider_grants(expires_at);
+CREATE INDEX idx_provider_grants_cloud_id
+  ON provider_grants((metadata->>'cloudId')) WHERE provider = 'atlassian';
 CREATE INDEX idx_operator_sessions_expires_at ON operator_sessions(expires_at);
 CREATE INDEX idx_pending_signin_state ON pending_oidc_signin(state);
 CREATE INDEX idx_logs_level ON logs(level);
@@ -237,7 +257,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - '5432:5432'
 
   app:
     build: .
@@ -249,7 +269,7 @@ services:
       PUBLIC_BASE_URL: https://yourdomain.com
       NODE_ENV: production
     ports:
-      - "3000:3000"
+      - '3000:3000'
     depends_on:
       - postgres
 
@@ -452,6 +472,7 @@ sudo ufw status
 Error: "Redirect URI mismatch"
 
 **Solution:** Ensure `PUBLIC_BASE_URL` matches OAuth app configuration exactly:
+
 - App setting: `https://yourdomain.com`
 - `ATLASSIAN_REDIRECT_URI`: `https://yourdomain.com/api/oauth/callback`
 - `PUBLIC_BASE_URL`: `https://yourdomain.com`
@@ -461,6 +482,7 @@ Error: "Redirect URI mismatch"
 Error: "TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key"
 
 **Solution:** Regenerate the key:
+
 ```bash
 openssl rand -base64 32
 ```
@@ -487,6 +509,7 @@ Already configured in `lib/db.ts` using node-postgres pool.
 ### Caching
 
 Consider implementing:
+
 - Redis for session caching
 - CDN for static assets
 - Jira API response caching (with TTL)
@@ -521,6 +544,7 @@ Test thoroughly before upgrading production.
 ## Support
 
 For issues:
+
 1. Check logs: `journalctl -u jira-mcp-gateway -n 50`
 2. Verify config: `echo $DATABASE_URL` (never commit .env files)
 3. Test connectivity: `curl -v https://yourdomain.com/api/health`

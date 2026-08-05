@@ -39,18 +39,24 @@ export default async function GrantsPage({
 
   // Fetch grants
   const grants = await db
-    .selectFrom('atlassian_grants')
-    .selectAll()
+    .selectFrom('provider_grants')
+    .select([
+      'provider_account_id',
+      'display_name',
+      'metadata',
+      'expires_at',
+      'created_at',
+      'subject',
+    ])
     .where('tenant_id', '=', tenant.id)
+    .where('provider', '=', 'atlassian')
     .orderBy('created_at', 'desc')
     .execute();
 
   return (
     <div style={{ padding: '2rem', maxWidth: '1000px' }}>
       <h2>Connected Jira Accounts</h2>
-      <p style={{ color: '#666' }}>
-        Manage Atlassian grants and connected user accounts
-      </p>
+      <p style={{ color: '#666' }}>Manage Atlassian grants and connected user accounts</p>
 
       {grants.length === 0 ? (
         <div
@@ -67,40 +73,34 @@ export default async function GrantsPage({
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '2px solid #ddd' }}>
-              <th style={{ textAlign: 'left', padding: '1rem' }}>
-                Display Name
-              </th>
-              <th style={{ textAlign: 'left', padding: '1rem' }}>
-                Account ID
-              </th>
+              <th style={{ textAlign: 'left', padding: '1rem' }}>Display Name</th>
+              <th style={{ textAlign: 'left', padding: '1rem' }}>Account ID</th>
               <th style={{ textAlign: 'left', padding: '1rem' }}>Cloud ID</th>
-              <th style={{ textAlign: 'left', padding: '1rem' }}>
-                Expires At
-              </th>
+              <th style={{ textAlign: 'left', padding: '1rem' }}>Expires At</th>
               <th style={{ textAlign: 'left', padding: '1rem' }}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {grants.map((grant) => {
-              const grantKey = `${grant.account_id}-${grant.tenant_id}`;
+              const grantKey = grant.provider_account_id;
+              const cloudId =
+                typeof grant.metadata === 'object' &&
+                grant.metadata !== null &&
+                'cloudId' in grant.metadata &&
+                typeof grant.metadata.cloudId === 'string'
+                  ? grant.metadata.cloudId
+                  : '';
               const expiresAt = new Date(grant.expires_at);
               const isExpired = expiresAt < new Date();
               const expiresAtStr = expiresAt.toLocaleDateString();
 
               return (
-                <tr
-                  key={grantKey}
-                  style={{ borderBottom: '1px solid #eee' }}
-                >
-                  <td style={{ padding: '1rem' }}>
-                    {grant.operator_name}
-                  </td>
+                <tr key={grantKey} style={{ borderBottom: '1px solid #eee' }}>
+                  <td style={{ padding: '1rem' }}>{grant.display_name}</td>
                   <td style={{ padding: '1rem', fontSize: '0.9rem' }}>
-                    {grant.account_id}
+                    {grant.provider_account_id}
                   </td>
-                  <td style={{ padding: '1rem', fontSize: '0.9rem' }}>
-                    {grant.cloud_id}
-                  </td>
+                  <td style={{ padding: '1rem', fontSize: '0.9rem' }}>{cloudId}</td>
                   <td
                     style={{
                       padding: '1rem',
@@ -114,15 +114,10 @@ export default async function GrantsPage({
                     <button
                       onClick={() => {
                         // In a real app, this would call the revoke endpoint
-                        if (
-                          confirm(
-                            `Revoke access for ${grant.operator_name}?`
-                          )
-                        ) {
-                          fetch(
-                            `/api/admin/${slug}/grants/${grant.account_id}/revoke`,
-                            { method: 'POST' }
-                          )
+                        if (confirm(`Revoke access for ${grant.display_name}?`)) {
+                          fetch(`/api/admin/${slug}/grants/${grant.provider_account_id}/revoke`, {
+                            method: 'POST',
+                          })
                             .then((res) => res.json())
                             .then((data) => {
                               if (data.success) {
@@ -158,8 +153,7 @@ export default async function GrantsPage({
           <li>Connected accounts allow the MCP gateway to access Jira on behalf of users</li>
           <li>Tokens expire after a period of time and are automatically refreshed</li>
           <li>
-            Revoking an account removes the token immediately - the user will need
-            to reconnect
+            Revoking an account removes the token immediately - the user will need to reconnect
           </li>
           <li>All tokens are encrypted at rest using AES-256-GCM</li>
         </ul>

@@ -9,11 +9,22 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@/lib/db.types';
 import type { Env } from '@/lib/env';
 import { refreshAtlassianTokenDirect } from '@/lib/tenant-operations';
+import { logger } from '@/lib/logger';
 
 export interface MCPToolContext {
   tenantId: string;
   accountId: string;
+  /**
+   * Bare site domain (https://your-domain.atlassian.net). Browser links only —
+   * `/browse/...`, boards, the JSM portal. OAuth 2.0 (3LO) bearer tokens are not
+   * accepted here; use apiBaseUrl for anything under /rest.
+   */
   siteUrl: string;
+  /**
+   * API gateway base (https://api.atlassian.com/ex/jira/{cloudId}). Every REST
+   * call must go through this — 3LO tokens are rejected on the bare site domain.
+   */
+  apiBaseUrl: string;
   accessToken: string;
   maxJqlResults: number;
   db?: Kysely<DB>;
@@ -97,6 +108,16 @@ interface TokenMetadata {
 const tokenMetadataCache = new Map<string, TokenMetadata>();
 
 /**
+ * Cache for accountId -> displayName mapping.
+ * Updated whenever user info is fetched, expires after 24h.
+ */
+interface UserMetadata {
+  displayName: string;
+  expiresAt: number;
+}
+const userMetadataCache = new Map<string, UserMetadata>();
+
+/**
  * Cache for refresh-in-flight promises keyed by (tenantId:accountId).
  * Prevents thundering herd when multiple tools need token refresh simultaneously.
  */
@@ -130,10 +151,71 @@ function getTokenMetadata(accessToken: string): TokenMetadata | undefined {
 }
 
 /**
+ * Store user displayName for 24h TTL lookup.
+ */
+export function cacheUserDisplayName(accountId: string, displayName: string): void {
+  userMetadataCache.set(accountId, {
+    displayName,
+    expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+  });
+}
+
+/**
+ * Retrieve cached displayName if still valid.
+ */
+export function getCachedDisplayName(accountId: string): string | undefined {
+  const cached = userMetadataCache.get(accountId);
+  if (!cached || cached.expiresAt < Date.now()) {
+    userMetadataCache.delete(accountId);
+    return undefined;
+  }
+  return cached.displayName;
+}
+
+/**
+ * Pull a human-readable reason out of an Atlassian error body. Jira returns
+ * `{errorMessages: [...], errors: {...}}`, JSM returns `{errorMessage: "..."}`,
+ * and a removed endpoint may return HTML or nothing at all.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function describeFailure(response: Response): Promise<string> {
+  const body = await response.text().catch(() => '');
+  if (!body) return response.statusText || `HTTP ${response.status}`;
+
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (isPlainObject(parsed)) {
+      if (Array.isArray(parsed.errorMessages) && parsed.errorMessages.length > 0) {
+        return parsed.errorMessages.join('; ');
+      }
+      if (typeof parsed.errorMessage === 'string' && parsed.errorMessage) {
+        return parsed.errorMessage;
+      }
+      if (isPlainObject(parsed.errors)) {
+        const entries = Object.entries(parsed.errors);
+        if (entries.length > 0) return entries.map(([k, v]) => `${k}: ${String(v)}`).join('; ');
+      }
+    }
+  } catch {
+    // Not JSON — fall through to the truncated raw body.
+  }
+
+  return body.slice(0, 300);
+}
+
+/**
  * Make an authenticated request to Jira API with automatic token refresh on 401.
  * Looks up tenant/account from cached token metadata; requires prior cacheTokenMetadata() call.
  * Deduplicates concurrent refresh requests by (tenantId, accountId).
- * Returns response without throwing, allowing callers to handle non-ok statuses.
+ *
+ * Throws JiraApiError on any non-2xx. This previously returned the response
+ * untouched "so callers can handle non-ok statuses" — but no caller ever did,
+ * so a 404 or 410 was parsed as JSON, failed an `isArray(data.issues)` check,
+ * and surfaced as "no results" or even a false success message. Failing loudly
+ * here is what makes a wrong endpoint visible instead of silently empty.
  */
 export async function jiraFetch(
   url: string,
@@ -141,6 +223,17 @@ export async function jiraFetch(
   options?: RequestInit
 ): Promise<Response> {
   let token = accessToken;
+  const metadata = getTokenMetadata(accessToken);
+  const displayName = metadata?.accountId ? getCachedDisplayName(metadata.accountId) : undefined;
+  // Deliberately no token material here, not even a prefix: these records are
+  // persisted by the Postgres log adapter and are readable over HTTP.
+  logger.debug('[jiraFetch] Request', {
+    tenantId: metadata?.tenantId,
+    accountId: metadata?.accountId,
+    displayName,
+    url,
+    method: options?.method || 'GET',
+  });
 
   // Make initial request
   const headers = {
@@ -154,17 +247,26 @@ export async function jiraFetch(
     ...options,
     headers,
   });
+  logger.debug('[jiraFetch] Response', {
+    tenantId: metadata?.tenantId,
+    accountId: metadata?.accountId,
+    url,
+    status: response.status,
+  });
 
   // If 401, refresh token and retry
   if (response.status === 401) {
-    const metadata = getTokenMetadata(accessToken);
     if (!metadata) {
-      // Cannot refresh without tenant/account info; return 401
-      return response;
+      logger.warn('[jiraFetch] 401 but no token metadata for refresh', { url });
+      throw new JiraApiError(
+        'Jira rejected the credential and no refresh metadata was available',
+        401
+      );
     }
 
     const { tenantId, accountId } = metadata;
     const refreshKey = getRefreshKey(tenantId, accountId);
+    logger.info('[jiraFetch] 401 response, refreshing token', { tenantId, accountId, url });
 
     // Check if refresh is already in-flight
     let refreshPromise = refreshInFlight.get(refreshKey);
@@ -176,11 +278,14 @@ export async function jiraFetch(
         refreshInFlight.delete(refreshKey);
 
         if (!result.ok) {
-          throw new Error(
-            result.val === 'GRANT_REVOKED' ? 'GRANT_REVOKED' : 'Token refresh failed'
-          );
+          // safe-functions puts the error code at .err.type, not .val
+          const error =
+            result.err.type === 'GRANT_REVOKED' ? 'GRANT_REVOKED' : 'Token refresh failed';
+          logger.error('[jiraFetch] Token refresh failed', { tenantId, accountId, error });
+          throw new Error(error);
         }
 
+        logger.info('[jiraFetch] Token refresh success', { tenantId, accountId });
         return result.val.accessToken;
       });
 
@@ -193,12 +298,18 @@ export async function jiraFetch(
     } catch (error) {
       // If grant is revoked, return 401 response to signal need for reauth
       if (error instanceof Error && error.message === 'GRANT_REVOKED') {
-        return response; // Return original 401
+        logger.warn('[jiraFetch] Grant revoked', { url });
+        throw new JiraApiError('GRANT_REVOKED', 401, true);
       }
       throw error;
     }
 
     // Retry request with refreshed token
+    logger.debug('[jiraFetch] Retrying with refreshed token', {
+      tenantId: metadata.tenantId,
+      accountId: metadata.accountId,
+      url,
+    });
     const retryHeaders = {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json',
@@ -210,6 +321,25 @@ export async function jiraFetch(
       ...options,
       headers: retryHeaders,
     });
+    logger.debug('[jiraFetch] Retry response', {
+      tenantId: metadata.tenantId,
+      accountId: metadata.accountId,
+      url,
+      status: response.status,
+    });
+  }
+
+  if (!response.ok) {
+    const reason = await describeFailure(response);
+    logger.warn('[jiraFetch] Non-OK response', {
+      tenantId: metadata?.tenantId,
+      accountId: metadata?.accountId,
+      url,
+      method: options?.method || 'GET',
+      status: response.status,
+      reason,
+    });
+    throw new JiraApiError(`Jira API ${response.status}: ${reason}`, response.status);
   }
 
   return response;

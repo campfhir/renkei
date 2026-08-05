@@ -6,7 +6,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, issueUrl } from '../common';
+import { jiraFetch, issueUrl, cacheUserDisplayName, getCachedDisplayName } from '../common';
+import { logger } from '@/lib/logger';
 
 // Type guard functions
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -36,26 +37,55 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
       annotations: { readOnlyHint: true },
     },
     async (_args: Record<string, unknown>) => {
+      const cachedDisplayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] whoami invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName: cachedDisplayName,
+        siteUrl: context.siteUrl,
+      });
       try {
+        logger.debug('[Tool] whoami fetching user info', {
+          url: `${context.apiBaseUrl}/rest/api/3/myself`,
+        });
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/myself`,
+          `${context.apiBaseUrl}/rest/api/3/myself`,
           context.accessToken
         );
+        logger.debug('[Tool] whoami fetch status', {
+          status: response.status,
+          statusText: response.statusText,
+        });
         const me = await response.json();
+        logger.debug('[Tool] whoami response', { data: me });
         if (!isRecord(me)) {
+          logger.error('[Tool] whoami invalid response format', { received: typeof me });
           return {
             content: [{ type: 'text' as const, text: 'Invalid response from API' }],
             isError: true,
           };
         }
+        const accountId = String(me.accountId || 'unknown');
+        const displayName = String(me.displayName || 'unknown');
+
+        // Cache the displayName for logging
+        if (me.accountId && me.displayName) {
+          cacheUserDisplayName(String(me.accountId), String(me.displayName));
+        }
+
         const lines = [
-          `Account: ${me.displayName || 'unknown'}`,
+          `Account: ${displayName}`,
           `Email: ${me.emailAddress || 'not shared'}`,
-          `Account ID: ${me.accountId || 'unknown'}`,
+          `Account ID: ${accountId}`,
           `Site: ${context.siteUrl}`,
         ];
+        logger.info('[Tool] whoami success', { displayName, accountId });
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
+        logger.error('[Tool] whoami error', {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
         return {
           content: [
             { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
@@ -83,6 +113,12 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] search_issues invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { jql } = args;
         const maxResults = Math.min(
@@ -97,8 +133,11 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           };
         }
 
+        // /rest/api/3/search was removed by Atlassian (CHANGE-2046). Its
+        // replacement pages by cursor rather than offset and, critically,
+        // returns only issue ids unless `fields` is given explicitly.
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/search`,
+          `${context.apiBaseUrl}/rest/api/3/search/jql`,
           context.accessToken,
           {
             method: 'POST',
@@ -106,7 +145,6 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
               jql,
               maxResults,
               fields: [
-                'key',
                 'summary',
                 'status',
                 'priority',
@@ -153,8 +191,11 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           })
           .filter((issue): issue is NonNullable<typeof issue> => issue !== null);
 
+        // The replacement response has no `total` — it is cursor-paged, and an
+        // exact count needs a separate /search/approximate-count call.
+        const more = typeof data.nextPageToken === 'string' && data.nextPageToken.length > 0;
         const lines = [
-          `Found ${data.total} issues (showing ${issues.length}):`,
+          `Found ${issues.length} issue${issues.length === 1 ? '' : 's'}${more ? ' (more available)' : ''}:`,
           ...issues.map(
             (i: Record<string, unknown>) =>
               `• ${i.key}: ${i.summary} [${i.status}] (${i.priority}) assigned to ${i.assignee}`
@@ -185,6 +226,12 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] get_issue invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { issueKey } = args;
 
@@ -196,7 +243,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/issue/${issueKey}`,
+          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}`,
           context.accessToken
         );
 
@@ -254,11 +301,17 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_boards invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const maxResults = Math.min((isNumber(args.maxResults) ? args.maxResults : 25) || 25, 100);
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/agile/1.0/board?maxResults=${maxResults}`,
+          `${context.apiBaseUrl}/rest/agile/1.0/board?maxResults=${maxResults}`,
           context.accessToken
         );
 
@@ -317,6 +370,12 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] list_sprints invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
       try {
         const { boardId } = args;
 
@@ -328,7 +387,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         }
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/agile/1.0/board/${boardId}/sprint`,
+          `${context.apiBaseUrl}/rest/agile/1.0/board/${boardId}/sprint`,
           context.accessToken
         );
 

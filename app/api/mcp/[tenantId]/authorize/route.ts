@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { randomUUID } from 'crypto';
+import { getSessionFromRequest } from '@/lib/session';
 
 export async function GET(
   request: NextRequest,
@@ -10,12 +11,12 @@ export async function GET(
   const { tenantId } = await params;
   const configResult = getConfig();
   if (!configResult.ok) {
-    return NextResponse.json({ error: "Config error" }, { status: 500 });
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const config = configResult.val;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
 
@@ -31,12 +32,24 @@ export async function GET(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
+    // The resulting grant is bound to whoever completes this flow, so the caller
+    // must already be signed in. Without this, anyone holding a tenantId could
+    // attach their own Atlassian account to that tenant.
+    const session = await getSessionFromRequest(request, tenantId);
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Not signed in', error_description: 'Sign in before connecting Jira' },
+        { status: 401 }
+      );
+    }
+
     // Generate state for CSRF protection
     const state = randomUUID();
     const nonce = randomUUID();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    // Store pending OAuth state
+    // Store pending OAuth state, carrying the connecting user so the callback
+    // knows whose grant to stamp.
     await db
       .insertInto('pending_oidc_signin')
       .values({
@@ -44,6 +57,7 @@ export async function GET(
         state,
         nonce,
         tenant_id: tenantId,
+        subject: session.subject,
         expires_at: expiresAt.toISOString(),
         created_at: new Date().toISOString(),
       })

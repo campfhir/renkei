@@ -5,6 +5,7 @@ import { encrypt, decrypt, parseEncryptionKey } from '@/lib/crypto/secretbox';
 import { randomUUID } from 'crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { logger } from '@/lib/logger';
 
 export interface TenantOidc {
   issuer: string;
@@ -13,6 +14,27 @@ export interface TenantOidc {
   roleClaim?: string;
   operatorIdpValue?: string | null;
   userIdpValue?: string | null;
+}
+
+/**
+ * Provider key for Atlassian grants in `provider_grants`. Jira and Confluence
+ * are products *of* this provider and share one credential, so the product a
+ * caller wants is carried on the MCP access token, not here.
+ */
+export const ATLASSIAN = 'atlassian';
+
+/**
+ * Atlassian keeps its site identity in the grant's `metadata` jsonb. Read it
+ * defensively: the column is provider-shaped, so nothing in the schema
+ * guarantees these keys are present on a given row.
+ */
+function readAtlassianMetadata(metadata: unknown): { cloudId: string; siteUrl: string } {
+  if (typeof metadata !== 'object' || metadata === null) return { cloudId: '', siteUrl: '' };
+  const record: Record<string, unknown> = { ...metadata };
+  return {
+    cloudId: typeof record.cloudId === 'string' ? record.cloudId : '',
+    siteUrl: typeof record.siteUrl === 'string' ? record.siteUrl : '',
+  };
 }
 
 export interface JiraGrant {
@@ -25,7 +47,16 @@ export interface JiraGrant {
   refreshToken: string;
   expiresAt: string;
   scopes: string[];
+  /**
+   * OIDC subject of the signed-in user who connected this grant. Null only for
+   * rows created before grants were owned — those are unusable and must not be
+   * served to a caller, since we cannot tell whose Jira account they are.
+   */
+  subject: string | null;
 }
+
+/** Writes always record an owner; only reads can surface a legacy unowned row. */
+export type NewJiraGrant = Omit<JiraGrant, 'subject'> & { subject: string };
 
 /**
  * Store OIDC configuration for a tenant.
@@ -193,7 +224,7 @@ export async function getTenantOidc(
  */
 export async function setJiraGrant(
   tenantId: string,
-  grant: JiraGrant
+  grant: NewJiraGrant
 ): Promise<Result<void, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -208,25 +239,34 @@ export async function setJiraGrant(
   const result = await wrapAsync(
     () =>
       db
-        .insertInto('atlassian_grants')
+        .insertInto('provider_grants')
         .values({
-          account_id: grant.accountId,
           tenant_id: tenantId,
-          atlassian_client_id: grant.atlassianClientId,
-          cloud_id: grant.cloudId,
-          site_url: grant.siteUrl,
-          operator_name: grant.displayName || grant.accountId,
+          provider: ATLASSIAN,
+          provider_account_id: grant.accountId,
+          client_id: grant.atlassianClientId,
+          display_name: grant.displayName || grant.accountId,
+          subject: grant.subject,
           encrypted_access_token: encryptedAccessToken,
           encrypted_refresh_token: encryptedRefreshToken,
           expires_at: grant.expiresAt,
           scopes: grant.scopes,
+          // Site identity is Atlassian-specific, so it lives in metadata rather
+          // than as columns every other provider would leave NULL.
+          metadata: JSON.stringify({ cloudId: grant.cloudId, siteUrl: grant.siteUrl }),
           created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         })
         .onConflict((oc) =>
-          oc.columns(['account_id', 'tenant_id']).doUpdateSet({
+          oc.columns(['tenant_id', 'provider', 'provider_account_id']).doUpdateSet({
             encrypted_access_token: encryptedAccessToken,
             encrypted_refresh_token: encryptedRefreshToken,
             expires_at: grant.expiresAt,
+            metadata: JSON.stringify({ cloudId: grant.cloudId, siteUrl: grant.siteUrl }),
+            updated_at: new Date().toISOString(),
+            // Re-stamp on reconnect so grants predating per-user ownership get
+            // an owner, and so a re-auth by a different user reassigns cleanly.
+            subject: grant.subject,
           })
         )
         .execute(),
@@ -254,21 +294,22 @@ export async function getJiraGrant(
   const rowResult = await wrapAsync(
     () =>
       db
-        .selectFrom('atlassian_grants')
+        .selectFrom('provider_grants')
         .select([
-          'account_id',
-          'atlassian_client_id',
-          'cloud_id',
-          'site_url',
-          'operator_name',
+          'provider_account_id',
+          'client_id',
+          'display_name',
+          'metadata',
           'encrypted_access_token',
           'encrypted_refresh_token',
           'expires_at',
           'scopes',
           'tenant_id',
+          'subject',
         ])
         .where('tenant_id', '=', tenantId)
-        .where('account_id', '=', accountId)
+        .where('provider', '=', ATLASSIAN)
+        .where('provider_account_id', '=', accountId)
         .executeTakeFirst(),
     'DB_ERROR' as const
   );
@@ -284,13 +325,16 @@ export async function getJiraGrant(
   const refreshTokenResult = decrypt(row.encrypted_refresh_token, encryptionKey);
   if (!refreshTokenResult.ok) return err('DECRYPTION_ERROR' as const);
 
+  const site = readAtlassianMetadata(row.metadata);
+
   // Return grant as-is; refresh on 401 is handled by jiraFetchWithRefresh
   return ok({
-    accountId: row.account_id,
-    atlassianClientId: row.atlassian_client_id,
-    cloudId: row.cloud_id,
-    siteUrl: row.site_url || '',
-    displayName: row.operator_name || '',
+    accountId: row.provider_account_id,
+    subject: row.subject,
+    atlassianClientId: row.client_id,
+    cloudId: site.cloudId,
+    siteUrl: site.siteUrl,
+    displayName: row.display_name || '',
     accessToken: accessTokenResult.val,
     refreshToken: refreshTokenResult.val,
     expiresAt: row.expires_at.toISOString(),
@@ -391,67 +435,116 @@ export async function refreshAtlassianTokenDirect(
     'REFRESH_FAILED' | 'GRANT_REVOKED'
   >
 > {
+  logger.info('[Refresh] Starting token refresh', { tenantId, accountId });
   const dbResult = getDatabase();
-  if (!dbResult.ok) return err('REFRESH_FAILED' as const);
+  if (!dbResult.ok) {
+    logger.error('[Refresh] Database unavailable', { tenantId, accountId });
+    return err('REFRESH_FAILED' as const);
+  }
   const db = dbResult.val;
 
   try {
     // Try to acquire distributed lock
     const lockAcquired = await acquireRefreshLock(db, tenantId, accountId);
     if (!lockAcquired) {
+      logger.debug('[Refresh] Lock not acquired, waiting for other process', {
+        tenantId,
+        accountId,
+      });
       // Another process is refreshing; wait for them to finish
       await waitForRefreshLock(db, tenantId, accountId);
       // Re-fetch grant (the other process may have updated it)
       const refetchResult = await getJiraGrant(tenantId, accountId);
       if (refetchResult.ok && refetchResult.val) {
+        logger.info('[Refresh] Using refreshed token from other process', { tenantId, accountId });
         return ok({
           accessToken: refetchResult.val.accessToken,
           refreshToken: refetchResult.val.refreshToken,
           expiresAt: new Date(refetchResult.val.expiresAt),
         });
       }
+      logger.debug('[Refresh] Re-fetch failed, proceeding with refresh', { tenantId, accountId });
       // If re-fetch fails, fall through to refresh
     }
 
     const grant = await db
-      .selectFrom('atlassian_grants')
-      .select(['atlassian_client_id', 'encrypted_refresh_token'])
+      .selectFrom('provider_grants')
+      .select(['client_id', 'encrypted_refresh_token'])
       .where('tenant_id', '=', tenantId)
-      .where('account_id', '=', accountId)
+      .where('provider', '=', ATLASSIAN)
+      .where('provider_account_id', '=', accountId)
       .executeTakeFirst();
 
     if (!grant) {
+      logger.error('[Refresh] No grant found', { tenantId, accountId });
       await releaseRefreshLock(db, tenantId, accountId);
       return err('REFRESH_FAILED' as const);
     }
 
     // Decrypt refresh token
     const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-    if (!encryptionKeyResult.ok) return err('REFRESH_FAILED' as const);
+    if (!encryptionKeyResult.ok) {
+      logger.error('[Refresh] Failed to parse encryption key', { tenantId, accountId });
+      return err('REFRESH_FAILED' as const);
+    }
     const encryptionKey = encryptionKeyResult.val;
 
     const decryptedRefreshTokenResult = decrypt(grant.encrypted_refresh_token, encryptionKey);
-    if (!decryptedRefreshTokenResult.ok) return err('REFRESH_FAILED' as const);
+    if (!decryptedRefreshTokenResult.ok) {
+      logger.error('[Refresh] Failed to decrypt refresh token', { tenantId, accountId });
+      return err('REFRESH_FAILED' as const);
+    }
     const refreshToken = decryptedRefreshTokenResult.val;
 
+    // client_secret is required for the refresh_token grant, same as the initial
+    // code exchange. Omitting it yields 401 access_denied / "Unauthorized".
+    const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET || '';
+    if (!clientSecret) {
+      logger.error('[Refresh] ATLASSIAN_CLIENT_SECRET is not configured', { tenantId, accountId });
+      return err('REFRESH_FAILED' as const);
+    }
+
+    logger.debug('[Refresh] Calling token endpoint', {
+      tenantId,
+      accountId,
+      clientId: grant.client_id,
+    });
     // Call Atlassian OAuth token endpoint
     const response = await fetch('https://auth.atlassian.com/oauth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         grant_type: 'refresh_token',
-        client_id: grant.atlassian_client_id,
+        client_id: grant.client_id,
+        client_secret: clientSecret,
         refresh_token: refreshToken,
       }),
     });
 
+    logger.debug('[Refresh] Token endpoint response', {
+      tenantId,
+      accountId,
+      status: response.status,
+    });
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      if (errorData.error === 'invalid_grant' || response.status === 401) {
+      logger.error('[Refresh] Token endpoint error', {
+        tenantId,
+        accountId,
+        status: response.status,
+        error: errorData.error,
+        errorDescription: errorData.error_description,
+      });
+      // Only invalid_grant means the refresh token is genuinely dead. Every other
+      // failure (client auth, network, 5xx) is ours to fix — deleting the grant
+      // there destroys a working authorization and forces a pointless re-consent.
+      if (errorData.error === 'invalid_grant') {
+        logger.warn('[Refresh] Refresh token rejected, deleting grant', { tenantId, accountId });
         await db
-          .deleteFrom('atlassian_grants')
+          .deleteFrom('provider_grants')
           .where('tenant_id', '=', tenantId)
-          .where('account_id', '=', accountId)
+          .where('provider', '=', ATLASSIAN)
+          .where('provider_account_id', '=', accountId)
           .execute();
         return err('GRANT_REVOKED' as const);
       }
@@ -461,6 +554,12 @@ export async function refreshAtlassianTokenDirect(
     const data = await response.json();
 
     if (!data.access_token || !data.refresh_token) {
+      logger.error('[Refresh] Token response missing required fields', {
+        tenantId,
+        accountId,
+        hasAccessToken: !!data.access_token,
+        hasRefreshToken: !!data.refresh_token,
+      });
       return err('REFRESH_FAILED' as const);
     }
 
@@ -469,27 +568,46 @@ export async function refreshAtlassianTokenDirect(
     const encryptedAccessToken = encrypt(data.access_token, encryptionKey);
     const encryptedRefreshToken = encrypt(data.refresh_token, encryptionKey);
 
-    await wrapAsync(
+    logger.debug('[Refresh] Updating grant in database', { tenantId, accountId });
+    const updateResult = await wrapAsync(
       () =>
         db
-          .updateTable('atlassian_grants')
+          .updateTable('provider_grants')
           .set({
             encrypted_access_token: encryptedAccessToken,
             encrypted_refresh_token: encryptedRefreshToken,
             expires_at: expiresAt,
+            updated_at: new Date(),
           })
           .where('tenant_id', '=', tenantId)
-          .where('account_id', '=', accountId)
+          .where('provider', '=', ATLASSIAN)
+          .where('provider_account_id', '=', accountId)
           .execute(),
       'REFRESH_FAILED' as const
     );
 
+    if (!updateResult.ok) {
+      logger.error('[Refresh] Failed to update grant', { tenantId, accountId });
+      return updateResult;
+    }
+
+    logger.info('[Refresh] Token refreshed successfully', {
+      tenantId,
+      accountId,
+      expiresAt: expiresAt.toISOString(),
+    });
     return ok({
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
       expiresAt,
     });
-  } catch {
+  } catch (error) {
+    logger.error('[Refresh] Unexpected error during refresh', {
+      tenantId,
+      accountId,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return err('REFRESH_FAILED' as const);
   } finally {
     // Always release the lock

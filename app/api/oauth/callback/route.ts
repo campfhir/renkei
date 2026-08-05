@@ -5,6 +5,7 @@ import { getDatabase } from '@/lib/db';
 import { setJiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { cacheUserDisplayName } from '@/lib/mcp-tools/common';
 
 interface JiraTokenResponse {
   access_token: string;
@@ -14,9 +15,8 @@ interface JiraTokenResponse {
 }
 
 interface JiraUserInfo {
-  account_id: string;
+  accountId: string;
   displayName?: string;
-  display_name?: string;
   name?: string;
 }
 
@@ -35,7 +35,7 @@ function isJiraUserInfo(data: unknown): data is JiraUserInfo {
   if (typeof data !== 'object' || data === null) return false;
 
   const obj = data as Record<string, unknown>;
-  return typeof obj.account_id === 'string';
+  return typeof obj.accountId === 'string';
 }
 
 function isResourceArray(data: unknown): data is Array<{ id: string; url: string; name: string }> {
@@ -85,12 +85,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // The pending record tells us which tenant this authorization is for
     const pendingSignIn = await db
       .selectFrom('pending_oidc_signin')
-      .select(['tenant_id', 'expires_at'])
+      .select(['tenant_id', 'expires_at', 'subject'])
       .where('state', '=', state)
       .executeTakeFirst();
 
     if (!pendingSignIn) {
       return NextResponse.json({ error: 'Invalid or expired state' }, { status: 400 });
+    }
+
+    // The authorize step records who initiated the connect. A pending row without
+    // one predates per-user grants; completing it would produce an unowned grant
+    // that no caller can use, so send the user back through a fresh sign-in.
+    if (!pendingSignIn.subject) {
+      logger.error('[OAuth] Pending sign-in has no subject; cannot assign grant owner', {
+        tenantId: pendingSignIn.tenant_id,
+      });
+      return NextResponse.json({ error: 'Sign in again before connecting Jira' }, { status: 400 });
     }
 
     // Delete pending record (single-use) to prevent replay attacks
@@ -140,7 +150,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     const tokenData = await tokenResponse.json();
-    logger.info('[OAuth] Token response OK', { tenantId: tenant.id });
+    // Record only whether a token came back, never any of its bytes: these
+    // records are persisted by the Postgres log adapter and are readable over
+    // HTTP by tenant users, so even a 20-character prefix does not belong here.
+    logger.info('[OAuth] Token response OK', {
+      tenantId: tenant.id,
+      hasAccessToken: Boolean(tokenData.access_token),
+      expiresIn: tokenData.expires_in,
+    });
     if (!isJiraTokenResponse(tokenData)) {
       logger.error('[OAuth] Invalid token response format', { tenantId: tenant.id, tokenData });
       return NextResponse.json({ error: 'Invalid token response format' }, { status: 400 });
@@ -178,19 +195,28 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
     }
 
-    logger.info('[OAuth] Fetching user info', { tenantId: tenant.id, siteUrl: resource.url });
-    // Get user info from the site-specific domain using OAuth 2.0 3LO endpoint
-    // Try v2 endpoint first (more reliable with OAuth), fall back to v3 if needed
-    const userResponse = await fetch(`${resource.url}/rest/api/2/myself`, {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
-    });
+    logger.info('[OAuth] Fetching user info', { tenantId: tenant.id, cloudId: resource.id });
+    // Get user info via API gateway path for OAuth 2.0 3LO
+    const userResponse = await fetch(
+      `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/myself`,
+      {
+        headers: {
+          Authorization: `Bearer ${tokenData.access_token}`,
+          Accept: 'application/json',
+        },
+      }
+    );
 
     if (!userResponse.ok) {
       const userErrorText = await userResponse.text();
+      const userErrorJson = await userResponse.json().catch(() => ({}));
       logger.error('[OAuth] Failed to fetch user info', {
         tenantId: tenant.id,
         status: userResponse.status,
-        error: userErrorText,
+        statusText: userResponse.statusText,
+        errorText: userErrorText,
+        errorJson: userErrorJson,
+        url: `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/myself`,
       });
       return NextResponse.json({ error: 'Failed to get user info' }, { status: 400 });
     }
@@ -209,16 +235,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     // Extract display name from any of several possible field names
-    const displayName =
-      (userInfo as JiraUserInfo).displayName ||
-      (userInfo as JiraUserInfo).display_name ||
-      (userInfo as JiraUserInfo).name ||
-      userInfo.account_id;
+    const displayName = userInfo.displayName || userInfo.name || userInfo.accountId;
 
-    logger.info('[OAuth] Storing Jira grant', { tenantId: tenant.id });
+    // Cache the displayName for logging
+    cacheUserDisplayName(userInfo.accountId, displayName);
+
+    logger.info('[OAuth] Storing Jira grant', {
+      tenantId: tenant.id,
+      subject: pendingSignIn.subject,
+    });
     // Store encrypted Jira grant
     await setJiraGrant(tenant.id, {
-      accountId: userInfo.account_id,
+      subject: pendingSignIn.subject,
+      accountId: userInfo.accountId,
       atlassianClientId: config.ATLASSIAN_CLIENT_ID,
       cloudId: resource.id,
       siteUrl: resource.url,

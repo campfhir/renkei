@@ -4,12 +4,12 @@ import { getJiraGrant } from '@/lib/tenant-operations';
 
 export const GET = async (
   _request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> },
+  { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> => {
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
 
@@ -27,9 +27,10 @@ export const GET = async (
 
     // Get Jira grant
     const grants = await db
-      .selectFrom('atlassian_grants')
-      .select(['account_id', 'cloud_id', 'operator_name'])
+      .selectFrom('provider_grants')
+      .select(['provider_account_id as account_id', 'display_name as operator_name'])
       .where('tenant_id', '=', tenantId)
+      .where('provider', '=', 'atlassian')
       .limit(1)
       .execute();
 
@@ -71,7 +72,7 @@ export const GET = async (
         connected: false,
         error: error instanceof Error ? error.message : 'Unknown error',
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 };
