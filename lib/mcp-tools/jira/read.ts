@@ -236,7 +236,7 @@ export const readTools: ReadToolHandler[] = [
 
       try {
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/boards?maxResults=${maxResults}`,
+          `${context.siteUrl}/rest/agile/1.0/board?maxResults=${maxResults}`,
           context.accessToken
         );
 
@@ -300,7 +300,7 @@ export const readTools: ReadToolHandler[] = [
 
       try {
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/board/${boardId}/sprints`,
+          `${context.siteUrl}/rest/agile/1.0/board/${boardId}/sprint`,
           context.accessToken
         );
 

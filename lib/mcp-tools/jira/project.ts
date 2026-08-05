@@ -38,7 +38,7 @@ export const projectTools: ProjectToolHandler[] = [
       try {
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/project/${projectKey}/components`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = (await response.json()) as any;
@@ -51,7 +51,9 @@ export const projectTools: ProjectToolHandler[] = [
 
         return ok(lines.join('\n'));
       } catch (error) {
-        return toolError(`Failed to list components: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Failed to list components: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },
@@ -71,21 +73,25 @@ export const projectTools: ProjectToolHandler[] = [
     handler: async (context) => {
       try {
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/fields`,
-          context.accessToken,
+          `${context.siteUrl}/rest/api/3/field`,
+          context.accessToken
         );
 
         const fields = (await response.json()) as any[];
 
         const lines = [
           `Found ${fields.length} fields:`,
-          ...fields.slice(0, 50).map((f: any) => `• ${f.name} (${f.id}) - ${f.schema?.type || 'unknown'}`),
+          ...fields
+            .slice(0, 50)
+            .map((f: any) => `• ${f.name} (${f.id}) - ${f.schema?.type || 'unknown'}`),
           fields.length > 50 ? `... and ${fields.length - 50} more` : '',
         ];
 
         return ok(lines.filter(Boolean).join('\n'));
       } catch (error) {
-        return toolError(`Failed to list fields: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Failed to list fields: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },
@@ -117,7 +123,7 @@ export const projectTools: ProjectToolHandler[] = [
       try {
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/user/search?query=${encodeURIComponent(query)}&maxResults=${Math.min(maxResults, 50)}`,
-          context.accessToken,
+          context.accessToken
         );
 
         const users = (await response.json()) as any[];
@@ -129,7 +135,9 @@ export const projectTools: ProjectToolHandler[] = [
 
         return ok(lines.join('\n'));
       } catch (error) {
-        return toolError(`Failed to search users: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Failed to search users: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },
@@ -157,7 +165,7 @@ export const projectTools: ProjectToolHandler[] = [
       try {
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/issue/${issueKey}/transitions`,
-          context.accessToken,
+          context.accessToken
         );
 
         const data = (await response.json()) as any;
@@ -170,7 +178,9 @@ export const projectTools: ProjectToolHandler[] = [
 
         return ok(lines.join('\n'));
       } catch (error) {
-        return toolError(`Failed to list transitions: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Failed to list transitions: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },

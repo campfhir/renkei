@@ -51,24 +51,26 @@ export const sprintTools: SprintToolHandler[] = [
       }
 
       try {
-        const body: any = { name };
+        const body: any = { name, originBoardId: parseInt(boardId) };
         if (startDate) body.startDate = startDate;
         if (endDate) body.endDate = endDate;
         if (goal) body.goal = goal;
 
         const response = await jiraFetch(
-          `${context.siteUrl}/rest/api/3/board/${boardId}/sprint`,
+          `${context.siteUrl}/rest/agile/1.0/sprint`,
           context.accessToken,
           {
             method: 'POST',
             body: JSON.stringify(body),
-          },
+          }
         );
 
         await response.json();
         return okWithLink(`Created sprint "${name}"`, sprintUrl(context.siteUrl, boardId));
       } catch (error) {
-        return toolError(`Failed to create sprint: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Failed to create sprint: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },
@@ -98,22 +100,20 @@ export const sprintTools: SprintToolHandler[] = [
       }
 
       try {
-        await jiraFetch(
-          `${context.siteUrl}/rest/api/3/issue/${issueKey}`,
-          context.accessToken,
-          {
-            method: 'PUT',
-            body: JSON.stringify({
-              fields: {
-                sprint: sprintId,
-              },
-            }),
-          },
-        );
+        await jiraFetch(`${context.siteUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
+          method: 'PUT',
+          body: JSON.stringify({
+            fields: {
+              sprint: sprintId,
+            },
+          }),
+        });
 
         return ok(`Moved ${issueKey} to sprint ${sprintId}`);
       } catch (error) {
-        return toolError(`Failed to move issue: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Failed to move issue: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },
@@ -139,22 +139,20 @@ export const sprintTools: SprintToolHandler[] = [
       }
 
       try {
-        await jiraFetch(
-          `${context.siteUrl}/rest/api/3/issue/${issueKey}`,
-          context.accessToken,
-          {
-            method: 'PUT',
-            body: JSON.stringify({
-              fields: {
-                sprint: null,
-              },
-            }),
-          },
-        );
+        await jiraFetch(`${context.siteUrl}/rest/api/3/issue/${issueKey}`, context.accessToken, {
+          method: 'PUT',
+          body: JSON.stringify({
+            fields: {
+              sprint: null,
+            },
+          }),
+        });
 
         return ok(`Removed ${issueKey} from sprint`);
       } catch (error) {
-        return toolError(`Failed to remove issue: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Failed to remove issue: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },
@@ -177,24 +175,27 @@ export const sprintTools: SprintToolHandler[] = [
       required: ['boardId', 'sprintId'],
     },
     handler: async (context, params) => {
-      const { boardId, sprintId } = params;
+      const { sprintId } = params;
 
-      if (!boardId || !sprintId) {
-        return toolError('boardId and sprintId are required');
+      if (!sprintId) {
+        return toolError('sprintId is required');
       }
 
       try {
         await jiraFetch(
-          `${context.siteUrl}/rest/api/3/board/${boardId}/sprint/${sprintId}/close`,
+          `${context.siteUrl}/rest/agile/1.0/sprint/${sprintId}`,
           context.accessToken,
           {
             method: 'POST',
-          },
+            body: JSON.stringify({ state: 'closed' }),
+          }
         );
 
         return ok(`Completed sprint ${sprintId}`);
       } catch (error) {
-        return toolError(`Failed to complete sprint: ${error instanceof Error ? error.message : String(error)}`);
+        return toolError(
+          `Failed to complete sprint: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     },
   },
