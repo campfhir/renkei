@@ -1,3 +1,5 @@
+import type { Kysely } from 'kysely';
+import type { DB } from '@/lib/db.types';
 import { getDatabase } from '@/lib/db';
 import { encrypt, decrypt, parseEncryptionKey } from '@/lib/crypto/secretbox';
 import { randomUUID } from 'crypto';
@@ -297,6 +299,85 @@ export async function getJiraGrant(
 }
 
 /**
+ * Acquire distributed lock for token refresh.
+ * Returns true if lock acquired, false if another process holds it.
+ */
+async function acquireRefreshLock(
+  db: Kysely<DB>,
+  tenantId: string,
+  accountId: string
+): Promise<boolean> {
+  try {
+    await db
+      .insertInto('atlassian_refresh_locks')
+      .values({
+        tenant_id: tenantId,
+        account_id: accountId,
+        locked_at: new Date(),
+      })
+      .execute();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Release distributed lock for token refresh.
+ */
+async function releaseRefreshLock(
+  db: Kysely<DB>,
+  tenantId: string,
+  accountId: string
+): Promise<void> {
+  try {
+    await db
+      .deleteFrom('atlassian_refresh_locks')
+      .where('tenant_id', '=', tenantId)
+      .where('account_id', '=', accountId)
+      .execute();
+  } catch {
+    // Ignore errors on release
+  }
+}
+
+/**
+ * Wait for lock to be released by another process.
+ * Polls with exponential backoff, max 10 seconds.
+ */
+async function waitForRefreshLock(
+  db: Kysely<DB>,
+  tenantId: string,
+  accountId: string
+): Promise<void> {
+  let attempts = 0;
+  const maxAttempts = 20;
+
+  while (attempts < maxAttempts) {
+    const lock = await db
+      .selectFrom('atlassian_refresh_locks')
+      .select('locked_at')
+      .where('tenant_id', '=', tenantId)
+      .where('account_id', '=', accountId)
+      .executeTakeFirst();
+
+    if (!lock) {
+      return;
+    }
+
+    const lockAgeMs = Date.now() - lock.locked_at.getTime();
+    if (lockAgeMs > 5 * 60 * 1000) {
+      await releaseRefreshLock(db, tenantId, accountId);
+      return;
+    }
+
+    const delayMs = Math.min(50 * Math.pow(2, attempts), 500);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    attempts++;
+  }
+}
+
+/**
  * Refresh an expired Atlassian OAuth token using the refresh token.
  * Updates the database with new tokens.
  * Exported for use by MCP tool layer (e.g., on 401 responses).
@@ -310,11 +391,27 @@ export async function refreshAtlassianTokenDirect(
     'REFRESH_FAILED' | 'GRANT_REVOKED'
   >
 > {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('REFRESH_FAILED' as const);
+  const db = dbResult.val;
+
   try {
-    // Get database and current grant to retrieve clientId and refreshToken
-    const dbResult = getDatabase();
-    if (!dbResult.ok) return err('REFRESH_FAILED' as const);
-    const db = dbResult.val;
+    // Try to acquire distributed lock
+    const lockAcquired = await acquireRefreshLock(db, tenantId, accountId);
+    if (!lockAcquired) {
+      // Another process is refreshing; wait for them to finish
+      await waitForRefreshLock(db, tenantId, accountId);
+      // Re-fetch grant (the other process may have updated it)
+      const refetchResult = await getJiraGrant(tenantId, accountId);
+      if (refetchResult.ok && refetchResult.val) {
+        return ok({
+          accessToken: refetchResult.val.accessToken,
+          refreshToken: refetchResult.val.refreshToken,
+          expiresAt: new Date(refetchResult.val.expiresAt),
+        });
+      }
+      // If re-fetch fails, fall through to refresh
+    }
 
     const grant = await db
       .selectFrom('atlassian_grants')
@@ -324,6 +421,7 @@ export async function refreshAtlassianTokenDirect(
       .executeTakeFirst();
 
     if (!grant) {
+      await releaseRefreshLock(db, tenantId, accountId);
       return err('REFRESH_FAILED' as const);
     }
 
@@ -348,10 +446,8 @@ export async function refreshAtlassianTokenDirect(
     });
 
     if (!response.ok) {
-      // Check if refresh token is invalid/revoked
       const errorData = await response.json().catch(() => ({}));
       if (errorData.error === 'invalid_grant' || response.status === 401) {
-        // Refresh token is burned; delete the grant so user must re-authenticate
         await db
           .deleteFrom('atlassian_grants')
           .where('tenant_id', '=', tenantId)
@@ -368,7 +464,6 @@ export async function refreshAtlassianTokenDirect(
       return err('REFRESH_FAILED' as const);
     }
 
-    // Calculate new expiration
     const expiresAt = new Date(Date.now() + (data.expires_in ?? 3600) * 1000);
 
     const encryptedAccessToken = encrypt(data.access_token, encryptionKey);
@@ -396,5 +491,8 @@ export async function refreshAtlassianTokenDirect(
     });
   } catch {
     return err('REFRESH_FAILED' as const);
+  } finally {
+    // Always release the lock
+    await releaseRefreshLock(db, tenantId, accountId);
   }
 }

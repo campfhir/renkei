@@ -40,6 +40,12 @@ export interface AtlassianGrants {
   tenant_id: string;
 }
 
+export interface AtlassianRefreshLocks {
+  account_id: string;
+  locked_at: Generated<Timestamp>;
+  tenant_id: string;
+}
+
 export interface JiraSessions {
   account_id: string;
   created_at: Generated<Timestamp>;
@@ -184,6 +190,7 @@ export interface OauthRefreshTokens {
 
 export interface DB {
   atlassian_grants: AtlassianGrants;
+  atlassian_refresh_locks: AtlassianRefreshLocks;
   jira_sessions: JiraSessions;
   log_attr: LogAttr;
   log_attr_blob: LogAttrBlob;
