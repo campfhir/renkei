@@ -105,6 +105,13 @@ const handler = async (
 
           logger.info('[MCP] Server created', { tenantId });
 
+          // Declare that server supports tools
+          server.registerCapabilities({
+            tools: {},
+          });
+
+          logger.info('[MCP] Tools capability registered', { tenantId });
+
           // Register all tools with request handler
           server.setRequestHandler(ListToolsRequestSchema, async () => {
             logger.info('[MCP] ListTools request received', { tenantId });
