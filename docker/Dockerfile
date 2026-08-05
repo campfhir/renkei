@@ -17,7 +17,7 @@ COPY app ./app
 COPY lib ./lib
 COPY public ./public
 COPY scripts ./scripts
-COPY middleware.ts next.config.js tsconfig.json tailwind.config.js postcss.config.mjs ./
+COPY proxy.ts next.config.ts tsconfig.json postcss.config.mjs ./
 
 # Compile migrations with esbuild (handles aliases)
 RUN node scripts/build-migrations.js
