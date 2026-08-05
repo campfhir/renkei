@@ -168,7 +168,11 @@ export function unauthorizedResponse(tenantId: string, origin: string, detail: s
       status: 401,
       headers: {
         'Content-Type': 'application/json',
-        'WWW-Authenticate': `Bearer realm="renkei", error="invalid_token", resource_metadata="${origin}/api/mcp/${tenantId}/.well-known/oauth-authorization-server"`,
+        // RFC 9728: this must be the *protected resource* metadata document.
+        // It pointed at the authorization server metadata, so a client followed
+        // it, looked for `authorization_servers`, found none, and never reached
+        // the registration endpoint.
+        'WWW-Authenticate': `Bearer realm="renkei", error="invalid_token", resource_metadata="${origin}/api/mcp/${tenantId}/.well-known/oauth-protected-resource"`,
       },
     }
   );

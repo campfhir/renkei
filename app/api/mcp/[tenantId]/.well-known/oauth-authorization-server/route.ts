@@ -37,7 +37,12 @@ export async function GET(
     const dcrEnabled = config.ENABLE_DCR !== 'false';
 
     const metadata = {
-      issuer: baseUrl,
+      // The issuer is per-tenant, matching the entry this tenant's protected
+      // resource metadata lists in `authorization_servers`. Declaring the bare
+      // origin here contradicted that document and pointed clients at the
+      // system-level metadata, whose registration endpoint has no tenant to
+      // register against and answers "Tenant not found".
+      issuer: `${baseUrl}${tenantPath}`,
       authorization_endpoint: `${baseUrl}${tenantPath}/oauth/authorize`,
       token_endpoint: `${baseUrl}${tenantPath}/oauth/token`,
       ...(dcrEnabled && {

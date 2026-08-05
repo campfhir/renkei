@@ -18,13 +18,17 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
   const baseUrl = config.PUBLIC_BASE_URL;
 
   const metadata = {
-    // This server is its own authorization server
-    authorization_servers: [
-      {
-        issuer: baseUrl,
-        jwks_uri: `${baseUrl}/api/.well-known/jwks.json`,
-      },
-    ],
+    resource: baseUrl,
+    // RFC 9728 defines this as an array of issuer identifier strings. It held
+    // objects, which a strict client rejects, and advertised a jwks_uri that
+    // does not exist and would not be meaningful anyway: the tokens issued here
+    // are opaque and validated by database lookup, not signature.
+    //
+    // MCP clients want the per-tenant document at
+    // /api/mcp/{tenantId}/.well-known/oauth-protected-resource; this
+    // system-level one covers the platform's own OAuth.
+    authorization_servers: [baseUrl],
+    bearer_methods_supported: ['header'],
   };
 
   return NextResponse.json(metadata);
