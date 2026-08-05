@@ -120,6 +120,7 @@ const handler = async (
               {
                 title: toolDef.name,
                 description: toolDef.description,
+                inputSchema: toolDef.inputSchema,
               },
               async (args: Record<string, unknown>) => {
                 try {
