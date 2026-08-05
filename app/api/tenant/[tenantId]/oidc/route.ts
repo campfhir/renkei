@@ -1,7 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
-import { setTenantOidc } from '@/lib/tenant-operations';
+import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations';
+import { getOperatorSession } from '@/lib/auth-utils';
 import { logger } from '@/lib/logger';
+import type { Kysely } from 'kysely';
+import type { DB } from '@/lib/db.types';
+
+/**
+ * Confirm the caller is an operator *of this tenant*.
+ *
+ * An operator session carries the tenant it was issued for, so checking only
+ * that a session exists would let an operator of one tenant reconfigure
+ * another's identity provider.
+ */
+async function requireTenantOperator(tenantId: string): Promise<NextResponse | null> {
+  const session = await getOperatorSession();
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (session.tenantId !== tenantId) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+  return null;
+}
+
+/** Whether this tenant already has an identity provider configured. */
+async function hasOidcConfig(db: Kysely<DB>, tenantId: string): Promise<boolean> {
+  const existing = await db
+    .selectFrom('tenant_oidc')
+    .select('client_id')
+    .where('tenant_id', '=', tenantId)
+    .executeTakeFirst();
+  return Boolean(existing);
+}
 
 interface OidcConfigRequest {
   discoveryEndpoint: string;
@@ -44,6 +75,27 @@ export async function POST(
 
     if (!tenant) {
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+    }
+
+    // First configuration is open; every change after it is operator-only.
+    //
+    // The exception exists because operator identity is itself derived from
+    // OIDC: until a tenant has an identity provider, nobody can hold an
+    // operator session for it, so gating creation would leave every new tenant
+    // permanently unconfigurable. Once a provider is set an operator can exist,
+    // and from then on only they may change it -- which is the part that
+    // matters, since whoever controls this record controls who becomes an
+    // operator.
+    const configured = await hasOidcConfig(db, tenantId);
+    if (configured) {
+      const denied = await requireTenantOperator(tenantId);
+      if (denied) {
+        logger.warn('[OIDC] Rejected unauthorised attempt to change identity provider', {
+          tenantId,
+          status: denied.status,
+        });
+        return denied;
+      }
     }
 
     const body = await request.json();
@@ -96,26 +148,60 @@ export async function POST(
       );
     }
 
-    // Store OIDC configuration
-    const setResult = await setTenantOidc(tenantId, {
+    const config = {
       issuer,
       clientId: body.clientId,
       clientSecret: body.clientSecret,
       roleClaim: body.roleClaim,
       operatorIdpValue: body.operatorIdpValue || null,
       userIdpValue: body.userIdpValue || null,
-    });
+    };
 
-    if (!setResult.ok) {
+    if (configured) {
+      // Authenticated update.
+      const setResult = await setTenantOidc(tenantId, config);
+      if (!setResult.ok) {
+        logger.error('[OIDC] Failed to save OIDC configuration: {error}', {
+          tenantId,
+          error: String(setResult.err),
+        });
+        return NextResponse.json({ error: 'Failed to save OIDC configuration' }, { status: 500 });
+      }
+
+      logger.info('[OIDC] Identity provider updated by operator', { tenantId, issuer });
+      return NextResponse.json({ success: true, tenantId });
+    }
+
+    // Unauthenticated bootstrap. Insert-only, so a configuration created while
+    // the discovery fetch above was in flight is not overwritten by this
+    // caller; they are told to authenticate instead.
+    const createResult = await createTenantOidcIfAbsent(tenantId, config);
+    if (!createResult.ok) {
       logger.error('[OIDC] Failed to save OIDC configuration: {error}', {
         tenantId,
-        error: String(setResult.err),
+        error: String(createResult.err),
       });
       return NextResponse.json({ error: 'Failed to save OIDC configuration' }, { status: 500 });
     }
 
-    logger.info('[OIDC] OIDC configuration updated', {
+    if (!createResult.val) {
+      logger.warn('[OIDC] Bootstrap lost a race with an existing configuration', { tenantId });
+      return NextResponse.json(
+        {
+          error:
+            'This tenant already has an identity provider. Changing it requires an operator session.',
+        },
+        { status: 409 }
+      );
+    }
+
+    // Worth a record of its own: this is the one write to this table that
+    // nobody had to authenticate for, and it decides who can become an operator.
+    logger.warn('[OIDC] Identity provider claimed for previously unconfigured tenant', {
       tenantId,
+      issuer,
+      clientId: body.clientId,
+      operatorIdpValue: body.operatorIdpValue || null,
     });
 
     return NextResponse.json({ success: true, tenantId });
@@ -134,6 +220,14 @@ export async function GET(
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
   const { tenantId } = await params;
+
+  // Operator-only, and checked before anything is read. This returns the
+  // issuer, client id and the claim mapping that decides who becomes an
+  // operator — which is the reconnaissance for an attack on POST, so it is
+  // gated even though no secret is in the response.
+  const denied = await requireTenantOperator(tenantId);
+  if (denied) return denied;
+
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });

@@ -62,6 +62,52 @@ export type NewJiraGrant = Omit<JiraGrant, 'subject'> & { subject: string };
  * Store OIDC configuration for a tenant.
  * Client secret is encrypted with the deployment key.
  */
+/**
+ * Configure a tenant's identity provider only if it has none.
+ *
+ * Resolves to false when a configuration already existed, leaving it
+ * untouched. The unauthenticated bootstrap path needs this rather than
+ * `setTenantOidc`: that one upserts, so two racing callers would both pass a
+ * "not configured yet" check and the later write would silently replace the
+ * earlier. Letting the database decide makes first-write-wins actually true.
+ */
+export async function createTenantOidcIfAbsent(
+  tenantId: string,
+  oidc: TenantOidc
+): Promise<Result<boolean, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+  const db = dbResult.val;
+  const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!encryptionKeyResult.ok) return err('INVALID_ENCRYPTION_KEY' as const);
+  const encryptionKey = encryptionKeyResult.val;
+
+  const result = await wrapAsync(
+    () =>
+      db
+        .insertInto('tenant_oidc')
+        .values({
+          id: randomUUID(),
+          tenant_id: tenantId,
+          issuer: oidc.issuer,
+          client_id: oidc.clientId,
+          client_secret: encrypt(oidc.clientSecret, encryptionKey),
+          role_claim: oidc.roleClaim,
+          operator_idp_value: oidc.operatorIdpValue || null,
+          user_idp_value: oidc.userIdpValue || null,
+          created_at: new Date().toISOString(),
+        })
+        .onConflict((oc) => oc.column('tenant_id').doNothing())
+        .executeTakeFirst(),
+    'DB_ERROR' as const
+  );
+
+  if (!result.ok) return result;
+  // A bigint literal would need an ES2020 target; Number() is safe for a count
+  // that is only ever 0 or 1.
+  return ok(Number(result.val?.numInsertedOrUpdatedRows ?? 0) > 0);
+}
+
 export async function setTenantOidc(
   tenantId: string,
   oidc: TenantOidc
