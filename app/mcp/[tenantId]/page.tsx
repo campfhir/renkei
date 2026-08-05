@@ -19,6 +19,11 @@ export default function MCPEndpoint() {
   // someone who is already signed in.
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [baseUrl, setBaseUrl] = useState('');
+  // Disconnecting is not reversible without re-authorising Jira, so it asks
+  // first rather than acting on one click.
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     // Set base URL for display
@@ -64,6 +69,28 @@ export default function MCPEndpoint() {
   const handleAuthorize = async () => {
     // Redirect to Jira OAuth authorization for this tenant
     window.location.href = `/api/mcp/${tenantId}/authorize`;
+  };
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/mcp/${tenantId}/grant`, { method: 'DELETE' });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setNotice(data.message || data.error || 'Could not disconnect');
+        return;
+      }
+
+      setJiraStatus({ connected: false });
+      setConfirmingDisconnect(false);
+      setNotice(data.message ?? 'Disconnected');
+    } catch {
+      setNotice('Could not reach the server');
+    } finally {
+      setDisconnecting(false);
+    }
   };
 
   const mcpEndpointUrl = `${baseUrl}/api/mcp/${tenantId}/http`;
@@ -124,6 +151,12 @@ export default function MCPEndpoint() {
           )}
         </div>
 
+        {notice && (
+          <p className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 mb-6 text-sm text-gray-800 dark:text-gray-200">
+            {notice}
+          </p>
+        )}
+
         {/* Setup Steps */}
         <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
           <h2 className="font-semibold text-blue-900 dark:text-blue-100 mb-2">Setup</h2>
@@ -152,6 +185,40 @@ export default function MCPEndpoint() {
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors mb-4"
             >
               Connect Jira
+            </button>
+          ))}
+
+        {jiraStatus.connected &&
+          (confirmingDisconnect ? (
+            <div className="border border-red-300 dark:border-red-800 rounded-lg p-4 mb-4">
+              <p className="text-sm text-gray-800 dark:text-gray-200 mb-3">
+                Disconnect <strong>{jiraStatus.displayName ?? 'your Jira account'}</strong>? Tools
+                stop working until you reconnect, and any MCP client tokens issued for you are
+                revoked.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={handleDisconnect}
+                  disabled={disconnecting}
+                  className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+                >
+                  {disconnecting ? 'Disconnecting…' : 'Yes, disconnect'}
+                </button>
+                <button
+                  onClick={() => setConfirmingDisconnect(false)}
+                  disabled={disconnecting}
+                  className="flex-1 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200 font-medium py-2 px-4 rounded-lg transition-colors"
+                >
+                  Keep it
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmingDisconnect(true)}
+              className="w-full border border-red-300 dark:border-red-800 text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 font-medium py-3 px-4 rounded-lg transition-colors mb-4"
+            >
+              Disconnect Jira
             </button>
           ))}
 
