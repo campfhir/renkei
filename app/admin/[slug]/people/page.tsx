@@ -2,6 +2,12 @@ import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 import { getDatabase } from '@/lib/db';
 
+interface User {
+  account_id: string;
+  display_name: string | null;
+  email: string | null;
+}
+
 export default async function PeoplePage({ params }: { params: Promise<{ slug: string }> }) {
   const session = await getOperatorSession();
   const { slug } = await params;
@@ -12,7 +18,7 @@ export default async function PeoplePage({ params }: { params: Promise<{ slug: s
 
   const db = getDatabase();
 
-  let users: any[] = [];
+  let users: User[] = [];
   try {
     const tenant = await db
       .selectFrom('tenants')

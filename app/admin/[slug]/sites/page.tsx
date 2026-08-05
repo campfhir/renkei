@@ -2,6 +2,14 @@ import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 import { getDatabase } from '@/lib/db';
 
+interface JiraSite {
+  site_id: string;
+  cloud_id: string;
+  jira_url: string;
+  enabled: boolean;
+  claimed_at: string | null;
+}
+
 export default async function SitesPage({ params }: { params: Promise<{ slug: string }> }) {
   const session = await getOperatorSession();
   const { slug } = await params;
@@ -13,7 +21,7 @@ export default async function SitesPage({ params }: { params: Promise<{ slug: st
   const db = getDatabase();
 
   // Fetch sites for this tenant
-  let sites: any[] = [];
+  let sites: JiraSite[] = [];
   try {
     const tenant = await db
       .selectFrom('tenants')

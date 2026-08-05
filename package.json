@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "jest"
+    "test": "jest",
+    "db:types": "tsx scripts/generate-db-types.ts"
   },
   "dependencies": {
     "@campfhir/bored-logs": "^0.3.2",
@@ -24,6 +25,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/jest": "^30.0.0",
@@ -32,10 +34,14 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "esbuild": "^0.28.1",
+    "eslint": "^10.8.0",
+    "eslint-config-next": "^16.3.0",
     "jest": "^30.4.2",
+    "kysely-codegen": "^0.20.0",
     "playwright": "^1.62.1",
     "tailwindcss": "^4",
     "ts-jest": "^29.4.12",
-    "typescript": "^5"
+    "typescript": "^5",
+    "typescript-eslint": "^8.66.0"
   }
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
-import { getTenantOidc, getOidcRoleMapping } from '@/lib/tenant-operations';
+import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 
 interface OIDCTokenResponse {
@@ -12,7 +12,7 @@ interface OIDCTokenResponse {
 }
 
 interface DecodedToken {
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 function decodeJWT(token: string): DecodedToken | null {

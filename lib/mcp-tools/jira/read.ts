@@ -10,8 +10,8 @@ import { issueKeySchema, ok, okWithLink, toolError, jiraFetch, issueUrl } from '
 export interface ReadToolHandler {
   name: string;
   description: string;
-  inputSchema?: Record<string, any>;
-  handler: (context: MCPToolContext, params: any) => Promise<MCPToolResult>;
+  inputSchema?: Record<string, unknown>;
+  handler: (context: MCPToolContext, params: unknown) => Promise<MCPToolResult>;
 }
 
 export const readTools: ReadToolHandler[] = [
@@ -23,7 +23,7 @@ export const readTools: ReadToolHandler[] = [
         `${context.siteUrl}/rest/api/3/myself`,
         context.accessToken,
       );
-      const me = (await response.json()) as any;
+      const me = (await response.json()) as Record<string, unknown>;
       const lines = [
         `Account: ${me.displayName || 'unknown'}`,
         `Email: ${me.emailAddress || 'not shared'}`,
@@ -54,8 +54,9 @@ export const readTools: ReadToolHandler[] = [
       required: ['jql'],
     },
     handler: async (context, params) => {
-      const { jql } = params;
-      const maxResults = Math.min(params.maxResults || 50, context.maxJqlResults);
+      const p = params as Record<string, unknown>;
+      const { jql } = p;
+      const maxResults = Math.min((p.maxResults as number | undefined) || 50, context.maxJqlResults);
 
       if (!jql) {
         return toolError('JQL query is required');
@@ -84,20 +85,24 @@ export const readTools: ReadToolHandler[] = [
           },
         );
 
-        const data = (await response.json()) as any;
-        const issues = (data.issues || []).map((issue: any) => ({
-          key: issue.key,
-          summary: issue.fields.summary,
-          status: issue.fields.status?.name || 'Unknown',
-          priority: issue.fields.priority?.name || 'No Priority',
-          assignee: issue.fields.assignee?.displayName || 'Unassigned',
-          updated: issue.fields.updated,
-        }));
+        const data = (await response.json()) as Record<string, unknown>;
+        const issues = ((data.issues as unknown[]) || []).map((issue: unknown) => {
+          const issueObj = issue as Record<string, unknown>;
+          const fields = issueObj.fields as Record<string, unknown>;
+          return {
+            key: issueObj.key,
+            summary: fields.summary,
+            status: (fields.status as Record<string, unknown>)?.name || 'Unknown',
+            priority: (fields.priority as Record<string, unknown>)?.name || 'No Priority',
+            assignee: (fields.assignee as Record<string, unknown>)?.displayName || 'Unassigned',
+            updated: fields.updated,
+          };
+        });
 
         const lines = [
           `Found ${data.total} issues (showing ${issues.length}):`,
           ...issues.map(
-            (i: any) =>
+            (i: Record<string, unknown>) =>
               `• ${i.key}: ${i.summary} [${i.status}] (${i.priority}) assigned to ${i.assignee}`,
           ),
         ];
@@ -123,7 +128,8 @@ export const readTools: ReadToolHandler[] = [
       required: ['issueKey'],
     },
     handler: async (context, params) => {
-      const { issueKey } = params;
+      const p = params as Record<string, unknown>;
+      const { issueKey } = p;
 
       if (!issueKey) {
         return toolError('Issue key is required');
@@ -135,22 +141,23 @@ export const readTools: ReadToolHandler[] = [
           context.accessToken,
         );
 
-        const issue = (await response.json()) as any;
+        const issue = (await response.json()) as Record<string, unknown>;
+        const fields = issue.fields as Record<string, unknown>;
         const lines = [
-          `${issue.key}: ${issue.fields.summary}`,
-          `Status: ${issue.fields.status?.name || 'Unknown'}`,
-          `Priority: ${issue.fields.priority?.name || 'No Priority'}`,
-          `Type: ${issue.fields.issuetype?.name || 'Unknown'}`,
-          `Assignee: ${issue.fields.assignee?.displayName || 'Unassigned'}`,
-          `Created: ${issue.fields.created}`,
-          `Updated: ${issue.fields.updated}`,
+          `${issue.key}: ${fields.summary}`,
+          `Status: ${(fields.status as Record<string, unknown>)?.name || 'Unknown'}`,
+          `Priority: ${(fields.priority as Record<string, unknown>)?.name || 'No Priority'}`,
+          `Type: ${(fields.issuetype as Record<string, unknown>)?.name || 'Unknown'}`,
+          `Assignee: ${(fields.assignee as Record<string, unknown>)?.displayName || 'Unassigned'}`,
+          `Created: ${fields.created}`,
+          `Updated: ${fields.updated}`,
         ];
 
-        if (issue.fields.description) {
-          lines.push(`\nDescription:\n${issue.fields.description}`);
+        if (fields.description) {
+          lines.push(`\nDescription:\n${fields.description}`);
         }
 
-        return okWithLink(lines.join('\n'), issueUrl(context.siteUrl, issue.key));
+        return okWithLink(lines.join('\n'), issueUrl(context.siteUrl, issue.key as string));
       } catch (error) {
         return toolError(`Failed to get issue: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -170,7 +177,8 @@ export const readTools: ReadToolHandler[] = [
       },
     },
     handler: async (context, params) => {
-      const maxResults = Math.min(params.maxResults || 25, 100);
+      const p = params as Record<string, unknown>;
+      const maxResults = Math.min((p.maxResults as number | undefined) || 25, 100);
 
       try {
         const response = await jiraFetch(
@@ -178,16 +186,19 @@ export const readTools: ReadToolHandler[] = [
           context.accessToken,
         );
 
-        const data = (await response.json()) as any;
-        const boards = (data.values || []).map((board: any) => ({
-          id: board.id,
-          name: board.name,
-          type: board.type,
-        }));
+        const data = (await response.json()) as Record<string, unknown>;
+        const boards = ((data.values as unknown[]) || []).map((board: unknown) => {
+          const boardObj = board as Record<string, unknown>;
+          return {
+            id: boardObj.id,
+            name: boardObj.name,
+            type: boardObj.type,
+          };
+        });
 
         const lines = [
           `Found ${data.total || 0} boards (showing ${boards.length}):`,
-          ...boards.map((b: any) => `• ${b.name} (${b.type})`),
+          ...boards.map((b: Record<string, unknown>) => `• ${b.name} (${b.type})`),
         ];
 
         return ok(lines.join('\n'));
@@ -211,7 +222,8 @@ export const readTools: ReadToolHandler[] = [
       required: ['boardId'],
     },
     handler: async (context, params) => {
-      const { boardId } = params;
+      const p = params as Record<string, unknown>;
+      const { boardId } = p;
 
       if (!boardId) {
         return toolError('Board ID is required');
@@ -223,12 +235,15 @@ export const readTools: ReadToolHandler[] = [
           context.accessToken,
         );
 
-        const data = (await response.json()) as any;
-        const sprints = data.values || [];
+        const data = (await response.json()) as Record<string, unknown>;
+        const sprints = (data.values as unknown[]) || [];
 
         const lines = [
           `Board ${boardId} has ${sprints.length} sprints:`,
-          ...sprints.map((s: any) => `• ${s.name} (${s.state})`),
+          ...sprints.map((s: unknown) => {
+            const sprintObj = s as Record<string, unknown>;
+            return `• ${sprintObj.name} (${sprintObj.state})`;
+          }),
         ];
 
         return ok(lines.join('\n'));

@@ -2,6 +2,15 @@ import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 import { getDatabase } from '@/lib/db';
 
+interface AuditEvent {
+  event_id: string;
+  event_type: string;
+  actor_id: string | null;
+  resource_id: string | null;
+  created_at: string;
+  details: unknown;
+}
+
 export default async function AuditPage({ params }: { params: Promise<{ slug: string }> }) {
   const session = await getOperatorSession();
   const { slug } = await params;
@@ -12,7 +21,7 @@ export default async function AuditPage({ params }: { params: Promise<{ slug: st
 
   const db = getDatabase();
 
-  let events: any[] = [];
+  let events: AuditEvent[] = [];
   try {
     const tenant = await db
       .selectFrom('tenants')

@@ -4,8 +4,16 @@ import Link from 'next/link';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
 
+interface LogEntry {
+  logged_timestamp?: string | null;
+  level?: string;
+  message?: string;
+  context?: unknown;
+  [key: string]: unknown;
+}
+
 interface LogsViewerProps {
-  initialLogs: any[];
+  initialLogs: LogEntry[];
   initialRole: string | null;
   initialError: string | null;
 }
@@ -17,7 +25,7 @@ export default function LogsViewerContent({ initialLogs, initialRole, initialErr
   const accountId = searchParams.get('accountId');
   const query = searchParams.get('q');
 
-  const [logs, setLogs] = useState<any[]>(initialLogs);
+  const [logs, setLogs] = useState<LogEntry[]>(initialLogs);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(initialError);
   const [searchQuery, setSearchQuery] = useState(query || '');
@@ -29,7 +37,7 @@ export default function LogsViewerContent({ initialLogs, initialRole, initialErr
         setIsLoading(true);
         setError(null);
 
-        const queryOptions: Record<string, any> = {};
+        const queryOptions: Record<string, string> = {};
         if (searchQuery) {
           queryOptions.query = searchQuery;
         }
@@ -244,7 +252,7 @@ export default function LogsViewerContent({ initialLogs, initialRole, initialErr
                   </tr>
                 </thead>
                 <tbody className="text-gray-700 dark:text-gray-300">
-                  {logs.map((log: any, idx: number) => (
+                  {logs.map((log, idx) => (
                     <tr key={idx} className="border-t border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700">
                       <td className="border border-gray-300 dark:border-gray-600 px-2 py-1 font-mono whitespace-nowrap">
                         {log.logged_timestamp ? new Date(log.logged_timestamp).toISOString().slice(11, 19) : '—'}

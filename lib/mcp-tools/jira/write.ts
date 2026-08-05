@@ -9,8 +9,8 @@ import { ok, okWithLink, toolError, jiraFetch, issueUrl } from '../common';
 export interface WriteToolHandler {
   name: string;
   description: string;
-  inputSchema?: Record<string, any>;
-  handler: (context: MCPToolContext, params: any) => Promise<MCPToolResult>;
+  inputSchema?: Record<string, unknown>;
+  handler: (context: MCPToolContext, params: unknown) => Promise<MCPToolResult>;
 }
 
 export const writeTools: WriteToolHandler[] = [
@@ -53,17 +53,18 @@ export const writeTools: WriteToolHandler[] = [
       required: ['projectKey', 'issueType', 'summary'],
     },
     handler: async (context, params) => {
-      const { projectKey, issueType, summary, description, priority, assignee, labels } = params;
+      const p = params as Record<string, unknown>;
+      const { projectKey, issueType, summary, description, priority, assignee, labels } = p;
 
       if (!projectKey || !issueType || !summary) {
         return toolError('projectKey, issueType, and summary are required');
       }
 
       try {
-        const fields: any = {
-          project: { key: projectKey },
-          issuetype: { name: issueType },
-          summary: summary.substring(0, 255),
+        const fields: Record<string, unknown> = {
+          project: { key: projectKey as string },
+          issuetype: { name: issueType as string },
+          summary: (summary as string).substring(0, 255),
         };
 
         if (description) {
@@ -91,8 +92,8 @@ export const writeTools: WriteToolHandler[] = [
           },
         );
 
-        const result = (await response.json()) as any;
-        return okWithLink(`Created issue ${result.key}`, issueUrl(context.siteUrl, result.key));
+        const result = (await response.json()) as Record<string, unknown>;
+        return okWithLink(`Created issue ${result.key}`, issueUrl(context.siteUrl, result.key as string));
       } catch (error) {
         return toolError(`Failed to create issue: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -134,14 +135,15 @@ export const writeTools: WriteToolHandler[] = [
       required: ['issueKey'],
     },
     handler: async (context, params) => {
-      const { issueKey, summary, description, priority, assignee, labels } = params;
+      const p = params as Record<string, unknown>;
+      const { issueKey, summary, description, priority, assignee, labels } = p;
 
       if (!issueKey) {
         return toolError('issueKey is required');
       }
 
       try {
-        const fields: any = {};
+        const fields: Record<string, unknown> = {};
 
         if (summary) {
           fields.summary = summary.substring(0, 255);
@@ -197,7 +199,8 @@ export const writeTools: WriteToolHandler[] = [
       required: ['issueKey', 'comment'],
     },
     handler: async (context, params) => {
-      const { issueKey, comment } = params;
+      const p = params as Record<string, unknown>;
+      const { issueKey, comment } = p;
 
       if (!issueKey || !comment) {
         return toolError('issueKey and comment are required');
@@ -244,7 +247,8 @@ export const writeTools: WriteToolHandler[] = [
       required: ['issueKey', 'transitionName'],
     },
     handler: async (context, params) => {
-      const { issueKey, transitionName, comment } = params;
+      const p = params as Record<string, unknown>;
+      const { issueKey, transitionName, comment } = p;
 
       if (!issueKey || !transitionName) {
         return toolError('issueKey and transitionName are required');
@@ -256,21 +260,21 @@ export const writeTools: WriteToolHandler[] = [
           `${context.siteUrl}/rest/api/3/issue/${issueKey}/transitions`,
           context.accessToken,
         );
-        const transData = (await transResponse.json()) as any;
+        const transData = (await transResponse.json()) as Record<string, unknown>;
 
         // Find the matching transition
         const transition = transData.transitions?.find(
-          (t: any) => t.name.toLowerCase() === transitionName.toLowerCase(),
+          (t: Record<string, unknown>) => t.name.toLowerCase() === transitionName.toLowerCase(),
         );
 
         if (!transition) {
           return toolError(
-            `Transition "${transitionName}" not found. Available: ${transData.transitions?.map((t: any) => t.name).join(', ') || 'none'}`,
+            `Transition "${transitionName}" not found. Available: ${transData.transitions?.map((t: Record<string, unknown>) => t.name).join(', ') || 'none'}`,
           );
         }
 
         // Execute the transition
-        const body: any = {
+        const body: Record<string, unknown> = {
           transition: { id: transition.id },
         };
 
@@ -324,14 +328,15 @@ export const writeTools: WriteToolHandler[] = [
       required: ['issueKey', 'timeSpent'],
     },
     handler: async (context, params) => {
-      const { issueKey, timeSpent, comment } = params;
+      const p = params as Record<string, unknown>;
+      const { issueKey, timeSpent, comment } = p;
 
       if (!issueKey || !timeSpent) {
         return toolError('issueKey and timeSpent are required');
       }
 
       try {
-        const body: any = {
+        const body: Record<string, unknown> = {
           timeSpent,
         };
 
