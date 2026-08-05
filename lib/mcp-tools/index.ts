@@ -7,6 +7,10 @@
 import type { MCPToolContext, MCPToolResult } from './common';
 import { readTools } from './read';
 import { writeTools } from './write';
+import { bulkTools } from './bulk';
+import { sprintTools } from './sprints';
+import { projectTools } from './project';
+import { jsmTools } from './jsm';
 
 export type { MCPToolContext, MCPToolResult };
 export { ok, okWithLink, toolError } from './common';
@@ -25,7 +29,14 @@ export interface ToolHandler {
 }
 
 // All available tools
-export const allTools = [...readTools, ...writeTools];
+export const allTools = [
+  ...readTools,
+  ...writeTools,
+  ...bulkTools,
+  ...sprintTools,
+  ...projectTools,
+  ...jsmTools,
+];
 
 /**
  * Get tool definition for MCP protocol response.
