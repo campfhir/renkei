@@ -35,6 +35,7 @@ await esbuild.build({
   platform: 'node',
   target: 'node24',
   format: 'cjs',
+  outExtension: { '.js': '.cjs' },
   logLevel: 'info',
 });
 
