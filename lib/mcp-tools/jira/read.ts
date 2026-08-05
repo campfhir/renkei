@@ -243,7 +243,9 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         // exact count needs a separate /search/approximate-count call.
         const more = typeof data.nextPageToken === 'string' && data.nextPageToken.length > 0;
         const lines = [
-          `Found ${issues.length} issue${issues.length === 1 ? '' : 's'}${more ? ' (more available)' : ''}:`,
+          `Showing ${issues.length} issue${issues.length === 1 ? '' : 's'}` +
+            (more ? ' — more match. Call count_issues with the same JQL for the total.' : '') +
+            ':',
           ...issues.map(
             (i: Record<string, unknown>) =>
               `• ${i.key}: ${i.summary} [${i.status}] (${i.priority}) assigned to ${i.assignee}`
@@ -251,6 +253,77 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         ];
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+      } catch (error) {
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // count_issues
+  server.registerTool(
+    'count_issues',
+    {
+      title: 'Count issues matching JQL',
+      description:
+        'How many issues match a JQL query, without listing them. Use this when the question is ' +
+        '"how many" — search_issues returns at most 100 and its response carries no total, so a ' +
+        'capped result says nothing about how many there really are.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        jql: z
+          .string()
+          .describe(
+            'JQL query, e.g. "assignee = \'someone@example.com\' AND resolution = Unresolved"'
+          ),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] count_issues invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
+      try {
+        const { jql } = args;
+        if (!isString(jql) || jql.trim().length === 0) {
+          return {
+            content: [{ type: 'text' as const, text: 'JQL query is required' }],
+            isError: true,
+          };
+        }
+
+        // The endpoint that replaced the removed /search's `total` (CHANGE-2046).
+        // Its answer is an estimate by design — Jira does not count exactly on a
+        // large result set — so it is reported as one rather than as a fact.
+        const response = await jiraFetch(
+          `${context.apiBaseUrl}/rest/api/3/search/approximate-count`,
+          context.accessToken,
+          { method: 'POST', body: JSON.stringify({ jql }) }
+        );
+
+        const data = await response.json();
+        if (!isRecord(data) || !isNumber(data.count)) {
+          return {
+            content: [{ type: 'text' as const, text: 'Invalid API response' }],
+            isError: true,
+          };
+        }
+
+        const approximate = data.count === 1 ? '1 issue matches' : `${data.count} issues match`;
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `${approximate} (Jira's approximate count):\n${jql}`,
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [

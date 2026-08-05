@@ -45,12 +45,18 @@ let requestedUrls: string[] = [];
 /** Answer every request with `payload`, recording the URL that was asked for. */
 function respondWith(payload: unknown): void {
   requestedUrls = [];
+  requestBodies = [];
   jiraFetchMock.mockReset();
-  jiraFetchMock.mockImplementation(async (url: unknown) => {
-    requestedUrls.push(String(url));
-    return { ok: true, status: 200, json: async () => payload } as unknown as Response;
-  });
+  jiraFetchMock.mockImplementation(
+    async (url: unknown, _token: unknown, request?: { body?: string }) => {
+      requestedUrls.push(String(url));
+      requestBodies.push(request?.body ? JSON.parse(request.body) : null);
+      return { ok: true, status: 200, json: async () => payload } as unknown as Response;
+    }
+  );
 }
+
+let requestBodies: (Record<string, unknown> | null)[] = [];
 
 const adfDescription = {
   type: 'doc',
@@ -173,5 +179,86 @@ describe('get_issue', () => {
     expect(text).toContain('Status: In Review');
     expect(text).toContain('Assignee: Dana Lin');
     expect(text).toContain('[Open in Jira](https://example.atlassian.net/browse/CHG-20)');
+  });
+});
+
+describe('count_issues', () => {
+  it('asks the count endpoint rather than paging results', async () => {
+    respondWith({ count: 137 });
+    const tools = await registerTools();
+
+    const result = await tools.get('count_issues')!({
+      jql: "assignee = 'celia.li@nems.org'",
+    });
+
+    expect(requestedUrls[0]).toBe(
+      'https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/search/approximate-count'
+    );
+    expect(requestBodies[0]).toEqual({ jql: "assignee = 'celia.li@nems.org'" });
+    expect(result.content[0].text).toContain('137 issues match');
+  });
+
+  it('says the number is an estimate, because Jira does not count exactly', async () => {
+    respondWith({ count: 137 });
+    const tools = await registerTools();
+
+    const result = await tools.get('count_issues')!({ jql: 'project = CAS' });
+
+    expect(result.content[0].text).toContain('approximate');
+  });
+
+  it('reads as a sentence for a single match', async () => {
+    respondWith({ count: 1 });
+    const tools = await registerTools();
+
+    const result = await tools.get('count_issues')!({ jql: 'key = CAS-1' });
+
+    expect(result.content[0].text).toContain('1 issue matches');
+  });
+
+  it('requires a query', async () => {
+    respondWith({ count: 0 });
+    const tools = await registerTools();
+
+    const result = await tools.get('count_issues')!({ jql: '   ' });
+
+    expect(result.isError).toBe(true);
+    expect(requestedUrls).toHaveLength(0);
+  });
+
+  it('reports an unusable response rather than a number it did not get', async () => {
+    respondWith({ errorMessages: ['bad jql'] });
+    const tools = await registerTools();
+
+    const result = await tools.get('count_issues')!({ jql: 'nonsense =' });
+
+    expect(result.isError).toBe(true);
+  });
+});
+
+describe('search_issues truncation', () => {
+  it('points at count_issues when more issues match than were returned', async () => {
+    respondWith({
+      issues: [{ key: 'CAS-1', fields: { summary: 'One', status: { name: 'Open' } } }],
+      nextPageToken: 'more-please',
+    });
+    const tools = await registerTools();
+
+    const result = await tools.get('search_issues')!({ jql: 'project = CAS' });
+
+    // The transcript this comes from: a capped list was read as "100+ tickets",
+    // with no way to find the actual number.
+    expect(result.content[0].text).toContain('count_issues');
+  });
+
+  it('says nothing about counting when the results are complete', async () => {
+    respondWith({
+      issues: [{ key: 'CAS-1', fields: { summary: 'One', status: { name: 'Open' } } }],
+    });
+    const tools = await registerTools();
+
+    const result = await tools.get('search_issues')!({ jql: 'project = CAS' });
+
+    expect(result.content[0].text).not.toContain('count_issues');
   });
 });
