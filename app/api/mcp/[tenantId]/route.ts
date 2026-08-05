@@ -1,46 +1,17 @@
+/**
+ * MCP endpoint using official MCP SDK.
+ *
+ * Replaces the hand-rolled JSON-RPC implementation with standards-compliant
+ * protocol handling using the MCP SDK.
+ */
+
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { getJiraGrant } from '@/lib/tenant-operations';
 import { recordSession } from '@/lib/audit';
 import { createLogger } from '@campfhir/bored-logs';
-import { getAllToolDefinitions, executeTool } from '@/lib/mcp-tools';
-
-interface JiraIssue {
-  key: string;
-  fields: {
-    summary: string;
-    description: string | null;
-    status: {
-      name: string;
-    };
-    assignee: {
-      displayName: string;
-    } | null;
-    created: string;
-    updated: string;
-  };
-}
-
-interface MCPResource {
-  uri: string;
-  name: string;
-  description: string;
-  mimeType: string;
-}
-
-interface MCPCapabilities {
-  resources: {
-    listChanged?: boolean;
-  };
-}
-
-interface MCPToolResult {
-  type: 'text' | 'image' | 'resource';
-  text?: string;
-  url?: string;
-  data?: string;
-  mimeType?: string;
-}
+import { createMCPServer } from './sdk-server';
+import { handleMCPRequest, parseJSONRPCMessage } from './http-transport';
 
 interface MCPMessage {
   jsonrpc: '2.0';
@@ -49,21 +20,21 @@ interface MCPMessage {
   params?: any;
 }
 
-interface MCPInitializeRequest extends MCPMessage {
-  method: 'initialize';
-  params: {
-    protocolVersion: string;
-    capabilities: any;
-    clientInfo: {
-      name: string;
-      version: string;
-    };
+interface InitializeParams {
+  protocolVersion: string;
+  capabilities: any;
+  clientInfo: {
+    name: string;
+    version: string;
   };
 }
 
+/**
+ * GET handler: Return server capabilities and tool list.
+ */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ tenantId: string }> },
 ) {
   const { tenantId } = await params;
   const db = getDatabase();
@@ -80,7 +51,7 @@ export async function GET(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
-    // Get the first Jira grant for this tenant (MVP: single user)
+    // Get Jira grant
     const grants = await db
       .selectFrom('atlassian_grants')
       .select(['account_id'])
@@ -94,7 +65,7 @@ export async function GET(
           error: 'No Jira grant configured',
           message: 'Please connect your Jira instance first',
         },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -103,37 +74,49 @@ export async function GET(
       return NextResponse.json({ error: 'Failed to retrieve Jira grant' }, { status: 500 });
     }
 
-    // Initialize MCP server response with all available tools
-    const toolDefinitions = getAllToolDefinitions();
-    const mcp: any = {
+    // Create MCP server
+    const server = createMCPServer({
+      tenantId,
+      accountId: grants[0].account_id,
+      siteUrl: grant.siteUrl,
+      accessToken: grant.accessToken,
+      maxJqlResults: 100,
+    });
+
+    // Get tool list from server
+    const toolsResponse = await handleMCPRequest(server, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/list',
+      params: {},
+    });
+
+    const tools = (toolsResponse as any).result?.tools || [];
+
+    return NextResponse.json({
       protocolVersion: '2024-11-05',
       capabilities: {
         resources: {},
-      } as MCPCapabilities,
-      resources: [] as MCPResource[],
-      tools: toolDefinitions,
-    };
-
-    // Add resources for each issue
-    mcp.resources.push({
-      uri: 'jira://issues',
-      name: 'Jira Issues',
-      description: 'Access to all Jira issues in this tenant',
-      mimeType: 'application/json',
+        tools: {},
+      },
+      serverInfo: {
+        name: 'Jira Renkei MCP',
+        version: '1.0.0',
+      },
+      tools,
     });
-
-    console.log(`[MCP ${tenantId}] Serving endpoint for ${grant.displayName}`);
-
-    return NextResponse.json(mcp);
   } catch (error) {
-    console.error('MCP endpoint error:', error);
+    console.error('MCP GET error:', error);
     return NextResponse.json({ error: 'Failed to initialize MCP server' }, { status: 500 });
   }
 }
 
+/**
+ * POST handler: Process tool calls and MCP protocol messages.
+ */
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string }> }
+  { params }: { params: Promise<{ tenantId: string }> },
 ) {
   const { tenantId } = await params;
   const db = getDatabase();
@@ -145,32 +128,9 @@ export async function POST(
   let body: MCPMessage | undefined;
 
   try {
-    body = await request.json() as MCPMessage;
-    const { jsonrpc = '2.0', id, method, params: toolParams } = body;
+    body = (await request.json()) as MCPMessage;
 
-    // Handle MCP initialization
-    if (method === 'initialize') {
-      const initReq = body as MCPInitializeRequest;
-      console.log(`[MCP ${tenantId}] Initialize from ${initReq.params?.clientInfo?.name || 'unknown'}`);
-
-      return NextResponse.json({
-        jsonrpc,
-        id,
-        result: {
-          protocolVersion: '2024-11-05',
-          capabilities: {
-            resources: {},
-            tools: {},
-          },
-          serverInfo: {
-            name: 'Jira Renkei MCP',
-            version: '1.0.0',
-          },
-        },
-      });
-    }
-
-    // For non-initialize methods, verify tenant and get Jira grant
+    // Verify tenant and get grant
     const tenant = await db
       .selectFrom('tenants')
       .select('id')
@@ -179,10 +139,10 @@ export async function POST(
 
     if (!tenant) {
       return NextResponse.json({
-        jsonrpc,
-        id,
+        jsonrpc: '2.0',
+        id: body?.id,
         error: { code: -32000, message: 'Tenant not found' },
-      }, { status: 404 });
+      });
     }
 
     const grants = await db
@@ -194,132 +154,85 @@ export async function POST(
 
     if (grants.length === 0) {
       return NextResponse.json({
-        jsonrpc,
-        id,
+        jsonrpc: '2.0',
+        id: body?.id,
         error: { code: -32000, message: 'No Jira grant configured' },
-      }, { status: 400 });
+      });
     }
 
     const accountId = grants[0].account_id;
     const grant = await getJiraGrant(tenantId, accountId);
     if (!grant) {
       return NextResponse.json({
-        jsonrpc,
-        id,
+        jsonrpc: '2.0',
+        id: body?.id,
         error: { code: -32000, message: 'Failed to retrieve Jira grant' },
-      }, { status: 500 });
+      });
     }
 
-    // Record session
-    await recordSession({
+    // Create MCP server
+    const server = createMCPServer({
       tenantId,
       accountId,
-      userAgent,
-      ipAddress,
+      siteUrl: grant.siteUrl,
+      accessToken: grant.accessToken,
+      maxJqlResults: 100,
     });
 
-    let result: MCPToolResult | null = null;
-    let toolError: string | undefined;
-
-    // Execute tool with new system
-    try {
-      if (!method) {
-        toolError = 'Method is required';
-      } else {
-        result = await executeTool(method, {
-          tenantId,
-          accountId,
-          siteUrl: grant.siteUrl,
-          accessToken: grant.accessToken,
-          maxJqlResults: 100,
-        }, toolParams || {});
-
-        if (!result) {
-          toolError = 'Failed to process request';
-        }
-      }
-    } catch (toolErr) {
-      toolError = toolErr instanceof Error ? toolErr.message : 'Unknown error';
-    }
-
-    // Log tool call with bored-logs
-    const logger = createLogger();
-    if (toolError) {
-      logger.error('[mcp:{tenantId}] Tool error: {method}', {
-        tenantId,
-        method,
-        accountId,
-        userAgent,
-        ipAddress,
-        status: 'failure',
-        error: toolError,
-      });
-
+    // Parse and validate JSON-RPC message
+    const mcpMessage = parseJSONRPCMessage(body);
+    if (!mcpMessage) {
       return NextResponse.json({
-        jsonrpc,
-        id,
-        error: { code: -32000, message: toolError },
-      }, { status: 400 });
-    } else {
-      logger.info('[mcp:{tenantId}] Tool call: {method}', {
-        tenantId,
-        method,
-        accountId,
-        userAgent,
-        ipAddress,
-        status: 'success',
+        jsonrpc: '2.0',
+        id: body?.id,
+        error: { code: -32700, message: 'Invalid JSON-RPC message' },
       });
     }
 
-    console.log(`[MCP ${tenantId}] Tool executed: ${method}`);
+    // Handle the request through the SDK
+    const response = await handleMCPRequest(server, mcpMessage);
 
-    return NextResponse.json({
-      jsonrpc,
-      id,
-      result: {
-        type: 'tool_result',
-        isError: false,
-        content: [result],
-      },
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-    console.error('MCP execution error:', error);
+    // Record tool call for audit
+    if (mcpMessage.method === 'tools/call') {
+      await recordSession({
+        tenantId,
+        accountId,
+        userAgent,
+        ipAddress,
+      });
 
-    // Try to log the error with bored-logs
-    try {
-      const bodyData = await request.json().catch(() => ({})) as any;
-      const grants = await db
-        .selectFrom('atlassian_grants')
-        .select(['account_id'])
-        .where('tenant_id', '=', tenantId)
-        .limit(1)
-        .execute();
-
-      if (grants.length > 0) {
-        const logger = createLogger();
-        logger.error('[mcp:{tenantId}] Execution error: {method}', {
+      const logger = createLogger();
+      if ((response as any).error) {
+        logger.error('[mcp:{tenantId}] Tool error: {method}', {
           tenantId,
-          method: bodyData.method || 'unknown',
-          accountId: grants[0].account_id,
+          method: mcpMessage.params?.name || 'unknown',
+          accountId,
           userAgent,
           ipAddress,
           status: 'failure',
-          error: errorMsg,
+          error: (response as any).error.message,
+        });
+      } else {
+        logger.info('[mcp:{tenantId}] Tool call: {method}', {
+          tenantId,
+          method: mcpMessage.params?.name || 'unknown',
+          accountId,
+          userAgent,
+          ipAddress,
+          status: 'success',
         });
       }
-    } catch {
-      // Silently fail logging
     }
 
-    return NextResponse.json(
-      {
-        jsonrpc: '2.0',
-        id: body?.id,
-        error: { code: -32603, message: `Internal error: ${errorMsg}` },
-      },
-      { status: 500 }
-    );
+    return NextResponse.json(response);
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    console.error('MCP POST error:', error);
+
+    return NextResponse.json({
+      jsonrpc: '2.0',
+      id: body?.id,
+      error: { code: -32603, message: `Internal error: ${errorMsg}` },
+    });
   }
 }
-
