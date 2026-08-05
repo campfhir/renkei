@@ -9,10 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-// Using Server for advanced tool registration pattern
-// (programmatically registering 41 tools with custom handlers via setRequestHandler)
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@/lib/db';
 import { getConfig } from '@/lib/env';
@@ -98,125 +95,96 @@ const handler = async (
     try {
       const mcpHandler = createMcpHandler(async () => {
         try {
-          const server = new Server({
-            name: 'Jira Renkei MCP',
-            version: '1.0.0',
-          });
+          const server = new McpServer(
+            { name: 'Jira Renkei MCP', version: '1.0.0' },
+            { instructions: 'Jira work item management via MCP' }
+          );
 
           logger.info('[MCP] Server created', { tenantId });
 
-          // Declare that server supports tools
-          server.registerCapabilities({
-            tools: {},
-          });
+          const context: MCPToolContext = {
+            tenantId,
+            accountId,
+            siteUrl: grant.siteUrl,
+            accessToken: grant.accessToken,
+            maxJqlResults: 100,
+            db,
+            config,
+          };
 
-          logger.info('[MCP] Tools capability registered', { tenantId });
+          // Register all tools individually
+          const toolDefinitions = getAllToolDefinitions();
+          for (const toolDef of toolDefinitions) {
+            server.registerTool(
+              toolDef.name,
+              {
+                title: toolDef.name,
+                description: toolDef.description,
+              },
+              async () => {
+                try {
+                  // Record session
+                  const recordResult = await recordSession({
+                    tenantId,
+                    accountId,
+                    userAgent,
+                    ipAddress,
+                  });
 
-          // Register all tools with request handler
-          server.setRequestHandler(ListToolsRequestSchema, async () => {
-            logger.info('[MCP] ListTools request received', { tenantId });
-            const toolDefinitions = getAllToolDefinitions();
-            return {
-              tools: toolDefinitions.map((tool) => ({
-                name: tool.name,
-                description: tool.description,
-                inputSchema: tool.inputSchema || {
-                  type: 'object' as const,
-                  properties: {},
-                },
-              })),
-            };
-          });
+                  if (!recordResult.ok) {
+                    logger.error('Failed to record session: {error}', {
+                      error: recordResult,
+                    });
+                  }
 
-          logger.info('[MCP] ListTools handler registered', { tenantId });
+                  // Execute tool
+                  const result = await executeTool(toolDef.name, context, {});
 
-          server.setRequestHandler(CallToolRequestSchema, async (request) => {
-            const toolName = request.params.name;
-            const toolArgs = request.params.arguments || {};
+                  // Log success
+                  logger.info('[MCP] Tool call success: {toolName}', {
+                    tenantId,
+                    toolName: toolDef.name,
+                    accountId,
+                    userAgent,
+                    ipAddress,
+                  });
 
-            if (!toolName) {
-              return {
-                content: [
-                  {
-                    type: 'text',
-                    text: 'Tool name is required',
-                  },
-                ],
-                isError: true,
-              };
-            }
+                  return {
+                    content: [
+                      {
+                        type: 'text' as const,
+                        text: result.text || '',
+                      },
+                    ],
+                  };
+                } catch (error) {
+                  // Log error
+                  logger.error('[MCP] Tool call error: {toolName}', {
+                    tenantId,
+                    toolName: toolDef.name,
+                    accountId,
+                    userAgent,
+                    ipAddress,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
 
-            const context: MCPToolContext = {
-              tenantId,
-              accountId,
-              siteUrl: grant.siteUrl,
-              accessToken: grant.accessToken,
-              maxJqlResults: 100,
-              db,
-              config,
-            };
-
-            try {
-              // Record session
-              const recordResult = await recordSession({
-                tenantId,
-                accountId,
-                userAgent,
-                ipAddress,
-              });
-
-              if (!recordResult.ok) {
-                logger.error('Failed to record session: {error}', {
-                  error: recordResult,
-                });
+                  return {
+                    content: [
+                      {
+                        type: 'text' as const,
+                        text: error instanceof Error ? error.message : String(error),
+                      },
+                    ],
+                    isError: true,
+                  };
+                }
               }
+            );
+          }
 
-              // Execute tool
-              const result = await executeTool(toolName, context, toolArgs);
-
-              // Log success
-              logger.info('[mcp:{tenantId}] Tool call: {method}', {
-                tenantId,
-                method: toolName,
-                accountId,
-                userAgent,
-                ipAddress,
-                status: 'success',
-              });
-
-              return {
-                content: [
-                  {
-                    type: result.type || 'text',
-                    text: result.text || '',
-                    uri: result.url,
-                    mimeType: result.mimeType,
-                    data: result.data,
-                  },
-                ],
-              };
-            } catch (error) {
-              // Log error
-              logger.error('[mcp:{tenantId}] Tool error: {method}', {
-                tenantId,
-                method: toolName,
-                accountId,
-                userAgent,
-                ipAddress,
-                status: 'failure',
-                error: error instanceof Error ? error.message : String(error),
-              });
-
-              return {
-                content: [
-                  {
-                    type: 'text',
-                    text: error instanceof Error ? error.message : String(error),
-                  },
-                ],
-                isError: true,
-              };
-            }
+          logger.info('[MCP] All tools registered', {
+            tenantId,
+            toolCount: toolDefinitions.length,
           });
 
           return server;
