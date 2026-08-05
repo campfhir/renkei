@@ -1,6 +1,6 @@
 import { Kysely } from 'kysely';
 
-export async function up(db: Kysely<any>): Promise<void> {
+export async function up(db: Kysely<unknown>): Promise<void> {
   // Replace comma-separated required_role with separate operator and user IDP value fields
   await db.schema
     .alterTable('tenant_oidc')
@@ -10,7 +10,7 @@ export async function up(db: Kysely<any>): Promise<void> {
     .execute();
 }
 
-export async function down(db: Kysely<any>): Promise<void> {
+export async function down(db: Kysely<unknown>): Promise<void> {
   await db.schema
     .alterTable('tenant_oidc')
     .dropColumn('operator_idp_value')

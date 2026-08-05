@@ -1,6 +1,6 @@
 import { Kysely, sql } from 'kysely';
 
-export async function up(db: Kysely<any>): Promise<void> {
+export async function up(db: Kysely<unknown>): Promise<void> {
   // Session tracking for Jira grant usage
   await db.schema
     .createTable('jira_sessions')
@@ -19,6 +19,6 @@ export async function up(db: Kysely<any>): Promise<void> {
   await db.schema.createIndex('idx_jira_sessions_last_used').on('jira_sessions').column('last_used_at').execute();
 }
 
-export async function down(db: Kysely<any>): Promise<void> {
+export async function down(db: Kysely<unknown>): Promise<void> {
   await db.schema.dropTable('jira_sessions').execute();
 }

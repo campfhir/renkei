@@ -1,6 +1,6 @@
 import { Kysely, sql } from 'kysely';
 
-export async function up(db: Kysely<any>): Promise<void> {
+export async function up(db: Kysely<unknown>): Promise<void> {
   // Create tenant_domains table for email domain -> tenant mapping
   await db.schema
     .createTable('tenant_domains')
@@ -37,7 +37,7 @@ export async function up(db: Kysely<any>): Promise<void> {
   await db.schema.createIndex('idx_grants_expires_at').on('atlassian_grants').column('expires_at').execute();
 }
 
-export async function down(db: Kysely<any>): Promise<void> {
+export async function down(db: Kysely<unknown>): Promise<void> {
   await db.schema.dropTable('atlassian_grants').execute();
 
   // Recreate old schema
