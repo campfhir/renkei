@@ -28,7 +28,9 @@ export interface JiraGrant {
  * Client secret is encrypted with the deployment key.
  */
 export async function setTenantOidc(tenantId: string, oidc: TenantOidc): Promise<void> {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error("Database error");
+  const db = dbResult.val;
   const encryptionKey = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
 
   const encryptedSecret = encrypt(oidc.clientSecret, encryptionKey);
@@ -67,7 +69,9 @@ export async function setOidcRoleMapping(
   idpRole: string,
   renkeiRole: string
 ): Promise<void> {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error("Database error");
+  const db = dbResult.val;
 
   await db
     .insertInto('oidc_role_mappings')
@@ -90,7 +94,9 @@ export async function setOidcRoleMapping(
  * Get renkei role for an IDP role.
  */
 export async function getOidcRoleMapping(tenantId: string, idpRole: string): Promise<string | null> {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error("Database error");
+  const db = dbResult.val;
 
   const row = await db
     .selectFrom('oidc_role_mappings')
@@ -107,7 +113,9 @@ export async function getOidcRoleMapping(tenantId: string, idpRole: string): Pro
  * Client secret is automatically decrypted.
  */
 export async function getTenantOidc(tenantId: string): Promise<TenantOidc | null> {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error("Database error");
+  const db = dbResult.val;
   const encryptionKey = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
 
   const row = await db
@@ -132,7 +140,9 @@ export async function getTenantOidc(tenantId: string): Promise<TenantOidc | null
  * Store encrypted Jira grant for a tenant user.
  */
 export async function setJiraGrant(tenantId: string, grant: JiraGrant): Promise<void> {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error("Database error");
+  const db = dbResult.val;
   const encryptionKey = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
 
   const encryptedAccessToken = encrypt(grant.accessToken, encryptionKey);
@@ -170,7 +180,9 @@ export async function getJiraGrant(
   tenantId: string,
   accountId: string
 ): Promise<JiraGrant | null> {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error("Database error");
+  const db = dbResult.val;
   const encryptionKey = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
 
   const row = await db

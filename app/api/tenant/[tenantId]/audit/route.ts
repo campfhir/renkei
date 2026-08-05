@@ -6,7 +6,11 @@ export async function GET(
   { params }: { params: Promise<{ tenantId: string }> }
 ) {
   const { tenantId } = await params;
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
+  }
+  const db = dbResult.val;
   const { searchParams } = new URL(request.url);
   const requestedAccountId = searchParams.get('accountId');
   const operatorKey = request.headers.get('x-operator-key');

@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { ok, err } from '@campfhir/safe-functions/helpers';
+import type { Result } from '@campfhir/safe-functions/types';
 
 const envSchema = z.object({
   // Atlassian OAuth
@@ -43,7 +45,7 @@ const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-export function loadConfig(): Env {
+export function loadConfig(): Result<Env, 'CONFIG_ERROR'> {
   const env = {
     ATLASSIAN_CLIENT_ID: process.env.ATLASSIAN_CLIENT_ID,
     ATLASSIAN_CLIENT_SECRET: process.env.ATLASSIAN_CLIENT_SECRET,
@@ -71,17 +73,21 @@ export function loadConfig(): Env {
     const issues = result.error.issues
       .map((issue) => `  - ${issue.path.join('.')}: ${issue.message}`)
       .join('\n');
-    throw new Error(`Configuration is incomplete:\n${issues}\n\nSee .env.example.`);
+    return err('CONFIG_ERROR' as const);
   }
 
-  return result.data;
+  return ok(result.data);
 }
 
 let config: Env | null = null;
 
-export function getConfig(): Env {
+export function getConfig(): Result<Env, 'CONFIG_ERROR'> {
   if (!config) {
-    config = loadConfig();
+    const result = loadConfig();
+    if (!result.ok) {
+      return result;
+    }
+    config = result.val;
   }
-  return config;
+  return ok(config);
 }

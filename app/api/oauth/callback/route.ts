@@ -37,8 +37,16 @@ function isResourceArray(data: unknown): data is Array<{ id: string; url: string
 }
 
 export async function GET(request: NextRequest) {
-  const config = getConfig();
-  const db = getDatabase();
+  const configResult = getConfig();
+  if (!configResult.ok) {
+    return NextResponse.json({ error: "Config error" }, { status: 500 });
+  }
+  const config = configResult.val;
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
+  }
+  const db = dbResult.val;
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
   const state = searchParams.get('state');

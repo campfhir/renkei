@@ -23,7 +23,11 @@ async function fetchInitialLogs(
       userRole = 'renkei-user';
     }
 
-    const db = getDatabase();
+    const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    throw new Error("Database error");
+  }
+  const db = dbResult.val;
     const tenant = await db
       .selectFrom('tenants')
       .select('id')

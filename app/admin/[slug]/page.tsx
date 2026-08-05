@@ -8,7 +8,11 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
 
   if (!session) {
     // Fetch tenant to check for OIDC configuration
-    const db = getDatabase();
+    const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    throw new Error("Database error");
+  }
+  const db = dbResult.val;
     let oidcConfigured = false;
     try {
       const tenant = await db

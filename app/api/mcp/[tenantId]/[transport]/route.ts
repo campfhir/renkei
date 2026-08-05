@@ -8,7 +8,7 @@
  * - Message framing and validation
  */
 
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 // Using Server for advanced tool registration pattern
 // (programmatically registering 41 tools with custom handlers via setRequestHandler)
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -29,7 +29,11 @@ const handler = async (
   { params }: { params: Promise<{ tenantId: string; transport: string }> },
 ) => {
   const { tenantId } = await params;
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
+  }
+  const db = dbResult.val;
   const userAgent = request.headers.get('user-agent') || undefined;
   const ipAddress =
     request.headers.get('x-forwarded-for')?.split(',')[0].trim() ||

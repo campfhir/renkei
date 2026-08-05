@@ -5,7 +5,11 @@ import { getOrigin } from '@/lib/get-origin';
 import { randomUUID } from 'crypto';
 
 export async function GET(request: NextRequest) {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
+  }
+  const db = dbResult.val;
   const { searchParams } = new URL(request.url);
   const tenantId = searchParams.get('tenantId');
   const redirect = searchParams.get('redirect') || '/mcp';

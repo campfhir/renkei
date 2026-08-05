@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
+  }
+  const db = dbResult.val;
 
   try {
     const body = await request.json();

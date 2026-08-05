@@ -10,7 +10,11 @@ export default async function AuditPage({ params }: { params: Promise<{ slug: st
     redirect(`/admin/${slug}`);
   }
 
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    throw new Error("Database error");
+  }
+  const db = dbResult.val;
 
   let events: {
     id: string;

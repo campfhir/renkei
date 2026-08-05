@@ -18,7 +18,11 @@ export default async function SitesPage({ params }: { params: Promise<{ slug: st
     redirect(`/admin/${slug}`);
   }
 
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    throw new Error("Database error");
+  }
+  const db = dbResult.val;
 
   // Fetch sites for this tenant
   let sites: JiraSite[] = [];

@@ -3,7 +3,9 @@ import { resolve } from 'path';
 import { getDatabase } from '@/lib/db';
 
 export async function runMigrations(migrationsDir?: string) {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error("Database error");
+  const db = dbResult.val;
   const migrationFolder = migrationsDir || resolve(process.cwd(), 'lib/migrations');
 
   const migrator = new Migrator({

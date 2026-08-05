@@ -5,8 +5,16 @@ import { randomUUID } from 'crypto';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function GET(_request: NextRequest) {
-  const config = getConfig();
-  const db = getDatabase();
+  const configResult = getConfig();
+  if (!configResult.ok) {
+    return NextResponse.json({ error: "Config error" }, { status: 500 });
+  }
+  const config = configResult.val;
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
+  }
+  const db = dbResult.val;
 
   const client_id = config.ATLASSIAN_CLIENT_ID;
   const redirect_uri = config.ATLASSIAN_REDIRECT_URI;

@@ -15,7 +15,11 @@ export default async function PeoplePage({ params }: { params: Promise<{ slug: s
     redirect(`/admin/${slug}`);
   }
 
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    throw new Error("Database error");
+  }
+  const db = dbResult.val;
 
   let users: User[] = [];
   try {

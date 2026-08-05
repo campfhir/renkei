@@ -8,8 +8,16 @@ export async function GET(
   { params }: { params: Promise<{ tenantId: string }> }
 ) {
   const { tenantId } = await params;
-  const config = getConfig();
-  const db = getDatabase();
+  const configResult = getConfig();
+  if (!configResult.ok) {
+    return NextResponse.json({ error: "Config error" }, { status: 500 });
+  }
+  const config = configResult.val;
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
+  }
+  const db = dbResult.val;
 
   try {
     // Verify tenant exists

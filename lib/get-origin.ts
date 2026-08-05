@@ -15,7 +15,9 @@ import { getConfig } from './env';
  * - App is NOT in development mode with direct access
  */
 export function getOrigin(request?: NextRequest): string {
-  const config = getConfig();
+  const configResult = getConfig();
+  if (!configResult.ok) throw new Error("Config error");
+  const config = configResult.val;
 
   if (!request) {
     // Fallback to env var when no request available

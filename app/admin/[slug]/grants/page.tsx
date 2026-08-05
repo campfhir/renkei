@@ -14,7 +14,11 @@ export default async function GrantsPage({
   }
 
   const { slug } = await params;
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    throw new Error("Database error");
+  }
+  const db = dbResult.val;
 
   // Fetch tenant
   const tenant = await db

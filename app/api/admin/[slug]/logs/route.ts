@@ -52,7 +52,11 @@ export async function GET(
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q') || '';
 
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
+  }
+  const db = dbResult.val;
 
   try {
     // Fetch tenant to verify access

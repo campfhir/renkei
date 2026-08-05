@@ -15,8 +15,16 @@ function isDiscoveryResponse(data: unknown): data is { authorization_endpoint: s
 
 export default async function SignInPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const db = getDatabase();
-  const config = getConfig();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    throw new Error("Database error");
+  }
+  const db = dbResult.val;
+  const configResult = getConfig();
+  if (!configResult.ok) {
+    throw new Error("Config error");
+  }
+  const config = configResult.val;
 
   // Fetch tenant and OIDC config
   const tenant = await db

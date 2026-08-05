@@ -16,7 +16,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const db = getDatabase();
+    const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
+  }
+  const db = dbResult.val;
 
     // Check if domain already exists
     const existing = await db

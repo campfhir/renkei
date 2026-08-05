@@ -12,7 +12,9 @@ interface SessionInfo {
  * Track or update a Jira session for a user
  */
 export async function recordSession(session: SessionInfo): Promise<void> {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error("Database error");
+  const db = dbResult.val;
 
   try {
     await db
@@ -52,7 +54,9 @@ export async function getUserSessions(
     createdAt: Date;
   }>
 > {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error("Database error");
+  const db = dbResult.val;
 
   return db
     .selectFrom('jira_sessions')
@@ -67,7 +71,9 @@ export async function getUserSessions(
  * Revoke a session
  */
 export async function revokeSession(sessionId: string, tenantId: string): Promise<boolean> {
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error("Database error");
+  const db = dbResult.val;
 
   try {
     await db

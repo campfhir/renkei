@@ -19,7 +19,11 @@ export async function POST(
   }
 
   const { slug, grantId } = await params;
-  const db = getDatabase();
+  const dbResult = getDatabase();
+  if (!dbResult.ok) {
+    return NextResponse.json({ error: "Database error" }, { status: 500 });
+  }
+  const db = dbResult.val;
 
   try {
     // Verify tenant access
