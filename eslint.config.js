@@ -17,12 +17,10 @@ export default [
     },
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
-      '@typescript-eslint/no-as-any': 'error',
       '@typescript-eslint/consistent-type-assertions': [
         'error',
         {
           assertionStyle: 'never',
-          objectLiteralTypeAssertions: 'never',
         },
       ],
     },
