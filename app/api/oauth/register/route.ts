@@ -86,16 +86,42 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       Math.floor(Math.random() * 16).toString(16)
     ).join('');
 
-    // Use a system tenant for MCP clients (fixed UUID for the MCP system)
-    // In a multi-tenant scenario, this could be extracted from a request header
-    const systemTenantId = '00000000-0000-0000-0000-000000000000';
+    // Extract tenant ID from request (Referer header when coming from MCP endpoint)
+    // Format: https://domain/api/mcp/{tenantId}/...
+    let tenantId: string | undefined;
+    const referer = request.headers.get('referer');
+    if (referer) {
+      const match = referer.match(/\/api\/mcp\/([a-f0-9-]+)/);
+      if (match) {
+        tenantId = match[1];
+      }
+    }
+
+    // Fallback: use system tenant if not extracted from referer
+    if (!tenantId) {
+      tenantId = '00000000-0000-0000-0000-000000000000';
+    }
+
+    // Verify tenant exists
+    const tenant = await db
+      .selectFrom('tenants')
+      .select('id')
+      .where('id', '=', tenantId)
+      .executeTakeFirst();
+
+    if (!tenant) {
+      return NextResponse.json(
+        { error: 'invalid_request', error_description: 'Tenant not found' },
+        { status: 400 }
+      );
+    }
 
     // Store the client
     await db
       .insertInto('oauth_clients')
       .values({
         client_id: clientId,
-        tenant_id: systemTenantId,
+        tenant_id: tenantId,
         client_secret: clientSecret,
         client_name: client_name || null,
         redirect_uris,
