@@ -4,6 +4,7 @@ import { getConfig } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { setJiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
+import { logger } from '@/lib/logger';
 
 interface JiraTokenResponse {
   access_token: string;
@@ -19,7 +20,7 @@ interface JiraUserInfo {
 
 function isJiraTokenResponse(data: unknown): data is JiraTokenResponse {
   if (typeof data !== 'object' || data === null) return false;
-   
+
   const obj = data as Record<string, unknown>;
   return (
     typeof obj.access_token === 'string' &&
@@ -30,14 +31,14 @@ function isJiraTokenResponse(data: unknown): data is JiraTokenResponse {
 
 function isJiraUserInfo(data: unknown): data is JiraUserInfo {
   if (typeof data !== 'object' || data === null) return false;
-   
+
   const obj = data as Record<string, unknown>;
   return typeof obj.account_id === 'string' && typeof obj.display_name === 'string';
 }
 
 function isResourceArray(data: unknown): data is Array<{ id: string; url: string; name: string }> {
   if (!Array.isArray(data)) return false;
-   
+
   return data.every(
     (item) =>
       typeof item === 'object' &&
@@ -110,7 +111,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Tenant not found' }, { status: 400 });
     }
 
-    console.log(`[MCP ${tenant.id}] Jira OAuth callback`);
+    logger.info('[OAuth] Jira callback', { tenantId: tenant.id });
+    logger.info('[OAuth] Exchanging code for tokens', { tenantId: tenant.id });
 
     // Exchange authorization code for Jira tokens
     const tokenResponse = await fetch('https://auth.atlassian.com/oauth/token', {
@@ -127,28 +129,41 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      console.error('Jira token exchange failed:', errorText);
+      logger.error('[OAuth] Token exchange failed', {
+        tenantId: tenant.id,
+        status: tokenResponse.status,
+        error: errorText,
+      });
       return NextResponse.json({ error: 'Failed to exchange authorization code' }, { status: 400 });
     }
 
     const tokenData = await tokenResponse.json();
+    logger.info('[OAuth] Token response OK', { tenantId: tenant.id });
     if (!isJiraTokenResponse(tokenData)) {
+      logger.error('[OAuth] Invalid token response format', { tenantId: tenant.id, tokenData });
       return NextResponse.json({ error: 'Invalid token response format' }, { status: 400 });
     }
 
+    logger.info('[OAuth] Fetching user info', { tenantId: tenant.id });
     // Get user info from Jira
     const userResponse = await fetch('https://api.atlassian.com/me', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
 
     if (!userResponse.ok) {
-      console.error('Failed to fetch user info from Jira');
+      const userErrorText = await userResponse.text();
+      logger.error('[OAuth] Failed to fetch user info', {
+        tenantId: tenant.id,
+        status: userResponse.status,
+        error: userErrorText,
+      });
       return NextResponse.json({ error: 'Failed to get user info' }, { status: 400 });
     }
 
     const userInfo = await userResponse.json();
+    logger.info('[OAuth] User info received', { tenantId: tenant.id, userInfo });
     if (!isJiraUserInfo(userInfo)) {
-      console.error('Invalid user info response:', JSON.stringify(userInfo, null, 2));
+      logger.error('[OAuth] Invalid user info response format', { tenantId: tenant.id, userInfo });
       return NextResponse.json(
         {
           error: 'Invalid user info response format',
@@ -158,6 +173,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
+    logger.info('[OAuth] Fetching accessible resources', { tenantId: tenant.id });
     // Get accessible resources (cloud IDs) to find the site
     const resourcesResponse = await fetch(
       'https://api.atlassian.com/oauth/token/accessible-resources',
@@ -167,12 +183,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
 
     if (!resourcesResponse.ok) {
-      console.error('Failed to fetch accessible resources');
+      const resourcesErrorText = await resourcesResponse.text();
+      logger.error('[OAuth] Failed to fetch resources', {
+        tenantId: tenant.id,
+        status: resourcesResponse.status,
+        error: resourcesErrorText,
+      });
       return NextResponse.json({ error: 'Failed to get accessible resources' }, { status: 400 });
     }
 
     const resources = await resourcesResponse.json();
+    logger.info('[OAuth] Resources received', { tenantId: tenant.id, resources });
     if (!isResourceArray(resources)) {
+      logger.error('[OAuth] Invalid resources format', { tenantId: tenant.id, resources });
       return NextResponse.json({ error: 'Invalid resources response format' }, { status: 400 });
     }
 
@@ -182,6 +205,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
     }
 
+    logger.info('[OAuth] Storing Jira grant', { tenantId: tenant.id });
     // Store encrypted Jira grant
     await setJiraGrant(tenant.id, {
       accountId: userInfo.account_id,
@@ -195,6 +219,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       scopes: ['read:jira-work', 'write:jira-work', 'read:jira-user'],
     });
 
+    logger.info('[OAuth] Jira grant stored successfully', { tenantId: tenant.id });
     // Redirect back to MCP endpoint page to show updated Jira connection status
     const originResult = getOrigin(request);
     if (!originResult.ok) {
@@ -202,9 +227,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     const origin = originResult.val;
     const mcpUrl = new URL(`/mcp/${tenant.id}`, origin);
+    logger.info('[OAuth] Redirecting', { tenantId: tenant.id, url: mcpUrl.toString() });
     return NextResponse.redirect(mcpUrl);
   } catch (err) {
-    console.error('OAuth callback error:', err);
+    logger.error('[OAuth] Callback error', {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
   }
 }
