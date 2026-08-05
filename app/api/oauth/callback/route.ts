@@ -159,11 +159,10 @@ export async function GET(request: NextRequest) {
       scopes: ['read:jira-work', 'write:jira-work', 'read:jira-user'],
     });
 
-    // Redirect to logs page with authenticated user's accountId
+    // Redirect back to MCP endpoint page to show updated Jira connection status
     const origin = getOrigin(request);
-    const logsUrl = new URL(`/tenant/${tenant.id}/logs`, origin);
-    logsUrl.searchParams.set('accountId', userInfo.account_id);
-    return NextResponse.redirect(logsUrl);
+    const mcpUrl = new URL(`/mcp/${tenant.id}`, origin);
+    return NextResponse.redirect(mcpUrl);
   } catch (err) {
     console.error('OAuth callback error:', err);
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
