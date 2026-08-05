@@ -8,7 +8,12 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { getCachedDisplayName } from '../common';
-import { analyzeTranscript, formatActionsAsMarkdown } from './transcript';
+import {
+  analyzeTranscript,
+  formatActionsAsMarkdown,
+  MEETING_TYPES,
+  isMeetingType,
+} from './transcript';
 import { logger } from '@/lib/logger';
 
 export async function registerUtilityTools(
@@ -22,9 +27,13 @@ export async function registerUtilityTools(
       title: 'Analyze a meeting transcript for Jira actions',
       description:
         'Parses a meeting transcript and recommends MCP tool calls to implement the discussed ' +
-        'actions. Detects phrasings like "create a task for X", "assign PROJ-12 to dana", or ' +
-        '"move PROJ-12 to done" and suggests which tool to call with what arguments. These are ' +
-        'recommendations only — no tools are executed. You must review and call them yourself.',
+        'actions. Detects phrasings like "create a task for X", "assign PROJ-12 to dana", ' +
+        '"move PROJ-12 to done", "blocked on the vendor", "spent 2h on PROJ-12" and "pull ' +
+        'PROJ-12 into the sprint". Identifies whether the meeting was a standup, sprint ' +
+        'planning, a retro or ad-hoc, and weighs each recommendation by how well it fits. ' +
+        'Anything the transcript asks for that no tool here can do — story points, original ' +
+        'estimates — is reported separately rather than guessed at. These are recommendations ' +
+        'only: no tools are executed. You must review and call them yourself.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         transcript: z.string().min(1).describe('Meeting or conversation transcript'),
@@ -36,6 +45,21 @@ export async function registerUtilityTools(
           .string()
           .describe('The issue under discussion, used to resolve "this", "it" and "that"')
           .optional(),
+        meetingType: z
+          .enum(MEETING_TYPES)
+          .describe(
+            'The kind of meeting. Inferred from the transcript when omitted; supplying it ' +
+              'avoids a misread, since the type shifts how confident each recommendation is.'
+          )
+          .optional(),
+        durationMinutes: z
+          .number()
+          .describe('Meeting length, used only to break a tie when the wording is ambiguous')
+          .optional(),
+        sprintId: z
+          .string()
+          .describe('Target sprint, so "pull it into the sprint" becomes a complete call')
+          .optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -46,7 +70,7 @@ export async function registerUtilityTools(
         displayName,
       });
       try {
-        const { transcript, projectKey, issueKey } = args;
+        const { transcript, projectKey, issueKey, meetingType, durationMinutes, sprintId } = args;
 
         if (!transcript || typeof transcript !== 'string') {
           return {
@@ -55,19 +79,25 @@ export async function registerUtilityTools(
           };
         }
 
-        const actions = analyzeTranscript(transcript, {
+        const analysis = analyzeTranscript(transcript, {
           projectKey: typeof projectKey === 'string' ? projectKey : undefined,
           issueKey: typeof issueKey === 'string' ? issueKey : undefined,
+          meetingType: isMeetingType(meetingType) ? meetingType : undefined,
+          durationMinutes: typeof durationMinutes === 'number' ? durationMinutes : undefined,
+          sprintId: typeof sprintId === 'string' ? sprintId : undefined,
         });
 
         logger.info('[Tool] analyze_transcript results', {
           tenantId: context.tenantId,
           accountId: context.accountId,
-          actions: actions.length,
+          meetingType: analysis.meeting.type,
+          meetingSource: analysis.meeting.source,
+          actions: analysis.actions.length,
+          observations: analysis.observations.length,
         });
 
         return {
-          content: [{ type: 'text' as const, text: formatActionsAsMarkdown(actions) }],
+          content: [{ type: 'text' as const, text: formatActionsAsMarkdown(analysis) }],
         };
       } catch (error) {
         return {

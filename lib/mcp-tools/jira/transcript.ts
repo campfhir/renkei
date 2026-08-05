@@ -8,6 +8,15 @@
  * Recommendations name the tools this server actually exposes, with arguments
  * in the shape those tools accept — a suggestion the caller cannot execute
  * verbatim is worse than no suggestion, because it reads as though it works.
+ * What a meeting asks for but no tool can do is reported separately, as an
+ * observation, rather than dressed up as a call.
+ *
+ * The kind of meeting changes what a sentence probably means. A standup talks
+ * about issues that already exist, so "we should add a task" there is more
+ * likely an aside than an instruction; planning assigns points and pulls from
+ * the backlog; a retro reviews work already done. The type is inferred from
+ * what was said, with duration as a tie-breaker, and shifts confidence rather
+ * than filtering — a misread meeting should cost certainty, not content.
  */
 
 export interface RecommendedAction {
@@ -27,11 +36,49 @@ interface Candidate extends RecommendedAction {
   span: readonly [number, number];
 }
 
+/** The meeting shapes this distinguishes. */
+export const MEETING_TYPES = ['standup', 'sprint-planning', 'retro', 'ad-hoc'] as const;
+
+export type MeetingType = (typeof MEETING_TYPES)[number];
+
+/** Narrow an argument that arrived from a tool call. */
+export function isMeetingType(value: unknown): value is MeetingType {
+  return typeof value === 'string' && MEETING_TYPES.some((type) => type === value);
+}
+
+/** Something the transcript asks for that no tool here can carry out. */
+export interface Observation {
+  detail: string;
+  excerpt: string;
+  /** What is missing, so the gap is actionable rather than just noted. */
+  blocked: string;
+}
+
+export interface MeetingContext {
+  type: MeetingType;
+  /** Whether the caller stated the type or it was read off the transcript. */
+  source: 'stated' | 'inferred';
+  /** The phrases that decided it, so a human can see it was read wrong. */
+  signals: string[];
+}
+
+export interface TranscriptAnalysis {
+  meeting: MeetingContext;
+  actions: RecommendedAction[];
+  observations: Observation[];
+}
+
 export interface TranscriptOptions {
   /** Default project for created issues. */
   projectKey?: string | undefined;
   /** The issue under discussion, used to resolve "this", "it" and "that". */
   issueKey?: string | undefined;
+  /** Skip inference when the caller already knows what meeting this was. */
+  meetingType?: MeetingType | undefined;
+  /** Tie-breaker only: a 10-minute meeting is a standup, a 90-minute one is not. */
+  durationMinutes?: number | undefined;
+  /** Target sprint for "pull it into the sprint", which otherwise needs a lookup. */
+  sprintId?: string | undefined;
 }
 
 /** Jira issue keys: uppercase project key, dash, number. */
@@ -76,21 +123,127 @@ const ISSUE_TYPES: Record<string, string> = {
   story: 'Story',
 };
 
+/**
+ * Phrases that identify a meeting. Weighted because some are decisive on their
+ * own — nobody says "retrospective" in a standup — while others only lean.
+ */
+const MEETING_SIGNALS: Record<Exclude<MeetingType, 'ad-hoc'>, [RegExp, number][]> = {
+  standup: [
+    [/\bstand-?up\b/i, 5],
+    [/\bdaily\b/i, 2],
+    [/\byesterday I\b/i, 3],
+    [/\btoday I(?:'ll| will| am)?\b/i, 3],
+    [/\bblock(?:ed|er)\b/i, 2],
+    [/\bworking on\b/i, 1],
+    [/\bno blockers\b/i, 3],
+  ],
+  'sprint-planning': [
+    [/\bsprint planning\b/i, 5],
+    [/\bplanning (?:meeting|session)\b/i, 4],
+    [/\bstory points?\b/i, 4],
+    [/\bpoints?\b/i, 1],
+    [/\bbacklog\b/i, 3],
+    [/\bsprint goal\b/i, 3],
+    [/\bcapacity\b/i, 2],
+    [/\bvelocity\b/i, 2],
+    [/\bgroom(?:ing)?\b|\brefin(?:e|ement)\b/i, 2],
+    [/\bestimate[sd]?\b/i, 2],
+  ],
+  retro: [
+    [/\bretro(?:spective)?\b/i, 5],
+    [/\bwent well\b/i, 4],
+    [/\bdid ?n[o']t go well\b/i, 4],
+    [/\bdo better\b/i, 3],
+    [/\bwhat worked\b/i, 3],
+    [/\blessons? learned\b/i, 3],
+    [/\blast sprint\b/i, 1],
+  ],
+};
+
+/** The types worth scoring; ad-hoc is what nothing else matching means. */
+const SCORED_TYPES: Exclude<MeetingType, 'ad-hoc'>[] = ['standup', 'sprint-planning', 'retro'];
+
+/** Where each type's duration sits, used only to break a scoring tie. */
+const DURATION_HINTS: [Exclude<MeetingType, 'ad-hoc'>, (minutes: number) => boolean][] = [
+  ['standup', (minutes) => minutes <= 20],
+  ['retro', (minutes) => minutes > 20 && minutes <= 75],
+  ['sprint-planning', (minutes) => minutes > 45],
+];
+
+export function detectMeeting(transcript: string, options: TranscriptOptions = {}): MeetingContext {
+  if (options.meetingType) {
+    return { type: options.meetingType, source: 'stated', signals: [] };
+  }
+
+  const scores = new Map<MeetingType, number>();
+  const signals: string[] = [];
+
+  // Iterated over a typed key list rather than Object.entries, which widens the
+  // key to string and would need an assertion to put back.
+  for (const type of SCORED_TYPES) {
+    let score = 0;
+    for (const [pattern, weight] of MEETING_SIGNALS[type]) {
+      const match = pattern.exec(transcript);
+      if (match) {
+        score += weight;
+        // Only report the phrases that carried real weight, or the list turns
+        // into every stopword in the transcript.
+        if (weight >= 3) signals.push(match[0].toLowerCase());
+      }
+    }
+    if (score > 0) scores.set(type, score);
+  }
+
+  const ranked = [...scores.entries()].sort((a, b) => b[1] - a[1]);
+  const [leader, runnerUp] = ranked;
+
+  if (!leader) {
+    return { type: 'ad-hoc', source: 'inferred', signals: [] };
+  }
+
+  // A tie on wording is what duration is for. It is never allowed to overrule
+  // wording, because a long standup is still a standup.
+  if (runnerUp && runnerUp[1] === leader[1] && options.durationMinutes !== undefined) {
+    const byDuration = DURATION_HINTS.find(
+      ([type, fits]) =>
+        fits(options.durationMinutes ?? 0) && (type === leader[0] || type === runnerUp[0])
+    );
+    if (byDuration) {
+      return {
+        type: byDuration[0],
+        source: 'inferred',
+        signals: [...signals, `${options.durationMinutes} minutes`],
+      };
+    }
+  }
+
+  return { type: leader[0], source: 'inferred', signals: [...new Set(signals)] };
+}
+
 export function analyzeTranscript(
   transcript: string,
   options: TranscriptOptions = {}
-): RecommendedAction[] {
+): TranscriptAnalysis {
+  const meeting = detectMeeting(transcript, options);
+
   if (!transcript || transcript.trim().length === 0) {
-    return [];
+    return { meeting, actions: [], observations: [] };
   }
 
   const candidates = [
     ...findCreateIssues(transcript, options),
     ...findAssignments(transcript, options),
     ...findTransitions(transcript, options),
-  ];
+    ...findBlockers(transcript, options),
+    ...findWorkLogged(transcript, options),
+    ...findSprintMoves(transcript, options),
+  ].map((candidate) => weighForMeeting(candidate, meeting.type));
 
-  return sortByConfidence(dedupe(candidates)).map(({ span: _span, ...action }) => action);
+  return {
+    meeting,
+    actions: sortByConfidence(dedupe(candidates)).map(({ span: _span, ...action }) => action),
+    observations: findUnsupported(transcript, options),
+  };
 }
 
 function findCreateIssues(transcript: string, options: TranscriptOptions): Candidate[] {
@@ -245,6 +398,257 @@ function findTransitions(transcript: string, options: TranscriptOptions): Candid
 }
 
 /**
+ * "CHG-20 is blocked on the vendor" -> a comment recording it.
+ *
+ * A blocker is the substance of a standup, and there is no blocked flag to set
+ * here, so the durable form is a comment on the issue.
+ */
+function findBlockers(transcript: string, options: TranscriptOptions): Candidate[] {
+  const patterns = [
+    new RegExp(`${TARGET}\\s+is\\s+blocked\\s+(?:on|by)\\s+([^.!?\\n]+)`, 'gi'),
+    new RegExp(
+      `(?:I(?:'m| am)?\\s+)?blocked\\s+(?:on|by)\\s+([^.!?\\n]+?)\\s+(?:for|on)\\s+${TARGET}`,
+      'gi'
+    ),
+  ];
+
+  const actions: Candidate[] = [];
+
+  // Group order differs between the two, so each is read on its own terms.
+  const readings: { regex: RegExp; target: number; reason: number }[] = [
+    { regex: patterns[0]!, target: 1, reason: 2 },
+    { regex: patterns[1]!, target: 2, reason: 1 },
+  ];
+
+  for (const { regex, target, reason } of readings) {
+    for (const match of matchAll(transcript, [regex])) {
+      const resolved = resolveTarget(match[target], options);
+      const cause = (match[reason] ?? '').trim();
+      if (cause.length === 0) continue;
+
+      actions.push({
+        confidence: resolved.confidence,
+        tool: 'add_comment',
+        summary: `Record on ${resolved.label} that it is blocked on ${truncate(cause, 60)}`,
+        arguments: {
+          ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}),
+          comment: `Blocked on ${cause}\n\n_Noted from meeting transcript._`,
+        },
+        excerpt: excerptOf(match),
+        span: spanOf(match),
+      });
+    }
+  }
+
+  return actions;
+}
+
+/** "I spent two hours on CHG-20" -> a worklog. */
+function findWorkLogged(transcript: string, options: TranscriptOptions): Candidate[] {
+  // Longest unit first: an alternation that offers `d` before `days` matches
+  // just the `d` and truncates the capture to "3 d".
+  const DURATION = '(\\d+(?:\\.\\d+)?\\s*(?:minutes?|mins?|hours?|hrs?|weeks?|days?|m|h|d|w))';
+  const patterns = [
+    new RegExp(`(?:spent|logged|put)\\s+${DURATION}\\s+(?:in\\s+)?on\\s+${TARGET}`, 'gi'),
+    new RegExp(`${TARGET}\\s+took\\s+(?:me\\s+)?${DURATION}`, 'gi'),
+  ];
+
+  const readings: { regex: RegExp; target: number; duration: number }[] = [
+    { regex: patterns[0]!, duration: 1, target: 2 },
+    { regex: patterns[1]!, target: 1, duration: 2 },
+  ];
+
+  const actions: Candidate[] = [];
+
+  for (const { regex, target, duration } of readings) {
+    for (const match of matchAll(transcript, [regex])) {
+      const resolved = resolveTarget(match[target], options);
+      const spent = normaliseDuration(match[duration] ?? '');
+      if (!spent) continue;
+
+      actions.push({
+        confidence: resolved.confidence,
+        tool: 'log_work',
+        summary: `Log ${spent} against ${resolved.label}`,
+        arguments: {
+          ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}),
+          timeSpent: spent,
+        },
+        excerpt: excerptOf(match),
+        span: spanOf(match),
+      });
+    }
+  }
+
+  return actions;
+}
+
+/** "pull CHG-20 into the sprint" / "drop it from the sprint". */
+function findSprintMoves(transcript: string, options: TranscriptOptions): Candidate[] {
+  const intoSprint = new RegExp(
+    `(?:pull|bring|move|add|commit)\\s+${TARGET}\\s+(?:in|into|to|onto)\\s+(?:the\\s+)?(?:current\\s+|next\\s+)?sprint`,
+    'gi'
+  );
+  const outOfSprint = new RegExp(
+    `(?:pull|drop|remove|take)\\s+${TARGET}\\s+(?:out\\s+of|off|from)\\s+(?:the\\s+)?sprint`,
+    'gi'
+  );
+
+  const actions: Candidate[] = [];
+
+  for (const match of matchAll(transcript, [intoSprint])) {
+    const resolved = resolveTarget(match[1], options);
+    actions.push({
+      // move_issue_to_sprint needs a sprint id, which a transcript never says.
+      // Without one from the caller this is a real observation with an
+      // incomplete call, so it is reported as the weaker reading it is.
+      confidence: options.sprintId ? resolved.confidence : 'low',
+      tool: 'move_issue_to_sprint',
+      summary: options.sprintId
+        ? `Move ${resolved.label} into sprint ${options.sprintId}`
+        : `Move ${resolved.label} into the sprint (sprint id unknown — call list_sprints)`,
+      arguments: {
+        ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}),
+        ...(options.sprintId ? { sprintId: options.sprintId } : {}),
+      },
+      excerpt: excerptOf(match),
+      span: spanOf(match),
+    });
+  }
+
+  for (const match of matchAll(transcript, [outOfSprint])) {
+    const resolved = resolveTarget(match[1], options);
+    actions.push({
+      confidence: resolved.confidence,
+      tool: 'remove_issue_from_sprint',
+      summary: `Remove ${resolved.label} from the sprint`,
+      arguments: { ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}) },
+      excerpt: excerptOf(match),
+      span: spanOf(match),
+    });
+  }
+
+  return actions;
+}
+
+/**
+ * Estimation talk, which planning is largely made of and which nothing here can
+ * carry out.
+ *
+ * Story points live in a per-instance custom field, and no tool on this server
+ * sets an arbitrary field or a time estimate — update_issue takes summary,
+ * description, priority, assignee and labels. Inventing a field id would
+ * produce a call that fails, or worse, writes to the wrong field, so these are
+ * reported as heard and named as blocked instead.
+ */
+function findUnsupported(transcript: string, options: TranscriptOptions): Observation[] {
+  const POINTS_BLOCKED =
+    'Story points are a per-instance custom field. Call list_fields for its id; ' +
+    'no tool here writes arbitrary fields yet.';
+  const ESTIMATE_BLOCKED =
+    'No tool here sets originalEstimate. log_work records time already spent, ' +
+    'which is a different field.';
+
+  const readings: {
+    regex: RegExp;
+    target: number;
+    value: number;
+    label: (v: string) => string;
+    blocked: string;
+  }[] = [
+    {
+      regex: new RegExp(
+        `${TARGET}\\s+(?:is|at|=)\\s*(\\d+(?:\\.\\d+)?)\\s*(?:story\\s+)?points?`,
+        'gi'
+      ),
+      target: 1,
+      value: 2,
+      label: (v) => `${v} story points`,
+      blocked: POINTS_BLOCKED,
+    },
+    {
+      regex: new RegExp(
+        `(\\d+(?:\\.\\d+)?)\\s*(?:story\\s+)?points?\\s+(?:for|on)\\s+${TARGET}`,
+        'gi'
+      ),
+      target: 2,
+      value: 1,
+      label: (v) => `${v} story points`,
+      blocked: POINTS_BLOCKED,
+    },
+    {
+      regex: new RegExp(
+        `estimate\\s+(?:for\\s+)?${TARGET}\\s+(?:is|at)\\s*(\\d+(?:\\.\\d+)?\\s*(?:minutes?|mins?|hours?|hrs?|weeks?|days?|m|h|d|w))`,
+        'gi'
+      ),
+      target: 1,
+      value: 2,
+      label: (v) => `an original estimate of ${v.trim()}`,
+      blocked: ESTIMATE_BLOCKED,
+    },
+  ];
+
+  const observations: Observation[] = [];
+  const seen = new Set<string>();
+
+  for (const { regex, target, value, label, blocked } of readings) {
+    for (const match of matchAll(transcript, [regex])) {
+      const resolved = resolveTarget(match[target], options);
+      const detail = `${resolved.label} — ${label(match[value] ?? '')}`;
+      if (seen.has(detail)) continue;
+      seen.add(detail);
+
+      observations.push({ detail, excerpt: excerptOf(match), blocked });
+    }
+  }
+
+  return observations;
+}
+
+/** Jira accepts "2h" and "30m"; spoken forms need the unit shortened. */
+function normaliseDuration(spoken: string): string | null {
+  const match = /^(\d+(?:\.\d+)?)\s*([a-z]+)$/i.exec(spoken.trim());
+  if (!match) return null;
+
+  const unit = (match[2] ?? '').toLowerCase();
+  const suffix = unit.startsWith('w')
+    ? 'w'
+    : unit.startsWith('d')
+      ? 'd'
+      : unit.startsWith('h')
+        ? 'h'
+        : unit.startsWith('m')
+          ? 'm'
+          : null;
+
+  return suffix ? `${match[1]}${suffix}` : null;
+}
+
+/**
+ * Shift confidence by how well the reading fits the meeting.
+ *
+ * Only ever downward, and only one step. A standup that really did agree to
+ * file a bug still surfaces it; it just says "medium" rather than "high", which
+ * is the honest reading of a sentence heard in the wrong room.
+ */
+const EXPECTED_IN: Record<string, MeetingType[]> = {
+  create_issue: ['sprint-planning', 'retro', 'ad-hoc'],
+  move_issue_to_sprint: ['sprint-planning'],
+  remove_issue_from_sprint: ['sprint-planning'],
+  log_work: ['standup', 'ad-hoc'],
+  add_comment: ['standup', 'retro', 'ad-hoc'],
+};
+
+function weighForMeeting(candidate: Candidate, type: MeetingType): Candidate {
+  const expected = EXPECTED_IN[candidate.tool];
+  if (!expected || expected.includes(type)) return candidate;
+
+  const weakened: RecommendedAction['confidence'] =
+    candidate.confidence === 'high' ? 'medium' : 'low';
+  return { ...candidate, confidence: weakened };
+}
+
+/**
  * Resolve the issue a sentence refers to.
  *
  * A pronoun only resolves if the caller said which issue is under discussion.
@@ -357,42 +761,82 @@ function sortByConfidence(candidates: readonly Candidate[]): Candidate[] {
   return [...candidates].sort((a, b) => rank(a) - rank(b));
 }
 
-/** Format actions as markdown for human review. */
-export function formatActionsAsMarkdown(actions: readonly RecommendedAction[]): string {
-  if (actions.length === 0) {
-    return [
-      '# Transcript analysis',
-      '',
-      'No actionable items detected. This looks for phrasings like "create a task for…",',
-      '"assign PROJ-12 to dana", and "move PROJ-12 to done".',
-    ].join('\n');
-  }
+/** Format the analysis as markdown for human review. */
+export function formatActionsAsMarkdown(analysis: TranscriptAnalysis): string {
+  const { meeting, actions, observations } = analysis;
 
-  const lines = [
-    '# Transcript analysis',
-    '',
-    `Found ${actions.length} suggested action${actions.length === 1 ? '' : 's'}:`,
-    '',
-  ];
+  const lines = [`# Transcript analysis`, ''];
 
-  actions.forEach((action, index) => {
+  const described =
+    meeting.source === 'stated'
+      ? `Meeting type: **${MEETING_LABELS[meeting.type]}** (as given).`
+      : meeting.signals.length > 0
+        ? `Meeting type: **${MEETING_LABELS[meeting.type]}** — inferred from ${meeting.signals
+            .map((signal) => `"${signal}"`)
+            .join(', ')}.`
+        : `Meeting type: **${MEETING_LABELS[meeting.type]}** — nothing in the transcript identified it.`;
+
+  lines.push(described, '');
+
+  if (meeting.source === 'inferred') {
+    // The type shifts confidence, so a wrong guess should be correctable
+    // rather than something the reader has to work out from odd scoring.
     lines.push(
-      `## ${index + 1}. ${action.summary}`,
-      `- **Tool:** \`${action.tool}\``,
-      `- **Confidence:** ${action.confidence}`,
-      '- **Arguments:**',
-      '```json',
-      JSON.stringify(action.arguments, null, 2),
-      '```',
-      `- **Heard as:** "${action.excerpt}"`,
+      `_If that is wrong, pass \`meetingType\` and the confidences below change accordingly._`,
       ''
     );
-  });
+  }
 
-  lines.push(
-    '**Nothing above has been executed.** Review each one and call the tool yourself.',
-    'Arguments shown without an `issueKey` need one supplied before they can run.'
-  );
+  if (actions.length === 0) {
+    lines.push(
+      'No actionable items detected. This looks for phrasings like "create a task for…",',
+      '"assign PROJ-12 to dana", "move PROJ-12 to done", "blocked on…", "spent 2h on PROJ-12",',
+      'and "pull PROJ-12 into the sprint".'
+    );
+  } else {
+    lines.push(`Found ${actions.length} suggested action${actions.length === 1 ? '' : 's'}:`, '');
+
+    actions.forEach((action, index) => {
+      lines.push(
+        `## ${index + 1}. ${action.summary}`,
+        `- **Tool:** \`${action.tool}\``,
+        `- **Confidence:** ${action.confidence}`,
+        '- **Arguments:**',
+        '```json',
+        JSON.stringify(action.arguments, null, 2),
+        '```',
+        `- **Heard as:** "${action.excerpt}"`,
+        ''
+      );
+    });
+  }
+
+  if (observations.length > 0) {
+    lines.push(
+      '## Heard, but not possible with these tools',
+      '',
+      ...observations.flatMap((observation) => [
+        `- ${observation.detail}`,
+        `  - Heard as: "${observation.excerpt}"`,
+        `  - ${observation.blocked}`,
+      ]),
+      ''
+    );
+  }
+
+  if (actions.length > 0) {
+    lines.push(
+      '**Nothing above has been executed.** Review each one and call the tool yourself.',
+      'Arguments shown without an `issueKey` need one supplied before they can run.'
+    );
+  }
 
   return lines.join('\n');
 }
+
+const MEETING_LABELS: Record<MeetingType, string> = {
+  standup: 'standup',
+  'sprint-planning': 'sprint planning',
+  retro: 'retrospective',
+  'ad-hoc': 'ad-hoc meeting',
+};

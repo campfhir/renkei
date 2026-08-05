@@ -1,13 +1,22 @@
-import { analyzeTranscript, formatActionsAsMarkdown } from './transcript';
+import {
+  analyzeTranscript,
+  detectMeeting,
+  formatActionsAsMarkdown,
+  isMeetingType,
+  type TranscriptOptions,
+} from './transcript';
 
-const forTool = (transcript: string, tool: string, options = {}) =>
-  analyzeTranscript(transcript, options).filter((action) => action.tool === tool);
+const actionsOf = (transcript: string, options: TranscriptOptions = {}) =>
+  analyzeTranscript(transcript, options).actions;
+
+const forTool = (transcript: string, tool: string, options: TranscriptOptions = {}) =>
+  actionsOf(transcript, options).filter((action) => action.tool === tool);
 
 describe('analyzeTranscript', () => {
   it('finds nothing in empty or unremarkable input', () => {
-    expect(analyzeTranscript('')).toEqual([]);
-    expect(analyzeTranscript('   ')).toEqual([]);
-    expect(analyzeTranscript('We talked about the weather and then adjourned.')).toEqual([]);
+    expect(actionsOf('')).toEqual([]);
+    expect(actionsOf('   ')).toEqual([]);
+    expect(actionsOf('We talked about the weather and then adjourned.')).toEqual([]);
   });
 
   describe('issue creation', () => {
@@ -110,7 +119,7 @@ describe('analyzeTranscript', () => {
     });
 
     it('never invents a placeholder key', () => {
-      const rendered = JSON.stringify(analyzeTranscript('move it to done'));
+      const rendered = JSON.stringify(actionsOf('move it to done'));
       expect(rendered).not.toContain('SCRUM-?');
       expect(rendered).not.toContain('?-');
     });
@@ -122,7 +131,7 @@ describe('analyzeTranscript', () => {
   });
 
   it('orders the most confident recommendations first', () => {
-    const actions = analyzeTranscript(
+    const actions = actionsOf(
       'assign this to dana. assign CHG-20 to sam. move CHG-20 to in progress.'
     );
     const confidences = actions.map((action) => action.confidence);
@@ -140,7 +149,7 @@ describe('analyzeTranscript', () => {
       'Dana: thanks all.',
     ].join('\n');
 
-    const actions = analyzeTranscript(transcript, { projectKey: 'CHG' });
+    const actions = actionsOf(transcript, { projectKey: 'CHG' });
     expect(actions.map((action) => action.tool).sort()).toEqual([
       'create_issue',
       'transition_issue',
@@ -159,9 +168,162 @@ describe('analyzeTranscript', () => {
   });
 });
 
+describe('meeting type', () => {
+  it('reads a standup from how people talk in one', () => {
+    const meeting = detectMeeting(
+      'Standup: yesterday I finished CHG-20, today I will pick up CHG-21, no blockers.'
+    );
+    expect(meeting.type).toBe('standup');
+    expect(meeting.source).toBe('inferred');
+    expect(meeting.signals.length).toBeGreaterThan(0);
+  });
+
+  it('reads sprint planning from points and backlog talk', () => {
+    const meeting = detectMeeting(
+      'Sprint planning. CHG-20 is 5 story points, pull CHG-21 from the backlog.'
+    );
+    expect(meeting.type).toBe('sprint-planning');
+  });
+
+  it('reads a retro from what-went-well talk', () => {
+    const meeting = detectMeeting('Retro time. The deploy went well. We should do better on QA.');
+    expect(meeting.type).toBe('retro');
+  });
+
+  it('falls back to ad-hoc when nothing identifies it', () => {
+    const meeting = detectMeeting('assign CHG-20 to dana');
+    expect(meeting.type).toBe('ad-hoc');
+    expect(meeting.signals).toEqual([]);
+  });
+
+  it('takes the caller word over its own reading', () => {
+    const meeting = detectMeeting('Retro time, what went well?', { meetingType: 'standup' });
+    expect(meeting).toEqual({ type: 'standup', source: 'stated', signals: [] });
+  });
+
+  it('breaks a tie on duration without overruling wording', () => {
+    // Evenly weighted: "no blockers" (standup) against "do better" (retro).
+    const tied = 'no blockers. we could do better.';
+    expect(detectMeeting(tied, { durationMinutes: 10 }).type).toBe('standup');
+    expect(detectMeeting(tied, { durationMinutes: 60 }).type).toBe('retro');
+
+    // Unambiguous wording is not overridden by a long meeting.
+    const clear = 'Standup. yesterday I shipped it. today I continue. no blockers.';
+    expect(detectMeeting(clear, { durationMinutes: 90 }).type).toBe('standup');
+  });
+
+  it('weakens a reading that does not fit the meeting, without dropping it', () => {
+    const line = 'create a task: rotate the keys';
+    const adHoc = forTool(line, 'create_issue', { projectKey: 'CHG' });
+    const standup = forTool(line, 'create_issue', {
+      projectKey: 'CHG',
+      meetingType: 'standup',
+    });
+
+    expect(adHoc[0]?.confidence).toBe('high');
+    // Standups discuss issues that already exist, so this is the weaker reading
+    // — but it is still reported.
+    expect(standup[0]?.confidence).toBe('medium');
+  });
+
+  it('keeps sprint moves strong in planning and weak elsewhere', () => {
+    const line = 'pull CHG-20 into the sprint';
+    const planning = forTool(line, 'move_issue_to_sprint', {
+      meetingType: 'sprint-planning',
+      sprintId: '42',
+    });
+    const standup = forTool(line, 'move_issue_to_sprint', {
+      meetingType: 'standup',
+      sprintId: '42',
+    });
+
+    expect(planning[0]?.confidence).toBe('high');
+    expect(standup[0]?.confidence).toBe('medium');
+  });
+});
+
+describe('standup material', () => {
+  it('turns a blocker into a comment on the issue', () => {
+    const [action] = forTool('CHG-20 is blocked on the vendor patch', 'add_comment');
+    expect(action?.arguments.issueKey).toBe('CHG-20');
+    expect(action?.arguments.comment).toContain('Blocked on the vendor patch');
+    expect(action?.summary).toContain('blocked on');
+  });
+
+  it('reads a blocker phrased the other way round', () => {
+    const [action] = forTool("I'm blocked on the vendor patch for CHG-20", 'add_comment');
+    expect(action?.arguments.issueKey).toBe('CHG-20');
+  });
+
+  it('logs time spent, normalised to what Jira accepts', () => {
+    expect(forTool('I spent 2 hours on CHG-20', 'log_work')[0]?.arguments).toEqual({
+      issueKey: 'CHG-20',
+      timeSpent: '2h',
+    });
+    expect(forTool('CHG-21 took me 30 minutes', 'log_work')[0]?.arguments).toEqual({
+      issueKey: 'CHG-21',
+      timeSpent: '30m',
+    });
+    expect(forTool('logged 3 days on CHG-22', 'log_work')[0]?.arguments.timeSpent).toBe('3d');
+  });
+});
+
+describe('sprint planning material', () => {
+  it('moves an issue into the sprint when the sprint is known', () => {
+    const [action] = forTool('pull CHG-20 into the sprint', 'move_issue_to_sprint', {
+      sprintId: '42',
+      meetingType: 'sprint-planning',
+    });
+    expect(action?.arguments).toEqual({ issueKey: 'CHG-20', sprintId: '42' });
+  });
+
+  it('says which lookup is needed when the sprint is not known', () => {
+    const [action] = forTool('bring CHG-20 into the next sprint', 'move_issue_to_sprint', {
+      meetingType: 'sprint-planning',
+    });
+    expect(action?.arguments).not.toHaveProperty('sprintId');
+    expect(action?.confidence).toBe('low');
+    expect(action?.summary).toContain('list_sprints');
+  });
+
+  it('removes an issue from the sprint', () => {
+    const [action] = forTool('drop CHG-20 from the sprint', 'remove_issue_from_sprint', {
+      meetingType: 'sprint-planning',
+    });
+    expect(action?.arguments).toEqual({ issueKey: 'CHG-20' });
+  });
+});
+
+describe('observations for what no tool can do', () => {
+  it('reports story points rather than recommending a call', () => {
+    const { actions, observations } = analyzeTranscript('CHG-20 is 5 story points');
+    expect(observations).toHaveLength(1);
+    expect(observations[0]?.detail).toContain('5 story points');
+    expect(observations[0]?.blocked).toContain('list_fields');
+    // Crucially, no tool call was invented for it.
+    expect(actions.some((action) => JSON.stringify(action.arguments).includes('5'))).toBe(false);
+  });
+
+  it('reads points phrased the other way round', () => {
+    const { observations } = analyzeTranscript('8 points for CHG-21');
+    expect(observations[0]?.detail).toContain('CHG-21');
+  });
+
+  it('separates an original estimate from time already spent', () => {
+    const { observations } = analyzeTranscript('estimate for CHG-20 is 3 days');
+    expect(observations[0]?.detail).toContain('original estimate of 3 days');
+    expect(observations[0]?.blocked).toContain('log_work records time already spent');
+  });
+
+  it('does not repeat the same observation', () => {
+    const { observations } = analyzeTranscript('CHG-20 is 5 points. Again, 5 points for CHG-20.');
+    expect(observations).toHaveLength(1);
+  });
+});
+
 describe('formatActionsAsMarkdown', () => {
   it('explains what it looks for when nothing matched', () => {
-    const markdown = formatActionsAsMarkdown([]);
+    const markdown = formatActionsAsMarkdown(analyzeTranscript('nothing to see here'));
     expect(markdown).toContain('No actionable items detected');
     expect(markdown).toContain('assign PROJ-12 to dana');
   });
@@ -177,5 +339,37 @@ describe('formatActionsAsMarkdown', () => {
   it('states plainly that nothing was executed', () => {
     const markdown = formatActionsAsMarkdown(analyzeTranscript('move CHG-20 to done'));
     expect(markdown).toContain('Nothing above has been executed');
+  });
+
+  it('names the meeting type and how it was decided', () => {
+    const inferred = formatActionsAsMarkdown(
+      analyzeTranscript('Standup: yesterday I finished CHG-20. no blockers.')
+    );
+    expect(inferred).toContain('Meeting type: **standup**');
+    expect(inferred).toContain('inferred from');
+    expect(inferred).toContain('meetingType');
+
+    const stated = formatActionsAsMarkdown(
+      analyzeTranscript('move CHG-20 to done', { meetingType: 'retro' })
+    );
+    expect(stated).toContain('Meeting type: **retrospective** (as given)');
+    expect(stated).not.toContain('inferred from');
+  });
+
+  it('lists what it heard but cannot do', () => {
+    const markdown = formatActionsAsMarkdown(analyzeTranscript('CHG-20 is 5 story points'));
+    expect(markdown).toContain('Heard, but not possible with these tools');
+    expect(markdown).toContain('5 story points');
+  });
+});
+
+describe('isMeetingType', () => {
+  it('accepts the four types and rejects anything else', () => {
+    expect(isMeetingType('standup')).toBe(true);
+    expect(isMeetingType('sprint-planning')).toBe(true);
+    expect(isMeetingType('retro')).toBe(true);
+    expect(isMeetingType('ad-hoc')).toBe(true);
+    expect(isMeetingType('all-hands')).toBe(false);
+    expect(isMeetingType(undefined)).toBe(false);
   });
 });
