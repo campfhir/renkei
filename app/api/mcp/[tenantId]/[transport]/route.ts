@@ -2,11 +2,11 @@
  * MCP HTTP endpoint using mcp-handler.
  *
  * Handles JSON-RPC 2.0 messages via HTTP POST.
- * Stateless: one server per request.
+ * Caches server per (tenantId, accountId) to avoid recreating and registering
+ * 43+ tools on every request. Cache persists for the lifetime of the Next.js process.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { McpServer } from '@modelcontextprotocol/server';
 import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@/lib/db';
 import { getConfig } from '@/lib/env';
@@ -14,6 +14,14 @@ import { getJiraGrant } from '@/lib/tenant-operations';
 import { logger } from '@/lib/logger';
 import { registerAllTools } from '@/lib/mcp-tools';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
+import type { McpServer } from '@modelcontextprotocol/server';
+
+// Cache MCP handlers per (tenantId, accountId)
+const handlerCache = new Map<string, (request: Request) => Promise<Response>>();
+
+function getCacheKey(tenantId: string, accountId: string): string {
+  return `${tenantId}:${accountId}`;
+}
 
 const handler = async (
   request: NextRequest,
@@ -81,50 +89,66 @@ const handler = async (
       });
     }
 
-    // Create MCP handler
-    const mcpHandler = createMcpHandler(
-      async (server: McpServer) => {
-        try {
-          logger.info('[MCP] Server created', { tenantId });
+    // Check cache
+    const cacheKey = getCacheKey(tenantId, accountId);
+    let mcpHandler = handlerCache.get(cacheKey);
 
-          const context: MCPToolContext = {
-            tenantId,
-            accountId,
-            siteUrl: grant.siteUrl,
-            accessToken: grant.accessToken,
-            maxJqlResults: 100,
-            db,
-            config,
-          };
+    if (!mcpHandler) {
+      logger.info('[MCP] Creating new handler (cache miss)', { tenantId, accountId });
 
-          // Register all tools
-          await registerAllTools(server, context);
+      // Create MCP handler with tool registration
+      mcpHandler = createMcpHandler(
+        async (server: McpServer) => {
+          try {
+            logger.info('[MCP] Server created', { tenantId, accountId });
 
-          logger.info('[MCP] All tools registered', {
-            tenantId,
-          });
-        } catch (err) {
-          logger.error('[MCP] Tool registration failed', {
-            error: err instanceof Error ? err.message : String(err),
-            cause:
-              err instanceof AggregateError
-                ? err.errors.map((e) => (e instanceof Error ? e.message : String(e)))
-                : undefined,
-          });
-          throw err;
-        }
-      },
-      {
-        serverInfo: {
-          name: 'Jira Renkei MCP',
-          version: '1.0.0',
+            const context: MCPToolContext = {
+              tenantId,
+              accountId,
+              siteUrl: grant.siteUrl,
+              accessToken: grant.accessToken,
+              maxJqlResults: 100,
+              db,
+              config,
+            };
+
+            // Register all tools
+            await registerAllTools(server, context);
+
+            logger.info('[MCP] All tools registered', {
+              tenantId,
+              accountId,
+            });
+          } catch (err) {
+            logger.error('[MCP] Tool registration failed', {
+              tenantId,
+              accountId,
+              error: err instanceof Error ? err.message : String(err),
+              cause:
+                err instanceof AggregateError
+                  ? err.errors.map((e) => (e instanceof Error ? e.message : String(e)))
+                  : undefined,
+            });
+            throw err;
+          }
         },
-        instructions: 'Jira work item management via MCP',
-        verboseLogs: false,
-      }
-    );
+        {
+          serverInfo: {
+            name: 'Jira Renkei MCP',
+            version: '1.0.0',
+          },
+          instructions: 'Jira work item management via MCP',
+          verboseLogs: false,
+        }
+      );
 
-    // Handle the request
+      // Store in cache
+      handlerCache.set(cacheKey, mcpHandler);
+    } else {
+      logger.debug('[MCP] Using cached handler', { tenantId, accountId });
+    }
+
+    // Handle the request with cached handler
     return await mcpHandler(request);
   } catch (error) {
     logger.error('[MCP Handler Error] {error}', {
