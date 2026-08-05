@@ -84,24 +84,35 @@ const handler = async (
     // Create MCP handler
     const mcpHandler = createMcpHandler(
       async (server: McpServer) => {
-        logger.info('[MCP] Server created', { tenantId });
+        try {
+          logger.info('[MCP] Server created', { tenantId });
 
-        const context: MCPToolContext = {
-          tenantId,
-          accountId,
-          siteUrl: grant.siteUrl,
-          accessToken: grant.accessToken,
-          maxJqlResults: 100,
-          db,
-          config,
-        };
+          const context: MCPToolContext = {
+            tenantId,
+            accountId,
+            siteUrl: grant.siteUrl,
+            accessToken: grant.accessToken,
+            maxJqlResults: 100,
+            db,
+            config,
+          };
 
-        // Register all tools
-        await registerAllTools(server, context);
+          // Register all tools
+          await registerAllTools(server, context);
 
-        logger.info('[MCP] All tools registered', {
-          tenantId,
-        });
+          logger.info('[MCP] All tools registered', {
+            tenantId,
+          });
+        } catch (err) {
+          logger.error('[MCP] Tool registration failed', {
+            error: err instanceof Error ? err.message : String(err),
+            cause:
+              err instanceof AggregateError
+                ? err.errors.map((e) => (e instanceof Error ? e.message : String(e)))
+                : undefined,
+          });
+          throw err;
+        }
       },
       {
         serverInfo: {
