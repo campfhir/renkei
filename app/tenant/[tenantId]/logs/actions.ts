@@ -5,6 +5,7 @@ import type { FilterExpr, LogRow } from '@campfhir/bored-logs';
 import { getDatabase } from '@/lib/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { buildLogQueryOptions } from '@/lib/log-query';
+import { NO_LOWER_BOUND } from './window';
 
 /** What the caller may see, resolved from their session rather than the request. */
 export interface LogScope {
@@ -95,7 +96,9 @@ export async function searchLogs(
   const result = await new PostgresAdapter({ db }).query(
     buildLogQueryOptions(search.expr, tenantId, accountId ?? undefined, {
       levels: search.levels,
-      start: search.start,
+      // Without a start the adapter substitutes yesterday, which is not what an
+      // empty date picker says. A cleared range means every record.
+      start: search.start ?? NO_LOWER_BOUND,
       end: search.end,
       sort: search.sort,
     })

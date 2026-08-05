@@ -17,6 +17,7 @@ import {
 } from '@campfhir/bored-logs/components';
 import { signInUrl } from '@/lib/sign-in-url';
 import { searchLogs, type LogSearchResult } from './actions';
+import { describeWindow, DEFAULT_WINDOW_DAYS, type LogWindow } from './window';
 
 /** The levels this gateway actually writes, in severity order. */
 const LEVELS = ['debug', 'info', 'warn', 'error', 'critical'];
@@ -46,15 +47,21 @@ export default function LogsViewer({
   tenantId,
   accountId,
   initial,
+  initialWindow,
 }: {
   tenantId: string;
   accountId: string | null;
   initial: LogSearchResult;
+  /** The window the server already searched, so the picker shows it. */
+  initialWindow: LogWindow;
 }) {
   const [{ logs, scope, error, signedOut }, setResult] = useState(initial);
   const [expr, setExpr] = useState<FilterExpr | null>(null);
   const [levels, setLevels] = useState<string[]>([]);
-  const [range, setRange] = useState<LogDateRange>({ start: null, end: null });
+  // Seeded from what the server searched rather than empty. An empty picker
+  // above a query scoped to a hidden window is how "no logs" got reported for a
+  // tenant whose activity was simply older than that window.
+  const [range, setRange] = useState<LogDateRange>(initialWindow);
   const [sort, setSort] = useState<SortState>({ column: 'timestamp', direction: 'desc' });
   const [page, setPage] = useState(1);
   const [showHelp, setShowHelp] = useState(false);
@@ -226,7 +233,8 @@ export default function LogsViewer({
 
           {ordered.length === 0 && !error && (
             <p className="px-4 py-10 text-center text-sm text-slate-400">
-              No activity in range — widen the dates or clear the filters.
+              No activity {describeWindow(range)}. The page starts at the last {DEFAULT_WINDOW_DAYS}{' '}
+              days — widen the range, or clear both dates for all time.
             </p>
           )}
         </div>

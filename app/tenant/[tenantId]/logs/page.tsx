@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { signInUrl } from '@/lib/sign-in-url';
 import { searchLogs } from './actions';
 import LogsViewer from './logs-viewer';
+import { defaultLogWindow } from './window';
 
 /**
  * Server-render the first page of logs, then hand off to the viewer, which
@@ -18,11 +19,15 @@ export default async function LogsPage({
   const { tenantId } = await params;
   const { accountId } = await searchParams;
 
+  // Computed here, not in both places: the server render and the picker the
+  // client seeds from have to agree about what is being searched.
+  const window = defaultLogWindow();
+
   const initial = await searchLogs(tenantId, {
     expr: null,
     levels: [],
-    start: null,
-    end: null,
+    start: window.start,
+    end: window.end,
     sort: 'desc',
     accountId: accountId ?? null,
   });
@@ -34,5 +39,12 @@ export default async function LogsPage({
     redirect(signInUrl(tenantId, `/tenant/${tenantId}/logs`));
   }
 
-  return <LogsViewer tenantId={tenantId} accountId={accountId ?? null} initial={initial} />;
+  return (
+    <LogsViewer
+      tenantId={tenantId}
+      accountId={accountId ?? null}
+      initial={initial}
+      initialWindow={window}
+    />
+  );
 }
