@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/consistent-type-assertions */
 import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
@@ -18,33 +19,44 @@ interface JiraUserInfo {
 
 function isJiraTokenResponse(data: unknown): data is JiraTokenResponse {
   if (typeof data !== 'object' || data === null) return false;
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+   
   const obj = data as Record<string, unknown>;
-  return typeof obj.access_token === 'string' && typeof obj.token_type === 'string' && typeof obj.expires_in === 'number';
+  return (
+    typeof obj.access_token === 'string' &&
+    typeof obj.token_type === 'string' &&
+    typeof obj.expires_in === 'number'
+  );
 }
 
 function isJiraUserInfo(data: unknown): data is JiraUserInfo {
   if (typeof data !== 'object' || data === null) return false;
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+   
   const obj = data as Record<string, unknown>;
   return typeof obj.account_id === 'string' && typeof obj.display_name === 'string';
 }
 
 function isResourceArray(data: unknown): data is Array<{ id: string; url: string; name: string }> {
   if (!Array.isArray(data)) return false;
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return data.every(item => typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).id === 'string' && typeof (item as Record<string, unknown>).url === 'string' && typeof (item as Record<string, unknown>).name === 'string');
+   
+  return data.every(
+    (item) =>
+      typeof item === 'object' &&
+      item !== null &&
+      typeof (item as Record<string, unknown>).id === 'string' &&
+      typeof (item as Record<string, unknown>).url === 'string' &&
+      typeof (item as Record<string, unknown>).name === 'string'
+  );
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const configResult = getConfig();
   if (!configResult.ok) {
-    return NextResponse.json({ error: "Config error" }, { status: 500 });
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const config = configResult.val;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
   const { searchParams } = new URL(request.url);
@@ -75,25 +87,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .executeTakeFirst();
 
     if (!pendingSignIn) {
-      return NextResponse.json(
-        { error: 'Invalid or expired state' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid or expired state' }, { status: 400 });
     }
 
     // Delete pending record (single-use) to prevent replay attacks
-    await db
-      .deleteFrom('pending_oidc_signin')
-      .where('state', '=', state)
-      .execute();
+    await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
 
     // Verify state is not expired
     const stateExpiresAt = new Date(pendingSignIn.expires_at);
     if (stateExpiresAt < new Date()) {
-      return NextResponse.json(
-        { error: 'State expired' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'State expired' }, { status: 400 });
     }
 
     // Verify tenant exists
@@ -125,18 +128,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
       console.error('Jira token exchange failed:', errorText);
-      return NextResponse.json(
-        { error: 'Failed to exchange authorization code' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Failed to exchange authorization code' }, { status: 400 });
     }
 
     const tokenData = await tokenResponse.json();
     if (!isJiraTokenResponse(tokenData)) {
-      return NextResponse.json(
-        { error: 'Invalid token response format' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid token response format' }, { status: 400 });
     }
 
     // Get user info from Jira
@@ -151,40 +148,38 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const userInfo = await userResponse.json();
     if (!isJiraUserInfo(userInfo)) {
+      console.error('Invalid user info response:', JSON.stringify(userInfo, null, 2));
       return NextResponse.json(
-        { error: 'Invalid user info response format' },
+        {
+          error: 'Invalid user info response format',
+          details: `Expected account_id and display_name, got: ${JSON.stringify(userInfo)}`,
+        },
         { status: 400 }
       );
     }
 
     // Get accessible resources (cloud IDs) to find the site
-    const resourcesResponse = await fetch('https://api.atlassian.com/oauth/token/accessible-resources', {
-      headers: { Authorization: `Bearer ${tokenData.access_token}` },
-    });
+    const resourcesResponse = await fetch(
+      'https://api.atlassian.com/oauth/token/accessible-resources',
+      {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      }
+    );
 
     if (!resourcesResponse.ok) {
       console.error('Failed to fetch accessible resources');
-      return NextResponse.json(
-        { error: 'Failed to get accessible resources' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Failed to get accessible resources' }, { status: 400 });
     }
 
     const resources = await resourcesResponse.json();
     if (!isResourceArray(resources)) {
-      return NextResponse.json(
-        { error: 'Invalid resources response format' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid resources response format' }, { status: 400 });
     }
 
     // For MVP, use the first accessible resource (cloud ID)
     const resource = resources[0];
     if (!resource) {
-      return NextResponse.json(
-        { error: 'No Jira sites accessible' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
     }
 
     // Store encrypted Jira grant
@@ -213,4 +208,3 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
   }
 }
-

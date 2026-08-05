@@ -63,16 +63,42 @@ const handler = async (
       .limit(1)
       .execute();
 
+    const authUrl = `${request.url.split('/api/')[0]}/api/mcp/${tenantId}/oauth/authorize`;
+
     if (grants.length === 0) {
-      // No grant found - direct user to re-authenticate
-      const authUrl = `${request.url.split('/api/')[0]}/api/mcp/${tenantId}/oauth/authorize`;
-      return new Response(
-        JSON.stringify({
-          error: 'No Jira grant configured',
-          message: `Your Jira authentication has expired or was revoked. Please re-authenticate: [Connect Jira](${authUrl})`,
-        }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      // No grant found - register only the connect_jira tool
+      const mcpHandler = createMcpHandler(
+        async (server: McpServer) => {
+          server.registerTool(
+            'connect_jira',
+            {
+              title: 'Connect Jira',
+              description:
+                'Jira is not connected. Click this link to authenticate: [Connect Jira](' +
+                authUrl +
+                ')',
+            },
+            async () => ({
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Jira is not connected. Please authenticate: [Connect Jira](${authUrl})`,
+                },
+              ],
+            })
+          );
+        },
+        {
+          serverInfo: {
+            name: 'Jira Renkei MCP',
+            version: '1.0.0',
+          },
+          instructions: 'Jira authentication required',
+          verboseLogs: false,
+        }
       );
+
+      return await mcpHandler(request);
     }
 
     const accountId = grants[0].account_id;
@@ -98,13 +124,13 @@ const handler = async (
 
     // Check cache
     const cacheKey = getCacheKey(tenantId, accountId);
-    let mcpHandler = handlerCache.get(cacheKey);
+    let cachedHandler = handlerCache.get(cacheKey);
 
-    if (!mcpHandler) {
+    if (!cachedHandler) {
       logger.info('[MCP] Creating new handler (cache miss)', { tenantId, accountId });
 
       // Create MCP handler with tool registration
-      mcpHandler = createMcpHandler(
+      cachedHandler = createMcpHandler(
         async (server: McpServer) => {
           try {
             logger.info('[MCP] Server created', { tenantId, accountId });
@@ -153,13 +179,13 @@ const handler = async (
       );
 
       // Store in cache
-      handlerCache.set(cacheKey, mcpHandler);
+      handlerCache.set(cacheKey, cachedHandler);
     } else {
       logger.debug('[MCP] Using cached handler', { tenantId, accountId });
     }
 
     // Handle the request with cached handler
-    return await mcpHandler(request);
+    return await cachedHandler(request);
   } catch (error) {
     logger.error('[MCP Handler Error] {error}', {
       error: error instanceof Error ? error.message : String(error),
