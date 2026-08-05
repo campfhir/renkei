@@ -1,5 +1,5 @@
 import { resolve } from 'path';
-import { runMigrations } from '@/lib/migrations/runner';
+import { runMigrations } from '../lib/migrations/runner';
 
 const migrationsDir = process.env.MIGRATIONS_DIR ? resolve(process.env.MIGRATIONS_DIR) : undefined;
 

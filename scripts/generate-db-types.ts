@@ -3,7 +3,7 @@
  * Run: pnpm tsx scripts/generate-db-types.ts
  */
 
-import { generateKyselyTypeFile } from 'kysely-codegen';
+import { Cli } from 'kysely-codegen';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 
@@ -12,10 +12,11 @@ if (!DATABASE_URL) {
 }
 
 async function generateTypes() {
-  await generateKyselyTypeFile({
+  const cli = new Cli();
+  await cli.generate({
     dialect: 'postgres',
     outFile: './lib/db.types.ts',
-    connectionString: DATABASE_URL,
+    url: DATABASE_URL,
   });
 
   console.log('✓ Generated database types at lib/db.types.ts');
