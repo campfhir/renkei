@@ -3,6 +3,7 @@ import { getDatabase } from '@/lib/db';
 import { getJiraGrant } from '@/lib/tenant-operations';
 import { recordSession } from '@/lib/audit';
 import { createLogger } from '@campfhir/bored-logs';
+import { getAllToolDefinitions, executeTool } from '@/lib/mcp-tools';
 
 interface JiraIssue {
   key: string;
@@ -102,59 +103,15 @@ export async function GET(
       return NextResponse.json({ error: 'Failed to retrieve Jira grant' }, { status: 500 });
     }
 
-    // Initialize MCP server response
+    // Initialize MCP server response with all available tools
+    const toolDefinitions = getAllToolDefinitions();
     const mcp: any = {
       protocolVersion: '2024-11-05',
       capabilities: {
         resources: {},
       } as MCPCapabilities,
       resources: [] as MCPResource[],
-      tools: [
-        {
-          name: 'list_issues',
-          description: 'List all Jira issues accessible to this tenant',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              jql: {
-                type: 'string',
-                description: 'JQL query to filter issues (optional)',
-              },
-              maxResults: {
-                type: 'number',
-                description: 'Maximum number of results (default: 50)',
-              },
-            },
-          },
-        },
-        {
-          name: 'get_issue',
-          description: 'Get details for a specific Jira issue',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              issueKey: {
-                type: 'string',
-                description: 'The issue key (e.g., PROJ-123)',
-              },
-            },
-            required: ['issueKey'],
-          },
-        },
-        {
-          name: 'get_boards',
-          description: 'List Jira boards available to this tenant',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              maxResults: {
-                type: 'number',
-                description: 'Maximum number of results (default: 50)',
-              },
-            },
-          },
-        },
-      ],
+      tools: toolDefinitions,
     };
 
     // Add resources for each issue
@@ -264,20 +221,22 @@ export async function POST(
     let result: MCPToolResult | null = null;
     let toolError: string | undefined;
 
-    // Route to appropriate MCP tool handler
+    // Execute tool with new system
     try {
-      if (method === 'list_issues') {
-        result = await handleListIssues(grant, toolParams);
-      } else if (method === 'get_issue') {
-        result = await handleGetIssue(grant, toolParams);
-      } else if (method === 'get_boards') {
-        result = await handleGetBoards(grant, toolParams);
+      if (!method) {
+        toolError = 'Method is required';
       } else {
-        toolError = `Unknown method: ${method}`;
-      }
+        result = await executeTool(method, {
+          tenantId,
+          accountId,
+          siteUrl: grant.siteUrl,
+          accessToken: grant.accessToken,
+          maxJqlResults: 100,
+        }, toolParams || {});
 
-      if (!result && !toolError) {
-        toolError = 'Failed to process request';
+        if (!result) {
+          toolError = 'Failed to process request';
+        }
       }
     } catch (toolErr) {
       toolError = toolErr instanceof Error ? toolErr.message : 'Unknown error';
@@ -364,146 +323,3 @@ export async function POST(
   }
 }
 
-async function handleListIssues(grant: any, params: any): Promise<MCPToolResult | null> {
-  try {
-    const jql = params?.jql || 'order by updated DESC';
-    const maxResults = params?.maxResults || 50;
-
-    const response = await fetch(
-      `${grant.siteUrl}/rest/api/3/search?jql=${encodeURIComponent(jql)}&maxResults=${maxResults}`,
-      {
-        headers: {
-          Authorization: `Bearer ${grant.accessToken}`,
-          Accept: 'application/json',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Jira API error: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    const issues = data.issues || [];
-
-    const formatted = issues
-      .map((issue: JiraIssue) => ({
-        key: issue.key,
-        summary: issue.fields.summary,
-        status: issue.fields.status.name,
-        assignee: issue.fields.assignee?.displayName || 'Unassigned',
-        updated: issue.fields.updated,
-      }))
-      .sort(
-        (a: any, b: any) =>
-          new Date(b.updated).getTime() - new Date(a.updated).getTime()
-      );
-
-    return {
-      type: 'text',
-      text: JSON.stringify(
-        {
-          total: data.total,
-          count: issues.length,
-          issues: formatted,
-        },
-        null,
-        2
-      ),
-    };
-  } catch (error) {
-    return {
-      type: 'text',
-      text: `Error fetching issues: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    };
-  }
-}
-
-async function handleGetIssue(grant: any, params: any): Promise<MCPToolResult | null> {
-  try {
-    if (!params?.issueKey) {
-      return {
-        type: 'text',
-        text: 'Error: issueKey parameter required',
-      };
-    }
-
-    const response = await fetch(`${grant.siteUrl}/rest/api/3/issue/${params.issueKey}`, {
-      headers: {
-        Authorization: `Bearer ${grant.accessToken}`,
-        Accept: 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Jira API error: ${response.statusText}`);
-    }
-
-    const issue = await response.json();
-
-    return {
-      type: 'text',
-      text: JSON.stringify(
-        {
-          key: issue.key,
-          summary: issue.fields.summary,
-          description: issue.fields.description || 'No description',
-          status: issue.fields.status.name,
-          assignee: issue.fields.assignee?.displayName || 'Unassigned',
-          created: issue.fields.created,
-          updated: issue.fields.updated,
-        },
-        null,
-        2
-      ),
-    };
-  } catch (error) {
-    return {
-      type: 'text',
-      text: `Error fetching issue: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    };
-  }
-}
-
-async function handleGetBoards(grant: any, params: any): Promise<MCPToolResult | null> {
-  try {
-    const maxResults = params?.maxResults || 50;
-
-    const response = await fetch(
-      `${grant.siteUrl}/rest/api/3/boards?maxResults=${maxResults}`,
-      {
-        headers: {
-          Authorization: `Bearer ${grant.accessToken}`,
-          Accept: 'application/json',
-        },
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Jira API error: ${response.statusText}`);
-    }
-
-    const data = await response.json();
-
-    return {
-      type: 'text',
-      text: JSON.stringify(
-        {
-          total: data.maxResults,
-          boards: (data.values || []).map((board: any) => ({
-            id: board.id,
-            name: board.name,
-            type: board.type,
-          })),
-        },
-        null,
-        2
-      ),
-    };
-  } catch (error) {
-    return {
-      type: 'text',
-      text: `Error fetching boards: ${error instanceof Error ? error.message : 'Unknown error'}`,
-    };
-  }
-}
