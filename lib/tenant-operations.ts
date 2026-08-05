@@ -29,7 +29,10 @@ export interface JiraGrant {
  * Store OIDC configuration for a tenant.
  * Client secret is encrypted with the deployment key.
  */
-export async function setTenantOidc(tenantId: string, oidc: TenantOidc): Promise<Result<void, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
+export async function setTenantOidc(
+  tenantId: string,
+  oidc: TenantOidc
+): Promise<Result<void, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
@@ -111,7 +114,10 @@ export async function setOidcRoleMapping(
 /**
  * Get renkei role for an IDP role.
  */
-export async function getOidcRoleMapping(tenantId: string, idpRole: string): Promise<Result<string | null, 'DB_ERROR'>> {
+export async function getOidcRoleMapping(
+  tenantId: string,
+  idpRole: string
+): Promise<Result<string | null, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
@@ -135,7 +141,9 @@ export async function getOidcRoleMapping(tenantId: string, idpRole: string): Pro
  * Get OIDC configuration for a tenant.
  * Client secret is automatically decrypted.
  */
-export async function getTenantOidc(tenantId: string): Promise<Result<TenantOidc | null, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY' | 'DECRYPTION_ERROR'>> {
+export async function getTenantOidc(
+  tenantId: string
+): Promise<Result<TenantOidc | null, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY' | 'DECRYPTION_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
@@ -147,7 +155,14 @@ export async function getTenantOidc(tenantId: string): Promise<Result<TenantOidc
     () =>
       db
         .selectFrom('tenant_oidc')
-        .select(['issuer', 'client_id', 'client_secret', 'role_claim', 'operator_idp_value', 'user_idp_value'])
+        .select([
+          'issuer',
+          'client_id',
+          'client_secret',
+          'role_claim',
+          'operator_idp_value',
+          'user_idp_value',
+        ])
         .where('tenant_id', '=', tenantId)
         .executeTakeFirst(),
     'DB_ERROR' as const
@@ -174,7 +189,10 @@ export async function getTenantOidc(tenantId: string): Promise<Result<TenantOidc
 /**
  * Store encrypted Jira grant for a tenant user.
  */
-export async function setJiraGrant(tenantId: string, grant: JiraGrant): Promise<Result<void, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
+export async function setJiraGrant(
+  tenantId: string,
+  grant: JiraGrant
+): Promise<Result<void, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
@@ -223,7 +241,12 @@ export async function setJiraGrant(tenantId: string, grant: JiraGrant): Promise<
 export async function getJiraGrant(
   tenantId: string,
   accountId: string
-): Promise<Result<JiraGrant | null, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY' | 'DECRYPTION_ERROR'>> {
+): Promise<
+  Result<
+    JiraGrant | null,
+    'DB_ERROR' | 'INVALID_ENCRYPTION_KEY' | 'DECRYPTION_ERROR' | 'TOKEN_REFRESH_FAILED'
+  >
+> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
@@ -245,6 +268,7 @@ export async function getJiraGrant(
           'encrypted_refresh_token',
           'expires_at',
           'scopes',
+          'tenant_id',
         ])
         .where('tenant_id', '=', tenantId)
         .where('account_id', '=', accountId)
@@ -263,15 +287,112 @@ export async function getJiraGrant(
   const refreshTokenResult = decrypt(row.encrypted_refresh_token, encryptionKey);
   if (!refreshTokenResult.ok) return err('DECRYPTION_ERROR' as const);
 
+  let accessToken = accessTokenResult.val;
+  let expiresAt = row.expires_at;
+  let refreshToken = refreshTokenResult.val;
+
+  // Check if token is expired and refresh if needed
+  const now = new Date();
+  if (expiresAt < now) {
+    // Token expired - attempt refresh
+    const refreshResult = await refreshAtlassianToken(
+      row.atlassian_client_id,
+      refreshToken,
+      tenantId,
+      accountId
+    );
+
+    if (!refreshResult.ok) {
+      return err('TOKEN_REFRESH_FAILED' as const);
+    }
+
+    accessToken = refreshResult.val.accessToken;
+    refreshToken = refreshResult.val.refreshToken;
+    expiresAt = refreshResult.val.expiresAt;
+  }
+
   return ok({
     accountId: row.account_id,
     atlassianClientId: row.atlassian_client_id,
     cloudId: row.cloud_id,
     siteUrl: row.site_url || '',
     displayName: row.operator_name || '',
-    accessToken: accessTokenResult.val,
-    refreshToken: refreshTokenResult.val,
-    expiresAt: row.expires_at.toISOString(),
+    accessToken,
+    refreshToken,
+    expiresAt: expiresAt.toISOString(),
     scopes: row.scopes,
   });
+}
+
+/**
+ * Refresh an expired Atlassian OAuth token using the refresh token.
+ * Updates the database with new tokens.
+ */
+async function refreshAtlassianToken(
+  clientId: string,
+  refreshToken: string,
+  tenantId: string,
+  accountId: string
+): Promise<
+  Result<{ accessToken: string; refreshToken: string; expiresAt: Date }, 'REFRESH_FAILED'>
+> {
+  try {
+    const response = await fetch('https://auth.atlassian.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        client_id: clientId,
+        refresh_token: refreshToken,
+      }),
+    });
+
+    if (!response.ok) {
+      return err('REFRESH_FAILED' as const);
+    }
+
+    const data = await response.json();
+
+    if (!data.access_token || !data.refresh_token) {
+      return err('REFRESH_FAILED' as const);
+    }
+
+    // Calculate new expiration
+    const expiresAt = new Date(Date.now() + (data.expires_in ?? 3600) * 1000);
+
+    // Update database
+    const dbResult = getDatabase();
+    if (!dbResult.ok) return err('REFRESH_FAILED' as const);
+    const db = dbResult.val;
+
+    const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+    if (!encryptionKeyResult.ok) return err('REFRESH_FAILED' as const);
+    const encryptionKey = encryptionKeyResult.val;
+
+    const encryptedAccessToken = encrypt(data.access_token, encryptionKey);
+    const encryptedRefreshToken = encrypt(data.refresh_token, encryptionKey);
+
+    await wrapAsync(
+      () =>
+        db
+          .updateTable('atlassian_grants')
+          .set({
+            encrypted_access_token: encryptedAccessToken,
+            encrypted_refresh_token: encryptedRefreshToken,
+            expires_at: expiresAt,
+          })
+          .where('tenant_id', '=', tenantId)
+          .where('account_id', '=', accountId)
+          .execute(),
+      'REFRESH_FAILED' as const
+    );
+
+    return ok({
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt,
+    });
+  } catch {
+    return err('REFRESH_FAILED' as const);
+  }
 }
