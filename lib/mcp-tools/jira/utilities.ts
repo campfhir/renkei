@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { getCachedDisplayName } from '../common';
+import { analyzeTranscript, formatActionsAsMarkdown } from './transcript';
 import { logger } from '@/lib/logger';
 
 export async function registerUtilityTools(
@@ -20,11 +21,21 @@ export async function registerUtilityTools(
     {
       title: 'Analyze a meeting transcript for Jira actions',
       description:
-        'Analyze a transcript and extract action items, decisions, and key discussion points.',
+        'Parses a meeting transcript and recommends MCP tool calls to implement the discussed ' +
+        'actions. Detects phrasings like "create a task for X", "assign PROJ-12 to dana", or ' +
+        '"move PROJ-12 to done" and suggests which tool to call with what arguments. These are ' +
+        'recommendations only — no tools are executed. You must review and call them yourself.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        transcript: z.string().describe('Meeting or conversation transcript'),
-        issueKey: z.string().describe('Optional issue key to associate with findings').optional(),
+        transcript: z.string().min(1).describe('Meeting or conversation transcript'),
+        projectKey: z
+          .string()
+          .describe('Default project key for created issues, e.g. SCRUM')
+          .optional(),
+        issueKey: z
+          .string()
+          .describe('The issue under discussion, used to resolve "this", "it" and "that"')
+          .optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -35,62 +46,29 @@ export async function registerUtilityTools(
         displayName,
       });
       try {
-        const { transcript, issueKey } = args;
+        const { transcript, projectKey, issueKey } = args;
 
-        if (!transcript) {
+        if (!transcript || typeof transcript !== 'string') {
           return {
             content: [{ type: 'text' as const, text: 'transcript is required' }],
             isError: true,
           };
         }
 
-        // Simple transcript analysis - extract lines that look like action items
-        const lines = String(transcript).split('\n');
-        const actionItems = lines.filter(
-          (line: string) =>
-            line.toLowerCase().includes('action item') ||
-            line.toLowerCase().includes('todo') ||
-            line.toLowerCase().includes('@') ||
-            line.toLowerCase().includes('should')
-        );
+        const actions = analyzeTranscript(transcript, {
+          projectKey: typeof projectKey === 'string' ? projectKey : undefined,
+          issueKey: typeof issueKey === 'string' ? issueKey : undefined,
+        });
 
-        const decisions = lines.filter(
-          (line: string) =>
-            line.toLowerCase().includes('decided') ||
-            line.toLowerCase().includes('decision') ||
-            line.toLowerCase().includes('agreed')
-        );
+        logger.info('[Tool] analyze_transcript results', {
+          tenantId: context.tenantId,
+          accountId: context.accountId,
+          actions: actions.length,
+        });
 
-        const summary = [
-          '## Transcript Analysis',
-          '',
-          `**Total lines:** ${lines.length}`,
-          `**Action items found:** ${actionItems.length}`,
-          `**Decisions found:** ${decisions.length}`,
-          '',
-        ];
-
-        if (actionItems.length > 0) {
-          summary.push('### Action Items');
-          actionItems.slice(0, 10).forEach((item: string) => {
-            summary.push(`- ${item.trim()}`);
-          });
-          summary.push('');
-        }
-
-        if (decisions.length > 0) {
-          summary.push('### Decisions');
-          decisions.slice(0, 10).forEach((item: string) => {
-            summary.push(`- ${item.trim()}`);
-          });
-          summary.push('');
-        }
-
-        if (issueKey) {
-          summary.push(`\n*Analysis for ${issueKey}*`);
-        }
-
-        return { content: [{ type: 'text' as const, text: summary.join('\n') }] };
+        return {
+          content: [{ type: 'text' as const, text: formatActionsAsMarkdown(actions) }],
+        };
       } catch (error) {
         return {
           content: [
