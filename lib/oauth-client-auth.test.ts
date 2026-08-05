@@ -8,7 +8,13 @@
  * placements reintroduces it.
  */
 
-import { readClientCredentials } from './oauth-client-auth';
+import { readClientCredentials, verifyClientSecret } from './oauth-client-auth';
+
+// mcp-token reaches the Kysely client for token storage, which is ESM and
+// cannot be required here. The digest helpers under test touch no database.
+jest.mock('@/lib/db', () => ({ getDatabase: () => ({ ok: false, err: 'unused' }) }));
+
+import { digestsMatch, hashToken } from './mcp-token';
 
 function basic(clientId: string, secret: string): string {
   return `Basic ${Buffer.from(`${clientId}:${secret}`).toString('base64')}`;
@@ -83,5 +89,45 @@ describe('readClientCredentials', () => {
     ])('%s', (_label, header, body) => {
       expect(readClientCredentials(header, body)).toBeNull();
     });
+  });
+});
+
+describe('verifyClientSecret', () => {
+  const check = (stored: unknown, presented: string) =>
+    verifyClientSecret(stored, presented, hashToken, digestsMatch);
+
+  it('accepts the secret it was issued', () => {
+    expect(check(hashToken('secret-1'), 'secret-1')).toBe('ok');
+  });
+
+  it('rejects a wrong secret', () => {
+    expect(check(hashToken('secret-1'), 'secret-2')).toBe('mismatch');
+  });
+
+  it('rejects the stored digest presented as if it were the secret', () => {
+    const digest = hashToken('secret-1');
+    expect(check(digest, digest)).toBe('mismatch');
+  });
+
+  it('reports a row that cannot authenticate anyone, separately from a mismatch', () => {
+    // What a NULL column, or client_secret_hash missing because migration 012
+    // has not run, arrives as. This used to throw inside Buffer.from and
+    // surface at the token endpoint as a 500.
+    expect(check(undefined, 'secret-1')).toBe('unusable');
+    expect(check(null, 'secret-1')).toBe('unusable');
+    expect(check('', 'secret-1')).toBe('unusable');
+  });
+});
+
+describe('digestsMatch', () => {
+  it('fails closed rather than throwing on a missing value', () => {
+    expect(digestsMatch(undefined, hashToken('x'))).toBe(false);
+    expect(digestsMatch(hashToken('x'), undefined)).toBe(false);
+    expect(digestsMatch(null, null)).toBe(false);
+  });
+
+  it('still compares two real digests', () => {
+    expect(digestsMatch(hashToken('x'), hashToken('x'))).toBe(true);
+    expect(digestsMatch(hashToken('x'), hashToken('y'))).toBe(false);
   });
 });

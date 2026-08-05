@@ -84,6 +84,27 @@ export function readClientCredentials(
   return null;
 }
 
+/**
+ * Check a presented secret against the digest stored for the client.
+ *
+ * `unusable` is separated from `mismatch` because the two mean different things
+ * to whoever is looking at the logs. A mismatch is a client with the wrong
+ * secret. An unusable digest is a row that cannot authenticate anybody — a NULL
+ * column, or `client_secret_hash` missing entirely because migration 012 has not
+ * run on this database — and every client will fail against it until that is
+ * fixed. Both answer `invalid_client` to the client; only one is the server's
+ * fault.
+ */
+export function verifyClientSecret(
+  storedHash: unknown,
+  presentedSecret: string,
+  hash: (value: string) => string,
+  compare: (a: unknown, b: unknown) => boolean
+): 'ok' | 'mismatch' | 'unusable' {
+  if (typeof storedHash !== 'string' || storedHash.length === 0) return 'unusable';
+  return compare(storedHash, hash(presentedSecret)) ? 'ok' : 'mismatch';
+}
+
 /** Auth methods the token endpoint accepts, as advertised in server metadata. */
 export const SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS = [
   'client_secret_basic',

@@ -33,7 +33,14 @@ export function hashToken(token: string): string {
  * exists to keep the comparison safe if a future change moves the check into
  * application code.
  */
-export function digestsMatch(a: string, b: string): boolean {
+export function digestsMatch(a: unknown, b: unknown): boolean {
+  // Fails closed on anything that is not a string. One argument is always a
+  // value read from the database, and a column that is absent or NULL arrives
+  // here as undefined: `Buffer.from(undefined)` throws ERR_INVALID_ARG_TYPE,
+  // which surfaced at the token endpoint as a 500 rather than as the
+  // authentication failure it is.
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+
   const left = Buffer.from(a, 'utf8');
   const right = Buffer.from(b, 'utf8');
   return left.length === right.length && timingSafeEqual(left, right);

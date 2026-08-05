@@ -5,7 +5,11 @@ import { randomUUID, createHash } from 'crypto';
 import type { Kysely } from 'kysely';
 import type { DB } from '@/lib/db.types';
 import { storeAccessToken, generateSecret, hashToken, digestsMatch } from '@/lib/mcp-token';
-import { readClientCredentials, type ClientCredentials } from '@/lib/oauth-client-auth';
+import {
+  readClientCredentials,
+  verifyClientSecret,
+  type ClientCredentials,
+} from '@/lib/oauth-client-auth';
 
 /**
  * Tenant-scoped OAuth 2.0 Token endpoint (RFC 6749)
@@ -131,8 +135,35 @@ async function handleAuthorizationCodeGrant(
       .executeTakeFirst();
 
     // Constant-time comparison of digests; the secret itself is not stored.
-    if (!client || !digestsMatch(client.client_secret_hash, hashToken(client_secret))) {
+    if (!client) {
       return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
+    }
+
+    const secretCheck = verifyClientSecret(
+      client.client_secret_hash,
+      client_secret,
+      hashToken,
+      digestsMatch
+    );
+    if (secretCheck !== 'ok') {
+      if (secretCheck === 'unusable') {
+        // Not the client's fault, and not something it can act on: no digest is
+        // stored for this row, so nothing it presents can ever match.
+        console.error('[OAuth Token] Client row has no usable secret digest', {
+          client_id,
+          hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
+        });
+      }
+      return NextResponse.json(
+        {
+          error: 'invalid_client',
+          error_description:
+            secretCheck === 'unusable'
+              ? 'This client cannot be authenticated on this server. Register again.'
+              : 'Client authentication failed',
+        },
+        { status: 401 }
+      );
     }
 
     // Retrieve and validate authorization code
@@ -283,8 +314,35 @@ async function handleRefreshTokenGrant(
       .executeTakeFirst();
 
     // Constant-time comparison of digests; the secret itself is not stored.
-    if (!client || !digestsMatch(client.client_secret_hash, hashToken(client_secret))) {
+    if (!client) {
       return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
+    }
+
+    const secretCheck = verifyClientSecret(
+      client.client_secret_hash,
+      client_secret,
+      hashToken,
+      digestsMatch
+    );
+    if (secretCheck !== 'ok') {
+      if (secretCheck === 'unusable') {
+        // Not the client's fault, and not something it can act on: no digest is
+        // stored for this row, so nothing it presents can ever match.
+        console.error('[OAuth Token] Client row has no usable secret digest', {
+          client_id,
+          hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
+        });
+      }
+      return NextResponse.json(
+        {
+          error: 'invalid_client',
+          error_description:
+            secretCheck === 'unusable'
+              ? 'This client cannot be authenticated on this server. Register again.'
+              : 'Client authentication failed',
+        },
+        { status: 401 }
+      );
     }
 
     // Find the refresh token for this tenant. Matched on the digest — the
