@@ -48,8 +48,8 @@ export async function getUserSessions(
     id: string;
     userAgent: string | null;
     ipAddress: string | null;
-    lastUsedAt: string;
-    createdAt: string;
+    lastUsedAt: Date;
+    createdAt: Date;
   }>
 > {
   const db = getDatabase();

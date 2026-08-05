@@ -200,7 +200,7 @@ export async function getJiraGrant(
     displayName: row.operator_name || '',
     accessToken: decrypt(row.encrypted_access_token, encryptionKey),
     refreshToken: decrypt(row.encrypted_refresh_token, encryptionKey),
-    expiresAt: row.expires_at,
+    expiresAt: row.expires_at.toISOString(),
     scopes: row.scopes,
   };
 }

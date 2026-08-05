@@ -23,7 +23,7 @@ export default async function SignInPage({ params }: { params: Promise<{ slug: s
 
   const oidcConfig = await db
     .selectFrom('tenant_oidc')
-    .select(['issuer', 'client_id', 'authorization_endpoint'])
+    .selectAll()
     .where('tenant_id', '=', tenant.id)
     .executeTakeFirst();
 
@@ -31,9 +31,22 @@ export default async function SignInPage({ params }: { params: Promise<{ slug: s
     redirect(`/admin/${slug}`);
   }
 
+  // Fetch OIDC discovery to get authorization endpoint
+  let authorizationEndpoint: string;
+  try {
+    const discoveryUrl = new URL('/.well-known/openid-configuration', oidcConfig.issuer).toString();
+    const discoveryResponse = await fetch(discoveryUrl);
+    const discovery = await discoveryResponse.json() as { authorization_endpoint?: string };
+    authorizationEndpoint = discovery.authorization_endpoint || oidcConfig.issuer;
+  } catch (err) {
+    console.error('Failed to fetch OIDC discovery:', err);
+    // Fallback to issuer
+    authorizationEndpoint = oidcConfig.issuer;
+  }
+
   // Generate OIDC authorization request
   const state = randomUUID();
-  const redirectUri = `${config.PUBLIC_BASE_URL}/api/oauth/callback`;
+  const redirectUri = `${config.PUBLIC_BASE_URL}/api/auth/oidc/callback`;
   const nonce = randomUUID();
   const expiresAt = new Date(Date.now() + SIGN_IN_TTL_MS).toISOString();
 
@@ -47,6 +60,7 @@ export default async function SignInPage({ params }: { params: Promise<{ slug: s
         tenant_id: tenant.id,
         expires_at: expiresAt,
         created_at: new Date().toISOString(),
+        id: randomUUID(),
       })
       .execute();
   } catch (err) {
@@ -55,7 +69,7 @@ export default async function SignInPage({ params }: { params: Promise<{ slug: s
   }
 
   // Build authorization URL
-  const authUrl = new URL(oidcConfig.authorization_endpoint);
+  const authUrl = new URL(authorizationEndpoint);
   authUrl.searchParams.append('client_id', oidcConfig.client_id);
   authUrl.searchParams.append('response_type', 'code');
   authUrl.searchParams.append('scope', 'openid email profile');

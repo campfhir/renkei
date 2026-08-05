@@ -165,7 +165,7 @@ export const writeTools: WriteToolHandler[] = [
       const p = params;
       const { issueKey, summary, description, priority, assignee, labels } = p;
 
-      if (!issueKey) {
+      if (!isString(issueKey)) {
         return toolError('issueKey is required');
       }
 
@@ -232,12 +232,12 @@ export const writeTools: WriteToolHandler[] = [
       const p = params;
       const { issueKey, comment } = p;
 
-      if (!issueKey || !comment) {
+      if (!isString(issueKey) || !isString(comment)) {
         return toolError('issueKey and comment are required');
       }
 
       try {
-        const commentStr = isString(comment) ? comment : String(comment);
+        const commentStr = comment;
         await jiraFetch(
           `${context.siteUrl}/rest/api/3/issue/${issueKey}/comments`,
           context.accessToken,
@@ -284,7 +284,7 @@ export const writeTools: WriteToolHandler[] = [
       const p = params;
       const { issueKey, transitionName, comment } = p;
 
-      if (!issueKey || !transitionName) {
+      if (!isString(issueKey) || !isString(transitionName)) {
         return toolError('issueKey and transitionName are required');
       }
 
@@ -300,7 +300,7 @@ export const writeTools: WriteToolHandler[] = [
         }
 
         // Find the matching transition
-        const transitionNameStr = isString(transitionName) ? transitionName : String(transitionName);
+        const transitionNameStr = transitionName;
         const transitions = isArray(transData.transitions) ? transData.transitions : [];
         const transition = transitions.find((t: unknown) => {
           if (!isRecord(t)) {
@@ -383,12 +383,12 @@ export const writeTools: WriteToolHandler[] = [
       const p = params;
       const { issueKey, timeSpent, comment } = p;
 
-      if (!issueKey || !timeSpent) {
+      if (!isString(issueKey) || !isString(timeSpent)) {
         return toolError('issueKey and timeSpent are required');
       }
 
       try {
-        const timeSpentStr = isString(timeSpent) ? timeSpent : String(timeSpent);
+        const timeSpentStr = timeSpent;
         const body: Record<string, unknown> = {
           timeSpent: timeSpentStr,
         };

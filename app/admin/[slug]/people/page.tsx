@@ -4,8 +4,7 @@ import { getDatabase } from '@/lib/db';
 
 interface User {
   account_id: string;
-  display_name: string | null;
-  email: string | null;
+  last_used_at: Date;
 }
 
 export default async function PeoplePage({ params }: { params: Promise<{ slug: string }> }) {
@@ -27,14 +26,25 @@ export default async function PeoplePage({ params }: { params: Promise<{ slug: s
       .executeTakeFirst();
 
     if (tenant) {
-      // TODO: Fetch users from database
-      // Query users who have connected to any site in this tenant
-      users = await db
-        .selectFrom('user_sessions')
-        .select(['account_id', 'display_name', 'email'])
-        .distinct()
+      // Query users who have connected Jira sessions in this tenant
+      const sessions = await db
+        .selectFrom('jira_sessions')
+        .select(['account_id', 'last_used_at'])
         .where('tenant_id', '=', tenant.id)
+        .orderBy('last_used_at', 'desc')
         .execute();
+
+      // Get unique users with their most recent session
+      const userMap = new Map<string, User>();
+      for (const session of sessions) {
+        if (!userMap.has(session.account_id)) {
+          userMap.set(session.account_id, {
+            account_id: session.account_id,
+            last_used_at: session.last_used_at,
+          });
+        }
+      }
+      users = Array.from(userMap.values());
     }
   } catch (err) {
     console.error('Error fetching people:', err);
@@ -49,18 +59,18 @@ export default async function PeoplePage({ params }: { params: Promise<{ slug: s
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid #ddd' }}>
-              <th style={{ padding: '0.5rem', textAlign: 'left' }}>Display Name</th>
-              <th style={{ padding: '0.5rem', textAlign: 'left' }}>Email</th>
               <th style={{ padding: '0.5rem', textAlign: 'left' }}>Account ID</th>
+              <th style={{ padding: '0.5rem', textAlign: 'left' }}>Last Active</th>
             </tr>
           </thead>
           <tbody>
             {users.map((user) => (
               <tr key={user.account_id} style={{ borderBottom: '1px solid #eee' }}>
-                <td style={{ padding: '0.5rem' }}>{user.display_name || '—'}</td>
-                <td style={{ padding: '0.5rem' }}>{user.email || '—'}</td>
                 <td style={{ padding: '0.5rem', fontFamily: 'monospace', fontSize: '0.9em' }}>
                   {user.account_id}
+                </td>
+                <td style={{ padding: '0.5rem' }}>
+                  {new Date(user.last_used_at).toLocaleString()}
                 </td>
               </tr>
             ))}

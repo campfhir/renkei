@@ -36,8 +36,8 @@ export async function POST(
     // Verify grant belongs to this tenant
     const grant = await db
       .selectFrom('atlassian_grants')
-      .select(['grant_id', 'account_display_name'])
-      .where('grant_id', '=', grantId)
+      .select(['account_id', 'operator_name'])
+      .where('account_id', '=', grantId)
       .where('tenant_id', '=', tenant.id)
       .executeTakeFirst();
 
@@ -48,14 +48,15 @@ export async function POST(
     // Delete the grant
     await db
       .deleteFrom('atlassian_grants')
-      .where('grant_id', '=', grantId)
+      .where('account_id', '=', grantId)
+      .where('tenant_id', '=', tenant.id)
       .execute();
 
     return NextResponse.json({
       success: true,
       grant_id: grantId,
-      account: grant.account_display_name,
-      message: `Grant for ${grant.account_display_name} has been revoked`,
+      account: grant.operator_name,
+      message: `Grant for ${grant.operator_name} has been revoked`,
     });
   } catch (error) {
     console.error('Error revoking grant:', error);

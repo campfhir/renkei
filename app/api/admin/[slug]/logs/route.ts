@@ -78,7 +78,7 @@ export async function GET(
       if (filter.field === 'level') {
         query = query.where('level', '=', filter.value);
       } else if (filter.field === 'timestamp') {
-        const timestamp = new Date(filter.value).toISOString();
+        const timestamp = new Date(filter.value);
         if (filter.operator === '>') {
           query = query.where('logged_timestamp', '>', timestamp);
         } else if (filter.operator === '<') {

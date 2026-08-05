@@ -37,16 +37,14 @@ export async function GET(
     const grants = await db
       .selectFrom('atlassian_grants')
       .select([
-        'grant_id',
-        'cloud_id',
         'account_id',
-        'account_display_name',
+        'cloud_id',
+        'operator_name',
         'expires_at',
         'created_at',
-        'updated_at',
       ])
       .where('tenant_id', '=', tenant.id)
-      .orderBy('updated_at', 'desc')
+      .orderBy('created_at', 'desc')
       .execute();
 
     // Add expiration status for each grant

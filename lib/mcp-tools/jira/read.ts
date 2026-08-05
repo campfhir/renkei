@@ -199,8 +199,8 @@ export const readTools: ReadToolHandler[] = [
           lines.push(`\nDescription:\n${fields.description}`);
         }
 
-        const issueKey = isString(issue.key) ? issue.key : String(issue.key);
-        return okWithLink(lines.join('\n'), issueUrl(context.siteUrl, issueKey));
+        const resolvedIssueKey = isString(issue.key) ? issue.key : String(issue.key);
+        return okWithLink(lines.join('\n'), issueUrl(context.siteUrl, resolvedIssueKey));
       } catch (error) {
         return toolError(`Failed to get issue: ${error instanceof Error ? error.message : String(error)}`);
       }

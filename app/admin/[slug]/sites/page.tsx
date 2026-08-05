@@ -7,7 +7,7 @@ interface JiraSite {
   cloud_id: string;
   jira_url: string;
   enabled: boolean;
-  claimed_at: string | null;
+  claimed_at: Date | null;
 }
 
 export default async function SitesPage({ params }: { params: Promise<{ slug: string }> }) {

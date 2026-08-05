@@ -16,9 +16,12 @@ interface LogsClientAppProps {
   tenantSlug: string;
 }
 
-interface LogEntry {
-  log_id: string;
-  [key: string]: unknown;
+interface LogRow {
+  id: string;
+  level: string;
+  message: string;
+  meta: { [key: string]: unknown };
+  timestamp: string | null;
 }
 
 function isLogsResponse(data: unknown): data is { logs: unknown[] } {
@@ -29,7 +32,7 @@ function isLogsResponse(data: unknown): data is { logs: unknown[] } {
 }
 
 export function LogsClientApp({ tenantSlug }: LogsClientAppProps) {
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logs, setLogs] = useState<LogRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [queryString, setQueryString] = useState('');
@@ -72,8 +75,21 @@ export function LogsClientApp({ tenantSlug }: LogsClientAppProps) {
       }
       const data = await response.json();
       if (isLogsResponse(data)) {
-        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-        setLogs(data.logs as LogEntry[]);
+        // Transform API response to LogRow format
+        const transformedLogs = (data.logs as unknown[]).map((log: unknown) => {
+          if (typeof log !== 'object' || log === null) {
+            return null;
+          }
+          const logObj = log as Record<string, unknown>;
+          return {
+            id: String(logObj.log_id || ''),
+            level: String(logObj.level || 'info'),
+            message: String(logObj.message || ''),
+            meta: {},
+            timestamp: logObj.logged_timestamp ? String(logObj.logged_timestamp) : null,
+          };
+        }).filter((log): log is LogRow => log !== null);
+        setLogs(transformedLogs);
       } else {
         setLogs([]);
       }
@@ -171,7 +187,7 @@ export function LogsClientApp({ tenantSlug }: LogsClientAppProps) {
             </tr>
           ) : (
             logs.map((log, idx) => (
-              <LogTableRowGroup key={String(log.log_id ?? idx)} log={log}>
+              <LogTableRowGroup key={String(log.id ?? idx)} log={log}>
                 <pre style={{ margin: 0, fontSize: '0.85em', maxHeight: '300px', overflow: 'auto' }}>
                   {JSON.stringify(log, null, 2)}
                 </pre>

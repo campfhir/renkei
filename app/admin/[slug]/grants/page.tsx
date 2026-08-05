@@ -30,16 +30,9 @@ export default async function GrantsPage({
   // Fetch grants
   const grants = await db
     .selectFrom('atlassian_grants')
-    .select([
-      'grant_id',
-      'cloud_id',
-      'account_id',
-      'account_display_name',
-      'expires_at',
-      'created_at',
-    ])
+    .selectAll()
     .where('tenant_id', '=', tenant.id)
-    .orderBy('updated_at', 'desc')
+    .orderBy('created_at', 'desc')
     .execute();
 
   return (
@@ -79,17 +72,18 @@ export default async function GrantsPage({
           </thead>
           <tbody>
             {grants.map((grant) => {
+              const grantKey = `${grant.account_id}-${grant.tenant_id}`;
               const expiresAt = new Date(grant.expires_at);
               const isExpired = expiresAt < new Date();
               const expiresAtStr = expiresAt.toLocaleDateString();
 
               return (
                 <tr
-                  key={grant.grant_id}
+                  key={grantKey}
                   style={{ borderBottom: '1px solid #eee' }}
                 >
                   <td style={{ padding: '1rem' }}>
-                    {grant.account_display_name}
+                    {grant.operator_name}
                   </td>
                   <td style={{ padding: '1rem', fontSize: '0.9rem' }}>
                     {grant.account_id}
@@ -112,11 +106,11 @@ export default async function GrantsPage({
                         // In a real app, this would call the revoke endpoint
                         if (
                           confirm(
-                            `Revoke access for ${grant.account_display_name}?`
+                            `Revoke access for ${grant.operator_name}?`
                           )
                         ) {
                           fetch(
-                            `/api/admin/${slug}/grants/${grant.grant_id}/revoke`,
+                            `/api/admin/${slug}/grants/${grant.account_id}/revoke`,
                             { method: 'POST' }
                           )
                             .then((res) => res.json())
