@@ -5,7 +5,7 @@
  * Tools are organized by product/service for modularity.
  */
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from './common';
 import { registerJiraTools } from './jira';
 import { registerJiraServiceManagementTools } from './jira-service-management';

@@ -4,7 +4,7 @@
  * Tools for managing Jira issues, boards, sprints, and project structure.
  */
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { registerReadTools } from './read';
 import { registerWriteTools } from './write';

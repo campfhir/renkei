@@ -4,7 +4,7 @@
  * Tools for managing customer requests, service desks, and support operations.
  */
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { registerJsmTools } from './jsm';
 import { registerRequestDetailsTools } from './request-details';

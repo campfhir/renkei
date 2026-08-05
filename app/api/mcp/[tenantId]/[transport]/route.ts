@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@/lib/db';
 import { getConfig } from '@/lib/env';
@@ -81,13 +81,9 @@ const handler = async (
       });
     }
 
-    try {
-      const mcpHandler = createMcpHandler(async () => {
-        const server = new McpServer(
-          { name: 'Jira Renkei MCP', version: '1.0.0' },
-          { instructions: 'Jira work item management via MCP' }
-        );
-
+    // Create MCP handler
+    const mcpHandler = createMcpHandler(
+      async (server: McpServer) => {
         logger.info('[MCP] Server created', { tenantId });
 
         const context: MCPToolContext = {
@@ -106,36 +102,32 @@ const handler = async (
         logger.info('[MCP] All tools registered', {
           tenantId,
         });
+      },
+      {
+        serverInfo: {
+          name: 'Jira Renkei MCP',
+          version: '1.0.0',
+        },
+        instructions: 'Jira work item management via MCP',
+        verboseLogs: false,
+      }
+    );
 
-        return server;
-      });
-
-      return mcpHandler(request);
-    } catch (error) {
-      logger.error('[MCP Handler Error] {error}', {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      return new Response(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          error: {
-            code: -32603,
-            message: `Internal server error: ${error instanceof Error ? error.message : String(error)}`,
-          },
-          id: null,
-        }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    // Handle the request
+    return await mcpHandler(request);
   } catch (error) {
-    logger.error('MCP handler error: {error}', {
+    logger.error('[MCP Handler Error] {error}', {
       error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
     return new Response(
       JSON.stringify({
-        error: 'Internal server error',
-        message: error instanceof Error ? error.message : 'Unknown error',
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: `Internal server error: ${error instanceof Error ? error.message : String(error)}`,
+        },
+        id: null,
       }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );

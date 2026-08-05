@@ -5,7 +5,7 @@
  */
 
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 
 export async function registerAttachmentTools(
