@@ -12,12 +12,10 @@ import { NextRequest, NextResponse } from 'next/server';
 // Using Server for advanced tool registration pattern
 // (programmatically registering 41 tools with custom handlers via setRequestHandler)
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@/lib/db';
+import { getConfig } from '@/lib/env';
 import { getJiraGrant } from '@/lib/tenant-operations';
 import { recordSession } from '@/lib/audit';
 import { createLogger } from '@campfhir/bored-logs';
@@ -26,14 +24,21 @@ import type { MCPToolContext } from '@/lib/mcp-tools/common';
 
 const handler = async (
   request: NextRequest,
-  { params }: { params: Promise<{ tenantId: string; transport: string }> },
+  { params }: { params: Promise<{ tenantId: string; transport: string }> }
 ): Promise<Response> => {
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
+
+  const configResult = getConfig();
+  if (!configResult.ok) {
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
+  const config = configResult.val;
+
   const userAgent = request.headers.get('user-agent') || undefined;
   const ipAddress =
     request.headers.get('x-forwarded-for')?.split(',')[0].trim() ||
@@ -49,10 +54,10 @@ const handler = async (
       .executeTakeFirst();
 
     if (!tenant) {
-      return new Response(
-        JSON.stringify({ error: 'Tenant not found' }),
-        { status: 404, headers: { 'Content-Type': 'application/json' } },
-      );
+      return new Response(JSON.stringify({ error: 'Tenant not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
     // Get Jira grant
@@ -69,24 +74,24 @@ const handler = async (
           error: 'No Jira grant configured',
           message: 'Please connect your Jira instance first',
         }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } },
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
     const accountId = grants[0].account_id;
     const grantResult = await getJiraGrant(tenantId, accountId);
     if (!grantResult.ok) {
-      return new Response(
-        JSON.stringify({ error: 'Failed to retrieve Jira grant' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } },
-      );
+      return new Response(JSON.stringify({ error: 'Failed to retrieve Jira grant' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
     const grant = grantResult.val;
     if (!grant) {
-      return new Response(
-        JSON.stringify({ error: 'Failed to retrieve Jira grant' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } },
-      );
+      return new Response(JSON.stringify({ error: 'Failed to retrieve Jira grant' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
     }
 
     // Use mcp-handler to manage HTTP/SSE protocol
@@ -133,6 +138,8 @@ const handler = async (
           siteUrl: grant.siteUrl,
           accessToken: grant.accessToken,
           maxJqlResults: 100,
+          db,
+          config,
         };
 
         try {
@@ -210,7 +217,7 @@ const handler = async (
         error: 'Internal server error',
         message: error instanceof Error ? error.message : 'Unknown error',
       }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } },
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
 };

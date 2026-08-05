@@ -5,6 +5,9 @@
  */
 
 import { z } from 'zod';
+import type { Kysely } from 'kysely';
+import type { DB } from '@/lib/db.types';
+import type { Env } from '@/lib/env';
 
 export interface MCPToolContext {
   tenantId: string;
@@ -12,6 +15,8 @@ export interface MCPToolContext {
   siteUrl: string;
   accessToken: string;
   maxJqlResults: number;
+  db?: Kysely<DB>;
+  config?: Env;
 }
 
 /**
