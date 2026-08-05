@@ -2,3 +2,5 @@ allowBuilds:
   esbuild: true
   sharp: true
   unrs-resolver: true
+minimumReleaseAgeExclude:
+  - '@campfhir/safe-functions@0.1.3'
