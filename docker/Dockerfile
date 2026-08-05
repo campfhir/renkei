@@ -32,8 +32,11 @@ RUN apk add --no-cache dumb-init && npm install -g pnpm
 # Copy package files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-# Install only production dependencies
-RUN pnpm install --frozen-lockfile --prod
+# Install only production dependencies (no dev deps, no optional)
+RUN pnpm install --frozen-lockfile --prod --no-optional && \
+    pnpm prune --prod && \
+    rm -rf /root/.pnpm-store && \
+    rm -rf /root/.npm
 
 # Copy built application from builder stage
 COPY --from=builder /app/.next ./.next
@@ -80,8 +83,11 @@ RUN npm install -g pnpm
 # Copy package files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-# Install only production dependencies
-RUN pnpm install --frozen-lockfile --prod
+# Install only production dependencies (no dev deps, no optional)
+RUN pnpm install --frozen-lockfile --prod --no-optional && \
+    pnpm prune --prod && \
+    rm -rf /root/.pnpm-store && \
+    rm -rf /root/.npm
 
 # Copy built migrations from builder stage
 COPY --from=builder /app/dist ./dist
