@@ -22,6 +22,8 @@ import { createLogger } from '@campfhir/bored-logs';
 import { getAllToolDefinitions, executeTool } from '@/lib/mcp-tools';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 
+const logger = createLogger();
+
 const handler = async (
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; transport: string }> }
@@ -95,123 +97,149 @@ const handler = async (
     }
 
     // Use mcp-handler to manage HTTP/SSE protocol
-    const mcpHandler = createMcpHandler(async () => {
-      const server = new Server({
-        name: 'Jira Renkei MCP',
-        version: '1.0.0',
-      });
-
-      // Register all tools with request handler
-      server.setRequestHandler(ListToolsRequestSchema, async () => {
-        const toolDefinitions = getAllToolDefinitions();
-        return {
-          tools: toolDefinitions.map((tool) => ({
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema || {
-              type: 'object' as const,
-              properties: {},
-            },
-          })),
-        };
-      });
-
-      server.setRequestHandler(CallToolRequestSchema, async (request) => {
-        const toolName = request.params.name;
-        const toolArgs = request.params.arguments || {};
-
-        if (!toolName) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: 'Tool name is required',
-              },
-            ],
-            isError: true,
-          };
-        }
-
-        const context: MCPToolContext = {
-          tenantId,
-          accountId,
-          siteUrl: grant.siteUrl,
-          accessToken: grant.accessToken,
-          maxJqlResults: 100,
-          db,
-          config,
-        };
-
+    try {
+      const mcpHandler = createMcpHandler(async () => {
         try {
-          // Record session
-          const recordResult = await recordSession({
-            tenantId,
-            accountId,
-            userAgent,
-            ipAddress,
+          const server = new Server({
+            name: 'Jira Renkei MCP',
+            version: '1.0.0',
           });
 
-          if (!recordResult.ok) {
-            console.error('Failed to record session:', recordResult);
-          }
-
-          // Execute tool
-          const result = await executeTool(toolName, context, toolArgs);
-
-          // Log success
-          const logger = createLogger();
-          logger.info('[mcp:{tenantId}] Tool call: {method}', {
-            tenantId,
-            method: toolName,
-            accountId,
-            userAgent,
-            ipAddress,
-            status: 'success',
+          // Register all tools with request handler
+          server.setRequestHandler(ListToolsRequestSchema, async () => {
+            const toolDefinitions = getAllToolDefinitions();
+            return {
+              tools: toolDefinitions.map((tool) => ({
+                name: tool.name,
+                description: tool.description,
+                inputSchema: tool.inputSchema || {
+                  type: 'object' as const,
+                  properties: {},
+                },
+              })),
+            };
           });
 
-          return {
-            content: [
-              {
-                type: result.type || 'text',
-                text: result.text || '',
-                uri: result.url,
-                mimeType: result.mimeType,
-                data: result.data,
-              },
-            ],
-          };
-        } catch (error) {
-          // Log error
-          const logger = createLogger();
-          logger.error('[mcp:{tenantId}] Tool error: {method}', {
-            tenantId,
-            method: toolName,
-            accountId,
-            userAgent,
-            ipAddress,
-            status: 'failure',
-            error: error instanceof Error ? error.message : String(error),
+          server.setRequestHandler(CallToolRequestSchema, async (request) => {
+            const toolName = request.params.name;
+            const toolArgs = request.params.arguments || {};
+
+            if (!toolName) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: 'Tool name is required',
+                  },
+                ],
+                isError: true,
+              };
+            }
+
+            const context: MCPToolContext = {
+              tenantId,
+              accountId,
+              siteUrl: grant.siteUrl,
+              accessToken: grant.accessToken,
+              maxJqlResults: 100,
+              db,
+              config,
+            };
+
+            try {
+              // Record session
+              const recordResult = await recordSession({
+                tenantId,
+                accountId,
+                userAgent,
+                ipAddress,
+              });
+
+              if (!recordResult.ok) {
+                logger.error('Failed to record session: {error}', {
+                  error: recordResult,
+                });
+              }
+
+              // Execute tool
+              const result = await executeTool(toolName, context, toolArgs);
+
+              // Log success
+              logger.info('[mcp:{tenantId}] Tool call: {method}', {
+                tenantId,
+                method: toolName,
+                accountId,
+                userAgent,
+                ipAddress,
+                status: 'success',
+              });
+
+              return {
+                content: [
+                  {
+                    type: result.type || 'text',
+                    text: result.text || '',
+                    uri: result.url,
+                    mimeType: result.mimeType,
+                    data: result.data,
+                  },
+                ],
+              };
+            } catch (error) {
+              // Log error
+              logger.error('[mcp:{tenantId}] Tool error: {method}', {
+                tenantId,
+                method: toolName,
+                accountId,
+                userAgent,
+                ipAddress,
+                status: 'failure',
+                error: error instanceof Error ? error.message : String(error),
+              });
+
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: error instanceof Error ? error.message : String(error),
+                  },
+                ],
+                isError: true,
+              };
+            }
           });
 
-          return {
-            content: [
-              {
-                type: 'text',
-                text: error instanceof Error ? error.message : String(error),
-              },
-            ],
-            isError: true,
-          };
+          return server;
+        } catch (serverError) {
+          logger.error('[MCP Server Setup Error] {error}', {
+            error: serverError instanceof Error ? serverError.message : String(serverError),
+          });
+          throw serverError;
         }
       });
 
-      return server;
-    });
-
-    // mcp-handler handles HTTP/SSE protocol negotiation and connection lifecycle
-    return mcpHandler(request);
+      // mcp-handler handles HTTP/SSE protocol negotiation and connection lifecycle
+      return mcpHandler(request);
+    } catch (error) {
+      logger.error('[MCP Handler Setup Error] {error}', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return new Response(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: `Internal server error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+          id: null,
+        }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
   } catch (error) {
-    console.error('MCP handler error:', error);
+    logger.error('MCP handler error: {error}', {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return new Response(
       JSON.stringify({
         error: 'Internal server error',
