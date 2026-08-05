@@ -121,7 +121,7 @@ const handler = async (
                 title: toolDef.name,
                 description: toolDef.description,
               },
-              async () => {
+              async (args: Record<string, unknown>) => {
                 try {
                   // Record session
                   const recordResult = await recordSession({
@@ -137,8 +137,8 @@ const handler = async (
                     });
                   }
 
-                  // Execute tool
-                  const result = await executeTool(toolDef.name, context, {});
+                  // Execute tool with arguments
+                  const result = await executeTool(toolDef.name, context, args);
 
                   // Log success
                   logger.info('[MCP] Tool call success: {toolName}', {
