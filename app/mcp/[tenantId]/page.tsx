@@ -3,6 +3,7 @@
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { signInUrl } from '@/lib/sign-in-url';
 
 interface JiraStatus {
   connected: boolean;
@@ -135,12 +136,16 @@ export default function MCPEndpoint() {
         {/* Action Buttons */}
         {!jiraStatus.connected &&
           (signedIn === false ? (
-            <Link
-              href="/"
+            // Straight into this tenant's OIDC flow. This used to point at "/",
+            // the home-realm chooser, which starts no flow and leaves the stale
+            // session cookie in place — so signing in from here looped back to
+            // the same "sign in" prompt.
+            <a
+              href={signInUrl(tenantId, `/mcp/${tenantId}`)}
               className="w-full block text-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors mb-4"
             >
               Sign in
-            </Link>
+            </a>
           ) : (
             <button
               onClick={handleAuthorize}
