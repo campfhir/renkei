@@ -13,15 +13,18 @@ const envSchema = z.object({
   ATLASSIAN_CLOUD_ID: z.string().optional(),
 
   // Encryption
-  TOKEN_ENCRYPTION_KEY: z.string().refine(
-    (key) => {
-      const decoded = Buffer.from(key, 'base64');
-      return decoded.byteLength === 32;
-    },
-    {
-      message: 'TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key',
-    }
-  ).transform((key) => Buffer.from(key, 'base64')),
+  TOKEN_ENCRYPTION_KEY: z
+    .string()
+    .refine(
+      (key) => {
+        const decoded = Buffer.from(key, 'base64');
+        return decoded.byteLength === 32;
+      },
+      {
+        message: 'TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key',
+      }
+    )
+    .transform((key) => Buffer.from(key, 'base64')),
 
   // Database
   DATABASE_URL: z.string().url(),
@@ -38,14 +41,27 @@ const envSchema = z.object({
   RATE_LIMIT_PER_USER_PER_MINUTE: z.coerce.number().default(60),
   MAX_ATTACHMENT_BYTES: z.coerce.number().default(20_971_520), // 20MB
 
+  // OAuth token TTLs
+  ACCESS_TOKEN_TTL_MINUTES: z.coerce.number().int().positive().max(1440).default(60),
+  AUTHORIZATION_CODE_TTL_SECONDS: z.coerce.number().int().positive().max(600).default(60),
+  REFRESH_TOKEN_TTL_DAYS: z.coerce.number().int().positive().max(365).default(30),
+
   // Optional
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   PLATFORM_OIDC: z.string().optional(),
-  ENABLE_DCR: z.enum(['true', 'false']).default('false'),
+  ENABLE_DCR: z.enum(['true', 'false']).default('true'),
   READ_ONLY: z.enum(['true', 'false']).default('false'),
 });
 
 export type Env = z.infer<typeof envSchema>;
+
+/**
+ * Parse the ENABLE_DCR string value to boolean.
+ * Defaults to true unless explicitly set to 'false'.
+ */
+export function isDcrEnabled(value?: string): boolean {
+  return value !== 'false';
+}
 
 export function loadConfig(): Result<Env, 'CONFIG_ERROR'> {
   const env = {
@@ -68,6 +84,9 @@ export function loadConfig(): Result<Env, 'CONFIG_ERROR'> {
     PLATFORM_OIDC: process.env.PLATFORM_OIDC,
     ENABLE_DCR: process.env.ENABLE_DCR,
     READ_ONLY: process.env.READ_ONLY,
+    ACCESS_TOKEN_TTL_MINUTES: process.env.ACCESS_TOKEN_TTL_MINUTES,
+    AUTHORIZATION_CODE_TTL_SECONDS: process.env.AUTHORIZATION_CODE_TTL_SECONDS,
+    REFRESH_TOKEN_TTL_DAYS: process.env.REFRESH_TOKEN_TTL_DAYS,
   };
 
   const result = envSchema.safeParse(env);

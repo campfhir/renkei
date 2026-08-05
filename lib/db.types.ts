@@ -3,11 +3,12 @@
  * Please do not edit it manually.
  */
 
-import type { ColumnType } from "kysely";
+import type { ColumnType } from 'kysely';
 
-export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
-  ? ColumnType<S, I | undefined, U>
-  : ColumnType<T, T | undefined, T>;
+export type Generated<T> =
+  T extends ColumnType<infer S, infer I, infer U>
+    ? ColumnType<S, I | undefined, U>
+    : ColumnType<T, T | undefined, T>;
 
 export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
 
@@ -145,12 +146,51 @@ export interface Tenants {
   slug: string;
 }
 
+export interface OauthClients {
+  client_id: string;
+  client_name: string | null;
+  client_secret: string;
+  created_at: Generated<Timestamp>;
+  grant_types: Generated<string[]>;
+  redirect_uris: string[];
+  response_types: Generated<string[]>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface OauthAuthorizationCodes {
+  client_id: string;
+  code: string;
+  code_challenge: string | null;
+  code_challenge_method: string | null;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  redirect_uri: string;
+  scope: string | null;
+  subject: string;
+  tenant_id: string;
+}
+
+export interface OauthRefreshTokens {
+  client_id: string;
+  created_at: Generated<Timestamp>;
+  encrypted_token: string;
+  expires_at: Timestamp;
+  scope: string | null;
+  subject: string;
+  tenant_id: string;
+  token_id: string;
+}
+
 export interface DB {
   atlassian_grants: AtlassianGrants;
   jira_sessions: JiraSessions;
   log_attr: LogAttr;
   log_attr_blob: LogAttrBlob;
   logs: Logs;
+  oauth_authorization_codes: OauthAuthorizationCodes;
+  oauth_clients: OauthClients;
+  oauth_refresh_tokens: OauthRefreshTokens;
   oidc_role_mappings: OidcRoleMappings;
   operator_sessions: OperatorSessions;
   pending_oidc_signin: PendingOidcSignin;
