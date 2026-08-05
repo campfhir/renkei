@@ -127,11 +127,7 @@ describe('buildEnforcedLogQuery', () => {
     });
 
     it('should remove user-provided userId', () => {
-      const result = buildEnforcedLogQuery(
-        'level:error && userId:attacker',
-        tenantId,
-        accountId
-      );
+      const result = buildEnforcedLogQuery('level:error && userId:attacker', tenantId, accountId);
       expect(result).toBeTruthy();
       const tree = JSON.stringify(result);
       // Should not contain "attacker"
@@ -207,10 +203,13 @@ describe('buildEnforcedLogQuery', () => {
   });
 
   describe('buildLogQueryOptions', () => {
-    it('should return query options with filter and limit', () => {
+    // `attributeFilter` is the option the adapter reads. Anything else — the
+    // `filter` this used to emit — leaves the query unscoped and returns every
+    // row in the table, so the name is the whole point of the test.
+    it('should return the filter tree under attributeFilter, with a limit', () => {
       const options = buildLogQueryOptions('level:error', tenantId, accountId);
-      expect(options).toHaveProperty('filter');
-      expect(options).toHaveProperty('limit');
+      expect(options).toHaveProperty('attributeFilter');
+      expect(options.attributeFilter).toBeTruthy();
       expect(options.limit).toBe(1000);
     });
 
@@ -220,11 +219,23 @@ describe('buildEnforcedLogQuery', () => {
         tenantId,
         accountId
       );
-      const filterStr = JSON.stringify(options.filter);
+      const filterStr = JSON.stringify(options.attributeFilter);
       // Should not contain wrong tenant
       expect(filterStr).not.toContain('wrong-tenant');
       // Should contain enforced tenant
       expect(filterStr).toContain(tenantId);
+    });
+
+    it('should keep the tenant scope even with no query at all', () => {
+      const options = buildLogQueryOptions(null, tenantId);
+      expect(JSON.stringify(options.attributeFilter)).toContain(tenantId);
+    });
+
+    it('should drop level names the adapter would reject', () => {
+      const options = buildLogQueryOptions(null, tenantId, undefined, {
+        levels: ['error', 'not-a-level'],
+      });
+      expect(options.levels).toEqual(['error']);
     });
   });
 

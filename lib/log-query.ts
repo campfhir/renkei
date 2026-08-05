@@ -1,133 +1,125 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions */
-import { FilterExpr, parseLogQueryExpr as boredLogsParseLogQueryExpr } from '@campfhir/bored-logs';
+import {
+  LOG_LEVELS,
+  parseLogQueryExpr as parseBoredLogsExpr,
+  type FilterExpr,
+  type LogLevel,
+  type LogQueryOptions,
+} from '@campfhir/bored-logs';
 
 /**
- * Build a FilterExpr with enforced tenant and user context.
- * Removes any existing tenantId, accountId, or userId from user query,
- * then appends enforced && tenantId && accountId filters.
+ * Keys that define a query's scope rather than narrowing it. A caller typing
+ * `tenantId:other-tenant` is asking to read someone else's logs, so these are
+ * stripped from whatever they typed and re-applied from the session.
  */
-export function buildEnforcedLogQuery(
-  userQuery: string | null,
-  tenantId: string,
-  accountId?: string
-): FilterExpr | null {
-  // Parse user query into tree
-  let userTree = userQuery ? parseLogQueryExpr(userQuery) : null;
+const RESTRICTED_KEYS = ['tenantId', 'accountId', 'userId'];
 
-  // Remove any existing tenantId, accountId, or userId nodes from the tree
-  if (userTree) {
-    userTree = removeRestrictedFields(userTree, ['tenantId', 'accountId', 'userId']);
-  }
-
-  // Build enforced filter nodes (wrapped in OR nodes for consistency with parser output)
-  const enforcedNodes: FilterExpr[] = [];
-  enforcedNodes.push({
-    type: 'or',
-    nodes: [{
-      type: 'filter',
-      filter: { key: 'tenantId', operator: 'contains', value: tenantId },
-    } as FilterExpr],
-  } as FilterExpr);
-  if (accountId) {
-    enforcedNodes.push({
-      type: 'or',
-      nodes: [{
-        type: 'filter',
-        filter: { key: 'accountId', operator: 'contains', value: accountId },
-      } as FilterExpr],
-    } as FilterExpr);
-  }
-
-  // Combine: (user query) && tenantId && accountId
-  let result = userTree;
-  for (const node of enforcedNodes) {
-    if (!result) {
-      result = node;
-    } else {
-      // Create an AND node with all nodes
-      const existingNodes = (result as any).type === 'and'
-        ? (result as any).nodes
-        : [result];
-      result = {
-        type: 'and',
-        nodes: [...existingNodes, node],
-      } as FilterExpr;
-    }
-  }
-
-  return result;
-}
+/** Level names are the keys of the level-rank map, so membership is the check. */
+const isKnownLevel = (level: string): level is LogLevel => level in LOG_LEVELS;
 
 /**
- * Remove restricted fields from a FilterExpr tree.
- * Recursively removes filter nodes with restricted keys and collapses the tree.
- */
-function removeRestrictedFields(tree: FilterExpr, restrictedKeys: string[]): FilterExpr | null {
-  const tree_ = tree as any;
-
-  // Handle filter leaf nodes
-  if (tree_.type === 'filter') {
-    const filter = tree_.filter;
-    // Remove if key is restricted
-    return restrictedKeys.includes(filter.key) ? null : tree;
-  }
-
-  // Handle AND/OR nodes
-  if (tree_.type === 'and' || tree_.type === 'or') {
-    // Filter and remove null entries
-    const filteredNodes = (tree_.nodes as FilterExpr[])
-      .map(node => removeRestrictedFields(node, restrictedKeys))
-      .filter((node): node is FilterExpr => node !== null);
-
-    // If no nodes left, return null
-    if (filteredNodes.length === 0) return null;
-
-    // If only one node left, return it (collapse the operation)
-    if (filteredNodes.length === 1) return filteredNodes[0];
-
-    // Multiple nodes, keep the operation
-    return { type: tree_.type, nodes: filteredNodes } as FilterExpr;
-  }
-
-  return tree;
-}
-
-/**
- * Parse a query string to a FilterExpr tree.
- * Handles || / && operators and parenthesized grouping.
+ * Parse a query string to a FilterExpr tree, or null if it is empty or does not
+ * parse. Handles `&&` / `||` and parenthesised grouping.
  *
- * Example:
- *   "level:error && tenantId:abc123"
+ *   "level:error && tool:list_issues"
  *   "(level:error || level:warn) && tenantId:abc123"
- *
- * Uses the parser from @campfhir/bored-logs.
  */
 export function parseLogQueryExpr(query: string): FilterExpr | null {
-  if (!query || !query.trim()) {
-    return null;
-  }
+  if (!query || !query.trim()) return null;
 
-  const result = boredLogsParseLogQueryExpr(query);
-  if (!result.ok) {
-    // Return null on parse error instead of throwing
-    return null;
-  }
-  return result.val;
+  const result = parseBoredLogsExpr(query);
+  return result.ok ? result.val : null;
+}
+
+/** A single comparison, wrapped in the or-node form the parser emits. */
+function scopeLeaf(key: string, value: string): FilterExpr {
+  return {
+    type: 'or',
+    nodes: [{ type: 'filter', filter: { key, operator: 'contains', value } }],
+  };
 }
 
 /**
- * Build query options for bored-logs adapter.query()
- * Includes enforced context filters.
+ * Build a filter tree with the tenant — and, when given, the Jira account —
+ * enforced: `(whatever the caller asked for) && tenantId && accountId`.
+ *
+ * Enforcing the tenant is also what keeps the viewer readable. Records written
+ * outside a tenant's request path (schema migration, adapter registration at
+ * boot) carry no `tenantId` attribute, so scoping to one excludes them instead
+ * of mixing deployment noise into a tenant's activity.
+ *
+ * Accepts either a raw query string or an already-parsed tree, since the
+ * `LogSearchBar` component hands back a tree directly.
  */
-export function buildLogQueryOptions(
-  userQuery: string | null,
+export function buildEnforcedLogQuery(
+  userQuery: string | FilterExpr | null,
   tenantId: string,
   accountId?: string
-): Record<string, any> {
-  const filterExpr = buildEnforcedLogQuery(userQuery, tenantId, accountId);
+): FilterExpr {
+  const parsed = typeof userQuery === 'string' ? parseLogQueryExpr(userQuery) : userQuery;
+  const scrubbed = parsed ? removeRestrictedFields(parsed, RESTRICTED_KEYS) : null;
+
+  // Splice the caller's own AND-ed branches in rather than nesting their whole
+  // tree, so the result stays in the parser's normal form.
+  const userNodes = scrubbed ? (scrubbed.type === 'and' ? scrubbed.nodes : [scrubbed]) : [];
+  const scope = [scopeLeaf('tenantId', tenantId)];
+  if (accountId) scope.push(scopeLeaf('accountId', accountId));
+
+  return { type: 'and', nodes: [...userNodes, ...scope] };
+}
+
+/**
+ * Remove restricted keys from a filter tree, collapsing any node left empty or
+ * with a single child.
+ */
+function removeRestrictedFields(tree: FilterExpr, restrictedKeys: string[]): FilterExpr | null {
+  if (tree.type === 'filter') {
+    return restrictedKeys.includes(tree.filter.key) ? null : tree;
+  }
+
+  const nodes = tree.nodes
+    .map((node) => removeRestrictedFields(node, restrictedKeys))
+    .filter((node): node is FilterExpr => node !== null);
+
+  if (nodes.length === 0) return null;
+  if (nodes.length === 1) return nodes[0];
+  return { type: tree.type, nodes };
+}
+
+/** Everything the viewer can vary beyond the query itself. */
+export interface LogQueryWindow {
+  /** From `LogLevelFilter`. Level is a column, so it has its own option. */
+  levels?: string[];
+  /** ISO-8601 bounds from `LogDateRangePicker`. Omitting both is last 24h. */
+  start?: string | null;
+  end?: string | null;
+  sort?: 'asc' | 'desc';
+  limit?: number;
+}
+
+/**
+ * Build the options for `adapter.query()`, with the caller's scope enforced.
+ *
+ * The tree goes in `attributeFilter` — the option the adapter actually reads.
+ * It was previously passed as `filter`, which the adapter ignores, so every
+ * query ran unscoped and returned the whole table: one tenant's operator saw
+ * other tenants' activity plus the gateway's own boot and migration records.
+ */
+export function buildLogQueryOptions(
+  userQuery: string | FilterExpr | null,
+  tenantId: string,
+  accountId?: string,
+  window: LogQueryWindow = {}
+): LogQueryOptions {
+  // Unknown names are dropped rather than passed through: the adapter rejects
+  // the whole query on an unrecognised level.
+  const levels = [...new Set((window.levels ?? []).filter(isKnownLevel))];
 
   return {
-    filter: filterExpr,
-    limit: 1000, // Reasonable default
+    attributeFilter: buildEnforcedLogQuery(userQuery, tenantId, accountId),
+    levels: levels.length ? levels : undefined,
+    start: window.start ?? undefined,
+    end: window.end ?? undefined,
+    sort: window.sort ?? 'desc',
+    limit: window.limit ?? 1000,
   };
 }
