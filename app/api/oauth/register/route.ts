@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConfig, isDcrEnabled } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { randomUUID } from 'crypto';
+import { createLogger } from '@campfhir/bored-logs';
 
 /**
  * Dynamic Client Registration endpoint (RFC 7591)
@@ -18,6 +19,8 @@ import { randomUUID } from 'crypto';
  *   }
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const logger = createLogger();
+
   const configResult = getConfig();
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
@@ -145,7 +148,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
-    console.error('[DCR] Registration error:', error);
+    logger.error('[DCR] Registration error: {error}', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return NextResponse.json(
       { error: 'server_error', error_description: 'An error occurred during registration' },
       { status: 500 }

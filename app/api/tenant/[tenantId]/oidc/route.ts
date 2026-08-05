@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { setTenantOidc } from '@/lib/tenant-operations';
+import { createLogger } from '@campfhir/bored-logs';
 
 interface OidcConfigRequest {
   discoveryEndpoint: string;
@@ -15,17 +16,22 @@ function isOidcConfigRequest(data: unknown): data is OidcConfigRequest {
   if (typeof data !== 'object' || data === null) return false;
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   const obj = data as Record<string, unknown>;
-  return typeof obj.discoveryEndpoint === 'string' && typeof obj.clientId === 'string' && typeof obj.clientSecret === 'string';
+  return (
+    typeof obj.discoveryEndpoint === 'string' &&
+    typeof obj.clientId === 'string' &&
+    typeof obj.clientSecret === 'string'
+  );
 }
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
+  const logger = createLogger();
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
 
@@ -43,10 +49,7 @@ export async function POST(
 
     const body = await request.json();
     if (!isOidcConfigRequest(body)) {
-      return NextResponse.json(
-        { error: 'Invalid request body format' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid request body format' }, { status: 400 });
     }
 
     // Validate required fields
@@ -78,9 +81,16 @@ export async function POST(
         );
       }
 
-      console.log(`[Tenant ${tenantId}] Fetched issuer from discovery: ${issuer}`);
+      logger.info('[OIDC] Fetched issuer from discovery: {issuer}', {
+        tenantId,
+        issuer,
+      });
     } catch (error) {
-      console.error(`[Tenant ${tenantId}] Failed to fetch discovery endpoint:`, error);
+      logger.error('[OIDC] Failed to fetch discovery endpoint: {error}', {
+        tenantId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return NextResponse.json(
         { error: 'Failed to fetch OIDC discovery endpoint' },
         { status: 400 }
@@ -98,18 +108,24 @@ export async function POST(
     });
 
     if (!setResult.ok) {
-      console.error(`[Tenant ${tenantId}] Failed to save OIDC configuration:`, setResult);
-      return NextResponse.json(
-        { error: 'Failed to save OIDC configuration' },
-        { status: 500 }
-      );
+      logger.error('[OIDC] Failed to save OIDC configuration: {error}', {
+        tenantId,
+        error: String(setResult.err),
+      });
+      return NextResponse.json({ error: 'Failed to save OIDC configuration' }, { status: 500 });
     }
 
-    console.log(`[Tenant ${tenantId}] OIDC configuration updated`);
+    logger.info('[OIDC] OIDC configuration updated', {
+      tenantId,
+    });
 
     return NextResponse.json({ success: true, tenantId });
   } catch (error) {
-    console.error('OIDC config error:', error);
+    logger.error('[OIDC] Config error: {error}', {
+      tenantId,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return NextResponse.json({ error: 'Failed to save OIDC configuration' }, { status: 500 });
   }
 }
@@ -118,10 +134,11 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
+  const logger = createLogger();
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
 
@@ -157,7 +174,11 @@ export async function GET(
       userIdpValue: oidc.user_idp_value,
     });
   } catch (error) {
-    console.error('OIDC config fetch error:', error);
+    logger.error('[OIDC] Config fetch error: {error}', {
+      tenantId,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return NextResponse.json({ error: 'Failed to fetch OIDC configuration' }, { status: 500 });
   }
 }
