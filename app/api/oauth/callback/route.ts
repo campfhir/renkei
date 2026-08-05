@@ -146,9 +146,41 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Invalid token response format' }, { status: 400 });
     }
 
-    logger.info('[OAuth] Fetching user info', { tenantId: tenant.id });
-    // Get user info from Jira
-    const userResponse = await fetch('https://api.atlassian.com/me', {
+    logger.info('[OAuth] Fetching accessible resources', { tenantId: tenant.id });
+    // Get accessible resources first to determine site URL
+    const resourcesResponse = await fetch(
+      'https://api.atlassian.com/oauth/token/accessible-resources',
+      {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      }
+    );
+
+    if (!resourcesResponse.ok) {
+      const resourcesErrorText = await resourcesResponse.text();
+      logger.error('[OAuth] Failed to fetch resources', {
+        tenantId: tenant.id,
+        status: resourcesResponse.status,
+        error: resourcesErrorText,
+      });
+      return NextResponse.json({ error: 'Failed to get accessible resources' }, { status: 400 });
+    }
+
+    const resources = await resourcesResponse.json();
+    logger.info('[OAuth] Resources received', { tenantId: tenant.id, resources });
+    if (!isResourceArray(resources)) {
+      logger.error('[OAuth] Invalid resources format', { tenantId: tenant.id, resources });
+      return NextResponse.json({ error: 'Invalid resources response format' }, { status: 400 });
+    }
+
+    // For MVP, use the first accessible resource (cloud ID)
+    const resource = resources[0];
+    if (!resource) {
+      return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
+    }
+
+    logger.info('[OAuth] Fetching user info', { tenantId: tenant.id, siteUrl: resource.url });
+    // Get user info from the site-specific domain using OAuth 2.0 3LO endpoint
+    const userResponse = await fetch(`${resource.url}/rest/api/3/myself`, {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
 
@@ -181,38 +213,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       (userInfo as JiraUserInfo).display_name ||
       (userInfo as JiraUserInfo).name ||
       userInfo.account_id;
-
-    logger.info('[OAuth] Fetching accessible resources', { tenantId: tenant.id });
-    // Get accessible resources (cloud IDs) to find the site
-    const resourcesResponse = await fetch(
-      'https://api.atlassian.com/oauth/token/accessible-resources',
-      {
-        headers: { Authorization: `Bearer ${tokenData.access_token}` },
-      }
-    );
-
-    if (!resourcesResponse.ok) {
-      const resourcesErrorText = await resourcesResponse.text();
-      logger.error('[OAuth] Failed to fetch resources', {
-        tenantId: tenant.id,
-        status: resourcesResponse.status,
-        error: resourcesErrorText,
-      });
-      return NextResponse.json({ error: 'Failed to get accessible resources' }, { status: 400 });
-    }
-
-    const resources = await resourcesResponse.json();
-    logger.info('[OAuth] Resources received', { tenantId: tenant.id, resources });
-    if (!isResourceArray(resources)) {
-      logger.error('[OAuth] Invalid resources format', { tenantId: tenant.id, resources });
-      return NextResponse.json({ error: 'Invalid resources response format' }, { status: 400 });
-    }
-
-    // For MVP, use the first accessible resource (cloud ID)
-    const resource = resources[0];
-    if (!resource) {
-      return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
-    }
 
     logger.info('[OAuth] Storing Jira grant', { tenantId: tenant.id });
     // Store encrypted Jira grant
