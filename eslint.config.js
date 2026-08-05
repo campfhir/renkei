@@ -8,6 +8,7 @@ export default [
       '.next/**',
       'dist/**',
       'node_modules/**',
+      '.claude/worktrees/**',
       '*.config.js',
       '*.config.mjs',
       'scripts/build-migrations.js',
