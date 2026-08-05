@@ -103,8 +103,11 @@ const handler = async (
             version: '1.0.0',
           });
 
+          logger.info('[MCP] Server created', { tenantId });
+
           // Register all tools with request handler
           server.setRequestHandler(ListToolsRequestSchema, async () => {
+            logger.info('[MCP] ListTools request received', { tenantId });
             const toolDefinitions = getAllToolDefinitions();
             return {
               tools: toolDefinitions.map((tool) => ({
@@ -117,6 +120,8 @@ const handler = async (
               })),
             };
           });
+
+          logger.info('[MCP] ListTools handler registered', { tenantId });
 
           server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const toolName = request.params.name;
