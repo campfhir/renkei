@@ -5,6 +5,14 @@ import { randomUUID } from 'crypto';
 
 const SIGN_IN_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
+function isDiscoveryResponse(data: unknown): data is { authorization_endpoint: string } {
+  if (typeof data !== 'object' || data === null) return false;
+  if (!('authorization_endpoint' in data)) return false;
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const obj = data as Record<string, unknown>;
+  return typeof obj.authorization_endpoint === 'string';
+}
+
 export default async function SignInPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const db = getDatabase();
@@ -36,8 +44,12 @@ export default async function SignInPage({ params }: { params: Promise<{ slug: s
   try {
     const discoveryUrl = new URL('/.well-known/openid-configuration', oidcConfig.issuer).toString();
     const discoveryResponse = await fetch(discoveryUrl);
-    const discovery = await discoveryResponse.json() as { authorization_endpoint?: string };
-    authorizationEndpoint = discovery.authorization_endpoint || oidcConfig.issuer;
+    const discovery = await discoveryResponse.json();
+    if (isDiscoveryResponse(discovery)) {
+      authorizationEndpoint = discovery.authorization_endpoint;
+    } else {
+      authorizationEndpoint = oidcConfig.issuer;
+    }
   } catch (err) {
     console.error('Failed to fetch OIDC discovery:', err);
     // Fallback to issuer
