@@ -1,10 +1,11 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Attachment tools for Jira MCP.
  * Handle file uploads and downloads.
  */
 
 import type { MCPToolContext, MCPToolResult } from '../common';
-import { ok, toolError, jiraFetch, issueUrl } from '../common';
+import { ok, toolError } from '../common';
 
 export interface AttachmentToolHandler {
   name: string;

@@ -26,7 +26,7 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
           .executeTakeFirst();
         oidcConfigured = !!oidc;
       }
-    } catch (err) {
+    } catch {
       // Database error, show basic sign-in
     }
 

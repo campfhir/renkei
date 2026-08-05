@@ -3,7 +3,6 @@ import { cookies } from 'next/headers';
 
 const COOKIE_NAME = 'renkei_operator';
 const SIGN_IN_TTL_MS = 15 * 60 * 1000;
-const IDLE_MINUTES = 15;
 const MAX_HOURS = 4;
 
 export interface OperatorSession {
@@ -13,6 +12,13 @@ export interface OperatorSession {
   tenantId: string;
   issuedAt: number;
   expiresAt: number;
+}
+
+function isOperatorSession(data: unknown): data is OperatorSession {
+  if (typeof data !== 'object' || data === null) return false;
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const obj = data as Record<string, unknown>;
+  return typeof obj.sessionId === 'string' && typeof obj.subject === 'string' && typeof obj.operator === 'string' && typeof obj.tenantId === 'string' && typeof obj.issuedAt === 'number' && typeof obj.expiresAt === 'number';
 }
 
 export function createSessionToken(session: Omit<OperatorSession, 'issuedAt'>) {
@@ -30,11 +36,11 @@ export function parseSessionToken(token: string): OperatorSession | null {
     const now = Date.now();
 
     // Check if session has expired
-    if (data.expiresAt < now) {
+    if (!isOperatorSession(data) || data.expiresAt < now) {
       return null;
     }
 
-    return data as OperatorSession;
+    return data;
   } catch {
     return null;
   }

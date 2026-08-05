@@ -16,8 +16,14 @@ export async function POST(
 
   try {
     const body = await request.json();
-    const cloudId = body.cloud_id as string;
-    const jiraUrl = body.jira_url as string;
+    if (typeof body.cloud_id !== 'string' || typeof body.jira_url !== 'string') {
+      return NextResponse.json(
+        { error: 'Missing cloud_id or jira_url' },
+        { status: 400 }
+      );
+    }
+    const cloudId = body.cloud_id;
+    const jiraUrl = body.jira_url;
 
     if (!cloudId || !jiraUrl) {
       return NextResponse.json(

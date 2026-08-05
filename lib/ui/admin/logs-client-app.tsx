@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   LogSearchBar,
   LogTable,
@@ -16,8 +16,20 @@ interface LogsClientAppProps {
   tenantSlug: string;
 }
 
+interface LogEntry {
+  log_id: string;
+  [key: string]: unknown;
+}
+
+function isLogsResponse(data: unknown): data is { logs: unknown[] } {
+  if (typeof data !== 'object' || data === null) return false;
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const obj = data as Record<string, unknown>;
+  return Array.isArray(obj.logs);
+}
+
 export function LogsClientApp({ tenantSlug }: LogsClientAppProps) {
-  const [logs, setLogs] = useState<any[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [queryString, setQueryString] = useState('');
@@ -58,8 +70,13 @@ export function LogsClientApp({ tenantSlug }: LogsClientAppProps) {
       if (!response.ok) {
         throw new Error(`Failed to fetch logs: ${response.statusText}`);
       }
-      const data = (await response.json()) as { logs?: unknown[] };
-      setLogs(Array.isArray(data.logs) ? data.logs : []);
+      const data = await response.json();
+      if (isLogsResponse(data)) {
+        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+        setLogs(data.logs as LogEntry[]);
+      } else {
+        setLogs([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error');
       setLogs([]);
@@ -97,6 +114,7 @@ export function LogsClientApp({ tenantSlug }: LogsClientAppProps) {
           onClick={handleRefresh}
           disabled={isLoading}
           className="logs-refresh-btn"
+          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
           style={{
             padding: '0.75rem 1.5rem',
             background: '#007bff',

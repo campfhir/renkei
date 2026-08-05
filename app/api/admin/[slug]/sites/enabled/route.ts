@@ -16,8 +16,14 @@ export async function POST(
 
   try {
     const body = await request.json();
-    const siteId = body.site_id as string;
-    const enabled = body.enabled as boolean;
+    if (typeof body.site_id !== 'string' || typeof body.enabled !== 'boolean') {
+      return NextResponse.json(
+        { error: 'Missing site_id or enabled' },
+        { status: 400 }
+      );
+    }
+    const siteId = body.site_id;
+    const enabled = body.enabled;
 
     if (!siteId || enabled === undefined) {
       return NextResponse.json(

@@ -16,8 +16,14 @@ export async function POST(
 
   try {
     const body = await request.json();
-    const accountId = body.account_id as string;
-    const scope = body.scope as string; // 'session' or 'credential'
+    if (typeof body.account_id !== 'string' || typeof body.scope !== 'string') {
+      return NextResponse.json(
+        { error: 'Invalid request body' },
+        { status: 400 }
+      );
+    }
+    const accountId = body.account_id;
+    const scope = body.scope; // 'session' or 'credential'
 
     if (!accountId) {
       return NextResponse.json(

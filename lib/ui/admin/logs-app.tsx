@@ -1,7 +1,6 @@
 import {
   LogSearchBar,
   LogTable,
-  LogTableRowGroup,
   LogLevelFilter,
   LogDateRangePicker,
   LogSearchSyntaxHelp,

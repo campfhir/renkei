@@ -3,7 +3,6 @@ import { getConfig } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { setJiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
-import { randomUUID } from 'crypto';
 
 interface JiraTokenResponse {
   access_token: string;
@@ -15,6 +14,26 @@ interface JiraTokenResponse {
 interface JiraUserInfo {
   account_id: string;
   display_name: string;
+}
+
+function isJiraTokenResponse(data: unknown): data is JiraTokenResponse {
+  if (typeof data !== 'object' || data === null) return false;
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const obj = data as Record<string, unknown>;
+  return typeof obj.access_token === 'string' && typeof obj.token_type === 'string' && typeof obj.expires_in === 'number';
+}
+
+function isJiraUserInfo(data: unknown): data is JiraUserInfo {
+  if (typeof data !== 'object' || data === null) return false;
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const obj = data as Record<string, unknown>;
+  return typeof obj.account_id === 'string' && typeof obj.display_name === 'string';
+}
+
+function isResourceArray(data: unknown): data is Array<{ id: string; url: string; name: string }> {
+  if (!Array.isArray(data)) return false;
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  return data.every(item => typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).id === 'string' && typeof (item as Record<string, unknown>).url === 'string' && typeof (item as Record<string, unknown>).name === 'string');
 }
 
 export async function GET(request: NextRequest) {
@@ -104,7 +123,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const tokenData = (await tokenResponse.json()) as JiraTokenResponse;
+    const tokenData = await tokenResponse.json();
+    if (!isJiraTokenResponse(tokenData)) {
+      return NextResponse.json(
+        { error: 'Invalid token response format' },
+        { status: 400 }
+      );
+    }
 
     // Get user info from Jira
     const userResponse = await fetch('https://api.atlassian.com/me', {
@@ -116,7 +141,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to get user info' }, { status: 400 });
     }
 
-    const userInfo = (await userResponse.json()) as JiraUserInfo;
+    const userInfo = await userResponse.json();
+    if (!isJiraUserInfo(userInfo)) {
+      return NextResponse.json(
+        { error: 'Invalid user info response format' },
+        { status: 400 }
+      );
+    }
 
     // Get accessible resources (cloud IDs) to find the site
     const resourcesResponse = await fetch('https://api.atlassian.com/oauth/token/accessible-resources', {
@@ -131,11 +162,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const resources = (await resourcesResponse.json()) as Array<{
-      id: string;
-      url: string;
-      name: string;
-    }>;
+    const resources = await resourcesResponse.json();
+    if (!isResourceArray(resources)) {
+      return NextResponse.json(
+        { error: 'Invalid resources response format' },
+        { status: 400 }
+      );
+    }
 
     // For MVP, use the first accessible resource (cloud ID)
     const resource = resources[0];

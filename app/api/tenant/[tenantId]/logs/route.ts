@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { buildLogQueryOptions } from '@/lib/log-query';
-import { parseRolesFromCookie, hasAnyRole } from '@/lib/oidc-roles';
+import { parseRolesFromCookie } from '@/lib/oidc-roles';
 
 export async function POST(
   request: NextRequest,

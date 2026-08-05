@@ -111,6 +111,11 @@ function CreateOrganizationContent() {
         }),
       });
 
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to configure OIDC');
+      }
+
       setMessage({ type: 'success', text: 'Organization configured successfully!' });
       setTimeout(() => {
         window.location.href = `/mcp/${actualTenantId}`;

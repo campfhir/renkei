@@ -27,6 +27,13 @@ function decodeJWT(token: string): DecodedToken | null {
   }
 }
 
+function isOIDCTokenResponse(data: unknown): data is OIDCTokenResponse {
+  if (typeof data !== 'object' || data === null) return false;
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const obj = data as Record<string, unknown>;
+  return typeof obj.access_token === 'string' && typeof obj.token_type === 'string' && typeof obj.expires_in === 'number';
+}
+
 export async function GET(request: NextRequest) {
   const db = getDatabase();
   const { searchParams } = new URL(request.url);
@@ -127,7 +134,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const tokenData = (await tokenResponse.json()) as OIDCTokenResponse;
+    const tokenData = await tokenResponse.json();
+    if (!isOIDCTokenResponse(tokenData)) {
+      return NextResponse.json(
+        { error: 'Invalid token response' },
+        { status: 400 }
+      );
+    }
 
     // Decode and mint standardized renkei roles from IDP claims
     const userRoles = new Set<string>();

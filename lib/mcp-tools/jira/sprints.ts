@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Sprint and board management tools for Jira MCP.
  */
@@ -64,7 +65,7 @@ export const sprintTools: SprintToolHandler[] = [
           },
         );
 
-        const sprint = (await response.json()) as any;
+        await response.json();
         return okWithLink(`Created sprint "${name}"`, sprintUrl(context.siteUrl, boardId));
       } catch (error) {
         return toolError(`Failed to create sprint: ${error instanceof Error ? error.message : String(error)}`);

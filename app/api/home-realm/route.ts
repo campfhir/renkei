@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@/lib/db';
 import { getOrigin } from '@/lib/get-origin';
-import { randomUUID } from 'crypto';
 
 function emailDomain(email: string): string | null {
   const at = email.lastIndexOf('@');

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions */
 /**
  * Bulk operation tools for Jira MCP.
  * Handle multiple issues at once.
@@ -75,7 +76,7 @@ export const bulkTools: BulkToolHandler[] = [
               },
             );
             updated++;
-          } catch (error) {
+          } catch {
             failed++;
           }
         }
@@ -164,7 +165,7 @@ export const bulkTools: BulkToolHandler[] = [
             } else {
               failed++;
             }
-          } catch (error) {
+          } catch {
             failed++;
           }
         }

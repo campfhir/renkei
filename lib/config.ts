@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { z, ZodError } from 'zod';
+import { z } from 'zod';
 
 /**
  * Two deployment shapes read from the same environment:
@@ -183,7 +183,7 @@ const serverEnvSchema = baseEnvSchema
       // The rule `OidcClient.assertUsableIssuer` enforces at sign-in, checked here
       // so a deployment-wide typo fails at boot rather than at the platform
       // operator's first attempt to use the console.
-      let issuer: URL | null = null;
+      let issuer: URL | null;
       try {
         issuer = new URL(env.PLATFORM_OIDC_ISSUER);
       } catch {

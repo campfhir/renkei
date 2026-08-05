@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions */
 /**
  * Customer management tools for JSM.
  * Handle customer lifecycle in service desks.

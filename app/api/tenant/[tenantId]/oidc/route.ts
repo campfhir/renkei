@@ -11,6 +11,13 @@ interface OidcConfigRequest {
   userIdpValue?: string;
 }
 
+function isOidcConfigRequest(data: unknown): data is OidcConfigRequest {
+  if (typeof data !== 'object' || data === null) return false;
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const obj = data as Record<string, unknown>;
+  return typeof obj.discoveryEndpoint === 'string' && typeof obj.clientId === 'string' && typeof obj.clientSecret === 'string';
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
@@ -30,7 +37,13 @@ export async function POST(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
-    const body = (await request.json()) as OidcConfigRequest;
+    const body = await request.json();
+    if (!isOidcConfigRequest(body)) {
+      return NextResponse.json(
+        { error: 'Invalid request body format' },
+        { status: 400 }
+      );
+    }
 
     // Validate required fields
     if (!body.discoveryEndpoint || !body.clientId || !body.clientSecret) {

@@ -21,7 +21,7 @@ interface LogsViewerProps {
 export default function LogsViewerContent({ initialLogs, initialRole, initialError }: LogsViewerProps) {
   const params = useParams();
   const searchParams = useSearchParams();
-  const tenantId = params.tenantId as string;
+  const tenantId = typeof params.tenantId === 'string' ? params.tenantId : '';
   const accountId = searchParams.get('accountId');
   const query = searchParams.get('q');
 

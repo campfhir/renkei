@@ -1,10 +1,11 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions */
 /**
  * Jira Service Management (JSM) tools for MCP.
  * Handle customer requests, service desks, and support operations.
  */
 
 import type { MCPToolContext, MCPToolResult } from '../common';
-import { ok, toolError, jiraFetch, requestUrl } from '../common';
+import { ok, toolError, jiraFetch } from '../common';
 
 export interface JSMToolHandler {
   name: string;

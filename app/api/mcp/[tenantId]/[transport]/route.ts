@@ -28,7 +28,7 @@ const handler = async (
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; transport: string }> },
 ) => {
-  const { tenantId, transport } = await params;
+  const { tenantId } = await params;
   const db = getDatabase();
   const userAgent = request.headers.get('user-agent') || undefined;
   const ipAddress =

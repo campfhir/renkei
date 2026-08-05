@@ -4,7 +4,7 @@
  */
 
 import type { MCPToolContext, MCPToolResult } from '../common';
-import { ok, okWithLink, toolError, jiraFetch, issueUrl } from '../common';
+import { okWithLink, toolError, jiraFetch, issueUrl } from '../common';
 
 // Type guard functions
 function isRecord(value: unknown): value is Record<string, unknown> {

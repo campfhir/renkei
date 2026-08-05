@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions */
 import { FilterExpr, parseLogQueryExpr as boredLogsParseLogQueryExpr } from '@campfhir/bored-logs';
 
 /**

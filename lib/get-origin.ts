@@ -61,8 +61,6 @@ export function getOrigin(request?: NextRequest): string {
  * - Default (development): allows localhost only
  */
 function isTrustedProxy(request: NextRequest): boolean {
-  const config = getConfig();
-
   // Get client IP from various headers (in order of precedence)
   const clientIp =
     request.headers.get('x-forwarded-for')?.split(',')[0].trim() ||

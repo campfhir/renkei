@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions */
 import { buildEnforcedLogQuery, buildLogQueryOptions, parseLogQueryExpr } from './log-query';
 
 describe('parseLogQueryExpr', () => {

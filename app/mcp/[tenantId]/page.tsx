@@ -12,9 +12,8 @@ interface JiraStatus {
 
 export default function MCPEndpoint() {
   const params = useParams();
-  const tenantId = params.tenantId as string;
+  const tenantId = typeof params.tenantId === 'string' ? params.tenantId : '';
   const [jiraStatus, setJiraStatus] = useState<JiraStatus>({ connected: false });
-  const [loading, setLoading] = useState(true);
   const [baseUrl, setBaseUrl] = useState('');
 
   useEffect(() => {
@@ -37,11 +36,9 @@ export default function MCPEndpoint() {
             });
           }
         }
-      } catch (error) {
+      } catch {
         // User hasn't connected Jira yet
         setJiraStatus({ connected: false });
-      } finally {
-        setLoading(false);
       }
     };
 

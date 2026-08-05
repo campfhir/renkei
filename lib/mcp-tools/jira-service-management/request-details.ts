@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions */
 /**
  * Detailed request management tools for JSM.
  * Handle request approvals, SLA, participants, and attachments.

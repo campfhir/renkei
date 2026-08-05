@@ -51,7 +51,6 @@ export async function GET(
   const { slug } = await params;
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q') || '';
-  const sortParam = searchParams.get('sort');
 
   const db = getDatabase();
 

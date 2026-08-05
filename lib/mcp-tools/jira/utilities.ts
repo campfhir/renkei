@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Utility tools for Jira MCP.
  * Miscellaneous helpful operations.

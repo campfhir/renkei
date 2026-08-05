@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions */
 /**
  * Project structure tools for Jira MCP.
  * Discover components, fields, versions, and users.
@@ -67,9 +68,7 @@ export const projectTools: ProjectToolHandler[] = [
         },
       },
     },
-    handler: async (context, params) => {
-      const { projectKey } = params;
-
+    handler: async (context) => {
       try {
         const response = await jiraFetch(
           `${context.siteUrl}/rest/api/3/fields`,

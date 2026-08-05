@@ -3,13 +3,10 @@ import { getOperatorSession } from '@/lib/auth-utils';
 
 export default async function AdminLayout({
   children,
-  params,
 }: {
   children: ReactNode;
-  params?: Promise<Record<string, never>>;
 }) {
   const session = await getOperatorSession();
-  const slug = null;
 
   if (!session) {
     return (
@@ -22,19 +19,6 @@ export default async function AdminLayout({
       </div>
     );
   }
-
-  const navStyle = {
-    display: 'flex',
-    gap: '1.5rem',
-    padding: '0.5rem 0',
-    fontSize: '0.95rem',
-  };
-
-  const linkStyle = {
-    color: '#0066cc',
-    textDecoration: 'none',
-    cursor: 'pointer',
-  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>

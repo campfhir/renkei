@@ -10,7 +10,7 @@ const TAG_LENGTH = 16; // 16 bytes for GCM
  * Data format: base64(nonce || ciphertext || tag)
  */
 export function decrypt(encryptedData: string, keyBuffer?: Buffer): string {
-  // @ts-ignore - Buffer type conflict between crypto and global Buffer
+  // @ts-expect-error - Buffer type conflict between crypto and global Buffer
   const key = keyBuffer || Buffer.from(getConfig().TOKEN_ENCRYPTION_KEY, 'base64');
 
   try {
@@ -30,12 +30,12 @@ export function decrypt(encryptedData: string, keyBuffer?: Buffer): string {
 
     return decrypted.toString('utf-8');
   } catch (err) {
-    throw new Error(`Decryption failed: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`Decryption failed: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }
 }
 
 export function encrypt(plaintext: string, keyBuffer?: Buffer): string {
-  // @ts-ignore - Buffer type conflict between crypto and global Buffer
+  // @ts-expect-error - Buffer type conflict between crypto and global Buffer
   const key = keyBuffer || Buffer.from(getConfig().TOKEN_ENCRYPTION_KEY, 'base64');
   const nonce = randomBytes(NONCE_LENGTH);
 

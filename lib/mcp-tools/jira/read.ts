@@ -3,9 +3,8 @@
  * Adapted from renkei for Next.js.
  */
 
-import { z } from 'zod';
 import type { MCPToolContext, MCPToolResult } from '../common';
-import { issueKeySchema, ok, okWithLink, toolError, jiraFetch, issueUrl } from '../common';
+import { ok, okWithLink, toolError, jiraFetch, issueUrl } from '../common';
 
 // Type guard functions
 function isRecord(value: unknown): value is Record<string, unknown> {
