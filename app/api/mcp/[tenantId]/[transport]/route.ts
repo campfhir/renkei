@@ -64,10 +64,12 @@ const handler = async (
       .execute();
 
     if (grants.length === 0) {
+      // No grant found - direct user to re-authenticate
+      const authUrl = `${request.url.split('/api/')[0]}/api/mcp/${tenantId}/oauth/authorize`;
       return new Response(
         JSON.stringify({
           error: 'No Jira grant configured',
-          message: 'Please connect your Jira instance first',
+          message: `Your Jira authentication has expired or was revoked. Please re-authenticate: [Connect Jira](${authUrl})`,
         }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
@@ -83,10 +85,15 @@ const handler = async (
     }
     const grant = grantResult.val;
     if (!grant) {
-      return new Response(JSON.stringify({ error: 'Failed to retrieve Jira grant' }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      // Grant was deleted during refresh (GRANT_REVOKED) - direct user to re-authenticate
+      const authUrl = `${request.url.split('/api/')[0]}/api/mcp/${tenantId}/oauth/authorize`;
+      return new Response(
+        JSON.stringify({
+          error: 'Jira grant revoked',
+          message: `Your Jira authentication has expired or was revoked. Please re-authenticate: [Connect Jira](${authUrl})`,
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
     }
 
     // Check cache

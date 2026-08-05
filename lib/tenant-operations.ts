@@ -305,7 +305,10 @@ export async function refreshAtlassianTokenDirect(
   tenantId: string,
   accountId: string
 ): Promise<
-  Result<{ accessToken: string; refreshToken: string; expiresAt: Date }, 'REFRESH_FAILED'>
+  Result<
+    { accessToken: string; refreshToken: string; expiresAt: Date },
+    'REFRESH_FAILED' | 'GRANT_REVOKED'
+  >
 > {
   try {
     // Get database and current grant to retrieve clientId and refreshToken
@@ -345,6 +348,17 @@ export async function refreshAtlassianTokenDirect(
     });
 
     if (!response.ok) {
+      // Check if refresh token is invalid/revoked
+      const errorData = await response.json().catch(() => ({}));
+      if (errorData.error === 'invalid_grant' || response.status === 401) {
+        // Refresh token is burned; delete the grant so user must re-authenticate
+        await db
+          .deleteFrom('atlassian_grants')
+          .where('tenant_id', '=', tenantId)
+          .where('account_id', '=', accountId)
+          .execute();
+        return err('GRANT_REVOKED' as const);
+      }
       return err('REFRESH_FAILED' as const);
     }
 

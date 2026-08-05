@@ -176,7 +176,9 @@ export async function jiraFetch(
         refreshInFlight.delete(refreshKey);
 
         if (!result.ok) {
-          throw new Error('Token refresh failed');
+          throw new Error(
+            result.val === 'GRANT_REVOKED' ? 'GRANT_REVOKED' : 'Token refresh failed'
+          );
         }
 
         return result.val.accessToken;
@@ -186,7 +188,15 @@ export async function jiraFetch(
     }
 
     // Wait for refresh to complete (either this call or a concurrent one)
-    token = await refreshPromise;
+    try {
+      token = await refreshPromise;
+    } catch (error) {
+      // If grant is revoked, return 401 response to signal need for reauth
+      if (error instanceof Error && error.message === 'GRANT_REVOKED') {
+        return response; // Return original 401
+      }
+      throw error;
+    }
 
     // Retry request with refreshed token
     const retryHeaders = {
