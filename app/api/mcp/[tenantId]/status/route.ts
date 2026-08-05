@@ -24,7 +24,7 @@ export const GET = async (
     // Get Jira grant
     const grants = await db
       .selectFrom('atlassian_grants')
-      .select(['account_id', 'cloud_id', 'display_name'])
+      .select(['account_id', 'cloud_id', 'operator_name'])
       .where('tenant_id', '=', tenantId)
       .limit(1)
       .execute();
@@ -36,7 +36,7 @@ export const GET = async (
       });
     }
 
-    const { account_id, display_name } = grants[0];
+    const { account_id, operator_name } = grants[0];
     const grant = await getJiraGrant(tenantId, account_id);
 
     if (!grant) {
@@ -49,7 +49,7 @@ export const GET = async (
     return NextResponse.json({
       connected: true,
       accountId: account_id,
-      displayName: display_name,
+      displayName: operator_name,
       siteUrl: grant.siteUrl,
     });
   } catch (error) {
