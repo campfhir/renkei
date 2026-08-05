@@ -1,8 +1,8 @@
 /**
- * MCP endpoint using mcp-handler.
+ * MCP HTTP endpoint using mcp-handler.
  *
- * Handles HTTP POST requests with JSON-RPC 2.0 messages.
- * Stateless: one server per request, discarded when complete.
+ * Handles JSON-RPC 2.0 messages via HTTP POST.
+ * Stateless: one server per request.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
