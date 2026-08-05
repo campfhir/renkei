@@ -9,6 +9,8 @@
  */
 
 import { NextRequest } from 'next/server';
+// Using Server for advanced tool registration pattern
+// (programmatically registering 41 tools with custom handlers via setRequestHandler)
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   ListToolsRequestSchema,
