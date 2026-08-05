@@ -14,6 +14,9 @@ export default function MCPEndpoint() {
   const params = useParams();
   const tenantId = typeof params.tenantId === 'string' ? params.tenantId : '';
   const [jiraStatus, setJiraStatus] = useState<JiraStatus>({ connected: false });
+  // null until the probe answers, so the page does not flash "sign in" at
+  // someone who is already signed in.
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [baseUrl, setBaseUrl] = useState('');
 
   useEffect(() => {
@@ -26,6 +29,17 @@ export default function MCPEndpoint() {
     const checkJiraStatus = async () => {
       try {
         const response = await fetch(`/api/mcp/${tenantId}/status`);
+
+        // The endpoint reports only the caller's own grant, so it needs a
+        // session. Without one there is nothing to connect *to* yet — sending
+        // them to the Jira flow would just 401 again, so ask them to sign in.
+        if (response.status === 401) {
+          setSignedIn(false);
+          setJiraStatus({ connected: false });
+          return;
+        }
+
+        setSignedIn(true);
         if (response.ok) {
           const data = await response.json();
           if (data.connected) {
@@ -37,7 +51,8 @@ export default function MCPEndpoint() {
           }
         }
       } catch {
-        // User hasn't connected Jira yet
+        // Network failure: leave the sign-in state unknown rather than
+        // asserting the user is signed out on no evidence.
         setJiraStatus({ connected: false });
       }
     };
@@ -97,6 +112,10 @@ export default function MCPEndpoint() {
             <p className="text-sm text-green-800 dark:text-green-200">
               Connected as: <strong>{jiraStatus.displayName}</strong>
             </p>
+          ) : signedIn === false ? (
+            <p className="text-sm text-yellow-800 dark:text-yellow-200">
+              Sign in to connect your Jira account
+            </p>
           ) : (
             <p className="text-sm text-yellow-800 dark:text-yellow-200">
               Connect your Jira account to enable work item syncing
@@ -114,14 +133,22 @@ export default function MCPEndpoint() {
         </div>
 
         {/* Action Buttons */}
-        {!jiraStatus.connected && (
-          <button
-            onClick={handleAuthorize}
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors mb-4"
-          >
-            Connect Jira
-          </button>
-        )}
+        {!jiraStatus.connected &&
+          (signedIn === false ? (
+            <Link
+              href="/"
+              className="w-full block text-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors mb-4"
+            >
+              Sign in
+            </Link>
+          ) : (
+            <button
+              onClick={handleAuthorize}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-lg transition-colors mb-4"
+            >
+              Connect Jira
+            </button>
+          ))}
 
         <Link
           href={`/tenant/${tenantId}/logs`}
