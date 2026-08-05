@@ -38,13 +38,20 @@
     "esbuild": "^0.28.1",
     "eslint": "^10.8.0",
     "eslint-config-next": "^16.3.0",
+    "husky": "^9.1.7",
     "jest": "^30.4.2",
     "kysely-codegen": "^0.20.0",
+    "lint-staged": "^17.3.0",
     "playwright": "^1.62.1",
+    "prettier": "^3.9.6",
     "tailwindcss": "^4",
     "ts-jest": "^29.4.12",
     "tsx": "^4.23.5",
     "typescript": "^5",
     "typescript-eslint": "^8.66.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json,md,css}": "prettier --write",
+    "*.{ts,tsx}": "eslint --fix"
   }
 }
