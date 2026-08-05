@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getConfig, isDcrEnabled } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { randomUUID } from 'crypto';
-import { generateSecret } from '@/lib/mcp-token';
+import { generateSecret, hashToken } from '@/lib/mcp-token';
 import { SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS } from '@/lib/oauth-client-auth';
 
 /**
@@ -108,7 +108,9 @@ export async function POST(
       .values({
         client_id: clientId,
         tenant_id: tenantId,
-        client_secret: clientSecret,
+        // Only the digest is stored; the secret itself exists solely in the
+        // registration response below and in the client that receives it.
+        client_secret_hash: hashToken(clientSecret),
         client_name: client_name || null,
         redirect_uris,
         response_types: response_types || ['code'],

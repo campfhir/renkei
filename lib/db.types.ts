@@ -95,7 +95,7 @@ export interface OauthAuthorizationCodes {
 export interface OauthClients {
   client_id: string;
   client_name: string | null;
-  client_secret: string;
+  client_secret_hash: string;
   created_at: Generated<Timestamp>;
   grant_types: Generated<string[]>;
   redirect_uris: string[];

@@ -130,7 +130,8 @@ async function handleAuthorizationCodeGrant(
       .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
 
-    if (!client || client.client_secret !== client_secret) {
+    // Constant-time comparison of digests; the secret itself is not stored.
+    if (!client || !digestsMatch(client.client_secret_hash, hashToken(client_secret))) {
       return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
     }
 
@@ -281,7 +282,8 @@ async function handleRefreshTokenGrant(
       .where('tenant_id', '=', tenantId)
       .executeTakeFirst();
 
-    if (!client || client.client_secret !== client_secret) {
+    // Constant-time comparison of digests; the secret itself is not stored.
+    if (!client || !digestsMatch(client.client_secret_hash, hashToken(client_secret))) {
       return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
     }
 
