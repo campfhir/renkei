@@ -26,15 +26,16 @@ export default function MCPEndpoint() {
     // Check if user has connected Jira auth
     const checkJiraStatus = async () => {
       try {
-        const response = await fetch(`/api/mcp/${tenantId}`);
+        const response = await fetch(`/api/mcp/${tenantId}/status`);
         if (response.ok) {
           const data = await response.json();
-          // If MCP endpoint responds, user has a Jira grant configured
-          setJiraStatus({
-            connected: true,
-            accountId: data.accountId,
-            displayName: data.displayName,
-          });
+          if (data.connected) {
+            setJiraStatus({
+              connected: true,
+              accountId: data.accountId,
+              displayName: data.displayName,
+            });
+          }
         }
       } catch (error) {
         // User hasn't connected Jira yet
@@ -52,7 +53,7 @@ export default function MCPEndpoint() {
     window.location.href = `/api/mcp/${tenantId}/authorize`;
   };
 
-  const mcpEndpointUrl = `${baseUrl}/api/mcp/${tenantId}`;
+  const mcpEndpointUrl = `${baseUrl}/api/mcp/${tenantId}/sse`;
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:bg-black px-4">
