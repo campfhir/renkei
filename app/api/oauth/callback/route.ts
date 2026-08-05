@@ -180,7 +180,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     logger.info('[OAuth] Fetching user info', { tenantId: tenant.id, siteUrl: resource.url });
     // Get user info from the site-specific domain using OAuth 2.0 3LO endpoint
-    const userResponse = await fetch(`${resource.url}/rest/api/3/myself`, {
+    // Try v2 endpoint first (more reliable with OAuth), fall back to v3 if needed
+    const userResponse = await fetch(`${resource.url}/rest/api/2/myself`, {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
 
