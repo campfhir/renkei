@@ -1,16 +1,10 @@
 /**
  * HTTP Transport adapter for MCP SDK.
- *
- * Allows MCP protocol to work with Next.js API routes by implementing
- * the ServerTransport interface with JSON-RPC over HTTP.
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import type { JSONRPCMessage, JSONRPCRequest, JSONRPCResponse } from '@modelcontextprotocol/sdk/types.js';
+import type { JSONRPCRequest, JSONRPCResponse } from '@modelcontextprotocol/sdk/types.js';
 
-/**
- * Handle a single JSON-RPC request through the MCP server.
- */
 export async function handleMCPRequest(
   server: Server,
   request: JSONRPCRequest,
@@ -48,9 +42,6 @@ export async function handleMCPRequest(
   }
 }
 
-/**
- * Safely parse JSON-RPC message from raw input.
- */
 export function parseJSONRPCMessage(input: unknown): JSONRPCRequest | null {
   if (typeof input !== 'object' || input === null) {
     return null;

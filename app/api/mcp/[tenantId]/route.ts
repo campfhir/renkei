@@ -1,8 +1,7 @@
 /**
  * MCP endpoint using official MCP SDK.
  *
- * Replaces the hand-rolled JSON-RPC implementation with standards-compliant
- * protocol handling using the MCP SDK.
+ * Standards-compliant protocol handling using @modelcontextprotocol/sdk.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -18,15 +17,6 @@ interface MCPMessage {
   id?: string | number;
   method?: string;
   params?: any;
-}
-
-interface InitializeParams {
-  protocolVersion: string;
-  capabilities: any;
-  clientInfo: {
-    name: string;
-    version: string;
-  };
 }
 
 /**
