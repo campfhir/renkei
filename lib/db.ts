@@ -21,8 +21,8 @@ export function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
       connectionString: configResult.val.DATABASE_URL,
     });
     return ok(pool);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  } catch (_error) {
+
+  } catch  {
     return err('DB_INIT_ERROR' as const);
   }
 }
@@ -40,8 +40,8 @@ export function getDatabase(): Result<Kysely<DB>, 'DB_INIT_ERROR'> {
       dialect: new PostgresDialect({ pool: poolResult.val }),
     });
     return ok(db);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  } catch (_error) {
+
+  } catch  {
     return err('DB_INIT_ERROR' as const);
   }
 }
