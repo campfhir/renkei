@@ -74,19 +74,21 @@ export function LogsClientApp({ tenantSlug }: LogsClientAppProps) {
         throw new Error(`Failed to fetch logs: ${response.statusText}`);
       }
       const data = await response.json();
-      if (isLogsResponse(data)) {
+      if (isLogsResponse(data) && Array.isArray(data.logs)) {
         // Transform API response to LogRow format
-        const transformedLogs = (data.logs as unknown[]).map((log: unknown) => {
+        const transformedLogs = data.logs.map((log: unknown) => {
           if (typeof log !== 'object' || log === null) {
             return null;
           }
-          const logObj = log as Record<string, unknown>;
+          if (!('log_id' in log) || !('level' in log) || !('message' in log)) {
+            return null;
+          }
           return {
-            id: String(logObj.log_id || ''),
-            level: String(logObj.level || 'info'),
-            message: String(logObj.message || ''),
+            id: String(log.log_id || ''),
+            level: String(log.level || 'info'),
+            message: String(log.message || ''),
             meta: {},
-            timestamp: logObj.logged_timestamp ? String(logObj.logged_timestamp) : null,
+            timestamp: 'logged_timestamp' in log ? String(log.logged_timestamp) : null,
           };
         }).filter((log): log is LogRow => log !== null);
         setLogs(transformedLogs);
