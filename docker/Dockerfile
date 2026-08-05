@@ -17,7 +17,7 @@ COPY app ./app
 COPY lib ./lib
 COPY public ./public
 COPY scripts ./scripts
-COPY proxy.ts next.config.ts tsconfig.json postcss.config.mjs ./
+COPY instrumentation.ts proxy.ts next.config.ts tsconfig.json postcss.config.mjs ./
 
 # Compile migrations with esbuild (handles aliases)
 RUN node scripts/build-migrations.js
