@@ -5,5 +5,11 @@
  */
 
 import { jsmTools } from './jsm';
+import { requestDetailsTools } from './request-details';
+import { customerTools } from './customers';
 
-export const jiraServiceManagementTools = jsmTools;
+export const jiraServiceManagementTools = [
+  ...jsmTools,
+  ...requestDetailsTools,
+  ...customerTools,
+];

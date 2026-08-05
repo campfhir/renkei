@@ -9,6 +9,8 @@ import { writeTools } from './write';
 import { bulkTools } from './bulk';
 import { sprintTools } from './sprints';
 import { projectTools } from './project';
+import { attachmentTools } from './attachments';
+import { utilityTools } from './utilities';
 
 export const jiraTools = [
   ...readTools,
@@ -16,4 +18,6 @@ export const jiraTools = [
   ...bulkTools,
   ...sprintTools,
   ...projectTools,
+  ...attachmentTools,
+  ...utilityTools,
 ];
