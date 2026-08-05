@@ -74,7 +74,8 @@ export async function getUserSessions(
       .orderBy('last_used_at', 'desc')
       .execute();
     return ok(result);
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     return err('DB_ERROR' as const);
   }
 }

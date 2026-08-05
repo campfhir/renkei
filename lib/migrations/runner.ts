@@ -42,7 +42,8 @@ export async function runMigrations(migrationsDir?: string): Promise<Result<void
 
     console.log('[Migrations] Done');
     return ok();
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     return err('MIGRATION_ERROR' as const);
   }
 }

@@ -101,6 +101,7 @@ export async function jiraFetch(
 
   if (!response.ok) {
     const error = await response.text();
+    // eslint-disable-next-line result/no-throw -- Low-level utility; callers must wrap with try-catch
     throw new Error(`Jira API error (${response.status}): ${error}`);
   }
 

@@ -27,7 +27,7 @@
  */
 
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { decrypt, DecryptionError, encrypt } from './secretbox.js';
+import { decrypt, encrypt } from './secretbox.js';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 

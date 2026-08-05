@@ -65,7 +65,8 @@ export async function setTenantOidc(tenantId: string, oidc: TenantOidc): Promise
       )
       .execute();
     return ok();
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     return err('DB_ERROR' as const);
   }
 }
@@ -99,7 +100,8 @@ export async function setOidcRoleMapping(
       )
       .execute();
     return ok();
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     return err('DB_ERROR' as const);
   }
 }
@@ -121,7 +123,8 @@ export async function getOidcRoleMapping(tenantId: string, idpRole: string): Pro
       .executeTakeFirst();
 
     return ok(row?.renkei_role || null);
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     return err('DB_ERROR' as const);
   }
 }
@@ -158,7 +161,8 @@ export async function getTenantOidc(tenantId: string): Promise<Result<TenantOidc
       operatorIdpValue: row.operator_idp_value || undefined,
       userIdpValue: row.user_idp_value || undefined,
     });
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     return err('DB_ERROR' as const);
   }
 }
@@ -202,7 +206,8 @@ export async function setJiraGrant(tenantId: string, grant: JiraGrant): Promise<
       )
       .execute();
     return ok();
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     return err('DB_ERROR' as const);
   }
 }
@@ -258,7 +263,8 @@ export async function getJiraGrant(
       expiresAt: row.expires_at.toISOString(),
       scopes: row.scopes,
     });
-  } catch (error) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  } catch (_error) {
     return err('DB_ERROR' as const);
   }
 }

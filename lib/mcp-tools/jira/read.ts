@@ -35,6 +35,7 @@ export const readTools: ReadToolHandler[] = [
     name: 'whoami',
     description: 'Returns the Atlassian account this connection acts as and the site it is pinned to.',
     handler: async (context) => {
+      // eslint-disable-next-line result/no-throw -- MCP handler framework catches exceptions
       const response = await jiraFetch(
         `${context.siteUrl}/rest/api/3/myself`,
         context.accessToken,

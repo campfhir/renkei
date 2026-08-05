@@ -72,9 +72,6 @@ export function loadConfig(): Result<Env, 'CONFIG_ERROR'> {
 
   const result = envSchema.safeParse(env);
   if (!result.success) {
-    const issues = result.error.issues
-      .map((issue) => `  - ${issue.path.join('.')}: ${issue.message}`)
-      .join('\n');
     return err('CONFIG_ERROR' as const);
   }
 
