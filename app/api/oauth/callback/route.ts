@@ -36,7 +36,7 @@ function isResourceArray(data: unknown): data is Array<{ id: string; url: string
   return data.every(item => typeof item === 'object' && item !== null && typeof (item as Record<string, unknown>).id === 'string' && typeof (item as Record<string, unknown>).url === 'string' && typeof (item as Record<string, unknown>).name === 'string');
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const configResult = getConfig();
   if (!configResult.ok) {
     return NextResponse.json({ error: "Config error" }, { status: 500 });

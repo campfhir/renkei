@@ -4,7 +4,7 @@ import { getDatabase } from '@/lib/db';
 import { randomUUID } from 'crypto';
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function GET(_request: NextRequest) {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const configResult = getConfig();
   if (!configResult.ok) {
     return NextResponse.json({ error: "Config error" }, { status: 500 });

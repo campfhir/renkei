@@ -4,7 +4,7 @@ import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { randomUUID } from 'crypto';
 
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: "Database error" }, { status: 500 });

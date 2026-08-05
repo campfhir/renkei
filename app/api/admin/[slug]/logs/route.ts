@@ -42,7 +42,7 @@ function parseBoredLogsQuery(q: string): QueryFilter[] {
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
-) {
+): Promise<NextResponse> {
   const session = await getOperatorSession();
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

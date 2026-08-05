@@ -7,7 +7,7 @@ import { parseRolesFromCookie } from '@/lib/oidc-roles';
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
-) {
+): Promise<NextResponse> {
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {

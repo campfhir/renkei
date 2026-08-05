@@ -14,7 +14,7 @@ function emailDomain(email: string): string | null {
   return DOMAIN_SHAPE.test(domain) ? domain : null;
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const email = searchParams.get('email')?.trim().toLowerCase();
 

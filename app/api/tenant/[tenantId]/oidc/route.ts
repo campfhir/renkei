@@ -21,7 +21,7 @@ function isOidcConfigRequest(data: unknown): data is OidcConfigRequest {
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
-) {
+): Promise<NextResponse> {
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -117,7 +117,7 @@ export async function POST(
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
-) {
+): Promise<NextResponse> {
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {

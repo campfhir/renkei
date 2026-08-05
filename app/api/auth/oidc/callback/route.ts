@@ -34,7 +34,7 @@ function isOIDCTokenResponse(data: unknown): data is OIDCTokenResponse {
   return typeof obj.access_token === 'string' && typeof obj.token_type === 'string' && typeof obj.expires_in === 'number';
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: "Database error" }, { status: 500 });

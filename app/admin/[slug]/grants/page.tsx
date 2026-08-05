@@ -6,7 +6,7 @@ export default async function GrantsPage({
   params,
 }: {
   params: Promise<{ slug: string }>;
-}) {
+}): Promise<JSX.Element> {
   const session = await getOperatorSession();
   if (!session) {
     const { slug } = await params;

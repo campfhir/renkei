@@ -2,7 +2,7 @@ import { LogsClientApp } from '@/lib/ui/admin/logs-client-app';
 import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 
-export default async function LogsPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function LogsPage({ params }: { params: Promise<{ slug: string }> }): Promise<JSX.Element> {
   const session = await getOperatorSession();
   const { slug } = await params;
 

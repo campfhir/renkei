@@ -4,7 +4,7 @@ import { getDatabase } from '@/lib/db';
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
-) {
+): Promise<NextResponse> {
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {

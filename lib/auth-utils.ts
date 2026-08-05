@@ -46,7 +46,7 @@ export function parseSessionToken(token: string): OperatorSession | null {
   }
 }
 
-export async function setOperatorCookie(session: OperatorSession) {
+export async function setOperatorCookie(session: OperatorSession): Promise<void> {
   const token = createSessionToken(session);
   const maxAge = session.expiresAt - Date.now();
 
@@ -64,7 +64,7 @@ export async function getOperatorSession(): Promise<OperatorSession | null> {
   return parseSessionToken(token);
 }
 
-export async function clearOperatorCookie() {
+export async function clearOperatorCookie(): Promise<void> {
   (await cookies()).delete(COOKIE_NAME);
 }
 

@@ -6,7 +6,7 @@ import { parseRolesFromCookie } from '@/lib/oidc-roles';
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
-) {
+): Promise<NextResponse> {
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -111,7 +111,7 @@ export async function GET(
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
-) {
+): Promise<NextResponse> {
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {

@@ -2,7 +2,7 @@ import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 import { getDatabase } from '@/lib/db';
 
-export default async function AuditPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function AuditPage({ params }: { params: Promise<{ slug: string }> }): Promise<JSX.Element> {
   const session = await getOperatorSession();
   const { slug } = await params;
 

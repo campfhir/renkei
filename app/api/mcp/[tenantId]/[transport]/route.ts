@@ -27,7 +27,7 @@ import type { MCPToolContext } from '@/lib/mcp-tools/common';
 const handler = async (
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string; transport: string }> },
-) => {
+): Promise<Response> => {
   const { tenantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {

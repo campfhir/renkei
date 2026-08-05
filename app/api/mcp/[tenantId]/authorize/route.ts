@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto';
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
-) {
+): Promise<NextResponse> {
   const { tenantId } = await params;
   const configResult = getConfig();
   if (!configResult.ok) {

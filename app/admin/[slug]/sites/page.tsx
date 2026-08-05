@@ -10,7 +10,7 @@ interface JiraSite {
   claimed_at: Date | null;
 }
 
-export default async function SitesPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function SitesPage({ params }: { params: Promise<{ slug: string }> }): Promise<JSX.Element> {
   const session = await getOperatorSession();
   const { slug } = await params;
 

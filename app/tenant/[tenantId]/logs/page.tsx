@@ -74,7 +74,7 @@ export default async function LogsPage({
 }: {
   params: Promise<{ tenantId: string }>;
   searchParams: Promise<{ accountId?: string; q?: string }>;
-}) {
+}): Promise<JSX.Element> {
   const { tenantId } = await params;
   const { accountId, q } = await searchParams;
 

@@ -12,7 +12,7 @@ import { getDatabase } from '@/lib/db';
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string; grantId: string }> }
-) {
+): Promise<NextResponse> {
   const session = await getOperatorSession();
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

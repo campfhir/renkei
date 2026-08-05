@@ -7,7 +7,7 @@ interface User {
   last_used_at: Date;
 }
 
-export default async function PeoplePage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function PeoplePage({ params }: { params: Promise<{ slug: string }> }): Promise<JSX.Element> {
   const session = await getOperatorSession();
   const { slug } = await params;
 
