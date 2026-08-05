@@ -12,7 +12,7 @@ import { getDatabase } from '@/lib/db';
 import { getConfig } from '@/lib/env';
 import { getJiraGrant } from '@/lib/tenant-operations';
 import { logger } from '@/lib/logger';
-import { registerAllTools } from '@/lib/mcp-tools';
+import { registerAllTools, cacheTokenMetadata } from '@/lib/mcp-tools';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import type { McpServer } from '@modelcontextprotocol/server';
 
@@ -101,6 +101,9 @@ const handler = async (
         async (server: McpServer) => {
           try {
             logger.info('[MCP] Server created', { tenantId, accountId });
+
+            // Cache token metadata for refresh lookups
+            cacheTokenMetadata(grant.accessToken, tenantId, accountId);
 
             const context: MCPToolContext = {
               tenantId,

@@ -241,12 +241,7 @@ export async function setJiraGrant(
 export async function getJiraGrant(
   tenantId: string,
   accountId: string
-): Promise<
-  Result<
-    JiraGrant | null,
-    'DB_ERROR' | 'INVALID_ENCRYPTION_KEY' | 'DECRYPTION_ERROR' | 'TOKEN_REFRESH_FAILED'
-  >
-> {
+): Promise<Result<JiraGrant | null, 'DB_ERROR' | 'INVALID_ENCRYPTION_KEY' | 'DECRYPTION_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
@@ -287,39 +282,16 @@ export async function getJiraGrant(
   const refreshTokenResult = decrypt(row.encrypted_refresh_token, encryptionKey);
   if (!refreshTokenResult.ok) return err('DECRYPTION_ERROR' as const);
 
-  let accessToken = accessTokenResult.val;
-  let expiresAt = row.expires_at;
-  let refreshToken = refreshTokenResult.val;
-
-  // Check if token is expired and refresh if needed
-  const now = new Date();
-  if (expiresAt < now) {
-    // Token expired - attempt refresh
-    const refreshResult = await refreshAtlassianToken(
-      row.atlassian_client_id,
-      refreshToken,
-      tenantId,
-      accountId
-    );
-
-    if (!refreshResult.ok) {
-      return err('TOKEN_REFRESH_FAILED' as const);
-    }
-
-    accessToken = refreshResult.val.accessToken;
-    refreshToken = refreshResult.val.refreshToken;
-    expiresAt = refreshResult.val.expiresAt;
-  }
-
+  // Return grant as-is; refresh on 401 is handled by jiraFetchWithRefresh
   return ok({
     accountId: row.account_id,
     atlassianClientId: row.atlassian_client_id,
     cloudId: row.cloud_id,
     siteUrl: row.site_url || '',
     displayName: row.operator_name || '',
-    accessToken,
-    refreshToken,
-    expiresAt: expiresAt.toISOString(),
+    accessToken: accessTokenResult.val,
+    refreshToken: refreshTokenResult.val,
+    expiresAt: row.expires_at.toISOString(),
     scopes: row.scopes,
   });
 }
@@ -327,22 +299,47 @@ export async function getJiraGrant(
 /**
  * Refresh an expired Atlassian OAuth token using the refresh token.
  * Updates the database with new tokens.
+ * Exported for use by MCP tool layer (e.g., on 401 responses).
  */
-async function refreshAtlassianToken(
-  clientId: string,
-  refreshToken: string,
+export async function refreshAtlassianTokenDirect(
   tenantId: string,
   accountId: string
 ): Promise<
   Result<{ accessToken: string; refreshToken: string; expiresAt: Date }, 'REFRESH_FAILED'>
 > {
   try {
+    // Get database and current grant to retrieve clientId and refreshToken
+    const dbResult = getDatabase();
+    if (!dbResult.ok) return err('REFRESH_FAILED' as const);
+    const db = dbResult.val;
+
+    const grant = await db
+      .selectFrom('atlassian_grants')
+      .select(['atlassian_client_id', 'encrypted_refresh_token'])
+      .where('tenant_id', '=', tenantId)
+      .where('account_id', '=', accountId)
+      .executeTakeFirst();
+
+    if (!grant) {
+      return err('REFRESH_FAILED' as const);
+    }
+
+    // Decrypt refresh token
+    const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+    if (!encryptionKeyResult.ok) return err('REFRESH_FAILED' as const);
+    const encryptionKey = encryptionKeyResult.val;
+
+    const decryptedRefreshTokenResult = decrypt(grant.encrypted_refresh_token, encryptionKey);
+    if (!decryptedRefreshTokenResult.ok) return err('REFRESH_FAILED' as const);
+    const refreshToken = decryptedRefreshTokenResult.val;
+
+    // Call Atlassian OAuth token endpoint
     const response = await fetch('https://auth.atlassian.com/oauth/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         grant_type: 'refresh_token',
-        client_id: clientId,
+        client_id: grant.atlassian_client_id,
         refresh_token: refreshToken,
       }),
     });
@@ -359,15 +356,6 @@ async function refreshAtlassianToken(
 
     // Calculate new expiration
     const expiresAt = new Date(Date.now() + (data.expires_in ?? 3600) * 1000);
-
-    // Update database
-    const dbResult = getDatabase();
-    if (!dbResult.ok) return err('REFRESH_FAILED' as const);
-    const db = dbResult.val;
-
-    const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-    if (!encryptionKeyResult.ok) return err('REFRESH_FAILED' as const);
-    const encryptionKey = encryptionKeyResult.val;
 
     const encryptedAccessToken = encrypt(data.access_token, encryptionKey);
     const encryptedRefreshToken = encrypt(data.refresh_token, encryptionKey);

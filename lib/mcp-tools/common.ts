@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { Kysely } from 'kysely';
 import type { DB } from '@/lib/db.types';
 import type { Env } from '@/lib/env';
+import { refreshAtlassianTokenDirect } from '@/lib/tenant-operations';
 
 export interface MCPToolContext {
   tenantId: string;
@@ -85,28 +86,120 @@ export function requestUrl(siteUrl: string, requestKey: string): string {
 }
 
 /**
- * Make an authenticated request to Jira API.
+ * Cache for token -> {tenantId, accountId} mapping.
+ * Updated whenever a token is used successfully, expires after 24h.
+ */
+interface TokenMetadata {
+  tenantId: string;
+  accountId: string;
+  expiresAt: number;
+}
+const tokenMetadataCache = new Map<string, TokenMetadata>();
+
+/**
+ * Cache for refresh-in-flight promises keyed by (tenantId:accountId).
+ * Prevents thundering herd when multiple tools need token refresh simultaneously.
+ */
+const refreshInFlight = new Map<string, Promise<string>>();
+
+function getRefreshKey(tenantId: string, accountId: string): string {
+  return `${tenantId}:${accountId}`;
+}
+
+/**
+ * Store token metadata for 24h TTL lookup during refresh.
+ */
+export function cacheTokenMetadata(accessToken: string, tenantId: string, accountId: string): void {
+  tokenMetadataCache.set(accessToken, {
+    tenantId,
+    accountId,
+    expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+  });
+}
+
+/**
+ * Retrieve cached token metadata if still valid.
+ */
+function getTokenMetadata(accessToken: string): TokenMetadata | undefined {
+  const cached = tokenMetadataCache.get(accessToken);
+  if (!cached || cached.expiresAt < Date.now()) {
+    tokenMetadataCache.delete(accessToken);
+    return undefined;
+  }
+  return cached;
+}
+
+/**
+ * Make an authenticated request to Jira API with automatic token refresh on 401.
+ * Looks up tenant/account from cached token metadata; requires prior cacheTokenMetadata() call.
+ * Deduplicates concurrent refresh requests by (tenantId, accountId).
+ * Returns response without throwing, allowing callers to handle non-ok statuses.
  */
 export async function jiraFetch(
   url: string,
   accessToken: string,
   options?: RequestInit
 ): Promise<Response> {
+  let token = accessToken;
+
+  // Make initial request
   const headers = {
-    Authorization: `Bearer ${accessToken}`,
+    Authorization: `Bearer ${token}`,
     Accept: 'application/json',
     'Content-Type': 'application/json',
     ...options?.headers,
   };
 
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     ...options,
     headers,
   });
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Jira API error (${response.status}): ${error}`);
+  // If 401, refresh token and retry
+  if (response.status === 401) {
+    const metadata = getTokenMetadata(accessToken);
+    if (!metadata) {
+      // Cannot refresh without tenant/account info; return 401
+      return response;
+    }
+
+    const { tenantId, accountId } = metadata;
+    const refreshKey = getRefreshKey(tenantId, accountId);
+
+    // Check if refresh is already in-flight
+    let refreshPromise = refreshInFlight.get(refreshKey);
+
+    if (!refreshPromise) {
+      // Start new refresh
+      refreshPromise = refreshAtlassianTokenDirect(tenantId, accountId).then((result) => {
+        // Clean up cache after refresh completes
+        refreshInFlight.delete(refreshKey);
+
+        if (!result.ok) {
+          throw new Error('Token refresh failed');
+        }
+
+        return result.val.accessToken;
+      });
+
+      refreshInFlight.set(refreshKey, refreshPromise);
+    }
+
+    // Wait for refresh to complete (either this call or a concurrent one)
+    token = await refreshPromise;
+
+    // Retry request with refreshed token
+    const retryHeaders = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...options?.headers,
+    };
+
+    response = await fetch(url, {
+      ...options,
+      headers: retryHeaders,
+    });
   }
 
   return response;
