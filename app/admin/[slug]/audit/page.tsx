@@ -2,15 +2,6 @@ import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 import { getDatabase } from '@/lib/db';
 
-interface AuditEvent {
-  event_id: string;
-  event_type: string;
-  actor_id: string | null;
-  resource_id: string | null;
-  created_at: string;
-  details: unknown;
-}
-
 export default async function AuditPage({ params }: { params: Promise<{ slug: string }> }) {
   const session = await getOperatorSession();
   const { slug } = await params;
@@ -21,7 +12,14 @@ export default async function AuditPage({ params }: { params: Promise<{ slug: st
 
   const db = getDatabase();
 
-  let events: AuditEvent[] = [];
+  let events: {
+    id: string;
+    event_type: string;
+    actor_id: string | null;
+    resource_id: string | null;
+    created_at: Date;
+    details: unknown;
+  }[] = [];
   try {
     const tenant = await db
       .selectFrom('tenants')
@@ -33,8 +31,7 @@ export default async function AuditPage({ params }: { params: Promise<{ slug: st
       // Fetch recent audit events
       events = await db
         .selectFrom('platform_audit_log')
-        .select(['event_id', 'event_type', 'actor_id', 'resource_id', 'created_at', 'details'])
-        .where('tenant_id', '=', tenant.id)
+        .selectAll()
         .orderBy('created_at', 'desc')
         .limit(100)
         .execute();
@@ -60,7 +57,7 @@ export default async function AuditPage({ params }: { params: Promise<{ slug: st
           </thead>
           <tbody>
             {events.map((event) => (
-              <tr key={event.event_id} style={{ borderBottom: '1px solid #eee' }}>
+              <tr key={event.id} style={{ borderBottom: '1px solid #eee' }}>
                 <td style={{ padding: '0.5rem' }}>{event.event_type}</td>
                 <td style={{ padding: '0.5rem', fontFamily: 'monospace' }}>
                   {event.actor_id ? event.actor_id.slice(0, 8) : '—'}

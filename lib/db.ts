@@ -1,8 +1,9 @@
 import { Kysely, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
 import { getConfig } from './env';
+import type { DB } from './db.types';
 
-let db: Kysely<any> | null = null;
+let db: Kysely<DB> | null = null;
 let pool: Pool | null = null;
 
 export function initDatabase(): Pool {
@@ -16,7 +17,7 @@ export function initDatabase(): Pool {
   return pool;
 }
 
-export function getDatabase(): Kysely<any> {
+export function getDatabase(): Kysely<DB> {
   if (db) return db;
 
   const pool = initDatabase();

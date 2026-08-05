@@ -7,6 +7,23 @@ import { z } from 'zod';
 import type { MCPToolContext, MCPToolResult } from '../common';
 import { issueKeySchema, ok, okWithLink, toolError, jiraFetch, issueUrl } from '../common';
 
+// Type guard functions
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === 'number';
+}
+
 export interface ReadToolHandler {
   name: string;
   description: string;
@@ -23,7 +40,10 @@ export const readTools: ReadToolHandler[] = [
         `${context.siteUrl}/rest/api/3/myself`,
         context.accessToken,
       );
-      const me = (await response.json()) as Record<string, unknown>;
+      const me = await response.json();
+      if (!isRecord(me)) {
+        return toolError('Invalid response from API');
+      }
       const lines = [
         `Account: ${me.displayName || 'unknown'}`,
         `Email: ${me.emailAddress || 'not shared'}`,
@@ -54,9 +74,12 @@ export const readTools: ReadToolHandler[] = [
       required: ['jql'],
     },
     handler: async (context, params) => {
-      const p = params as Record<string, unknown>;
+      if (!isRecord(params)) {
+        return toolError('Invalid parameters');
+      }
+      const p = params;
       const { jql } = p;
-      const maxResults = Math.min((p.maxResults as number | undefined) || 50, context.maxJqlResults);
+      const maxResults = Math.min((isNumber(p.maxResults) ? p.maxResults : 50) || 50, context.maxJqlResults);
 
       if (!jql) {
         return toolError('JQL query is required');
@@ -85,19 +108,30 @@ export const readTools: ReadToolHandler[] = [
           },
         );
 
-        const data = (await response.json()) as Record<string, unknown>;
-        const issues = ((data.issues as unknown[]) || []).map((issue: unknown) => {
-          const issueObj = issue as Record<string, unknown>;
-          const fields = issueObj.fields as Record<string, unknown>;
+        const data = await response.json();
+        if (!isRecord(data)) {
+          return toolError('Invalid API response');
+        }
+        if (!isArray(data.issues)) {
+          return toolError('Expected issues array in response');
+        }
+        const issues = data.issues.map((issue: unknown) => {
+          if (!isRecord(issue)) {
+            return null;
+          }
+          if (!isRecord(issue.fields)) {
+            return null;
+          }
+          const fields = issue.fields;
           return {
-            key: issueObj.key,
+            key: issue.key,
             summary: fields.summary,
-            status: (fields.status as Record<string, unknown>)?.name || 'Unknown',
-            priority: (fields.priority as Record<string, unknown>)?.name || 'No Priority',
-            assignee: (fields.assignee as Record<string, unknown>)?.displayName || 'Unassigned',
+            status: (isRecord(fields.status) ? fields.status.name : null) || 'Unknown',
+            priority: (isRecord(fields.priority) ? fields.priority.name : null) || 'No Priority',
+            assignee: (isRecord(fields.assignee) ? fields.assignee.displayName : null) || 'Unassigned',
             updated: fields.updated,
           };
-        });
+        }).filter((issue): issue is NonNullable<typeof issue> => issue !== null);
 
         const lines = [
           `Found ${data.total} issues (showing ${issues.length}):`,
@@ -128,7 +162,10 @@ export const readTools: ReadToolHandler[] = [
       required: ['issueKey'],
     },
     handler: async (context, params) => {
-      const p = params as Record<string, unknown>;
+      if (!isRecord(params)) {
+        return toolError('Invalid parameters');
+      }
+      const p = params;
       const { issueKey } = p;
 
       if (!issueKey) {
@@ -141,14 +178,20 @@ export const readTools: ReadToolHandler[] = [
           context.accessToken,
         );
 
-        const issue = (await response.json()) as Record<string, unknown>;
-        const fields = issue.fields as Record<string, unknown>;
+        const issue = await response.json();
+        if (!isRecord(issue)) {
+          return toolError('Invalid API response');
+        }
+        if (!isRecord(issue.fields)) {
+          return toolError('Expected fields object in issue');
+        }
+        const fields = issue.fields;
         const lines = [
           `${issue.key}: ${fields.summary}`,
-          `Status: ${(fields.status as Record<string, unknown>)?.name || 'Unknown'}`,
-          `Priority: ${(fields.priority as Record<string, unknown>)?.name || 'No Priority'}`,
-          `Type: ${(fields.issuetype as Record<string, unknown>)?.name || 'Unknown'}`,
-          `Assignee: ${(fields.assignee as Record<string, unknown>)?.displayName || 'Unassigned'}`,
+          `Status: ${(isRecord(fields.status) ? fields.status.name : null) || 'Unknown'}`,
+          `Priority: ${(isRecord(fields.priority) ? fields.priority.name : null) || 'No Priority'}`,
+          `Type: ${(isRecord(fields.issuetype) ? fields.issuetype.name : null) || 'Unknown'}`,
+          `Assignee: ${(isRecord(fields.assignee) ? fields.assignee.displayName : null) || 'Unassigned'}`,
           `Created: ${fields.created}`,
           `Updated: ${fields.updated}`,
         ];
@@ -157,7 +200,8 @@ export const readTools: ReadToolHandler[] = [
           lines.push(`\nDescription:\n${fields.description}`);
         }
 
-        return okWithLink(lines.join('\n'), issueUrl(context.siteUrl, issue.key as string));
+        const issueKey = isString(issue.key) ? issue.key : String(issue.key);
+        return okWithLink(lines.join('\n'), issueUrl(context.siteUrl, issueKey));
       } catch (error) {
         return toolError(`Failed to get issue: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -177,8 +221,11 @@ export const readTools: ReadToolHandler[] = [
       },
     },
     handler: async (context, params) => {
-      const p = params as Record<string, unknown>;
-      const maxResults = Math.min((p.maxResults as number | undefined) || 25, 100);
+      if (!isRecord(params)) {
+        return toolError('Invalid parameters');
+      }
+      const p = params;
+      const maxResults = Math.min((isNumber(p.maxResults) ? p.maxResults : 25) || 25, 100);
 
       try {
         const response = await jiraFetch(
@@ -186,15 +233,23 @@ export const readTools: ReadToolHandler[] = [
           context.accessToken,
         );
 
-        const data = (await response.json()) as Record<string, unknown>;
-        const boards = ((data.values as unknown[]) || []).map((board: unknown) => {
-          const boardObj = board as Record<string, unknown>;
+        const data = await response.json();
+        if (!isRecord(data)) {
+          return toolError('Invalid API response');
+        }
+        if (!isArray(data.values)) {
+          return toolError('Expected values array in response');
+        }
+        const boards = data.values.map((board: unknown) => {
+          if (!isRecord(board)) {
+            return null;
+          }
           return {
-            id: boardObj.id,
-            name: boardObj.name,
-            type: boardObj.type,
+            id: board.id,
+            name: board.name,
+            type: board.type,
           };
-        });
+        }).filter((board): board is NonNullable<typeof board> => board !== null);
 
         const lines = [
           `Found ${data.total || 0} boards (showing ${boards.length}):`,
@@ -222,7 +277,10 @@ export const readTools: ReadToolHandler[] = [
       required: ['boardId'],
     },
     handler: async (context, params) => {
-      const p = params as Record<string, unknown>;
+      if (!isRecord(params)) {
+        return toolError('Invalid parameters');
+      }
+      const p = params;
       const { boardId } = p;
 
       if (!boardId) {
@@ -235,15 +293,20 @@ export const readTools: ReadToolHandler[] = [
           context.accessToken,
         );
 
-        const data = (await response.json()) as Record<string, unknown>;
-        const sprints = (data.values as unknown[]) || [];
+        const data = await response.json();
+        if (!isRecord(data)) {
+          return toolError('Invalid API response');
+        }
+        const sprints = isArray(data.values) ? data.values : [];
 
         const lines = [
           `Board ${boardId} has ${sprints.length} sprints:`,
           ...sprints.map((s: unknown) => {
-            const sprintObj = s as Record<string, unknown>;
-            return `• ${sprintObj.name} (${sprintObj.state})`;
-          }),
+            if (!isRecord(s)) {
+              return null;
+            }
+            return `• ${s.name} (${s.state})`;
+          }).filter((line): line is string => line !== null),
         ];
 
         return ok(lines.join('\n'));

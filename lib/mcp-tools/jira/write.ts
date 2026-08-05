@@ -6,6 +6,19 @@
 import type { MCPToolContext, MCPToolResult } from '../common';
 import { ok, okWithLink, toolError, jiraFetch, issueUrl } from '../common';
 
+// Type guard functions
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+
+function isArray(value: unknown): value is unknown[] {
+  return Array.isArray(value);
+}
+
 export interface WriteToolHandler {
   name: string;
   description: string;
@@ -53,7 +66,10 @@ export const writeTools: WriteToolHandler[] = [
       required: ['projectKey', 'issueType', 'summary'],
     },
     handler: async (context, params) => {
-      const p = params as Record<string, unknown>;
+      if (!isRecord(params)) {
+        return toolError('Invalid parameters');
+      }
+      const p = params;
       const { projectKey, issueType, summary, description, priority, assignee, labels } = p;
 
       if (!projectKey || !issueType || !summary) {
@@ -61,25 +77,29 @@ export const writeTools: WriteToolHandler[] = [
       }
 
       try {
+        const projectKeyStr = isString(projectKey) ? projectKey : String(projectKey);
+        const issueTypeStr = isString(issueType) ? issueType : String(issueType);
+        const summaryStr = isString(summary) ? summary : String(summary);
+
         const fields: Record<string, unknown> = {
-          project: { key: projectKey as string },
-          issuetype: { name: issueType as string },
-          summary: (summary as string).substring(0, 255),
+          project: { key: projectKeyStr },
+          issuetype: { name: issueTypeStr },
+          summary: summaryStr.substring(0, 255),
         };
 
-        if (description) {
+        if (description && isString(description)) {
           fields.description = { content: [{ content: [{ text: description }], type: 'paragraph' }], type: 'doc', version: 1 };
         }
 
-        if (priority) {
+        if (priority && isString(priority)) {
           fields.priority = { name: priority };
         }
 
-        if (assignee) {
+        if (assignee && isString(assignee)) {
           fields.assignee = { name: assignee };
         }
 
-        if (labels && Array.isArray(labels)) {
+        if (labels && isArray(labels)) {
           fields.labels = labels;
         }
 
@@ -92,8 +112,12 @@ export const writeTools: WriteToolHandler[] = [
           },
         );
 
-        const result = (await response.json()) as Record<string, unknown>;
-        return okWithLink(`Created issue ${result.key}`, issueUrl(context.siteUrl, result.key as string));
+        const result = await response.json();
+        if (!isRecord(result)) {
+          return toolError('Invalid response from API');
+        }
+        const resultKey = isString(result.key) ? result.key : String(result.key);
+        return okWithLink(`Created issue ${result.key}`, issueUrl(context.siteUrl, resultKey));
       } catch (error) {
         return toolError(`Failed to create issue: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -135,7 +159,10 @@ export const writeTools: WriteToolHandler[] = [
       required: ['issueKey'],
     },
     handler: async (context, params) => {
-      const p = params as Record<string, unknown>;
+      if (!isRecord(params)) {
+        return toolError('Invalid parameters');
+      }
+      const p = params;
       const { issueKey, summary, description, priority, assignee, labels } = p;
 
       if (!issueKey) {
@@ -145,23 +172,23 @@ export const writeTools: WriteToolHandler[] = [
       try {
         const fields: Record<string, unknown> = {};
 
-        if (summary) {
+        if (summary && isString(summary)) {
           fields.summary = summary.substring(0, 255);
         }
 
-        if (description) {
+        if (description && isString(description)) {
           fields.description = { content: [{ content: [{ text: description }], type: 'paragraph' }], type: 'doc', version: 1 };
         }
 
-        if (priority) {
+        if (priority && isString(priority)) {
           fields.priority = { name: priority };
         }
 
-        if (assignee) {
+        if (assignee && isString(assignee)) {
           fields.assignee = { name: assignee };
         }
 
-        if (labels && Array.isArray(labels)) {
+        if (labels && isArray(labels)) {
           fields.labels = labels;
         }
 
@@ -199,7 +226,10 @@ export const writeTools: WriteToolHandler[] = [
       required: ['issueKey', 'comment'],
     },
     handler: async (context, params) => {
-      const p = params as Record<string, unknown>;
+      if (!isRecord(params)) {
+        return toolError('Invalid parameters');
+      }
+      const p = params;
       const { issueKey, comment } = p;
 
       if (!issueKey || !comment) {
@@ -207,13 +237,14 @@ export const writeTools: WriteToolHandler[] = [
       }
 
       try {
+        const commentStr = isString(comment) ? comment : String(comment);
         await jiraFetch(
           `${context.siteUrl}/rest/api/3/issue/${issueKey}/comments`,
           context.accessToken,
           {
             method: 'POST',
             body: JSON.stringify({
-              body: { content: [{ content: [{ text: comment }], type: 'paragraph' }], type: 'doc', version: 1 },
+              body: { content: [{ content: [{ text: commentStr }], type: 'paragraph' }], type: 'doc', version: 1 },
             }),
           },
         );
@@ -247,7 +278,10 @@ export const writeTools: WriteToolHandler[] = [
       required: ['issueKey', 'transitionName'],
     },
     handler: async (context, params) => {
-      const p = params as Record<string, unknown>;
+      if (!isRecord(params)) {
+        return toolError('Invalid parameters');
+      }
+      const p = params;
       const { issueKey, transitionName, comment } = p;
 
       if (!issueKey || !transitionName) {
@@ -260,25 +294,40 @@ export const writeTools: WriteToolHandler[] = [
           `${context.siteUrl}/rest/api/3/issue/${issueKey}/transitions`,
           context.accessToken,
         );
-        const transData = (await transResponse.json()) as Record<string, unknown>;
+        const transData = await transResponse.json();
+        if (!isRecord(transData)) {
+          return toolError('Invalid response from transitions API');
+        }
 
         // Find the matching transition
-        const transition = transData.transitions?.find(
-          (t: Record<string, unknown>) => t.name.toLowerCase() === transitionName.toLowerCase(),
-        );
+        const transitionNameStr = isString(transitionName) ? transitionName : String(transitionName);
+        const transitions = isArray(transData.transitions) ? transData.transitions : [];
+        const transition = transitions.find((t: unknown) => {
+          if (!isRecord(t)) {
+            return false;
+          }
+          return isString(t.name) && t.name.toLowerCase() === transitionNameStr.toLowerCase();
+        });
 
         if (!transition) {
+          const availableNames = transitions
+            .map((t: unknown) => (isRecord(t) && isString(t.name) ? t.name : null))
+            .filter((name): name is string => name !== null)
+            .join(', ');
           return toolError(
-            `Transition "${transitionName}" not found. Available: ${transData.transitions?.map((t: Record<string, unknown>) => t.name).join(', ') || 'none'}`,
+            `Transition "${transitionNameStr}" not found. Available: ${availableNames || 'none'}`,
           );
         }
 
         // Execute the transition
+        if (!isRecord(transition)) {
+          return toolError('Invalid transition object');
+        }
         const body: Record<string, unknown> = {
           transition: { id: transition.id },
         };
 
-        if (comment) {
+        if (comment && isString(comment)) {
           body.update = {
             comment: [
               {
@@ -328,7 +377,10 @@ export const writeTools: WriteToolHandler[] = [
       required: ['issueKey', 'timeSpent'],
     },
     handler: async (context, params) => {
-      const p = params as Record<string, unknown>;
+      if (!isRecord(params)) {
+        return toolError('Invalid parameters');
+      }
+      const p = params;
       const { issueKey, timeSpent, comment } = p;
 
       if (!issueKey || !timeSpent) {
@@ -336,11 +388,12 @@ export const writeTools: WriteToolHandler[] = [
       }
 
       try {
+        const timeSpentStr = isString(timeSpent) ? timeSpent : String(timeSpent);
         const body: Record<string, unknown> = {
-          timeSpent,
+          timeSpent: timeSpentStr,
         };
 
-        if (comment) {
+        if (comment && isString(comment)) {
           body.comment = {
             content: [{ content: [{ text: comment }], type: 'paragraph' }],
             type: 'doc',
