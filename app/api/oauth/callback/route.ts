@@ -15,7 +15,9 @@ interface JiraTokenResponse {
 
 interface JiraUserInfo {
   account_id: string;
-  display_name: string;
+  displayName?: string;
+  display_name?: string;
+  name?: string;
 }
 
 function isJiraTokenResponse(data: unknown): data is JiraTokenResponse {
@@ -33,7 +35,7 @@ function isJiraUserInfo(data: unknown): data is JiraUserInfo {
   if (typeof data !== 'object' || data === null) return false;
 
   const obj = data as Record<string, unknown>;
-  return typeof obj.account_id === 'string' && typeof obj.display_name === 'string';
+  return typeof obj.account_id === 'string';
 }
 
 function isResourceArray(data: unknown): data is Array<{ id: string; url: string; name: string }> {
@@ -167,11 +169,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json(
         {
           error: 'Invalid user info response format',
-          details: `Expected account_id and display_name, got: ${JSON.stringify(userInfo)}`,
+          details: `Expected account_id, got: ${JSON.stringify(userInfo)}`,
         },
         { status: 400 }
       );
     }
+
+    // Extract display name from any of several possible field names
+    const displayName =
+      (userInfo as JiraUserInfo).displayName ||
+      (userInfo as JiraUserInfo).display_name ||
+      (userInfo as JiraUserInfo).name ||
+      userInfo.account_id;
 
     logger.info('[OAuth] Fetching accessible resources', { tenantId: tenant.id });
     // Get accessible resources (cloud IDs) to find the site
@@ -212,7 +221,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       atlassianClientId: config.ATLASSIAN_CLIENT_ID,
       cloudId: resource.id,
       siteUrl: resource.url,
-      displayName: userInfo.display_name || userInfo.account_id,
+      displayName,
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token || '',
       expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
