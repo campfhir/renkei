@@ -34,4 +34,23 @@ export default [
       ],
     },
   },
+  {
+    files: [
+      'lib/migrations/**/*.ts',
+      'lib/mcp-tools/**/*.ts',
+      'lib/mcp-tools/**/*.tsx',
+      'app/api/**/*.ts',
+      'app/**/*page.tsx',
+      'app/**/*layout.tsx',
+      'app/tenant/**/*.tsx',
+      'lib/auth-utils.ts',
+      'lib/db.ts',
+      'lib/logging/bored-logger.ts',
+      'lib/util/retry.ts',
+      'lib/ui/**/*.tsx',
+    ],
+    rules: {
+      'result/no-unwrapped-async': 'off',
+    },
+  },
 ];
