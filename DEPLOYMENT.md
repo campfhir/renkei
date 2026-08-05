@@ -51,129 +51,47 @@ psql jira_mcp_db -c "ALTER USER jira_mcp WITH PASSWORD '<secure-password>';"
 
 ### Run Migrations
 
-The system uses Kysely ORM. Create required tables:
+Migrations are Kysely migrations under `lib/migrations`, applied in order and
+recorded in the `kysely_migration` table. Never create these tables by hand:
+the schema has changed several times — columns renamed, values re-encoded — and
+a hand-built schema is not recorded in the ledger, so the migrations that would
+bring it forward either re-run against tables that already exist or are skipped
+on a table that is missing a column the code expects.
 
-```sql
--- Tenants and OIDC
-CREATE TABLE tenants (
-  id UUID PRIMARY KEY,
-  slug VARCHAR(255) NOT NULL UNIQUE,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
+From a checkout:
 
-CREATE TABLE tenant_oidc (
-  id UUID PRIMARY KEY,
-  tenant_id UUID NOT NULL REFERENCES tenants(id),
-  issuer VARCHAR(255) NOT NULL,
-  client_id VARCHAR(255) NOT NULL,
-  client_secret VARCHAR(255) NOT NULL,
-  authorization_endpoint VARCHAR(255) NOT NULL,
-  token_endpoint VARCHAR(255) NOT NULL,
-  jwks_uri VARCHAR(255) NOT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  UNIQUE(tenant_id)
-);
-
--- Jira Sites
-CREATE TABLE tenant_jira_sites (
-  site_id UUID PRIMARY KEY,
-  tenant_id UUID NOT NULL REFERENCES tenants(id),
-  cloud_id VARCHAR(255) NOT NULL,
-  jira_url VARCHAR(255) NOT NULL,
-  enabled BOOLEAN NOT NULL DEFAULT TRUE,
-  claimed_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
--- Provider Grants (OAuth credentials held on a user's behalf)
---
--- One row per (tenant, provider, provider account). `provider` is the
--- credential's issuer -- 'atlassian', 'microsoft' -- not the product: Jira and
--- Confluence share one Atlassian grant, as SharePoint and Outlook share one
--- Microsoft Graph grant. The product a caller asks for lives on the issued MCP
--- token (oauth_access_tokens.application) instead.
---
--- Provider-specific coordinates go in `metadata` rather than becoming columns,
--- since Atlassian needs {cloudId, siteUrl} and Microsoft needs {tenantId, upn}.
-CREATE TABLE provider_grants (
-  tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  provider VARCHAR(50) NOT NULL,
-  provider_account_id VARCHAR(255) NOT NULL,
-  -- Which signed-in user owns this grant. Nullable only to carry across rows
-  -- predating per-user ownership; NULL must be treated as unusable, never
-  -- matched to a caller.
-  subject VARCHAR(255),
-  client_id VARCHAR(255) NOT NULL,
-  display_name VARCHAR(255) NOT NULL,
-  encrypted_access_token TEXT NOT NULL,
-  encrypted_refresh_token TEXT NOT NULL,
-  expires_at TIMESTAMP NOT NULL,
-  scopes TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
-  metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (tenant_id, provider, provider_account_id)
-);
-
--- Operator Sessions
-CREATE TABLE operator_sessions (
-  session_id UUID PRIMARY KEY,
-  tenant_id UUID NOT NULL REFERENCES tenants(id),
-  subject VARCHAR(255) NOT NULL,
-  operator_name VARCHAR(255) NOT NULL,
-  issued_at TIMESTAMP NOT NULL,
-  expires_at TIMESTAMP NOT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
--- Pending OIDC Sign-ins (CSRF Protection)
-CREATE TABLE pending_oidc_signin (
-  id UUID PRIMARY KEY,
-  tenant_id UUID NOT NULL REFERENCES tenants(id),
-  state VARCHAR(255) NOT NULL UNIQUE,
-  nonce VARCHAR(255) NOT NULL,
-  expires_at TIMESTAMP NOT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
--- Logs
-CREATE TABLE logs (
-  log_id UUID PRIMARY KEY,
-  tenant_id UUID,
-  message TEXT NOT NULL,
-  level VARCHAR(50),
-  logged_timestamp TIMESTAMP NOT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE log_attributes (
-  id UUID PRIMARY KEY,
-  log_id UUID NOT NULL REFERENCES logs(log_id),
-  key VARCHAR(255) NOT NULL,
-  value VARCHAR(255)
-);
-
--- Audit Log
-CREATE TABLE platform_audit_log (
-  id UUID PRIMARY KEY,
-  event_type VARCHAR(255) NOT NULL,
-  actor_id VARCHAR(255),
-  resource_id VARCHAR(255),
-  details JSONB,
-  created_at TIMESTAMP NOT NULL DEFAULT NOW()
-);
-
--- Create Indexes
-CREATE INDEX idx_tenant_jira_sites_cloud_id ON tenant_jira_sites(cloud_id);
-CREATE INDEX idx_provider_grants_tenant_subject_provider
-  ON provider_grants(tenant_id, subject, provider);
-CREATE INDEX idx_provider_grants_expires_at ON provider_grants(expires_at);
-CREATE INDEX idx_provider_grants_cloud_id
-  ON provider_grants((metadata->>'cloudId')) WHERE provider = 'atlassian';
-CREATE INDEX idx_operator_sessions_expires_at ON operator_sessions(expires_at);
-CREATE INDEX idx_pending_signin_state ON pending_oidc_signin(state);
-CREATE INDEX idx_logs_level ON logs(level);
-CREATE INDEX idx_logs_timestamp ON logs(logged_timestamp);
+```bash
+pnpm tsx scripts/migrate.ts
 ```
+
+From the published images, on a target machine:
+
+```bash
+docker compose -f docker-compose.yaml run --rm migrate
+```
+
+Run this **before** starting the gateway on every upgrade. The migrate service is
+deliberately kept out of `docker compose up`, so starting the app never applies
+migrations as a side effect — which means nothing applies them for you.
+
+The app reports the mismatch rather than assuming it away. On startup it logs
+every pending migration at error level, and `GET /api/health` answers 503 with
+their names while any are outstanding:
+
+```json
+{
+  "status": "degraded",
+  "reason": "database schema is behind this build",
+  "pendingMigrations": ["012-hash-client-secrets"],
+  "action": "docker compose -f docker-compose.yaml run --rm migrate"
+}
+```
+
+That is worth gating a deploy on. Skipping the step otherwise surfaces much
+later and much further from the cause — a build expecting
+`oauth_clients.client_secret_hash` against a database that still has
+`client_secret` fails every MCP client registration with a 500, and the reason
+appears only as a Postgres `42703 undefined_column` in the container log.
 
 ## Building for Production
 

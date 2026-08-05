@@ -30,5 +30,43 @@ export async function register() {
     logger.info('[instrumentation] PostgresAdapter registered', {
       level: process.env.LOG_DB_LEVEL ?? 'info',
     });
+
+    await reportSchemaDrift();
   }
+}
+
+/**
+ * Say loudly, once, at startup if the schema is behind the code.
+ *
+ * Migrations are a separate deliberate step, so this only reports: an operator
+ * who pulled new images and skipped it otherwise finds out when an MCP client
+ * fails to register, several layers away from the cause.
+ */
+async function reportSchemaDrift(): Promise<void> {
+  const { getMigrationStatus, MIGRATION_COMMAND } = await import('@/lib/migrations/status');
+  const status = await getMigrationStatus();
+
+  if (status.error) {
+    logger.error('[instrumentation] Could not check migration status: {error}', {
+      error: status.error,
+    });
+    return;
+  }
+
+  if (status.pending.length === 0) {
+    logger.info('[instrumentation] Schema up to date', { applied: status.applied });
+    return;
+  }
+
+  logger.error(
+    '[instrumentation] DATABASE SCHEMA IS BEHIND THIS BUILD — {count} migration(s) pending',
+    {
+      count: status.pending.length,
+      pending: status.pending.join(', '),
+      applied: status.applied,
+      action: MIGRATION_COMMAND,
+      consequence:
+        'Requests touching the new schema will fail until this is run. /api/health reports 503.',
+    }
+  );
 }
