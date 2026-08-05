@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { jiraFetch, issueUrl, cacheUserDisplayName, getCachedDisplayName } from '../common';
+import { STANDARD_ISSUE_FIELDS, normalizeFieldId, renderFieldValue } from './fields';
 import { logger } from '@/lib/logger';
 
 // Type guard functions
@@ -24,6 +25,53 @@ function isString(value: unknown): value is string {
 
 function isNumber(value: unknown): value is number {
   return typeof value === 'number';
+}
+
+/** A single field's value is capped so one long field cannot crowd out the rest. */
+const MAX_FIELD_VALUE_CHARS = 1500;
+
+/**
+ * Format the fields a caller asked for as `Name (id): value` lines.
+ *
+ * The id is kept alongside the name because it is what a follow-up JQL filter
+ * needs, and because two custom fields are allowed to share a display name.
+ */
+function renderExtraFields(
+  fields: Record<string, unknown>,
+  names: unknown,
+  requestedFields: string[],
+  wantEveryField: boolean
+): string[] {
+  if (requestedFields.length === 0) return [];
+
+  const fieldNames = isRecord(names) ? names : {};
+  const label = (id: string) => (isString(fieldNames[id]) ? fieldNames[id] : id);
+
+  const ids = wantEveryField
+    ? Object.keys(fields)
+        .filter((id) => !STANDARD_ISSUE_FIELDS.includes(id))
+        .filter((id) => renderFieldValue(fields[id]) !== '')
+        .sort((a, b) => label(a).localeCompare(label(b)))
+    : requestedFields.filter((id) => id !== '*all');
+
+  return ids.map((id) => {
+    // Distinguish "Jira has no such field" from "the field is empty here": the
+    // first means the caller should check the id, the second is an answer.
+    if (!(id in fields)) {
+      return `${label(id)} (${id}): not present on this issue`;
+    }
+
+    const value = renderFieldValue(fields[id]);
+    if (!value) return `${label(id)} (${id}): (empty)`;
+
+    const capped =
+      value.length > MAX_FIELD_VALUE_CHARS
+        ? `${value.slice(0, MAX_FIELD_VALUE_CHARS)}… (truncated)`
+        : value;
+
+    // Indent wrapped lines so a multi-line value stays visibly one field.
+    return `${label(id)} (${id}): ${capped.replace(/\n/g, '\n  ')}`;
+  });
 }
 
 export async function registerReadTools(server: McpServer, context: MCPToolContext): Promise<void> {
@@ -219,10 +267,22 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     'get_issue',
     {
       title: 'Read a Jira issue',
-      description: 'Get detailed information about a specific Jira issue.',
+      description:
+        'Get detailed information about a specific Jira issue. Pass `fields` to include ' +
+        'custom fields — their values are printed, not just matched, so this reads back ' +
+        'what a JQL filter on the same field found.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+        fields: z
+          .array(z.string())
+          .describe(
+            'Extra fields to include beyond the standard set. Accepts field ids ' +
+              '("customfield_12013"), bare custom field numbers ("12013"), the JQL ' +
+              'spelling ("cf[12013]"), or system field names ("labels", "components"). ' +
+              'Pass ["*all"] to list every field that has a value on the issue.'
+          )
+          .optional(),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -242,8 +302,27 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           };
         }
 
+        const requestedFields = (isArray(args.fields) ? args.fields.filter(isString) : []).map(
+          normalizeFieldId
+        );
+        const wantEveryField = requestedFields.includes('*all');
+
+        // Naming any field restricts the response to that list, so the standard
+        // set has to be asked for alongside it. `expand=names` carries the
+        // human-readable field names in the same round trip, which is what
+        // turns `customfield_12013` into "Decision of Change Request".
+        const query = new URLSearchParams();
+        if (wantEveryField) {
+          query.set('fields', '*all');
+        } else if (requestedFields.length > 0) {
+          query.set('fields', [...STANDARD_ISSUE_FIELDS, ...requestedFields].join(','));
+        }
+        if (requestedFields.length > 0) query.set('expand', 'names');
+
+        const queryString = query.toString();
         const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}`,
+          `${context.apiBaseUrl}/rest/api/3/issue/${encodeURIComponent(String(issueKey))}` +
+            (queryString ? `?${queryString}` : ''),
           context.accessToken
         );
 
@@ -271,8 +350,17 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           `Updated: ${fields.updated}`,
         ];
 
-        if (fields.description) {
-          lines.push(`\nDescription:\n${fields.description}`);
+        const extras = renderExtraFields(fields, issue.names, requestedFields, wantEveryField);
+        if (extras.length > 0) {
+          lines.push('', 'Fields:', ...extras);
+        }
+
+        // The description is ADF, so it needs the same flattening as any other
+        // rich-text field — printing the node tree is where [object Object] came
+        // from.
+        const description = renderFieldValue(fields.description);
+        if (description) {
+          lines.push(`\nDescription:\n${description}`);
         }
 
         const resolvedIssueKey = isString(issue.key) ? issue.key : String(issue.key);

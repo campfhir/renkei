@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { jiraFetch, issueUrl, getCachedDisplayName } from '../common';
+import { markdownToAdf } from './markdown';
 import { logger } from '@/lib/logger';
 
 // Type guard functions
@@ -72,11 +73,7 @@ export async function registerWriteTools(
         };
 
         if (description && isString(description)) {
-          fields.description = {
-            content: [{ content: [{ text: description }], type: 'paragraph' }],
-            type: 'doc',
-            version: 1,
-          };
+          fields.description = markdownToAdf(description);
         }
 
         if (priority && isString(priority)) {
@@ -160,11 +157,7 @@ export async function registerWriteTools(
         }
 
         if (description && isString(description)) {
-          fields.description = {
-            content: [{ content: [{ text: description }], type: 'paragraph' }],
-            type: 'doc',
-            version: 1,
-          };
+          fields.description = markdownToAdf(description);
         }
 
         if (priority && isString(priority)) {
@@ -232,11 +225,7 @@ export async function registerWriteTools(
           {
             method: 'POST',
             body: JSON.stringify({
-              body: {
-                content: [{ content: [{ text: commentStr }], type: 'paragraph' }],
-                type: 'doc',
-                version: 1,
-              },
+              body: markdownToAdf(commentStr),
             }),
           }
         );
@@ -340,11 +329,7 @@ export async function registerWriteTools(
             comment: [
               {
                 add: {
-                  body: {
-                    content: [{ content: [{ text: comment }], type: 'paragraph' }],
-                    type: 'doc',
-                    version: 1,
-                  },
+                  body: markdownToAdf(comment),
                 },
               },
             ],
@@ -408,11 +393,7 @@ export async function registerWriteTools(
         };
 
         if (comment && isString(comment)) {
-          body.comment = {
-            content: [{ content: [{ text: comment }], type: 'paragraph' }],
-            type: 'doc',
-            version: 1,
-          };
+          body.comment = markdownToAdf(comment);
         }
 
         await jiraFetch(
