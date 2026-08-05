@@ -5,6 +5,7 @@ import { randomUUID, createHash } from 'crypto';
 import type { Kysely } from 'kysely';
 import type { DB } from '@/lib/db.types';
 import { generateSecret, hashToken, digestsMatch } from '@/lib/mcp-token';
+import { readClientCredentials, type ClientCredentials } from '@/lib/oauth-client-auth';
 import { logger } from '@/lib/logger';
 
 /**
@@ -52,12 +53,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
+    // Accepted from the Authorization header as well as the body: the
+    // registration response tells clients to use client_secret_basic.
+    const credentials = readClientCredentials(request.headers.get('authorization'), params);
+
     const grantType = params.grant_type;
 
     if (grantType === 'authorization_code') {
-      return handleAuthorizationCodeGrant(params, db, config);
+      return handleAuthorizationCodeGrant(params, credentials, db, config);
     } else if (grantType === 'refresh_token') {
-      return handleRefreshTokenGrant(params, db, config);
+      return handleRefreshTokenGrant(params, credentials, db, config);
     } else {
       return NextResponse.json(
         {
@@ -78,18 +83,30 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
 async function handleAuthorizationCodeGrant(
   params: Record<string, string>,
+  credentials: ClientCredentials | null,
   db: Kysely<DB>,
   config: Env
 ): Promise<NextResponse> {
-  const { code, client_id, client_secret, redirect_uri, code_verifier } = params;
+  const { code, redirect_uri, code_verifier } = params;
+
+  if (!credentials) {
+    return NextResponse.json(
+      {
+        error: 'invalid_client',
+        error_description:
+          'Client authentication required: send an Authorization: Basic header, or client_id and client_secret in the body',
+      },
+      { status: 401 }
+    );
+  }
+  const { clientId: client_id, clientSecret: client_secret } = credentials;
 
   // Validate required parameters
-  if (!code || !client_id || !client_secret || !redirect_uri) {
+  if (!code || !redirect_uri) {
     return NextResponse.json(
       {
         error: 'invalid_request',
-        error_description:
-          'Missing required parameters: code, client_id, client_secret, redirect_uri',
+        error_description: 'Missing required parameters: code, redirect_uri',
       },
       { status: 400 }
     );
@@ -212,14 +229,27 @@ async function handleAuthorizationCodeGrant(
 
 async function handleRefreshTokenGrant(
   params: Record<string, string>,
+  credentials: ClientCredentials | null,
   db: Kysely<DB>,
   config: Env
 ): Promise<NextResponse> {
-  const { refresh_token, client_id, client_secret } = params;
+  const { refresh_token } = params;
 
-  if (!refresh_token || !client_id || !client_secret) {
+  if (!credentials) {
     return NextResponse.json(
-      { error: 'invalid_request', error_description: 'Missing required parameters' },
+      {
+        error: 'invalid_client',
+        error_description:
+          'Client authentication required: send an Authorization: Basic header, or client_id and client_secret in the body',
+      },
+      { status: 401 }
+    );
+  }
+  const { clientId: client_id, clientSecret: client_secret } = credentials;
+
+  if (!refresh_token) {
+    return NextResponse.json(
+      { error: 'invalid_request', error_description: 'Missing required parameter: refresh_token' },
       { status: 400 }
     );
   }

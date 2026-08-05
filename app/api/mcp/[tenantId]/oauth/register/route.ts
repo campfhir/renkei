@@ -3,6 +3,7 @@ import { getConfig, isDcrEnabled } from '@/lib/env';
 import { getDatabase } from '@/lib/db';
 import { randomUUID } from 'crypto';
 import { generateSecret } from '@/lib/mcp-token';
+import { SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS } from '@/lib/oauth-client-auth';
 
 /**
  * Tenant-scoped Dynamic Client Registration endpoint (RFC 7591)
@@ -60,6 +61,17 @@ export async function POST(
 
     const { client_name, redirect_uris, response_types, grant_types } = body;
 
+    // Echo back the method the client asked for when it is one we accept,
+    // rather than always answering client_secret_basic. Both are supported at
+    // the token endpoint, and telling a client to use something other than what
+    // it requested is a needless way to break the exchange.
+    const requestedAuthMethod: unknown = body.token_endpoint_auth_method;
+    const tokenEndpointAuthMethod = SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS.some(
+      (method) => method === requestedAuthMethod
+    )
+      ? requestedAuthMethod
+      : 'client_secret_basic';
+
     // Validate required fields
     if (!redirect_uris || !Array.isArray(redirect_uris) || redirect_uris.length === 0) {
       return NextResponse.json(
@@ -112,7 +124,7 @@ export async function POST(
       redirect_uris,
       response_types: response_types || ['code'],
       grant_types: grant_types || ['authorization_code', 'refresh_token'],
-      token_endpoint_auth_method: 'client_secret_basic',
+      token_endpoint_auth_method: tokenEndpointAuthMethod,
       client_id_issued_at: Math.floor(Date.now() / 1000),
     };
 
