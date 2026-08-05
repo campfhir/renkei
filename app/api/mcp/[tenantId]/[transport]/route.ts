@@ -1,11 +1,8 @@
 /**
- * MCP endpoint using mcp-handler for proper edge case handling.
+ * MCP endpoint using mcp-handler.
  *
- * Uses the battle-tested mcp-handler package which handles:
- * - HTTP/SSE transport protocol
- * - Connection lifecycle management
- * - Error recovery
- * - Message framing and validation
+ * Handles HTTP POST requests with JSON-RPC 2.0 messages.
+ * Stateless: one server per request, discarded when complete.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -84,48 +81,40 @@ const handler = async (
       });
     }
 
-    // Use mcp-handler to manage HTTP/SSE protocol
     try {
       const mcpHandler = createMcpHandler(async () => {
-        try {
-          const server = new McpServer(
-            { name: 'Jira Renkei MCP', version: '1.0.0' },
-            { instructions: 'Jira work item management via MCP' }
-          );
+        const server = new McpServer(
+          { name: 'Jira Renkei MCP', version: '1.0.0' },
+          { instructions: 'Jira work item management via MCP' }
+        );
 
-          logger.info('[MCP] Server created', { tenantId });
+        logger.info('[MCP] Server created', { tenantId });
 
-          const context: MCPToolContext = {
-            tenantId,
-            accountId,
-            siteUrl: grant.siteUrl,
-            accessToken: grant.accessToken,
-            maxJqlResults: 100,
-            db,
-            config,
-          };
+        const context: MCPToolContext = {
+          tenantId,
+          accountId,
+          siteUrl: grant.siteUrl,
+          accessToken: grant.accessToken,
+          maxJqlResults: 100,
+          db,
+          config,
+        };
 
-          // Register all tools
-          await registerAllTools(server, context);
+        // Register all tools
+        await registerAllTools(server, context);
 
-          logger.info('[MCP] All tools registered', {
-            tenantId,
-          });
+        logger.info('[MCP] All tools registered', {
+          tenantId,
+        });
 
-          return server;
-        } catch (serverError) {
-          logger.error('[MCP Server Setup Error] {error}', {
-            error: serverError instanceof Error ? serverError.message : String(serverError),
-          });
-          throw serverError;
-        }
+        return server;
       });
 
-      // mcp-handler handles HTTP/SSE protocol negotiation and connection lifecycle
       return mcpHandler(request);
     } catch (error) {
-      logger.error('[MCP Handler Setup Error] {error}', {
+      logger.error('[MCP Handler Error] {error}', {
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
       return new Response(
         JSON.stringify({
