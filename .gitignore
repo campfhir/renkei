@@ -32,6 +32,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but the templates are the point: they hold no values, and they are how the
+# next person learns which variables exist. The blanket rule above had them
+# ignored, so the repository documented none of its configuration.
+!.env.example
+!.env*.example
 
 # vercel
 .vercel
