@@ -31,6 +31,15 @@ const STORY_POINTS = {
   clauseNames: ['cf[10016]', 'Story Points'],
 };
 
+/** A multi-line text custom field, exactly as Jira describes one. */
+const BACKOUT_PLAN = {
+  id: 'customfield_10085',
+  name: 'Backout Plan',
+  custom: true,
+  schema: { type: 'string', custom: 'com.atlassian.jira.plugin.system.customfieldtypes:textarea' },
+  clauseNames: ['cf[10085]', 'Backout Plan'],
+};
+
 const DECISION = {
   id: 'customfield_12013',
   name: 'Decision of Change Request',
@@ -476,5 +485,56 @@ describe('create_issue', () => {
 
     expect(result.isError).toBe(true);
     expect(postBodies('/issue')).toHaveLength(0);
+  });
+});
+
+describe('rich-text custom fields', () => {
+  it('writes an Atlassian Document, not the string Jira refuses', async () => {
+    serve([BACKOUT_PLAN]);
+    const update = await updateIssue();
+
+    await update({
+      issueKey: 'CHG-20',
+      fields: { 'Backout Plan': 'Restore the snapshot, then re-run migrations.' },
+    });
+
+    const written = putFields()?.customfield_10085;
+    expect(written).toMatchObject({ type: 'doc', version: 1 });
+    expect(JSON.stringify(written)).toContain('Restore the snapshot');
+  });
+
+  it('accepts a node copied from another issue', async () => {
+    serve([BACKOUT_PLAN]);
+    const update = await updateIssue();
+
+    await update({
+      issueKey: 'CHG-20',
+      fields: {
+        'Backout Plan': { type: 'paragraph', content: [{ type: 'text', text: 'Copied plan' }] },
+      },
+    });
+
+    expect(putFields()?.customfield_10085).toMatchObject({ type: 'doc' });
+    expect(JSON.stringify(putFields())).toContain('Copied plan');
+    expect(JSON.stringify(putFields())).not.toContain('[object Object]');
+  });
+
+  it('records the text, not [object Object], when the field is refused', async () => {
+    // The reported failure: six rich-text fields refused, and the comment meant
+    // to preserve their values recorded "[object Object]" for every one.
+    serve([BACKOUT_PLAN], { refuse: ['customfield_10085'] });
+    const update = await updateIssue();
+
+    const result = await update({
+      issueKey: 'CHG-20',
+      summary: 'keeps going',
+      fields: { 'Backout Plan': 'Restore the snapshot, then re-run migrations.' },
+    });
+
+    const comment = commentText();
+    expect(comment).toContain('Restore the snapshot');
+    expect(comment).not.toContain('[object Object]');
+    expect(result.content[0].text).toContain('Restore the snapshot');
+    expect(result.content[0].text).not.toContain('[object Object]');
   });
 });

@@ -19,7 +19,9 @@
 import { jiraFetch } from '../common';
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
-import { normalizeFieldId } from './fields';
+import { adfToMarkdown } from './adf';
+import { normalizeFieldId, renderFieldValue } from './fields';
+import { markdownToAdf } from './markdown';
 
 export interface JiraField {
   /** `summary`, `customfield_10016`. What the REST payload is keyed by. */
@@ -31,6 +33,15 @@ export interface JiraField {
   type: string;
   /** `schema.items` for an array field — the type of one member. */
   itemType?: string | undefined;
+  /**
+   * `schema.custom`, the plugin key of a custom field.
+   *
+   * Needed because `type` alone does not say whether a field takes rich text.
+   * Jira reports a multi-line text custom field as `type: "string"` while its
+   * write API requires an Atlassian Document, so the plugin key is the only
+   * thing that distinguishes it from a field that really does take a string.
+   */
+  customType?: string | undefined;
   /** The JQL spellings, which include `cf[10016]`. */
   clauseNames: string[];
 }
@@ -80,6 +91,7 @@ function parseField(raw: unknown): JiraField | null {
     custom: raw.custom === true,
     type: typeof schema.type === 'string' ? schema.type : 'any',
     itemType: typeof schema.items === 'string' ? schema.items : undefined,
+    customType: typeof schema.custom === 'string' ? schema.custom : undefined,
     clauseNames: Array.isArray(raw.clauseNames)
       ? raw.clauseNames.filter((name): name is string => typeof name === 'string')
       : [],
@@ -173,7 +185,65 @@ function ambiguous(reference: string, candidates: readonly JiraField[]): string 
   return `"${reference}" matches more than one field: ${named}. Use the field id.`;
 }
 
+/**
+ * Custom field types whose values are Atlassian Documents.
+ *
+ * `textarea` is the multi-line text field, which Jira describes as
+ * `type: "string"` and then refuses to accept a string for: "Operation value
+ * must be an Atlassian Document". Treating those two facts as one is what this
+ * list is for.
+ */
+const RICH_TEXT_CUSTOM_TYPES = [':textarea'];
+
+/** Does this field hold an Atlassian Document, whatever its `type` claims? */
+export function isRichTextField(field: JiraField): boolean {
+  if (field.type === 'doc') return true;
+  const custom = field.customType ?? '';
+  return RICH_TEXT_CUSTOM_TYPES.some((suffix) => custom.endsWith(suffix));
+}
+
 export type Coercion = { ok: true; value: unknown } | { ok: false; message: string };
+
+/** True for something already shaped as an Atlassian Document. */
+function isAdfDocument(value: unknown): boolean {
+  return isRecord(value) && value.type === 'doc' && Array.isArray(value.content);
+}
+
+/**
+ * Turn whatever arrived into an Atlassian Document.
+ *
+ * A string is read as markdown, which is what the write tools accept
+ * everywhere else. A document passes through. An ADF fragment — a bare
+ * paragraph, or a node copied out of another issue — is flattened and rebuilt
+ * so the result is a whole document rather than something Jira half-accepts.
+ */
+function richTextValue(value: unknown): Coercion {
+  if (isAdfDocument(value)) return { ok: true, value };
+  if (typeof value === 'string') return { ok: true, value: markdownToAdf(value) };
+
+  if (isRecord(value)) {
+    // renderFieldValue handles ADF nodes, option objects and users alike, so a
+    // value copied from a read of another issue keeps its text either way.
+    const text = renderFieldValue(value) || adfToMarkdown(value);
+    if (text) return { ok: true, value: markdownToAdf(text) };
+  }
+
+  if (value === undefined) return { ok: true, value: null };
+  return { ok: true, value: markdownToAdf(String(value)) };
+}
+
+/**
+ * A string for a field that genuinely wants one.
+ *
+ * Never `String(value)` on an object: that is where "[object Object]" came
+ * from, and it reached Jira as the field's new contents.
+ */
+function plainStringValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (isRecord(value) || Array.isArray(value))
+    return renderFieldValue(value) || JSON.stringify(value);
+  return String(value);
+}
 
 /**
  * Put a plain value into the shape the field's schema type requires.
@@ -187,6 +257,10 @@ export function coerceFieldValue(field: JiraField, value: unknown): Coercion {
   // Clearing a field is a legitimate update, and null is how Jira spells it.
   if (value === null) return { ok: true, value: null };
 
+  // Before the switch: a rich-text field reports `type: "string"`, so matching
+  // on type alone sends a string to a field that only accepts a document.
+  if (isRichTextField(field)) return richTextValue(value);
+
   switch (field.type) {
     case 'number': {
       const asNumber = typeof value === 'number' ? value : Number(String(value).trim());
@@ -197,7 +271,7 @@ export function coerceFieldValue(field: JiraField, value: unknown): Coercion {
     }
 
     case 'string':
-      return { ok: true, value: typeof value === 'string' ? value : String(value) };
+      return { ok: true, value: plainStringValue(value) };
 
     case 'option':
       return isRecord(value) ? { ok: true, value } : { ok: true, value: { value: String(value) } };
@@ -255,7 +329,7 @@ function arrayValue(field: JiraField, value: unknown): Coercion {
 
   switch (field.itemType) {
     case 'string':
-      return { ok: true, value: members.map((member) => String(member)) };
+      return { ok: true, value: members.map((member) => plainStringValue(member)) };
     case 'option':
     case 'version':
     case 'component':

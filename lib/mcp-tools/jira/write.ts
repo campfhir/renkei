@@ -14,6 +14,7 @@ import {
   isJiraDuration,
   loadFieldSchema,
 } from './field-schema';
+import { renderFieldValue } from './fields';
 import {
   unwrittenFieldsComment,
   writeWithFieldFallback,
@@ -119,7 +120,11 @@ async function collectExtraFields(
     Object.assign(fields, updates.fields);
     for (const [id, value] of Object.entries(updates.fields)) {
       const applied = updates.applied.find((entry) => entry.includes(id));
-      labels[id] = `${applied ?? id} → ${JSON.stringify(value)}`;
+      // The rendered text, not the JSON. When a write is refused this label is
+      // what the fallback comment carries, and it recorded "[object Object]"
+      // for every rich-text field — losing exactly the value the comment
+      // exists to preserve.
+      labels[id] = `${applied ?? id} → ${preview(value)}`;
     }
     for (const problem of updates.problems) {
       unwritten.push({ label: 'A field that could not be resolved', reason: problem });
@@ -158,6 +163,23 @@ async function recordUnwritten(
     });
     return false;
   }
+}
+
+/** How long a value may run before the reply and the comment truncate it. */
+const PREVIEW_CHARS = 300;
+
+/**
+ * A readable one-line rendering of a value about to be written.
+ *
+ * Goes through the same renderer the read path uses, so an Atlassian Document
+ * shows its text rather than its node tree.
+ */
+function preview(value: unknown): string {
+  const text = renderFieldValue(value)
+    .replace(/\s*\n+\s*/g, ' ')
+    .trim();
+  if (!text) return '(empty)';
+  return text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS)}…` : text;
 }
 
 /** The trailing section of a reply: what was set, and what was not. */

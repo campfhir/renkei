@@ -12,10 +12,12 @@ import {
   coerceFieldValue,
   findStoryPointsField,
   isJiraDuration,
+  isRichTextField,
   loadFieldSchema,
   lookupField,
   type JiraField,
 } from './field-schema';
+import { adfToMarkdown } from './adf';
 
 const field = (over: Partial<JiraField> & Pick<JiraField, 'id' | 'name'>): JiraField => ({
   custom: over.id.startsWith('customfield_'),
@@ -361,5 +363,83 @@ describe('buildFieldUpdates', () => {
     await buildFieldUpdates(context, { 'Brand New Field': 'x' });
 
     expect(jiraFetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('rich text fields', () => {
+  // What Jira reports for a multi-line text custom field: type "string", and a
+  // write API that then refuses a string.
+  const backoutPlan = field({
+    id: 'customfield_10085',
+    name: 'Backout Plan',
+    type: 'string',
+    customType: 'com.atlassian.jira.plugin.system.customfieldtypes:textarea',
+  });
+  const summary = field({ id: 'summary', name: 'Summary', type: 'string' });
+  const docField = field({ id: 'description', name: 'Description', type: 'doc' });
+
+  it('recognises a textarea despite its type saying string', () => {
+    expect(isRichTextField(backoutPlan)).toBe(true);
+    expect(isRichTextField(docField)).toBe(true);
+    expect(isRichTextField(summary)).toBe(false);
+  });
+
+  it('sends an Atlassian Document, not a string', () => {
+    const result = coerceFieldValue(backoutPlan, 'Restore the snapshot, then re-run migrations.');
+
+    expect(result.ok).toBe(true);
+    const value = result.ok ? result.value : null;
+    expect(value).toMatchObject({ type: 'doc', version: 1 });
+    expect(adfToMarkdown(value)).toBe('Restore the snapshot, then re-run migrations.');
+  });
+
+  it('reads the string as markdown, so structure survives', () => {
+    const result = coerceFieldValue(backoutPlan, '## Steps\n\n- stop writes\n- restore');
+    expect(adfToMarkdown(result.ok ? result.value : null)).toBe(
+      '## Steps\n\n- stop writes\n- restore'
+    );
+  });
+
+  it('passes an existing document through untouched', () => {
+    const doc = { type: 'doc', version: 1, content: [] };
+    expect(coerceFieldValue(backoutPlan, doc)).toEqual({ ok: true, value: doc });
+  });
+
+  it('rebuilds a bare ADF fragment into a whole document', () => {
+    // A node copied out of another issue's field, which is how this arose.
+    const fragment = { type: 'paragraph', content: [{ type: 'text', text: 'Copied text' }] };
+    const result = coerceFieldValue(backoutPlan, fragment);
+
+    expect(result.ok && result.value).toMatchObject({ type: 'doc' });
+    expect(adfToMarkdown(result.ok ? result.value : null)).toBe('Copied text');
+  });
+
+  it('never produces [object Object]', () => {
+    // The reported bug: an object reached String(), the field was written with
+    // the literal text "[object Object]", and Jira refused it.
+    for (const value of [
+      { type: 'paragraph', content: [{ type: 'text', text: 'x' }] },
+      { value: 'Approved' },
+      { unrecognised: true },
+      ['a', 'b'],
+    ]) {
+      const rich = coerceFieldValue(backoutPlan, value);
+      const plain = coerceFieldValue(summary, value);
+      expect(JSON.stringify(rich.ok ? rich.value : '')).not.toContain('[object Object]');
+      expect(JSON.stringify(plain.ok ? plain.value : '')).not.toContain('[object Object]');
+    }
+  });
+
+  it('keeps a plain string field a string', () => {
+    expect(coerceFieldValue(summary, 'Just text')).toEqual({ ok: true, value: 'Just text' });
+  });
+
+  it('renders an object into a string field rather than mangling it', () => {
+    const result = coerceFieldValue(summary, { value: 'Approved' });
+    expect(result).toEqual({ ok: true, value: 'Approved' });
+  });
+
+  it('still clears with null', () => {
+    expect(coerceFieldValue(backoutPlan, null)).toEqual({ ok: true, value: null });
   });
 });
