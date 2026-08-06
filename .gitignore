@@ -47,3 +47,8 @@ dist/
 # pnpm content-addressable store. Local cache, never source: it was committed
 # once by accident and cost 74MB across 28k files before being purged.
 .pnpm-store/
+
+# Playwright artifacts. An error-context dump once captured a live Azure AD
+# client secret from a test, which GitHub push protection caught.
+test-results/
+playwright-report/
