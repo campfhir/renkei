@@ -43,6 +43,7 @@ export const EXPECTED_MIGRATIONS = [
   '010-provider-grants',
   '011-hash-refresh-tokens',
   '012-hash-client-secrets',
+  '013-events',
 ];
 
 export interface MigrationStatus {

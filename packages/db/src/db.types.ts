@@ -212,8 +212,24 @@ export interface Tenants {
   slug: string;
 }
 
+export interface Events {
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  id: string;
+  last_error: string | null;
+  locked_at: Timestamp | null;
+  payload: Json;
+  run_after: Generated<Timestamp>;
+  source: string;
+  status: Generated<string>;
+  tenant_id: string;
+  type: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface DB {
   atlassian_refresh_locks: AtlassianRefreshLocks;
+  events: Events;
   jira_sessions: JiraSessions;
   log_attr: LogAttr;
   log_attr_blob: LogAttrBlob;
