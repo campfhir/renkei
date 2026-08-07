@@ -82,7 +82,8 @@ interface ExtraFields {
  */
 async function collectExtraFields(
   context: MCPToolContext,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  options: { projectKey?: string; issueTypeId?: string } = {}
 ): Promise<ExtraFields> {
   const fields: Record<string, unknown> = {};
   const labels: Record<string, string> = {};
@@ -116,7 +117,7 @@ async function collectExtraFields(
   }
 
   if (isRecord(args.fields)) {
-    const updates = await buildFieldUpdates(context, args.fields);
+    const updates = await buildFieldUpdates(context, args.fields, options);
     Object.assign(fields, updates.fields);
     for (const [id, value] of Object.entries(updates.fields)) {
       const applied = updates.applied.find((entry) => entry.includes(id));
@@ -255,7 +256,10 @@ export async function registerWriteTools(
         const issueTypeStr = isString(issueType) ? issueType : String(issueType);
         const summaryStr = isString(summary) ? summary : String(summary);
 
-        const extra = await collectExtraFields(context, args);
+        const extra = await collectExtraFields(context, args, {
+          projectKey: projectKeyStr,
+          issueTypeId: issueTypeStr,
+        });
 
         // The issue's identity is what cannot be given up. Everything else,
         // including the built-in optional fields, is droppable if the project
@@ -370,6 +374,9 @@ export async function registerWriteTools(
           };
         }
 
+        // For updates, we don't have the issue type readily available.
+        // The enrichment will use createmeta data if available, but without
+        // issueTypeId the validation will be best-effort.
         const extra = await collectExtraFields(context, args);
 
         // Nothing is mandatory on an update: every field is droppable, so a
@@ -680,6 +687,111 @@ export async function registerWriteTools(
         );
 
         const text = `Logged ${timeSpent} on ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        return { content: [{ type: 'text' as const, text }] };
+      } catch (error) {
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // delete_issue
+  server.registerTool(
+    'delete_issue',
+    {
+      title: 'Delete a Jira issue',
+      description:
+        'Permanently delete a Jira issue. If the issue has subtasks, set deleteSubtasks to true to delete them along with the issue. This action cannot be undone.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+        deleteSubtasks: z
+          .boolean()
+          .describe(
+            'If true, delete the issue and all its subtasks. If false, the issue cannot be deleted if it has subtasks.'
+          )
+          .optional(),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] delete_issue invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
+      try {
+        const { issueKey, deleteSubtasks } = args;
+
+        if (!isString(issueKey)) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey is required' }],
+            isError: true,
+          };
+        }
+
+        let url = `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}`;
+        if (deleteSubtasks === true) {
+          url += '?deleteSubtasks=true';
+        }
+
+        await jiraFetch(url, context.accessToken, {
+          method: 'DELETE',
+        });
+
+        const text = `Issue ${issueKey} has been deleted.`;
+        return { content: [{ type: 'text' as const, text }] };
+      } catch (error) {
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // delete_comment
+  server.registerTool(
+    'delete_comment',
+    {
+      title: 'Delete a comment from a Jira issue',
+      description: 'Permanently delete a comment from a Jira issue.',
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+        commentId: z.string().describe('Comment ID to delete'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('[Tool] delete_comment invoked', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
+      try {
+        const { issueKey, commentId } = args;
+
+        if (!isString(issueKey) || !isString(commentId)) {
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey and commentId are required' }],
+            isError: true,
+          };
+        }
+
+        await jiraFetch(
+          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/comment/${commentId}`,
+          context.accessToken,
+          {
+            method: 'DELETE',
+          }
+        );
+
+        const text = `Comment ${commentId} has been deleted from ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         return {
