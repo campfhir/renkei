@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { getDatabase } from '@renkei/db';
+import { readConnectorConfigCached } from '@renkei/connector-config';
 import {
   ATLASSIAN,
   AtlassianAdapter,
@@ -345,6 +346,21 @@ export async function refreshAtlassianTokenDirect(
     return err('REFRESH_FAILED' as const);
   }
 
-  const adapter = new AtlassianAdapter(process.env.ATLASSIAN_CLIENT_SECRET || '');
+  // The client secret is org connector configuration in the database, like
+  // the rest of the Atlassian app registration.
+  const configResult = await readConnectorConfigCached(
+    tenantId,
+    ATLASSIAN,
+    encryptionKeyResult.val
+  );
+  if (!configResult.ok || !configResult.val?.secrets.clientSecret) {
+    logger.error('[Refresh] Atlassian connector config missing; cannot refresh', {
+      tenantId,
+      accountId,
+    });
+    return err('REFRESH_FAILED' as const);
+  }
+
+  const adapter = new AtlassianAdapter(configResult.val.secrets.clientSecret);
   return refreshGrantTokens(adapter, tenantId, accountId, encryptionKeyResult.val, logger);
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig, type Env } from '@/lib/env';
+import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { getDatabase } from '@renkei/db';
 import { randomUUID, createHash } from 'crypto';
 import type { Kysely } from 'kysely';
@@ -21,11 +21,11 @@ export async function POST(
 ): Promise<NextResponse> {
   const { tenantId } = await params;
 
-  const configResult = getConfig();
-  if (!configResult.ok) {
+  const settingsResult = await getOrgSettings(tenantId);
+  if (!settingsResult.ok) {
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
-  const config = configResult.val;
+  const settings = settingsResult.val;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -75,9 +75,9 @@ export async function POST(
     const grantType = params.grant_type;
 
     if (grantType === 'authorization_code') {
-      return handleAuthorizationCodeGrant(params, credentials, db, config, tenantId);
+      return handleAuthorizationCodeGrant(params, credentials, db, settings, tenantId);
     } else if (grantType === 'refresh_token') {
-      return handleRefreshTokenGrant(params, credentials, db, config, tenantId);
+      return handleRefreshTokenGrant(params, credentials, db, settings, tenantId);
     } else {
       return NextResponse.json(
         {
@@ -97,7 +97,7 @@ async function handleAuthorizationCodeGrant(
   params: Record<string, string>,
   credentials: ClientCredentials | null,
   db: Kysely<DB>,
-  config: Env,
+  settings: OrgSettings,
   tenantId: string
 ): Promise<NextResponse> {
   const { code, redirect_uri, code_verifier } = params;
@@ -226,12 +226,12 @@ async function handleAuthorizationCodeGrant(
     // Generate tokens
     const accessToken = generateSecret(32);
     const refreshToken = generateSecret(32);
-    const tokenExpiresIn = config.ACCESS_TOKEN_TTL_MINUTES * 60;
+    const tokenExpiresIn = settings.accessTokenTtlMinutes * 60;
 
     // Store refresh token
     const refreshTokenId = randomUUID();
     const refreshTokenExpiresAt = new Date(
-      Date.now() + config.REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000
+      Date.now() + settings.refreshTokenTtlDays * 24 * 60 * 60 * 1000
     );
 
     await db
@@ -280,7 +280,7 @@ async function handleRefreshTokenGrant(
   params: Record<string, string>,
   credentials: ClientCredentials | null,
   db: Kysely<DB>,
-  config: Env,
+  settings: OrgSettings,
   tenantId: string
 ): Promise<NextResponse> {
   const { refresh_token } = params;
@@ -379,7 +379,7 @@ async function handleRefreshTokenGrant(
 
     // Generate new access token
     const accessToken = generateSecret(32);
-    const tokenExpiresIn = config.ACCESS_TOKEN_TTL_MINUTES * 60;
+    const tokenExpiresIn = settings.accessTokenTtlMinutes * 60;
 
     // Carry the original grant's subject forward — the refreshed token must act
     // as the same person, not as whoever holds the refresh token.

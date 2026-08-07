@@ -1,19 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig } from '@/lib/env';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
+import { getAtlassianApp } from '@/lib/atlassian-app';
+import { getOrigin } from '@/lib/get-origin';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
   const { tenantId } = await params;
-  const configResult = getConfig();
-  if (!configResult.ok) {
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
-  const config = configResult.val;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -43,6 +39,20 @@ export async function GET(
       );
     }
 
+    // The org's Atlassian app registration comes from connector config in
+    // the database; without one, no Atlassian flow can start.
+    const originResult = await getOrigin(request);
+    if (!originResult.ok) {
+      return NextResponse.json({ error: 'Config error' }, { status: 500 });
+    }
+    const app = await getAtlassianApp(tenantId, originResult.val);
+    if (!app) {
+      return NextResponse.json(
+        { error: 'Atlassian connector not configured for this organization' },
+        { status: 503 }
+      );
+    }
+
     // Generate state for CSRF protection
     const state = randomUUID();
     const nonce = randomUUID();
@@ -66,15 +76,15 @@ export async function GET(
     // Build Atlassian OAuth URL for this tenant
     const authUrl = new URL('https://auth.atlassian.com/authorize');
     authUrl.searchParams.append('audience', 'api.atlassian.com');
-    authUrl.searchParams.append('client_id', config.ATLASSIAN_CLIENT_ID);
-    authUrl.searchParams.append('redirect_uri', config.ATLASSIAN_REDIRECT_URI);
+    authUrl.searchParams.append('client_id', app.clientId);
+    authUrl.searchParams.append('redirect_uri', app.redirectUri);
     authUrl.searchParams.append('response_type', 'code');
-    authUrl.searchParams.append('scope', config.ATLASSIAN_SCOPES);
+    authUrl.searchParams.append('scope', app.scopes);
     authUrl.searchParams.append('state', state);
 
     console.log(`[MCP ${tenantId}] Jira OAuth authorize:`);
-    console.log('  client_id:', config.ATLASSIAN_CLIENT_ID);
-    console.log('  redirect_uri:', config.ATLASSIAN_REDIRECT_URI);
+    console.log('  client_id:', app.clientId);
+    console.log('  redirect_uri:', app.redirectUri);
     console.log('  state:', state);
 
     return NextResponse.redirect(authUrl.toString());

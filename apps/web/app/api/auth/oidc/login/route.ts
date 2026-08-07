@@ -96,7 +96,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     // Build OIDC authorization URL
-    const originResult = getOrigin(request);
+    const originResult = await getOrigin(request);
     if (!originResult.ok) {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }

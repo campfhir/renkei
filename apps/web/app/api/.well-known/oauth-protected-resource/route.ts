@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig } from '@/lib/env';
+import { getOrigin } from '@/lib/get-origin';
 
 /**
  * OAuth Protected Resource Metadata endpoint (RFC 9728)
@@ -8,14 +8,13 @@ import { getConfig } from '@/lib/env';
  * Advertises which authorization server(s) protect this API, allowing MCP clients
  * to discover the issuer and obtain tokens before accessing the MCP server.
  */
-export async function GET(_request: NextRequest): Promise<NextResponse> {
-  const configResult = getConfig();
-  if (!configResult.ok) {
+export async function GET(request: NextRequest): Promise<NextResponse> {
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const config = configResult.val;
-
-  const baseUrl = config.PUBLIC_BASE_URL;
+  const baseUrl = originResult.val;
 
   const metadata = {
     resource: baseUrl,

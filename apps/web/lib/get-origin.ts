@@ -1,35 +1,35 @@
 import { NextRequest } from 'next/server';
-import { getConfig } from './env';
-import { ok, err } from '@campfhir/safe-functions/helpers';
+import { getPublicBaseUrl } from '@renkei/settings';
+import { ok } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
 /**
  * Get the origin/base URL for the application, respecting reverse proxies securely.
  *
  * Uses a defensive strategy to prevent header spoofing:
- * 1. PUBLIC_BASE_URL (most trustworthy - configured by ops)
+ * 1. The platform's public_base_url setting (most trustworthy — configured by
+ *    an org-admin, stored in the database)
  * 2. X-Forwarded-* headers ONLY if from whitelisted proxy IPs
  * 3. Request URL (as fallback, but logs warning)
+ *
+ * The database being unset (or unreachable) falls through to the header
+ * chain rather than failing: origin resolution is also how the very first
+ * sign-in reaches the deployment before anything has been configured.
  *
  * X-Forwarded headers are only trusted when:
  * - Request comes from a whitelisted proxy IP
  * - Both X-Forwarded-Proto and X-Forwarded-Host are present
- * - App is NOT in development mode with direct access
  */
-export function getOrigin(request?: NextRequest): Result<string, 'CONFIG_ERROR'> {
-  const configResult = getConfig();
-  if (!configResult.ok) return err('CONFIG_ERROR' as const);
-  const config = configResult.val;
-
-  if (!request) {
-    // Fallback to env var when no request available
-    return ok(config.PUBLIC_BASE_URL || 'http://localhost:3000');
+export async function getOrigin(request?: NextRequest): Promise<Result<string, 'CONFIG_ERROR'>> {
+  // Priority 1: the stored public base URL is the single source of truth.
+  const configured = await getPublicBaseUrl();
+  if (configured.ok && configured.val) {
+    return ok(configured.val);
   }
 
-  // Priority 1: PUBLIC_BASE_URL is the single source of truth (if configured)
-  // This should always be set in production
-  if (config.PUBLIC_BASE_URL) {
-    return ok(config.PUBLIC_BASE_URL);
+  if (!request) {
+    // No request to derive from and nothing configured.
+    return ok('http://localhost:3000');
   }
 
   // Priority 2: Check X-Forwarded headers ONLY from trusted proxies
@@ -60,9 +60,9 @@ export function getOrigin(request?: NextRequest): Result<string, 'CONFIG_ERROR'>
 /**
  * Check if the request comes from a whitelisted proxy IP.
  *
- * Configuration via environment variables:
- * - TRUSTED_PROXY_IPS: comma-separated list of IPs (e.g., "127.0.0.1,172.17.0.1,10.0.0.0/24")
- * - Default (development): allows localhost only
+ * TRUSTED_PROXY_IPS stays an environment variable deliberately: whether to
+ * believe a request's forwarding headers must be decided before anything
+ * from the database can be trusted to have been reached correctly.
  */
 function isTrustedProxy(request: NextRequest): boolean {
   // Get client IP from various headers (in order of precedence)

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig } from '@/lib/env';
+import { getOrigin } from '@/lib/get-origin';
 import { getDatabase } from '@renkei/db';
 
 /**
@@ -17,16 +17,10 @@ import { getDatabase } from '@renkei/db';
  * mix-up.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
   const { tenantId } = await params;
-
-  const configResult = getConfig();
-  if (!configResult.ok) {
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
-  const config = configResult.val;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -44,8 +38,11 @@ export async function GET(
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   }
 
-  const baseUrl = config.PUBLIC_BASE_URL;
-  const tenantIssuer = `${baseUrl}/api/mcp/${tenantId}`;
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) {
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
+  const tenantIssuer = `${originResult.val}/api/mcp/${tenantId}`;
 
   return NextResponse.json({
     resource: tenantIssuer,

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig } from '@/lib/env';
+import { getAtlassianApp } from '@/lib/atlassian-app';
 import { getDatabase } from '@renkei/db';
 import { setJiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
@@ -52,11 +52,6 @@ function isResourceArray(data: unknown): data is Array<{ id: string; url: string
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const configResult = getConfig();
-  if (!configResult.ok) {
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
-  const config = configResult.val;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
@@ -124,6 +119,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     logger.info('[OAuth] Jira callback', { tenantId: tenant.id });
+
+    // The org's Atlassian app registration, from connector config. The
+    // authorize step used the same reader, so both legs of the exchange
+    // present the same client and redirect URI.
+    const appOriginResult = await getOrigin(request);
+    if (!appOriginResult.ok) {
+      return NextResponse.json({ error: 'Config error' }, { status: 500 });
+    }
+    const atlassianApp = await getAtlassianApp(tenant.id, appOriginResult.val);
+    if (!atlassianApp) {
+      return NextResponse.json(
+        { error: 'Atlassian connector not configured for this organization' },
+        { status: 503 }
+      );
+    }
+
     logger.info('[OAuth] Exchanging code for tokens', { tenantId: tenant.id });
 
     // Exchange authorization code for Jira tokens
@@ -132,10 +143,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         grant_type: 'authorization_code',
-        client_id: config.ATLASSIAN_CLIENT_ID,
-        client_secret: config.ATLASSIAN_CLIENT_SECRET,
+        client_id: atlassianApp.clientId,
+        client_secret: atlassianApp.clientSecret,
         code,
-        redirect_uri: config.ATLASSIAN_REDIRECT_URI,
+        redirect_uri: atlassianApp.redirectUri,
       }),
     });
 
@@ -248,7 +259,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     await setJiraGrant(tenant.id, {
       subject: pendingSignIn.subject,
       accountId: userInfo.accountId,
-      atlassianClientId: config.ATLASSIAN_CLIENT_ID,
+      atlassianClientId: atlassianApp.clientId,
       cloudId: resource.id,
       siteUrl: resource.url,
       displayName,
@@ -260,7 +271,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     logger.info('[OAuth] Jira grant stored successfully', { tenantId: tenant.id });
     // Redirect back to MCP endpoint page to show updated Jira connection status
-    const originResult = getOrigin(request);
+    const originResult = await getOrigin(request);
     if (!originResult.ok) {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }

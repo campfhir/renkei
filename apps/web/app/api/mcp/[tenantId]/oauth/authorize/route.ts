@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig } from '@/lib/env';
+import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
@@ -13,12 +13,6 @@ export async function GET(
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
   const { tenantId } = await params;
-
-  const configResult = getConfig();
-  if (!configResult.ok) {
-    return NextResponse.json({ error: 'server_error' }, { status: 500 });
-  }
-  const config = configResult.val;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -105,7 +99,9 @@ export async function GET(
 
     // Generate authorization code
     const code = `code_${randomUUID()}`;
-    const expiresAt = new Date(Date.now() + (config.AUTHORIZATION_CODE_TTL_SECONDS || 60) * 1000);
+    const settingsResult = await getOrgSettings(tenantId);
+    const settings = settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS;
+    const expiresAt = new Date(Date.now() + settings.authorizationCodeTtlSeconds * 1000);
 
     // Store authorization code
     await db

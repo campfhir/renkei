@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig, isDcrEnabled } from '@/lib/env';
+import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { generateSecret, hashToken } from '@/lib/mcp-token';
@@ -15,13 +15,10 @@ export async function POST(
 ): Promise<NextResponse> {
   const { tenantId } = await params;
 
-  const configResult = getConfig();
-  if (!configResult.ok) {
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
-  const config = configResult.val;
+  const settingsResult = await getOrgSettings(tenantId);
+  const settings = settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS;
 
-  if (!isDcrEnabled(config.ENABLE_DCR)) {
+  if (!settings.enableDcr) {
     return NextResponse.json(
       {
         error: 'unsupported_operation',

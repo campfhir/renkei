@@ -118,7 +118,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     // Exchange code for token
-    const originResult = getOrigin(request);
+    const originResult = await getOrigin(request);
     if (!originResult.ok) {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }

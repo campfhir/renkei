@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig, isDcrEnabled } from '@/lib/env';
+import { DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { generateSecret, hashToken } from '@/lib/mcp-token';
@@ -20,14 +20,9 @@ import { logger } from '@/lib/logger';
  *   }
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const configResult = getConfig();
-  if (!configResult.ok) {
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
-  const config = configResult.val;
-
-  // Check if DCR is enabled
-  if (!isDcrEnabled(config.ENABLE_DCR)) {
+  // No tenant is known yet at system-level registration, so the platform
+  // default applies; tenant-scoped registration consults the org's setting.
+  if (!DEFAULT_ORG_SETTINGS.enableDcr) {
     return NextResponse.json(
       {
         error: 'unsupported_operation',

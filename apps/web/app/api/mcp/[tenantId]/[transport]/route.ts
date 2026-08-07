@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@renkei/db';
-import { getConfig } from '@/lib/env';
+import { getOrgSettings } from '@renkei/settings';
 import { getJiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/mcp-token';
@@ -23,8 +23,11 @@ import type { McpServer } from '@modelcontextprotocol/server';
 // Cache MCP handlers per (tenantId, accountId)
 const handlerCache = new Map<string, (request: Request) => Promise<Response>>();
 
-function getCacheKey(tenantId: string, accountId: string): string {
-  return `${tenantId}:${accountId}`;
+function getCacheKey(tenantId: string, accountId: string, readOnly: boolean): string {
+  // The registered tool set depends on the org's read-only mode, so the mode
+  // is part of the key: flipping it takes effect on the next request instead
+  // of after a process restart.
+  return `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}`;
 }
 
 const handler = async (
@@ -38,15 +41,9 @@ const handler = async (
   }
   const db = dbResult.val;
 
-  const configResult = getConfig();
-  if (!configResult.ok) {
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
-  const config = configResult.val;
-
   // request.url is the internal URL behind a reverse proxy (localhost:3000), so any
   // link built from it is unreachable for the user. getOrigin resolves the public one.
-  const originResult = getOrigin(request);
+  const originResult = await getOrigin(request);
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
@@ -154,6 +151,13 @@ const handler = async (
       );
     }
 
+    // Org policy (read-only mode, limits) comes from the database per tenant.
+    const settingsResult = await getOrgSettings(tenantId);
+    if (!settingsResult.ok) {
+      return NextResponse.json({ error: 'Settings error' }, { status: 500 });
+    }
+    const settings = settingsResult.val;
+
     // Record the grant's token on every request, not just at handler creation:
     // the cached handler's closure holds whatever token existed when it was
     // built, and jiraFetch resolves the current one through this cache. This
@@ -162,7 +166,7 @@ const handler = async (
     cacheTokenMetadata(grant.accessToken, tenantId, accountId);
 
     // Check cache
-    const cacheKey = getCacheKey(tenantId, accountId);
+    const cacheKey = getCacheKey(tenantId, accountId, settings.readOnly);
     let cachedHandler = handlerCache.get(cacheKey);
 
     if (!cachedHandler) {
@@ -180,10 +184,10 @@ const handler = async (
               siteUrl: grant.siteUrl,
               apiBaseUrl: `https://api.atlassian.com/ex/jira/${grant.cloudId}`,
               accessToken: grant.accessToken,
-              maxJqlResults: 100,
+              maxJqlResults: settings.maxJqlResults,
+              maxAttachmentBytes: settings.maxAttachmentBytes,
               origin,
               db,
-              config,
             };
 
             // Register all tools, filtered through the per-user capability
@@ -195,7 +199,7 @@ const handler = async (
             // preferences UI.
             const projection = createProjection(
               {
-                readOnly: config.READ_ONLY === 'true',
+                readOnly: settings.readOnly,
                 disabledConnectors: [],
                 disabledCapabilities: [],
               },

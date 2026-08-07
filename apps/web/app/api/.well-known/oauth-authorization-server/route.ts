@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig } from '@/lib/env';
+import { DEFAULT_ORG_SETTINGS } from '@renkei/settings';
+import { getOrigin } from '@/lib/get-origin';
 
 /**
  * OAuth Authorization Server Metadata endpoint (RFC 8414) - System level
  * This is a generic endpoint at the root level. For tenant-specific servers,
  * use the tenant-scoped endpoint at /api/mcp/[tenantId]/.well-known/oauth-authorization-server
  */
-export async function GET(_request: NextRequest): Promise<NextResponse> {
-  const configResult = getConfig();
-  if (!configResult.ok) {
+export async function GET(request: NextRequest): Promise<NextResponse> {
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const config = configResult.val;
-
-  const baseUrl = config.PUBLIC_BASE_URL;
-  const dcrEnabled = config.ENABLE_DCR !== 'false';
+  const baseUrl = originResult.val;
+  const dcrEnabled = DEFAULT_ORG_SETTINGS.enableDcr;
 
   // Note: These are placeholder endpoints. For MCP connections, use tenant-scoped endpoints.
   // When connecting via /api/mcp/{tenantId}/http, the OAuth discovery should use

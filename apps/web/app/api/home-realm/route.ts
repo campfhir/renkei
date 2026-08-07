@@ -44,7 +44,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (!tenant) {
       // Domain not found - redirect to create organization flow
-      const originResult = getOrigin(request);
+      const originResult = await getOrigin(request);
       if (!originResult.ok) {
         return NextResponse.json({ error: 'Config error' }, { status: 500 });
       }
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // Tenant exists - redirect to MCP endpoint
-    const originResult = getOrigin(request);
+    const originResult = await getOrigin(request);
     if (!originResult.ok) {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }

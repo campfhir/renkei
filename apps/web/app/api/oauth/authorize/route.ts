@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig } from '@/lib/env';
+import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 
@@ -19,12 +19,6 @@ import { randomUUID } from 'crypto';
  *   - code_challenge_method: S256 or plain (optional)
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const configResult = getConfig();
-  if (!configResult.ok) {
-    return NextResponse.json({ error: 'server_error' }, { status: 500 });
-  }
-  const config = configResult.val;
-
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
@@ -87,7 +81,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     // Generate authorization code
     const code = `code_${randomUUID()}`;
-    const expiresAt = new Date(Date.now() + (config.AUTHORIZATION_CODE_TTL_SECONDS || 60) * 1000);
+    const settingsResult = await getOrgSettings(client.tenant_id);
+    const settings = settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS;
+    const expiresAt = new Date(Date.now() + settings.authorizationCodeTtlSeconds * 1000);
 
     // Store authorization code
     await db

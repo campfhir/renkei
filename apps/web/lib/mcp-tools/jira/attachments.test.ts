@@ -26,7 +26,6 @@ jest.mock('../common', () => {
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import type { Env } from '@/lib/env';
 import { registerAttachmentTools } from './attachments';
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
@@ -49,8 +48,7 @@ async function addAttachmentHandler(maxBytes?: number): Promise<ToolHandler> {
     apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
     accessToken: 'token',
     maxJqlResults: 100,
-    config:
-      maxBytes === undefined ? undefined : ({ MAX_ATTACHMENT_BYTES: maxBytes } as unknown as Env),
+    maxAttachmentBytes: maxBytes,
   };
 
   await registerAttachmentTools(server, context);

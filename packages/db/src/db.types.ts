@@ -254,10 +254,25 @@ export interface ConnectorConfigs {
   updated_at: Generated<Timestamp>;
 }
 
+export interface PlatformSettings {
+  key: string;
+  updated_at: Generated<Timestamp>;
+  value: Json;
+}
+
+export interface TenantSettings {
+  key: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  value: Json;
+}
+
 export interface DB {
   actionable_items: ActionableItems;
   connector_configs: ConnectorConfigs;
   events: Events;
+  platform_settings: PlatformSettings;
+  tenant_settings: TenantSettings;
   provider_refresh_locks: ProviderRefreshLocks;
   jira_sessions: JiraSessions;
   log_attr: LogAttr;

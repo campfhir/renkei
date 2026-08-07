@@ -1,7 +1,7 @@
 import React from 'react';
 import { getDatabase } from '@renkei/db';
 import { redirect } from 'next/navigation';
-import { getConfig } from '@/lib/env';
+import { getOrigin } from '@/lib/get-origin';
 import { randomUUID } from 'crypto';
 
 const SIGN_IN_TTL_MS = 15 * 60 * 1000; // 15 minutes
@@ -26,16 +26,10 @@ export default async function SignInPage({ params }: { params: Promise<{ slug: s
     );
   }
   const db = dbResult.val;
-  const configResult = getConfig();
-  if (!configResult.ok) {
-    return (
-      <div style={{ padding: '2rem', maxWidth: '500px' }}>
-        <h2>Error</h2>
-        <p>Configuration error. Please contact your administrator.</p>
-      </div>
-    );
-  }
-  const config = configResult.val;
+  // The deployment's public origin: the stored platform setting, or the
+  // localhost fallback before one is configured.
+  const originResult = await getOrigin();
+  const origin = originResult.ok ? originResult.val : 'http://localhost:3000';
 
   // Fetch tenant and OIDC config
   const tenant = await db
@@ -77,7 +71,7 @@ export default async function SignInPage({ params }: { params: Promise<{ slug: s
 
   // Generate OIDC authorization request
   const state = randomUUID();
-  const redirectUri = `${config.PUBLIC_BASE_URL}/api/auth/oidc/callback`;
+  const redirectUri = `${origin}/api/auth/oidc/callback`;
   const nonce = randomUUID();
   const expiresAt = new Date(Date.now() + SIGN_IN_TTL_MS).toISOString();
 

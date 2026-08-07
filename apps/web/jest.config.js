@@ -13,6 +13,7 @@ export default {
     '^@renkei/capability-registry$': '<rootDir>/../../packages/capability-registry/src/index.ts',
     '^@renkei/connector-webex$': '<rootDir>/../../packages/connector-webex/src/index.ts',
     '^@renkei/connector-config$': '<rootDir>/../../packages/connector-config/src/index.ts',
+    '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
   },
   transform: {
     '^.+\\.tsx?$': [

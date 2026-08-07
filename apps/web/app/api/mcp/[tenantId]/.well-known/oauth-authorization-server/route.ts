@@ -1,18 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig } from '@/lib/env';
+import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
+import { getOrigin } from '@/lib/get-origin';
 import { getDatabase } from '@renkei/db';
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
 ): Promise<NextResponse> {
   const { tenantId } = await params;
-
-  const configResult = getConfig();
-  if (!configResult.ok) {
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
-  const config = configResult.val;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -32,9 +27,14 @@ export async function GET(
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
 
-    const baseUrl = config.PUBLIC_BASE_URL;
+    const originResult = await getOrigin(request);
+    if (!originResult.ok) {
+      return NextResponse.json({ error: 'Config error' }, { status: 500 });
+    }
+    const baseUrl = originResult.val;
     const tenantPath = `/api/mcp/${tenantId}`;
-    const dcrEnabled = config.ENABLE_DCR !== 'false';
+    const settingsResult = await getOrgSettings(tenantId);
+    const dcrEnabled = (settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS).enableDcr;
 
     const metadata = {
       // The issuer is per-tenant, matching the entry this tenant's protected

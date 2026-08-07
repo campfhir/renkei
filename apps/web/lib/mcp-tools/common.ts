@@ -7,7 +7,6 @@
 import { z } from 'zod';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import type { Env } from '@/lib/env';
 import { refreshAtlassianTokenDirect } from '@/lib/tenant-operations';
 import { logger } from '@/lib/logger';
 
@@ -33,8 +32,9 @@ export interface MCPToolContext {
    * proxy is not reachable from outside.
    */
   origin?: string;
+  /** Org limit for attachment uploads, from org settings. */
+  maxAttachmentBytes?: number;
   db?: Kysely<DB>;
-  config?: Env;
 }
 
 /**

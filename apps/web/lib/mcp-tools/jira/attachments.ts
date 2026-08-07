@@ -10,7 +10,7 @@ import type { MCPToolContext } from '../common';
 import { getCachedDisplayName, jiraFetch } from '../common';
 import { logger } from '@/lib/logger';
 
-/** Fallback when no config is on the context; matches the env default. */
+/** Fallback when no limit is on the context; matches the org-settings default. */
 const DEFAULT_MAX_ATTACHMENT_BYTES = 20_971_520; // 20MB
 
 export async function registerAttachmentTools(
@@ -50,7 +50,7 @@ export async function registerAttachmentTools(
 
         const buffer = Buffer.from(contentBase64, 'base64');
 
-        const maxBytes = context.config?.MAX_ATTACHMENT_BYTES ?? DEFAULT_MAX_ATTACHMENT_BYTES;
+        const maxBytes = context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
         if (buffer.byteLength > maxBytes) {
           return {
             content: [
