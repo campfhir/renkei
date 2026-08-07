@@ -1,0 +1,74 @@
+/**
+ * The embedding provider's contract with an OpenAI-compatible endpoint, and
+ * the vector literal pgvector receives.
+ */
+
+// embeddings.ts → connector-config → @renkei/db → kysely (ESM, unloadable
+// under jest); the client itself never touches the database.
+jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+
+import { OpenAiCompatibleEmbeddings, vectorLiteral } from './embeddings';
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
+describe('OpenAiCompatibleEmbeddings', () => {
+  it('posts to /embeddings with the model and returns vectors in order', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      jsonResponse(200, {
+        data: [
+          { embedding: [0.1, 0.2] },
+          { embedding: [0.3, 0.4] },
+        ],
+      })
+    );
+
+    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com/v1/', 'key-1', 'small');
+    const result = await provider.embed(['a', 'b']);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.val).toEqual([[0.1, 0.2], [0.3, 0.4]]);
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe('https://llm.example.com/v1/embeddings');
+    const payload = JSON.parse(String(init?.body));
+    expect(payload).toEqual({ model: 'small', input: ['a', 'b'] });
+  });
+
+  it('fails on a non-2xx response', async () => {
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(429, { error: 'rate' }));
+    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm');
+    expect((await provider.embed(['a'])).ok).toBe(false);
+  });
+
+  it('fails when the response has the wrong number of embeddings', async () => {
+    jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse(200, { data: [{ embedding: [1] }] }));
+    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm');
+    expect((await provider.embed(['a', 'b'])).ok).toBe(false);
+  });
+
+  it('returns no vectors for no texts without calling the endpoint', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch');
+    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm');
+    const result = await provider.embed([]);
+    if (result.ok) expect(result.val).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('vectorLiteral', () => {
+  it('formats the pgvector input form', () => {
+    expect(vectorLiteral([0.1, -2, 3])).toBe('[0.1,-2,3]');
+    expect(vectorLiteral([])).toBe('[]');
+  });
+});

@@ -14,6 +14,8 @@
     "@renkei/connector-webex": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/gates": "workspace:*",
+    "@renkei/knowledge": "workspace:*",
     "kysely": "^0.29.4",
     "tsx": "^4.23.5"
   },

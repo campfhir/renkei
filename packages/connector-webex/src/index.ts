@@ -29,3 +29,4 @@ export {
   type WebexWebhookEvent,
 } from './webhook';
 export { WebexClient, type WebexMessage, type WebexPerson } from './client';
+export { createWebexAccessVerifier, webexRefId } from './verifier';

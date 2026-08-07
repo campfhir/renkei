@@ -267,10 +267,23 @@ export interface TenantSettings {
   value: Json;
 }
 
+export interface KnowledgeChunks {
+  content: string;
+  created_at: Generated<Timestamp>;
+  /** pgvector value; written and compared via sql fragments, read as text. */
+  embedding: string;
+  id: string;
+  metadata: Generated<Json>;
+  provider: string;
+  ref_id: string;
+  tenant_id: string;
+}
+
 export interface DB {
   actionable_items: ActionableItems;
   connector_configs: ConnectorConfigs;
   events: Events;
+  knowledge_chunks: KnowledgeChunks;
   platform_settings: PlatformSettings;
   tenant_settings: TenantSettings;
   provider_refresh_locks: ProviderRefreshLocks;

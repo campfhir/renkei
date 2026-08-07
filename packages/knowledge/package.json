@@ -1,5 +1,5 @@
 {
-  "name": "@renkei/connector-webex",
+  "name": "@renkei/knowledge",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -11,7 +11,11 @@
   },
   "dependencies": {
     "@campfhir/safe-functions": "^0.1.3",
-    "@renkei/gates": "workspace:*"
+    "@renkei/connector-config": "workspace:*",
+    "@renkei/crypto": "workspace:*",
+    "@renkei/db": "workspace:*",
+    "@renkei/gates": "workspace:*",
+    "kysely": "^0.29.4"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

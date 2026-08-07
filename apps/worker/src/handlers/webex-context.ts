@@ -14,7 +14,7 @@ import { readConnectorConfigCached } from '@renkei/connector-config';
 import { WebexClient, WEBEX_CONNECTOR } from '@renkei/connector-webex';
 
 export interface WebexTenantContext {
-  client: Pick<WebexClient, 'getMessage'>;
+  client: Pick<WebexClient, 'getMessage' | 'isRoomMember'>;
   botPersonId: string | null;
 }
 

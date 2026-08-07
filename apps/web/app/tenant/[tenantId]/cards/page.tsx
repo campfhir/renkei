@@ -34,7 +34,7 @@ export default async function CardsPage({
 
   const items = await dbResult.val
     .selectFrom('actionable_items')
-    .select(['id', 'source', 'status', 'title', 'summary', 'result', 'created_at'])
+    .select(['id', 'source', 'status', 'title', 'summary', 'evidence', 'result', 'created_at'])
     .where('tenant_id', '=', tenantId)
     .orderBy('created_at', 'desc')
     .limit(50)
@@ -67,12 +67,38 @@ export default async function CardsPage({
           </div>
           <p style={{ margin: '0.5rem 0', whiteSpace: 'pre-wrap' }}>{item.summary}</p>
 
+          <RelatedEvidence evidence={item.evidence} />
+
           {item.status === 'suggested' && <CardActions tenantId={tenantId} itemId={item.id} />}
 
           {item.status === 'executed' && <ExecutionResult result={item.result} />}
           {item.status === 'failed' && <ExecutionResult result={item.result} failed />}
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Similar prior discussion the pipeline found, already cleared through the
+ * live ACL gate for the reporting user at enrichment time.
+ */
+function RelatedEvidence({ evidence }: { evidence: unknown }): React.ReactNode {
+  if (typeof evidence !== 'object' || evidence === null) return null;
+  const record: Record<string, unknown> = { ...evidence };
+  const related = Array.isArray(record.related) ? record.related : [];
+  if (related.length === 0) return null;
+
+  return (
+    <div style={{ margin: '0.5rem 0', padding: '0.5rem', background: '#f7f7f7', borderRadius: '6px' }}>
+      <strong style={{ fontSize: '0.85rem' }}>Similar prior discussion</strong>
+      <ul style={{ margin: '0.25rem 0 0 1rem', fontSize: '0.85rem', color: '#444' }}>
+        {related.map((entry, index) => {
+          if (typeof entry !== 'object' || entry === null) return null;
+          const hit: Record<string, unknown> = { ...entry };
+          return <li key={index}>{String(hit.excerpt ?? '')}</li>;
+        })}
+      </ul>
     </div>
   );
 }

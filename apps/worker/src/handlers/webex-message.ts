@@ -10,6 +10,9 @@
 
 import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
+import { createWebexAccessVerifier, webexRefId } from '@renkei/connector-webex';
+import { ingestChunk, resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
+import type { KnowledgeHit } from '@renkei/knowledge';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { classifyMessage } from '../pipeline/classify';
@@ -53,8 +56,57 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
     // them would loop.
     if (context.botPersonId && message.personId === context.botPersonId) return;
 
-    const classification = classifyMessage(message.text ?? '');
+    const text = message.text ?? '';
+    const refId = webexRefId(message.roomId, message.id);
+
+    // Knowledge is broader than actionability: every human message with text
+    // is indexed (when the org has an embedding provider), so later cards can
+    // cite prior discussion. Indexing failures are logged, not retried — a
+    // retry here would re-run the whole event and duplicate any card it
+    // already produced; a missed chunk is the cheaper loss.
+    const embedder = await resolveEmbeddingProvider(event.tenant_id);
+    if (embedder && text.trim()) {
+      const ingested = await ingestChunk(event.tenant_id, embedder, {
+        provider: 'webex',
+        refId,
+        content: text,
+        metadata: {
+          roomId: message.roomId,
+          personEmail: message.personEmail,
+          created: message.created,
+        },
+      });
+      if (!ingested.ok) {
+        console.warn(
+          `[worker] could not index WebEx message ${message.id} for tenant ${event.tenant_id}`
+        );
+      }
+    }
+
+    const classification = classifyMessage(text);
     if (!classification) return;
+
+    // Enrichment: similar prior chunks, disclosed only after the live ACL
+    // gate clears them for the message AUTHOR — the one identity this event
+    // carries. (Per-viewer verification at card-display time needs the
+    // identity spine; see RENKEI.md open questions.)
+    let related: KnowledgeHit[] = [];
+    let relatedElided = 0;
+    if (embedder && message.personEmail) {
+      const searched = await searchKnowledge({
+        tenantId: event.tenant_id,
+        userEmail: message.personEmail,
+        query: text,
+        k: 3,
+        embedder,
+        verifiers: new Map([['webex', createWebexAccessVerifier(context.client)]]),
+        excludeRef: { provider: 'webex', refId },
+      });
+      if (searched.ok) {
+        related = searched.val.hits;
+        relatedElided = searched.val.elided;
+      }
+    }
 
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable');
@@ -73,7 +125,14 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
           messageId: message.id,
           personEmail: message.personEmail,
           created: message.created,
-          excerpt: (message.text ?? '').slice(0, 500),
+          excerpt: text.slice(0, 500),
+          related: related.map((hit) => ({
+            provider: hit.provider,
+            refId: hit.refId,
+            excerpt: hit.content.slice(0, 200),
+            distance: hit.distance,
+          })),
+          relatedElided,
         }),
         suggested_action: JSON.stringify(classification.suggestedAction),
       })

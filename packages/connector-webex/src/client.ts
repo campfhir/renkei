@@ -81,6 +81,19 @@ export class WebexClient {
     });
   }
 
+  /**
+   * Is this person currently a member of the room? The live ACL check for
+   * WebEx content: room membership is exactly WebEx's own access rule for
+   * messages, verified at query time with the bot credential.
+   */
+  async isRoomMember(roomId: string, personEmail: string): Promise<Result<boolean, 'WEBEX_API_ERROR'>> {
+    const query = `roomId=${encodeURIComponent(roomId)}&personEmail=${encodeURIComponent(personEmail)}`;
+    const result = await this.get(`/memberships?${query}`);
+    if (!result.ok) return result;
+    const items = result.val.items;
+    return ok(Array.isArray(items) && items.length > 0);
+  }
+
   /** The bot's own identity, for filtering its own messages out of ingestion. */
   async getMe(): Promise<Result<WebexPerson, 'WEBEX_API_ERROR'>> {
     const result = await this.get('/people/me');

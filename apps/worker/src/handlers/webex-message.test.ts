@@ -6,6 +6,11 @@
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+jest.mock('@renkei/knowledge', () => ({
+  resolveEmbeddingProvider: jest.fn(async () => null),
+  ingestChunk: jest.fn(async () => ({ ok: true, val: undefined })),
+  searchKnowledge: jest.fn(async () => ({ ok: true, val: { hits: [], elided: 0 } })),
+}));
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { WebexMessage } from '@renkei/connector-webex';
@@ -65,7 +70,7 @@ describe('createWebexMessageHandler', () => {
     const { inserted } = stubDb();
     const handler = createWebexMessageHandler({
       resolveContext: async () => ({
-        client: { getMessage: async () => ok(message({ text: 'The build server is down' })) },
+        client: { getMessage: async () => ok(message({ text: 'The build server is down' })), isRoomMember: async () => ok(true) },
         botPersonId: 'bot-1',
       }),
     });
@@ -84,7 +89,7 @@ describe('createWebexMessageHandler', () => {
     const { inserted } = stubDb();
     const handler = createWebexMessageHandler({
       resolveContext: async () => ({
-        client: { getMessage: async () => ok(message({ personId: 'bot-1', text: 'it is down' })) },
+        client: { getMessage: async () => ok(message({ personId: 'bot-1', text: 'it is down' })), isRoomMember: async () => ok(true) },
         botPersonId: 'bot-1',
       }),
     });
@@ -98,7 +103,7 @@ describe('createWebexMessageHandler', () => {
     const { inserted } = stubDb();
     const handler = createWebexMessageHandler({
       resolveContext: async () => ({
-        client: { getMessage: async () => ok(message({ text: 'lunch at noon?' })) },
+        client: { getMessage: async () => ok(message({ text: 'lunch at noon?' })), isRoomMember: async () => ok(true) },
         botPersonId: 'bot-1',
       }),
     });
@@ -112,7 +117,7 @@ describe('createWebexMessageHandler', () => {
     stubDb();
     const handler = createWebexMessageHandler({
       resolveContext: async () => ({
-        client: { getMessage: async () => err('WEBEX_API_ERROR' as const) },
+        client: { getMessage: async () => err('WEBEX_API_ERROR' as const), isRoomMember: async () => ok(true) },
         botPersonId: 'bot-1',
       }),
     });
@@ -124,7 +129,7 @@ describe('createWebexMessageHandler', () => {
     stubDb();
     const handler = createWebexMessageHandler({
       resolveContext: async () => ({
-        client: { getMessage: async () => ok(message({})) },
+        client: { getMessage: async () => ok(message({})), isRoomMember: async () => ok(true) },
         botPersonId: null,
       }),
     });
@@ -143,5 +148,41 @@ describe('createWebexMessageHandler', () => {
     });
 
     await expect(handler(event())).rejects.toThrow('not configured');
+  });
+
+  it('indexes the message and attaches gate-cleared related priors when embeddings are configured', async () => {
+    const knowledge = jest.requireMock<{
+      resolveEmbeddingProvider: jest.Mock;
+      ingestChunk: jest.Mock;
+      searchKnowledge: jest.Mock;
+    }>('@renkei/knowledge');
+    const embedder = { embed: jest.fn() };
+    knowledge.resolveEmbeddingProvider.mockResolvedValueOnce(embedder);
+    knowledge.searchKnowledge.mockResolvedValueOnce({
+      ok: true,
+      val: {
+        hits: [
+          { provider: 'webex', refId: 'room-1/m0', content: 'build server crashed yesterday', metadata: {}, distance: 0.1 },
+        ],
+        elided: 1,
+      },
+    });
+
+    const { inserted } = stubDb();
+    const handler = createWebexMessageHandler({
+      resolveContext: async () => ({
+        client: { getMessage: async () => ok(message({ text: 'The build server is down' })), isRoomMember: async () => ok(true) },
+        botPersonId: 'bot-1',
+      }),
+    });
+
+    await handler(event());
+
+    expect(knowledge.ingestChunk).toHaveBeenCalledTimes(1);
+    expect(inserted).toHaveLength(1);
+    const evidence = JSON.parse(String(inserted[0]!.evidence));
+    expect(evidence.related).toHaveLength(1);
+    expect(evidence.related[0].refId).toBe('room-1/m0');
+    expect(evidence.relatedElided).toBe(1);
   });
 });
