@@ -12,6 +12,7 @@ import { claimNextEvent, completeEvent, failEvent } from './queue';
 import { handlerFor, registerHandler } from './handlers';
 import { createWebexMessageHandler } from './handlers/webex-message';
 import { createWebexAttachmentActionHandler } from './handlers/webex-attachment-action';
+import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 
 /** Poll cadence: quick when draining a backlog, relaxed when idle. */
 const BUSY_DELAY_MS = 100;
@@ -61,10 +62,32 @@ function registerConnectorHandlers(): void {
   console.log('[worker] webex handlers registered');
 }
 
+/**
+ * Scheduler-as-part-of-the-loop: the sweep runs on its own cadence inside
+ * the poll loop (first pass at boot), so a repair is never further away
+ * than one poll interval past due. A sweep failure is logged inside the
+ * sweep itself and never disturbs event processing.
+ */
+let nextWebhookSweepAt = 0;
+
+async function maybeSweepWebhooks(): Promise<void> {
+  if (Date.now() < nextWebhookSweepAt) return;
+  nextWebhookSweepAt = Date.now() + WEBHOOK_HEALTH_INTERVAL_MS;
+  try {
+    await sweepWebexWebhooks();
+  } catch (error) {
+    console.error(
+      '[worker] webhook health sweep error:',
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
+
 async function main(): Promise<void> {
   registerConnectorHandlers();
   console.log('[worker] started');
   while (running) {
+    await maybeSweepWebhooks();
     let hadWork = false;
     try {
       hadWork = await processOne();

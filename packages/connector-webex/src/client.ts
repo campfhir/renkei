@@ -54,11 +54,46 @@ export interface OutgoingMessage {
   attachments?: unknown[];
 }
 
+/** A webhook registration as WebEx reports it. */
+export interface WebexWebhook {
+  id: string;
+  name: string | null;
+  targetUrl: string | null;
+  resource: string | null;
+  event: string | null;
+  /** WebEx echoes the signing secret back on reads — how drift is detected. */
+  secret: string | null;
+  /** 'active', or 'inactive' once WebEx gives up on a failing target. */
+  status: string | null;
+}
+
+export interface WebhookRegistration {
+  name: string;
+  targetUrl: string;
+  resource: string;
+  event: string;
+  secret: string;
+}
+
+function readWebhook(body: Record<string, unknown>): WebexWebhook | null {
+  const id = optionalString(body.id);
+  if (!id) return null;
+  return {
+    id,
+    name: optionalString(body.name),
+    targetUrl: optionalString(body.targetUrl),
+    resource: optionalString(body.resource),
+    event: optionalString(body.event),
+    secret: optionalString(body.secret),
+    status: optionalString(body.status),
+  };
+}
+
 export class WebexClient {
   constructor(private readonly botToken: string) {}
 
   private async request(
-    method: 'GET' | 'POST',
+    method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body?: unknown
   ): Promise<Result<Record<string, unknown>, 'WEBEX_API_ERROR'>> {
@@ -82,6 +117,9 @@ export class WebexClient {
         message: `WebEx API ${response.status} for ${path}`,
       });
     }
+
+    // Deletes answer 204 with no body.
+    if (response.status === 204) return ok({});
 
     const parsed: unknown = await response.json().catch(() => null);
     if (!isRecord(parsed)) {
@@ -184,6 +222,45 @@ export class WebexClient {
       : [];
 
     return ok({ id, emails, displayName: optionalString(body.displayName) });
+  }
+
+  /**
+   * The bot's webhook registrations. Webhooks are scoped to the creating
+   * credential, so this is exactly the set Renkei's bot owns — the cap of
+   * 100 is far beyond the two registrations Renkei maintains.
+   */
+  async listWebhooks(): Promise<Result<WebexWebhook[], 'WEBEX_API_ERROR'>> {
+    const result = await this.get('/webhooks?max=100');
+    if (!result.ok) return result;
+    const items = result.val.items;
+    if (!Array.isArray(items)) {
+      return err('WEBEX_API_ERROR' as const, { message: 'webhooks response missing items' });
+    }
+    const hooks: WebexWebhook[] = [];
+    for (const item of items) {
+      if (!isRecord(item)) continue;
+      const hook = readWebhook(item);
+      if (hook) hooks.push(hook);
+    }
+    return ok(hooks);
+  }
+
+  /** Register a webhook — Renkei pointing WebEx at its own receipt endpoint. */
+  async createWebhook(
+    registration: WebhookRegistration
+  ): Promise<Result<WebexWebhook, 'WEBEX_API_ERROR'>> {
+    const result = await this.request('POST', '/webhooks', registration);
+    if (!result.ok) return result;
+    const hook = readWebhook(result.val);
+    if (!hook) return err('WEBEX_API_ERROR' as const, { message: 'webhook response missing id' });
+    return ok(hook);
+  }
+
+  /** Remove a webhook — half of "recreate", and how strays are cleaned up. */
+  async deleteWebhook(webhookId: string): Promise<Result<void, 'WEBEX_API_ERROR'>> {
+    const result = await this.request('DELETE', `/webhooks/${encodeURIComponent(webhookId)}`);
+    if (!result.ok) return result;
+    return ok();
   }
 
   /** The bot's own identity, for filtering its own messages out of ingestion. */
