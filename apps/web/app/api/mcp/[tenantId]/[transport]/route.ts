@@ -15,6 +15,8 @@ import { getOrigin } from '@/lib/get-origin';
 import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
 import { registerAllTools, cacheTokenMetadata } from '@/lib/mcp-tools';
+import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
+import { createProjection } from '@renkei/capability-registry';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import type { McpServer } from '@modelcontextprotocol/server';
 
@@ -184,8 +186,22 @@ const handler = async (
               config,
             };
 
-            // Register all tools
-            await registerAllTools(server, context);
+            // Register all tools, filtered through the per-user capability
+            // projection (RENKEI.md Decision #12). Org policy first: READ_ONLY
+            // is the org-wide read-only capability flag, so mutating tools are
+            // simply never registered under it. This caller reached here with
+            // their own Jira grant, so the jira connector is provisioned;
+            // per-capability user expose/hide choices arrive with the
+            // preferences UI.
+            const projection = createProjection(
+              {
+                readOnly: config.READ_ONLY === 'true',
+                disabledConnectors: [],
+                disabledCapabilities: [],
+              },
+              { provisionedConnectors: [JIRA_CONNECTOR], hiddenCapabilities: [] }
+            );
+            await registerAllTools(withCapabilityGate(server, projection), context);
 
             logger.info('[MCP] All tools registered', {
               tenantId,
