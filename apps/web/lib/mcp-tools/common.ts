@@ -34,6 +34,11 @@ export interface MCPToolContext {
   origin?: string;
   /** Org limit for attachment uploads, from org settings. */
   maxAttachmentBytes?: number;
+  /**
+   * The caller's recorded email (identity spine), which the knowledge gate
+   * verifies provider access against. Absent = gates fail closed.
+   */
+  userEmail?: string;
   db?: Kysely<DB>;
 }
 

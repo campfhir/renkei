@@ -18,10 +18,14 @@ import type { CapabilityProjection } from '@renkei/capability-registry';
 
 type RegisterToolArgs = Parameters<McpServer['registerTool']>;
 
-/** The connector every tool in this server belongs to. */
+/** The connector the Jira/JSM tool modules register under. */
 export const JIRA_CONNECTOR = 'jira';
 
-export function withCapabilityGate(server: McpServer, projection: CapabilityProjection): McpServer {
+export function withCapabilityGate(
+  server: McpServer,
+  projection: CapabilityProjection,
+  connector: string = JIRA_CONNECTOR
+): McpServer {
   return new Proxy(server, {
     get(target, property, receiver) {
       if (property === 'registerTool') {
@@ -30,7 +34,7 @@ export function withCapabilityGate(server: McpServer, projection: CapabilityProj
           const readOnly = config.annotations?.readOnlyHint === true;
           const allowed = projection.allows({
             id: name,
-            connector: JIRA_CONNECTOR,
+            connector,
             kind: readOnly ? 'read' : 'act',
           });
           if (!allowed) return undefined;

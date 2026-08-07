@@ -6,7 +6,7 @@ Renkei (連携 — "linkage, cooperation") is a permission-aware knowledge and a
 
 ## How it works
 
-- **MCP endpoint:** `/api/mcp/{tenantId}/{transport}` (streamable HTTP, JSON-RPC via `mcp-handler`).
+- **MCP endpoint:** `/api/mcp/{tenantId}/{transport}` (streamable HTTP, JSON-RPC via `mcp-handler`). Beyond the Jira tools, `search_knowledge` searches what Renkei has indexed from connected tools — every result is verified against the source system for the calling user's access before disclosure, and withheld results are reported as a count.
 - **Auth, layer 1:** the server is an OAuth 2.1 authorization server toward MCP clients — per-tenant authorize/register/token endpoints with PKCE and RFC 8414/9728 discovery. Users sign in through their tenant's own OIDC provider.
 - **Auth, layer 2:** each signed-in user links their own Atlassian account (OAuth 2.0 3LO). The grant is bound to the user's OIDC subject and encrypted at rest; tool calls hit `api.atlassian.com` with that user's token.
 - **Storage:** PostgreSQL 16 via Kysely. Migrations live in `lib/migrations/`; `/api/health` returns 503 while migrations are pending, which gates deployments.
