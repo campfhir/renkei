@@ -15,6 +15,8 @@ export interface WebexMessage {
   text: string | null;
   personId: string | null;
   personEmail: string | null;
+  /** Thread root when the message is a threaded reply. */
+  parentId: string | null;
   created: string | null;
 }
 
@@ -32,14 +34,44 @@ function optionalString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
+export interface WebexAttachmentAction {
+  id: string;
+  personId: string | null;
+  roomId: string | null;
+  /** The message carrying the card whose button was pressed. */
+  messageId: string | null;
+  /** The submitted Action.Submit data plus any card Input values. */
+  inputs: Record<string, unknown>;
+}
+
+export interface OutgoingMessage {
+  roomId: string;
+  /** Thread root to reply under; omitted = new top-level message. */
+  parentId?: string;
+  markdown?: string;
+  text?: string;
+  /** Adaptive Card attachments, pre-shaped by the caller (see cards.ts). */
+  attachments?: unknown[];
+}
+
 export class WebexClient {
   constructor(private readonly botToken: string) {}
 
-  private async get(path: string): Promise<Result<Record<string, unknown>, 'WEBEX_API_ERROR'>> {
+  private async request(
+    method: 'GET' | 'POST',
+    path: string,
+    body?: unknown
+  ): Promise<Result<Record<string, unknown>, 'WEBEX_API_ERROR'>> {
     let response: Response;
     try {
       response = await fetch(`${API_BASE}${path}`, {
-        headers: { Authorization: `Bearer ${this.botToken}`, Accept: 'application/json' },
+        method,
+        headers: {
+          Authorization: `Bearer ${this.botToken}`,
+          Accept: 'application/json',
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     } catch {
       return err('WEBEX_API_ERROR' as const, { message: 'WebEx API unreachable' });
@@ -51,11 +83,15 @@ export class WebexClient {
       });
     }
 
-    const body: unknown = await response.json().catch(() => null);
-    if (!isRecord(body)) {
+    const parsed: unknown = await response.json().catch(() => null);
+    if (!isRecord(parsed)) {
       return err('WEBEX_API_ERROR' as const, { message: `WebEx API returned no JSON for ${path}` });
     }
-    return ok(body);
+    return ok(parsed);
+  }
+
+  private get(path: string): Promise<Result<Record<string, unknown>, 'WEBEX_API_ERROR'>> {
+    return this.request('GET', path);
   }
 
   /** Fetch a message's content — webhooks carry only its id. */
@@ -77,6 +113,7 @@ export class WebexClient {
       text: optionalString(body.text),
       personId: optionalString(body.personId),
       personEmail: optionalString(body.personEmail),
+      parentId: optionalString(body.parentId),
       created: optionalString(body.created),
     });
   }
@@ -92,6 +129,61 @@ export class WebexClient {
     if (!result.ok) return result;
     const items = result.val.items;
     return ok(Array.isArray(items) && items.length > 0);
+  }
+
+  /** Post a message (optionally with card attachments) as the bot. */
+  async postMessage(message: OutgoingMessage): Promise<Result<{ id: string }, 'WEBEX_API_ERROR'>> {
+    const result = await this.request('POST', '/messages', message);
+    if (!result.ok) return result;
+    const id = optionalString(result.val.id);
+    if (!id) return err('WEBEX_API_ERROR' as const, { message: 'message response missing id' });
+    return ok({ id });
+  }
+
+  /**
+   * Fetch an Action.Submit event's substance from the API. The webhook only
+   * carries the action id — and even if it carried more, acting on unfetched
+   * webhook data would mean trusting the network instead of WebEx.
+   */
+  async getAttachmentAction(
+    actionId: string
+  ): Promise<Result<WebexAttachmentAction, 'WEBEX_API_ERROR'>> {
+    const result = await this.get(`/attachment/actions/${encodeURIComponent(actionId)}`);
+    if (!result.ok) return result;
+    const body = result.val;
+
+    const id = optionalString(body.id);
+    if (!id) {
+      return err('WEBEX_API_ERROR' as const, { message: 'attachment action missing id' });
+    }
+    const inputs = body.inputs;
+
+    return ok({
+      id,
+      personId: optionalString(body.personId),
+      roomId: optionalString(body.roomId),
+      messageId: optionalString(body.messageId),
+      inputs:
+        typeof inputs === 'object' && inputs !== null && !Array.isArray(inputs)
+          ? { ...inputs }
+          : {},
+    });
+  }
+
+  /** Look up a person — how a button press resolves to an identity. */
+  async getPerson(personId: string): Promise<Result<WebexPerson, 'WEBEX_API_ERROR'>> {
+    const result = await this.get(`/people/${encodeURIComponent(personId)}`);
+    if (!result.ok) return result;
+    const body = result.val;
+
+    const id = optionalString(body.id);
+    if (!id) return err('WEBEX_API_ERROR' as const, { message: 'person response missing id' });
+
+    const emails = Array.isArray(body.emails)
+      ? body.emails.filter((value): value is string => typeof value === 'string')
+      : [];
+
+    return ok({ id, emails, displayName: optionalString(body.displayName) });
   }
 
   /** The bot's own identity, for filtering its own messages out of ingestion. */

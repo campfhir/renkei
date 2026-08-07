@@ -1,21 +1,25 @@
 /**
- * The webex/messages.created handler — pipeline v1 for use case #1.
+ * The webex/messages.created handler — the ambient half of use case #1.
  *
  * The webhook carried only the message id; here the message is fetched with
- * the bot credential, classified, and — when it reads as an issue report —
- * recorded as a suggested actionable item. Nothing is executed: the item
- * waits in the card feed for a human to approve, edit, or dismiss
- * (suggest-then-act, the default posture).
+ * the bot credential and captured (see webex-capture.ts): indexed into
+ * knowledge, and — when it reads as an issue report — recorded as a
+ * suggested actionable item. Nothing is executed: items wait in the card
+ * feed for a human (suggest-then-act, the default posture).
+ *
+ * The bot always answers in-thread, because in a group room it only ever
+ * sees messages that deliberately mention it: a capture gets a confirmation,
+ * and anything else gets the "Push to Renkei" card so the human can capture
+ * what the classifier missed (use case #3 — the interaction stays in the
+ * WebEx client). Reply failures are logged, never fatal: the capture is the
+ * outcome, the reply is courtesy.
  */
 
-import { randomUUID } from 'node:crypto';
-import { getDatabase } from '@renkei/db';
-import { createWebexAccessVerifier, webexRefId } from '@renkei/connector-webex';
-import { ingestChunk, resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
-import type { KnowledgeHit } from '@renkei/knowledge';
+import { buildPushToRenkeiCard } from '@renkei/connector-webex';
+import { getPublicBaseUrl } from '@renkei/settings';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
-import { classifyMessage } from '../pipeline/classify';
+import { captureMessage } from './webex-capture';
 import { resolveWebexContext, type WebexTenantContext } from './webex-context';
 
 export interface WebexHandlerDeps {
@@ -29,6 +33,13 @@ function payloadMessageId(event: ClaimedEvent): string | null {
   const record: Record<string, unknown> = { ...payload };
   const id = record.id;
   return typeof id === 'string' && id.length > 0 ? id : null;
+}
+
+/** Where the feed lives, for confirmation links; null before the base URL is set. */
+async function cardsFeedUrl(tenantId: string): Promise<string | null> {
+  const base = await getPublicBaseUrl();
+  if (!base.ok || !base.val) return null;
+  return `${base.val}/tenant/${tenantId}/cards`;
 }
 
 export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHandler {
@@ -56,86 +67,38 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
     // them would loop.
     if (context.botPersonId && message.personId === context.botPersonId) return;
 
-    const text = message.text ?? '';
-    const refId = webexRefId(message.roomId, message.id);
+    const outcome = await captureMessage({
+      tenantId: event.tenant_id,
+      message,
+      client: context.client,
+      force: false,
+    });
 
-    // Knowledge is broader than actionability: every human message with text
-    // is indexed (when the org has an embedding provider), so later cards can
-    // cite prior discussion. Indexing failures are logged, not retried — a
-    // retry here would re-run the whole event and duplicate any card it
-    // already produced; a missed chunk is the cheaper loss.
-    const embedder = await resolveEmbeddingProvider(event.tenant_id);
-    if (embedder && text.trim()) {
-      const ingested = await ingestChunk(event.tenant_id, embedder, {
-        provider: 'webex',
-        refId,
-        content: text,
-        metadata: {
-          roomId: message.roomId,
-          personEmail: message.personEmail,
-          created: message.created,
-        },
+    const threadRoot = message.parentId ?? message.id;
+    if (outcome === 'captured') {
+      const feed = await cardsFeedUrl(event.tenant_id);
+      const posted = await context.client.postMessage({
+        roomId: message.roomId,
+        parentId: threadRoot,
+        markdown: feed
+          ? `Captured in Renkei — review and act on it in [your card feed](${feed}).`
+          : 'Captured in Renkei — review and act on it in your card feed.',
       });
-      if (!ingested.ok) {
-        console.warn(
-          `[worker] could not index WebEx message ${message.id} for tenant ${event.tenant_id}`
-        );
+      if (!posted.ok) {
+        console.warn(`[worker] could not post capture confirmation for ${message.id}`);
+      }
+    } else if (outcome === 'skipped') {
+      // Not issue-shaped — offer the deliberate push instead of guessing.
+      const posted = await context.client.postMessage({
+        roomId: message.roomId,
+        parentId: threadRoot,
+        markdown: 'Want me to capture this?',
+        attachments: [buildPushToRenkeiCard({ messageId: message.id, replyTo: threadRoot })],
+      });
+      if (!posted.ok) {
+        console.warn(`[worker] could not post push card for ${message.id}`);
       }
     }
-
-    const classification = classifyMessage(text);
-    if (!classification) return;
-
-    // Enrichment: similar prior chunks, disclosed only after the live ACL
-    // gate clears them for the message AUTHOR — the one identity this event
-    // carries. (Per-viewer verification at card-display time needs the
-    // identity spine; see RENKEI.md open questions.)
-    let related: KnowledgeHit[] = [];
-    let relatedElided = 0;
-    if (embedder && message.personEmail) {
-      const searched = await searchKnowledge({
-        tenantId: event.tenant_id,
-        userEmail: message.personEmail,
-        query: text,
-        k: 3,
-        embedder,
-        verifiers: new Map([['webex', createWebexAccessVerifier(context.client)]]),
-        excludeRef: { provider: 'webex', refId },
-      });
-      if (searched.ok) {
-        related = searched.val.hits;
-        relatedElided = searched.val.elided;
-      }
-    }
-
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable');
-
-    await dbResult.val
-      .insertInto('actionable_items')
-      .values({
-        id: randomUUID(),
-        tenant_id: event.tenant_id,
-        source: 'webex',
-        title: classification.title,
-        summary: classification.summary,
-        evidence: JSON.stringify({
-          provider: 'webex',
-          roomId: message.roomId,
-          messageId: message.id,
-          personEmail: message.personEmail,
-          created: message.created,
-          excerpt: text.slice(0, 500),
-          related: related.map((hit) => ({
-            provider: hit.provider,
-            refId: hit.refId,
-            excerpt: hit.content.slice(0, 200),
-            distance: hit.distance,
-          })),
-          relatedElided,
-        }),
-        suggested_action: JSON.stringify(classification.suggestedAction),
-      })
-      .execute();
+    // 'duplicate': the item already exists; a second reply would be noise.
   };
 }

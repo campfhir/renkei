@@ -11,6 +11,7 @@ import { closeDatabase } from '@renkei/db';
 import { claimNextEvent, completeEvent, failEvent } from './queue';
 import { handlerFor, registerHandler } from './handlers';
 import { createWebexMessageHandler } from './handlers/webex-message';
+import { createWebexAttachmentActionHandler } from './handlers/webex-attachment-action';
 
 /** Poll cadence: quick when draining a backlog, relaxed when idle. */
 const BUSY_DELAY_MS = 100;
@@ -56,7 +57,8 @@ function sleep(ms: number): Promise<void> {
  */
 function registerConnectorHandlers(): void {
   registerHandler('webex', 'messages.created', createWebexMessageHandler());
-  console.log('[worker] webex handler registered');
+  registerHandler('webex', 'attachmentActions.created', createWebexAttachmentActionHandler());
+  console.log('[worker] webex handlers registered');
 }
 
 async function main(): Promise<void> {

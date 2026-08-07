@@ -28,5 +28,20 @@ export {
   WEBEX_MESSAGE_CREATED,
   type WebexWebhookEvent,
 } from './webhook';
-export { WebexClient, type WebexMessage, type WebexPerson } from './client';
+export {
+  WebexClient,
+  type WebexMessage,
+  type WebexPerson,
+  type WebexAttachmentAction,
+  type OutgoingMessage,
+} from './client';
 export { createWebexAccessVerifier, webexRefId } from './verifier';
+export {
+  buildPushToRenkeiCard,
+  parsePushAction,
+  CARD_COMMAND_PUSH,
+  CARD_INPUT_NOTE,
+  type CardAttachment,
+  type PushCardInput,
+  type ParsedPushAction,
+} from './cards';
