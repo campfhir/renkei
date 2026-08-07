@@ -9,7 +9,7 @@
  * that requires an operator of this same tenant.
  */
 
-jest.mock('@/lib/db', () => ({ getDatabase: jest.fn() }));
+jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/auth-utils', () => ({ getOperatorSession: jest.fn() }));
 jest.mock('@/lib/tenant-operations', () => ({
   setTenantOidc: jest.fn(),
@@ -19,7 +19,7 @@ jest.mock('@/lib/tenant-operations', () => ({
 import { NextRequest } from 'next/server';
 import { GET, POST } from './route';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@/lib/db');
+const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getOperatorSession: mockGetOperatorSession } = jest.requireMock<{
   getOperatorSession: jest.Mock;
 }>('@/lib/auth-utils');

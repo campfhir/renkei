@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { getOrigin } from '@/lib/get-origin';
 
 function emailDomain(email: string): string | null {

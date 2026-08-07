@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/env';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 
 /**
  * Protected Resource Metadata for one tenant's MCP server (RFC 9728).

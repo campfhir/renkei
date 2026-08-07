@@ -1,5 +1,5 @@
 import React from 'react';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { redirect } from 'next/navigation';
 import { getConfig } from '@/lib/env';
 import { randomUUID } from 'crypto';

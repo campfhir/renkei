@@ -1,6 +1,5 @@
 import { Kysely, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
-import { getConfig } from './env';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { DB } from './db.types';
@@ -11,15 +10,16 @@ let pool: Pool | null = null;
 export function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
   if (pool) return ok(pool);
 
-  const configResult = getConfig();
-  if (!configResult.ok) {
+  // Deliberately raw process.env, not a package-level config module: this
+  // package is shared by web, worker and the migrate CLI, and DATABASE_URL is
+  // the only setting it needs. Each app validates its own fuller config.
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
     return err('DB_INIT_ERROR' as const);
   }
 
   try {
-    pool = new Pool({
-      connectionString: configResult.val.DATABASE_URL,
-    });
+    pool = new Pool({ connectionString });
     return ok(pool);
 
   } catch  {

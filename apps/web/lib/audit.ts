@@ -1,4 +1,4 @@
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';

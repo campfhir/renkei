@@ -1,5 +1,5 @@
 import React from 'react';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 

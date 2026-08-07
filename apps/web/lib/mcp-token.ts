@@ -10,7 +10,7 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import type { NextRequest } from 'next/server';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { logger } from '@/lib/logger';
 
 /**

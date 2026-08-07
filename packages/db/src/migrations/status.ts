@@ -22,7 +22,7 @@
  */
 
 import { sql } from 'kysely';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '../client';
 
 /**
  * Every migration this build expects, in order.

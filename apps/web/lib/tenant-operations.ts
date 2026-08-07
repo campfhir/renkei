@@ -1,6 +1,6 @@
 import type { Kysely } from 'kysely';
-import type { DB } from '@/lib/db.types';
-import { getDatabase } from '@/lib/db';
+import type { DB } from '@renkei/db';
+import { getDatabase } from '@renkei/db';
 import { encrypt, decrypt, parseEncryptionKey } from '@/lib/crypto/secretbox';
 import { randomUUID } from 'crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';

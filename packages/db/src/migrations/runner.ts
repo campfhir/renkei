@@ -1,6 +1,6 @@
 import { FileMigrationProvider, Migrator } from 'kysely/migration';
 import { resolve } from 'path';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '../client';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -8,7 +8,7 @@ export async function runMigrations(migrationsDir?: string): Promise<Result<void
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('MIGRATION_ERROR' as const);
   const db = dbResult.val;
-  const migrationFolder = migrationsDir || resolve(process.cwd(), 'lib/migrations');
+  const migrationFolder = migrationsDir || resolve(process.cwd(), 'src/migrations');
 
   const fsResult = await wrapAsync(() => import('fs').then((m) => m.promises), 'MIGRATION_ERROR' as const);
   if (!fsResult.ok) return fsResult;

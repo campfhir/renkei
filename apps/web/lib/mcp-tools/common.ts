@@ -6,7 +6,7 @@
 
 import { z } from 'zod';
 import type { Kysely } from 'kysely';
-import type { DB } from '@/lib/db.types';
+import type { DB } from '@renkei/db';
 import type { Env } from '@/lib/env';
 import { refreshAtlassianTokenDirect } from '@/lib/tenant-operations';
 import { logger } from '@/lib/logger';

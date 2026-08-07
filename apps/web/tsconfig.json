@@ -19,7 +19,8 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@renkei/db": ["../../packages/db/src/index.ts"]
     }
   },
   "include": [

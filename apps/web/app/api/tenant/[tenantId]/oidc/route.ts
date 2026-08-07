@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations';
 import { getOperatorSession } from '@/lib/auth-utils';
 import { logger } from '@/lib/logger';
 import type { Kysely } from 'kysely';
-import type { DB } from '@/lib/db.types';
+import type { DB } from '@renkei/db';
 
 /**
  * Confirm the caller is an operator *of this tenant*.

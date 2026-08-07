@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOperatorSession } from '@/lib/auth-utils';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 
 interface QueryFilter {
   field: string;

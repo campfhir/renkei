@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {

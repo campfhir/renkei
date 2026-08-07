@@ -12,7 +12,7 @@ import { readClientCredentials, verifyClientSecret } from './oauth-client-auth';
 
 // mcp-token reaches the Kysely client for token storage, which is ESM and
 // cannot be required here. The digest helpers under test touch no database.
-jest.mock('@/lib/db', () => ({ getDatabase: () => ({ ok: false, err: 'unused' }) }));
+jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false, err: 'unused' }) }));
 
 import { digestsMatch, hashToken } from './mcp-token';
 

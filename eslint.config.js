@@ -11,7 +11,7 @@ export default [
       '.claude/worktrees/**',
       '**/*.config.js',
       '**/*.config.mjs',
-      'apps/web/scripts/build-migrations.js',
+      'packages/db/scripts/build-migrations.js',
       'apps/web/scripts/fix-async-warnings.ts',
     ],
   },
@@ -45,7 +45,7 @@ export default [
   },
   {
     files: [
-      'apps/web/lib/migrations/**/*.ts',
+      'packages/db/src/**/*.ts',
       'apps/web/lib/mcp-tools/**/*.ts',
       'apps/web/lib/mcp-tools/**/*.tsx',
       'apps/web/app/api/**/*.ts',
@@ -53,7 +53,6 @@ export default [
       'apps/web/app/**/*layout.tsx',
       'apps/web/app/tenant/**/*.tsx',
       'apps/web/lib/auth-utils.ts',
-      'apps/web/lib/db.ts',
       'apps/web/lib/logging/bored-logger.ts',
       'apps/web/lib/util/retry.ts',
       'apps/web/lib/ui/**/*.tsx',

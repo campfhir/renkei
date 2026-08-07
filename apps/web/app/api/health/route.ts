@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getMigrationStatus, MIGRATION_COMMAND } from '@/lib/migrations/status';
+import { getMigrationStatus, MIGRATION_COMMAND } from '@renkei/db';
 
 /**
  * Liveness, and whether the schema matches this build.

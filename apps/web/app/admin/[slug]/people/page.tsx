@@ -1,7 +1,7 @@
 import React from 'react';
 import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 
 interface User {
   account_id: string;

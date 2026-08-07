@@ -8,11 +8,11 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "jest",
-    "db:types": "tsx scripts/generate-db-types.ts"
+    "test": "jest"
   },
   "dependencies": {
     "@campfhir/bored-logs": "^0.3.2",
+    "@renkei/db": "workspace:*",
     "@modelcontextprotocol/server": "^2.0.0",
     "dotenv": "^17.4.2",
     "jose": "^6.2.5",

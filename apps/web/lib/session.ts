@@ -10,7 +10,7 @@
 import { randomUUID } from 'crypto';
 import type { NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { logger } from '@/lib/logger';

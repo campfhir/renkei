@@ -1,7 +1,7 @@
 import React from 'react';
 import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 
 export default async function AdminPage({ params }: { params: Promise<{ slug: string }> }): Promise<React.ReactNode> {
   const session = await getOperatorSession();

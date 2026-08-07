@@ -1,0 +1,31 @@
+{
+  "name": "@renkei/db",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "migrate": "tsx scripts/migrate.ts",
+    "db:types": "tsx scripts/generate-db-types.ts"
+  },
+  "dependencies": {
+    "@campfhir/bored-logs": "^0.3.2",
+    "@campfhir/safe-functions": "^0.1.3",
+    "kysely": "^0.29.4",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24",
+    "@types/pg": "^8.20.3",
+    "esbuild": "^0.28.1",
+    "jest": "^30.4.2",
+    "kysely-codegen": "^0.20.0",
+    "ts-jest": "^29.4.12",
+    "tsx": "^4.23.5",
+    "typescript": "^5"
+  }
+}

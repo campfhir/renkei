@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 import { NextRequest, NextResponse } from 'next/server';
 import { getConfig } from '@/lib/env';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { setJiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';

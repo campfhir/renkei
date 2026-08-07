@@ -2,7 +2,7 @@
 
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import type { FilterExpr, LogRow } from '@campfhir/bored-logs';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { buildLogQueryOptions } from '@/lib/log-query';
 import { NO_LOWER_BOUND } from './window';

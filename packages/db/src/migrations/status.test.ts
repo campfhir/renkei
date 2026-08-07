@@ -4,7 +4,7 @@ import { join } from 'path';
 // Both are ESM and cannot be required here. Neither is reached by these cases:
 // the list is static, and the no-database path returns before any query.
 jest.mock('kysely', () => ({ sql: () => ({ execute: async () => ({ rows: [] }) }) }));
-jest.mock('@/lib/db', () => ({ getDatabase: () => ({ ok: false, err: 'unused' }) }));
+jest.mock('../client', () => ({ getDatabase: () => ({ ok: false, err: 'unused' }) }));
 
 import { EXPECTED_MIGRATIONS, getMigrationStatus } from './status';
 

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getConfig, type Env } from '@/lib/env';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { randomUUID, createHash } from 'crypto';
 import type { Kysely } from 'kysely';
-import type { DB } from '@/lib/db.types';
+import type { DB } from '@renkei/db';
 import { storeAccessToken, generateSecret, hashToken, digestsMatch } from '@/lib/mcp-token';
 import {
   readClientCredentials,

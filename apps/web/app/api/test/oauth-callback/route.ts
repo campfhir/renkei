@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const dbResult = getDatabase();

@@ -1,5 +1,5 @@
 import { logger } from '@/lib/logger';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
@@ -43,7 +43,7 @@ export async function register() {
  * fails to register, several layers away from the cause.
  */
 async function reportSchemaDrift(): Promise<void> {
-  const { getMigrationStatus, MIGRATION_COMMAND } = await import('@/lib/migrations/status');
+  const { getMigrationStatus, MIGRATION_COMMAND } = await import('@renkei/db');
   const status = await getMigrationStatus();
 
   if (status.error) {

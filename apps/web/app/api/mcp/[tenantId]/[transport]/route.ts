@@ -8,7 +8,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createMcpHandler } from 'mcp-handler';
-import { getDatabase } from '@/lib/db';
+import { getDatabase } from '@renkei/db';
 import { getConfig } from '@/lib/env';
 import { getJiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
