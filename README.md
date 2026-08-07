@@ -25,6 +25,17 @@ pnpm dev
 
 MCP clients need a public HTTPS origin for OAuth callbacks during development — see [NGROK_SETUP.md](./NGROK_SETUP.md).
 
+**WebEx connector:** store the bot token and webhook secret via
+`PUT /api/admin/{slug}/connectors/webex`, then let Renkei register its own
+webhooks: `POST /api/admin/{slug}/connectors/webex/webhooks` creates the
+two required registrations (`messages/created` for ingestion,
+`attachmentActions/created` for the "Push to Renkei" card button) pointing
+at `/api/webhooks/webex/{tenantId}`. `GET` on the same path reports their
+health. The worker also re-checks every 15 minutes and re-creates webhooks
+that were deleted, disabled by WebEx after repeated failures, or left
+signing with a stale secret — so a rotting connector repairs itself and the
+repair is visible in the worker log.
+
 ## Scripts
 
 | Command | What it does |

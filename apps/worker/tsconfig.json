@@ -34,6 +34,9 @@
       ],
       "@renkei/knowledge": [
         "../../packages/knowledge/src/index.ts"
+      ],
+      "@renkei/settings": [
+        "../../packages/settings/src/index.ts"
       ]
     }
   },
