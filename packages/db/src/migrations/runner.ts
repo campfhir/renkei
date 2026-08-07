@@ -1,8 +1,37 @@
-import { FileMigrationProvider, Migrator } from 'kysely/migration';
+import { Migrator, type Migration, type MigrationProvider } from 'kysely/migration';
 import { resolve } from 'path';
 import { getDatabase } from '../client';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+
+import { isMigrationFile } from './migration-files';
+
+/**
+ * Loads only numbered migration files (001-init.ts, …). Kysely's
+ * FileMigrationProvider imports EVERY file in the folder, which detonates on
+ * the colocated helpers — status.test.ts references jest at module scope —
+ * the moment migrations run from source instead of the compiled bundle
+ * (whose build step already applies this same filter).
+ */
+class NumberedMigrationProvider implements MigrationProvider {
+  constructor(private readonly folder: string) {}
+
+  async getMigrations(): Promise<Record<string, Migration>> {
+    const { promises: fs } = await import('fs');
+    const path = await import('path');
+    const { pathToFileURL } = await import('url');
+
+    const migrations: Record<string, Migration> = {};
+    const files = (await fs.readdir(this.folder)).filter(isMigrationFile).sort();
+    for (const file of files) {
+      const module: Migration = await import(
+        pathToFileURL(path.join(this.folder, file)).href
+      );
+      migrations[file.replace(/\.[^.]+$/, '')] = module;
+    }
+    return migrations;
+  }
+}
 
 export async function runMigrations(migrationsDir?: string): Promise<Result<void, 'MIGRATION_ERROR'>> {
   const dbResult = getDatabase();
@@ -10,20 +39,9 @@ export async function runMigrations(migrationsDir?: string): Promise<Result<void
   const db = dbResult.val;
   const migrationFolder = migrationsDir || resolve(process.cwd(), 'src/migrations');
 
-  const fsResult = await wrapAsync(() => import('fs').then((m) => m.promises), 'MIGRATION_ERROR' as const);
-  if (!fsResult.ok) return fsResult;
-  const fs = fsResult.val;
-
-  const pathResult = await wrapAsync(() => import('path'), 'MIGRATION_ERROR' as const);
-  if (!pathResult.ok) return pathResult;
-
   const migrator = new Migrator({
     db,
-    provider: new FileMigrationProvider({
-      fs,
-      path: pathResult.val,
-      migrationFolder,
-    }),
+    provider: new NumberedMigrationProvider(migrationFolder),
   });
 
   console.log('[Migrations] Running migrations...');
