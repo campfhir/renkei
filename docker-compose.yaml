@@ -52,6 +52,17 @@ services:
     # docker compose -f docker-compose.yaml run --rm migrate
     profiles: ['tools']
 
+  worker:
+    image: scotteremiaroden/jira-work-items-mcp-next:0.1.0-worker
+    container_name: renkei-worker
+    env_file:
+      - .env
+    environment: *database-urls
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   renkei:
     image: scotteremiaroden/jira-work-items-mcp-next:0.1.0
     container_name: renkei-app

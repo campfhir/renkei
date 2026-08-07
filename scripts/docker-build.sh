@@ -105,6 +105,7 @@ prompt_platform BUILD_PLATFORM "${BUILD_PLATFORM:-}"
 prompt_registry_type REGISTRY_TYPE "${REGISTRY_TYPE:-none}"
 configure_registry_prefix
 prompt_yes_no BUILD_MIGRATE "Also build the migration image (docker/Dockerfile's 'migrate' target)?" "${BUILD_MIGRATE:-n}"
+prompt_yes_no BUILD_WORKER "Also build the worker image (docker/Dockerfile's 'worker' target)?" "${BUILD_WORKER:-n}"
 
 IMAGE_NAME="${ARG_NAME:-$PKG_NAME}"
 VERSION="${ARG_VERSION:-$PKG_VERSION}"
@@ -163,11 +164,32 @@ else
   fi
 fi
 
+# The worker image is the long-running queue consumer, tagged "-worker" in the
+# same repository, following the migrate image's pattern.
+LOCAL_WORKER_SEMVER_TAG="${IMAGE_NAME}:${VERSION}-worker"
+LOCAL_WORKER_LATEST_TAG="${IMAGE_NAME}:latest-worker"
+REMOTE_WORKER_SEMVER_TAG=""
+REMOTE_WORKER_LATEST_TAG=""
+if [[ -n "$REGISTRY_PREFIX" ]]; then
+  REMOTE_WORKER_SEMVER_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}:${VERSION}-worker"
+  REMOTE_WORKER_LATEST_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}:latest-worker"
+fi
+
+if $MULTI_PLATFORM; then
+  WORKER_TAG_ARGS=(--tag "$REMOTE_WORKER_SEMVER_TAG" --tag "$REMOTE_WORKER_LATEST_TAG")
+else
+  WORKER_TAG_ARGS=(--tag "$LOCAL_WORKER_SEMVER_TAG" --tag "$LOCAL_WORKER_LATEST_TAG")
+  if [[ -n "$REGISTRY_PREFIX" ]]; then
+    WORKER_TAG_ARGS+=(--tag "$REMOTE_WORKER_SEMVER_TAG" --tag "$REMOTE_WORKER_LATEST_TAG")
+  fi
+fi
+
 # ── Save config ──────────────────────────────────────────────────────────────
 {
   echo "BUILD_ENV=$BUILD_ENV"
   echo "BUILD_PLATFORM=$BUILD_PLATFORM"
   echo "BUILD_MIGRATE=$BUILD_MIGRATE"
+  echo "BUILD_WORKER=$BUILD_WORKER"
   registry_config_lines
 } > "$CONFIG_FILE"
 echo ""
@@ -251,6 +273,28 @@ if [[ "$BUILD_MIGRATE" == y ]]; then
       echo "✅  Also tagged: $REMOTE_MIGRATE_LATEST_TAG"
       echo ""
       echo "Run scripts/docker-push.sh to push $REMOTE_MIGRATE_SEMVER_TAG"
+    fi
+  fi
+fi
+
+if [[ "$BUILD_WORKER" == y ]]; then
+  echo ""
+  echo "Building: ${WORKER_TAG_ARGS[*]} (env=$BUILD_ENV, platform=$PLATFORM_LABEL, registry=$REGISTRY_LABEL)"
+  echo "──────────────────────────────────────────────────────────────────────────────"
+  build_target worker "${WORKER_TAG_ARGS[@]}"
+
+  echo ""
+  if $MULTI_PLATFORM; then
+    echo "✅  Built and pushed: $REMOTE_WORKER_SEMVER_TAG"
+    echo "✅  Pushed: $REMOTE_WORKER_LATEST_TAG"
+  else
+    echo "✅  Built: $LOCAL_WORKER_SEMVER_TAG"
+    echo "✅  Tagged: $LOCAL_WORKER_LATEST_TAG"
+    if [[ -n "$REGISTRY_PREFIX" ]]; then
+      echo "✅  Also tagged: $REMOTE_WORKER_SEMVER_TAG"
+      echo "✅  Also tagged: $REMOTE_WORKER_LATEST_TAG"
+      echo ""
+      echo "Run scripts/docker-push.sh to push $REMOTE_WORKER_SEMVER_TAG"
     fi
   fi
 fi

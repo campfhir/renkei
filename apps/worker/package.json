@@ -11,14 +11,14 @@
   },
   "dependencies": {
     "@renkei/db": "workspace:*",
-    "kysely": "^0.29.4"
+    "kysely": "^0.29.4",
+    "tsx": "^4.23.5"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/node": "^24",
     "jest": "^30.4.2",
     "ts-jest": "^29.4.12",
-    "tsx": "^4.23.5",
     "typescript": "^5"
   }
 }

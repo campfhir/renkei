@@ -81,6 +81,7 @@ fi
 
 # Defaults to whatever docker-build.sh last built, loaded from BUILD_CONFIG above.
 prompt_yes_no PUSH_MIGRATE "Also push the migration image?" "${BUILD_MIGRATE:-n}"
+prompt_yes_no PUSH_WORKER "Also push the worker image?" "${BUILD_WORKER:-n}"
 
 LOCAL_SEMVER_TAG="${IMAGE_NAME}:${VERSION}"
 LOCAL_LATEST_TAG="${IMAGE_NAME}:latest"
@@ -91,6 +92,11 @@ LOCAL_MIGRATE_SEMVER_TAG="${IMAGE_NAME}:${VERSION}-migrate"
 LOCAL_MIGRATE_LATEST_TAG="${IMAGE_NAME}:latest-migrate"
 REMOTE_MIGRATE_SEMVER_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}:${VERSION}-migrate"
 REMOTE_MIGRATE_LATEST_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}:latest-migrate"
+
+LOCAL_WORKER_SEMVER_TAG="${IMAGE_NAME}:${VERSION}-worker"
+LOCAL_WORKER_LATEST_TAG="${IMAGE_NAME}:latest-worker"
+REMOTE_WORKER_SEMVER_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}:${VERSION}-worker"
+REMOTE_WORKER_LATEST_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}:latest-worker"
 
 # ── Save push config ─────────────────────────────────────────────────────────
 registry_config_lines > "$PUSH_CONFIG"
@@ -158,12 +164,34 @@ if [[ "$PUSH_MIGRATE" == y ]]; then
   echo "✅  Pushed: $REMOTE_MIGRATE_LATEST_TAG"
 fi
 
+if [[ "$PUSH_WORKER" == y ]]; then
+  tag_if_needed "$LOCAL_WORKER_SEMVER_TAG" "$REMOTE_WORKER_SEMVER_TAG"
+  tag_if_needed "$LOCAL_WORKER_LATEST_TAG" "$REMOTE_WORKER_LATEST_TAG"
+
+  echo ""
+  echo "Pushing:  $REMOTE_WORKER_SEMVER_TAG"
+  echo "──────────────────────────────────────────────────────"
+  docker push "$REMOTE_WORKER_SEMVER_TAG"
+
+  echo ""
+  echo "Pushing:  $REMOTE_WORKER_LATEST_TAG"
+  echo "──────────────────────────────────────────────────────"
+  docker push "$REMOTE_WORKER_LATEST_TAG"
+
+  echo ""
+  echo "✅  Pushed: $REMOTE_WORKER_SEMVER_TAG"
+  echo "✅  Pushed: $REMOTE_WORKER_LATEST_TAG"
+fi
+
 echo ""
 echo "Pull on your server with:"
 echo "  docker pull $REMOTE_SEMVER_TAG"
 if [[ "$PUSH_MIGRATE" == y ]]; then
   echo "  docker pull $REMOTE_MIGRATE_SEMVER_TAG"
   echo "  docker run --rm -e MIGRATION_DATABASE_URL=... $REMOTE_MIGRATE_SEMVER_TAG"
+fi
+if [[ "$PUSH_WORKER" == y ]]; then
+  echo "  docker pull $REMOTE_WORKER_SEMVER_TAG"
 fi
 case "$REGISTRY_TYPE" in
   acr)    echo "  (ensure the server is also logged in via: az acr login --name $ACR_NAME)" ;;

@@ -6,26 +6,26 @@ WORKDIR /app
 # Install pnpm
 RUN npm install -g pnpm
 
-# Copy package files
+# Manifests first, so the dependency install caches independently of source edits
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/web/package.json ./apps/web/
+COPY apps/worker/package.json ./apps/worker/
+COPY packages/db/package.json ./packages/db/
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
 
-# Copy only necessary source files (exclude node_modules, .next, dist, etc.)
-COPY app ./app
-COPY lib ./lib
-COPY public ./public
-COPY scripts ./scripts
-COPY instrumentation.ts proxy.ts next.config.ts tsconfig.json postcss.config.mjs ./
+# Copy workspace source
+COPY apps ./apps
+COPY packages ./packages
 
-# Compile migrations with esbuild (handles aliases)
-RUN node scripts/build-migrations.js
+# Compile the migrate CLI and migration files for the migrate stage
+RUN node packages/db/scripts/build-migrations.js
 
-# Build the application
-RUN npm run build
+# Build the web application
+RUN pnpm --filter @renkei/web build
 
-# Production stage (runtime)
+# Web runtime stage
 FROM node:24-alpine AS runtime
 
 WORKDIR /app
@@ -33,20 +33,21 @@ WORKDIR /app
 # Install dumb-init for proper signal handling and pnpm
 RUN apk add --no-cache dumb-init && npm install -g pnpm
 
-# Copy package files
+# Copy manifests and install only the web app's production dependencies
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/web/package.json ./apps/web/
+COPY packages/db/package.json ./packages/db/
+RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/web... && \
+    rm -rf /root/.pnpm-store /root/.npm
 
-# Install only production dependencies (no dev deps, no optional)
-RUN pnpm install --frozen-lockfile --prod --no-optional && \
-    pnpm prune --prod && \
-    rm -rf /root/.pnpm-store && \
-    rm -rf /root/.npm
+# @renkei/db ships TypeScript source (compiled into the build via
+# transpilePackages); the workspace link still needs the package present.
+COPY --from=builder /app/packages/db/src ./packages/db/src
 
 # Copy built application from builder stage
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/proxy.ts ./proxy.ts
+COPY --from=builder /app/apps/web/.next ./apps/web/.next
+COPY --from=builder /app/apps/web/public ./apps/web/public
+COPY --from=builder /app/apps/web/next.config.ts /app/apps/web/tsconfig.json /app/apps/web/proxy.ts ./apps/web/
 
 # Create a non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
@@ -74,7 +75,35 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
 ENTRYPOINT ["dumb-init", "--"]
 
 # Start the application
-CMD ["pnpm", "start"]
+CMD ["pnpm", "--filter", "@renkei/web", "start"]
+
+# Worker stage - the long-running queue consumer
+FROM node:24-alpine AS worker
+
+WORKDIR /app
+
+RUN apk add --no-cache dumb-init && npm install -g pnpm
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/worker/package.json ./apps/worker/
+COPY packages/db/package.json ./packages/db/
+RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/worker... && \
+    rm -rf /root/.pnpm-store /root/.npm
+
+# The worker runs TypeScript directly through tsx, so it ships source.
+COPY --from=builder /app/packages/db/src ./packages/db/src
+COPY --from=builder /app/apps/worker/src ./apps/worker/src
+COPY --from=builder /app/apps/worker/tsconfig.json ./apps/worker/
+
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S worker -u 1001 && \
+    chown -R worker:nodejs /app
+USER worker
+
+ENV NODE_ENV=production
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["pnpm", "--filter", "@renkei/worker", "start"]
 
 # Migration stage - runs migrations only
 FROM node:24-alpine AS migrate
@@ -84,20 +113,17 @@ WORKDIR /app
 # Install pnpm
 RUN npm install -g pnpm
 
-# Copy package files
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/db/package.json ./packages/db/
+RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/db... && \
+    rm -rf /root/.pnpm-store /root/.npm
 
-# Install only production dependencies (no dev deps, no optional)
-RUN pnpm install --frozen-lockfile --prod --no-optional && \
-    pnpm prune --prod && \
-    rm -rf /root/.pnpm-store && \
-    rm -rf /root/.npm
+# Copy compiled migrations from builder stage
+COPY --from=builder /app/packages/db/dist ./packages/db/dist
 
-# Copy built migrations from builder stage
-COPY --from=builder /app/dist ./dist
-
-# Set environment variable to point to compiled migrations
-ENV MIGRATIONS_DIR=/app/dist/lib/migrations
+# The CJS bundle cannot resolve a script-relative default, so the migrations
+# directory is set explicitly (see packages/db/scripts/build-migrations.js).
+ENV MIGRATIONS_DIR=/app/packages/db/dist/migrations
 
 # Run migrations
-CMD ["node", "dist/migrate.cjs"]
+CMD ["node", "packages/db/dist/migrate.cjs"]
