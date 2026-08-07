@@ -4,7 +4,7 @@
  */
 
 import { randomBytes } from 'crypto';
-import { encrypt, decrypt, parseEncryptionKey } from './crypto/secretbox';
+import { encrypt, decrypt, parseEncryptionKey } from '@renkei/crypto';
 
 /** A `provider_grants` row as the production writer stores it. */
 interface GrantRow {

@@ -44,6 +44,7 @@ export const EXPECTED_MIGRATIONS = [
   '011-hash-refresh-tokens',
   '012-hash-client-secrets',
   '013-events',
+  '014-provider-refresh-locks',
 ];
 
 export interface MigrationStatus {

@@ -16,7 +16,7 @@ import type { NextConfig } from 'next';
  */
 const nextConfig: NextConfig = {
   // Workspace packages ship TypeScript source; Next compiles them in-place.
-  transpilePackages: ['@renkei/db'],
+  transpilePackages: ['@renkei/db', '@renkei/crypto', '@renkei/provider-grants'],
   async rewrites() {
     return [
       // RFC 8414 path-insert form for the per-tenant authorization server.

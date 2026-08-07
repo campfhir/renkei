@@ -20,7 +20,9 @@
     ],
     "paths": {
       "@/*": ["./*"],
-      "@renkei/db": ["../../packages/db/src/index.ts"]
+      "@renkei/db": ["../../packages/db/src/index.ts"],
+      "@renkei/crypto": ["../../packages/crypto/src/index.ts"],
+      "@renkei/provider-grants": ["../../packages/provider-grants/src/index.ts"]
     }
   },
   "include": [

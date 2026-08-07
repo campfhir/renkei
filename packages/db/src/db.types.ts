@@ -26,9 +26,10 @@ export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
-export interface AtlassianRefreshLocks {
+export interface ProviderRefreshLocks {
   account_id: string;
   locked_at: Generated<Timestamp>;
+  provider: string;
   tenant_id: string;
 }
 
@@ -228,8 +229,8 @@ export interface Events {
 }
 
 export interface DB {
-  atlassian_refresh_locks: AtlassianRefreshLocks;
   events: Events;
+  provider_refresh_locks: ProviderRefreshLocks;
   jira_sessions: JiraSessions;
   log_attr: LogAttr;
   log_attr_blob: LogAttrBlob;

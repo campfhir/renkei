@@ -12,7 +12,9 @@
   },
   "dependencies": {
     "@campfhir/bored-logs": "^0.3.2",
+    "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/provider-grants": "workspace:*",
     "@modelcontextprotocol/server": "^2.0.0",
     "dotenv": "^17.4.2",
     "jose": "^6.2.5",
