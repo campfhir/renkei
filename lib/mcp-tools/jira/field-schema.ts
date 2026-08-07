@@ -44,6 +44,13 @@ export interface JiraField {
   customType?: string | undefined;
   /** The JQL spellings, which include `cf[10016]`. */
   clauseNames: string[];
+  /** Valid option values for select/option fields (fetched from createmeta). */
+  allowedValues?: FieldOption[] | undefined;
+}
+
+export interface FieldOption {
+  value: string;
+  id?: string | undefined;
 }
 
 /** How long the schema is trusted. It tracks configuration, not content. */
@@ -274,7 +281,7 @@ export function coerceFieldValue(field: JiraField, value: unknown): Coercion {
       return { ok: true, value: plainStringValue(value) };
 
     case 'option':
-      return isRecord(value) ? { ok: true, value } : { ok: true, value: { value: String(value) } };
+      return validateOptionValue(field, value);
 
     case 'option-with-child':
       // Both levels need ids or values the caller has to know; pass through.
@@ -303,6 +310,38 @@ export function coerceFieldValue(field: JiraField, value: unknown): Coercion {
       // than refuse. Jira validates, and its error names the field.
       return { ok: true, value };
   }
+}
+
+function validateOptionValue(field: JiraField, value: unknown): Coercion {
+  // If already a record (structured value), pass through
+  if (isRecord(value)) return { ok: true, value };
+
+  const stringValue = String(value).trim();
+
+  // If no allowed values are defined, we can't validate — pass through and let Jira validate
+  if (!field.allowedValues || field.allowedValues.length === 0) {
+    return { ok: true, value: { value: stringValue } };
+  }
+
+  // Check if the value matches any allowed option (case-insensitive for user-friendliness)
+  const lowerStringValue = stringValue.toLowerCase();
+  const match = field.allowedValues.find(
+    (opt) =>
+      opt.value.toLowerCase() === lowerStringValue ||
+      (opt.id && opt.id.toLowerCase() === lowerStringValue)
+  );
+
+  if (match) {
+    // Use the exact value from the allowed options to ensure case matches
+    return { ok: true, value: { value: match.value } };
+  }
+
+  // Value not found in allowed options
+  const validOptions = field.allowedValues.map((opt) => `"${opt.value}"`).join(', ');
+  return {
+    ok: false,
+    message: `${field.name} does not accept "${stringValue}". Valid options: ${validOptions}`,
+  };
 }
 
 function userValue(field: JiraField, value: unknown): Coercion {
@@ -416,7 +455,8 @@ export interface FieldUpdates {
  */
 export async function buildFieldUpdates(
   context: MCPToolContext,
-  requested: Record<string, unknown>
+  requested: Record<string, unknown>,
+  options: { projectKey?: string; issueTypeId?: string } = {}
 ): Promise<FieldUpdates> {
   const entries = Object.entries(requested);
   if (entries.length === 0) return { fields: {}, applied: [], problems: [] };
@@ -432,6 +472,14 @@ export async function buildFieldUpdates(
       schema = await loadFieldSchema(context, { refresh: true });
     }
   }
+
+  // Enrich schema with allowed values for option fields
+  schema = await enrichFieldsWithAllowedValues(
+    context,
+    schema,
+    options.projectKey,
+    options.issueTypeId
+  );
 
   const fields: Record<string, unknown> = {};
   const applied: string[] = [];
@@ -460,4 +508,79 @@ export async function buildFieldUpdates(
 function schemaCacheAge(context: MCPToolContext): number | null {
   const cached = schemaCache.get(context.apiBaseUrl);
   return cached ? Date.now() - cached.fetchedAt : null;
+}
+
+/**
+ * Fetch allowed values for fields from issue creation metadata.
+ * This provides the valid options for select/option fields.
+ *
+ * Only fetches if createmeta is accessible; gracefully falls back if not.
+ */
+export async function enrichFieldsWithAllowedValues(
+  context: MCPToolContext,
+  fields: JiraField[],
+  projectKey?: string,
+  issueTypeId?: string
+): Promise<JiraField[]> {
+  try {
+    // Build createmeta URL with optional filters
+    let url = `${context.apiBaseUrl}/rest/api/3/issue/createmeta`;
+    const params: string[] = [];
+
+    if (projectKey) params.push(`projectKeys=${encodeURIComponent(projectKey)}`);
+    if (issueTypeId) params.push(`issueTypeIds=${encodeURIComponent(issueTypeId)}`);
+    params.push('expand=projects.issuetypes.fields');
+
+    if (params.length > 0) {
+      url += `?${params.join('&')}`;
+    }
+
+    const response = await jiraFetch(url, context.accessToken);
+    if (!response.ok) {
+      // If createmeta is not accessible, return fields as-is
+      logger.debug('[FieldSchema] Could not fetch createmeta for allowed values', {
+        status: response.status,
+      });
+      return fields;
+    }
+
+    const metadata = await response.json();
+
+    // Extract allowed values from projects.issuetypes.fields
+    const allowedValuesByFieldId: Record<string, FieldOption[]> = {};
+
+    if (isRecord(metadata) && Array.isArray(metadata.projects)) {
+      for (const projectData of metadata.projects) {
+        if (!isRecord(projectData) || !Array.isArray(projectData.issuetypes)) continue;
+        for (const issueTypeData of projectData.issuetypes) {
+          if (!isRecord(issueTypeData) || !isRecord(issueTypeData.fields)) continue;
+          for (const [fieldId, fieldMeta] of Object.entries(issueTypeData.fields)) {
+            if (!isRecord(fieldMeta)) continue;
+
+            const allowedValues = fieldMeta.allowedValues;
+            if (Array.isArray(allowedValues) && allowedValues.length > 0) {
+              allowedValuesByFieldId[fieldId] = allowedValues.map((opt) => {
+                const optRecord = isRecord(opt) ? opt : {};
+                const value = typeof optRecord.value === 'string' ? optRecord.value : String(opt);
+                const id = typeof optRecord.id === 'string' ? optRecord.id : undefined;
+                return { value, id };
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // Merge allowed values back into fields
+    return fields.map((field) => ({
+      ...field,
+      allowedValues: allowedValuesByFieldId[field.id] || field.allowedValues,
+    }));
+  } catch (error) {
+    logger.debug('[FieldSchema] Error enriching fields with allowed values', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // Gracefully return fields without allowed values
+    return fields;
+  }
 }

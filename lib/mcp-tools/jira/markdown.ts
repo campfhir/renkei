@@ -63,7 +63,9 @@ const LIST_ITEM = /^(\s*)(?:([-*+])|(\d{1,9})[.)])\s+(.*)$/;
 
 export function markdownToAdf(markdown: string): AdfDocument {
   const lines = maskEscapes(markdown).replace(/\r\n?/g, '\n').split('\n');
-  return { version: 1, type: 'doc', content: parseBlocks(lines) };
+  const content = parseBlocks(lines);
+  // Post-process to convert @accountId patterns to mention nodes
+  return { version: 1, type: 'doc', content: processMentions(content) };
 }
 
 /** True when the source would produce a document Jira treats as empty. */
@@ -299,4 +301,82 @@ function textNode(text: string, marks: readonly AdfMark[]): AdfNode[] {
     return [];
   }
   return [{ type: 'text', text: restored, ...(marks.length === 0 ? {} : { marks: [...marks] }) }];
+}
+
+// ---------------------------------------------------------------- mentions
+
+/**
+ * Post-process ADF nodes to convert [~accountId] patterns to mention nodes.
+ *
+ * Jira wiki markup uses [~accountId] for mentions.
+ * Account IDs are UUIDs with a numeric prefix (e.g., 557058:xxx-xxx-xxx).
+ */
+function processMentions(nodes: readonly AdfNode[]): AdfNode[] {
+  return nodes.flatMap((node) => {
+    // Recursively process children
+    if (node.content && Array.isArray(node.content)) {
+      return { ...node, content: processMentions(node.content) };
+    }
+
+    // Convert text nodes containing [~mention] patterns
+    if (node.type === 'text' && typeof node.text === 'string') {
+      const result = processMentionsInText(node, node.marks ?? []);
+      return Array.isArray(result) ? result : [result];
+    }
+
+    return node;
+  });
+}
+
+/**
+ * Convert [~accountId] patterns in a text node to separate text and mention nodes.
+ */
+function processMentionsInText(node: AdfNode, marks: readonly AdfMark[]): AdfNode | AdfNode[] {
+  const text = node.text ?? '';
+  // Match Jira wiki markup: [~accountId] where accountId is a Jira UUID
+  const mentionPattern = /\[~([0-9a-f]+:[0-9a-f-]+)\]/gi;
+
+  const parts: AdfNode[] = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = mentionPattern.exec(text)) !== null) {
+    // Add text before the mention
+    if (match.index > lastIndex) {
+      parts.push({
+        type: 'text',
+        text: text.slice(lastIndex, match.index),
+        ...(marks.length === 0 ? {} : { marks: [...marks] }),
+      });
+    }
+
+    // Add the mention node
+    const accountId = match[1] ?? '';
+    parts.push({
+      type: 'mention',
+      attrs: {
+        id: accountId,
+        text: `[~${accountId}]`,
+      },
+    });
+
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Add remaining text after the last mention
+  if (lastIndex < text.length) {
+    parts.push({
+      type: 'text',
+      text: text.slice(lastIndex),
+      ...(marks.length === 0 ? {} : { marks: [...marks] }),
+    });
+  }
+
+  // If no mentions found, return original node
+  if (parts.length === 0) {
+    return node;
+  }
+
+  // If we created parts, return them (may be multiple nodes now)
+  return parts;
 }
