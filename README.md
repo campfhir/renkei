@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Renkei
 
-## Getting Started
+Renkei (連携 — "linkage, cooperation") is a permission-aware knowledge and action layer for the tools an organization already uses. The full product vision, architecture, and roadmap live in [RENKEI.md](./RENKEI.md).
 
-First, run the development server:
+**What this repo is today:** the first module of that platform — a multi-tenant **Jira MCP server**. It exposes 50+ Jira and Jira Service Management tools over the Model Context Protocol, with per-user OAuth so every action happens as the calling user and reads honor that user's Jira permissions.
+
+## How it works
+
+- **MCP endpoint:** `/api/mcp/{tenantId}/{transport}` (streamable HTTP, JSON-RPC via `mcp-handler`).
+- **Auth, layer 1:** the server is an OAuth 2.1 authorization server toward MCP clients — per-tenant authorize/register/token endpoints with PKCE and RFC 8414/9728 discovery. Users sign in through their tenant's own OIDC provider.
+- **Auth, layer 2:** each signed-in user links their own Atlassian account (OAuth 2.0 3LO). The grant is bound to the user's OIDC subject and encrypted at rest; tool calls hit `api.atlassian.com` with that user's token.
+- **Storage:** PostgreSQL 16 via Kysely. Migrations live in `lib/migrations/`; `/api/health` returns 503 while migrations are pending, which gates deployments.
+
+## Getting started
+
+Requirements: Node 24+, pnpm, Docker (for Postgres).
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
+cp .env.example .env.development   # fill in OIDC + Atlassian OAuth credentials
+docker compose -f docker-compose.yml up -d postgres
+npx tsx scripts/migrate.ts        # run database migrations
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+MCP clients need a public HTTPS origin for OAuth callbacks during development — see [NGROK_SETUP.md](./NGROK_SETUP.md).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Scripts
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Command | What it does |
+| --- | --- |
+| `pnpm dev` | Start the Next.js dev server |
+| `pnpm build` | Production build |
+| `pnpm start` | Run the production build |
+| `pnpm lint` | ESLint over the repo |
+| `pnpm typecheck` | TypeScript, no emit |
+| `pnpm test` | Jest test suite |
+| `pnpm db:types` | Regenerate `lib/db.types.ts` from the live database schema |
 
-## Learn More
+## Layout
 
-To learn more about Next.js, take a look at the following resources:
+```
+app/            Next.js App Router: pages, MCP + OAuth + OIDC + admin API routes
+lib/            business logic
+  mcp-tools/    tool implementations (jira/, jira-service-management/)
+  migrations/   Kysely migrations, run by lib/migrations/runner.ts
+  crypto/       AES-256-GCM secretbox for grants at rest
+docker/         multi-stage Dockerfile (builder / runtime / migrate)
+scripts/        build, migration, docker, and ngrok helpers
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Deployment
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+`docker-compose.yaml` (production) runs prebuilt images with a `migrate` service behind the `tools` profile, so `up` never migrates as a side effect. See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full guide.

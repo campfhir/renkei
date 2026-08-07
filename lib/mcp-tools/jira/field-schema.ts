@@ -473,13 +473,21 @@ export async function buildFieldUpdates(
     }
   }
 
-  // Enrich schema with allowed values for option fields
-  schema = await enrichFieldsWithAllowedValues(
-    context,
-    schema,
-    options.projectKey,
-    options.issueTypeId
-  );
+  // Allowed values come from createmeta — an extra, potentially large round
+  // trip — so only pay for it when a requested field is actually a select,
+  // whose value is worth validating before Jira sees it.
+  const needsAllowedValues = entries.some(([reference]) => {
+    const lookup = lookupField(schema, reference);
+    return lookup.ok && lookup.field.type === 'option';
+  });
+  if (needsAllowedValues) {
+    schema = await enrichFieldsWithAllowedValues(
+      context,
+      schema,
+      options.projectKey,
+      options.issueTypeId
+    );
+  }
 
   const fields: Record<string, unknown> = {};
   const applied: string[] = [];
@@ -535,15 +543,9 @@ export async function enrichFieldsWithAllowedValues(
       url += `?${params.join('&')}`;
     }
 
+    // jiraFetch throws on non-2xx, so an inaccessible createmeta lands in the
+    // catch below and the fields go back unenriched.
     const response = await jiraFetch(url, context.accessToken);
-    if (!response.ok) {
-      // If createmeta is not accessible, return fields as-is
-      logger.debug('[FieldSchema] Could not fetch createmeta for allowed values', {
-        status: response.status,
-      });
-      return fields;
-    }
-
     const metadata = await response.json();
 
     // Extract allowed values from projects.issuetypes.fields

@@ -152,6 +152,13 @@ const handler = async (
       );
     }
 
+    // Record the grant's token on every request, not just at handler creation:
+    // the cached handler's closure holds whatever token existed when it was
+    // built, and jiraFetch resolves the current one through this cache. This
+    // also picks up tokens rotated by another process, since the grant above
+    // is read fresh from the database each request.
+    cacheTokenMetadata(grant.accessToken, tenantId, accountId);
+
     // Check cache
     const cacheKey = getCacheKey(tenantId, accountId);
     let cachedHandler = handlerCache.get(cacheKey);
@@ -165,9 +172,6 @@ const handler = async (
           try {
             logger.info('[MCP] Server created', { tenantId, accountId });
 
-            // Cache token metadata for refresh lookups
-            cacheTokenMetadata(grant.accessToken, tenantId, accountId);
-
             const context: MCPToolContext = {
               tenantId,
               accountId,
@@ -175,6 +179,7 @@ const handler = async (
               apiBaseUrl: `https://api.atlassian.com/ex/jira/${grant.cloudId}`,
               accessToken: grant.accessToken,
               maxJqlResults: 100,
+              origin,
               db,
               config,
             };

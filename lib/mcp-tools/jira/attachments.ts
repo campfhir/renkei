@@ -7,8 +7,11 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName } from '../common';
+import { getCachedDisplayName, jiraFetch } from '../common';
 import { logger } from '@/lib/logger';
+
+/** Fallback when no config is on the context; matches the env default. */
+const DEFAULT_MAX_ATTACHMENT_BYTES = 20_971_520; // 20MB
 
 export async function registerAttachmentTools(
   server: McpServer,
@@ -45,29 +48,33 @@ export async function registerAttachmentTools(
           };
         }
 
-        // Decode base64 to binary
-        const binaryString = Buffer.from(contentBase64, 'base64').toString('binary');
-        const blob = Buffer.from(binaryString, 'binary');
+        const buffer = Buffer.from(contentBase64, 'base64');
+
+        const maxBytes = context.config?.MAX_ATTACHMENT_BYTES ?? DEFAULT_MAX_ATTACHMENT_BYTES;
+        if (buffer.byteLength > maxBytes) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Attachment is ${buffer.byteLength} bytes; the limit is ${maxBytes} bytes (MAX_ATTACHMENT_BYTES)`,
+              },
+            ],
+            isError: true,
+          };
+        }
 
         // Create form data for multipart upload
         const formData = new FormData();
-        formData.append('file', new Blob([blob]), filename);
+        formData.append('file', new Blob([buffer]), filename);
 
-        const response = await fetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/attachments`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${context.accessToken}`,
-              'X-Atlassian-Token': 'no-check',
-            },
-            body: formData,
-          }
-        );
-
-        if (!response.ok) {
-          throw new Error(`Upload failed: ${response.statusText}`);
-        }
+        // Through jiraFetch, not bare fetch: an expired token gets refreshed
+        // and retried instead of failing the upload, and a refusal surfaces
+        // Jira's actual reason rather than a bare status text.
+        await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/attachments`, context.accessToken, {
+          method: 'POST',
+          headers: { 'X-Atlassian-Token': 'no-check' },
+          body: formData,
+        });
 
         return {
           content: [{ type: 'text' as const, text: `Attached ${filename} to ${issueKey}` }],

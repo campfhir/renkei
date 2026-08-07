@@ -126,21 +126,24 @@ export async function registerUtilityTools(
         displayName,
       });
       try {
-        const { db, tenantId, config } = context;
+        const { db, tenantId } = context;
 
-        if (!db || !config) {
+        if (!db) {
           return {
-            content: [{ type: 'text' as const, text: 'Database or config not available' }],
+            content: [{ type: 'text' as const, text: 'Database not available' }],
             isError: true,
           };
         }
 
-        // Check if a Jira grant already exists for this tenant
+        // The caller's own grant only. A tenant-wide query here reported
+        // "already connected as <someone else>" — one user's connection state
+        // disclosed to another, and a dead end for the asker.
         const existingGrant = await db
           .selectFrom('provider_grants')
           .select(['display_name', 'metadata'])
           .where('tenant_id', '=', tenantId)
           .where('provider', '=', 'atlassian')
+          .where('provider_account_id', '=', context.accountId)
           .executeTakeFirst();
 
         if (existingGrant) {
@@ -160,17 +163,11 @@ export async function registerUtilityTools(
           };
         }
 
-        // Generate the Jira authorization URL
-        const params = new URLSearchParams({
-          response_type: 'code',
-          client_id: config.ATLASSIAN_CLIENT_ID,
-          redirect_uri: config.ATLASSIAN_REDIRECT_URI,
-          scope: config.ATLASSIAN_SCOPES,
-          state: 'jira-setup',
-          audience: 'api.atlassian.com',
-        });
-
-        const authUrl = `https://auth.atlassian.com/authorize?${params.toString()}`;
+        // Send the user through this server's authorize route, which requires
+        // a signed-in session and mints real CSRF state. A hand-built
+        // auth.atlassian.com URL cannot work here: its state would never match
+        // a pending_oidc_signin row, so the callback would reject it.
+        const authUrl = `${context.origin ?? ''}/api/mcp/${tenantId}/authorize`;
 
         const text =
           `**Jira is not connected yet.**\n\n` +
