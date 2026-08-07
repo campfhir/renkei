@@ -33,6 +33,15 @@ export interface ProviderRefreshLocks {
   tenant_id: string;
 }
 
+export interface Identities {
+  created_at: Generated<Timestamp>;
+  display_name: string | null;
+  email: string;
+  subject: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface JiraSessions {
   account_id: string;
   created_at: Generated<Timestamp>;
@@ -283,6 +292,7 @@ export interface DB {
   actionable_items: ActionableItems;
   connector_configs: ConnectorConfigs;
   events: Events;
+  identities: Identities;
   knowledge_chunks: KnowledgeChunks;
   platform_settings: PlatformSettings;
   tenant_settings: TenantSettings;

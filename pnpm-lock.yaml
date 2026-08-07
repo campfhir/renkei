@@ -59,6 +59,12 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@renkei/gates':
+        specifier: workspace:*
+        version: link:../../packages/gates
+      '@renkei/knowledge':
+        specifier: workspace:*
+        version: link:../../packages/knowledge
       '@renkei/provider-grants':
         specifier: workspace:*
         version: link:../../packages/provider-grants

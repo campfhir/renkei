@@ -3,6 +3,7 @@ import { getDatabase } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { createSession, sessionCookieName, sessionCookieOptions } from '@/lib/session';
+import { identityClaimsFromIdToken, upsertIdentity } from '@/lib/identity';
 
 interface OIDCTokenResponse {
   access_token: string;
@@ -158,6 +159,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         { error: 'Identity provider did not return a subject claim' },
         { status: 400 }
       );
+    }
+
+    // Record the identity spine entry (subject → email) while the id_token
+    // is in hand — the only moment the mapping is trustworthy. Non-fatal:
+    // a failed upsert must not break sign-in, and everything downstream
+    // that needs the email fails closed without it.
+    const identityClaims = decoded ? identityClaimsFromIdToken(decoded) : null;
+    if (identityClaims) {
+      const recorded = await upsertIdentity(tenantId, subject, identityClaims);
+      if (!recorded.ok) {
+        console.warn(`[OIDC ${tenantId}] could not record identity for subject; gates will fail closed`);
+      }
+    } else {
+      console.warn(`[OIDC ${tenantId}] id_token carries no email claim; gates will fail closed for this user`);
     }
 
     // Decode and mint standardized renkei roles from IDP claims

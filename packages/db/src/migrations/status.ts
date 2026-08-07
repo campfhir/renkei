@@ -49,6 +49,7 @@ export const EXPECTED_MIGRATIONS = [
   '016-connector-configs',
   '017-settings',
   '018-knowledge-chunks',
+  '019-identities',
 ];
 
 export interface MigrationStatus {

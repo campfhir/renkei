@@ -26,7 +26,9 @@
       "@renkei/capability-registry": ["../../packages/capability-registry/src/index.ts"],
       "@renkei/connector-webex": ["../../packages/connector-webex/src/index.ts"],
       "@renkei/connector-config": ["../../packages/connector-config/src/index.ts"],
-      "@renkei/settings": ["../../packages/settings/src/index.ts"]
+      "@renkei/settings": ["../../packages/settings/src/index.ts"],
+      "@renkei/gates": ["../../packages/gates/src/index.ts"],
+      "@renkei/knowledge": ["../../packages/knowledge/src/index.ts"]
     }
   },
   "include": [

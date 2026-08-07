@@ -24,6 +24,8 @@ const nextConfig: NextConfig = {
     '@renkei/connector-config',
     '@renkei/connector-webex',
     '@renkei/settings',
+    '@renkei/gates',
+    '@renkei/knowledge',
   ],
   async rewrites() {
     return [

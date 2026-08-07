@@ -17,6 +17,8 @@
     "@renkei/connector-webex": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/gates": "workspace:*",
+    "@renkei/knowledge": "workspace:*",
     "@renkei/provider-grants": "workspace:*",
     "@renkei/settings": "workspace:*",
     "@modelcontextprotocol/server": "^2.0.0",

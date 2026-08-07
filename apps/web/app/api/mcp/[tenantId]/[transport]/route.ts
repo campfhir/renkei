@@ -16,6 +16,9 @@ import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/
 import { logger } from '@/lib/logger';
 import { registerAllTools, cacheTokenMetadata } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
+import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
+import { getIdentityEmail } from '@/lib/identity';
+import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { createProjection } from '@renkei/capability-registry';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -23,11 +26,18 @@ import type { McpServer } from '@modelcontextprotocol/server';
 // Cache MCP handlers per (tenantId, accountId)
 const handlerCache = new Map<string, (request: Request) => Promise<Response>>();
 
-function getCacheKey(tenantId: string, accountId: string, readOnly: boolean): string {
-  // The registered tool set depends on the org's read-only mode, so the mode
-  // is part of the key: flipping it takes effect on the next request instead
-  // of after a process restart.
-  return `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}`;
+function getCacheKey(
+  tenantId: string,
+  accountId: string,
+  readOnly: boolean,
+  knowledgeAvailable: boolean,
+  userEmail: string | null
+): string {
+  // Everything the registered tool set or a handler closure depends on must
+  // be part of the key, or a change takes effect only on process restart:
+  // the org's read-only mode, whether the knowledge layer is provisioned,
+  // and the caller's recorded email (captured by search_knowledge's closure).
+  return `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:${userEmail ?? ''}`;
 }
 
 const handler = async (
@@ -165,8 +175,17 @@ const handler = async (
     // is read fresh from the database each request.
     cacheTokenMetadata(grant.accessToken, tenantId, accountId);
 
+    // The caller's recorded email (identity spine): what the knowledge gate
+    // verifies provider access against. Absent = the gate fails closed.
+    const emailResult = await getIdentityEmail(tenantId, subject);
+    const userEmail = emailResult.ok ? emailResult.val : null;
+
+    // The knowledge connector is provisioned org-wide when an embedding
+    // provider is configured — its capabilities register only then.
+    const knowledgeAvailable = (await resolveEmbeddingProvider(tenantId)) !== null;
+
     // Check cache
-    const cacheKey = getCacheKey(tenantId, accountId, settings.readOnly);
+    const cacheKey = getCacheKey(tenantId, accountId, settings.readOnly, knowledgeAvailable, userEmail);
     let cachedHandler = handlerCache.get(cacheKey);
 
     if (!cachedHandler) {
@@ -187,6 +206,7 @@ const handler = async (
               maxJqlResults: settings.maxJqlResults,
               maxAttachmentBytes: settings.maxAttachmentBytes,
               origin,
+              userEmail: userEmail ?? undefined,
               db,
             };
 
@@ -203,9 +223,19 @@ const handler = async (
                 disabledConnectors: [],
                 disabledCapabilities: [],
               },
-              { provisionedConnectors: [JIRA_CONNECTOR], hiddenCapabilities: [] }
+              {
+                provisionedConnectors: [
+                  JIRA_CONNECTOR,
+                  ...(knowledgeAvailable ? [KNOWLEDGE_CONNECTOR] : []),
+                ],
+                hiddenCapabilities: [],
+              }
             );
             await registerAllTools(withCapabilityGate(server, projection), context);
+            await registerKnowledgeTools(
+              withCapabilityGate(server, projection, KNOWLEDGE_CONNECTOR),
+              context
+            );
 
             logger.info('[MCP] All tools registered', {
               tenantId,
