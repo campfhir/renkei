@@ -1,0 +1,149 @@
+/**
+ * The provider-agnostic grant store: encrypted at rest, subject-bound,
+ * keyed (tenant, provider, provider account). Provider-specific identity
+ * lives in the metadata jsonb and is round-tripped untouched.
+ */
+
+import { getDatabase } from '@renkei/db';
+import { encrypt, decrypt } from '@renkei/crypto';
+import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import type { Result } from '@campfhir/safe-functions/types';
+import type { NewProviderGrant, ProviderGrant } from './types';
+
+function readMetadata(metadata: unknown): Record<string, unknown> {
+  if (typeof metadata !== 'object' || metadata === null) return {};
+  return { ...metadata };
+}
+
+export async function setGrant(
+  provider: string,
+  tenantId: string,
+  grant: NewProviderGrant,
+  encryptionKey: Buffer
+): Promise<Result<void, 'DB_ERROR'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+  const db = dbResult.val;
+
+  const encryptedAccessToken = encrypt(grant.accessToken, encryptionKey);
+  const encryptedRefreshToken = encrypt(grant.refreshToken, encryptionKey);
+  const metadata = JSON.stringify(grant.metadata);
+
+  const result = await wrapAsync(
+    () =>
+      db
+        .insertInto('provider_grants')
+        .values({
+          tenant_id: tenantId,
+          provider,
+          provider_account_id: grant.accountId,
+          client_id: grant.clientId,
+          display_name: grant.displayName || grant.accountId,
+          subject: grant.subject,
+          encrypted_access_token: encryptedAccessToken,
+          encrypted_refresh_token: encryptedRefreshToken,
+          expires_at: grant.expiresAt,
+          scopes: grant.scopes,
+          metadata,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .onConflict((oc) =>
+          oc.columns(['tenant_id', 'provider', 'provider_account_id']).doUpdateSet({
+            encrypted_access_token: encryptedAccessToken,
+            encrypted_refresh_token: encryptedRefreshToken,
+            expires_at: grant.expiresAt,
+            metadata,
+            updated_at: new Date().toISOString(),
+            // Re-stamp on reconnect so grants predating per-user ownership get
+            // an owner, and so a re-auth by a different user reassigns cleanly.
+            subject: grant.subject,
+          })
+        )
+        .execute(),
+    'DB_ERROR' as const
+  );
+
+  if (!result.ok) return result;
+  return ok();
+}
+
+export async function getGrant(
+  provider: string,
+  tenantId: string,
+  accountId: string,
+  encryptionKey: Buffer
+): Promise<Result<ProviderGrant | null, 'DB_ERROR' | 'DECRYPTION_ERROR'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+  const db = dbResult.val;
+
+  const rowResult = await wrapAsync(
+    () =>
+      db
+        .selectFrom('provider_grants')
+        .select([
+          'provider_account_id',
+          'client_id',
+          'display_name',
+          'metadata',
+          'encrypted_access_token',
+          'encrypted_refresh_token',
+          'expires_at',
+          'scopes',
+          'subject',
+        ])
+        .where('tenant_id', '=', tenantId)
+        .where('provider', '=', provider)
+        .where('provider_account_id', '=', accountId)
+        .executeTakeFirst(),
+    'DB_ERROR' as const
+  );
+
+  if (!rowResult.ok) return rowResult;
+
+  const row = rowResult.val;
+  if (!row) return ok(null);
+
+  const accessTokenResult = decrypt(row.encrypted_access_token, encryptionKey);
+  if (!accessTokenResult.ok) return err('DECRYPTION_ERROR' as const);
+
+  const refreshTokenResult = decrypt(row.encrypted_refresh_token, encryptionKey);
+  if (!refreshTokenResult.ok) return err('DECRYPTION_ERROR' as const);
+
+  return ok({
+    provider,
+    accountId: row.provider_account_id,
+    subject: row.subject,
+    clientId: row.client_id,
+    displayName: row.display_name || '',
+    accessToken: accessTokenResult.val,
+    refreshToken: refreshTokenResult.val,
+    expiresAt: row.expires_at.toISOString(),
+    scopes: row.scopes,
+    metadata: readMetadata(row.metadata),
+  });
+}
+
+export async function deleteGrant(
+  provider: string,
+  tenantId: string,
+  accountId: string
+): Promise<Result<void, 'DB_ERROR'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+
+  const result = await wrapAsync(
+    () =>
+      dbResult.val
+        .deleteFrom('provider_grants')
+        .where('tenant_id', '=', tenantId)
+        .where('provider', '=', provider)
+        .where('provider_account_id', '=', accountId)
+        .execute(),
+    'DB_ERROR' as const
+  );
+
+  if (!result.ok) return result;
+  return ok();
+}

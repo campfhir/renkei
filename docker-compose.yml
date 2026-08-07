@@ -3,7 +3,7 @@ services:
     # Matches docker-compose.yaml (the deploy stack). Postgres majors are not
     # binary compatible, so a dev/prod split here means testing migrations on a
     # different engine than they run on.
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: renkei-postgres
     environment:
       POSTGRES_USER: renkei
@@ -23,27 +23,57 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: renkei:latest
+      target: runtime
+    image: renkei-web:latest
     container_name: renkei-app
     env_file:
-      - .env.development
+      - apps/web/.env.development
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       PORT: 3000
       HOST: 0.0.0.0
       NODE_ENV: production
-      MIGRATIONS_DIR: dist/lib/migrations
     ports:
       - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
-    command: sh -c "node dist/migrate.cjs && pnpm start"
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
       interval: 10s
       timeout: 5s
       retries: 3
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: worker
+    image: renkei-worker:latest
+    container_name: renkei-worker
+    environment:
+      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: migrate
+    image: renkei-migrate:latest
+    container_name: renkei-dev-migrate
+    environment:
+      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+    depends_on:
+      postgres:
+        condition: service_healthy
 
 volumes:
   postgres_data:

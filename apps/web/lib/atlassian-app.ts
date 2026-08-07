@@ -1,0 +1,67 @@
+/**
+ * The Atlassian OAuth app registration, from the database.
+ *
+ * Client id, scopes and redirect URI are connector configuration
+ * (connector_configs, provider 'atlassian'); the client secret is sealed
+ * with the deployment key. Nothing about the Atlassian app lives in the
+ * environment — an org-admin stores it through the connectors API.
+ */
+
+import { parseEncryptionKey } from '@renkei/crypto';
+import { readConnectorConfigCached } from '@renkei/connector-config';
+import { logger } from '@/lib/logger';
+
+export const ATLASSIAN_CONNECTOR = 'atlassian';
+
+/** The scopes the Jira connector needs unless the org narrows them. */
+export const DEFAULT_ATLASSIAN_SCOPES =
+  'read:jira-work write:jira-work read:jira-user offline_access';
+
+export interface AtlassianApp {
+  clientId: string;
+  clientSecret: string;
+  scopes: string;
+  redirectUri: string;
+}
+
+/**
+ * The tenant's Atlassian app, or null when not (fully) configured — the
+ * caller answers 503, because without an app registration no Atlassian flow
+ * can start. `origin` supplies the default redirect URI so authorize and
+ * token-exchange always derive the same value.
+ */
+export async function getAtlassianApp(tenantId: string, origin: string): Promise<AtlassianApp | null> {
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) {
+    logger.error('[AtlassianApp] TOKEN_ENCRYPTION_KEY is missing or malformed', { tenantId });
+    return null;
+  }
+
+  const configResult = await readConnectorConfigCached(tenantId, ATLASSIAN_CONNECTOR, keyResult.val);
+  if (!configResult.ok) {
+    logger.error('[AtlassianApp] Could not read atlassian connector config', { tenantId });
+    return null;
+  }
+  const config = configResult.val;
+  if (!config || !config.enabled) return null;
+
+  const clientId = config.settings.clientId;
+  const clientSecret = config.secrets.clientSecret;
+  if (typeof clientId !== 'string' || !clientId || !clientSecret) {
+    logger.warn('[AtlassianApp] atlassian connector config missing clientId or clientSecret', {
+      tenantId,
+    });
+    return null;
+  }
+
+  const scopes =
+    typeof config.settings.scopes === 'string' && config.settings.scopes
+      ? config.settings.scopes
+      : DEFAULT_ATLASSIAN_SCOPES;
+  const redirectUri =
+    typeof config.settings.redirectUri === 'string' && config.settings.redirectUri
+      ? config.settings.redirectUri
+      : `${origin}/api/oauth/callback`;
+
+  return { clientId, clientSecret, scopes, redirectUri };
+}

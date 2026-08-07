@@ -1,0 +1,43 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
+    "paths": {
+      "@/*": ["./*"],
+      "@renkei/db": ["../../packages/db/src/index.ts"],
+      "@renkei/crypto": ["../../packages/crypto/src/index.ts"],
+      "@renkei/provider-grants": ["../../packages/provider-grants/src/index.ts"],
+      "@renkei/capability-registry": ["../../packages/capability-registry/src/index.ts"],
+      "@renkei/connector-webex": ["../../packages/connector-webex/src/index.ts"],
+      "@renkei/connector-config": ["../../packages/connector-config/src/index.ts"],
+      "@renkei/settings": ["../../packages/settings/src/index.ts"]
+    }
+  },
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.mts",
+    "scripts/**/*.ts",
+    "app/**/.well-known/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}

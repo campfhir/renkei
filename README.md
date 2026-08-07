@@ -17,9 +17,9 @@ Requirements: Node 24+, pnpm, Docker (for Postgres).
 
 ```bash
 pnpm install
-cp .env.example .env.development   # fill in OIDC + Atlassian OAuth credentials
+cp apps/web/.env.example apps/web/.env.development   # fill in OIDC + Atlassian OAuth credentials
 docker compose -f docker-compose.yml up -d postgres
-npx tsx scripts/migrate.ts        # run database migrations
+pnpm --filter @renkei/db migrate    # run database migrations
 pnpm dev
 ```
 
@@ -29,24 +29,30 @@ MCP clients need a public HTTPS origin for OAuth callbacks during development â€
 
 | Command | What it does |
 | --- | --- |
-| `pnpm dev` | Start the Next.js dev server |
-| `pnpm build` | Production build |
-| `pnpm start` | Run the production build |
-| `pnpm lint` | ESLint over the repo |
-| `pnpm typecheck` | TypeScript, no emit |
-| `pnpm test` | Jest test suite |
-| `pnpm db:types` | Regenerate `lib/db.types.ts` from the live database schema |
+| `pnpm dev` | Start the Next.js dev server (`@renkei/web`) |
+| `pnpm build` | Production build across the workspace |
+| `pnpm lint` | ESLint over the whole repo |
+| `pnpm typecheck` | TypeScript, no emit, every package |
+| `pnpm test` | Jest suites of every package |
+| `pnpm --filter @renkei/db migrate` | Run database migrations |
+| `pnpm --filter @renkei/db db:types` | Regenerate `db.types.ts` from the live schema |
+| `pnpm --filter @renkei/worker dev` | Run the worker with reload |
 
 ## Layout
 
+The monorepo follows the web/worker/packages topology of `RENKEI.md` (Decision #17):
+
 ```
-app/            Next.js App Router: pages, MCP + OAuth + OIDC + admin API routes
-lib/            business logic
-  mcp-tools/    tool implementations (jira/, jira-service-management/)
-  migrations/   Kysely migrations, run by lib/migrations/runner.ts
-  crypto/       AES-256-GCM secretbox for grants at rest
-docker/         multi-stage Dockerfile (builder / runtime / migrate)
-scripts/        build, migration, docker, and ngrok helpers
+apps/web/          Next.js: all surfaces, MCP gateway, OAuth/OIDC, admin UI,
+                   and (thin) webhook receipt
+  app/             App Router: pages, MCP + OAuth + OIDC + admin API routes
+  lib/             business logic; mcp-tools/ holds the Jira + JSM tools
+apps/worker/       long-running process: events-queue consumer (claim via
+                   FOR UPDATE SKIP LOCKED, retry with backoff, dead-letter)
+packages/db/       @renkei/db â€” Kysely client, generated schema types, and
+                   migrations; shared by web, worker, and the migrate CLI
+docker/            multi-stage Dockerfile (builder / runtime / worker / migrate)
+scripts/           docker build/push and ngrok helpers
 ```
 
 ## Deployment
