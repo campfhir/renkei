@@ -1,19 +1,25 @@
 /**
- * The webhook receipt's contract: signature verified over the raw body
- * before anything else, malformed deliveries refused, and a valid delivery
- * does exactly one thing — INSERT an event row. No processing here.
+ * The webhook receipt's contract: the per-tenant secret comes from the
+ * connector_configs store (never the environment), the signature is verified
+ * over the raw body before anything else is trusted, malformed deliveries
+ * are refused, and a valid delivery does exactly one thing — INSERT an event
+ * row. No processing here.
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+jest.mock('@renkei/connector-config', () => ({ readConnectorConfigCached: jest.fn() }));
 jest.mock('@/lib/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { NextRequest } from 'next/server';
 import { POST } from './route';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+const { readConnectorConfigCached: mockReadConfig } = jest.requireMock<{
+  readConnectorConfigCached: jest.Mock;
+}>('@renkei/connector-config');
 
 const TENANT = '00000000-0000-4000-8000-000000000001';
 const SECRET = 'webhook-secret';
@@ -45,6 +51,23 @@ function stubDb(tenantExists = true): Recorded {
   return recorded;
 }
 
+function connectorConfigured(
+  over: Partial<{ enabled: boolean; secrets: Record<string, string> }> | null = {}
+): void {
+  mockReadConfig.mockResolvedValue({
+    ok: true,
+    val:
+      over === null
+        ? null
+        : {
+            connector: 'webex',
+            enabled: over.enabled ?? true,
+            settings: {},
+            secrets: over.secrets ?? { webhookSecret: SECRET, botToken: 'bot-token' },
+          },
+  });
+}
+
 function delivery(body: string, signature: string | null): NextRequest {
   const headers = new Headers({ 'Content-Type': 'application/json' });
   if (signature !== null) headers.set('X-Spark-Signature', signature);
@@ -70,13 +93,15 @@ const VALID_BODY = JSON.stringify({
 });
 
 beforeEach(() => {
-  process.env.WEBEX_WEBHOOK_SECRET = SECRET;
+  process.env.TOKEN_ENCRYPTION_KEY = randomBytes(32).toString('base64');
   mockGetDatabase.mockReset();
+  mockReadConfig.mockReset();
 });
 
 describe('POST /api/webhooks/webex/[tenantId]', () => {
-  it('accepts a signed delivery by inserting exactly one event row', async () => {
+  it('accepts a delivery signed with the tenant’s stored secret', async () => {
     const recorded = stubDb();
+    connectorConfigured();
 
     const response = await POST(delivery(VALID_BODY, sign(VALID_BODY)), params());
 
@@ -90,6 +115,7 @@ describe('POST /api/webhooks/webex/[tenantId]', () => {
 
   it('rejects a bad signature with 401 and inserts nothing', async () => {
     const recorded = stubDb();
+    connectorConfigured();
 
     const response = await POST(delivery(VALID_BODY, 'not-the-signature'), params());
 
@@ -99,27 +125,45 @@ describe('POST /api/webhooks/webex/[tenantId]', () => {
 
   it('rejects a missing signature', async () => {
     stubDb();
+    connectorConfigured();
     const response = await POST(delivery(VALID_BODY, null), params());
     expect(response.status).toBe(401);
   });
 
   it('rejects a signed but malformed payload with 400', async () => {
     stubDb();
+    connectorConfigured();
     const body = JSON.stringify({ resource: 'messages' });
     const response = await POST(delivery(body, sign(body)), params());
     expect(response.status).toBe(400);
   });
 
-  it('answers 503 when the connector is not configured', async () => {
-    delete process.env.WEBEX_WEBHOOK_SECRET;
+  it('answers 503 when the connector is not configured for the tenant', async () => {
     stubDb();
+    connectorConfigured(null);
+    const response = await POST(delivery(VALID_BODY, sign(VALID_BODY)), params());
+    expect(response.status).toBe(503);
+  });
+
+  it('answers 503 when the connector is disabled', async () => {
+    stubDb();
+    connectorConfigured({ enabled: false });
     const response = await POST(delivery(VALID_BODY, sign(VALID_BODY)), params());
     expect(response.status).toBe(503);
   });
 
   it('answers 404 for an unknown tenant', async () => {
     stubDb(false);
+    connectorConfigured();
     const response = await POST(delivery(VALID_BODY, sign(VALID_BODY)), params());
     expect(response.status).toBe(404);
+  });
+
+  it('answers 500 when the deployment encryption key is absent', async () => {
+    delete process.env.TOKEN_ENCRYPTION_KEY;
+    stubDb();
+    connectorConfigured();
+    const response = await POST(delivery(VALID_BODY, sign(VALID_BODY)), params());
+    expect(response.status).toBe(500);
   });
 });

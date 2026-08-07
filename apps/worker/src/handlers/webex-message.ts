@@ -10,15 +10,14 @@
 
 import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
-import type { WebexClient } from '@renkei/connector-webex';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { classifyMessage } from '../pipeline/classify';
+import { resolveWebexContext, type WebexTenantContext } from './webex-context';
 
 export interface WebexHandlerDeps {
-  client: Pick<WebexClient, 'getMessage'>;
-  /** The bot's own person id; its own messages are not ingested. */
-  botPersonId: string | null;
+  /** Injectable for tests; defaults to the DB-config-backed resolver. */
+  resolveContext?: (tenantId: string) => Promise<WebexTenantContext>;
 }
 
 function payloadMessageId(event: ClaimedEvent): string | null {
@@ -29,7 +28,9 @@ function payloadMessageId(event: ClaimedEvent): string | null {
   return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
-export function createWebexMessageHandler(deps: WebexHandlerDeps): EventHandler {
+export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHandler {
+  const resolveContext = deps.resolveContext ?? resolveWebexContext;
+
   return async (event) => {
     const messageId = payloadMessageId(event);
     if (!messageId) {
@@ -38,7 +39,11 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps): EventHandler 
       throw new Error('webex event payload has no message id');
     }
 
-    const messageResult = await deps.client.getMessage(messageId);
+    // Per-tenant: the bot credential comes from the tenant's connector
+    // configuration, resolved (and briefly cached) per event.
+    const context = await resolveContext(event.tenant_id);
+
+    const messageResult = await context.client.getMessage(messageId);
     if (!messageResult.ok) {
       throw new Error(`could not fetch WebEx message ${messageId}`);
     }
@@ -46,7 +51,7 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps): EventHandler 
 
     // The bot's own replies come back as webhook deliveries too; ingesting
     // them would loop.
-    if (deps.botPersonId && message.personId === deps.botPersonId) return;
+    if (context.botPersonId && message.personId === context.botPersonId) return;
 
     const classification = classifyMessage(message.text ?? '');
     if (!classification) return;

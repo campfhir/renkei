@@ -21,6 +21,7 @@ const nextConfig: NextConfig = {
     '@renkei/crypto',
     '@renkei/provider-grants',
     '@renkei/capability-registry',
+    '@renkei/connector-config',
     '@renkei/connector-webex',
   ],
   async rewrites() {

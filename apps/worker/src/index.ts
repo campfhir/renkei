@@ -8,7 +8,6 @@
  */
 
 import { closeDatabase } from '@renkei/db';
-import { WebexClient } from '@renkei/connector-webex';
 import { claimNextEvent, completeEvent, failEvent } from './queue';
 import { handlerFor, registerHandler } from './handlers';
 import { createWebexMessageHandler } from './handlers/webex-message';
@@ -50,32 +49,18 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Connector handlers register at startup based on what is configured. An
- * unconfigured connector's events stay pending/dead-lettered rather than
- * being silently swallowed — visible, not lost.
+ * Handlers register unconditionally; whether a connector is actually
+ * configured is per-tenant database state, resolved when its events are
+ * processed. A tenant without configuration fails its events visibly (into
+ * the retry/dead-letter path) rather than having them silently swallowed.
  */
-async function registerConnectorHandlers(): Promise<void> {
-  const webexBotToken = process.env.WEBEX_BOT_TOKEN;
-  if (!webexBotToken) {
-    console.log('[worker] WEBEX_BOT_TOKEN not set; webex handler not registered');
-    return;
-  }
-
-  const client = new WebexClient(webexBotToken);
-  // Best effort: without the bot's identity the handler still works, it just
-  // cannot filter the bot's own messages out of ingestion.
-  const me = await client.getMe();
-  const botPersonId = me.ok ? me.val.id : null;
-  if (!me.ok) {
-    console.warn('[worker] could not resolve WebEx bot identity; own-message filter disabled');
-  }
-
-  registerHandler('webex', 'messages.created', createWebexMessageHandler({ client, botPersonId }));
+function registerConnectorHandlers(): void {
+  registerHandler('webex', 'messages.created', createWebexMessageHandler());
   console.log('[worker] webex handler registered');
 }
 
 async function main(): Promise<void> {
-  await registerConnectorHandlers();
+  registerConnectorHandlers();
   console.log('[worker] started');
   while (running) {
     let hadWork = false;

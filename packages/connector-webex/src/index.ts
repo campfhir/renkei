@@ -19,6 +19,9 @@
  * ever sees rooms it was explicitly added to.
  */
 
+/** The connector key used in connector_configs, capability descriptors, and event rows. */
+export const WEBEX_CONNECTOR = 'webex';
+
 export {
   verifyWebexSignature,
   parseWebhookPayload,

@@ -64,8 +64,10 @@ describe('createWebexMessageHandler', () => {
   it('records one suggested item for an issue report', async () => {
     const { inserted } = stubDb();
     const handler = createWebexMessageHandler({
-      client: { getMessage: async () => ok(message({ text: 'The build server is down' })) },
-      botPersonId: 'bot-1',
+      resolveContext: async () => ({
+        client: { getMessage: async () => ok(message({ text: 'The build server is down' })) },
+        botPersonId: 'bot-1',
+      }),
     });
 
     await handler(event());
@@ -81,8 +83,10 @@ describe('createWebexMessageHandler', () => {
   it('skips the bot’s own messages', async () => {
     const { inserted } = stubDb();
     const handler = createWebexMessageHandler({
-      client: { getMessage: async () => ok(message({ personId: 'bot-1', text: 'it is down' })) },
-      botPersonId: 'bot-1',
+      resolveContext: async () => ({
+        client: { getMessage: async () => ok(message({ personId: 'bot-1', text: 'it is down' })) },
+        botPersonId: 'bot-1',
+      }),
     });
 
     await handler(event());
@@ -93,8 +97,10 @@ describe('createWebexMessageHandler', () => {
   it('produces nothing for chatter', async () => {
     const { inserted } = stubDb();
     const handler = createWebexMessageHandler({
-      client: { getMessage: async () => ok(message({ text: 'lunch at noon?' })) },
-      botPersonId: 'bot-1',
+      resolveContext: async () => ({
+        client: { getMessage: async () => ok(message({ text: 'lunch at noon?' })) },
+        botPersonId: 'bot-1',
+      }),
     });
 
     await handler(event());
@@ -105,8 +111,10 @@ describe('createWebexMessageHandler', () => {
   it('throws when the message cannot be fetched, so the retry budget applies', async () => {
     stubDb();
     const handler = createWebexMessageHandler({
-      client: { getMessage: async () => err('WEBEX_API_ERROR' as const) },
-      botPersonId: 'bot-1',
+      resolveContext: async () => ({
+        client: { getMessage: async () => err('WEBEX_API_ERROR' as const) },
+        botPersonId: 'bot-1',
+      }),
     });
 
     await expect(handler(event())).rejects.toThrow('could not fetch WebEx message');
@@ -115,14 +123,25 @@ describe('createWebexMessageHandler', () => {
   it('throws on a payload with no message id', async () => {
     stubDb();
     const handler = createWebexMessageHandler({
-      client: {
-        getMessage: async () => ok(message({})),
-      },
-      botPersonId: null,
+      resolveContext: async () => ({
+        client: { getMessage: async () => ok(message({})) },
+        botPersonId: null,
+      }),
     });
 
     await expect(handler({ ...event(), payload: { roomId: 'room-1' } })).rejects.toThrow(
       'no message id'
     );
+  });
+
+  it('propagates an unconfigured-connector error into the retry path', async () => {
+    stubDb();
+    const handler = createWebexMessageHandler({
+      resolveContext: async () => {
+        throw new Error('webex connector is not configured or disabled for tenant tenant-1');
+      },
+    });
+
+    await expect(handler(event())).rejects.toThrow('not configured');
   });
 });

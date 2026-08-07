@@ -46,6 +46,7 @@ export const EXPECTED_MIGRATIONS = [
   '013-events',
   '014-provider-refresh-locks',
   '015-actionable-items',
+  '016-connector-configs',
 ];
 
 export interface MigrationStatus {

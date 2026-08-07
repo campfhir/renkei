@@ -244,8 +244,19 @@ export interface ActionableItems {
   updated_at: Generated<Timestamp>;
 }
 
+export interface ConnectorConfigs {
+  connector: string;
+  created_at: Generated<Timestamp>;
+  enabled: Generated<boolean>;
+  encrypted_secrets: string;
+  settings: Generated<Json>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface DB {
   actionable_items: ActionableItems;
+  connector_configs: ConnectorConfigs;
   events: Events;
   provider_refresh_locks: ProviderRefreshLocks;
   jira_sessions: JiraSessions;
