@@ -3,10 +3,6 @@ export default {
   testEnvironment: 'node',
   roots: ['<rootDir>'],
   testMatch: ['**/*.test.ts'],
-  moduleNameMapper: {
-    '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
-    '^@renkei/connector-webex$': '<rootDir>/../../packages/connector-webex/src/index.ts',
-  },
   transform: {
     '^.+\\.tsx?$': [
       'ts-jest',

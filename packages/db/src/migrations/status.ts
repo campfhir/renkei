@@ -45,6 +45,7 @@ export const EXPECTED_MIGRATIONS = [
   '012-hash-client-secrets',
   '013-events',
   '014-provider-refresh-locks',
+  '015-actionable-items',
 ];
 
 export interface MigrationStatus {

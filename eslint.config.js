@@ -53,6 +53,7 @@ export default [
       'apps/web/app/**/*layout.tsx',
       'apps/web/app/tenant/**/*.tsx',
       'apps/web/lib/auth-utils.ts',
+      'apps/web/lib/actionable-items.ts',
       'apps/web/lib/logging/bored-logger.ts',
       'apps/web/lib/util/retry.ts',
       'apps/web/lib/ui/**/*.tsx',

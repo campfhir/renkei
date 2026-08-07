@@ -1,19 +1,16 @@
 {
-  "name": "@renkei/worker",
+  "name": "@renkei/connector-webex",
   "version": "0.1.0",
   "type": "module",
   "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "jest"
   },
   "dependencies": {
-    "@renkei/connector-webex": "workspace:*",
-    "@renkei/db": "workspace:*",
-    "kysely": "^0.29.4",
-    "tsx": "^4.23.5"
+    "@campfhir/safe-functions": "^0.1.3"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

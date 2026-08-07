@@ -228,7 +228,24 @@ export interface Events {
   updated_at: Generated<Timestamp>;
 }
 
+export interface ActionableItems {
+  created_at: Generated<Timestamp>;
+  decided_at: Timestamp | null;
+  decided_by: string | null;
+  evidence: Json;
+  id: string;
+  result: Json | null;
+  source: string;
+  status: Generated<string>;
+  suggested_action: Json;
+  summary: string;
+  tenant_id: string;
+  title: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface DB {
+  actionable_items: ActionableItems;
   events: Events;
   provider_refresh_locks: ProviderRefreshLocks;
   jira_sessions: JiraSessions;

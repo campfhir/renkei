@@ -13,6 +13,7 @@
   "dependencies": {
     "@campfhir/bored-logs": "^0.3.2",
     "@renkei/capability-registry": "workspace:*",
+    "@renkei/connector-webex": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
     "@renkei/provider-grants": "workspace:*",
