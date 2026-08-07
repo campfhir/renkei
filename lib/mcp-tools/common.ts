@@ -27,6 +27,12 @@ export interface MCPToolContext {
   apiBaseUrl: string;
   accessToken: string;
   maxJqlResults: number;
+  /**
+   * Public origin of this deployment (https://mcp.example.com), for links the
+   * user must be able to open — the internal request URL behind a reverse
+   * proxy is not reachable from outside.
+   */
+  origin?: string;
   db?: Kysely<DB>;
   config?: Env;
 }
@@ -123,12 +129,25 @@ const userMetadataCache = new Map<string, UserMetadata>();
  */
 const refreshInFlight = new Map<string, Promise<string>>();
 
+/**
+ * The freshest known access token per (tenantId:accountId).
+ *
+ * The MCP handler cache captures `context.accessToken` by value when the
+ * handler is created, and that closure outlives the token. Without this map,
+ * every call after the first expiry presented the stale token and paid a
+ * 401 + refresh + retry round trip — forever. jiraFetch resolves the caller's
+ * token through here first, and both a successful refresh and each incoming
+ * request (via cacheTokenMetadata) keep it current.
+ */
+const currentTokens = new Map<string, string>();
+
 function getRefreshKey(tenantId: string, accountId: string): string {
   return `${tenantId}:${accountId}`;
 }
 
 /**
- * Store token metadata for 24h TTL lookup during refresh.
+ * Store token metadata for 24h TTL lookup during refresh, and record the
+ * token as the freshest known one for its (tenantId, accountId).
  */
 export function cacheTokenMetadata(accessToken: string, tenantId: string, accountId: string): void {
   tokenMetadataCache.set(accessToken, {
@@ -136,6 +155,7 @@ export function cacheTokenMetadata(accessToken: string, tenantId: string, accoun
     accountId,
     expiresAt: Date.now() + 24 * 60 * 60 * 1000,
   });
+  currentTokens.set(getRefreshKey(tenantId, accountId), accessToken);
 }
 
 /**
@@ -244,8 +264,12 @@ export async function jiraFetch(
   accessToken: string,
   options?: RequestInit
 ): Promise<Response> {
-  let token = accessToken;
   const metadata = getTokenMetadata(accessToken);
+  // The caller's token may be a stale capture from a cached handler closure;
+  // when its owner is known, use the freshest token recorded for that owner.
+  let token = metadata
+    ? (currentTokens.get(getRefreshKey(metadata.tenantId, metadata.accountId)) ?? accessToken)
+    : accessToken;
   const displayName = metadata?.accountId ? getCachedDisplayName(metadata.accountId) : undefined;
   // Deliberately no token material here, not even a prefix: these records are
   // persisted by the Postgres log adapter and are readable over HTTP.
@@ -257,11 +281,16 @@ export async function jiraFetch(
     method: options?.method || 'GET',
   });
 
+  // A FormData body must carry its own multipart boundary, so no Content-Type
+  // may be preset for it — fetch generates the header from the body.
+  const contentTypeHeader: Record<string, string> =
+    options?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' };
+
   // Make initial request
   const headers = {
     Authorization: `Bearer ${token}`,
     Accept: 'application/json',
-    'Content-Type': 'application/json',
+    ...contentTypeHeader,
     ...options?.headers,
   };
 
@@ -308,6 +337,9 @@ export async function jiraFetch(
         }
 
         logger.info('[jiraFetch] Token refresh success', { tenantId, accountId });
+        // Record the new token so later calls holding the stale capture skip
+        // the 401 round trip entirely.
+        cacheTokenMetadata(result.val.accessToken, tenantId, accountId);
         return result.val.accessToken;
       });
 
@@ -335,7 +367,7 @@ export async function jiraFetch(
     const retryHeaders = {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json',
-      'Content-Type': 'application/json',
+      ...contentTypeHeader,
       ...options?.headers,
     };
 
