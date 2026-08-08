@@ -59,13 +59,29 @@ tenantId server-side (`tenantIdForSlug` in
 `apps/web/app/api/admin/[slug]/connectors/atlassian/route.ts` is the existing
 one; lift it into a shared helper) and 404s on an unknown slug.
 
-**API routes stay keyed by tenantId.** `/api/mcp/[tenantId]/*` is not just a
-path — `{base}/api/mcp/{tenantId}` is the OAuth issuer, baked into the discovery
-documents and the rewrites in `next.config.ts`, and every MCP client that has
-registered holds it. Re-keying it to slug changes the issuer identity and
-invalidates those registrations, and it would mean a rename of the org silently
-breaking live connectors. Human-facing pages get the readable identifier;
-machine-facing endpoints keep the stable one.
+**`/api/mcp/*` moves to slug as well.** That URL is the artifact a user copies
+into their LLM app, so `…/api/mcp/acme/http` beats `…/api/mcp/9f3c1e70-…/http`
+for every user, every time — against a rename cost paid rarely by one org. The
+fresh database makes the switch free: `oauth_clients` is empty, so no
+registration is invalidated by moving it now.
+
+`{base}/api/mcp/{slug}` therefore becomes the OAuth issuer, in the discovery
+documents and the `next.config.ts` rewrites. Each route resolves the segment to
+`tenants.id` once at the top and uses the UUID for every query below that — the
+segment is a lookup key, not the internal identity.
+
+**The rule that has to come with it: retired slugs are tombstoned, never
+re-claimable.** Without that, an org renaming `acme` → `acme-corp` frees `acme`
+for someone else, and an MCP client still holding the old issuer resolves to a
+_different tenant_. That is cross-tenant access, not mere breakage. Enforce it
+in whatever creates and renames a tenant, alongside the reserved-word check
+below. Renaming still invalidates that org's own registrations — clients must
+re-register — so the rename UI should say so.
+
+Routes affected (each currently does `where('id', '=', tenantId)` on the raw
+segment): `.well-known/oauth-authorization-server`,
+`.well-known/oauth-protected-resource`, `[transport]`, `authorize`, `grant`,
+`oauth/authorize`, `oauth/register`, `oauth/token`, `status`.
 
 | now                                             | proposed                                                                                                                   |
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -80,7 +96,8 @@ the other sections according to the signed-in user's role.
 
 A top-level `/[slug]` catch-all sits next to real routes like
 `/create-organization`, so reserve those words — a tenant must not be able to
-claim the slug `api`, `admin`, or `create-organization`.
+claim the slug `api`, `admin`, or `create-organization`. Same list, same place
+in the code as the tombstone check above.
 
 ## Open questions
 
