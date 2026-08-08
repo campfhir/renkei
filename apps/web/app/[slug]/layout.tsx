@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { notFound } from 'next/navigation';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
-import { getOperatorSession } from '@/lib/auth-utils';
+import { ROLE_OPERATOR } from '@/lib/access';
 import { getIdentityDisplay } from '@/lib/identity';
 import { signInUrl } from '@/lib/sign-in-url';
 import AppNav from './nav';
@@ -27,24 +27,14 @@ export default async function TenantLayout({
   const tenant = await tenantForSlug(slug);
   if (!tenant) notFound();
 
-  const [session, operatorSession] = await Promise.all([
-    getSessionFromCookies(tenant.id),
-    getOperatorSession(),
-  ]);
-  const isOperator =
-    (operatorSession !== null && operatorSession.tenantId === tenant.id) ||
-    (session?.roles.includes('renkei-operator') ?? false);
+  const session = await getSessionFromCookies(tenant.id);
+  const isOperator = session?.roles.includes(ROLE_OPERATOR) ?? false;
 
   // The nav shows a person, not an OIDC subject: the identity spine has the
   // display name and email recorded at sign-in. The subject is the fallback
   // for a session recorded before the spine existed.
   const identity = session ? await getIdentityDisplay(tenant.id, session.subject) : null;
-  const userName =
-    identity?.displayName ??
-    identity?.email ??
-    session?.subject ??
-    operatorSession?.operator ??
-    null;
+  const userName = identity?.displayName ?? identity?.email ?? session?.subject ?? null;
 
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">

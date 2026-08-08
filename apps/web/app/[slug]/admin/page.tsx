@@ -1,6 +1,6 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
-import { getOperatorAccess } from '@/lib/operator-access';
+import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -20,7 +20,7 @@ export default async function AdminPage({
   const tenantRef = await tenantForSlug(slug);
   if (!tenantRef) notFound();
 
-  const access = await getOperatorAccess(tenantRef.id);
+  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (access) {
     redirect(`/${slug}/admin/logs`);
   }

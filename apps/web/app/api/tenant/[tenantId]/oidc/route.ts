@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations';
-import { getOperatorAccess } from '@/lib/operator-access';
+import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
@@ -9,12 +9,12 @@ import type { DB } from '@renkei/db';
 /**
  * Confirm the caller is an operator *of this tenant*.
  *
- * getOperatorAccess is tenant-scoped by construction — the legacy operator
- * cookie names its tenant, and the user-session cookie is per-tenant — so an
- * operator of one tenant cannot reconfigure another's identity provider.
+ * checkAccess is tenant-scoped by construction — the session cookie is
+ * per-tenant — so an operator of one tenant cannot reconfigure another's
+ * identity provider.
  */
 async function requireTenantOperator(tenantId: string): Promise<NextResponse | null> {
-  const access = await getOperatorAccess(tenantId);
+  const access = await checkAccess(tenantId, [ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

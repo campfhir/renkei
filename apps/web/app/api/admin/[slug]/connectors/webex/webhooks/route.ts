@@ -10,7 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getOperatorAccess } from '@/lib/operator-access';
+import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
@@ -95,7 +95,7 @@ export async function GET(
   if (!tenantRef) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   }
-  const access = await getOperatorAccess(tenantRef.id);
+  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -130,7 +130,7 @@ export async function POST(
   if (!tenantRef) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   }
-  const access = await getOperatorAccess(tenantRef.id);
+  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

@@ -1,5 +1,5 @@
 import React from 'react';
-import { getOperatorAccess } from '@/lib/operator-access';
+import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
@@ -12,7 +12,7 @@ export default async function SettingsPage({
   const { slug } = await params;
   const tenantRef = await tenantForSlug(slug);
   if (!tenantRef) notFound();
-  if (!(await getOperatorAccess(tenantRef.id))) {
+  if (!(await checkAccess(tenantRef.id, [ROLE_OPERATOR]))) {
     redirect(`/${slug}/admin`);
   }
 
