@@ -8,9 +8,9 @@
  * The Ops API takes GRANULAR scopes only (read:ops-alert:… etc.), which ship
  * default-off in the connector's scope checkboxes — a 401/403 here means the
  * grant predates them or the Atlassian app lacks them, and the error says so
- * rather than leaving a bare status. Teams have no list endpoint in this API
- * (that is the separate Atlassian platform Teams API); schedules carry their
- * owning teamId.
+ * rather than leaving a bare status. Teams here are the OPS teams (GET
+ * /v1/teams, read:ops-config scope) — the ones schedules, escalations and
+ * routing rules hang off — not the separate Atlassian platform Teams API.
  */
 
 import { z } from 'zod';
@@ -306,6 +306,77 @@ export async function registerJsmOpsTools(
       return textResult(
         names.length === 0 ? 'Nobody is on call for that schedule.' : names.join('\n')
       );
+    }
+  );
+
+  server.registerTool(
+    'jsm_ops_list_teams',
+    {
+      title: 'List JSM Operations teams',
+      description:
+        'List the operations teams — the ones schedules, escalations and routing rules belong ' +
+        'to. Team ids feed jsm_ops_list_escalations and match the teamId on schedules.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const base = opsBase(context);
+      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const response = await jiraFetch(`${base}/teams`, context.accessToken);
+      if (!response.ok) return errText(await describeOpsFailure(response));
+      const body: unknown = await response.json().catch(() => null);
+      const teams =
+        isRecord(body) && Array.isArray(body.platformTeams)
+          ? body.platformTeams.filter(isRecord)
+          : [];
+      const lines = teams.map(
+        (team) => `${str(team.teamName) || '(unnamed)'} — id: ${str(team.teamId)}`
+      );
+      return textResult(lines.length === 0 ? 'No operations teams.' : lines.join('\n'));
+    }
+  );
+
+  server.registerTool(
+    'jsm_ops_list_escalations',
+    {
+      title: 'List a team’s escalation policies',
+      description:
+        'The escalation policies of one operations team: each rule’s condition, delay, and ' +
+        'recipient — how an unacknowledged alert climbs the ladder.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        teamId: z.string().min(1).describe('Team id from jsm_ops_list_teams'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const base = opsBase(context);
+      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const teamId = encodeURIComponent(str(args.teamId));
+      const response = await jiraFetch(`${base}/teams/${teamId}/escalations`, context.accessToken);
+      if (!response.ok) return errText(await describeOpsFailure(response));
+      const body: unknown = await response.json().catch(() => null);
+      const lines = items(body).map((escalation) => {
+        const rules = Array.isArray(escalation.rules)
+          ? escalation.rules.filter(isRecord).map((rule) => {
+              const recipient = isRecord(rule.recipient)
+                ? str(rule.recipient.id) || str(rule.recipient.type)
+                : '';
+              const delay = isRecord(rule.delay)
+                ? `${rule.delay.timeAmount ?? ''} ${str(rule.delay.timeUnit)}`.trim()
+                : '';
+              return (
+                `  ${str(rule.condition) || 'if-not-acked'} → notify ${recipient || '?'}` +
+                (delay ? ` after ${delay}` : '')
+              );
+            })
+          : [];
+        return [
+          `${str(escalation.name) || '(unnamed)'} — ` +
+            `${escalation.enabled === false ? 'disabled' : 'enabled'} — id: ${str(escalation.id)}`,
+          ...rules,
+        ].join('\n');
+      });
+      return textResult(lines.length === 0 ? 'No escalation policies.' : lines.join('\n\n'));
     }
   );
 }
