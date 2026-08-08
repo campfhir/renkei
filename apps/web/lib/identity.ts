@@ -93,3 +93,28 @@ export async function getIdentityEmail(
   if (!rowResult.ok) return rowResult;
   return ok(rowResult.val?.email ?? null);
 }
+
+/**
+ * The recorded identity for a subject, for display: who to show in the nav.
+ * Null when the subject has never signed in with claims we could record.
+ */
+export async function getIdentityDisplay(
+  tenantId: string,
+  subject: string
+): Promise<IdentityClaims | null> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return null;
+
+  const row = await wrapAsync(
+    () =>
+      dbResult.val
+        .selectFrom('identities')
+        .select(['email', 'display_name'])
+        .where('tenant_id', '=', tenantId)
+        .where('subject', '=', subject)
+        .executeTakeFirst(),
+    'DB_ERROR' as const
+  );
+  if (!row.ok || !row.val) return null;
+  return { email: row.val.email, displayName: row.val.display_name };
+}

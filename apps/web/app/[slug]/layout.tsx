@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { getOperatorSession } from '@/lib/auth-utils';
+import { getIdentityDisplay } from '@/lib/identity';
 import { signInUrl } from '@/lib/sign-in-url';
 import AppNav from './nav';
 
@@ -34,12 +35,24 @@ export default async function TenantLayout({
     (operatorSession !== null && operatorSession.tenantId === tenant.id) ||
     (session?.roles.includes('renkei-operator') ?? false);
 
+  // The nav shows a person, not an OIDC subject: the identity spine has the
+  // display name and email recorded at sign-in. The subject is the fallback
+  // for a session recorded before the spine existed.
+  const identity = session ? await getIdentityDisplay(tenant.id, session.subject) : null;
+  const userName =
+    identity?.displayName ??
+    identity?.email ??
+    session?.subject ??
+    operatorSession?.operator ??
+    null;
+
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
       <AppNav
         slug={tenant.slug}
         tenantId={tenant.id}
-        subject={session?.subject ?? operatorSession?.operator ?? null}
+        userName={userName}
+        userEmail={identity?.email ?? null}
         isOperator={isOperator}
         signInHref={signInUrl(tenant.id, `/${tenant.slug}/home`)}
       />

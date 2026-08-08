@@ -7,10 +7,19 @@ import { usePathname, useRouter } from 'next/navigation';
 interface NavProps {
   slug: string;
   tenantId: string;
-  /** Who is signed in (OIDC subject / operator name), or null. */
-  subject: string | null;
+  /** Display name from the identity spine, falling back to email/subject. */
+  userName: string | null;
+  userEmail: string | null;
   isOperator: boolean;
   signInHref: string;
+}
+
+/** "Ada Lovelace" → "AL"; single word or an email → its first letter. */
+function initialsOf(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  if (words.length === 1) return words[0].charAt(0).toUpperCase();
+  return (words[0].charAt(0) + words[words.length - 1].charAt(0)).toUpperCase();
 }
 
 interface NavItem {
@@ -29,12 +38,41 @@ interface NavGroup {
  * Admin entries appear only for operators — the pages behind them still guard
  * themselves, the nav just does not advertise doors the user cannot open.
  */
-export default function AppNav({ slug, tenantId, subject, isOperator, signInHref }: NavProps) {
+export default function AppNav({
+  slug,
+  tenantId,
+  userName,
+  userEmail,
+  isOperator,
+  signInHref,
+}: NavProps) {
   const [open, setOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
   const drawerRef = useRef<HTMLElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // The avatar menu closes on navigation, Escape, and any click outside it.
+  useEffect(() => setMenuOpen(false), [pathname]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuOpen(false);
+    };
+    const onClick = (e: MouseEvent) => {
+      if (menuRef.current && e.target instanceof Node && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onClick);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onClick);
+    };
+  }, [menuOpen]);
 
   // The drawer closes on navigation, on Escape, and traps initial focus so a
   // keyboard user is not left tabbing through content hidden behind it.
@@ -90,7 +128,7 @@ export default function AppNav({ slug, tenantId, subject, isOperator, signInHref
     }
   }
 
-  const initial = subject ? subject.trim().charAt(0).toUpperCase() : '?';
+  const initials = userName ? initialsOf(userName) : '?';
 
   return (
     <>
@@ -113,23 +151,57 @@ export default function AppNav({ slug, tenantId, subject, isOperator, signInHref
         </Link>
 
         <div className="ml-auto flex items-center gap-2">
-          {subject ? (
-            <>
-              <span
-                title={subject}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white"
-              >
-                {initial}
-              </span>
+          {userName ? (
+            <div ref={menuRef} className="relative">
               <button
                 type="button"
-                onClick={() => void signOut()}
-                disabled={signingOut}
-                className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+                title={userName}
+                aria-label="Account menu"
+                aria-expanded={menuOpen}
+                aria-haspopup="menu"
+                onClick={() => setMenuOpen((o) => !o)}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white ring-blue-300 hover:ring-2 dark:ring-blue-800"
               >
-                {signingOut ? 'Signing out…' : 'Sign out'}
+                {initials}
               </button>
-            </>
+
+              {menuOpen && (
+                <div
+                  role="menu"
+                  className="absolute right-0 top-10 z-40 w-60 rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-800 dark:bg-gray-950"
+                >
+                  <div className="border-b border-gray-200 px-4 py-2 dark:border-gray-800">
+                    <p className="truncate text-sm font-medium" title={userName}>
+                      {userName}
+                    </p>
+                    {userEmail && userEmail !== userName && (
+                      <p className="truncate text-xs text-gray-500" title={userEmail}>
+                        {userEmail}
+                      </p>
+                    )}
+                  </div>
+                  {/* Placeholder until user preferences exist to edit. */}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled
+                    title="Coming soon"
+                    className="block w-full cursor-not-allowed px-4 py-2 text-left text-sm text-gray-400 dark:text-gray-600"
+                  >
+                    Preferences
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void signOut()}
+                    disabled={signingOut}
+                    className="block w-full px-4 py-2 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:hover:bg-gray-900"
+                  >
+                    {signingOut ? 'Signing out…' : 'Sign out'}
+                  </button>
+                </div>
+              )}
+            </div>
           ) : (
             <a
               href={signInHref}
@@ -198,9 +270,9 @@ export default function AppNav({ slug, tenantId, subject, isOperator, signInHref
           </div>
         ))}
 
-        {subject && (
-          <p className="mt-auto truncate px-2 text-xs text-gray-500" title={subject}>
-            {subject}
+        {userName && (
+          <p className="mt-auto truncate px-2 text-xs text-gray-500" title={userName}>
+            {userName}
           </p>
         )}
       </nav>
