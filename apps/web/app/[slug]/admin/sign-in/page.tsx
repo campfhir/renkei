@@ -2,6 +2,7 @@ import React from 'react';
 import { getDatabase } from '@renkei/db';
 import { redirect } from 'next/navigation';
 import { getOrigin } from '@/lib/get-origin';
+import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 import { randomUUID } from 'crypto';
 
 const SIGN_IN_TTL_MS = 15 * 60 * 1000; // 15 minutes
@@ -59,7 +60,7 @@ export default async function SignInPage({
   // Fetch OIDC discovery to get authorization endpoint
   let authorizationEndpoint: string;
   try {
-    const discoveryUrl = new URL('/.well-known/openid-configuration', oidcConfig.issuer).toString();
+    const discoveryUrl = oidcDiscoveryUrl(oidcConfig.issuer);
     const discoveryResponse = await fetch(discoveryUrl);
     const discovery = await discoveryResponse.json();
     if (isDiscoveryResponse(discovery)) {

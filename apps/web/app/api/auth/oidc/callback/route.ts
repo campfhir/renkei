@@ -4,6 +4,7 @@ import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { createSession, sessionCookieName, sessionCookieOptions } from '@/lib/session';
 import { identityClaimsFromIdToken, upsertIdentity } from '@/lib/identity';
+import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 
 interface OIDCTokenResponse {
   access_token: string;
@@ -90,7 +91,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     // Fetch OIDC discovery document to get the token endpoint
-    const discoveryUrl = new URL('/.well-known/openid-configuration', oidc.issuer).toString();
+    const discoveryUrl = oidcDiscoveryUrl(oidc.issuer);
     let tokenEndpoint: string;
 
     console.log(`[OIDC] Fetching discovery from: ${discoveryUrl}`);

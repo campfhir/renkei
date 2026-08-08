@@ -3,6 +3,7 @@ import { getDatabase } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { sessionCookieName } from '@/lib/session';
+import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 import { randomUUID } from 'crypto';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .execute();
 
     // Fetch OIDC discovery document to get the authorization endpoint
-    const discoveryUrl = new URL('/.well-known/openid-configuration', oidc.issuer).toString();
+    const discoveryUrl = oidcDiscoveryUrl(oidc.issuer);
     let authorizationEndpoint: string;
 
     console.log(`[OIDC] Fetching discovery from: ${discoveryUrl}`);
