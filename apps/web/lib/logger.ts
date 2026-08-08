@@ -1,4 +1,5 @@
 import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
+import packageJson from '../package.json';
 
 type RenkeiLogger = ReturnType<typeof createLogger>;
 
@@ -19,9 +20,11 @@ type RenkeiLogger = ReturnType<typeof createLogger>;
 const globalForLogger = globalThis as unknown as { __renkeiLogger?: RenkeiLogger };
 
 function buildLogger(): RenkeiLogger {
+  // Identity from the package manifest, not hand-maintained strings: the
+  // version in every log row is the version that actually shipped.
   const built = createLogger({
-    application: 'Renkei MCP Gateway',
-    version: process.env.APP_VERSION ?? '0.1.0',
+    application: packageJson.name,
+    version: packageJson.version,
   });
 
   built.addAdapter(
