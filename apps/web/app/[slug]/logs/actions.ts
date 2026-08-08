@@ -108,5 +108,64 @@ export async function searchLogs(
     return { logs: [], scope, error: result.err.message || 'Failed to query logs' };
   }
 
-  return { logs: result.val, scope, error: null };
+  return { logs: await resolveUserNames(db, tenantId, result.val), scope, error: null };
+}
+
+/**
+ * Fill the User column for rows that carry an identity key but no name.
+ * Most log lines record `subject` (OIDC) or `accountId` (provider) — the
+ * durable names live in the identities spine and the grant rows, so two
+ * batched lookups resolve every distinct key on the page. Rows that already
+ * carry a displayName keep it; unresolvable keys stay blank rather than
+ * showing an opaque id as if it were a person.
+ */
+async function resolveUserNames(
+  db: NonNullable<ReturnType<typeof getDatabase>['val']>,
+  tenantId: string,
+  logs: LogRow[]
+): Promise<LogRow[]> {
+  const subjects = new Set<string>();
+  const accountIds = new Set<string>();
+  for (const log of logs) {
+    if (typeof log.meta.displayName === 'string' && log.meta.displayName) continue;
+    if (typeof log.meta.subject === 'string' && log.meta.subject) subjects.add(log.meta.subject);
+    else if (typeof log.meta.accountId === 'string' && log.meta.accountId) {
+      accountIds.add(log.meta.accountId);
+    }
+  }
+  if (subjects.size === 0 && accountIds.size === 0) return logs;
+
+  const [identityRows, grantRows] = await Promise.all([
+    subjects.size > 0
+      ? db
+          .selectFrom('identities')
+          .select(['subject', 'display_name', 'email'])
+          .where('tenant_id', '=', tenantId)
+          .where('subject', 'in', [...subjects])
+          .execute()
+      : Promise.resolve([]),
+    accountIds.size > 0
+      ? db
+          .selectFrom('provider_grants')
+          .select(['provider_account_id', 'display_name'])
+          .where('tenant_id', '=', tenantId)
+          .where('provider_account_id', 'in', [...accountIds])
+          .execute()
+      : Promise.resolve([]),
+  ]);
+
+  const bySubject = new Map(
+    identityRows.map((row) => [row.subject, row.display_name ?? row.email])
+  );
+  const byAccount = new Map(grantRows.map((row) => [row.provider_account_id, row.display_name]));
+
+  return logs.map((log) => {
+    if (typeof log.meta.displayName === 'string' && log.meta.displayName) return log;
+    const subject = typeof log.meta.subject === 'string' ? log.meta.subject : null;
+    const accountId = typeof log.meta.accountId === 'string' ? log.meta.accountId : null;
+    const resolved =
+      (subject ? bySubject.get(subject) : null) ?? (accountId ? byAccount.get(accountId) : null);
+    if (!resolved) return log;
+    return { ...log, meta: { ...log.meta, displayName: resolved } };
+  });
 }
