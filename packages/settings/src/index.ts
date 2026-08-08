@@ -39,7 +39,6 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   refreshTokenTtlDays: 30,
 };
 
-
 const PUBLIC_BASE_URL_KEY = 'public_base_url';
 
 const CACHE_TTL_MS = 60_000;
@@ -96,7 +95,9 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     authorizationCodeTtlSeconds: Number(
       coerce(stored.get('authorization_code_ttl_seconds'), d.authorizationCodeTtlSeconds)
     ),
-    refreshTokenTtlDays: Number(coerce(stored.get('refresh_token_ttl_days'), d.refreshTokenTtlDays)),
+    refreshTokenTtlDays: Number(
+      coerce(stored.get('refresh_token_ttl_days'), d.refreshTokenTtlDays)
+    ),
   };
 
   orgCache.set(tenantId, { value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -155,8 +156,19 @@ export async function setOrgSettings(
  * The deployment's public base URL, or null when unset — callers fall back
  * to trusted request headers (see web's getOrigin), which is also what makes
  * first-boot configuration reachable before this value exists.
+ *
+ * PUBLIC_BASE_URL from the environment wins over the platform_settings row.
+ * The deploy compose file has always shipped that variable in .env, but
+ * nothing read it — the row was the only source, and it had to be seeded by
+ * hand. A rebuilt database then silently reverted every OIDC redirect_uri to
+ * the localhost fallback. Deployment shape belongs to the deployment.
  */
 export async function getPublicBaseUrl(): Promise<Result<string | null, 'DB_ERROR'>> {
+  const fromEnv = process.env.PUBLIC_BASE_URL?.trim();
+  if (fromEnv) {
+    return ok(fromEnv.replace(/\/+$/, ''));
+  }
+
   if (platformBaseUrlCache && platformBaseUrlCache.expiresAt > Date.now()) {
     return ok(platformBaseUrlCache.value);
   }

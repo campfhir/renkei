@@ -137,4 +137,29 @@ describe('public base URL', () => {
     const result = await getPublicBaseUrl();
     if (result.ok) expect(result.val).toBe('https://renkei.example.com');
   });
+
+  it('prefers PUBLIC_BASE_URL from the environment, trailing slash stripped', async () => {
+    stubDb();
+    await setPublicBaseUrl('https://stale.example.com');
+    process.env.PUBLIC_BASE_URL = 'https://renkei.example.com/';
+    try {
+      const result = await getPublicBaseUrl();
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.val).toBe('https://renkei.example.com');
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+  });
+
+  it('ignores a blank PUBLIC_BASE_URL', async () => {
+    stubDb();
+    process.env.PUBLIC_BASE_URL = '   ';
+    try {
+      const result = await getPublicBaseUrl();
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.val).toBeNull();
+    } finally {
+      delete process.env.PUBLIC_BASE_URL;
+    }
+  });
 });
