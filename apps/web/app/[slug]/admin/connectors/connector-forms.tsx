@@ -2,6 +2,7 @@
 
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
 import { WEBEX_USER_SCOPE_OPTIONS, WEBEX_KMS_SCOPE } from '@/lib/webex-scopes';
+import { ATLASSIAN_SCOPE_OPTIONS, ATLASSIAN_OFFLINE_SCOPE } from '@/lib/atlassian-scopes';
 
 /**
  * The three connector forms, each a thin skin over its
@@ -153,7 +154,15 @@ function AtlassianForm({ slug }: { slug: string }) {
   const [state, reload] = useConnectorConfig<AtlassianConfig>(url);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
-  const [scopes, setScopes] = useState('');
+  // Checked scopes, offline_access excluded — it is always sent, never a choice.
+  const [checkedScopes, setCheckedScopes] = useState<Set<string>>(
+    () =>
+      new Set(
+        ATLASSIAN_SCOPE_OPTIONS.filter((option) => option.defaultChecked).map(
+          (option) => option.scope
+        )
+      )
+  );
   const [redirectUri, setRedirectUri] = useState('');
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -163,21 +172,43 @@ function AtlassianForm({ slug }: { slug: string }) {
   useEffect(() => {
     if (!state.data) return;
     setClientId(state.data.clientId ?? '');
-    setScopes(state.data.scopes ?? '');
+    if (state.data.configured && state.data.scopes) {
+      const stored = new Set(state.data.scopes.split(/\s+/));
+      setCheckedScopes(
+        new Set(
+          ATLASSIAN_SCOPE_OPTIONS.map((option) => option.scope).filter((scope) => stored.has(scope))
+        )
+      );
+    }
     setRedirectUri(state.data.redirectUri ?? '');
     setEnabled(state.data.configured ? state.data.enabled : true);
   }, [state.data]);
+
+  function toggleScope(scope: string, on: boolean) {
+    setCheckedScopes((current) => {
+      const next = new Set(current);
+      if (on) next.add(scope);
+      else next.delete(scope);
+      return next;
+    });
+  }
 
   async function save(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setNotice(null);
     setError(null);
+    const scopes = [
+      ...ATLASSIAN_SCOPE_OPTIONS.map((option) => option.scope).filter((scope) =>
+        checkedScopes.has(scope)
+      ),
+      ATLASSIAN_OFFLINE_SCOPE,
+    ].join(' ');
     const failure = await putJson(url, {
       clientId: clientId.trim(),
       clientSecret: clientSecret.trim(),
       enabled,
-      ...(scopes.trim() ? { scopes: scopes.trim() } : {}),
+      scopes,
       ...(redirectUri.trim() ? { redirectUri: redirectUri.trim() } : {}),
     });
     setBusy(false);
@@ -258,16 +289,35 @@ function AtlassianForm({ slug }: { slug: string }) {
           )}
         </div>
         <div>
-          <label htmlFor="at-scopes" className={labelClass}>
-            Scopes <span className="font-normal text-gray-500">(optional)</span>
-          </label>
-          <input
-            id="at-scopes"
-            value={scopes}
-            onChange={(e) => setScopes(e.target.value)}
-            placeholder="read:jira-work write:jira-work read:jira-user offline_access"
-            className={`${inputClass} font-mono`}
-          />
+          <fieldset>
+            <legend className={labelClass}>What users may grant</legend>
+            <div className="space-y-2">
+              {ATLASSIAN_SCOPE_OPTIONS.map((option) => (
+                <label key={option.scope} className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={checkedScopes.has(option.scope)}
+                    onChange={(e) => toggleScope(option.scope, e.target.checked)}
+                  />
+                  <span>
+                    {option.label}{' '}
+                    <code className="font-mono text-xs text-gray-500">{option.scope}</code>
+                    <span className="block text-xs text-gray-500 dark:text-gray-400">
+                      {option.hint}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className={hintClass}>
+              Every checked scope must also be granted to the app on developer.atlassian.com —
+              Atlassian refuses the authorize step otherwise.{' '}
+              <code className="font-mono text-xs">{ATLASSIAN_OFFLINE_SCOPE}</code> is always
+              included (without it grants die within an hour). Users who already connected keep
+              their old scopes until they reconnect.
+            </p>
+          </fieldset>
         </div>
         <div>
           <label htmlFor="at-redirect" className={labelClass}>
