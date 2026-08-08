@@ -310,6 +310,259 @@ export async function registerJsmOpsTools(
   );
 
   server.registerTool(
+    'jsm_ops_list_overrides',
+    {
+      title: 'List schedule overrides',
+      description:
+        'The overrides currently on a schedule: who is covering, for which window, on which ' +
+        'rotations. Read this before creating an override, to avoid stacking conflicting ones.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        scheduleId: z.string().min(1).describe('Schedule id from jsm_ops_list_schedules'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const base = opsBase(context);
+      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const scheduleId = encodeURIComponent(str(args.scheduleId));
+      const response = await jiraFetch(
+        `${base}/schedules/${scheduleId}/overrides`,
+        context.accessToken
+      );
+      if (!response.ok) return errText(await describeOpsFailure(response));
+      const body: unknown = await response.json().catch(() => null);
+      const lines = items(body).map((override) => {
+        const responder = isRecord(override.responder)
+          ? str(override.responder.id) || str(override.responder.type)
+          : '?';
+        const rotations = Array.isArray(override.rotationIds)
+          ? override.rotationIds.filter((r) => typeof r === 'string')
+          : [];
+        return (
+          `${responder} covers ${str(override.startDate)} → ${str(override.endDate)}` +
+          (rotations.length ? ` — rotations: ${rotations.join(', ')}` : ' — whole schedule') +
+          ` — alias: ${str(override.alias)}`
+        );
+      });
+      return textResult(lines.length === 0 ? 'No overrides.' : lines.join('\n'));
+    }
+  );
+
+  server.registerTool(
+    'jsm_ops_create_override',
+    {
+      title: 'Create a schedule override (wizard)',
+      description:
+        'Put someone on call in place of the rotation for a window — "cover for me Friday". ' +
+        'This is a WIZARD: gather each missing piece from the user (it will tell you what is ' +
+        'missing), then call WITHOUT confirm to get a preview, show the user that preview, and ' +
+        'only after their explicit yes call again with confirm=true. Never invent times or ' +
+        'responders. Requires the write:ops-config scope.',
+      inputSchema: z.object({
+        scheduleId: z.string().min(1).describe('Schedule id from jsm_ops_list_schedules'),
+        responderAccountId: z
+          .string()
+          .describe('Atlassian accountId of who covers — resolve via search_users')
+          .optional(),
+        startDate: z.string().describe('ISO start of the coverage window').optional(),
+        endDate: z.string().describe('ISO end of the coverage window').optional(),
+        rotationIds: z
+          .array(z.string())
+          .describe('Limit the override to specific rotations; omit for the whole schedule')
+          .optional(),
+        confirm: z
+          .boolean()
+          .describe('true ONLY after the user approved the preview this tool returned')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const base = opsBase(context);
+      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const scheduleId = str(args.scheduleId);
+
+      // Context for the wizard: the schedule must exist, and its name and
+      // timezone anchor every question the assistant asks the user.
+      const scheduleResponse = await jiraFetch(
+        `${base}/schedules/${encodeURIComponent(scheduleId)}`,
+        context.accessToken
+      );
+      if (!scheduleResponse.ok) return errText(await describeOpsFailure(scheduleResponse));
+      const scheduleBody: unknown = await scheduleResponse.json().catch(() => null);
+      const schedule = isRecord(scheduleBody) ? scheduleBody : {};
+      const scheduleName = str(schedule.name) || scheduleId;
+      const timezone = str(schedule.timezone) || 'UTC';
+
+      const missing: string[] = [];
+      if (!str(args.responderAccountId)) {
+        missing.push(
+          'WHO covers: ask the user for the person, resolve their Atlassian accountId with search_users'
+        );
+      }
+      if (!str(args.startDate)) {
+        missing.push(`WHEN it starts: ISO timestamp (schedule timezone is ${timezone})`);
+      }
+      if (!str(args.endDate)) {
+        missing.push(`WHEN it ends: ISO timestamp (schedule timezone is ${timezone})`);
+      }
+      if (missing.length > 0) {
+        return textResult(
+          `Override on "${scheduleName}" — still needed before a preview:\n` +
+            missing.map((m) => `- ${m}`).join('\n') +
+            '\nAsk the user, then call this tool again with the answers.'
+        );
+      }
+
+      const start = new Date(str(args.startDate));
+      const end = new Date(str(args.endDate));
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) {
+        return errText(
+          'startDate/endDate must be valid ISO timestamps with end after start. Re-ask the user.'
+        );
+      }
+
+      const rotationIds = Array.isArray(args.rotationIds)
+        ? args.rotationIds.filter((r: unknown) => typeof r === 'string')
+        : [];
+
+      if (args.confirm !== true) {
+        return textResult(
+          `PREVIEW — nothing written yet.\n` +
+            `Schedule: ${scheduleName} (tz ${timezone})\n` +
+            `Covering: ${str(args.responderAccountId)}\n` +
+            `Window: ${start.toISOString()} → ${end.toISOString()}\n` +
+            `Rotations: ${rotationIds.length ? rotationIds.join(', ') : 'whole schedule'}\n` +
+            'Show this to the user. If they approve, call again with confirm: true.'
+        );
+      }
+
+      const response = await jiraFetch(
+        `${base}/schedules/${encodeURIComponent(scheduleId)}/overrides`,
+        context.accessToken,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            responder: { type: 'user', id: str(args.responderAccountId) },
+            startDate: start.toISOString(),
+            endDate: end.toISOString(),
+            ...(rotationIds.length ? { rotationIds } : {}),
+          }),
+        }
+      );
+      if (!response.ok) return errText(await describeOpsFailure(response));
+      const created: unknown = await response.json().catch(() => null);
+      const alias = isRecord(created) ? str(created.alias) : '';
+      logger.info('[Tool] jsm_ops_create_override', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        scheduleId,
+      });
+      return textResult(`Override created${alias ? ` (alias ${alias})` : ''}.`);
+    }
+  );
+
+  server.registerTool(
+    'jsm_ops_update_rotation',
+    {
+      title: 'Update a rotation (wizard)',
+      description:
+        'Change a rotation’s name, window, type, length, or participants. This is a WIZARD: ' +
+        'call with only scheduleId+rotationId to see current values, gather the changes from ' +
+        'the user, call with the changes for a preview diff, show it, and only after their ' +
+        'explicit yes call again with confirm=true. Only the fields you pass change. Requires ' +
+        'the write:ops-config scope.',
+      inputSchema: z.object({
+        scheduleId: z.string().min(1).describe('Schedule id'),
+        rotationId: z.string().min(1).describe('Rotation id from jsm_ops_list_schedules'),
+        name: z.string().describe('New rotation name').optional(),
+        startDate: z.string().describe('New ISO start').optional(),
+        endDate: z.string().describe('New ISO end').optional(),
+        type: z.enum(['daily', 'weekly', 'hourly']).describe('New rotation type').optional(),
+        length: z.number().int().min(1).describe('New rotation length (units of type)').optional(),
+        participantAccountIds: z
+          .array(z.string())
+          .describe('REPLACEMENT participant list, in on-call order — resolve via search_users')
+          .optional(),
+        confirm: z
+          .boolean()
+          .describe('true ONLY after the user approved the preview this tool returned')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const base = opsBase(context);
+      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const scheduleId = encodeURIComponent(str(args.scheduleId));
+      const rotationId = encodeURIComponent(str(args.rotationId));
+
+      const currentResponse = await jiraFetch(
+        `${base}/schedules/${scheduleId}/rotations/${rotationId}`,
+        context.accessToken
+      );
+      if (!currentResponse.ok) return errText(await describeOpsFailure(currentResponse));
+      const currentBody: unknown = await currentResponse.json().catch(() => null);
+      const current = isRecord(currentBody) ? currentBody : {};
+      const currentParticipants = Array.isArray(current.participants)
+        ? current.participants
+            .filter(isRecord)
+            .map((p) => str(p.id) || str(p.type))
+            .filter(Boolean)
+        : [];
+
+      const patch: Record<string, unknown> = {};
+      if (str(args.name)) patch.name = str(args.name);
+      if (str(args.startDate)) patch.startDate = str(args.startDate);
+      if (str(args.endDate)) patch.endDate = str(args.endDate);
+      if (str(args.type)) patch.type = str(args.type);
+      if (typeof args.length === 'number') patch.length = args.length;
+      if (Array.isArray(args.participantAccountIds)) {
+        patch.participants = args.participantAccountIds
+          .filter((p: unknown) => typeof p === 'string')
+          .map((id: string) => ({ type: 'user', id }));
+      }
+
+      const currentSummary =
+        `Rotation "${str(current.name) || rotationId}": ${str(current.type)}` +
+        `${typeof current.length === 'number' ? ` ×${current.length}` : ''}, ` +
+        `${str(current.startDate)} → ${str(current.endDate) || 'open-ended'}, ` +
+        `participants: ${currentParticipants.join(', ') || '(none)'}`;
+
+      if (Object.keys(patch).length === 0) {
+        return textResult(
+          `${currentSummary}\n` +
+            'No changes given. Ask the user what to change (name, window, type, length, or the ' +
+            'participant list — participants REPLACE the whole list, in on-call order), then ' +
+            'call again with those fields.'
+        );
+      }
+
+      if (args.confirm !== true) {
+        const changes = Object.entries(patch)
+          .map(([key, value]) => `  ${key}: ${JSON.stringify(value)}`)
+          .join('\n');
+        return textResult(
+          `PREVIEW — nothing written yet.\nCurrent → ${currentSummary}\nChanges:\n${changes}\n` +
+            'Show this to the user. If they approve, call again with confirm: true.'
+        );
+      }
+
+      const response = await jiraFetch(
+        `${base}/schedules/${scheduleId}/rotations/${rotationId}`,
+        context.accessToken,
+        { method: 'PATCH', body: JSON.stringify(patch) }
+      );
+      if (!response.ok) return errText(await describeOpsFailure(response));
+      logger.info('[Tool] jsm_ops_update_rotation', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        rotationId: str(args.rotationId),
+        fields: Object.keys(patch),
+      });
+      return textResult('Rotation updated.');
+    }
+  );
+
+  server.registerTool(
     'jsm_ops_list_teams',
     {
       title: 'List JSM Operations teams',

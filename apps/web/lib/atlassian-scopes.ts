@@ -66,7 +66,13 @@ export const ATLASSIAN_SCOPE_OPTIONS: AtlassianScopeOption[] = [
   {
     scope: 'read:ops-config:jira-service-management',
     label: 'Read Ops schedules & on-call',
-    hint: 'Schedules, rotations, who-is-on-call tools; granular scope — requires it on the Atlassian app',
+    hint: 'Schedules, rotations, who-is-on-call, teams, escalations; granular scope — requires it on the Atlassian app',
+    defaultChecked: false,
+  },
+  {
+    scope: 'write:ops-config:jira-service-management',
+    label: 'Update Ops schedules',
+    hint: 'Create schedule overrides, update rotations — confirm-gated wizard tools; granular scope — requires it on the Atlassian app',
     defaultChecked: false,
   },
 ];
