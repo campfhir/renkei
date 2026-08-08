@@ -19,6 +19,7 @@ jest.mock('@renkei/settings', () => ({
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { WebexWebhook, WebexWebhooksClient } from '@renkei/connector-webex';
 import { sweepWebexWebhooks } from './webex-webhooks';
+import { logger } from '../logger';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { readConnectorConfigCached: mockReadConfig } = jest.requireMock<{
@@ -78,8 +79,8 @@ beforeEach(() => {
   mockGetDatabase.mockReset();
   mockReadConfig.mockReset();
   mockGetPublicBaseUrl.mockReset();
-  jest.spyOn(console, 'warn').mockImplementation(() => {});
-  jest.spyOn(console, 'error').mockImplementation(() => {});
+  jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+  jest.spyOn(logger, 'error').mockImplementation(() => undefined);
 });
 
 afterEach(() => {
@@ -112,7 +113,10 @@ describe('sweepWebexWebhooks', () => {
       )
     ).toBe(true);
     expect(stub.created.every((c) => c.secret === 'secret-1')).toBe(true);
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('repaired tenant tenant-1'));
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('repaired webhooks'),
+      expect.objectContaining({ tenantId: 'tenant-1' })
+    );
   });
 
   it('stays silent for a tenant whose webhooks are healthy', async () => {
@@ -128,7 +132,7 @@ describe('sweepWebexWebhooks', () => {
     await sweepWebexWebhooks({ makeClient: () => stub.client });
 
     expect(stub.created).toHaveLength(0);
-    expect(console.warn).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('continues to the next tenant when one tenant’s WebEx API fails', async () => {
@@ -147,7 +151,10 @@ describe('sweepWebexWebhooks', () => {
     await sweepWebexWebhooks({ makeClient });
 
     expect(healthy.created).toHaveLength(2);
-    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('tenant-1'));
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ tenantId: 'tenant-1' })
+    );
   });
 
   it('skips a tenant whose config lost its secrets, with a warning', async () => {
@@ -159,8 +166,9 @@ describe('sweepWebexWebhooks', () => {
     await sweepWebexWebhooks({ makeClient });
 
     expect(makeClient).not.toHaveBeenCalled();
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('missing bot token or webhook secret')
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('missing bot token or webhook secret'),
+      expect.objectContaining({ tenantId: 'tenant-1' })
     );
   });
 });

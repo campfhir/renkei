@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
+import { logger } from '../logger';
 import { createWebexAccessVerifier, webexRefId } from '@renkei/connector-webex';
 import type { WebexMessage } from '@renkei/connector-webex';
 import { ingestChunk, resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
@@ -78,7 +79,11 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
       },
     });
     if (!ingested.ok) {
-      console.warn(`[worker] could not index WebEx message ${message.id} for tenant ${tenantId}`);
+      logger.warn('could not index WebEx message', {
+        component: 'webex/capture',
+        messageId: message.id,
+        tenantId,
+      });
     }
   }
 

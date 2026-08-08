@@ -17,6 +17,7 @@ import { getDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { getPublicBaseUrl } from '@renkei/settings';
+import { logger } from '../logger';
 import {
   WEBEX_CONNECTOR,
   WebexClient,
@@ -43,19 +44,21 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
 
   const baseUrl = getPublicBaseUrl();
   if (!baseUrl) {
-    console.warn('[worker] webhook health: PUBLIC_BASE_URL not set; skipping sweep');
+    logger.warn('PUBLIC_BASE_URL not set; skipping sweep', { component: 'webex/webhook-health' });
     return;
   }
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {
-    console.error('[worker] webhook health: TOKEN_ENCRYPTION_KEY is missing or malformed');
+    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
+      component: 'webex/webhook-health',
+    });
     return;
   }
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    console.error('[worker] webhook health: database unavailable');
+    logger.error('database unavailable', { component: 'webex/webhook-health' });
     return;
   }
 
@@ -68,10 +71,10 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
       .where('enabled', '=', true)
       .execute();
   } catch (error) {
-    console.error(
-      '[worker] webhook health: could not enumerate tenants:',
-      error instanceof Error ? error.message : String(error)
-    );
+    logger.error('could not enumerate tenants: {error}', {
+      component: 'webex/webhook-health',
+      error: error instanceof Error ? error.message : String(error),
+    });
     return;
   }
 
@@ -81,9 +84,10 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     const botToken = configResult.val.secrets.botToken;
     const secret = configResult.val.secrets.webhookSecret;
     if (!botToken || !secret) {
-      console.warn(
-        `[worker] webhook health: tenant ${tenantId} is missing bot token or webhook secret`
-      );
+      logger.warn('tenant is missing bot token or webhook secret', {
+        component: 'webex/webhook-health',
+        tenantId,
+      });
       continue;
     }
 
@@ -92,9 +96,10 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
       secret,
     });
     if (!reconciled.ok) {
-      console.error(
-        `[worker] webhook health: WebEx API error for tenant ${tenantId}; will retry next sweep`
-      );
+      logger.error('WebEx API error; will retry next sweep', {
+        component: 'webex/webhook-health',
+        tenantId,
+      });
       continue;
     }
     if (reconciled.val.changed) {
@@ -105,7 +110,11 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
         )
         .join(', ');
       // Loud on purpose: a repair means deliveries were being lost until now.
-      console.warn(`[worker] webhook health: repaired tenant ${tenantId} — ${repairs}`);
+      logger.warn('repaired webhooks: {repairs}', {
+        component: 'webex/webhook-health',
+        tenantId,
+        repairs,
+      });
     }
   }
 }

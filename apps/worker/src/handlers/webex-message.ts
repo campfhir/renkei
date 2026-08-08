@@ -20,6 +20,7 @@ import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { captureMessage } from './webex-capture';
 import { cardsFeedUrl } from './feed-url';
+import { logger } from '../logger';
 import { resolveWebexContext, type WebexTenantContext } from './webex-context';
 
 export interface WebexHandlerDeps {
@@ -78,7 +79,10 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
           : 'Captured in Renkei — review and act on it in your card feed.',
       });
       if (!posted.ok) {
-        console.warn(`[worker] could not post capture confirmation for ${message.id}`);
+        logger.warn('could not post capture confirmation', {
+          component: 'webex/ingest',
+          messageId: message.id,
+        });
       }
     } else if (outcome === 'skipped') {
       // Not issue-shaped — offer the deliberate push instead of guessing.
@@ -89,7 +93,10 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
         attachments: [buildPushToRenkeiCard({ messageId: message.id, replyTo: threadRoot })],
       });
       if (!posted.ok) {
-        console.warn(`[worker] could not post push card for ${message.id}`);
+        logger.warn('could not post push card', {
+          component: 'webex/ingest',
+          messageId: message.id,
+        });
       }
     }
     // 'duplicate': the item already exists; a second reply would be noise.

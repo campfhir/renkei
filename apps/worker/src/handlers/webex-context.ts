@@ -12,6 +12,7 @@
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { WebexClient, WEBEX_CONNECTOR } from '@renkei/connector-webex';
+import { logger } from '../logger';
 
 export interface WebexTenantContext {
   client: Pick<
@@ -58,9 +59,10 @@ export async function resolveWebexContext(tenantId: string): Promise<WebexTenant
   // cannot filter the bot's own messages out of ingestion.
   const me = await client.getMe();
   if (!me.ok) {
-    console.warn(
-      `[worker] could not resolve WebEx bot identity for tenant ${tenantId}; own-message filter disabled`
-    );
+    logger.warn('could not resolve WebEx bot identity; own-message filter disabled', {
+      component: 'webex/ingest',
+      tenantId,
+    });
   }
 
   const context: WebexTenantContext = { client, botPersonId: me.ok ? me.val.id : null };

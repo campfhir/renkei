@@ -38,16 +38,16 @@ repair is visible in the worker log.
 
 ## Scripts
 
-| Command | What it does |
-| --- | --- |
-| `pnpm dev` | Start the Next.js dev server (`@renkei/web`) |
-| `pnpm build` | Production build across the workspace |
-| `pnpm lint` | ESLint over the whole repo |
-| `pnpm typecheck` | TypeScript, no emit, every package |
-| `pnpm test` | Jest suites of every package |
-| `pnpm --filter @renkei/db migrate` | Run database migrations |
+| Command                             | What it does                                  |
+| ----------------------------------- | --------------------------------------------- |
+| `pnpm dev`                          | Start the Next.js dev server (`renkei`)       |
+| `pnpm build`                        | Production build across the workspace         |
+| `pnpm lint`                         | ESLint over the whole repo                    |
+| `pnpm typecheck`                    | TypeScript, no emit, every package            |
+| `pnpm test`                         | Jest suites of every package                  |
+| `pnpm --filter @renkei/db migrate`  | Run database migrations                       |
 | `pnpm --filter @renkei/db db:types` | Regenerate `db.types.ts` from the live schema |
-| `pnpm --filter @renkei/worker dev` | Run the worker with reload |
+| `pnpm --filter @renkei/worker dev`  | Run the worker with reload                    |
 
 ## Layout
 

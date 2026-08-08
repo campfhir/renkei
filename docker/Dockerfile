@@ -35,7 +35,7 @@ COPY packages ./packages
 RUN node packages/db/scripts/build-migrations.js
 
 # Build the web application
-RUN pnpm --filter @renkei/web build
+RUN pnpm --filter renkei build
 
 # Web runtime stage
 FROM node:24-alpine AS runtime
@@ -54,7 +54,7 @@ RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 # pnpm's os/cpu fields mean only the matching platform binary is installed.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY --parents apps/*/package.json packages/*/package.json ./
-RUN pnpm install --frozen-lockfile --prod --filter @renkei/web... && \
+RUN pnpm install --frozen-lockfile --prod --filter renkei... && \
     rm -rf /root/.pnpm-store /root/.npm
 
 # The workspace packages ship TypeScript source (compiled into the build via
@@ -93,7 +93,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
 ENTRYPOINT ["dumb-init", "--"]
 
 # Start the application
-CMD ["pnpm", "--filter", "@renkei/web", "start"]
+CMD ["pnpm", "--filter", "renkei", "start"]
 
 # Worker stage - the long-running queue consumer
 FROM node:24-alpine AS worker
