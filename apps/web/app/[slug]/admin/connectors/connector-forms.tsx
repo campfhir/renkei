@@ -1,8 +1,17 @@
 'use client';
 
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
-import { WEBEX_USER_SCOPE_OPTIONS, WEBEX_REQUIRED_SCOPES } from '@/lib/webex-scopes';
-import { ATLASSIAN_SCOPE_OPTIONS, ATLASSIAN_OFFLINE_SCOPE } from '@/lib/atlassian-scopes';
+import {
+  WEBEX_USER_SCOPE_OPTIONS,
+  WEBEX_SCOPE_GROUPS,
+  WEBEX_REQUIRED_SCOPES,
+} from '@/lib/webex-scopes';
+import {
+  ATLASSIAN_SCOPE_OPTIONS,
+  ATLASSIAN_SCOPE_GROUPS,
+  ATLASSIAN_OFFLINE_SCOPE,
+} from '@/lib/atlassian-scopes';
+import ScopePicker from '@/components/scope-picker';
 
 /**
  * The three connector forms, each a thin skin over its
@@ -291,28 +300,16 @@ function AtlassianForm({ slug }: { slug: string }) {
         <div>
           <fieldset>
             <legend className={labelClass}>What users may grant</legend>
-            <div className="space-y-2">
-              {ATLASSIAN_SCOPE_OPTIONS.map((option) => (
-                <label key={option.scope} className="flex items-start gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5"
-                    checked={checkedScopes.has(option.scope)}
-                    onChange={(e) => toggleScope(option.scope, e.target.checked)}
-                  />
-                  <span>
-                    {option.label}{' '}
-                    <code className="font-mono text-xs text-gray-500">{option.scope}</code>
-                    <span className="block text-xs text-gray-500 dark:text-gray-400">
-                      {option.hint}
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </div>
+            <ScopePicker
+              groups={ATLASSIAN_SCOPE_GROUPS}
+              options={ATLASSIAN_SCOPE_OPTIONS}
+              checked={checkedScopes}
+              onToggle={toggleScope}
+            />
             <p className={hintClass}>
-              Every checked scope must also be granted to the app on developer.atlassian.com —
-              Atlassian refuses the authorize step otherwise.{' '}
+              This is the ceiling: users can narrow it when they connect, never widen it. Every
+              checked scope must also be granted to the app on developer.atlassian.com — Atlassian
+              refuses the authorize step otherwise.{' '}
               <code className="font-mono text-xs">{ATLASSIAN_OFFLINE_SCOPE}</code> is always
               included (without it grants die within an hour). Users who already connected keep
               their old scopes until they reconnect.
@@ -627,29 +624,16 @@ function WebexUserForm({ slug }: { slug: string }) {
         </div>
         <fieldset>
           <legend className={labelClass}>What users may grant</legend>
-          <div className="space-y-2">
-            {WEBEX_USER_SCOPE_OPTIONS.map((option) => (
-              <label key={option.scope} className="flex items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={checkedScopes.has(option.scope)}
-                  onChange={(e) => toggleScope(option.scope, e.target.checked)}
-                />
-                <span>
-                  {option.label}{' '}
-                  <code className="font-mono text-xs text-gray-500">{option.scope}</code>
-                  <span className="block text-xs text-gray-500 dark:text-gray-400">
-                    {option.hint}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </div>
+          <ScopePicker
+            groups={WEBEX_SCOPE_GROUPS}
+            options={WEBEX_USER_SCOPE_OPTIONS}
+            checked={checkedScopes}
+            onToggle={toggleScope}
+          />
           <p className={hintClass}>
-            Unchecked scopes are never requested and their tools tell the caller why. Every checked
-            scope must also be selected on the Integration at developer.webex.com — WebEx refuses
-            the authorize step otherwise.{' '}
+            This is the ceiling: users can narrow it when they connect, never widen it. Every
+            checked scope must also be selected on the Integration at developer.webex.com — WebEx
+            refuses the authorize step otherwise.{' '}
             <code className="font-mono text-xs">{WEBEX_REQUIRED_SCOPES.join(' ')}</code> are always
             included (identifying who granted, and decrypting message content). Users who already
             connected keep their old scopes until they reconnect.

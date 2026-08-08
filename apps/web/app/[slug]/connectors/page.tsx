@@ -7,8 +7,20 @@ import { signInUrl } from '@/lib/sign-in-url';
 import JiraConnector from './jira-connector';
 import WebexUserConnector from './webex-user-connector';
 import McpEndpoint from './mcp-endpoint';
-import { WEBEX_USER } from '@renkei/provider-grants';
+import { WEBEX_USER, ATLASSIAN } from '@renkei/provider-grants';
 import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
+import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
+import { DEFAULT_ATLASSIAN_SCOPES } from '@/lib/atlassian-scopes';
+
+/** The org's scope ceiling for a connector, from its non-secret settings. */
+function ceilingFrom(settings: unknown, fallback: string): string[] {
+  if (typeof settings === 'object' && settings !== null && 'scopes' in settings) {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowing jsonb
+    const scopes = (settings as Record<string, unknown>).scopes;
+    if (typeof scopes === 'string' && scopes) return scopes.split(/\s+/);
+  }
+  return fallback.split(' ');
+}
 
 /**
  * The user's own connections: which connectors the org has enabled, this
@@ -33,29 +45,49 @@ export default async function ConnectorsPage({
     redirect(signInUrl(tenant.id, `/${slug}/connectors`));
   }
 
-  // Enabled flags only — settings and secrets stay out of user pages.
+  // Enabled flags plus non-secret settings — the settings carry the org's
+  // scope ceiling, which the connect cards let the user narrow. Secrets
+  // never touch this page.
   const dbResult = getDatabase();
   const configs = dbResult.ok
     ? await dbResult.val
         .selectFrom('connector_configs')
-        .select(['connector', 'enabled'])
+        .select(['connector', 'enabled', 'settings'])
         .where('tenant_id', '=', tenant.id)
         .where('enabled', '=', true)
         .execute()
     : [];
   const enabled = new Set(configs.map((c) => c.connector));
+  const settingsOf = (connector: string) =>
+    configs.find((c) => c.connector === connector)?.settings;
 
-  // The caller's own WebEx grant, server-rendered: exists or not.
-  const webexGrant =
-    dbResult.ok && enabled.has(WEBEX_USER_CONNECTOR)
-      ? await dbResult.val
-          .selectFrom('provider_grants')
-          .select('display_name')
-          .where('tenant_id', '=', tenant.id)
-          .where('provider', '=', WEBEX_USER)
-          .where('subject', '=', session.subject)
-          .executeTakeFirst()
-      : undefined;
+  const atlassianCeiling = ceilingFrom(settingsOf('atlassian'), DEFAULT_ATLASSIAN_SCOPES);
+  const webexCeiling = ceilingFrom(settingsOf(WEBEX_USER_CONNECTOR), DEFAULT_WEBEX_USER_SCOPES);
+
+  // The caller's own grants, server-rendered — connection state, and the
+  // scopes they previously authorized (seeding the picker on reconnect).
+  const [atlassianGrant, webexGrant] = dbResult.ok
+    ? await Promise.all([
+        enabled.has('atlassian')
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'scopes'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', ATLASSIAN)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+        enabled.has(WEBEX_USER_CONNECTOR)
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'scopes'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', WEBEX_USER)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+      ])
+    : [undefined, undefined];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -66,7 +98,11 @@ export default async function ConnectorsPage({
 
       <div className="space-y-6">
         {enabled.has('atlassian') ? (
-          <JiraConnector tenantId={tenant.id} />
+          <JiraConnector
+            tenantId={tenant.id}
+            ceiling={atlassianCeiling}
+            priorScopes={atlassianGrant?.scopes ?? null}
+          />
         ) : (
           <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
             <h2 className="font-semibold">Jira</h2>
@@ -91,6 +127,8 @@ export default async function ConnectorsPage({
             tenantId={tenant.id}
             connected={webexGrant !== undefined && webexGrant !== null}
             displayName={webexGrant?.display_name ?? null}
+            ceiling={webexCeiling}
+            priorScopes={webexGrant?.scopes ?? null}
           />
         )}
 

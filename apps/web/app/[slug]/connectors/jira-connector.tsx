@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import ScopePicker from '@/components/scope-picker';
+import { ATLASSIAN_SCOPE_GROUPS, ATLASSIAN_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
 
 interface JiraStatus {
   connected: boolean;
@@ -12,8 +14,44 @@ interface JiraStatus {
  * The user's Jira grant: status, connect, disconnect. Talks to the existing
  * /api/mcp/[tenantId] routes — the page around it has already established a
  * session, so a 401 here means it died mid-visit and a refresh re-guards.
+ *
+ * Before connecting, the user may narrow the org's scope ceiling — hide the
+ * capabilities they don't want Renkei to have. The authorize route enforces
+ * the subset server-side; this picker is the honest UI over that rule.
  */
-export default function JiraConnector({ tenantId }: { tenantId: string }) {
+export default function JiraConnector({
+  tenantId,
+  ceiling,
+  priorScopes,
+}: {
+  tenantId: string;
+  /** The org's allowed scopes — the most a user can grant. */
+  ceiling: string[];
+  /** Scopes on the user's previous grant, seeding the picker on reconnect. */
+  priorScopes: string[] | null;
+}) {
+  // Only catalog options count as choices; required scopes (offline_access,
+  // kms, people_read) ride along server-side and are not offered here.
+  const pickable = ATLASSIAN_SCOPE_OPTIONS.filter((option) => ceiling.includes(option.scope)).map(
+    (option) => option.scope
+  );
+  const [selectedScopes, setSelectedScopes] = useState<Set<string>>(() => {
+    const seed = priorScopes?.filter((scope) => pickable.includes(scope));
+    return new Set(seed && seed.length > 0 ? seed : pickable);
+  });
+
+  function toggleScope(scope: string, on: boolean) {
+    setSelectedScopes((current) => {
+      const next = new Set(current);
+      if (on) next.add(scope);
+      else next.delete(scope);
+      return next;
+    });
+  }
+
+  const authorizeUrl = `/api/mcp/${tenantId}/authorize?scopes=${encodeURIComponent(
+    [...selectedScopes].join(' ')
+  )}`;
   const [status, setStatus] = useState<JiraStatus | null>(null);
   // Disconnecting is not reversible without re-authorising Jira, so it asks
   // first rather than acting on one click.
@@ -84,12 +122,32 @@ export default function JiraConnector({ tenantId }: { tenantId: string }) {
       )}
 
       {status !== null && !status.connected && (
-        <a
-          href={`/api/mcp/${tenantId}/authorize`}
-          className="mt-3 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          Connect Jira
-        </a>
+        <div className="mt-3">
+          <details className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+            <summary className="cursor-pointer text-sm font-medium">
+              What Renkei may do ({selectedScopes.size} of {pickable.length} permissions)
+            </summary>
+            <div className="mt-3">
+              <ScopePicker
+                groups={ATLASSIAN_SCOPE_GROUPS}
+                options={ATLASSIAN_SCOPE_OPTIONS}
+                checked={selectedScopes}
+                onToggle={toggleScope}
+                available={ceiling}
+              />
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Your organization allows at most these. Uncheck anything you don&apos;t want Renkei
+                to have — you can reconnect later to change it.
+              </p>
+            </div>
+          </details>
+          <a
+            href={authorizeUrl}
+            className="inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            Connect Jira
+          </a>
+        </div>
       )}
 
       {status?.connected &&

@@ -2,26 +2,56 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import ScopePicker from '@/components/scope-picker';
+import { WEBEX_SCOPE_GROUPS, WEBEX_USER_SCOPE_OPTIONS } from '@/lib/webex-scopes';
 
 /**
- * The user's own WebEx grant: "Renkei reads WebEx as me." Connection state
+ * The user's own WebEx grant: "Renkei acts on my WebEx." Connection state
  * arrives server-rendered from the page (the grant row either exists or
- * not); this component only carries the connect link and the disconnect
- * confirmation.
+ * not); this component carries the connect link — with the user's optional
+ * scope narrowing, enforced server-side — and the disconnect confirmation.
  */
 export default function WebexUserConnector({
   tenantId,
   connected,
   displayName,
+  ceiling,
+  priorScopes,
 }: {
   tenantId: string;
   connected: boolean;
   displayName: string | null;
+  /** The org's allowed scopes — the most a user can grant. */
+  ceiling: string[];
+  /** Scopes on the user's previous grant, seeding the picker on reconnect. */
+  priorScopes: string[] | null;
 }) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // Only catalog options count as choices; required scopes (offline_access,
+  // kms, people_read) ride along server-side and are not offered here.
+  const pickable = WEBEX_USER_SCOPE_OPTIONS.filter((option) => ceiling.includes(option.scope)).map(
+    (option) => option.scope
+  );
+  const [selectedScopes, setSelectedScopes] = useState<Set<string>>(() => {
+    const seed = priorScopes?.filter((scope) => pickable.includes(scope));
+    return new Set(seed && seed.length > 0 ? seed : pickable);
+  });
+
+  function toggleScope(scope: string, on: boolean) {
+    setSelectedScopes((current) => {
+      const next = new Set(current);
+      if (on) next.add(scope);
+      else next.delete(scope);
+      return next;
+    });
+  }
+
+  const authorizeUrl = `/api/webex/${tenantId}/authorize?scopes=${encodeURIComponent(
+    [...selectedScopes].join(' ')
+  )}`;
 
   async function disconnect() {
     setBusy(true);
@@ -74,12 +104,32 @@ export default function WebexUserConnector({
       )}
 
       {!connected && (
-        <a
-          href={`/api/webex/${tenantId}/authorize`}
-          className="mt-3 inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          Connect WebEx
-        </a>
+        <div className="mt-3">
+          <details className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+            <summary className="cursor-pointer text-sm font-medium">
+              What Renkei may do ({selectedScopes.size} of {pickable.length} permissions)
+            </summary>
+            <div className="mt-3">
+              <ScopePicker
+                groups={WEBEX_SCOPE_GROUPS}
+                options={WEBEX_USER_SCOPE_OPTIONS}
+                checked={selectedScopes}
+                onToggle={toggleScope}
+                available={ceiling}
+              />
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                Your organization allows at most these. Uncheck anything you don&apos;t want Renkei
+                to have — you can reconnect later to change it.
+              </p>
+            </div>
+          </details>
+          <a
+            href={authorizeUrl}
+            className="inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            Connect WebEx
+          </a>
+        </div>
       )}
 
       {connected &&

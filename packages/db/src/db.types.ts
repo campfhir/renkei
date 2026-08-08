@@ -150,6 +150,8 @@ export interface PendingOidcSignin {
   nonce: string;
   /** Which provider's OAuth flow this state belongs to; null means Atlassian. */
   provider: string | null;
+  /** Space-separated scopes the flow requested; null predates narrowing. */
+  scopes: string | null;
   state: string;
   subject: string | null;
   tenant_id: string;

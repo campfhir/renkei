@@ -1,84 +1,93 @@
 /**
  * The Atlassian OAuth (3LO) scopes Renkei's tools actually use — rendered as
- * checkboxes in the admin connector form, same treatment as WebEx. Pure
- * data, importable from client components; atlassian-app.ts re-exports the
- * derived default.
+ * grouped checkboxes via ScopePicker. Pure data, importable from client
+ * components; atlassian-app.ts re-exports the derived default.
  */
 
-export interface AtlassianScopeOption {
-  scope: string;
-  label: string;
-  /** What checking it lets the MCP tools do, in the operator's terms. */
-  hint: string;
-  /** Off by default: the scope must exist on the Atlassian app before use. */
-  defaultChecked: boolean;
-}
+import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
 
-export const ATLASSIAN_SCOPE_OPTIONS: AtlassianScopeOption[] = [
+export const ATLASSIAN_SCOPE_GROUPS: ScopeGroup[] = [
+  { id: 'jira', label: 'Jira' },
+  { id: 'jsm', label: 'Service Management' },
+  { id: 'ops', label: 'Operations (alerts & on-call)' },
+];
+
+export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
   {
     scope: 'read:jira-work',
     label: 'Read work items',
     hint: 'Search, issues, comments, boards, sprints, worklogs — every read tool',
+    group: 'jira',
     defaultChecked: true,
   },
   {
     scope: 'write:jira-work',
     label: 'Create and update work items',
-    hint: 'Create, transition, comment, assign, log work — every mutating tool (org read-only mode disables them regardless)',
+    hint: 'Create, transition, comment, assign, log work (org read-only mode disables these regardless)',
+    group: 'jira',
     defaultChecked: true,
   },
   {
     scope: 'read:jira-user',
     label: 'Look up users',
     hint: 'User search and assignee resolution',
+    group: 'jira',
     defaultChecked: true,
   },
   {
     scope: 'read:servicedesk-request',
-    label: 'Read JSM requests',
-    hint: 'Jira Service Management read tools; requires the scope on the Atlassian app',
+    label: 'Read requests',
+    hint: 'Service desk request read tools',
+    group: 'jsm',
     defaultChecked: false,
   },
   {
     scope: 'write:servicedesk-request',
-    label: 'Create and update JSM requests',
-    hint: 'Jira Service Management mutating tools; requires the scope on the Atlassian app',
+    label: 'Create and update requests',
+    hint: 'Service desk mutating tools',
+    group: 'jsm',
     defaultChecked: false,
   },
   {
     scope: 'manage:servicedesk-customer',
-    label: 'Manage JSM customers',
-    hint: 'Customer add/remove tools; requires the scope on the Atlassian app',
+    label: 'Manage customers',
+    hint: 'Customer add/remove tools',
+    group: 'jsm',
     defaultChecked: false,
   },
   {
     scope: 'read:ops-alert:jira-service-management',
-    label: 'Read Ops alerts',
-    hint: 'JSM Operations alert list/detail tools; granular scope — requires it on the Atlassian app',
+    label: 'Read alerts',
+    hint: 'Alert list and detail',
+    group: 'ops',
     defaultChecked: false,
   },
   {
     scope: 'write:ops-alert:jira-service-management',
-    label: 'Act on Ops alerts',
-    hint: 'Acknowledge and close alerts; granular scope — requires it on the Atlassian app',
+    label: 'Act on alerts',
+    hint: 'Acknowledge and close',
+    group: 'ops',
     defaultChecked: false,
   },
   {
     scope: 'read:ops-config:jira-service-management',
-    label: 'Read Ops schedules & on-call',
-    hint: 'Schedules, rotations, who-is-on-call, teams, escalations; granular scope — requires it on the Atlassian app',
+    label: 'Read schedules & on-call',
+    hint: 'Schedules, rotations, who-is-on-call, teams, escalations',
+    group: 'ops',
     defaultChecked: false,
   },
   {
     scope: 'write:ops-config:jira-service-management',
-    label: 'Update Ops schedules',
-    hint: 'Create schedule overrides, update rotations — confirm-gated wizard tools; granular scope — requires it on the Atlassian app',
+    label: 'Update schedules',
+    hint: 'Overrides and rotation changes — confirm-gated wizards',
+    group: 'ops',
     defaultChecked: false,
   },
   {
     scope: 'delete:ops-config:jira-service-management',
-    label: 'Delete Ops overrides',
-    hint: 'Remove schedule overrides — confirm-gated; granular scope — requires it on the Atlassian app',
+    label: 'Delete overrides',
+    hint: 'Remove schedule overrides — confirm-gated',
+    group: 'ops',
     defaultChecked: false,
   },
 ];
@@ -88,6 +97,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: AtlassianScopeOption[] = [
  * no refresh token, and every grant would die within an hour of connecting.
  */
 export const ATLASSIAN_OFFLINE_SCOPE = 'offline_access';
+export const ATLASSIAN_REQUIRED_SCOPES = [ATLASSIAN_OFFLINE_SCOPE];
 
 export const DEFAULT_ATLASSIAN_SCOPES = [
   ...ATLASSIAN_SCOPE_OPTIONS.filter((option) => option.defaultChecked).map(

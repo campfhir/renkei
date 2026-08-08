@@ -51,6 +51,7 @@ export const EXPECTED_MIGRATIONS = [
   '018-knowledge-chunks',
   '019-identities',
   '020-pending-oauth-provider',
+  '021-pending-oauth-scopes',
 ];
 
 export interface MigrationStatus {

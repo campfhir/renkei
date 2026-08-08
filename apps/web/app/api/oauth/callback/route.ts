@@ -86,7 +86,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // provider's token endpoint the code must be exchanged at.
     const pendingSignIn = await db
       .selectFrom('pending_oidc_signin')
-      .select(['tenant_id', 'expires_at', 'subject', 'provider'])
+      .select(['tenant_id', 'expires_at', 'subject', 'provider', 'scopes'])
       .where('state', '=', state)
       .executeTakeFirst();
 
@@ -127,7 +127,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Dispatch on the provider the authorize step recorded. Null predates
     // the column and means Atlassian — the only provider that existed then.
     if (pendingSignIn.provider === 'webex-user') {
-      return handleWebexUserCallback(request, tenant, pendingSignIn.subject, code);
+      return handleWebexUserCallback(
+        request,
+        tenant,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes
+      );
     }
 
     logger.info('[OAuth] Jira callback', { tenantId: tenant.id });
@@ -279,12 +285,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       refreshToken: tokenData.refresh_token || '',
       expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
       // The scopes actually granted, from the token response when Atlassian
-      // echoes them, else what we asked for. Tool registration filters on
-      // these — a hardcoded list here once made every tool register forever.
-      scopes:
-        typeof tokenData.scope === 'string' && tokenData.scope
-          ? tokenData.scope.split(' ')
-          : atlassianApp.scopes.split(' '),
+      // echoes them, else what the (possibly user-narrowed) authorize step
+      // asked for, else the org ceiling. Tool registration filters on these —
+      // a hardcoded list here once made every tool register forever.
+      scopes: (
+        (typeof tokenData.scope === 'string' && tokenData.scope) ||
+        pendingSignIn.scopes ||
+        atlassianApp.scopes
+      ).split(' '),
     });
 
     logger.info('[OAuth] Jira grant stored successfully', { tenantId: tenant.id });
@@ -315,7 +323,8 @@ async function handleWebexUserCallback(
   request: NextRequest,
   tenant: { id: string; slug: string },
   subject: string | null,
-  code: string
+  code: string,
+  requestedScopes: string | null
 ): Promise<NextResponse> {
   if (!subject) {
     logger.error('[OAuth] WebEx pending flow has no subject; cannot assign grant owner', {
@@ -419,7 +428,9 @@ async function handleWebexUserCallback(
       accessToken,
       refreshToken,
       expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
-      scopes: app.scopes.split(' '),
+      // WebEx does not echo scopes in its token response, so the (possibly
+      // user-narrowed) request carried through the pending row is the record.
+      scopes: (requestedScopes || app.scopes).split(' '),
       metadata: { personEmail: emails[0] ?? null },
       subject,
     },
