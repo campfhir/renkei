@@ -304,10 +304,24 @@ function WebexForm({ slug }: { slug: string }) {
   const [state, reload] = useConnectorConfig<WebexConfig>(url);
   const [botToken, setBotToken] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
+  // Generating reveals the field: the operator needs to see what was minted
+  // to store it in their own vault — the server will never show it again.
+  const [secretRevealed, setSecretRevealed] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  function generateSecret() {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    setWebhookSecret(
+      Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+    );
+    setSecretRevealed(true);
+  }
 
   useEffect(() => {
     if (!state.data) return;
@@ -331,6 +345,7 @@ function WebexForm({ slug }: { slug: string }) {
     }
     setBotToken('');
     setWebhookSecret('');
+    setSecretRevealed(false);
     setNotice('Saved');
     reload();
   }
@@ -379,20 +394,31 @@ function WebexForm({ slug }: { slug: string }) {
           <label htmlFor="wx-secret" className={labelClass}>
             Webhook secret
           </label>
-          <input
-            id="wx-secret"
-            type="password"
-            required
-            value={webhookSecret}
-            onChange={(e) => setWebhookSecret(e.target.value)}
-            placeholder={config?.hasWebhookSecret ? 'Stored — re-enter to save changes' : ''}
-            className={`${inputClass} font-mono`}
-          />
-          {(config?.hasBotToken || config?.hasWebhookSecret) && (
-            <p className={hintClass}>
-              Secrets are stored but never shown. Saving any change requires entering both again.
-            </p>
-          )}
+          <div className="flex gap-2">
+            <input
+              id="wx-secret"
+              type={secretRevealed ? 'text' : 'password'}
+              required
+              value={webhookSecret}
+              onChange={(e) => setWebhookSecret(e.target.value)}
+              placeholder={config?.hasWebhookSecret ? 'Stored — re-enter to save changes' : ''}
+              className={`${inputClass} font-mono`}
+            />
+            <button
+              type="button"
+              onClick={generateSecret}
+              className="shrink-0 rounded-md border border-gray-300 px-3 py-2 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+            >
+              Generate
+            </button>
+          </div>
+          <p className={hintClass}>
+            A value you choose, not one WebEx issues — Renkei registers webhooks with it and WebEx
+            signs every delivery using it. Generate fills in 32 random bytes.
+            {config?.hasWebhookSecret || config?.hasBotToken
+              ? ' Secrets are stored but never shown; saving any change requires entering both again.'
+              : ''}
+          </p>
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
