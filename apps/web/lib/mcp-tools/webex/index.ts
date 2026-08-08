@@ -93,22 +93,47 @@ async function resolveWebexAccess(context: MCPToolContext): Promise<WebexAccess 
   return { accessToken: grant.accessToken, personEmail };
 }
 
-async function webexGet(
+function describeStatus(status: number): string {
+  if (status === 403) {
+    return (
+      'WebEx refused (403) — the grant likely lacks the needed scope. The org admin must select ' +
+      'it on the Integration at developer.webex.com, then you disconnect and reconnect WebEx.'
+    );
+  }
+  return `WebEx API answered ${status}`;
+}
+
+async function webexRequest(
   accessToken: string,
-  path: string
-): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> {
+  path: string,
+  init?: { method?: string; json?: unknown }
+): Promise<{ ok: true; response: Response } | { ok: false; error: string }> {
   let response: Response;
   try {
     response = await fetch(`${API}${path}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      method: init?.method ?? 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        ...(init?.json !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(init?.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
     });
   } catch {
     return { ok: false, error: 'Could not reach webexapis.com' };
   }
   if (!response.ok) {
-    return { ok: false, error: `WebEx API answered ${response.status}` };
+    return { ok: false, error: describeStatus(response.status) };
   }
-  const body: unknown = await response.json().catch(() => null);
+  return { ok: true, response };
+}
+
+async function webexGet(
+  accessToken: string,
+  path: string
+): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> {
+  const result = await webexRequest(accessToken, path);
+  if (!result.ok) return result;
+  const body: unknown = await result.response.json().catch(() => null);
   if (typeof body !== 'object' || body === null) {
     return { ok: false, error: 'Malformed WebEx API response' };
   }
@@ -292,6 +317,189 @@ export async function registerWebexUserTools(
         messageId,
       });
       return textResult(`Captured. It is now on the card feed awaiting a human decision.`);
+    }
+  );
+
+  server.registerTool(
+    'webex_send_message',
+    {
+      title: 'Send a WebEx message',
+      description:
+        'Post a message as the connected user, to a room or a person — e.g. a summary of Jira ' +
+        'tickets assembled with the Jira tools. Markdown supported. This speaks AS the user, so ' +
+        'only send what they asked to send.',
+      // The one acting tool: no readOnlyHint, so org read-only mode disables it.
+      inputSchema: z.object({
+        roomId: z.string().describe('Destination room id (from webex_list_rooms)').optional(),
+        toPersonEmail: z
+          .string()
+          .describe('Recipient email for a 1:1 message instead of a room')
+          .optional(),
+        markdown: z.string().min(1).describe('Message body, WebEx markdown'),
+        parentId: z.string().describe('Message id to reply to, threading under it').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveWebexAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const roomId = str(args.roomId);
+      const toPersonEmail = str(args.toPersonEmail);
+      if (!roomId && !toPersonEmail) return errText('Provide roomId or toPersonEmail.');
+      if (roomId && toPersonEmail) return errText('Provide roomId or toPersonEmail, not both.');
+
+      const result = await webexRequest(access.accessToken, '/messages', {
+        method: 'POST',
+        json: {
+          ...(roomId ? { roomId } : { toPersonEmail }),
+          markdown: str(args.markdown),
+          ...(str(args.parentId) ? { parentId: str(args.parentId) } : {}),
+        },
+      });
+      if (!result.ok) return errText(result.error);
+      const body: unknown = await result.response.json().catch(() => null);
+      const sent =
+        typeof body === 'object' && body !== null
+          ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+            (body as Record<string, unknown>)
+          : {};
+      logger.info('[Tool] webex_send_message sent', {
+        tenantId: context.tenantId,
+        roomId: str(sent.roomId),
+      });
+      return textResult(`Sent (message id ${str(sent.id) || 'unknown'}).`);
+    }
+  );
+
+  server.registerTool(
+    'webex_list_meetings',
+    {
+      title: 'List WebEx meetings',
+      description:
+        'List the connected user’s meetings in a time window — scheduled or ended. Meeting ids ' +
+        'feed webex_list_transcripts and webex_list_recordings.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        from: z.string().describe('ISO start of the window (default: 7 days ago)').optional(),
+        to: z.string().describe('ISO end of the window (default: now)').optional(),
+        max: z.number().int().min(1).max(100).describe('How many (default 20)').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveWebexAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const from = str(args.from) || new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+      const to = str(args.to) || new Date().toISOString();
+      const max = typeof args.max === 'number' ? args.max : 20;
+      const query = `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&max=${max}&meetingType=meeting`;
+      const result = await webexGet(access.accessToken, `/meetings?${query}`);
+      if (!result.ok) return errText(result.error);
+      const lines = items(result.body).map(
+        (meeting) =>
+          `${str(meeting.title) || '(untitled)'} — ${str(meeting.start)} → ${str(meeting.end)} — ` +
+          `state: ${str(meeting.state)} — id: ${str(meeting.id)}`
+      );
+      return textResult(lines.length === 0 ? 'No meetings in that window.' : lines.join('\n'));
+    }
+  );
+
+  server.registerTool(
+    'webex_list_transcripts',
+    {
+      title: 'List WebEx meeting transcripts',
+      description:
+        'List transcripts of the connected user’s hosted meetings, optionally narrowed to one ' +
+        'meeting. Transcript ids feed webex_get_transcript.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        meetingId: z.string().describe('Narrow to one meeting').optional(),
+        from: z.string().describe('ISO start of the window').optional(),
+        to: z.string().describe('ISO end of the window').optional(),
+        max: z.number().int().min(1).max(100).describe('How many (default 20)').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveWebexAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const parts = [`max=${typeof args.max === 'number' ? args.max : 20}`];
+      if (str(args.meetingId)) parts.push(`meetingId=${encodeURIComponent(str(args.meetingId))}`);
+      if (str(args.from)) parts.push(`from=${encodeURIComponent(str(args.from))}`);
+      if (str(args.to)) parts.push(`to=${encodeURIComponent(str(args.to))}`);
+      const result = await webexGet(access.accessToken, `/meetingTranscripts?${parts.join('&')}`);
+      if (!result.ok) return errText(result.error);
+      const lines = items(result.body).map(
+        (transcript) =>
+          `${str(transcript.meetingTopic) || '(no topic)'} — ${str(transcript.startTime)} — ` +
+          `id: ${str(transcript.id)}`
+      );
+      return textResult(lines.length === 0 ? 'No transcripts.' : lines.join('\n'));
+    }
+  );
+
+  server.registerTool(
+    'webex_get_transcript',
+    {
+      title: 'Download a WebEx meeting transcript',
+      description:
+        'Fetch a transcript’s text by id — the raw material for "summarize that meeting and ' +
+        'file/announce the outcomes".',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        transcriptId: z.string().min(1).describe('Transcript id from webex_list_transcripts'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveWebexAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const transcriptId = str(args.transcriptId);
+      if (!transcriptId) return errText('transcriptId is required');
+      const result = await webexRequest(
+        access.accessToken,
+        `/meetingTranscripts/${encodeURIComponent(transcriptId)}/download?format=txt`
+      );
+      if (!result.ok) return errText(result.error);
+      const content = await result.response.text().catch(() => '');
+      if (!content) return errText('Transcript came back empty.');
+      // A long meeting can be megabytes of text; cap what one tool call returns.
+      const MAX = 80_000;
+      const capped =
+        content.length > MAX
+          ? `${content.slice(0, MAX)}\n\n[…truncated: ${content.length - MAX} more characters]`
+          : content;
+      return textResult(capped);
+    }
+  );
+
+  server.registerTool(
+    'webex_list_recordings',
+    {
+      title: 'List WebEx meeting recordings',
+      description:
+        'List recordings of the connected user’s meetings, with playback links. Read-only; the ' +
+        'links open in a browser.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        meetingId: z.string().describe('Narrow to one meeting').optional(),
+        from: z.string().describe('ISO start of the window').optional(),
+        to: z.string().describe('ISO end of the window').optional(),
+        max: z.number().int().min(1).max(100).describe('How many (default 20)').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveWebexAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const parts = [`max=${typeof args.max === 'number' ? args.max : 20}`];
+      if (str(args.meetingId)) parts.push(`meetingId=${encodeURIComponent(str(args.meetingId))}`);
+      if (str(args.from)) parts.push(`from=${encodeURIComponent(str(args.from))}`);
+      if (str(args.to)) parts.push(`to=${encodeURIComponent(str(args.to))}`);
+      const result = await webexGet(access.accessToken, `/recordings?${parts.join('&')}`);
+      if (!result.ok) return errText(result.error);
+      const lines = items(result.body).map(
+        (recording) =>
+          `${str(recording.topic) || '(no topic)'} — ${str(recording.createTime)} — ` +
+          `${typeof recording.durationSeconds === 'number' ? `${Math.round(recording.durationSeconds / 60)} min — ` : ''}` +
+          `${str(recording.playbackUrl) ? `[play](${str(recording.playbackUrl)})` : 'no playback link'} — id: ${str(recording.id)}`
+      );
+      return textResult(lines.length === 0 ? 'No recordings.' : lines.join('\n'));
     }
   );
 }

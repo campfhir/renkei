@@ -555,11 +555,13 @@ function WebexUserForm({ slug }: { slug: string }) {
             id="wxu-scopes"
             value={scopes}
             onChange={(e) => setScopes(e.target.value)}
-            placeholder="spark:rooms_read spark:messages_read spark:kms"
+            placeholder="spark:rooms_read spark:messages_read spark:messages_write meeting:schedules_read meeting:transcripts_read meeting:recordings_read spark:kms"
             className={`${inputClass} font-mono`}
           />
           <p className={hintClass}>
-            Read-only by default. The scopes must also be selected on the Integration itself.
+            Default covers rooms, messages (read + write), meetings, transcripts and recordings.
+            Every scope must also be selected on the Integration itself; narrow the list here and
+            the tools degrade accordingly.
           </p>
         </div>
         <label className="flex items-center gap-2 text-sm">

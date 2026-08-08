@@ -105,13 +105,17 @@ nothing but the brand:
 1. **The org bot** (`webex` connector) — ambient ingestion. Invited to spaces,
    fires webhooks on @mentions (all messages in 1:1), classifier turns issue
    reports into cards. Forward a message to the bot's DM to capture it by hand.
-2. **The user grant** (`webex-user` connector) — "Renkei reads WebEx as me."
+2. **The user grant** (`webex-user` connector) — "Renkei acts on my WebEx."
    An Integration from developer.webex.com (client id/secret in admin
    connectors), each user connects on the Connectors page, grant rows live in
    provider_grants like Jira. MCP tools register per-user when the grant
    exists: webex_list_rooms, webex_list_messages, webex_get_message,
-   webex_capture_message (→ card feed, human decides). Read-only scopes;
-   nothing posts to WebEx as the user.
+   webex_capture_message (→ card feed, human decides), webex_list_meetings,
+   webex_list_transcripts, webex_get_transcript, webex_list_recordings, and
+   webex_send_message — the one acting tool (disabled under org read-only
+   mode), which is what powers "assemble a Jira summary and send it to the
+   team". Scopes must match the Integration's; specs vendored in
+   docs/webex-{messaging,meeting}-open-api-spec.json.
 
 The shared OAuth callback dispatches on a provider column added to
 pending_oidc_signin (migration 020); null means Atlassian.

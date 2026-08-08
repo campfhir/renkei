@@ -60,11 +60,12 @@ export default function WebexUserConnector({
       <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
         {connected && displayName ? (
           <>
-            Connected as <strong>{displayName}</strong>. MCP tools can read the rooms you are in —
-            they never post as you.
+            Connected as <strong>{displayName}</strong>. MCP tools can read your rooms, messages,
+            meeting transcripts and recordings — and send a message as you when you explicitly ask
+            them to.
           </>
         ) : (
-          'Grant Renkei read access to your own WebEx: list your rooms, read messages you can see, capture them as actionable items. Read-only.'
+          'Grant Renkei access to your own WebEx: read rooms, messages, meeting transcripts and recordings; capture messages as actionable items; send a message as you when you ask (e.g. a Jira summary to your team).'
         )}
       </p>
 
