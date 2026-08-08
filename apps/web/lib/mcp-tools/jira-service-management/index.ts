@@ -9,6 +9,7 @@ import type { MCPToolContext } from '../common';
 import { registerJsmTools } from './jsm';
 import { registerRequestDetailsTools } from './request-details';
 import { registerJsmCustomerTools } from './customers';
+import { registerJsmOpsTools } from './ops';
 
 export async function registerJiraServiceManagementTools(
   server: McpServer,
@@ -17,4 +18,5 @@ export async function registerJiraServiceManagementTools(
   await registerJsmTools(server, context);
   await registerRequestDetailsTools(server, context);
   await registerJsmCustomerTools(server, context);
+  await registerJsmOpsTools(server, context);
 }

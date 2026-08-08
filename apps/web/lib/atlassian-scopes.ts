@@ -51,6 +51,24 @@ export const ATLASSIAN_SCOPE_OPTIONS: AtlassianScopeOption[] = [
     hint: 'Customer add/remove tools; requires the scope on the Atlassian app',
     defaultChecked: false,
   },
+  {
+    scope: 'read:ops-alert:jira-service-management',
+    label: 'Read Ops alerts',
+    hint: 'JSM Operations alert list/detail tools; granular scope — requires it on the Atlassian app',
+    defaultChecked: false,
+  },
+  {
+    scope: 'write:ops-alert:jira-service-management',
+    label: 'Act on Ops alerts',
+    hint: 'Acknowledge and close alerts; granular scope — requires it on the Atlassian app',
+    defaultChecked: false,
+  },
+  {
+    scope: 'read:ops-config:jira-service-management',
+    label: 'Read Ops schedules & on-call',
+    hint: 'Schedules, rotations, who-is-on-call tools; granular scope — requires it on the Atlassian app',
+    defaultChecked: false,
+  },
 ];
 
 /**

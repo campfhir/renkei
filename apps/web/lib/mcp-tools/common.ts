@@ -24,6 +24,12 @@ export interface MCPToolContext {
    * call must go through this — 3LO tokens are rejected on the bare site domain.
    */
   apiBaseUrl: string;
+  /**
+   * The Atlassian cloud id on its own, for APIs that embed it differently
+   * than the /ex/jira gateway — JSM Operations lives at
+   * api.atlassian.com/jsm/ops/api/{cloudId}/v1.
+   */
+  cloudId?: string;
   accessToken: string;
   maxJqlResults: number;
   /**

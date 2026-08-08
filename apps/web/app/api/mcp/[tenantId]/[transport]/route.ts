@@ -233,6 +233,7 @@ const handler = async (
               accountId,
               siteUrl: grant.siteUrl,
               apiBaseUrl: `https://api.atlassian.com/ex/jira/${grant.cloudId}`,
+              cloudId: grant.cloudId,
               accessToken: grant.accessToken,
               maxJqlResults: settings.maxJqlResults,
               maxAttachmentBytes: settings.maxAttachmentBytes,
