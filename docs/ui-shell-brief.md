@@ -49,27 +49,43 @@ to sign in, connect their accounts, and copy the MCP URL into their LLM app —
 that does not warrant a dedicated page. Fold the MCP endpoint URL into the home
 page or the connectors page.
 
-### 5. Routing — move to `/[tenantId]/*`
+### 5. Routing — move to `/[slug]/*`
 
 Keep the tenant model, drop the `/tenant/` and `/mcp/` prefixes.
 
-| now                                             | proposed                                                                                                                       |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `apps/web/app/tenant/[tenantId]/cards/page.tsx` | `/[tenantId]/home` — cards are a _component_ on the home page, not a page of their own                                         |
-| `apps/web/app/tenant/[tenantId]/logs/page.tsx`  | `/[tenantId]/logs` — a real page, just needs the path updated                                                                  |
-| —                                               | `/[tenantId]/connectors` — the user manages their own grants and their connectors' capabilities                                |
-| `apps/web/app/admin/[slug]/*`                   | `/[tenantId]/admin/*` — org-level setup: what employees may connect, org logs, etc. Roughly what `admin/` has today, relocated |
-| `apps/web/app/mcp/[tenantId]/page.tsx`          | delete                                                                                                                         |
+**Pages are keyed by slug, not tenantId** — a slug is memorable, a UUID is not,
+and `admin/[slug]` already works this way. Each page segment resolves slug →
+tenantId server-side (`tenantIdForSlug` in
+`apps/web/app/api/admin/[slug]/connectors/atlassian/route.ts` is the existing
+one; lift it into a shared helper) and 404s on an unknown slug.
+
+**API routes stay keyed by tenantId.** `/api/mcp/[tenantId]/*` is not just a
+path — `{base}/api/mcp/{tenantId}` is the OAuth issuer, baked into the discovery
+documents and the rewrites in `next.config.ts`, and every MCP client that has
+registered holds it. Re-keying it to slug changes the issuer identity and
+invalidates those registrations, and it would mean a rename of the org silently
+breaking live connectors. Human-facing pages get the readable identifier;
+machine-facing endpoints keep the stable one.
+
+| now                                             | proposed                                                                                                                   |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/app/tenant/[tenantId]/cards/page.tsx` | `/[slug]/home` — cards are a _component_ on the home page, not a page of their own                                         |
+| `apps/web/app/tenant/[tenantId]/logs/page.tsx`  | `/[slug]/logs` — a real page, just needs the path updated                                                                  |
+| —                                               | `/[slug]/connectors` — the user manages their own grants and their connectors' capabilities                                |
+| `apps/web/app/admin/[slug]/*`                   | `/[slug]/admin/*` — org-level setup: what employees may connect, org logs, etc. Roughly what `admin/` has today, relocated |
+| `apps/web/app/mcp/[tenantId]/page.tsx`          | delete                                                                                                                     |
 
 Home page is where the summary cards and their actions live. From home, surface
 the other sections according to the signed-in user's role.
 
+A top-level `/[slug]` catch-all sits next to real routes like
+`/create-organization`, so reserve those words — a tenant must not be able to
+claim the slug `api`, `admin`, or `create-organization`.
+
 ## Open questions
 
-- `admin/[slug]` is keyed by slug, the proposed tree is keyed by tenantId. Pick
-  one and make it consistent, or keep slug for admin and accept the mismatch.
-- Role model: what distinguishes a user who sees `/[tenantId]/connectors` from
-  an operator who sees `/[tenantId]/admin`? `getOperatorSession` vs
+- Role model: what distinguishes a user who sees `/[slug]/connectors` from an
+  operator who sees `/[slug]/admin`? `getOperatorSession` vs
   `getSessionFromCookies` is the current split.
 - Existing pages are a mix of Tailwind classes and inline `style` objects with
   hardcoded light-mode colors (`#666`, `#ddd`, `#f7f7f7`). The dark-mode pass
