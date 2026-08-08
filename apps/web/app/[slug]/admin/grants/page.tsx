@@ -3,6 +3,7 @@ import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { redirect, notFound } from 'next/navigation';
+import RevokeButton from './revoke-button';
 
 export default async function GrantsPage({
   params,
@@ -63,9 +64,10 @@ export default async function GrantsPage({
         <div
           style={{
             padding: '2rem',
-            backgroundColor: '#f5f5f5',
+            border: '1px solid var(--border)',
             borderRadius: '4px',
             textAlign: 'center',
+            color: 'var(--muted)',
           }}
         >
           <p>No connected Jira accounts yet</p>
@@ -105,41 +107,18 @@ export default async function GrantsPage({
                   <td
                     style={{
                       padding: '1rem',
-                      color: isExpired ? '#d32f2f' : '#333',
+                      color: isExpired ? '#d32f2f' : 'inherit',
                     }}
                   >
                     {expiresAtStr}
                     {isExpired && <span style={{ marginLeft: '0.5rem' }}>⚠️</span>}
                   </td>
                   <td style={{ padding: '1rem' }}>
-                    <button
-                      onClick={() => {
-                        // In a real app, this would call the revoke endpoint
-                        if (confirm(`Revoke access for ${grant.display_name}?`)) {
-                          fetch(`/api/admin/${slug}/grants/${grant.provider_account_id}/revoke`, {
-                            method: 'POST',
-                          })
-                            .then((res) => res.json())
-                            .then((data) => {
-                              if (data.success) {
-                                // Reload page
-                                window.location.reload();
-                              }
-                            })
-                            .catch((err) => console.error('Revoke failed:', err));
-                        }
-                      }}
-                      style={{
-                        padding: '0.5rem 1rem',
-                        backgroundColor: '#d32f2f',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '4px',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Revoke
-                    </button>
+                    <RevokeButton
+                      slug={slug}
+                      accountId={grant.provider_account_id}
+                      displayName={grant.display_name ?? grant.provider_account_id}
+                    />
                   </td>
                 </tr>
               );
