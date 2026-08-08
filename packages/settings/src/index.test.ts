@@ -1,8 +1,8 @@
 /**
  * The settings store's contract: unset means defaults (the old env
  * defaults), stored values override per key, setters invalidate the cache,
- * and the platform base URL is null — not an error — when unset, so callers
- * can fall back to trusted request headers.
+ * and the public base URL comes from the environment — null when unset, so
+ * callers can fall back to trusted request headers.
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
@@ -11,7 +11,6 @@ import {
   getOrgSettings,
   setOrgSettings,
   getPublicBaseUrl,
-  setPublicBaseUrl,
   invalidateSettingsCache,
   DEFAULT_ORG_SETTINGS,
 } from './index';
@@ -123,43 +122,21 @@ describe('org settings', () => {
 });
 
 describe('public base URL', () => {
-  it('is null when unset', async () => {
-    stubDb();
-    const result = await getPublicBaseUrl();
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.val).toBeNull();
+  afterEach(() => {
+    delete process.env.PUBLIC_BASE_URL;
   });
 
-  it('round-trips through the setter with cache invalidation', async () => {
-    stubDb();
-    await getPublicBaseUrl();
-    await setPublicBaseUrl('https://renkei.example.com');
-    const result = await getPublicBaseUrl();
-    if (result.ok) expect(result.val).toBe('https://renkei.example.com');
+  it('is null when PUBLIC_BASE_URL is unset', () => {
+    expect(getPublicBaseUrl()).toBeNull();
   });
 
-  it('prefers PUBLIC_BASE_URL from the environment, trailing slash stripped', async () => {
-    stubDb();
-    await setPublicBaseUrl('https://stale.example.com');
+  it('reads PUBLIC_BASE_URL, trailing slash stripped', () => {
     process.env.PUBLIC_BASE_URL = 'https://renkei.example.com/';
-    try {
-      const result = await getPublicBaseUrl();
-      expect(result.ok).toBe(true);
-      if (result.ok) expect(result.val).toBe('https://renkei.example.com');
-    } finally {
-      delete process.env.PUBLIC_BASE_URL;
-    }
+    expect(getPublicBaseUrl()).toBe('https://renkei.example.com');
   });
 
-  it('ignores a blank PUBLIC_BASE_URL', async () => {
-    stubDb();
+  it('treats a blank PUBLIC_BASE_URL as unset', () => {
     process.env.PUBLIC_BASE_URL = '   ';
-    try {
-      const result = await getPublicBaseUrl();
-      expect(result.ok).toBe(true);
-      if (result.ok) expect(result.val).toBeNull();
-    } finally {
-      delete process.env.PUBLIC_BASE_URL;
-    }
+    expect(getPublicBaseUrl()).toBeNull();
   });
 });

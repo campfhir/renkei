@@ -10,10 +10,10 @@
  */
 
 import { parsePushAction } from '@renkei/connector-webex';
-import { getPublicBaseUrl } from '@renkei/settings';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { captureMessage } from './webex-capture';
+import { cardsFeedUrl } from './feed-url';
 import { resolveWebexContext, type WebexTenantContext } from './webex-context';
 
 export interface WebexActionHandlerDeps {
@@ -84,8 +84,7 @@ export function createWebexAttachmentActionHandler(
       force: true,
     });
 
-    const feed = await getPublicBaseUrl();
-    const feedUrl = feed.ok && feed.val ? `${feed.val}/tenant/${event.tenant_id}/cards` : null;
+    const feedUrl = await cardsFeedUrl(event.tenant_id);
     const confirmation =
       outcome === 'duplicate'
         ? 'Already captured in Renkei.'

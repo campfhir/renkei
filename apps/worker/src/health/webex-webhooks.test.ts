@@ -88,7 +88,7 @@ afterEach(() => {
 
 describe('sweepWebexWebhooks', () => {
   it('skips entirely when no public base URL is stored', async () => {
-    mockGetPublicBaseUrl.mockResolvedValue(ok(null));
+    mockGetPublicBaseUrl.mockReturnValue(null);
     const makeClient = jest.fn();
 
     await sweepWebexWebhooks({ makeClient });
@@ -98,7 +98,7 @@ describe('sweepWebexWebhooks', () => {
   });
 
   it('registers both webhooks for a tenant that has none, at the derived target', async () => {
-    mockGetPublicBaseUrl.mockResolvedValue(ok('https://renkei.example.com'));
+    mockGetPublicBaseUrl.mockReturnValue('https://renkei.example.com');
     stubDbTenants(['tenant-1']);
     mockReadConfig.mockResolvedValue(configFor({ botToken: 'token-1', webhookSecret: 'secret-1' }));
     const stub = stubClient([]);
@@ -106,14 +106,18 @@ describe('sweepWebexWebhooks', () => {
     await sweepWebexWebhooks({ makeClient: () => stub.client });
 
     expect(stub.created).toHaveLength(2);
-    expect(stub.created.every((c) => c.targetUrl === 'https://renkei.example.com/api/webhooks/webex/tenant-1')).toBe(true);
+    expect(
+      stub.created.every(
+        (c) => c.targetUrl === 'https://renkei.example.com/api/webhooks/webex/tenant-1'
+      )
+    ).toBe(true);
     expect(stub.created.every((c) => c.secret === 'secret-1')).toBe(true);
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('repaired tenant tenant-1'));
   });
 
   it('stays silent for a tenant whose webhooks are healthy', async () => {
     const target = 'https://renkei.example.com/api/webhooks/webex/tenant-1';
-    mockGetPublicBaseUrl.mockResolvedValue(ok('https://renkei.example.com'));
+    mockGetPublicBaseUrl.mockReturnValue('https://renkei.example.com');
     stubDbTenants(['tenant-1']);
     mockReadConfig.mockResolvedValue(configFor({ botToken: 'token-1', webhookSecret: 'secret-1' }));
     const stub = stubClient([
@@ -128,7 +132,7 @@ describe('sweepWebexWebhooks', () => {
   });
 
   it('continues to the next tenant when one tenant’s WebEx API fails', async () => {
-    mockGetPublicBaseUrl.mockResolvedValue(ok('https://renkei.example.com'));
+    mockGetPublicBaseUrl.mockReturnValue('https://renkei.example.com');
     stubDbTenants(['tenant-1', 'tenant-2']);
     mockReadConfig.mockResolvedValue(configFor({ botToken: 'token', webhookSecret: 'secret' }));
     const failing: WebexWebhooksClient = {
@@ -147,7 +151,7 @@ describe('sweepWebexWebhooks', () => {
   });
 
   it('skips a tenant whose config lost its secrets, with a warning', async () => {
-    mockGetPublicBaseUrl.mockResolvedValue(ok('https://renkei.example.com'));
+    mockGetPublicBaseUrl.mockReturnValue('https://renkei.example.com');
     stubDbTenants(['tenant-1']);
     mockReadConfig.mockResolvedValue(configFor({ botToken: 'token-only' }));
     const makeClient = jest.fn();
@@ -155,6 +159,8 @@ describe('sweepWebexWebhooks', () => {
     await sweepWebexWebhooks({ makeClient });
 
     expect(makeClient).not.toHaveBeenCalled();
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('missing bot token or webhook secret'));
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('missing bot token or webhook secret')
+    );
   });
 });

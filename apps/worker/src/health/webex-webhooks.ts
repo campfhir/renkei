@@ -41,12 +41,11 @@ export interface WebhookSweepDeps {
 export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<void> {
   const makeClient = deps.makeClient ?? ((botToken: string) => new WebexClient(botToken));
 
-  const baseUrlResult = await getPublicBaseUrl();
-  if (!baseUrlResult.ok || !baseUrlResult.val) {
-    console.warn('[worker] webhook health: no public base URL configured; skipping sweep');
+  const baseUrl = getPublicBaseUrl();
+  if (!baseUrl) {
+    console.warn('[worker] webhook health: PUBLIC_BASE_URL not set; skipping sweep');
     return;
   }
-  const baseUrl = baseUrlResult.val;
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {
@@ -82,7 +81,9 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     const botToken = configResult.val.secrets.botToken;
     const secret = configResult.val.secrets.webhookSecret;
     if (!botToken || !secret) {
-      console.warn(`[worker] webhook health: tenant ${tenantId} is missing bot token or webhook secret`);
+      console.warn(
+        `[worker] webhook health: tenant ${tenantId} is missing bot token or webhook secret`
+      );
       continue;
     }
 
@@ -91,13 +92,17 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
       secret,
     });
     if (!reconciled.ok) {
-      console.error(`[worker] webhook health: WebEx API error for tenant ${tenantId}; will retry next sweep`);
+      console.error(
+        `[worker] webhook health: WebEx API error for tenant ${tenantId}; will retry next sweep`
+      );
       continue;
     }
     if (reconciled.val.changed) {
       const repairs = reconciled.val.registrations
         .filter((registration) => registration.action !== 'kept')
-        .map((registration) => `${registration.resource}/${registration.event} ${registration.action}`)
+        .map(
+          (registration) => `${registration.resource}/${registration.event} ${registration.action}`
+        )
         .join(', ');
       // Loud on purpose: a repair means deliveries were being lost until now.
       console.warn(`[worker] webhook health: repaired tenant ${tenantId} — ${repairs}`);
