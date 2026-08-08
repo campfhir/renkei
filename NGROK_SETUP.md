@@ -76,7 +76,6 @@ Either:
 
 ```bash
 PUBLIC_BASE_URL=https://1a2b-3c4d-5e6f-7g8h.ngrok.io
-TRUST_PROXY_HEADERS=true
 ```
 
 **Option B: Use ngrok subdomain** (requires paid plan)
@@ -127,8 +126,8 @@ X-Forwarded-Proto: https
 X-Forwarded-Host: 1a2b-3c4d-5e6f-7g8h.ngrok.io
 ```
 
-These are trusted because `TRUST_PROXY_HEADERS=true` asserts the app is only
-reachable through the tunnel — locally, the ngrok agent forwards to
+These are trusted unconditionally — the app assumes it always stands behind a
+reverse proxy the operator controls. Locally, the ngrok agent forwards to
 127.0.0.1, so nothing else is talking to that port.
 
 ## Testing Reverse Proxy Scenarios
@@ -188,9 +187,9 @@ kill -9 <PID>
 
 ### X-Forwarded headers not being used
 
-1. Ensure `TRUST_PROXY_HEADERS=true` is set
-2. Check that app is behind ngrok (not direct connection)
-3. Look in app logs for `[getOrigin] X-Forwarded headers present but not trusted`
+1. Check that app is behind ngrok (not direct connection) — the headers are
+   only present when a proxy adds them
+2. Inspect the actual headers in the ngrok dashboard (http://127.0.0.1:4040)
 
 ### ngrok tunnel keeps dropping
 

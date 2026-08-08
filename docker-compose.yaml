@@ -70,11 +70,12 @@ services:
       - .env
     environment:
       <<: *database-urls
-      # TRUST_PROXY_HEADERS=true (set it in .env) makes the app believe
-      # X-Forwarded-Proto/Host when deriving its own origin. Only assert this
-      # when nothing but your reverse proxy can reach the app — publish the
-      # port on 127.0.0.1 or an internal network first. Without it, the app
-      # uses PUBLIC_BASE_URL, which is right for a single-address deployment.
+      # The app believes X-Forwarded-Proto/Host when deriving its own origin —
+      # the deployment contract is that it always sits behind a reverse proxy
+      # the operator controls. That means this port must never be reachable by
+      # untrusted clients directly, or they could choose the origin themselves:
+      # keep it published on 127.0.0.1 / an internal network, with the proxy in
+      # front. Without those headers, PUBLIC_BASE_URL from .env is used.
     ports:
       - '80:3000'
     depends_on:
