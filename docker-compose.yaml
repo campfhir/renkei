@@ -70,12 +70,11 @@ services:
       - .env
     environment:
       <<: *database-urls
-      # Whitelist proxy IPs that are allowed to set X-Forwarded-* headers
-      # Default (if not set): 127.0.0.1,::1 (localhost only)
-      # For Docker: 172.17.0.1 (Docker bridge gateway)
-      # For Kubernetes/overlay networks: add the pod/service IP range
-      # Example: TRUSTED_PROXY_IPS=127.0.0.1,172.17.0.1,10.0.0.0/24
-      # TRUSTED_PROXY_IPS: ""  # Set in .env file instead
+      # TRUST_PROXY_HEADERS=true (set it in .env) makes the app believe
+      # X-Forwarded-Proto/Host when deriving its own origin. Only assert this
+      # when nothing but your reverse proxy can reach the app — publish the
+      # port on 127.0.0.1 or an internal network first. Without it, the app
+      # uses PUBLIC_BASE_URL, which is right for a single-address deployment.
     ports:
       - '80:3000'
     depends_on:
