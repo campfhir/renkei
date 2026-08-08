@@ -46,12 +46,14 @@ export const WEBEX_USER_SCOPE_OPTIONS: WebexScopeOption[] = [
 ];
 
 /**
- * Always requested, never a choice: WebEx requires it to decrypt message
- * content, so without it every read scope is decorative.
+ * Always requested, never a choice — structural, not capabilities:
+ * spark:people_read is how the callback identifies WHO granted (/people/me
+ * answers 403 without it, killing every connect), and spark:kms is required
+ * to decrypt message content, without which every read scope is decorative.
  */
-export const WEBEX_KMS_SCOPE = 'spark:kms';
+export const WEBEX_REQUIRED_SCOPES = ['spark:people_read', 'spark:kms'];
 
 export const DEFAULT_WEBEX_USER_SCOPES = [
   ...WEBEX_USER_SCOPE_OPTIONS.map((option) => option.scope),
-  WEBEX_KMS_SCOPE,
+  ...WEBEX_REQUIRED_SCOPES,
 ].join(' ');

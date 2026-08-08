@@ -352,13 +352,16 @@ async function handleWebexUserCallback(
   const tokens = tokenData as Record<string, unknown> | null;
   const accessToken = typeof tokens?.access_token === 'string' ? tokens.access_token : null;
   if (!accessToken) {
+    logger.error('[OAuth] WebEx token response carried no access_token', { tenantId: tenant.id });
     return NextResponse.json({ error: 'Malformed WebEx token response' }, { status: 502 });
   }
   const refreshToken = typeof tokens?.refresh_token === 'string' ? tokens.refresh_token : '';
   const expiresIn = typeof tokens?.expires_in === 'number' ? tokens.expires_in : 3600;
 
   // Who granted this. personId is the durable account key; email is what the
-  // access verifier checks room membership against.
+  // access verifier checks room membership against. Requires the always-on
+  // spark:people_read scope — a 403 here means the Integration at
+  // developer.webex.com does not have it selected.
   const meResponse = await fetch('https://webexapis.com/v1/people/me', {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
@@ -366,13 +369,35 @@ async function handleWebexUserCallback(
   const me = meData as Record<string, unknown> | null;
   const personId = typeof me?.id === 'string' ? me.id : null;
   if (!meResponse.ok || !personId) {
-    return NextResponse.json({ error: 'Could not identify WebEx user' }, { status: 502 });
+    logger.error('[OAuth] WebEx /people/me failed; cannot identify grantor', {
+      tenantId: tenant.id,
+      status: meResponse.status,
+      hint:
+        meResponse.status === 403
+          ? 'Select spark:people_read on the Integration at developer.webex.com'
+          : undefined,
+    });
+    return NextResponse.json(
+      {
+        error: 'Could not identify WebEx user',
+        ...(meResponse.status === 403
+          ? {
+              error_description:
+                'The Integration is missing the spark:people_read scope. Select it at developer.webex.com, then reconnect.',
+            }
+          : {}),
+      },
+      { status: 502 }
+    );
   }
   const displayName = typeof me?.displayName === 'string' ? me.displayName : personId;
   const emails = Array.isArray(me?.emails) ? me.emails.filter((e) => typeof e === 'string') : [];
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {
+    logger.error('[OAuth] TOKEN_ENCRYPTION_KEY missing or malformed; cannot store WebEx grant', {
+      tenantId: tenant.id,
+    });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 

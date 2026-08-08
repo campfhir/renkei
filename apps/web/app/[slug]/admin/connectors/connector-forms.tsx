@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
-import { WEBEX_USER_SCOPE_OPTIONS, WEBEX_KMS_SCOPE } from '@/lib/webex-scopes';
+import { WEBEX_USER_SCOPE_OPTIONS, WEBEX_REQUIRED_SCOPES } from '@/lib/webex-scopes';
 import { ATLASSIAN_SCOPE_OPTIONS, ATLASSIAN_OFFLINE_SCOPE } from '@/lib/atlassian-scopes';
 
 /**
@@ -539,7 +539,7 @@ function WebexUserForm({ slug }: { slug: string }) {
       ...WEBEX_USER_SCOPE_OPTIONS.map((option) => option.scope).filter((scope) =>
         checkedScopes.has(scope)
       ),
-      WEBEX_KMS_SCOPE,
+      ...WEBEX_REQUIRED_SCOPES,
     ].join(' ');
     const failure = await putJson(url, {
       clientId: clientId.trim(),
@@ -650,9 +650,9 @@ function WebexUserForm({ slug }: { slug: string }) {
             Unchecked scopes are never requested and their tools tell the caller why. Every checked
             scope must also be selected on the Integration at developer.webex.com — WebEx refuses
             the authorize step otherwise.{' '}
-            <code className="font-mono text-xs">{WEBEX_KMS_SCOPE}</code> is always included
-            (required to decrypt message content). Users who already connected keep their old scopes
-            until they reconnect.
+            <code className="font-mono text-xs">{WEBEX_REQUIRED_SCOPES.join(' ')}</code> are always
+            included (identifying who granted, and decrypting message content). Users who already
+            connected keep their old scopes until they reconnect.
           </p>
         </fieldset>
         <label className="flex items-center gap-2 text-sm">
