@@ -1,16 +1,28 @@
+# syntax=docker/dockerfile:1-labs
+# The labs frontend supplies COPY --parents, which is what lets each stage pull
+# in every workspace manifest by glob instead of by a hand-maintained list.
+
+# Must match package.json's "packageManager" field. A bare `npm i -g pnpm`
+# installs the latest major, which then tries to self-manage down to the pinned
+# version by fetching a @pnpm/exe.<platform> binary it cannot verify against
+# this lockfile — so the version is pinned here instead.
+ARG PNPM_VERSION=10.33.0
+
 # Build stage
 FROM node:24-alpine AS builder
+ARG PNPM_VERSION
 
 WORKDIR /app
 
 # Install pnpm
-RUN npm install -g pnpm
+RUN npm install -g pnpm@${PNPM_VERSION}
 
-# Manifests first, so the dependency install caches independently of source edits
+# Manifests first, so the dependency install caches independently of source edits.
+# Globbed rather than listed one by one: the explicit list went stale every time
+# a workspace package was added, and a missing manifest fails the install with a
+# module-not-found much further along, in the Next build.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/web/package.json ./apps/web/
-COPY apps/worker/package.json ./apps/worker/
-COPY packages/db/package.json ./packages/db/
+COPY --parents apps/*/package.json packages/*/package.json ./
 
 # Install dependencies
 RUN pnpm install --frozen-lockfile
@@ -27,22 +39,28 @@ RUN pnpm --filter @renkei/web build
 
 # Web runtime stage
 FROM node:24-alpine AS runtime
+ARG PNPM_VERSION
 
 WORKDIR /app
 
 # Install dumb-init for proper signal handling and pnpm
-RUN apk add --no-cache dumb-init && npm install -g pnpm
+RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
-# Copy manifests and install only the web app's production dependencies
+# Copy manifests and install only the web app's production dependencies.
+# Optionals are NOT stripped here, unlike the worker and migrate stages: Next
+# ships its native SWC binary as an optionalDependency, and next.config.ts has
+# to be transpiled at startup. Without the binary in the image, `next start`
+# downloads it from npm on every boot — slow, and broken on an offline host.
+# pnpm's os/cpu fields mean only the matching platform binary is installed.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/web/package.json ./apps/web/
-COPY packages/db/package.json ./packages/db/
-RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/web... && \
+COPY --parents apps/*/package.json packages/*/package.json ./
+RUN pnpm install --frozen-lockfile --prod --filter @renkei/web... && \
     rm -rf /root/.pnpm-store /root/.npm
 
-# @renkei/db ships TypeScript source (compiled into the build via
-# transpilePackages); the workspace link still needs the package present.
-COPY --from=builder /app/packages/db/src ./packages/db/src
+# The workspace packages ship TypeScript source (compiled into the build via
+# transpilePackages); the workspace links still need the packages present, and
+# each one's "main" points into src/.
+COPY --parents packages/*/src ./
 
 # Copy built application from builder stage
 COPY --from=builder /app/apps/web/.next ./apps/web/.next
@@ -79,21 +97,22 @@ CMD ["pnpm", "--filter", "@renkei/web", "start"]
 
 # Worker stage - the long-running queue consumer
 FROM node:24-alpine AS worker
+ARG PNPM_VERSION
 
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init && npm install -g pnpm
+RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/worker/package.json ./apps/worker/
-COPY packages/db/package.json ./packages/db/
+COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/worker... && \
     rm -rf /root/.pnpm-store /root/.npm
 
-# The worker runs TypeScript directly through tsx, so it ships source.
-COPY --from=builder /app/packages/db/src ./packages/db/src
-COPY --from=builder /app/apps/worker/src ./apps/worker/src
-COPY --from=builder /app/apps/worker/tsconfig.json ./apps/worker/
+# The worker runs TypeScript directly through tsx, so it ships source — its own
+# and that of every workspace package it imports.
+COPY --parents packages/*/src ./
+COPY apps/worker/src ./apps/worker/src
+COPY apps/worker/tsconfig.json ./apps/worker/
 
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S worker -u 1001 && \
@@ -107,14 +126,15 @@ CMD ["pnpm", "--filter", "@renkei/worker", "start"]
 
 # Migration stage - runs migrations only
 FROM node:24-alpine AS migrate
+ARG PNPM_VERSION
 
 WORKDIR /app
 
 # Install pnpm
-RUN npm install -g pnpm
+RUN npm install -g pnpm@${PNPM_VERSION}
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY packages/db/package.json ./packages/db/
+COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/db... && \
     rm -rf /root/.pnpm-store /root/.npm
 
