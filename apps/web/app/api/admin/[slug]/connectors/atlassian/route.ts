@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getOperatorSession } from '@/lib/auth-utils';
+import { getOperatorAccess } from '@/lib/operator-access';
 import { getDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import {
@@ -31,15 +31,14 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
-  const session = await getOperatorSession();
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
   const { slug } = await params;
   const tenantId = await tenantIdForSlug(slug);
   if (!tenantId) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+  }
+  const access = await getOperatorAccess(tenantId);
+  if (!access) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
@@ -73,15 +72,14 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
-  const session = await getOperatorSession();
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
   const { slug } = await params;
   const tenantId = await tenantIdForSlug(slug);
   if (!tenantId) {
     return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+  }
+  const access = await getOperatorAccess(tenantId);
+  if (!access) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const body: unknown = await request.json().catch(() => null);
@@ -98,7 +96,8 @@ export async function PUT(
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
   const scopes =
     typeof body.scopes === 'string' && body.scopes ? body.scopes : DEFAULT_ATLASSIAN_SCOPES;
-  const redirectUri = typeof body.redirectUri === 'string' && body.redirectUri ? body.redirectUri : undefined;
+  const redirectUri =
+    typeof body.redirectUri === 'string' && body.redirectUri ? body.redirectUri : undefined;
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {

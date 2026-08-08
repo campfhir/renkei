@@ -1,6 +1,7 @@
 import React from 'react';
-import { redirect } from 'next/navigation';
-import { getOperatorSession } from '@/lib/auth-utils';
+import { redirect, notFound } from 'next/navigation';
+import { getOperatorAccess } from '@/lib/operator-access';
+import { tenantForSlug } from '@/lib/tenant-slug';
 import ConnectorForms from './connector-forms';
 
 /**
@@ -15,10 +16,10 @@ export default async function AdminConnectorsPage({
 }: {
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
-  const session = await getOperatorSession();
   const { slug } = await params;
-
-  if (!session) {
+  const tenantRef = await tenantForSlug(slug);
+  if (!tenantRef) notFound();
+  if (!(await getOperatorAccess(tenantRef.id))) {
     redirect(`/${slug}/admin`);
   }
 

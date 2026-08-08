@@ -11,6 +11,9 @@
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/auth-utils', () => ({ getOperatorSession: jest.fn() }));
+// The role-bearing-session fallback: none of these tests establish one, and
+// the real implementation reads cookies() which has no request scope here.
+jest.mock('@/lib/session', () => ({ getSessionFromCookies: jest.fn(async () => null) }));
 jest.mock('@/lib/tenant-operations', () => ({
   setTenantOidc: jest.fn(),
   createTenantOidcIfAbsent: jest.fn(),
@@ -162,7 +165,10 @@ describe('tenant OIDC configuration', () => {
 
       const response = await POST(post(VALID_BODY), params());
 
-      expect(response.status).toBe(403);
+      // 401 rather than 403: a wrong-tenant credential is simply not a
+      // credential for this tenant, so the gate reports "not authenticated"
+      // instead of leaking that the caller holds one elsewhere.
+      expect(response.status).toBe(401);
       expect(mockSetTenantOidc).not.toHaveBeenCalled();
     });
 
@@ -205,7 +211,7 @@ describe('tenant OIDC configuration', () => {
 
       const response = await GET(post({}), params());
 
-      expect(response.status).toBe(403);
+      expect(response.status).toBe(401);
     });
 
     it('serves an operator of this tenant', async () => {

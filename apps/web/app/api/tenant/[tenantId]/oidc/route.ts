@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations';
-import { getOperatorSession } from '@/lib/auth-utils';
+import { getOperatorAccess } from '@/lib/operator-access';
 import { logger } from '@/lib/logger';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
@@ -9,17 +9,14 @@ import type { DB } from '@renkei/db';
 /**
  * Confirm the caller is an operator *of this tenant*.
  *
- * An operator session carries the tenant it was issued for, so checking only
- * that a session exists would let an operator of one tenant reconfigure
- * another's identity provider.
+ * getOperatorAccess is tenant-scoped by construction — the legacy operator
+ * cookie names its tenant, and the user-session cookie is per-tenant — so an
+ * operator of one tenant cannot reconfigure another's identity provider.
  */
 async function requireTenantOperator(tenantId: string): Promise<NextResponse | null> {
-  const session = await getOperatorSession();
-  if (!session) {
+  const access = await getOperatorAccess(tenantId);
+  if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  if (session.tenantId !== tenantId) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   return null;
 }

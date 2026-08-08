@@ -1,6 +1,7 @@
 import React from 'react';
-import { getOperatorSession } from '@/lib/auth-utils';
-import { redirect } from 'next/navigation';
+import { getOperatorAccess } from '@/lib/operator-access';
+import { tenantForSlug } from '@/lib/tenant-slug';
+import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 
 export default async function AuditPage({
@@ -8,10 +9,10 @@ export default async function AuditPage({
 }: {
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
-  const session = await getOperatorSession();
   const { slug } = await params;
-
-  if (!session) {
+  const tenantRef = await tenantForSlug(slug);
+  if (!tenantRef) notFound();
+  if (!(await getOperatorAccess(tenantRef.id))) {
     redirect(`/${slug}/admin`);
   }
 

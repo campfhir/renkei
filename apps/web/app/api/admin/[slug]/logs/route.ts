@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOperatorSession } from '@/lib/auth-utils';
+import { getOperatorAccess } from '@/lib/operator-access';
+import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
 
 interface QueryFilter {
@@ -43,18 +44,21 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
-  const session = await getOperatorSession();
-  if (!session) {
+  const { slug } = await params;
+  const tenantRef = await tenantForSlug(slug);
+  if (!tenantRef) {
+    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+  }
+  const access = await getOperatorAccess(tenantRef.id);
+  if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-
-  const { slug } = await params;
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q') || '';
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
 
@@ -73,9 +77,7 @@ export async function GET(
     // Parse bored-logs query and build SQL
     const filters = parseBoredLogsQuery(q);
 
-    let query = db
-      .selectFrom('logs')
-      .select(['log_id', 'message', 'logged_timestamp', 'level']);
+    let query = db.selectFrom('logs').select(['log_id', 'message', 'logged_timestamp', 'level']);
 
     // Apply filters from parsed query
     for (const filter of filters) {

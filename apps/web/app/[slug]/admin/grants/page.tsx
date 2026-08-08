@@ -1,20 +1,21 @@
 import React from 'react';
 import { getDatabase } from '@renkei/db';
-import { getOperatorSession } from '@/lib/auth-utils';
-import { redirect } from 'next/navigation';
+import { getOperatorAccess } from '@/lib/operator-access';
+import { tenantForSlug } from '@/lib/tenant-slug';
+import { redirect, notFound } from 'next/navigation';
 
 export default async function GrantsPage({
   params,
 }: {
   params: Promise<{ slug: string }>;
 }): Promise<React.ReactNode> {
-  const session = await getOperatorSession();
-  if (!session) {
-    const { slug } = await params;
-    redirect(`/${slug}/admin/sign-in`);
+  const { slug } = await params;
+  const tenantRef = await tenantForSlug(slug);
+  if (!tenantRef) notFound();
+  if (!(await getOperatorAccess(tenantRef.id))) {
+    redirect(`/${slug}/admin`);
   }
 
-  const { slug } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return (

@@ -1,39 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOperatorSession } from '@/lib/auth-utils';
+import { getOperatorAccess } from '@/lib/operator-access';
+import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
-  const session = await getOperatorSession();
-  if (!session) {
+  const { slug } = await params;
+  const tenantRef = await tenantForSlug(slug);
+  if (!tenantRef) {
+    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+  }
+  const access = await getOperatorAccess(tenantRef.id);
+  if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-
-  const { slug } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const db = dbResult.val;
 
   try {
     const body = await request.json();
     if (typeof body.site_id !== 'string' || typeof body.enabled !== 'boolean') {
-      return NextResponse.json(
-        { error: 'Missing site_id or enabled' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Missing site_id or enabled' }, { status: 400 });
     }
     const siteId = body.site_id;
     const enabled = body.enabled;
 
     if (!siteId || enabled === undefined) {
-      return NextResponse.json(
-        { error: 'Missing site_id or enabled' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Missing site_id or enabled' }, { status: 400 });
     }
 
     // Verify site belongs to this tenant
@@ -72,9 +70,6 @@ export async function POST(
     });
   } catch (error) {
     console.error('Error updating site:', error);
-    return NextResponse.json(
-      { error: 'Failed to update site' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to update site' }, { status: 500 });
   }
 }

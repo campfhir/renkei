@@ -10,7 +10,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getOperatorSession } from '@/lib/auth-utils';
+import { getOperatorAccess } from '@/lib/operator-access';
+import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getConnectorConfig } from '@renkei/connector-config';
@@ -63,7 +64,10 @@ async function resolveWebhookContext(
   if (!config || !config.enabled || !botToken || !secret) {
     return {
       ok: false,
-      err: { status: 409, error: 'WebEx connector is not configured — store the bot token and webhook secret first' },
+      err: {
+        status: 409,
+        error: 'WebEx connector is not configured — store the bot token and webhook secret first',
+      },
     };
   }
 
@@ -86,12 +90,15 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
-  const session = await getOperatorSession();
-  if (!session) {
+  const { slug } = await params;
+  const tenantRef = await tenantForSlug(slug);
+  if (!tenantRef) {
+    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+  }
+  const access = await getOperatorAccess(tenantRef.id);
+  if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-
-  const { slug } = await params;
   const context = await resolveWebhookContext(request, slug);
   if (!context.ok) {
     return NextResponse.json({ error: context.err.error }, { status: context.err.status });
@@ -118,12 +125,15 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string }> }
 ): Promise<NextResponse> {
-  const session = await getOperatorSession();
-  if (!session) {
+  const { slug } = await params;
+  const tenantRef = await tenantForSlug(slug);
+  if (!tenantRef) {
+    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+  }
+  const access = await getOperatorAccess(tenantRef.id);
+  if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-
-  const { slug } = await params;
   const context = await resolveWebhookContext(request, slug);
   if (!context.ok) {
     return NextResponse.json({ error: context.err.error }, { status: context.err.status });
