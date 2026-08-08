@@ -51,28 +51,35 @@ function items(body: unknown): Record<string, unknown>[] {
 }
 
 async function describeOpsFailure(response: Response): Promise<string> {
-  if (response.status === 401 || response.status === 403) {
-    return (
-      `JSM Operations refused (${response.status}). The grant likely lacks the granular Ops ` +
-      'scopes (read:ops-alert / write:ops-alert / read:ops-config / write:ops-config / ' +
-      'delete:ops-config, all suffixed :jira-service-management). An org admin must check the ' +
-      'needed ones in the connector setup AND add ' +
-      'them to the Atlassian app, then you reconnect Jira. If Atlassian refuses the authorize ' +
-      'step after that, the classic and granular scopes may need separate app registrations.'
-    );
-  }
+  // Always surface what Atlassian actually said — an earlier version replaced
+  // the body with a scope lecture on every 401/403, which sent a healthy
+  // token's owner off chasing scopes while the real reason sat in the
+  // discarded body.
   const body = await response.text().catch(() => '');
   let detail = '';
   try {
     const parsed: unknown = JSON.parse(body);
     if (typeof parsed === 'object' && parsed !== null) {
       // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-      detail = str((parsed as Record<string, unknown>).message);
+      const record = parsed as Record<string, unknown>;
+      detail =
+        str(record.message) ||
+        (Array.isArray(record.errors) ? record.errors.map(String).join('; ') : '');
     }
   } catch {
-    // Non-JSON body; the status alone will have to do.
+    detail = body.slice(0, 300);
   }
-  return `JSM Operations answered ${response.status}${detail ? `: ${detail}` : ''}`;
+
+  let text = `JSM Operations answered ${response.status}${detail ? `: ${detail}` : ''}.`;
+  if (response.status === 401 || response.status === 403) {
+    text +=
+      ' If the grant is missing Ops scopes, an org admin checks them in connector setup, adds ' +
+      'them to the Atlassian app, and you reconnect. If the scopes are present, this usually ' +
+      'means JSM Operations is not provisioned for this site or user — the caller must be a ' +
+      'Jira Service Management agent with Operations enabled (Alerts/On-call visible in the ' +
+      'JSM UI).';
+  }
+  return text;
 }
 
 function alertLine(alert: Record<string, unknown>): string {
