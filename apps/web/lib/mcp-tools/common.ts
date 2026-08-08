@@ -50,6 +50,14 @@ export interface MCPToolContext {
    * call rather than resolved into the context (the WebEx user grant).
    */
   subject?: string;
+  /**
+   * The scopes the caller's Atlassian grant actually carries. Tool
+   * registration filters on these; undefined (pre-recording grants) means no
+   * filtering.
+   */
+  grantedScopes?: string[];
+  /** Same, for the caller's WebEx user grant when one exists. */
+  webexScopes?: string[];
   db?: Kysely<DB>;
 }
 

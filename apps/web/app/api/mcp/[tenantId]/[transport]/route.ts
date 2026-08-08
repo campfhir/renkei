@@ -198,25 +198,31 @@ const handler = async (
 
     // The WebEx user tools register only when this caller has connected
     // their own WebEx account (the grant is per-user, unlike the org bot).
+    // Its scopes gate which of those tools register.
     const webexGrantRow = await db
       .selectFrom('provider_grants')
-      .select('provider_account_id')
+      .select(['provider_account_id', 'scopes'])
       .where('tenant_id', '=', tenantId)
       .where('provider', '=', WEBEX_USER)
       .where('subject', '=', subject)
       .limit(1)
       .executeTakeFirst();
     const webexAvailable = webexGrantRow !== undefined;
+    const webexScopes = webexGrantRow?.scopes ?? [];
 
-    // Check cache
-    const cacheKey = getCacheKey(
-      tenantId,
-      accountId,
-      settings.readOnly,
-      knowledgeAvailable,
-      webexAvailable,
-      userEmail
-    );
+    // Check cache. The tool set now varies with both grants' scopes, so they
+    // are part of the key — a reconnect with different scopes must not be
+    // served a handler built for the old ones.
+    const scopeFingerprint = `${[...grant.scopes].sort().join(',')}|${[...webexScopes].sort().join(',')}`;
+    const cacheKey =
+      getCacheKey(
+        tenantId,
+        accountId,
+        settings.readOnly,
+        knowledgeAvailable,
+        webexAvailable,
+        userEmail
+      ) + `:${scopeFingerprint}`;
     let cachedHandler = handlerCache.get(cacheKey);
 
     if (!cachedHandler) {
@@ -240,6 +246,8 @@ const handler = async (
               origin,
               userEmail: userEmail ?? undefined,
               subject,
+              grantedScopes: grant.scopes,
+              webexScopes: webexAvailable ? webexScopes : undefined,
               db,
             };
 

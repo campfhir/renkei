@@ -29,6 +29,7 @@ import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
 import { getWebexUserApp } from '@/lib/webex-app';
 import { logger } from '@/lib/logger';
+import { withScopeGate } from '../capability-gate';
 import type { MCPToolContext } from '../common';
 
 export const WEBEX_USER_MCP_CONNECTOR = 'webex-user';
@@ -166,10 +167,34 @@ function messageLine(message: Record<string, unknown>): string {
   return `[${str(message.created)}] ${str(message.personEmail)} (${str(message.id)}):\n  ${text.replace(/\n/g, '\n  ')}`;
 }
 
+/** Which WebEx scope each tool stands on; registration filters against the grant. */
+function webexScopeFor(toolName: string): string[] {
+  switch (toolName) {
+    case 'webex_send_message':
+      return ['spark:messages_write'];
+    case 'webex_list_meetings':
+      return ['meeting:schedules_read'];
+    case 'webex_list_transcripts':
+    case 'webex_get_transcript':
+      return ['meeting:transcripts_read'];
+    case 'webex_list_recordings':
+      return ['meeting:recordings_read'];
+    case 'webex_list_rooms':
+      return ['spark:rooms_read'];
+    default:
+      // list/get/capture message tools
+      return ['spark:messages_read'];
+  }
+}
+
 export async function registerWebexUserTools(
-  server: McpServer,
+  rawServer: McpServer,
   context: MCPToolContext
 ): Promise<void> {
+  // A tool whose scope this user's grant does not carry is not registered at
+  // all — the org may have narrowed the checkboxes, or the user connected
+  // before a scope was added.
+  const server = withScopeGate(rawServer, context.webexScopes, (name) => webexScopeFor(name));
   server.registerTool(
     'webex_list_rooms',
     {

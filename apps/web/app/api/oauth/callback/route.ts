@@ -15,6 +15,8 @@ interface JiraTokenResponse {
   token_type: string;
   expires_in: number;
   refresh_token?: string;
+  /** Space-separated scopes actually granted, when Atlassian echoes them. */
+  scope?: string;
 }
 
 interface JiraUserInfo {
@@ -276,7 +278,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token || '',
       expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
-      scopes: ['read:jira-work', 'write:jira-work', 'read:jira-user'],
+      // The scopes actually granted, from the token response when Atlassian
+      // echoes them, else what we asked for. Tool registration filters on
+      // these — a hardcoded list here once made every tool register forever.
+      scopes:
+        typeof tokenData.scope === 'string' && tokenData.scope
+          ? tokenData.scope.split(' ')
+          : atlassianApp.scopes.split(' '),
     });
 
     logger.info('[OAuth] Jira grant stored successfully', { tenantId: tenant.id });
