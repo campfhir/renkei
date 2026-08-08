@@ -432,6 +432,148 @@ function WebexForm({ slug }: { slug: string }) {
 
 /* ----------------------------------------------------------------------- */
 
+interface WebexUserConfig {
+  configured: boolean;
+  enabled: boolean;
+  clientId: string | null;
+  scopes: string | null;
+  hasClientSecret: boolean;
+}
+
+function WebexUserForm({ slug }: { slug: string }) {
+  const url = `/api/admin/${slug}/connectors/webex-user`;
+  const [state, reload] = useConnectorConfig<WebexUserConfig>(url);
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  const [scopes, setScopes] = useState('');
+  const [enabled, setEnabled] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!state.data) return;
+    setClientId(state.data.clientId ?? '');
+    setScopes(state.data.scopes ?? '');
+    setEnabled(state.data.configured ? state.data.enabled : true);
+  }, [state.data]);
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    setError(null);
+    const failure = await putJson(url, {
+      clientId: clientId.trim(),
+      clientSecret: clientSecret.trim(),
+      enabled,
+      ...(scopes.trim() ? { scopes: scopes.trim() } : {}),
+    });
+    setBusy(false);
+    if (failure) {
+      setError(failure);
+      return;
+    }
+    setClientSecret('');
+    setNotice('Saved');
+    reload();
+  }
+
+  if (state.loading)
+    return (
+      <Card title="WebEx (user access)" status={null}>
+        Loading…
+      </Card>
+    );
+  if (state.error) {
+    return (
+      <Card title="WebEx (user access)" status={null}>
+        <p className="text-sm text-red-700 dark:text-red-300">{state.error}</p>
+      </Card>
+    );
+  }
+  const config = state.data;
+
+  return (
+    <Card
+      title="WebEx (user access)"
+      status={
+        <StatusPill configured={config?.configured ?? false} enabled={config?.enabled ?? false} />
+      }
+    >
+      <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
+        An{' '}
+        <a
+          href="https://developer.webex.com/my-apps"
+          className="text-blue-600 hover:underline dark:text-blue-400"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Integration
+        </a>{' '}
+        (not the bot) through which each person grants Renkei read access to their own WebEx — rooms
+        they are in, messages they can see. Its redirect URI must be this deployment&apos;s origin +{' '}
+        <code className="font-mono text-xs">/api/oauth/callback</code>.
+      </p>
+      <form onSubmit={(e) => void save(e)} className="space-y-3">
+        <div>
+          <label htmlFor="wxu-client-id" className={labelClass}>
+            Client ID
+          </label>
+          <input
+            id="wxu-client-id"
+            required
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            className={`${inputClass} font-mono`}
+          />
+        </div>
+        <div>
+          <label htmlFor="wxu-client-secret" className={labelClass}>
+            Client secret
+          </label>
+          <input
+            id="wxu-client-secret"
+            type="password"
+            required
+            value={clientSecret}
+            onChange={(e) => setClientSecret(e.target.value)}
+            placeholder={config?.hasClientSecret ? 'Stored — re-enter to save changes' : ''}
+            className={`${inputClass} font-mono`}
+          />
+          {config?.hasClientSecret && (
+            <p className={hintClass}>
+              A secret is stored but never shown. Saving any change requires entering it again.
+            </p>
+          )}
+        </div>
+        <div>
+          <label htmlFor="wxu-scopes" className={labelClass}>
+            Scopes <span className="font-normal text-gray-500">(optional)</span>
+          </label>
+          <input
+            id="wxu-scopes"
+            value={scopes}
+            onChange={(e) => setScopes(e.target.value)}
+            placeholder="spark:rooms_read spark:messages_read spark:kms"
+            className={`${inputClass} font-mono`}
+          />
+          <p className={hintClass}>
+            Read-only by default. The scopes must also be selected on the Integration itself.
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          Enabled
+        </label>
+        <SaveRow busy={busy} notice={notice} error={error} />
+      </form>
+    </Card>
+  );
+}
+
+/* ----------------------------------------------------------------------- */
+
 interface EmbeddingsConfig {
   configured: boolean;
   enabled: boolean;
@@ -565,6 +707,7 @@ export default function ConnectorForms({ slug }: { slug: string }) {
     <div className="space-y-6">
       <AtlassianForm slug={slug} />
       <WebexForm slug={slug} />
+      <WebexUserForm slug={slug} />
       <EmbeddingsForm slug={slug} />
     </div>
   );

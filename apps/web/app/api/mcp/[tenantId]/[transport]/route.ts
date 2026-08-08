@@ -17,6 +17,8 @@ import { logger } from '@/lib/logger';
 import { registerAllTools, cacheTokenMetadata, cacheUserDisplayName } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
+import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
+import { WEBEX_USER } from '@renkei/provider-grants';
 import { getIdentityEmail } from '@/lib/identity';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { createProjection } from '@renkei/capability-registry';
@@ -31,13 +33,15 @@ function getCacheKey(
   accountId: string,
   readOnly: boolean,
   knowledgeAvailable: boolean,
+  webexAvailable: boolean,
   userEmail: string | null
 ): string {
   // Everything the registered tool set or a handler closure depends on must
   // be part of the key, or a change takes effect only on process restart:
   // the org's read-only mode, whether the knowledge layer is provisioned,
-  // and the caller's recorded email (captured by search_knowledge's closure).
-  return `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:${userEmail ?? ''}`;
+  // whether this caller holds a WebEx user grant, and the caller's recorded
+  // email (captured by search_knowledge's closure).
+  return `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:${webexAvailable ? 'w' : 'nw'}:${userEmail ?? ''}`;
 }
 
 const handler = async (
@@ -192,12 +196,25 @@ const handler = async (
     // provider is configured — its capabilities register only then.
     const knowledgeAvailable = (await resolveEmbeddingProvider(tenantId)) !== null;
 
+    // The WebEx user tools register only when this caller has connected
+    // their own WebEx account (the grant is per-user, unlike the org bot).
+    const webexGrantRow = await db
+      .selectFrom('provider_grants')
+      .select('provider_account_id')
+      .where('tenant_id', '=', tenantId)
+      .where('provider', '=', WEBEX_USER)
+      .where('subject', '=', subject)
+      .limit(1)
+      .executeTakeFirst();
+    const webexAvailable = webexGrantRow !== undefined;
+
     // Check cache
     const cacheKey = getCacheKey(
       tenantId,
       accountId,
       settings.readOnly,
       knowledgeAvailable,
+      webexAvailable,
       userEmail
     );
     let cachedHandler = handlerCache.get(cacheKey);
@@ -221,6 +238,7 @@ const handler = async (
               maxAttachmentBytes: settings.maxAttachmentBytes,
               origin,
               userEmail: userEmail ?? undefined,
+              subject,
               db,
             };
 
@@ -241,6 +259,7 @@ const handler = async (
                 provisionedConnectors: [
                   JIRA_CONNECTOR,
                   ...(knowledgeAvailable ? [KNOWLEDGE_CONNECTOR] : []),
+                  ...(webexAvailable ? [WEBEX_USER_MCP_CONNECTOR] : []),
                 ],
                 hiddenCapabilities: [],
               }
@@ -250,6 +269,12 @@ const handler = async (
               withCapabilityGate(server, projection, KNOWLEDGE_CONNECTOR),
               context
             );
+            if (webexAvailable) {
+              await registerWebexUserTools(
+                withCapabilityGate(server, projection, WEBEX_USER_MCP_CONNECTOR),
+                context
+              );
+            }
 
             logger.info('[MCP] All tools registered', {
               tenantId,

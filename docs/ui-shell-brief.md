@@ -96,3 +96,22 @@ claim the slug `api`, `admin`, or `create-organization`.
 - Existing pages are a mix of Tailwind classes and inline `style` objects with
   hardcoded light-mode colors (`#666`, `#ddd`, `#f7f7f7`). The dark-mode pass
   means converting those.
+
+## WebEx: two integrations, deliberately
+
+Built after the shell work. WebEx participation comes in two shapes that share
+nothing but the brand:
+
+1. **The org bot** (`webex` connector) — ambient ingestion. Invited to spaces,
+   fires webhooks on @mentions (all messages in 1:1), classifier turns issue
+   reports into cards. Forward a message to the bot's DM to capture it by hand.
+2. **The user grant** (`webex-user` connector) — "Renkei reads WebEx as me."
+   An Integration from developer.webex.com (client id/secret in admin
+   connectors), each user connects on the Connectors page, grant rows live in
+   provider_grants like Jira. MCP tools register per-user when the grant
+   exists: webex_list_rooms, webex_list_messages, webex_get_message,
+   webex_capture_message (→ card feed, human decides). Read-only scopes;
+   nothing posts to WebEx as the user.
+
+The shared OAuth callback dispatches on a provider column added to
+pending_oidc_signin (migration 020); null means Atlassian.

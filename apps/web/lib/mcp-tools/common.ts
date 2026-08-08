@@ -39,6 +39,11 @@ export interface MCPToolContext {
    * verifies provider access against. Absent = gates fail closed.
    */
   userEmail?: string;
+  /**
+   * The caller's OIDC subject — the key for grants that are looked up per
+   * call rather than resolved into the context (the WebEx user grant).
+   */
+  subject?: string;
   db?: Kysely<DB>;
 }
 

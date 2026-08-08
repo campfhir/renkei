@@ -5,7 +5,10 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import JiraConnector from './jira-connector';
+import WebexUserConnector from './webex-user-connector';
 import McpEndpoint from './mcp-endpoint';
+import { WEBEX_USER } from '@renkei/provider-grants';
+import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
 
 /**
  * The user's own connections: which connectors the org has enabled, this
@@ -42,6 +45,18 @@ export default async function ConnectorsPage({
     : [];
   const enabled = new Set(configs.map((c) => c.connector));
 
+  // The caller's own WebEx grant, server-rendered: exists or not.
+  const webexGrant =
+    dbResult.ok && enabled.has(WEBEX_USER_CONNECTOR)
+      ? await dbResult.val
+          .selectFrom('provider_grants')
+          .select('display_name')
+          .where('tenant_id', '=', tenant.id)
+          .where('provider', '=', WEBEX_USER)
+          .where('subject', '=', session.subject)
+          .executeTakeFirst()
+      : undefined;
+
   return (
     <div className="mx-auto max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Connectors</h1>
@@ -63,12 +78,20 @@ export default async function ConnectorsPage({
 
         {enabled.has('webex') && (
           <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
-            <h2 className="font-semibold">WebEx</h2>
+            <h2 className="font-semibold">WebEx (org bot)</h2>
             <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              Enabled by your organization. Messages are forwarded through the org bot — there is
-              nothing to connect here.
+              Enabled by your organization. Add the bot to a space and mention it, or forward it a
+              message in a 1:1 — there is nothing to connect here.
             </p>
           </div>
+        )}
+
+        {enabled.has(WEBEX_USER_CONNECTOR) && (
+          <WebexUserConnector
+            tenantId={tenant.id}
+            connected={webexGrant !== undefined && webexGrant !== null}
+            displayName={webexGrant?.display_name ?? null}
+          />
         )}
 
         <McpEndpoint tenantId={tenant.id} />

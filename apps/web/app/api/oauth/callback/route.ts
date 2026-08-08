@@ -1,8 +1,11 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 import { NextRequest, NextResponse } from 'next/server';
 import { getAtlassianApp } from '@/lib/atlassian-app';
+import { getWebexUserApp } from '@/lib/webex-app';
 import { getDatabase } from '@renkei/db';
 import { setJiraGrant } from '@/lib/tenant-operations';
+import { setGrant, WEBEX_USER } from '@renkei/provider-grants';
+import { parseEncryptionKey } from '@renkei/crypto';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
 import { cacheUserDisplayName } from '@/lib/mcp-tools/common';
@@ -76,11 +79,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    // Look up pending Jira authorization by state (single-use token)
-    // The pending record tells us which tenant this authorization is for
+    // Look up the pending authorization by state (single-use token). The
+    // pending record tells us which tenant this flow is for and which
+    // provider's token endpoint the code must be exchanged at.
     const pendingSignIn = await db
       .selectFrom('pending_oidc_signin')
-      .select(['tenant_id', 'expires_at', 'subject'])
+      .select(['tenant_id', 'expires_at', 'subject', 'provider'])
       .where('state', '=', state)
       .executeTakeFirst();
 
@@ -116,6 +120,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (!tenant) {
       return NextResponse.json({ error: 'Tenant not found' }, { status: 400 });
+    }
+
+    // Dispatch on the provider the authorize step recorded. Null predates
+    // the column and means Atlassian — the only provider that existed then.
+    if (pendingSignIn.provider === 'webex-user') {
+      return handleWebexUserCallback(request, tenant, pendingSignIn.subject, code);
     }
 
     logger.info('[OAuth] Jira callback', { tenantId: tenant.id });
@@ -286,4 +296,107 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
   }
+}
+
+/**
+ * The WebEx leg of the shared callback: exchange the code with webexapis.com,
+ * ask /people/me who authorized, store the grant bound to the signed-in
+ * subject. Read access only — the scopes were fixed at the authorize step.
+ */
+async function handleWebexUserCallback(
+  request: NextRequest,
+  tenant: { id: string; slug: string },
+  subject: string | null,
+  code: string
+): Promise<NextResponse> {
+  if (!subject) {
+    logger.error('[OAuth] WebEx pending flow has no subject; cannot assign grant owner', {
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Sign in again before connecting WebEx' }, { status: 400 });
+  }
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) {
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
+  const app = await getWebexUserApp(tenant.id, originResult.val);
+  if (!app) {
+    return NextResponse.json(
+      { error: 'WebEx user integration not configured for this organization' },
+      { status: 503 }
+    );
+  }
+
+  const tokenResponse = await fetch('https://webexapis.com/v1/access_token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: app.clientId,
+      client_secret: app.clientSecret,
+      code,
+      redirect_uri: app.redirectUri,
+    }),
+  });
+  if (!tokenResponse.ok) {
+    const body = await tokenResponse.text().catch(() => '');
+    logger.error('[OAuth] WebEx token exchange failed', {
+      tenantId: tenant.id,
+      status: tokenResponse.status,
+      body: body.slice(0, 300),
+    });
+    return NextResponse.json({ error: 'WebEx token exchange failed' }, { status: 502 });
+  }
+  const tokenData: unknown = await tokenResponse.json().catch(() => null);
+  const tokens = tokenData as Record<string, unknown> | null;
+  const accessToken = typeof tokens?.access_token === 'string' ? tokens.access_token : null;
+  if (!accessToken) {
+    return NextResponse.json({ error: 'Malformed WebEx token response' }, { status: 502 });
+  }
+  const refreshToken = typeof tokens?.refresh_token === 'string' ? tokens.refresh_token : '';
+  const expiresIn = typeof tokens?.expires_in === 'number' ? tokens.expires_in : 3600;
+
+  // Who granted this. personId is the durable account key; email is what the
+  // access verifier checks room membership against.
+  const meResponse = await fetch('https://webexapis.com/v1/people/me', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const meData: unknown = await meResponse.json().catch(() => null);
+  const me = meData as Record<string, unknown> | null;
+  const personId = typeof me?.id === 'string' ? me.id : null;
+  if (!meResponse.ok || !personId) {
+    return NextResponse.json({ error: 'Could not identify WebEx user' }, { status: 502 });
+  }
+  const displayName = typeof me?.displayName === 'string' ? me.displayName : personId;
+  const emails = Array.isArray(me?.emails) ? me.emails.filter((e) => typeof e === 'string') : [];
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) {
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  const stored = await setGrant(
+    WEBEX_USER,
+    tenant.id,
+    {
+      accountId: personId,
+      clientId: app.clientId,
+      displayName,
+      accessToken,
+      refreshToken,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      scopes: app.scopes.split(' '),
+      metadata: { personEmail: emails[0] ?? null },
+      subject,
+    },
+    keyResult.val
+  );
+  if (!stored.ok) {
+    logger.error('[OAuth] Failed to store WebEx grant', { tenantId: tenant.id });
+    return NextResponse.json({ error: 'Failed to store WebEx grant' }, { status: 500 });
+  }
+
+  logger.info('[OAuth] WebEx user grant stored', { tenantId: tenant.id, subject });
+  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }

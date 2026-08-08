@@ -148,6 +148,8 @@ export interface PendingOidcSignin {
   expires_at: Timestamp;
   id: string;
   nonce: string;
+  /** Which provider's OAuth flow this state belongs to; null means Atlassian. */
+  provider: string | null;
   state: string;
   subject: string | null;
   tenant_id: string;
