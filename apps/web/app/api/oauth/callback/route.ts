@@ -270,15 +270,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
 
     logger.info('[OAuth] Jira grant stored successfully', { tenantId: tenant.id });
-    // Redirect back to MCP endpoint page to show updated Jira connection status
+    // Back to the connectors page, which shows the fresh connection status.
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const origin = originResult.val;
-    const mcpUrl = new URL(`/mcp/${tenant.id}`, origin);
-    logger.info('[OAuth] Redirecting', { tenantId: tenant.id, url: mcpUrl.toString() });
-    return NextResponse.redirect(mcpUrl);
+    const connectorsUrl = new URL(`/${tenant.slug}/connectors`, origin);
+    logger.info('[OAuth] Redirecting', { tenantId: tenant.id, url: connectorsUrl.toString() });
+    return NextResponse.redirect(connectorsUrl);
   } catch (err) {
     logger.error('[OAuth] Callback error', {
       error: err instanceof Error ? err.message : String(err),

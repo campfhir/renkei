@@ -8,12 +8,16 @@ interface User {
   last_used_at: Date;
 }
 
-export default async function PeoplePage({ params }: { params: Promise<{ slug: string }> }): Promise<React.ReactNode> {
+export default async function PeoplePage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<React.ReactNode> {
   const session = await getOperatorSession();
   const { slug } = await params;
 
   if (!session) {
-    redirect(`/admin/${slug}`);
+    redirect(`/${slug}/admin`);
   }
 
   const dbResult = getDatabase();
@@ -68,14 +72,14 @@ export default async function PeoplePage({ params }: { params: Promise<{ slug: s
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid #ddd' }}>
+            <tr style={{ borderBottom: '1px solid var(--border)' }}>
               <th style={{ padding: '0.5rem', textAlign: 'left' }}>Account ID</th>
               <th style={{ padding: '0.5rem', textAlign: 'left' }}>Last Active</th>
             </tr>
           </thead>
           <tbody>
             {users.map((user) => (
-              <tr key={user.account_id} style={{ borderBottom: '1px solid #eee' }}>
+              <tr key={user.account_id} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ padding: '0.5rem', fontFamily: 'monospace', fontSize: '0.9em' }}>
                   {user.account_id}
                 </td>

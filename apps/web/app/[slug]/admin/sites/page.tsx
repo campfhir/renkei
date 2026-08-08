@@ -11,12 +11,16 @@ interface JiraSite {
   claimed_at: Date | null;
 }
 
-export default async function SitesPage({ params }: { params: Promise<{ slug: string }> }): Promise<React.ReactNode> {
+export default async function SitesPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<React.ReactNode> {
   const session = await getOperatorSession();
   const { slug } = await params;
 
   if (!session) {
-    redirect(`/admin/${slug}`);
+    redirect(`/${slug}/admin`);
   }
 
   const dbResult = getDatabase();
@@ -58,7 +62,7 @@ export default async function SitesPage({ params }: { params: Promise<{ slug: st
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid #ddd' }}>
+            <tr style={{ borderBottom: '1px solid var(--border)' }}>
               <th style={{ padding: '0.5rem', textAlign: 'left' }}>Jira URL</th>
               <th style={{ padding: '0.5rem', textAlign: 'left' }}>Cloud ID</th>
               <th style={{ padding: '0.5rem', textAlign: 'left' }}>Status</th>
@@ -67,13 +71,13 @@ export default async function SitesPage({ params }: { params: Promise<{ slug: st
           </thead>
           <tbody>
             {sites.map((site) => (
-              <tr key={site.site_id} style={{ borderBottom: '1px solid #eee' }}>
+              <tr key={site.site_id} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ padding: '0.5rem' }}>{site.jira_url}</td>
                 <td style={{ padding: '0.5rem', fontFamily: 'monospace', fontSize: '0.9em' }}>
                   {site.cloud_id}
                 </td>
                 <td style={{ padding: '0.5rem' }}>{site.enabled ? '✓ Enabled' : 'Disabled'}</td>
-                <td style={{ padding: '0.5rem', fontSize: '0.9em', color: '#666' }}>
+                <td style={{ padding: '0.5rem', fontSize: '0.9em', color: 'var(--muted)' }}>
                   {site.claimed_at ? new Date(site.claimed_at).toLocaleDateString() : '—'}
                 </td>
               </tr>

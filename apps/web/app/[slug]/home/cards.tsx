@@ -1,34 +1,26 @@
 import React from 'react';
-import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { getSessionFromCookies } from '@/lib/session';
-import { signInUrl } from '@/lib/sign-in-url';
 import CardActions from './card-actions';
 
 /**
  * The curated-card feed (use case #1's human half): what Renkei suggests,
  * with approve/dismiss one click away. Decided items stay listed — the feed
  * doubles as the audit trail of what was suggested and what people did.
+ *
+ * A component on the home page, not a page of its own: the cards are the
+ * home page's content, everything else there is chrome around them.
  */
-export default async function CardsPage({
-  params,
+export default async function ActionableCards({
+  tenantId,
 }: {
-  params: Promise<{ tenantId: string }>;
+  tenantId: string;
 }): Promise<React.ReactNode> {
-  const { tenantId } = await params;
-
-  const session = await getSessionFromCookies(tenantId);
-  if (!session) {
-    redirect(signInUrl(tenantId, `/tenant/${tenantId}/cards`));
-  }
-
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return (
-      <div style={{ padding: '2rem', maxWidth: '800px' }}>
-        <h2>Error</h2>
-        <p>Unable to connect to the database. Please try again later.</p>
-      </div>
+      <p className="text-sm text-red-700 dark:text-red-300">
+        Unable to connect to the database. Please try again later.
+      </p>
     );
   }
 
@@ -40,32 +32,24 @@ export default async function CardsPage({
     .limit(50)
     .execute();
 
+  if (items.length === 0) {
+    return <p className="text-sm text-gray-600 dark:text-gray-400">Nothing suggested yet.</p>;
+  }
+
   return (
-    <div style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto' }}>
-      <h1 style={{ fontSize: '1.4rem', marginBottom: '0.25rem' }}>Actionable items</h1>
-      <p style={{ color: '#666', marginBottom: '1.5rem' }}>
-        Suggestions from your connected tools. Approving executes the action as you.
-      </p>
-
-      {items.length === 0 && <p>Nothing suggested yet.</p>}
-
+    <div className="space-y-4">
       {items.map((item) => (
         <div
           key={item.id}
-          style={{
-            border: '1px solid #ddd',
-            borderRadius: '8px',
-            padding: '1rem',
-            marginBottom: '1rem',
-          }}
+          className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+          <div className="flex justify-between gap-4">
             <strong>{item.title}</strong>
-            <span style={{ color: '#666', whiteSpace: 'nowrap' }}>
+            <span className="whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
               {item.source} · {item.status}
             </span>
           </div>
-          <p style={{ margin: '0.5rem 0', whiteSpace: 'pre-wrap' }}>{item.summary}</p>
+          <p className="my-2 whitespace-pre-wrap text-sm">{item.summary}</p>
 
           <RelatedEvidence evidence={item.evidence} />
 
@@ -90,9 +74,9 @@ function RelatedEvidence({ evidence }: { evidence: unknown }): React.ReactNode {
   if (related.length === 0) return null;
 
   return (
-    <div style={{ margin: '0.5rem 0', padding: '0.5rem', background: '#f7f7f7', borderRadius: '6px' }}>
-      <strong style={{ fontSize: '0.85rem' }}>Similar prior discussion</strong>
-      <ul style={{ margin: '0.25rem 0 0 1rem', fontSize: '0.85rem', color: '#444' }}>
+    <div className="my-2 rounded-md bg-gray-100 p-2 dark:bg-gray-900">
+      <strong className="text-xs">Similar prior discussion</strong>
+      <ul className="ml-4 mt-1 list-disc text-xs text-gray-600 dark:text-gray-400">
         {related.map((entry, index) => {
           if (typeof entry !== 'object' || entry === null) return null;
           const hit: Record<string, unknown> = { ...entry };
@@ -114,12 +98,22 @@ function ExecutionResult({
   const record: Record<string, unknown> = { ...result };
 
   if (failed) {
-    return <p style={{ color: '#b00' }}>Failed: {String(record.error ?? 'unknown error')}</p>;
+    return (
+      <p className="text-sm text-red-700 dark:text-red-300">
+        Failed: {String(record.error ?? 'unknown error')}
+      </p>
+    );
   }
   if (typeof record.url === 'string' && typeof record.issueKey === 'string') {
     return (
-      <p>
-        Created <a href={record.url}>{record.issueKey}</a>
+      <p className="text-sm">
+        Created{' '}
+        <a
+          href={record.url}
+          className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+        >
+          {record.issueKey}
+        </a>
       </p>
     );
   }

@@ -3,12 +3,16 @@ import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 
-export default async function AuditPage({ params }: { params: Promise<{ slug: string }> }): Promise<React.ReactNode> {
+export default async function AuditPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<React.ReactNode> {
   const session = await getOperatorSession();
   const { slug } = await params;
 
   if (!session) {
-    redirect(`/admin/${slug}`);
+    redirect(`/${slug}/admin`);
   }
 
   const dbResult = getDatabase();
@@ -58,7 +62,7 @@ export default async function AuditPage({ params }: { params: Promise<{ slug: st
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
           <thead>
-            <tr style={{ borderBottom: '1px solid #ddd', background: '#f5f5f5' }}>
+            <tr style={{ borderBottom: '1px solid var(--border)', background: '#f5f5f5' }}>
               <th style={{ padding: '0.5rem', textAlign: 'left' }}>Event</th>
               <th style={{ padding: '0.5rem', textAlign: 'left' }}>Actor</th>
               <th style={{ padding: '0.5rem', textAlign: 'left' }}>Resource</th>
@@ -67,7 +71,7 @@ export default async function AuditPage({ params }: { params: Promise<{ slug: st
           </thead>
           <tbody>
             {events.map((event) => (
-              <tr key={event.id} style={{ borderBottom: '1px solid #eee' }}>
+              <tr key={event.id} style={{ borderBottom: '1px solid var(--border)' }}>
                 <td style={{ padding: '0.5rem' }}>{event.event_type}</td>
                 <td style={{ padding: '0.5rem', fontFamily: 'monospace' }}>
                   {event.actor_id ? event.actor_id.slice(0, 8) : '—'}
@@ -75,10 +79,8 @@ export default async function AuditPage({ params }: { params: Promise<{ slug: st
                 <td style={{ padding: '0.5rem', fontFamily: 'monospace' }}>
                   {event.resource_id ? event.resource_id.slice(0, 12) : '—'}
                 </td>
-                <td style={{ padding: '0.5rem', color: '#666' }}>
-                  {event.created_at
-                    ? new Date(event.created_at).toLocaleString()
-                    : '—'}
+                <td style={{ padding: '0.5rem', color: 'var(--muted)' }}>
+                  {event.created_at ? new Date(event.created_at).toLocaleString() : '—'}
                 </td>
               </tr>
             ))}

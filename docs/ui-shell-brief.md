@@ -1,8 +1,9 @@
 # UI shell brief — app nav, routing, and connector self-service
 
 Working brief, captured so the conversation can be picked up from another
-device. Nothing here is built yet. The one thing already done is the SWC fix in
-`docker/Dockerfile` (see the commit this file arrived in).
+device. Now built: the `/[slug]/*` tree, the app shell, the connector config
+UI, and the redirect rewiring all landed on this branch — see the commit that
+touched this line. What remains open is at the bottom.
 
 ## Why now
 

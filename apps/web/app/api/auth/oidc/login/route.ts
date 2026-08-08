@@ -13,7 +13,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const db = dbResult.val;
   const { searchParams } = new URL(request.url);
   const tenantId = searchParams.get('tenantId');
-  const redirect = searchParams.get('redirect') || '/mcp';
+  // Empty means "no preference": the callback then derives the tenant's home
+  // page from its slug rather than this route hardcoding a landing.
+  const redirect = searchParams.get('redirect') || '';
 
   if (!tenantId) {
     return NextResponse.json({ error: 'Missing tenantId' }, { status: 400 });

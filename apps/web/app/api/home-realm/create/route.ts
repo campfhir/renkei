@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
+import { isReservedSlug } from '@/lib/tenant-slug';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const { domain } = await request.json();
@@ -17,10 +18,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
-  }
-  const db = dbResult.val;
+    if (!dbResult.ok) {
+      return NextResponse.json({ error: 'Database error' }, { status: 500 });
+    }
+    const db = dbResult.val;
 
     // Check if domain already exists
     const existing = await db
@@ -36,9 +37,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Create new tenant for this domain
+    // Create new tenant for this domain. The slug becomes a top-level URL
+    // segment, so it must not shadow a real route — `create.organization`
+    // would otherwise derive to the slug `create-organization`.
     const tenantId = randomUUID();
-    const slug = domain.toLowerCase().replace(/\./g, '-');
+    let slug = domain.toLowerCase().replace(/\./g, '-');
+    if (isReservedSlug(slug)) slug = `${slug}-org`;
 
     await db
       .insertInto('tenants')

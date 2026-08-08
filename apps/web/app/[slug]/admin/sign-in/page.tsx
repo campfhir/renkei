@@ -14,7 +14,11 @@ function isDiscoveryResponse(data: unknown): data is { authorization_endpoint: s
   return typeof obj.authorization_endpoint === 'string';
 }
 
-export default async function SignInPage({ params }: { params: Promise<{ slug: string }> }): Promise<React.ReactNode> {
+export default async function SignInPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<React.ReactNode> {
   const { slug } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -39,7 +43,7 @@ export default async function SignInPage({ params }: { params: Promise<{ slug: s
     .executeTakeFirst();
 
   if (!tenant) {
-    redirect(`/admin/${slug}`);
+    redirect(`/${slug}/admin`);
   }
 
   const oidcConfig = await db
@@ -49,7 +53,7 @@ export default async function SignInPage({ params }: { params: Promise<{ slug: s
     .executeTakeFirst();
 
   if (!oidcConfig) {
-    redirect(`/admin/${slug}`);
+    redirect(`/${slug}/admin`);
   }
 
   // Fetch OIDC discovery to get authorization endpoint

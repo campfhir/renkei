@@ -3,12 +3,16 @@ import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 
-export default async function SettingsPage({ params }: { params: Promise<{ slug: string }> }): Promise<React.ReactNode> {
+export default async function SettingsPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<React.ReactNode> {
   const session = await getOperatorSession();
   const { slug } = await params;
 
   if (!session) {
-    redirect(`/admin/${slug}`);
+    redirect(`/${slug}/admin`);
   }
 
   const dbResult = getDatabase();

@@ -169,10 +169,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (identityClaims) {
       const recorded = await upsertIdentity(tenantId, subject, identityClaims);
       if (!recorded.ok) {
-        console.warn(`[OIDC ${tenantId}] could not record identity for subject; gates will fail closed`);
+        console.warn(
+          `[OIDC ${tenantId}] could not record identity for subject; gates will fail closed`
+        );
       }
     } else {
-      console.warn(`[OIDC ${tenantId}] id_token carries no email claim; gates will fail closed for this user`);
+      console.warn(
+        `[OIDC ${tenantId}] id_token carries no email claim; gates will fail closed for this user`
+      );
     }
 
     // Decode and mint standardized renkei roles from IDP claims
@@ -209,9 +213,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Delete used state token
     await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
 
-    // Get redirect target from cookie
+    // Get redirect target from cookie; without one, land on the tenant's home
+    // page — the slug tree, not the retired /mcp/[tenantId] page.
     const redirectCookie = request.cookies.get(`oidc_redirect_${tenantId}`)?.value;
-    const redirect = redirectCookie || `/mcp/${tenantId}`;
+    let redirect = redirectCookie || '';
+    if (!redirect) {
+      const tenantRow = await db
+        .selectFrom('tenants')
+        .select('slug')
+        .where('id', '=', tenantId)
+        .executeTakeFirst();
+      redirect = tenantRow ? `/${tenantRow.slug}/home` : '/';
+    }
 
     // Create a server-side session. Subject and roles are stored in the database
     // and never sent to the client; the cookie holds only an opaque id. Previously

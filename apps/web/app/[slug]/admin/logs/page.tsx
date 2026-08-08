@@ -3,12 +3,16 @@ import { LogsClientApp } from '@/lib/ui/admin/logs-client-app';
 import { getOperatorSession } from '@/lib/auth-utils';
 import { redirect } from 'next/navigation';
 
-export default async function LogsPage({ params }: { params: Promise<{ slug: string }> }): Promise<React.ReactNode> {
+export default async function LogsPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<React.ReactNode> {
   const session = await getOperatorSession();
   const { slug } = await params;
 
   if (!session) {
-    redirect(`/admin/${slug}`);
+    redirect(`/${slug}/admin`);
   }
 
   return (

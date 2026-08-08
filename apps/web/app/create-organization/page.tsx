@@ -21,7 +21,11 @@ function CreateOrganizationContent() {
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [discoveryValidated, setDiscoveryValidated] = useState(false);
-  const [discoveryInfo, setDiscoveryInfo] = useState<{ issuer: string; authEndpoint?: string; tokenEndpoint?: string } | null>(null);
+  const [discoveryInfo, setDiscoveryInfo] = useState<{
+    issuer: string;
+    authEndpoint?: string;
+    tokenEndpoint?: string;
+  } | null>(null);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -146,8 +150,10 @@ function CreateOrganizationContent() {
       }
 
       setMessage({ type: 'success', text: 'Organization configured successfully!' });
+      // Straight into the OIDC flow they just configured — prove the login
+      // works, then land on the tenant's home page (the callback's default).
       setTimeout(() => {
-        window.location.href = `/mcp/${actualTenantId}`;
+        window.location.href = `/api/auth/oidc/login?tenantId=${actualTenantId}`;
       }, 1500);
     } catch (error) {
       setMessage({
@@ -170,7 +176,9 @@ function CreateOrganizationContent() {
 
         <h1 className="text-3xl font-bold mb-2">Set up your identity provider</h1>
         <p className="text-gray-600 dark:text-gray-400 mb-6">
-          {domain ? `Configure OIDC for ${domain}` : 'Configure your organization identity provider'}
+          {domain
+            ? `Configure OIDC for ${domain}`
+            : 'Configure your organization identity provider'}
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4 mb-6">
@@ -206,11 +214,23 @@ function CreateOrganizationContent() {
             </p>
             {discoveryValidated && discoveryInfo && (
               <div className="mt-3 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-                <p className="text-sm font-medium text-green-900 dark:text-green-100 mb-2">✓ Discovery validated</p>
+                <p className="text-sm font-medium text-green-900 dark:text-green-100 mb-2">
+                  ✓ Discovery validated
+                </p>
                 <div className="text-xs text-green-800 dark:text-green-200 space-y-1">
-                  <p><strong>Issuer:</strong> {discoveryInfo.issuer}</p>
-                  {discoveryInfo.authEndpoint && <p><strong>Auth:</strong> {discoveryInfo.authEndpoint}</p>}
-                  {discoveryInfo.tokenEndpoint && <p><strong>Token:</strong> {discoveryInfo.tokenEndpoint}</p>}
+                  <p>
+                    <strong>Issuer:</strong> {discoveryInfo.issuer}
+                  </p>
+                  {discoveryInfo.authEndpoint && (
+                    <p>
+                      <strong>Auth:</strong> {discoveryInfo.authEndpoint}
+                    </p>
+                  )}
+                  {discoveryInfo.tokenEndpoint && (
+                    <p>
+                      <strong>Token:</strong> {discoveryInfo.tokenEndpoint}
+                    </p>
+                  )}
                 </div>
               </div>
             )}
@@ -262,20 +282,25 @@ function CreateOrganizationContent() {
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100"
             />
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              JWT claim that contains user roles (e.g., 'roles' for Entra ID, 'appRoles', 'org_roles')
+              JWT claim that contains user roles (e.g., 'roles' for Entra ID, 'appRoles',
+              'org_roles')
             </p>
           </div>
 
           <div className="border-t pt-4 mt-4">
             <h3 className="font-semibold text-gray-900 dark:text-gray-100 mb-4">Role Mapping</h3>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-              Map your identity provider's role values to Renkei roles. Enter the IDP value that should grant each Renkei role.
+              Map your identity provider's role values to Renkei roles. Enter the IDP value that
+              should grant each Renkei role.
             </p>
 
             <div className="space-y-4">
               <div className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-800/50">
                 <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-                  Renkei Operator <span className="text-gray-500 dark:text-gray-400 font-mono">(renkei-operator)</span>
+                  Renkei Operator{' '}
+                  <span className="text-gray-500 dark:text-gray-400 font-mono">
+                    (renkei-operator)
+                  </span>
                 </label>
                 <input
                   type="text"
@@ -292,7 +317,8 @@ function CreateOrganizationContent() {
 
               <div className="border rounded-lg p-4 bg-gray-50 dark:bg-gray-800/50">
                 <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-                  Renkei User <span className="text-gray-500 dark:text-gray-400 font-mono">(renkei-user)</span>
+                  Renkei User{' '}
+                  <span className="text-gray-500 dark:text-gray-400 font-mono">(renkei-user)</span>
                 </label>
                 <input
                   type="text"
@@ -326,7 +352,11 @@ function CreateOrganizationContent() {
             disabled={isLoading || !discoveryValidated}
             className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium py-2 px-4 rounded-lg transition-colors"
           >
-            {isLoading ? 'Saving...' : discoveryValidated ? 'Save Identity Provider Configuration' : 'Test discovery endpoint first'}
+            {isLoading
+              ? 'Saving...'
+              : discoveryValidated
+                ? 'Save Identity Provider Configuration'
+                : 'Test discovery endpoint first'}
           </button>
         </form>
 

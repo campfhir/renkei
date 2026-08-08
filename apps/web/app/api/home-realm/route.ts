@@ -29,10 +29,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   try {
     const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: "Database error" }, { status: 500 });
-  }
-  const db = dbResult.val;
+    if (!dbResult.ok) {
+      return NextResponse.json({ error: 'Database error' }, { status: 500 });
+    }
+    const db = dbResult.val;
 
     // Check if tenant exists for this domain via tenant_domains table
     const tenant = await db
@@ -54,13 +54,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Tenant exists - redirect to MCP endpoint
+    // Tenant exists — send them to its home page. The page guards itself and
+    // starts the OIDC flow if the browser holds no session.
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const origin = originResult.val;
-    return NextResponse.redirect(new URL(`/mcp/${tenant.id}`, origin));
+    return NextResponse.redirect(new URL(`/${tenant.slug}/home`, origin));
   } catch (error) {
     console.error('Home-realm discovery error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

@@ -1,0 +1,209 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+
+interface NavProps {
+  slug: string;
+  tenantId: string;
+  /** Who is signed in (OIDC subject / operator name), or null. */
+  subject: string | null;
+  isOperator: boolean;
+  signInHref: string;
+}
+
+interface NavItem {
+  href: string;
+  label: string;
+}
+
+interface NavGroup {
+  label: string;
+  items: NavItem[];
+}
+
+/**
+ * The app-wide navigation: a top bar with the hamburger, org name, and the
+ * user; a drawer that slides in from the left edge with the sections stacked.
+ * Admin entries appear only for operators — the pages behind them still guard
+ * themselves, the nav just does not advertise doors the user cannot open.
+ */
+export default function AppNav({ slug, tenantId, subject, isOperator, signInHref }: NavProps) {
+  const [open, setOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  const pathname = usePathname();
+  const router = useRouter();
+  const drawerRef = useRef<HTMLElement>(null);
+
+  // The drawer closes on navigation, on Escape, and traps initial focus so a
+  // keyboard user is not left tabbing through content hidden behind it.
+  useEffect(() => setOpen(false), [pathname]);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    drawerRef.current?.focus();
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  const groups: NavGroup[] = [
+    {
+      label: 'Workspace',
+      items: [
+        { href: `/${slug}/home`, label: 'Home' },
+        { href: `/${slug}/connectors`, label: 'Connectors' },
+        { href: `/${slug}/logs`, label: 'Activity' },
+      ],
+    },
+    ...(isOperator
+      ? [
+          {
+            label: 'Organization',
+            items: [
+              { href: `/${slug}/admin/connectors`, label: 'Connector setup' },
+              { href: `/${slug}/admin/grants`, label: 'Grants' },
+              { href: `/${slug}/admin/people`, label: 'People' },
+              { href: `/${slug}/admin/sites`, label: 'Jira sites' },
+              { href: `/${slug}/admin/logs`, label: 'Org logs' },
+              { href: `/${slug}/admin/audit`, label: 'Audit' },
+              { href: `/${slug}/admin/settings`, label: 'Settings' },
+            ],
+          },
+        ]
+      : []),
+  ];
+
+  async function signOut() {
+    setSigningOut(true);
+    try {
+      await fetch('/api/auth/sign-out', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenantId }),
+      });
+    } finally {
+      router.push('/');
+      router.refresh();
+    }
+  }
+
+  const initial = subject ? subject.trim().charAt(0).toUpperCase() : '?';
+
+  return (
+    <>
+      <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-gray-200 bg-white/90 px-4 backdrop-blur dark:border-gray-800 dark:bg-black/80">
+        <button
+          type="button"
+          aria-label="Open menu"
+          aria-expanded={open}
+          onClick={() => setOpen(true)}
+          className="flex h-9 w-9 flex-col items-center justify-center gap-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900"
+        >
+          <span className="h-0.5 w-5 rounded bg-gray-700 dark:bg-gray-300" />
+          <span className="h-0.5 w-5 rounded bg-gray-700 dark:bg-gray-300" />
+          <span className="h-0.5 w-5 rounded bg-gray-700 dark:bg-gray-300" />
+        </button>
+
+        <Link href={`/${slug}/home`} className="font-semibold tracking-tight">
+          Renkei
+          <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">{slug}</span>
+        </Link>
+
+        <div className="ml-auto flex items-center gap-2">
+          {subject ? (
+            <>
+              <span
+                title={subject}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600 text-sm font-semibold text-white"
+              >
+                {initial}
+              </span>
+              <button
+                type="button"
+                onClick={() => void signOut()}
+                disabled={signingOut}
+                className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+              >
+                {signingOut ? 'Signing out…' : 'Sign out'}
+              </button>
+            </>
+          ) : (
+            <a
+              href={signInHref}
+              className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              Sign in
+            </a>
+          )}
+        </div>
+      </header>
+
+      {/* Backdrop */}
+      <div
+        onClick={() => setOpen(false)}
+        className={`fixed inset-0 z-40 bg-black/40 transition-opacity ${
+          open ? 'opacity-100' : 'pointer-events-none opacity-0'
+        }`}
+        aria-hidden="true"
+      />
+
+      {/* Drawer — slides in from the left edge */}
+      <nav
+        ref={drawerRef}
+        tabIndex={-1}
+        aria-label="Application"
+        className={`fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-gray-200 bg-white p-4 outline-none transition-transform duration-200 ease-out dark:border-gray-800 dark:bg-gray-950 ${
+          open ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <span className="font-semibold">Renkei</span>
+          <button
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setOpen(false)}
+            className="rounded-lg px-2 py-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+          >
+            ✕
+          </button>
+        </div>
+
+        {groups.map((group) => (
+          <div key={group.label} className="mb-6">
+            <p className="mb-2 px-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+              {group.label}
+            </p>
+            <ul className="space-y-1">
+              {group.items.map((item) => {
+                const here = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                return (
+                  <li key={item.href}>
+                    <Link
+                      href={item.href}
+                      className={`block rounded-lg px-3 py-2 text-sm ${
+                        here
+                          ? 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                          : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-900'
+                      }`}
+                    >
+                      {item.label}
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+
+        {subject && (
+          <p className="mt-auto truncate px-2 text-xs text-gray-500" title={subject}>
+            {subject}
+          </p>
+        )}
+      </nav>
+    </>
+  );
+}

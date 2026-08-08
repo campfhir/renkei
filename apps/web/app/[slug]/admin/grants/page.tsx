@@ -11,7 +11,7 @@ export default async function GrantsPage({
   const session = await getOperatorSession();
   if (!session) {
     const { slug } = await params;
-    redirect(`/admin/${slug}/sign-in`);
+    redirect(`/${slug}/admin/sign-in`);
   }
 
   const { slug } = await params;
@@ -34,7 +34,7 @@ export default async function GrantsPage({
     .executeTakeFirst();
 
   if (!tenant) {
-    redirect(`/admin/${slug}`);
+    redirect(`/${slug}/admin`);
   }
 
   // Fetch grants
@@ -56,7 +56,7 @@ export default async function GrantsPage({
   return (
     <div style={{ padding: '2rem', maxWidth: '1000px' }}>
       <h2>Connected Jira Accounts</h2>
-      <p style={{ color: '#666' }}>Manage Atlassian grants and connected user accounts</p>
+      <p style={{ color: 'var(--muted)' }}>Manage Atlassian grants and connected user accounts</p>
 
       {grants.length === 0 ? (
         <div
@@ -72,7 +72,7 @@ export default async function GrantsPage({
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
-            <tr style={{ borderBottom: '2px solid #ddd' }}>
+            <tr style={{ borderBottom: '2px solid var(--border)' }}>
               <th style={{ textAlign: 'left', padding: '1rem' }}>Display Name</th>
               <th style={{ textAlign: 'left', padding: '1rem' }}>Account ID</th>
               <th style={{ textAlign: 'left', padding: '1rem' }}>Cloud ID</th>
@@ -95,7 +95,7 @@ export default async function GrantsPage({
               const expiresAtStr = expiresAt.toLocaleDateString();
 
               return (
-                <tr key={grantKey} style={{ borderBottom: '1px solid #eee' }}>
+                <tr key={grantKey} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: '1rem' }}>{grant.display_name}</td>
                   <td style={{ padding: '1rem', fontSize: '0.9rem' }}>
                     {grant.provider_account_id}
@@ -147,9 +147,9 @@ export default async function GrantsPage({
         </table>
       )}
 
-      <div style={{ marginTop: '2rem', paddingTop: '2rem', borderTop: '1px solid #eee' }}>
+      <div style={{ marginTop: '2rem', paddingTop: '2rem', borderTop: '1px solid var(--border)' }}>
         <h3>About Connected Accounts</h3>
-        <ul style={{ color: '#666' }}>
+        <ul style={{ color: 'var(--muted)' }}>
           <li>Connected accounts allow the MCP gateway to access Jira on behalf of users</li>
           <li>Tokens expire after a period of time and are automatically refreshed</li>
           <li>

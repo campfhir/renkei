@@ -1,4 +1,5 @@
-import { redirect } from 'next/navigation';
+import { redirect, notFound } from 'next/navigation';
+import { tenantForSlug } from '@/lib/tenant-slug';
 import { signInUrl } from '@/lib/sign-in-url';
 import { searchLogs } from './actions';
 import LogsViewer from './logs-viewer';
@@ -13,17 +14,19 @@ export default async function LogsPage({
   params,
   searchParams,
 }: {
-  params: Promise<{ tenantId: string }>;
+  params: Promise<{ slug: string }>;
   searchParams: Promise<{ accountId?: string }>;
 }) {
-  const { tenantId } = await params;
+  const { slug } = await params;
   const { accountId } = await searchParams;
+  const tenant = await tenantForSlug(slug);
+  if (!tenant) notFound();
 
   // Computed here, not in both places: the server render and the picker the
   // client seeds from have to agree about what is being searched.
   const window = defaultLogWindow();
 
-  const initial = await searchLogs(tenantId, {
+  const initial = await searchLogs(tenant.id, {
     expr: null,
     levels: [],
     start: window.start,
@@ -32,16 +35,17 @@ export default async function LogsPage({
     accountId: accountId ?? null,
   });
 
-  // The proxy only checks that a session cookie exists, so arriving here with a
-  // dead one is normal. Send them to authenticate rather than rendering a page
-  // that says "sign in" without being able to start it.
+  // Arriving with a dead session cookie is normal. Send them to authenticate
+  // rather than rendering a page that says "sign in" without being able to
+  // start it.
   if (initial.signedOut) {
-    redirect(signInUrl(tenantId, `/tenant/${tenantId}/logs`));
+    redirect(signInUrl(tenant.id, `/${slug}/logs`));
   }
 
   return (
     <LogsViewer
-      tenantId={tenantId}
+      slug={slug}
+      tenantId={tenant.id}
       accountId={accountId ?? null}
       initial={initial}
       initialWindow={window}

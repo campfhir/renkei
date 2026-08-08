@@ -44,11 +44,13 @@ const COLUMNS: ExtraColumn[] = [
 ];
 
 export default function LogsViewer({
+  slug,
   tenantId,
   accountId,
   initial,
   initialWindow,
 }: {
+  slug: string;
   tenantId: string;
   accountId: string | null;
   initial: LogSearchResult;
@@ -119,14 +121,14 @@ export default function LogsViewer({
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-6xl flex-col gap-4 px-4 py-6 sm:px-6">
+    <div className="flex flex-col gap-4">
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h1 className="text-xl font-semibold">Activity</h1>
         <Link
-          href={`/mcp/${tenantId}`}
+          href={`/${slug}/connectors`}
           className="text-sm text-blue-600 hover:underline dark:text-blue-400"
         >
-          ← MCP endpoint
+          Connectors
         </Link>
         <p className="w-full text-sm text-slate-500 dark:text-slate-400">
           {scope?.accountId ? (
@@ -149,10 +151,7 @@ export default function LogsViewer({
           {signedOut && (
             <>
               {' '}
-              <a
-                className="font-medium underline"
-                href={signInUrl(tenantId, `/tenant/${tenantId}/logs`)}
-              >
+              <a className="font-medium underline" href={signInUrl(tenantId, `/${slug}/logs`)}>
                 Sign in again
               </a>
             </>
@@ -261,6 +260,6 @@ export default function LogsViewer({
           </div>
         )}
       </section>
-    </main>
+    </div>
   );
 }
