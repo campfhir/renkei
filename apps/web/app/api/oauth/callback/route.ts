@@ -98,7 +98,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // one predates per-user grants; completing it would produce an unowned grant
     // that no caller can use, so send the user back through a fresh sign-in.
     if (!pendingSignIn.subject) {
-      logger.error('[OAuth] Pending sign-in has no subject; cannot assign grant owner', {
+      logger.error('Pending sign-in has no subject; cannot assign grant owner', {
+        component: 'auth/oauth',
         tenantId: pendingSignIn.tenant_id,
       });
       return NextResponse.json({ error: 'Sign in again before connecting Jira' }, { status: 400 });
@@ -136,7 +137,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    logger.info('[OAuth] Jira callback', { tenantId: tenant.id });
+    logger.info('Jira callback', { component: 'auth/oauth', tenantId: tenant.id });
 
     // The org's Atlassian app registration, from connector config. The
     // authorize step used the same reader, so both legs of the exchange
@@ -153,7 +154,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    logger.info('[OAuth] Exchanging code for tokens', { tenantId: tenant.id });
+    logger.info('Exchanging code for tokens', { component: 'auth/oauth', tenantId: tenant.id });
 
     // Exchange authorization code for Jira tokens
     const tokenResponse = await fetch('https://auth.atlassian.com/oauth/token', {
@@ -170,7 +171,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      logger.error('[OAuth] Token exchange failed', {
+      logger.error('Token exchange failed', {
+        component: 'auth/oauth',
         tenantId: tenant.id,
         status: tokenResponse.status,
         error: errorText,
@@ -182,17 +184,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Record only whether a token came back, never any of its bytes: these
     // records are persisted by the Postgres log adapter and are readable over
     // HTTP by tenant users, so even a 20-character prefix does not belong here.
-    logger.info('[OAuth] Token response OK', {
+    logger.info('Token response OK', {
+      component: 'auth/oauth',
       tenantId: tenant.id,
       hasAccessToken: Boolean(tokenData.access_token),
       expiresIn: tokenData.expires_in,
     });
     if (!isJiraTokenResponse(tokenData)) {
-      logger.error('[OAuth] Invalid token response format', { tenantId: tenant.id, tokenData });
+      logger.error('Invalid token response format', {
+        component: 'auth/oauth',
+        tenantId: tenant.id,
+        tokenData,
+      });
       return NextResponse.json({ error: 'Invalid token response format' }, { status: 400 });
     }
 
-    logger.info('[OAuth] Fetching accessible resources', { tenantId: tenant.id });
+    logger.info('Fetching accessible resources', { component: 'auth/oauth', tenantId: tenant.id });
     // Get accessible resources first to determine site URL
     const resourcesResponse = await fetch(
       'https://api.atlassian.com/oauth/token/accessible-resources',
@@ -203,7 +210,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (!resourcesResponse.ok) {
       const resourcesErrorText = await resourcesResponse.text();
-      logger.error('[OAuth] Failed to fetch resources', {
+      logger.error('Failed to fetch resources', {
+        component: 'auth/oauth',
         tenantId: tenant.id,
         status: resourcesResponse.status,
         error: resourcesErrorText,
@@ -212,9 +220,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     const resources = await resourcesResponse.json();
-    logger.info('[OAuth] Resources received', { tenantId: tenant.id, resources });
+    logger.info('Resources received', { component: 'auth/oauth', tenantId: tenant.id, resources });
     if (!isResourceArray(resources)) {
-      logger.error('[OAuth] Invalid resources format', { tenantId: tenant.id, resources });
+      logger.error('Invalid resources format', {
+        component: 'auth/oauth',
+        tenantId: tenant.id,
+        resources,
+      });
       return NextResponse.json({ error: 'Invalid resources response format' }, { status: 400 });
     }
 
@@ -224,7 +236,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
     }
 
-    logger.info('[OAuth] Fetching user info', { tenantId: tenant.id, cloudId: resource.id });
+    logger.info('Fetching user info', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      cloudId: resource.id,
+    });
     // Get user info via API gateway path for OAuth 2.0 3LO
     const userResponse = await fetch(
       `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/myself`,
@@ -239,7 +255,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!userResponse.ok) {
       const userErrorText = await userResponse.text();
       const userErrorJson = await userResponse.json().catch(() => ({}));
-      logger.error('[OAuth] Failed to fetch user info', {
+      logger.error('Failed to fetch user info', {
+        component: 'auth/oauth',
         tenantId: tenant.id,
         status: userResponse.status,
         statusText: userResponse.statusText,
@@ -251,9 +268,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     const userInfo = await userResponse.json();
-    logger.info('[OAuth] User info received', { tenantId: tenant.id, userInfo });
+    logger.info('User info received', { component: 'auth/oauth', tenantId: tenant.id, userInfo });
     if (!isJiraUserInfo(userInfo)) {
-      logger.error('[OAuth] Invalid user info response format', { tenantId: tenant.id, userInfo });
+      logger.error('Invalid user info response format', {
+        component: 'auth/oauth',
+        tenantId: tenant.id,
+        userInfo,
+      });
       return NextResponse.json(
         {
           error: 'Invalid user info response format',
@@ -269,7 +290,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Cache the displayName for logging
     cacheUserDisplayName(userInfo.accountId, displayName);
 
-    logger.info('[OAuth] Storing Jira grant', {
+    logger.info('Storing Jira grant', {
+      component: 'auth/oauth',
       tenantId: tenant.id,
       subject: pendingSignIn.subject,
     });
@@ -295,7 +317,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ).split(' '),
     });
 
-    logger.info('[OAuth] Jira grant stored successfully', { tenantId: tenant.id });
+    logger.info('Jira grant stored successfully', { component: 'auth/oauth', tenantId: tenant.id });
     // Back to the connectors page, which shows the fresh connection status.
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
@@ -303,10 +325,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     const origin = originResult.val;
     const connectorsUrl = new URL(`/${tenant.slug}/connectors`, origin);
-    logger.info('[OAuth] Redirecting', { tenantId: tenant.id, url: connectorsUrl.toString() });
+    logger.info('Redirecting', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      url: connectorsUrl.toString(),
+    });
     return NextResponse.redirect(connectorsUrl);
   } catch (err) {
-    logger.error('[OAuth] Callback error', {
+    logger.error('Callback error', {
+      component: 'auth/oauth',
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
@@ -327,7 +354,8 @@ async function handleWebexUserCallback(
   requestedScopes: string | null
 ): Promise<NextResponse> {
   if (!subject) {
-    logger.error('[OAuth] WebEx pending flow has no subject; cannot assign grant owner', {
+    logger.error('WebEx pending flow has no subject; cannot assign grant owner', {
+      component: 'auth/oauth',
       tenantId: tenant.id,
     });
     return NextResponse.json({ error: 'Sign in again before connecting WebEx' }, { status: 400 });
@@ -358,7 +386,8 @@ async function handleWebexUserCallback(
   });
   if (!tokenResponse.ok) {
     const body = await tokenResponse.text().catch(() => '');
-    logger.error('[OAuth] WebEx token exchange failed', {
+    logger.error('WebEx token exchange failed', {
+      component: 'auth/oauth',
       tenantId: tenant.id,
       status: tokenResponse.status,
       body: body.slice(0, 300),
@@ -369,7 +398,10 @@ async function handleWebexUserCallback(
   const tokens = tokenData as Record<string, unknown> | null;
   const accessToken = typeof tokens?.access_token === 'string' ? tokens.access_token : null;
   if (!accessToken) {
-    logger.error('[OAuth] WebEx token response carried no access_token', { tenantId: tenant.id });
+    logger.error('WebEx token response carried no access_token', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
     return NextResponse.json({ error: 'Malformed WebEx token response' }, { status: 502 });
   }
   const refreshToken = typeof tokens?.refresh_token === 'string' ? tokens.refresh_token : '';
@@ -386,7 +418,8 @@ async function handleWebexUserCallback(
   const me = meData as Record<string, unknown> | null;
   const personId = typeof me?.id === 'string' ? me.id : null;
   if (!meResponse.ok || !personId) {
-    logger.error('[OAuth] WebEx /people/me failed; cannot identify grantor', {
+    logger.error('WebEx /people/me failed; cannot identify grantor', {
+      component: 'auth/oauth',
       tenantId: tenant.id,
       status: meResponse.status,
       hint:
@@ -412,7 +445,8 @@ async function handleWebexUserCallback(
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {
-    logger.error('[OAuth] TOKEN_ENCRYPTION_KEY missing or malformed; cannot store WebEx grant', {
+    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store WebEx grant', {
+      component: 'auth/oauth',
       tenantId: tenant.id,
     });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
@@ -437,10 +471,10 @@ async function handleWebexUserCallback(
     keyResult.val
   );
   if (!stored.ok) {
-    logger.error('[OAuth] Failed to store WebEx grant', { tenantId: tenant.id });
+    logger.error('Failed to store WebEx grant', { component: 'auth/oauth', tenantId: tenant.id });
     return NextResponse.json({ error: 'Failed to store WebEx grant' }, { status: 500 });
   }
 
-  logger.info('[OAuth] WebEx user grant stored', { tenantId: tenant.id, subject });
+  logger.info('WebEx user grant stored', { component: 'auth/oauth', tenantId: tenant.id, subject });
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }

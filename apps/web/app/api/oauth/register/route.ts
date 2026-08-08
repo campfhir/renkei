@@ -142,7 +142,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
-    logger.error('[DCR] Registration error: {error}', {
+    logger.error('Registration error: {error}', {
+      component: 'auth/oauth-register',
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });

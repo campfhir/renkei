@@ -24,7 +24,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_service_desks invoked', {
+      logger.info('list_service_desks invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -74,7 +75,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_request_types invoked', {
+      logger.info('list_request_types invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -131,7 +133,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_requests invoked', {
+      logger.info('list_requests invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -186,7 +189,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_request invoked', {
+      logger.info('get_request invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -247,7 +251,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] create_request invoked', {
+      logger.info('create_request invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -316,7 +321,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] add_request_comment invoked', {
+      logger.info('add_request_comment invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -375,7 +381,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_request_transitions invoked', {
+      logger.info('list_request_transitions invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -428,7 +435,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] transition_request invoked', {
+      logger.info('transition_request invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -508,7 +516,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_customers invoked', {
+      logger.info('list_customers invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

@@ -157,7 +157,8 @@ async function recordUnwritten(
     );
     return true;
   } catch (error) {
-    logger.warn('[Tool] could not record unwritten fields', {
+    logger.warn('could not record unwritten fields', {
+      component: 'mcp/tool',
       tenantId: context.tenantId,
       issueKey,
       error: error instanceof Error ? error.message : String(error),
@@ -235,7 +236,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] create_issue invoked', {
+      logger.info('create_issue invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -359,7 +361,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] update_issue invoked', {
+      logger.info('update_issue invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -484,7 +487,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] add_comment invoked', {
+      logger.info('add_comment invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -540,7 +544,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] transition_issue invoked', {
+      logger.info('transition_issue invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -653,7 +658,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] log_work invoked', {
+      logger.info('log_work invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -718,7 +724,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] delete_issue invoked', {
+      logger.info('delete_issue invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -768,7 +775,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] delete_comment invoked', {
+      logger.info('delete_comment invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

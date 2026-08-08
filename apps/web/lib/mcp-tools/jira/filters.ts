@@ -27,7 +27,8 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_filters invoked', {
+      logger.info('list_filters invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -77,7 +78,8 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_filter invoked', {
+      logger.info('get_filter invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -136,7 +138,8 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] create_filter invoked', {
+      logger.info('create_filter invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -202,7 +205,8 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] delete_filter invoked', {
+      logger.info('delete_filter invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

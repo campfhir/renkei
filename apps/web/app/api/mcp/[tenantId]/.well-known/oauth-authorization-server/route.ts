@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getOrigin } from '@/lib/get-origin';
 import { getDatabase } from '@renkei/db';
@@ -67,7 +68,10 @@ export async function GET(
 
     return NextResponse.json(metadata);
   } catch (error) {
-    console.error('[OAuth Metadata] Error:', error);
+    logger.error('Error: {detail}', {
+      component: 'auth/oauth-metadata',
+      detail: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

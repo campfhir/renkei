@@ -28,7 +28,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_request_type_fields invoked', {
+      logger.info('get_request_type_fields invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -87,7 +88,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_request_approvals invoked', {
+      logger.info('list_request_approvals invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -144,7 +146,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_request_sla invoked', {
+      logger.info('get_request_sla invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -201,7 +204,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_request_participants invoked', {
+      logger.info('list_request_participants invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -257,7 +261,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] add_request_participant invoked', {
+      logger.info('add_request_participant invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -308,7 +313,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] remove_request_participant invoked', {
+      logger.info('remove_request_participant invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -363,7 +369,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] add_request_attachment invoked', {
+      logger.info('add_request_attachment invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

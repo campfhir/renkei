@@ -27,7 +27,8 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_components invoked', {
+      logger.info('list_components invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -80,7 +81,8 @@ export async function registerProjectTools(
     },
     async (_args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_fields invoked', {
+      logger.info('list_fields invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -127,7 +129,8 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] search_users invoked', {
+      logger.info('search_users invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -176,7 +179,8 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_transitions invoked', {
+      logger.info('list_transitions invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

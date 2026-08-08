@@ -52,7 +52,8 @@ export async function sprintMembership(
 
     return { resolved: true, active, closed };
   } catch (error) {
-    logger.debug('[Sprint] Agile issue lookup failed, trying the Sprint field', {
+    logger.debug('Agile issue lookup failed, trying the Sprint field', {
+      component: 'mcp/tool',
       issueKey,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -129,7 +130,8 @@ export async function registerSprintTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] create_sprint invoked', {
+      logger.info('create_sprint invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -182,7 +184,8 @@ export async function registerSprintTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] move_issue_to_sprint invoked', {
+      logger.info('move_issue_to_sprint invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -236,7 +239,8 @@ export async function registerSprintTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] remove_issue_from_sprint invoked', {
+      logger.info('remove_issue_from_sprint invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -311,7 +315,8 @@ export async function registerSprintTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] complete_sprint invoked', {
+      logger.info('complete_sprint invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

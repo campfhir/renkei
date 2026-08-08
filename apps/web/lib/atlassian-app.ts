@@ -38,7 +38,10 @@ export async function getAtlassianApp(
 ): Promise<AtlassianApp | null> {
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {
-    logger.error('[AtlassianApp] TOKEN_ENCRYPTION_KEY is missing or malformed', { tenantId });
+    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
+      component: 'connectors/atlassian',
+      tenantId,
+    });
     return null;
   }
 
@@ -48,7 +51,10 @@ export async function getAtlassianApp(
     keyResult.val
   );
   if (!configResult.ok) {
-    logger.error('[AtlassianApp] Could not read atlassian connector config', { tenantId });
+    logger.error('Could not read atlassian connector config', {
+      component: 'connectors/atlassian',
+      tenantId,
+    });
     return null;
   }
   const config = configResult.val;
@@ -57,7 +63,8 @@ export async function getAtlassianApp(
   const clientId = config.settings.clientId;
   const clientSecret = config.secrets.clientSecret;
   if (typeof clientId !== 'string' || !clientId || !clientSecret) {
-    logger.warn('[AtlassianApp] atlassian connector config missing clientId or clientSecret', {
+    logger.warn('atlassian connector config missing clientId or clientSecret', {
+      component: 'connectors/atlassian',
       tenantId,
     });
     return null;

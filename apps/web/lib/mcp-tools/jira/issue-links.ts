@@ -25,7 +25,8 @@ export async function registerIssueLinkTools(
     },
     async (_args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_link_types invoked', {
+      logger.info('list_link_types invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -71,7 +72,8 @@ export async function registerIssueLinkTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] create_issue_link invoked', {
+      logger.info('create_issue_link invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -144,7 +146,8 @@ export async function registerIssueLinkTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] delete_issue_link invoked', {
+      logger.info('delete_issue_link invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

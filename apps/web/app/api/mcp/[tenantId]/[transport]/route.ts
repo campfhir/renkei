@@ -83,13 +83,16 @@ const handler = async (
     // first — attributing every comment, transition and worklog to that account.
     const bearer = getBearerToken(request);
     if (!bearer) {
-      logger.warn('[MCP] Request without bearer token', { tenantId });
+      logger.warn('Request without bearer token', { component: 'mcp/transport', tenantId });
       return unauthorizedResponse(tenantId, origin, 'Authorization required');
     }
 
     const tokenRecord = await resolveAccessToken(bearer, tenantId);
     if (!tokenRecord) {
-      logger.warn('[MCP] Request with unknown or expired bearer token', { tenantId });
+      logger.warn('Request with unknown or expired bearer token', {
+        component: 'mcp/transport',
+        tenantId,
+      });
       return unauthorizedResponse(tenantId, origin, 'Invalid or expired access token');
     }
 
@@ -226,13 +229,17 @@ const handler = async (
     let cachedHandler = handlerCache.get(cacheKey);
 
     if (!cachedHandler) {
-      logger.info('[MCP] Creating new handler (cache miss)', { tenantId, accountId });
+      logger.debug('Creating new handler (cache miss)', {
+        component: 'mcp/transport',
+        tenantId,
+        accountId,
+      });
 
       // Create MCP handler with tool registration
       cachedHandler = createMcpHandler(
         async (server: McpServer) => {
           try {
-            logger.info('[MCP] Server created', { tenantId, accountId });
+            logger.verbose('Server created', { component: 'mcp/transport', tenantId, accountId });
 
             const context: MCPToolContext = {
               tenantId,
@@ -285,12 +292,14 @@ const handler = async (
               );
             }
 
-            logger.info('[MCP] All tools registered', {
+            logger.verbose('All tools registered', {
+              component: 'mcp/transport',
               tenantId,
               accountId,
             });
           } catch (err) {
-            logger.error('[MCP] Tool registration failed', {
+            logger.error('Tool registration failed', {
+              component: 'mcp/transport',
               tenantId,
               accountId,
               error: err instanceof Error ? err.message : String(err),
@@ -315,13 +324,14 @@ const handler = async (
       // Store in cache
       handlerCache.set(cacheKey, cachedHandler);
     } else {
-      logger.debug('[MCP] Using cached handler', { tenantId, accountId });
+      logger.debug('Using cached handler', { component: 'mcp/transport', tenantId, accountId });
     }
 
     // Handle the request with cached handler
     return await cachedHandler(request);
   } catch (error) {
-    logger.error('[MCP Handler Error] {error}', {
+    logger.error('{error}', {
+      component: 'mcp/transport',
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });

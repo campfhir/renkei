@@ -186,7 +186,8 @@ export async function registerJsmOpsTools(
         }
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
-      logger.info('[Tool] jsm_ops_acknowledge_alert', {
+      logger.info('jsm_ops_acknowledge_alert', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         alertId: str(args.alertId),
@@ -215,7 +216,8 @@ export async function registerJsmOpsTools(
         body: JSON.stringify({}),
       });
       if (!response.ok) return errText(await describeOpsFailure(response));
-      logger.info('[Tool] jsm_ops_close_alert', {
+      logger.info('jsm_ops_close_alert', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         alertId: str(args.alertId),
@@ -460,7 +462,8 @@ export async function registerJsmOpsTools(
       if (!response.ok) return errText(await describeOpsFailure(response));
       const created: unknown = await response.json().catch(() => null);
       const alias = isRecord(created) ? str(created.alias) : '';
-      logger.info('[Tool] jsm_ops_create_override', {
+      logger.info('jsm_ops_create_override', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         scheduleId,
@@ -525,7 +528,8 @@ export async function registerJsmOpsTools(
         { method: 'DELETE' }
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
-      logger.info('[Tool] jsm_ops_delete_override', {
+      logger.info('jsm_ops_delete_override', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         scheduleId: str(args.scheduleId),
@@ -626,7 +630,8 @@ export async function registerJsmOpsTools(
         { method: 'PATCH', body: JSON.stringify(patch) }
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
-      logger.info('[Tool] jsm_ops_update_rotation', {
+      logger.info('jsm_ops_update_rotation', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         rotationId: str(args.rotationId),

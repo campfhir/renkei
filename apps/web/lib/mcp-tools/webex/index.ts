@@ -337,7 +337,8 @@ export async function registerWebexUserTools(
         })
         .execute();
 
-      logger.info('[Tool] webex_capture_message captured', {
+      logger.info('webex_capture_message captured', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         messageId,
       });
@@ -387,7 +388,8 @@ export async function registerWebexUserTools(
           ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
             (body as Record<string, unknown>)
           : {};
-      logger.info('[Tool] webex_send_message sent', {
+      logger.info('webex_send_message sent', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         roomId: str(sent.roomId),
       });

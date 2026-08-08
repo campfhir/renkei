@@ -342,7 +342,11 @@ export async function refreshAtlassianTokenDirect(
 > {
   const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!encryptionKeyResult.ok) {
-    logger.error('[Refresh] Failed to parse encryption key', { tenantId, accountId });
+    logger.error('Failed to parse encryption key', {
+      component: 'grants/refresh',
+      tenantId,
+      accountId,
+    });
     return err('REFRESH_FAILED' as const);
   }
 
@@ -354,7 +358,8 @@ export async function refreshAtlassianTokenDirect(
     encryptionKeyResult.val
   );
   if (!configResult.ok || !configResult.val?.secrets.clientSecret) {
-    logger.error('[Refresh] Atlassian connector config missing; cannot refresh', {
+    logger.error('Atlassian connector config missing; cannot refresh', {
+      component: 'grants/refresh',
       tenantId,
       accountId,
     });

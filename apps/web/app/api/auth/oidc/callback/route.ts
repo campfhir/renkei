@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
@@ -112,7 +113,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         tokenEndpoint = `${baseIssuer}/oauth2/v2.0/token`;
       }
     } catch (error) {
-      console.error('[OIDC] Failed to fetch discovery document:', error);
+      logger.error('Failed to fetch discovery document: {detail}', {
+        component: 'auth/oidc',
+        detail: error instanceof Error ? error.message : String(error),
+      });
       // Fallback to Azure AD OAuth2 v2.0 endpoint
       // Strip trailing /v2.0 from issuer if present to avoid duplication
       const baseIssuer = oidc.issuer.endsWith('/v2.0') ? oidc.issuer.slice(0, -5) : oidc.issuer;
@@ -155,7 +159,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const subject = typeof decoded?.sub === 'string' ? decoded.sub : null;
 
     if (!subject) {
-      console.error(`[OIDC ${tenantId}] No 'sub' claim in id_token; cannot establish session`);
+      logger.error("No 'sub' claim in id_token; cannot establish session", {
+        component: 'auth/oidc',
+        tenantId,
+      });
       return NextResponse.json(
         { error: 'Identity provider did not return a subject claim' },
         { status: 400 }

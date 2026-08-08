@@ -59,14 +59,16 @@ export async function createSession(
       .values({ id, tenant_id: tenantId, subject, roles, expires_at: expiresAt })
       .execute();
   } catch (error) {
-    logger.error('[Session] Failed to create session', {
+    logger.error('Failed to create session', {
+      component: 'auth/session',
       tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
     return err('SESSION_ERROR' as const);
   }
 
-  logger.info('[Session] Created', {
+  logger.info('Created', {
+    component: 'auth/session',
     tenantId,
     subject,
     roles,
@@ -96,7 +98,7 @@ export async function getSessionById(sessionId: string, tenantId: string): Promi
 
   if (new Date(row.expires_at) < new Date()) {
     await db.deleteFrom('sessions').where('id', '=', sessionId).execute();
-    logger.debug('[Session] Expired session discarded', { tenantId, sessionId });
+    logger.debug('Expired session discarded', { component: 'auth/session', tenantId, sessionId });
     return null;
   }
 

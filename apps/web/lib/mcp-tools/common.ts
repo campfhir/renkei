@@ -297,7 +297,8 @@ export async function jiraFetch(
   const displayName = metadata?.accountId ? getCachedDisplayName(metadata.accountId) : undefined;
   // Deliberately no token material here, not even a prefix: these records are
   // persisted by the Postgres log adapter and are readable over HTTP.
-  logger.debug('[jiraFetch] Request', {
+  logger.debug('Request', {
+    component: 'jira/fetch',
     tenantId: metadata?.tenantId,
     accountId: metadata?.accountId,
     displayName,
@@ -322,7 +323,8 @@ export async function jiraFetch(
     ...options,
     headers,
   });
-  logger.debug('[jiraFetch] Response', {
+  logger.debug('Response', {
+    component: 'jira/fetch',
     tenantId: metadata?.tenantId,
     accountId: metadata?.accountId,
     url,
@@ -332,7 +334,7 @@ export async function jiraFetch(
   // If 401, refresh token and retry
   if (response.status === 401) {
     if (!metadata) {
-      logger.warn('[jiraFetch] 401 but no token metadata for refresh', { url });
+      logger.warn('401 but no token metadata for refresh', { component: 'jira/fetch', url });
       throw new JiraApiError(
         'Jira rejected the credential and no refresh metadata was available',
         401
@@ -341,7 +343,12 @@ export async function jiraFetch(
 
     const { tenantId, accountId } = metadata;
     const refreshKey = getRefreshKey(tenantId, accountId);
-    logger.info('[jiraFetch] 401 response, refreshing token', { tenantId, accountId, url });
+    logger.info('401 response, refreshing token', {
+      component: 'jira/fetch',
+      tenantId,
+      accountId,
+      url,
+    });
 
     // Check if refresh is already in-flight
     let refreshPromise = refreshInFlight.get(refreshKey);
@@ -356,11 +363,16 @@ export async function jiraFetch(
           // safe-functions puts the error code at .err.type, not .val
           const error =
             result.err.type === 'GRANT_REVOKED' ? 'GRANT_REVOKED' : 'Token refresh failed';
-          logger.error('[jiraFetch] Token refresh failed', { tenantId, accountId, error });
+          logger.error('Token refresh failed', {
+            component: 'jira/fetch',
+            tenantId,
+            accountId,
+            error,
+          });
           throw new Error(error);
         }
 
-        logger.info('[jiraFetch] Token refresh success', { tenantId, accountId });
+        logger.info('Token refresh success', { component: 'jira/fetch', tenantId, accountId });
         // Record the new token so later calls holding the stale capture skip
         // the 401 round trip entirely.
         cacheTokenMetadata(result.val.accessToken, tenantId, accountId);
@@ -376,14 +388,15 @@ export async function jiraFetch(
     } catch (error) {
       // If grant is revoked, return 401 response to signal need for reauth
       if (error instanceof Error && error.message === 'GRANT_REVOKED') {
-        logger.warn('[jiraFetch] Grant revoked', { url });
+        logger.warn('Grant revoked', { component: 'jira/fetch', url });
         throw new JiraApiError('GRANT_REVOKED', 401, true);
       }
       throw error;
     }
 
     // Retry request with refreshed token
-    logger.debug('[jiraFetch] Retrying with refreshed token', {
+    logger.debug('Retrying with refreshed token', {
+      component: 'jira/fetch',
       tenantId: metadata.tenantId,
       accountId: metadata.accountId,
       url,
@@ -399,7 +412,8 @@ export async function jiraFetch(
       ...options,
       headers: retryHeaders,
     });
-    logger.debug('[jiraFetch] Retry response', {
+    logger.debug('Retry response', {
+      component: 'jira/fetch',
       tenantId: metadata.tenantId,
       accountId: metadata.accountId,
       url,
@@ -409,7 +423,8 @@ export async function jiraFetch(
 
   if (!response.ok) {
     const failure = await describeFailure(response);
-    logger.warn('[jiraFetch] Non-OK response', {
+    logger.warn('Non-OK response', {
+      component: 'jira/fetch',
       tenantId: metadata?.tenantId,
       accountId: metadata?.accountId,
       url,

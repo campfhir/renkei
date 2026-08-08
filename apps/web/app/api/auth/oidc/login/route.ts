@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
@@ -91,7 +92,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         authorizationEndpoint = `${baseIssuer}/oauth2/v2.0/authorize`;
       }
     } catch (error) {
-      console.error('[OIDC] Failed to fetch discovery document:', error);
+      logger.error('Failed to fetch discovery document: {detail}', {
+        component: 'auth/oidc',
+        detail: error instanceof Error ? error.message : String(error),
+      });
       // Fallback to Azure AD OAuth2 v2.0 endpoint
       // Strip trailing /v2.0 from issuer if present to avoid duplication
       const baseIssuer = oidc.issuer.endsWith('/v2.0') ? oidc.issuer.slice(0, -5) : oidc.issuer;

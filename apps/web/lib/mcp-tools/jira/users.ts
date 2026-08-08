@@ -25,7 +25,8 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_users invoked', {
+      logger.info('list_users invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -72,7 +73,8 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_user invoked', {
+      logger.info('get_user invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -128,7 +130,8 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_groups invoked', {
+      logger.info('list_groups invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -173,7 +176,8 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_group_members invoked', {
+      logger.info('list_group_members invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -226,7 +230,8 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_user_groups invoked', {
+      logger.info('get_user_groups invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

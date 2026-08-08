@@ -24,7 +24,8 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] bulk_update_issues invoked', {
+      logger.info('bulk_update_issues invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -108,7 +109,8 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] bulk_transition_issues invoked', {
+      logger.info('bulk_transition_issues invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

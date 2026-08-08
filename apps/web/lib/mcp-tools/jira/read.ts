@@ -86,28 +86,34 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (_args: Record<string, unknown>) => {
       const cachedDisplayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] whoami invoked', {
+      logger.info('whoami invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName: cachedDisplayName,
         siteUrl: context.siteUrl,
       });
       try {
-        logger.debug('[Tool] whoami fetching user info', {
+        logger.debug('whoami fetching user info', {
+          component: 'mcp/tool',
           url: `${context.apiBaseUrl}/rest/api/3/myself`,
         });
         const response = await jiraFetch(
           `${context.apiBaseUrl}/rest/api/3/myself`,
           context.accessToken
         );
-        logger.debug('[Tool] whoami fetch status', {
+        logger.debug('whoami fetch status', {
+          component: 'mcp/tool',
           status: response.status,
           statusText: response.statusText,
         });
         const me = await response.json();
-        logger.debug('[Tool] whoami response', { data: me });
+        logger.debug('whoami response', { component: 'mcp/tool', data: me });
         if (!isRecord(me)) {
-          logger.error('[Tool] whoami invalid response format', { received: typeof me });
+          logger.error('whoami invalid response format', {
+            component: 'mcp/tool',
+            received: typeof me,
+          });
           return {
             content: [{ type: 'text' as const, text: 'Invalid response from API' }],
             isError: true,
@@ -127,10 +133,11 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           `Account ID: ${accountId}`,
           `Site: ${context.siteUrl}`,
         ];
-        logger.info('[Tool] whoami success', { displayName, accountId });
+        logger.info('whoami success', { component: 'mcp/tool', displayName, accountId });
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        logger.error('[Tool] whoami error', {
+        logger.error('whoami error', {
+          component: 'mcp/tool',
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         });
@@ -162,7 +169,8 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] search_issues invoked', {
+      logger.info('search_issues invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -284,7 +292,8 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] count_issues invoked', {
+      logger.info('count_issues invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -360,7 +369,8 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_issue invoked', {
+      logger.info('get_issue invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -463,7 +473,8 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_boards invoked', {
+      logger.info('list_boards invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -532,7 +543,8 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_sprints invoked', {
+      logger.info('list_sprints invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

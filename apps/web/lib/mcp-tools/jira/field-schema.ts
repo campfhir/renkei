@@ -127,7 +127,8 @@ export async function loadFieldSchema(
       : [];
 
     schemaCache.set(key, { fields, fetchedAt: Date.now() });
-    logger.debug('[FieldSchema] Loaded', {
+    logger.debug('Loaded', {
+      component: 'jira/field-schema',
       tenantId: context.tenantId,
       accountId: context.accountId,
       fields: fields.length,
@@ -579,7 +580,8 @@ export async function enrichFieldsWithAllowedValues(
       allowedValues: allowedValuesByFieldId[field.id] || field.allowedValues,
     }));
   } catch (error) {
-    logger.debug('[FieldSchema] Error enriching fields with allowed values', {
+    logger.debug('Error enriching fields with allowed values', {
+      component: 'jira/field-schema',
       error: error instanceof Error ? error.message : String(error),
     });
     // Gracefully return fields without allowed values

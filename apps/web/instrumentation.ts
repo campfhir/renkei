@@ -16,7 +16,8 @@ export async function register() {
 
     const dbResult = getDatabase();
     if (!dbResult.ok) {
-      logger.error('[instrumentation] Failed to initialize database for bored-logs', {
+      logger.error('Failed to initialize database for bored-logs', {
+        component: 'web/instrumentation',
         error: String(dbResult.err),
       });
       return;
@@ -28,16 +29,17 @@ export async function register() {
         level: process.env.LOG_DB_LEVEL ?? 'info',
         onWarning(w) {
           if (w.type === 'attr_keys_truncated') {
-            logger.warn('[bored-logs] attribute keys truncated', {});
+            logger.warn('attribute keys truncated', { component: 'logging/adapter' });
           } else if (w.type === 'attr_value_truncated') {
-            logger.warn('[bored-logs] attribute value truncated', {});
+            logger.warn('attribute value truncated', { component: 'logging/adapter' });
           }
         },
       })
     );
 
     globalMarks.__renkeiPgLogAdapterAttached = true;
-    logger.info('[instrumentation] PostgresAdapter registered', {
+    logger.info('PostgresAdapter registered', {
+      component: 'web/instrumentation',
       level: process.env.LOG_DB_LEVEL ?? 'info',
     });
 
@@ -57,26 +59,25 @@ async function reportSchemaDrift(): Promise<void> {
   const status = await getMigrationStatus();
 
   if (status.error) {
-    logger.error('[instrumentation] Could not check migration status: {error}', {
+    logger.error('Could not check migration status: {error}', {
+      component: 'web/instrumentation',
       error: status.error,
     });
     return;
   }
 
   if (status.pending.length === 0) {
-    logger.info('[instrumentation] Schema up to date', { applied: status.applied });
+    logger.info('Schema up to date', { component: 'web/instrumentation', applied: status.applied });
     return;
   }
 
-  logger.error(
-    '[instrumentation] DATABASE SCHEMA IS BEHIND THIS BUILD — {count} migration(s) pending',
-    {
-      count: status.pending.length,
-      pending: status.pending.join(', '),
-      applied: status.applied,
-      action: MIGRATION_COMMAND,
-      consequence:
-        'Requests touching the new schema will fail until this is run. /api/health reports 503.',
-    }
-  );
+  logger.error('DATABASE SCHEMA IS BEHIND THIS BUILD — {count} migration(s) pending', {
+    component: 'web/instrumentation',
+    count: status.pending.length,
+    pending: status.pending.join(', '),
+    applied: status.applied,
+    action: MIGRATION_COMMAND,
+    consequence:
+      'Requests touching the new schema will fail until this is run. /api/health reports 503.',
+  });
 }
