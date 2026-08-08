@@ -35,6 +35,20 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
     defaultChecked: true,
   },
   {
+    scope: 'read:board-scope:jira-software',
+    label: 'View boards & backlogs',
+    hint: 'Boards, board issues, backlog, sprints via the agile API — granular scope; the classic read:jira-work does not always cover it',
+    group: 'jira',
+    defaultChecked: false,
+  },
+  {
+    scope: 'write:board-scope:jira-software',
+    label: 'Move issues on boards',
+    hint: 'Move issues between board and backlog — granular scope',
+    group: 'jira',
+    defaultChecked: false,
+  },
+  {
     scope: 'read:servicedesk-request',
     label: 'Read requests',
     hint: 'Service desk request read tools',

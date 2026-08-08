@@ -23,6 +23,13 @@ const USER_DIRECTORY_TOOLS = new Set([
 /**
  * Classic Jira scope resolution: reads need read:jira-work, mutations add
  * write:jira-work, and the user-directory tools need read:jira-user instead.
+ *
+ * Board/sprint tools are deliberately NOT gated on the granular
+ * read:board-scope:jira-software — classic read:jira-work covers the agile
+ * API for some app configurations and not others (mixing granular scopes
+ * into the app changes how Atlassian evaluates the token), so the granular
+ * scope rides in the catalog for the token's sake while registration keys
+ * on the classic scope that always accompanies it.
  */
 function classicJiraScopes(toolName: string, readOnly: boolean): string[] {
   if (USER_DIRECTORY_TOOLS.has(toolName)) return ['read:jira-user'];
