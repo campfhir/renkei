@@ -276,23 +276,32 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     let cloudId = resource?.id ?? '';
     let siteUrl = resource?.url ?? '';
     if (!resource) {
+      // The AUTHORIZATION CODE is itself a JWT and reliably carries the
+      // site's ARI (the access token does not) — the primary fallback.
+      // Disconnect-then-reconnect deletes the caller's own prior grant, so
+      // the tenant's other grants stand in for the siteUrl: one org, one
+      // site, in practice.
+      cloudId =
+        cloudIdFromTokenClaims(code) ?? cloudIdFromTokenClaims(tokenData.access_token) ?? '';
+
       const prior = await db
         .selectFrom('provider_grants')
         .select(['metadata'])
         .where('tenant_id', '=', tenant.id)
         .where('provider', '=', 'atlassian')
-        .where('subject', '=', pendingSignIn.subject)
+        .orderBy('updated_at', 'desc')
         .executeTakeFirst();
       if (prior && typeof prior.metadata === 'object' && prior.metadata !== null) {
         const metadata = prior.metadata as Record<string, unknown>;
-        cloudId = typeof metadata.cloudId === 'string' ? metadata.cloudId : '';
-        siteUrl = typeof metadata.siteUrl === 'string' ? metadata.siteUrl : '';
+        if (!cloudId && typeof metadata.cloudId === 'string') cloudId = metadata.cloudId;
+        if (typeof metadata.siteUrl === 'string') siteUrl = metadata.siteUrl;
       }
+
       if (!cloudId) {
-        // Last resort: the access token JWT names its site ARIs.
-        cloudId = cloudIdFromTokenClaims(tokenData.access_token) ?? '';
-      }
-      if (!cloudId) {
+        logger.error('No accessible resources, no site ARI in code/token claims, no prior grant', {
+          component: 'auth/oauth',
+          tenantId: tenant.id,
+        });
         return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
       }
       logger.info('No accessible resources (jira-less scopes); using fallback site identity', {
