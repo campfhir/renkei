@@ -43,6 +43,43 @@ function isJiraUserInfo(data: unknown): data is JiraUserInfo {
   return typeof obj.accountId === 'string';
 }
 
+/** Decode a JWT's payload without verification — claims for identity hints only. */
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const parsed: unknown = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+    return typeof parsed === 'object' && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The Atlassian account id from the access token's sub claim. */
+function subFromTokenClaims(accessToken: string): string | null {
+  const claims = decodeJwtPayload(accessToken);
+  return typeof claims?.sub === 'string' && claims.sub ? claims.sub : null;
+}
+
+/**
+ * The Jira site's cloud id from the token's resource ARIs
+ * (ari:cloud:jira::site/{cloudId}) — the fallback when accessible-resources
+ * has nothing to say because the token carries no Jira scopes.
+ */
+function cloudIdFromTokenClaims(accessToken: string): string | null {
+  const claims = decodeJwtPayload(accessToken);
+  const resources = claims?.['https://id.atlassian.com/resource'];
+  if (!Array.isArray(resources)) return null;
+  for (const entry of resources) {
+    if (typeof entry !== 'string') continue;
+    const match = /^ari:cloud:jira::site\/(.+)$/.exec(entry);
+    if (match) return match[1];
+  }
+  return null;
+}
+
 function isResourceArray(data: unknown): data is Array<{ id: string; url: string; name: string }> {
   if (!Array.isArray(data)) return false;
 
@@ -230,20 +267,49 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Invalid resources response format' }, { status: 400 });
     }
 
-    // For MVP, use the first accessible resource (cloud ID)
-    const resource = resources[0];
+    // Use the first accessible resource for the site identity. A token with
+    // no Jira scopes (an ops-only or otherwise narrowed grant) surfaces no
+    // resources here, and /myself is equally closed to it — for that shape,
+    // identity comes from the access token's own claims and the site from the
+    // caller's previous grant.
+    const resource = resources[0] ?? null;
+    let cloudId = resource?.id ?? '';
+    let siteUrl = resource?.url ?? '';
     if (!resource) {
-      return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
+      const prior = await db
+        .selectFrom('provider_grants')
+        .select(['metadata'])
+        .where('tenant_id', '=', tenant.id)
+        .where('provider', '=', 'atlassian')
+        .where('subject', '=', pendingSignIn.subject)
+        .executeTakeFirst();
+      if (prior && typeof prior.metadata === 'object' && prior.metadata !== null) {
+        const metadata = prior.metadata as Record<string, unknown>;
+        cloudId = typeof metadata.cloudId === 'string' ? metadata.cloudId : '';
+        siteUrl = typeof metadata.siteUrl === 'string' ? metadata.siteUrl : '';
+      }
+      if (!cloudId) {
+        // Last resort: the access token JWT names its site ARIs.
+        cloudId = cloudIdFromTokenClaims(tokenData.access_token) ?? '';
+      }
+      if (!cloudId) {
+        return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
+      }
+      logger.info('No accessible resources (jira-less scopes); using fallback site identity', {
+        component: 'auth/oauth',
+        tenantId: tenant.id,
+        cloudId,
+      });
     }
 
     logger.info('Fetching user info', {
       component: 'auth/oauth',
       tenantId: tenant.id,
-      cloudId: resource.id,
+      cloudId,
     });
     // Get user info via API gateway path for OAuth 2.0 3LO
     const userResponse = await fetch(
-      `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/myself`,
+      `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/myself`,
       {
         headers: {
           Authorization: `Bearer ${tokenData.access_token}`,
@@ -252,43 +318,61 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     );
 
-    if (!userResponse.ok) {
-      const userErrorText = await userResponse.text();
-      const userErrorJson = await userResponse.json().catch(() => ({}));
-      logger.error('Failed to fetch user info', {
+    let accountId = '';
+    let displayName = '';
+    if (userResponse.ok) {
+      const userInfo = await userResponse.json();
+      logger.info('User info received', { component: 'auth/oauth', tenantId: tenant.id, userInfo });
+      if (!isJiraUserInfo(userInfo)) {
+        logger.error('Invalid user info response format', {
+          component: 'auth/oauth',
+          tenantId: tenant.id,
+          userInfo,
+        });
+        return NextResponse.json(
+          {
+            error: 'Invalid user info response format',
+            details: `Expected account_id, got: ${JSON.stringify(userInfo)}`,
+          },
+          { status: 400 }
+        );
+      }
+      accountId = userInfo.accountId;
+      // Extract display name from any of several possible field names
+      displayName = userInfo.displayName || userInfo.name || userInfo.accountId;
+    } else {
+      // /myself is a Jira-scoped endpoint; a jira-less token cannot call it.
+      // The access token's own sub claim is the Atlassian account id.
+      const sub = subFromTokenClaims(tokenData.access_token);
+      if (!sub) {
+        const userErrorText = await userResponse.text().catch(() => '');
+        logger.error('Failed to fetch user info and token carries no sub claim', {
+          component: 'auth/oauth',
+          tenantId: tenant.id,
+          status: userResponse.status,
+          error: userErrorText.slice(0, 300),
+        });
+        return NextResponse.json({ error: 'Failed to get user info' }, { status: 400 });
+      }
+      accountId = sub;
+      displayName = sub;
+      const priorName = await db
+        .selectFrom('provider_grants')
+        .select('display_name')
+        .where('tenant_id', '=', tenant.id)
+        .where('provider', '=', 'atlassian')
+        .where('provider_account_id', '=', sub)
+        .executeTakeFirst();
+      if (priorName?.display_name) displayName = priorName.display_name;
+      logger.info('User identity from token claims (jira-less scopes)', {
         component: 'auth/oauth',
         tenantId: tenant.id,
-        status: userResponse.status,
-        statusText: userResponse.statusText,
-        errorText: userErrorText,
-        errorJson: userErrorJson,
-        url: `https://api.atlassian.com/ex/jira/${resource.id}/rest/api/3/myself`,
+        accountId,
       });
-      return NextResponse.json({ error: 'Failed to get user info' }, { status: 400 });
     }
-
-    const userInfo = await userResponse.json();
-    logger.info('User info received', { component: 'auth/oauth', tenantId: tenant.id, userInfo });
-    if (!isJiraUserInfo(userInfo)) {
-      logger.error('Invalid user info response format', {
-        component: 'auth/oauth',
-        tenantId: tenant.id,
-        userInfo,
-      });
-      return NextResponse.json(
-        {
-          error: 'Invalid user info response format',
-          details: `Expected account_id, got: ${JSON.stringify(userInfo)}`,
-        },
-        { status: 400 }
-      );
-    }
-
-    // Extract display name from any of several possible field names
-    const displayName = userInfo.displayName || userInfo.name || userInfo.accountId;
 
     // Cache the displayName for logging
-    cacheUserDisplayName(userInfo.accountId, displayName);
+    cacheUserDisplayName(accountId, displayName);
 
     logger.info('Storing Jira grant', {
       component: 'auth/oauth',
@@ -298,10 +382,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Store encrypted Jira grant
     await setJiraGrant(tenant.id, {
       subject: pendingSignIn.subject,
-      accountId: userInfo.accountId,
+      accountId,
       atlassianClientId: atlassianApp.clientId,
-      cloudId: resource.id,
-      siteUrl: resource.url,
+      cloudId,
+      siteUrl,
       displayName,
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token || '',
