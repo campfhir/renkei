@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, ReactNode, useEffect, useState } from 'react';
+import { WEBEX_USER_SCOPE_OPTIONS, WEBEX_KMS_SCOPE } from '@/lib/webex-scopes';
 
 /**
  * The three connector forms, each a thin skin over its
@@ -445,7 +446,10 @@ function WebexUserForm({ slug }: { slug: string }) {
   const [state, reload] = useConnectorConfig<WebexUserConfig>(url);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
-  const [scopes, setScopes] = useState('');
+  // Checked scopes, spark:kms excluded — it is always sent, never a choice.
+  const [checkedScopes, setCheckedScopes] = useState<Set<string>>(
+    () => new Set(WEBEX_USER_SCOPE_OPTIONS.map((option) => option.scope))
+  );
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -454,20 +458,44 @@ function WebexUserForm({ slug }: { slug: string }) {
   useEffect(() => {
     if (!state.data) return;
     setClientId(state.data.clientId ?? '');
-    setScopes(state.data.scopes ?? '');
+    if (state.data.configured && state.data.scopes) {
+      const stored = new Set(state.data.scopes.split(/\s+/));
+      setCheckedScopes(
+        new Set(
+          WEBEX_USER_SCOPE_OPTIONS.map((option) => option.scope).filter((scope) =>
+            stored.has(scope)
+          )
+        )
+      );
+    }
     setEnabled(state.data.configured ? state.data.enabled : true);
   }, [state.data]);
+
+  function toggleScope(scope: string, on: boolean) {
+    setCheckedScopes((current) => {
+      const next = new Set(current);
+      if (on) next.add(scope);
+      else next.delete(scope);
+      return next;
+    });
+  }
 
   async function save(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setNotice(null);
     setError(null);
+    const scopes = [
+      ...WEBEX_USER_SCOPE_OPTIONS.map((option) => option.scope).filter((scope) =>
+        checkedScopes.has(scope)
+      ),
+      WEBEX_KMS_SCOPE,
+    ].join(' ');
     const failure = await putJson(url, {
       clientId: clientId.trim(),
       clientSecret: clientSecret.trim(),
       enabled,
-      ...(scopes.trim() ? { scopes: scopes.trim() } : {}),
+      scopes,
     });
     setBusy(false);
     if (failure) {
@@ -547,23 +575,36 @@ function WebexUserForm({ slug }: { slug: string }) {
             </p>
           )}
         </div>
-        <div>
-          <label htmlFor="wxu-scopes" className={labelClass}>
-            Scopes <span className="font-normal text-gray-500">(optional)</span>
-          </label>
-          <input
-            id="wxu-scopes"
-            value={scopes}
-            onChange={(e) => setScopes(e.target.value)}
-            placeholder="spark:rooms_read spark:messages_read spark:messages_write meeting:schedules_read meeting:transcripts_read meeting:recordings_read spark:kms"
-            className={`${inputClass} font-mono`}
-          />
+        <fieldset>
+          <legend className={labelClass}>What users may grant</legend>
+          <div className="space-y-2">
+            {WEBEX_USER_SCOPE_OPTIONS.map((option) => (
+              <label key={option.scope} className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={checkedScopes.has(option.scope)}
+                  onChange={(e) => toggleScope(option.scope, e.target.checked)}
+                />
+                <span>
+                  {option.label}{' '}
+                  <code className="font-mono text-xs text-gray-500">{option.scope}</code>
+                  <span className="block text-xs text-gray-500 dark:text-gray-400">
+                    {option.hint}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
           <p className={hintClass}>
-            Default covers rooms, messages (read + write), meetings, transcripts and recordings.
-            Every scope must also be selected on the Integration itself; narrow the list here and
-            the tools degrade accordingly.
+            Unchecked scopes are never requested and their tools tell the caller why. Every checked
+            scope must also be selected on the Integration at developer.webex.com — WebEx refuses
+            the authorize step otherwise.{' '}
+            <code className="font-mono text-xs">{WEBEX_KMS_SCOPE}</code> is always included
+            (required to decrypt message content). Users who already connected keep their old scopes
+            until they reconnect.
           </p>
-        </div>
+        </fieldset>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
           Enabled

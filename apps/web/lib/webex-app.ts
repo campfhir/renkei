@@ -14,18 +14,11 @@ import { logger } from '@/lib/logger';
 
 export const WEBEX_USER_CONNECTOR = 'webex-user';
 
-/**
- * The full surface the MCP tools can use: read rooms/messages, read meetings
- * with their transcripts and recordings, and write messages — the one "act"
- * scope, powering "send this Jira summary to the team" (the org's read-only
- * mode disables the sending tool regardless of scope). spark:kms rides along —
- * WebEx requires it to decrypt message content. Every scope listed here must
- * also be selected on the Integration at developer.webex.com; an org can
- * narrow this list in the connector form and the tools degrade accordingly.
- */
-export const DEFAULT_WEBEX_USER_SCOPES =
-  'spark:rooms_read spark:messages_read spark:messages_write ' +
-  'meeting:schedules_read meeting:transcripts_read meeting:recordings_read spark:kms';
+// The scope catalog lives in webex-scopes.ts (pure data, client-importable —
+// the admin form renders it as checkboxes); re-exported here for the server
+// routes that already import it from this module.
+import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
+export { DEFAULT_WEBEX_USER_SCOPES };
 
 export interface WebexUserApp {
   clientId: string;
