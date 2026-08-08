@@ -39,7 +39,7 @@ services:
     restart: unless-stopped
 
   migrate:
-    image: scotteremiaroden/jira-work-items-mcp-next:0.1.0-migrate
+    image: scotteremiaroden/renkei-migrate:latest
     container_name: renkei-migrate
     env_file:
       - .env
@@ -53,7 +53,7 @@ services:
     profiles: ['tools']
 
   worker:
-    image: scotteremiaroden/jira-work-items-mcp-next:0.1.0-worker
+    image: scotteremiaroden/renkei-worker:latest
     container_name: renkei-worker
     env_file:
       - .env
@@ -64,7 +64,7 @@ services:
     restart: unless-stopped
 
   renkei:
-    image: scotteremiaroden/jira-work-items-mcp-next:0.1.0
+    image: scotteremiaroden/renkei:latest
     container_name: renkei-app
     env_file:
       - .env

@@ -97,8 +97,8 @@ echo ""
 echo "🐳  Atlas — Docker Build"
 echo "────────────────────────"
 
-PKG_NAME="$(node -p "require('$ROOT_DIR/package.json').name")"
-PKG_VERSION="$(node -p "require('$ROOT_DIR/package.json').version")"
+PKG_NAME="$(node -p "require('$ROOT_DIR/apps/web/package.json').name")"
+PKG_VERSION="$(node -p "require('$ROOT_DIR/apps/web/package.json').version")"
 
 prompt_choice BUILD_ENV "Environment:" "${BUILD_ENV:-dev}"
 prompt_platform BUILD_PLATFORM "${BUILD_PLATFORM:-}"
@@ -143,16 +143,16 @@ else
   fi
 fi
 
-# The migrate target carries node-pg-migrate, which the runtime image
-# deliberately does not — see docker/Dockerfile. Tagged with a "-migrate"
-# suffix in the same repository rather than a second image name.
-LOCAL_MIGRATE_SEMVER_TAG="${IMAGE_NAME}:${VERSION}-migrate"
-LOCAL_MIGRATE_LATEST_TAG="${IMAGE_NAME}:latest-migrate"
+# The migrate target carries the migration runner, which the runtime image
+# deliberately does not — see docker/Dockerfile. Its own image repository
+# (renkei-migrate), versioned in step with the app.
+LOCAL_MIGRATE_SEMVER_TAG="${IMAGE_NAME}-migrate:${VERSION}"
+LOCAL_MIGRATE_LATEST_TAG="${IMAGE_NAME}-migrate:latest"
 REMOTE_MIGRATE_SEMVER_TAG=""
 REMOTE_MIGRATE_LATEST_TAG=""
 if [[ -n "$REGISTRY_PREFIX" ]]; then
-  REMOTE_MIGRATE_SEMVER_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}:${VERSION}-migrate"
-  REMOTE_MIGRATE_LATEST_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}:latest-migrate"
+  REMOTE_MIGRATE_SEMVER_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}-migrate:${VERSION}"
+  REMOTE_MIGRATE_LATEST_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}-migrate:latest"
 fi
 
 if $MULTI_PLATFORM; then
@@ -164,15 +164,15 @@ else
   fi
 fi
 
-# The worker image is the long-running queue consumer, tagged "-worker" in the
-# same repository, following the migrate image's pattern.
-LOCAL_WORKER_SEMVER_TAG="${IMAGE_NAME}:${VERSION}-worker"
-LOCAL_WORKER_LATEST_TAG="${IMAGE_NAME}:latest-worker"
+# The worker image is the long-running queue consumer — its own repository
+# (renkei-worker), versioned in step with the app.
+LOCAL_WORKER_SEMVER_TAG="${IMAGE_NAME}-worker:${VERSION}"
+LOCAL_WORKER_LATEST_TAG="${IMAGE_NAME}-worker:latest"
 REMOTE_WORKER_SEMVER_TAG=""
 REMOTE_WORKER_LATEST_TAG=""
 if [[ -n "$REGISTRY_PREFIX" ]]; then
-  REMOTE_WORKER_SEMVER_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}:${VERSION}-worker"
-  REMOTE_WORKER_LATEST_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}:latest-worker"
+  REMOTE_WORKER_SEMVER_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}-worker:${VERSION}"
+  REMOTE_WORKER_LATEST_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}-worker:latest"
 fi
 
 if $MULTI_PLATFORM; then
