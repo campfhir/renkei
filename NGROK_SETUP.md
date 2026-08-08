@@ -126,9 +126,10 @@ X-Forwarded-Proto: https
 X-Forwarded-Host: 1a2b-3c4d-5e6f-7g8h.ngrok.io
 ```
 
-These are trusted unconditionally — the app assumes it always stands behind a
-reverse proxy the operator controls. Locally, the ngrok agent forwards to
-127.0.0.1, so nothing else is talking to that port.
+When `PUBLIC_BASE_URL` is set it is authoritative and these headers are not
+consulted. Without it, they are trusted unconditionally — the app assumes it
+always stands behind a reverse proxy the operator controls. Locally, the ngrok
+agent forwards to 127.0.0.1, so nothing else is talking to that port.
 
 ## Testing Reverse Proxy Scenarios
 

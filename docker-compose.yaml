@@ -70,12 +70,12 @@ services:
       - .env
     environment:
       <<: *database-urls
-      # The app believes X-Forwarded-Proto/Host when deriving its own origin —
-      # the deployment contract is that it always sits behind a reverse proxy
-      # the operator controls. That means this port must never be reachable by
-      # untrusted clients directly, or they could choose the origin themselves:
-      # keep it published on 127.0.0.1 / an internal network, with the proxy in
-      # front. Without those headers, PUBLIC_BASE_URL from .env is used.
+      # PUBLIC_BASE_URL in .env is the authoritative origin when set — it is
+      # the address registered with every OAuth provider. Without it, the app
+      # falls back to X-Forwarded-Proto/Host from the reverse proxy, which it
+      # believes unconditionally — so this port must never be reachable by
+      # untrusted clients directly: keep it published on 127.0.0.1 / an
+      # internal network, with the proxy in front.
     ports:
       - '80:3000'
     depends_on:
