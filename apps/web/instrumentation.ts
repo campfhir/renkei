@@ -1,8 +1,17 @@
 import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
 
+// register() re-runs on dev recompiles, and the logger it decorates is a
+// process-wide singleton — without this guard each recompile would attach
+// another PostgresAdapter and every log line would be written to the table
+// once per recompile.
+// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+const globalMarks = globalThis as unknown as { __renkeiPgLogAdapterAttached?: boolean };
+
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
+    if (globalMarks.__renkeiPgLogAdapterAttached) return;
+
     const { PostgresAdapter } = await import('@campfhir/bored-logs/adapters/psql');
 
     const dbResult = getDatabase();
@@ -27,6 +36,7 @@ export async function register() {
       })
     );
 
+    globalMarks.__renkeiPgLogAdapterAttached = true;
     logger.info('[instrumentation] PostgresAdapter registered', {
       level: process.env.LOG_DB_LEVEL ?? 'info',
     });
