@@ -59,29 +59,18 @@ tenantId server-side (`tenantIdForSlug` in
 `apps/web/app/api/admin/[slug]/connectors/atlassian/route.ts` is the existing
 one; lift it into a shared helper) and 404s on an unknown slug.
 
-**`/api/mcp/*` moves to slug as well.** That URL is the artifact a user copies
-into their LLM app, so `…/api/mcp/acme/http` beats `…/api/mcp/9f3c1e70-…/http`
-for every user, every time — against a rename cost paid rarely by one org. The
-fresh database makes the switch free: `oauth_clients` is empty, so no
-registration is invalidated by moving it now.
+**`/api/mcp/*` keeps the tenantId.** Moving it to slug was considered and
+dropped. `{base}/api/mcp/{tenantId}` is the OAuth issuer — it lives in the
+discovery documents, the `next.config.ts` rewrites, and every MCP client that
+has registered — so putting the org's mutable name inside it means a rename
+invalidates that org's registrations, and a freed slug re-claimed by another
+tenant would route an old issuer at somebody else's data. Keeping the UUID
+costs nothing in practice: nobody types this URL, they copy it from a button on
+the connectors page, where a UUID reads no worse than a slug.
 
-`{base}/api/mcp/{slug}` therefore becomes the OAuth issuer, in the discovery
-documents and the `next.config.ts` rewrites. Each route resolves the segment to
-`tenants.id` once at the top and uses the UUID for every query below that — the
-segment is a lookup key, not the internal identity.
-
-**The rule that has to come with it: retired slugs are tombstoned, never
-re-claimable.** Without that, an org renaming `acme` → `acme-corp` frees `acme`
-for someone else, and an MCP client still holding the old issuer resolves to a
-_different tenant_. That is cross-tenant access, not mere breakage. Enforce it
-in whatever creates and renames a tenant, alongside the reserved-word check
-below. Renaming still invalidates that org's own registrations — clients must
-re-register — so the rename UI should say so.
-
-Routes affected (each currently does `where('id', '=', tenantId)` on the raw
-segment): `.well-known/oauth-authorization-server`,
-`.well-known/oauth-protected-resource`, `[transport]`, `authorize`, `grant`,
-`oauth/authorize`, `oauth/register`, `oauth/token`, `status`.
+So: readable identifier for humans, stable identifier for machines. Renaming an
+org never touches a live connector, and slug allocation stays a display concern
+rather than a security one.
 
 | now                                             | proposed                                                                                                                   |
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
@@ -96,8 +85,7 @@ the other sections according to the signed-in user's role.
 
 A top-level `/[slug]` catch-all sits next to real routes like
 `/create-organization`, so reserve those words — a tenant must not be able to
-claim the slug `api`, `admin`, or `create-organization`. Same list, same place
-in the code as the tombstone check above.
+claim the slug `api`, `admin`, or `create-organization`.
 
 ## Open questions
 
