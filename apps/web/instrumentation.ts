@@ -1,5 +1,6 @@
 import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
+import packageJson from './package.json';
 
 // register() re-runs on dev recompiles, and the logger it decorates is a
 // process-wide singleton — without this guard each recompile would attach
@@ -11,6 +12,17 @@ const globalMarks = globalThis as unknown as { __renkeiPgLogAdapterAttached?: bo
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     if (globalMarks.__renkeiPgLogAdapterAttached) return;
+
+    // The console adapter prints only message + context attrs, never the
+    // logger's application/version — so the build identity goes on the boot
+    // line explicitly, where `docker logs` answers "what is running" without
+    // reaching the database. First, before anything that could fail.
+    logger.info('booting {application} {version}', {
+      component: 'web/instrumentation',
+      application: packageJson.name,
+      version: packageJson.version,
+      commit: process.env.GIT_COMMIT ?? 'dev',
+    });
 
     const { PostgresAdapter } = await import('@campfhir/bored-logs/adapters/psql');
 

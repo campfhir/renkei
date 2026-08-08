@@ -14,6 +14,7 @@ import { createWebexMessageHandler } from './handlers/webex-message';
 import { createWebexAttachmentActionHandler } from './handlers/webex-attachment-action';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { logger, attachDbLogging } from './logger';
+import packageJson from '../package.json';
 
 /** Poll cadence: quick when draining a backlog, relaxed when idle. */
 const BUSY_DELAY_MS = 100;
@@ -104,7 +105,14 @@ async function maybeSweepWebhooks(): Promise<void> {
 async function main(): Promise<void> {
   attachDbLogging();
   registerConnectorHandlers();
-  logger.info('started', { component: 'worker/loop' });
+  // Console output carries only explicit attrs, so the build identity rides
+  // the boot line — `docker logs` answers "what is running" directly.
+  logger.info('started {application} {version}', {
+    component: 'worker/loop',
+    application: packageJson.name,
+    version: packageJson.version,
+    commit: process.env.GIT_COMMIT ?? 'dev',
+  });
   while (running) {
     await maybeSweepWebhooks();
     let hadWork = false;
