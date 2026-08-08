@@ -15,7 +15,11 @@ import packageJson from '../package.json';
  */
 export const logger = createLogger({
   application: packageJson.name,
-  version: packageJson.version,
+  // GIT_COMMIT is baked in by docker-build.sh: every row names the exact
+  // build that produced it (0.1.0+sha), absent in bare local runs.
+  version: process.env.GIT_COMMIT
+    ? `${packageJson.version}+${process.env.GIT_COMMIT}`
+    : packageJson.version,
 });
 
 logger.addAdapter(

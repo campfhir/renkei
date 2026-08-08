@@ -20,11 +20,14 @@ type RenkeiLogger = ReturnType<typeof createLogger>;
 const globalForLogger = globalThis as unknown as { __renkeiLogger?: RenkeiLogger };
 
 function buildLogger(): RenkeiLogger {
-  // Identity from the package manifest, not hand-maintained strings: the
-  // version in every log row is the version that actually shipped.
+  // Identity from the package manifest plus the build's git commit (baked in
+  // as GIT_COMMIT by docker-build.sh): every log row names the exact code
+  // that produced it, e.g. 0.1.0+4b9f475 — no more guessing whether the
+  // running image carries a fix.
+  const commit = process.env.GIT_COMMIT;
   const built = createLogger({
     application: packageJson.name,
-    version: packageJson.version,
+    version: commit ? `${packageJson.version}+${commit}` : packageJson.version,
   });
 
   built.addAdapter(

@@ -110,6 +110,14 @@ prompt_yes_no BUILD_WORKER "Also build the worker image (docker/Dockerfile's 'wo
 IMAGE_NAME="${ARG_NAME:-$PKG_NAME}"
 VERSION="${ARG_VERSION:-$PKG_VERSION}"
 
+# Baked into the images so every log row names the exact build. A dirty tree
+# is marked, because "which version is running" questions usually start there.
+GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+if ! git -C "$ROOT_DIR" diff --quiet 2>/dev/null; then
+  GIT_COMMIT="${GIT_COMMIT}-dirty"
+fi
+echo "Commit: $GIT_COMMIT"
+
 echo "Image: $IMAGE_NAME:$VERSION"
 
 LOCAL_SEMVER_TAG="${IMAGE_NAME}:${VERSION}"
@@ -207,6 +215,8 @@ build_target() {
         --target "$target" \
         --platform "$BUILD_PLATFORM" \
         --build-arg BUILD_ENV="$BUILD_ENV" \
+      --build-arg GIT_COMMIT="$GIT_COMMIT" \
+        --build-arg GIT_COMMIT="$GIT_COMMIT" \
         "${tag_args[@]}" \
         --push \
         "$ROOT_DIR"
@@ -216,6 +226,8 @@ build_target() {
         --target "$target" \
         --platform "$BUILD_PLATFORM" \
         --build-arg BUILD_ENV="$BUILD_ENV" \
+      --build-arg GIT_COMMIT="$GIT_COMMIT" \
+        --build-arg GIT_COMMIT="$GIT_COMMIT" \
         "${tag_args[@]}" \
         --load \
         "$ROOT_DIR"
@@ -225,6 +237,7 @@ build_target() {
       -f "$ROOT_DIR/docker/Dockerfile" \
       --target "$target" \
       --build-arg BUILD_ENV="$BUILD_ENV" \
+      --build-arg GIT_COMMIT="$GIT_COMMIT" \
       "${tag_args[@]}" \
       "$ROOT_DIR"
   fi

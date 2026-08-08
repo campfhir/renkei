@@ -7,6 +7,9 @@
 # version by fetching a @pnpm/exe.<platform> binary it cannot verify against
 # this lockfile — so the version is pinned here instead.
 ARG PNPM_VERSION=10.33.0
+# The build's git commit, baked into every stage's environment so the loggers
+# can stamp each row with the exact code that produced it (version 0.1.0+sha).
+ARG GIT_COMMIT=unknown
 
 # Build stage
 FROM node:24-alpine AS builder
@@ -81,9 +84,11 @@ USER nextjs
 EXPOSE 3000
 
 # Set environment variables
+ARG GIT_COMMIT
 ENV NODE_ENV=production \
     PORT=3000 \
-    HOST=0.0.0.0
+    HOST=0.0.0.0 \
+    GIT_COMMIT=${GIT_COMMIT}
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
@@ -119,7 +124,9 @@ RUN addgroup -g 1001 -S nodejs && \
     chown -R worker:nodejs /app
 USER worker
 
-ENV NODE_ENV=production
+ARG GIT_COMMIT
+ENV NODE_ENV=production \
+    GIT_COMMIT=${GIT_COMMIT}
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["pnpm", "--filter", "@renkei/worker", "start"]
