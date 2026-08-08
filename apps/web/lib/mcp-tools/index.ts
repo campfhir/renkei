@@ -11,7 +11,7 @@ import { registerJiraTools } from './jira';
 import { registerJiraServiceManagementTools } from './jira-service-management';
 
 export type { MCPToolContext };
-export { ok, okWithLink, toolError, cacheTokenMetadata } from './common';
+export { ok, okWithLink, toolError, cacheTokenMetadata, cacheUserDisplayName } from './common';
 
 /**
  * Register all MCP tools with the server.

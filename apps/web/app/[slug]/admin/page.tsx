@@ -20,9 +20,11 @@ export default async function AdminPage({
   const tenantRef = await tenantForSlug(slug);
   if (!tenantRef) notFound();
 
+  // Connectors is the console's center of gravity; logs live on the shared
+  // Activity page, where an operator already sees the whole tenant.
   const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
   if (access) {
-    redirect(`/${slug}/admin/logs`);
+    redirect(`/${slug}/admin/connectors`);
   }
 
   const session = await getSessionFromCookies(tenantRef.id);

@@ -14,7 +14,7 @@ import { getJiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
-import { registerAllTools, cacheTokenMetadata } from '@/lib/mcp-tools';
+import { registerAllTools, cacheTokenMetadata, cacheUserDisplayName } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
 import { getIdentityEmail } from '@/lib/identity';
@@ -175,6 +175,14 @@ const handler = async (
     // is read fresh from the database each request.
     cacheTokenMetadata(grant.accessToken, tenantId, accountId);
 
+    // Seed the display-name cache from the grant's durable record. The cache
+    // is in-memory, so a restarted container logged every tool call with
+    // displayName: null until the user happened to reconnect or ask who they
+    // are — while provider_grants.display_name held the answer all along.
+    if (grant.displayName) {
+      cacheUserDisplayName(accountId, grant.displayName);
+    }
+
     // The caller's recorded email (identity spine): what the knowledge gate
     // verifies provider access against. Absent = the gate fails closed.
     const emailResult = await getIdentityEmail(tenantId, subject);
@@ -185,7 +193,13 @@ const handler = async (
     const knowledgeAvailable = (await resolveEmbeddingProvider(tenantId)) !== null;
 
     // Check cache
-    const cacheKey = getCacheKey(tenantId, accountId, settings.readOnly, knowledgeAvailable, userEmail);
+    const cacheKey = getCacheKey(
+      tenantId,
+      accountId,
+      settings.readOnly,
+      knowledgeAvailable,
+      userEmail
+    );
     let cachedHandler = handlerCache.get(cacheKey);
 
     if (!cachedHandler) {

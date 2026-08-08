@@ -105,7 +105,6 @@ export default function AppNav({
               { href: `/${slug}/admin/grants`, label: 'Grants' },
               { href: `/${slug}/admin/people`, label: 'People' },
               { href: `/${slug}/admin/sites`, label: 'Jira sites' },
-              { href: `/${slug}/admin/logs`, label: 'Org logs' },
               { href: `/${slug}/admin/audit`, label: 'Audit' },
               { href: `/${slug}/admin/settings`, label: 'Settings' },
             ],
