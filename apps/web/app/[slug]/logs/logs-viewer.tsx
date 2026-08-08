@@ -39,6 +39,7 @@ function StatusBadge({ value }: { value: unknown }) {
 
 /** Extra columns beyond the built-in timestamp/level/message, read from `meta`. */
 const COLUMNS: ExtraColumn[] = [
+  { key: 'component', label: 'Component' },
   { key: 'displayName', label: 'User' },
   { key: 'status', label: 'Status', render: (value) => <StatusBadge value={value} /> },
 ];
