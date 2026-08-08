@@ -75,6 +75,12 @@ export const ATLASSIAN_SCOPE_OPTIONS: AtlassianScopeOption[] = [
     hint: 'Create schedule overrides, update rotations — confirm-gated wizard tools; granular scope — requires it on the Atlassian app',
     defaultChecked: false,
   },
+  {
+    scope: 'delete:ops-config:jira-service-management',
+    label: 'Delete Ops overrides',
+    hint: 'Remove schedule overrides — confirm-gated; granular scope — requires it on the Atlassian app',
+    defaultChecked: false,
+  },
 ];
 
 /**

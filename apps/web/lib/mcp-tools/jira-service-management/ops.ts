@@ -54,8 +54,9 @@ async function describeOpsFailure(response: Response): Promise<string> {
   if (response.status === 401 || response.status === 403) {
     return (
       `JSM Operations refused (${response.status}). The grant likely lacks the granular Ops ` +
-      'scopes (read:ops-alert / write:ops-alert / read:ops-config, all suffixed ' +
-      ':jira-service-management). An org admin must check them in the connector setup AND add ' +
+      'scopes (read:ops-alert / write:ops-alert / read:ops-config / write:ops-config / ' +
+      'delete:ops-config, all suffixed :jira-service-management). An org admin must check the ' +
+      'needed ones in the connector setup AND add ' +
       'them to the Atlassian app, then you reconnect Jira. If Atlassian refuses the authorize ' +
       'step after that, the classic and granular scopes may need separate app registrations.'
     );
@@ -458,6 +459,72 @@ export async function registerJsmOpsTools(
         scheduleId,
       });
       return textResult(`Override created${alias ? ` (alias ${alias})` : ''}.`);
+    }
+  );
+
+  server.registerTool(
+    'jsm_ops_delete_override',
+    {
+      title: 'Delete a schedule override (confirm-gated)',
+      description:
+        'Remove an override by its alias — coverage falls back to the rotation. Deletion is not ' +
+        'reversible: call WITHOUT confirm first to see exactly which override would go, show the ' +
+        'user, and only after their explicit yes call again with confirm=true. Requires the ' +
+        'delete:ops-config scope.',
+      inputSchema: z.object({
+        scheduleId: z.string().min(1).describe('Schedule id'),
+        alias: z.string().min(1).describe('Override alias from jsm_ops_list_overrides'),
+        confirm: z
+          .boolean()
+          .describe('true ONLY after the user approved the preview this tool returned')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const base = opsBase(context);
+      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const scheduleId = encodeURIComponent(str(args.scheduleId));
+      const alias = encodeURIComponent(str(args.alias));
+
+      // Fetch the override first — the preview must describe the real thing,
+      // and a delete of a mistyped alias should fail loudly here, not there.
+      const currentResponse = await jiraFetch(
+        `${base}/schedules/${scheduleId}/overrides/${alias}`,
+        context.accessToken
+      );
+      if (!currentResponse.ok) return errText(await describeOpsFailure(currentResponse));
+      const currentBody: unknown = await currentResponse.json().catch(() => null);
+      const override = isRecord(currentBody) ? currentBody : {};
+      const responder = isRecord(override.responder)
+        ? str(override.responder.id) || str(override.responder.type)
+        : '?';
+      const summary =
+        `${responder} covering ${str(override.startDate)} → ${str(override.endDate)}` +
+        (Array.isArray(override.rotationIds) && override.rotationIds.length
+          ? ` on rotations ${override.rotationIds.filter((r) => typeof r === 'string').join(', ')}`
+          : ' (whole schedule)');
+
+      if (args.confirm !== true) {
+        return textResult(
+          `PREVIEW — nothing deleted yet.\nWould remove: ${summary}\n` +
+            'Coverage falls back to the rotation for that window. Show this to the user; if ' +
+            'they approve, call again with confirm: true.'
+        );
+      }
+
+      const response = await jiraFetch(
+        `${base}/schedules/${scheduleId}/overrides/${alias}`,
+        context.accessToken,
+        { method: 'DELETE' }
+      );
+      if (!response.ok) return errText(await describeOpsFailure(response));
+      logger.info('[Tool] jsm_ops_delete_override', {
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        scheduleId: str(args.scheduleId),
+        alias: str(args.alias),
+      });
+      return textResult(`Override removed (${summary}).`);
     }
   );
 
