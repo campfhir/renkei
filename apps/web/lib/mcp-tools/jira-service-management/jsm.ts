@@ -7,8 +7,12 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { jiraFetch, getCachedDisplayName, requestUrl } from '../common';
 import { logger } from '@/lib/logger';
+
+function str(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
 
 export async function registerJsmTools(server: McpServer, context: MCPToolContext): Promise<void> {
   // list_service_desks
@@ -275,15 +279,19 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           };
         }
 
+        // The servicedeskapi wants issue fields nested under
+        // requestFieldValues — top-level summary (platform-API style) is
+        // "Invalid request payload". The 401 scope gate used to fire before
+        // payload validation, which is why this never surfaced until the
+        // JSM app's scopes landed.
         const body: any = {
-          serviceDeskId,
-          requestTypeId,
-          summary,
+          serviceDeskId: String(serviceDeskId),
+          requestTypeId: String(requestTypeId),
+          requestFieldValues: {
+            summary,
+            ...(description ? { description } : {}),
+          },
         };
-
-        if (description) {
-          body.description = description;
-        }
 
         const response = await jiraFetch(
           `${context.apiBaseUrl}/rest/servicedeskapi/request`,
@@ -295,7 +303,16 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         );
 
         const result = (await response.json()) as any;
-        return { content: [{ type: 'text' as const, text: `Created request ${result.issueKey}` }] };
+        // Echo what Jira actually created, not the input.
+        const key = str(result.issueKey) || '(no key in response)';
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Created request ${key}\n\n[Open in portal](${requestUrl(context.siteUrl, key)})`,
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
