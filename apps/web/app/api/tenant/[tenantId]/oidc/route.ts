@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations';
-import { getOperatorSession } from '@/lib/auth-utils';
+import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
@@ -9,17 +9,14 @@ import type { DB } from '@renkei/db';
 /**
  * Confirm the caller is an operator *of this tenant*.
  *
- * An operator session carries the tenant it was issued for, so checking only
- * that a session exists would let an operator of one tenant reconfigure
- * another's identity provider.
+ * checkAccess is tenant-scoped by construction — the session cookie is
+ * per-tenant — so an operator of one tenant cannot reconfigure another's
+ * identity provider.
  */
 async function requireTenantOperator(tenantId: string): Promise<NextResponse | null> {
-  const session = await getOperatorSession();
-  if (!session) {
+  const access = await checkAccess(tenantId, [ROLE_OPERATOR]);
+  if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  if (session.tenantId !== tenantId) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   return null;
 }
@@ -90,7 +87,8 @@ export async function POST(
     if (configured) {
       const denied = await requireTenantOperator(tenantId);
       if (denied) {
-        logger.warn('[OIDC] Rejected unauthorised attempt to change identity provider', {
+        logger.warn('Rejected unauthorised attempt to change identity provider', {
+          component: 'auth/oidc',
           tenantId,
           status: denied.status,
         });
@@ -132,12 +130,14 @@ export async function POST(
         );
       }
 
-      logger.info('[OIDC] Fetched issuer from discovery: {issuer}', {
+      logger.info('Fetched issuer from discovery: {issuer}', {
+        component: 'auth/oidc',
         tenantId,
         issuer,
       });
     } catch (error) {
-      logger.error('[OIDC] Failed to fetch discovery endpoint: {error}', {
+      logger.error('Failed to fetch discovery endpoint: {error}', {
+        component: 'auth/oidc',
         tenantId,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
@@ -161,14 +161,19 @@ export async function POST(
       // Authenticated update.
       const setResult = await setTenantOidc(tenantId, config);
       if (!setResult.ok) {
-        logger.error('[OIDC] Failed to save OIDC configuration: {error}', {
+        logger.error('Failed to save OIDC configuration: {error}', {
+          component: 'auth/oidc',
           tenantId,
           error: String(setResult.err),
         });
         return NextResponse.json({ error: 'Failed to save OIDC configuration' }, { status: 500 });
       }
 
-      logger.info('[OIDC] Identity provider updated by operator', { tenantId, issuer });
+      logger.info('Identity provider updated by operator', {
+        component: 'auth/oidc',
+        tenantId,
+        issuer,
+      });
       return NextResponse.json({ success: true, tenantId });
     }
 
@@ -177,7 +182,8 @@ export async function POST(
     // caller; they are told to authenticate instead.
     const createResult = await createTenantOidcIfAbsent(tenantId, config);
     if (!createResult.ok) {
-      logger.error('[OIDC] Failed to save OIDC configuration: {error}', {
+      logger.error('Failed to save OIDC configuration: {error}', {
+        component: 'auth/oidc',
         tenantId,
         error: String(createResult.err),
       });
@@ -185,7 +191,10 @@ export async function POST(
     }
 
     if (!createResult.val) {
-      logger.warn('[OIDC] Bootstrap lost a race with an existing configuration', { tenantId });
+      logger.warn('Bootstrap lost a race with an existing configuration', {
+        component: 'auth/oidc',
+        tenantId,
+      });
       return NextResponse.json(
         {
           error:
@@ -197,7 +206,8 @@ export async function POST(
 
     // Worth a record of its own: this is the one write to this table that
     // nobody had to authenticate for, and it decides who can become an operator.
-    logger.warn('[OIDC] Identity provider claimed for previously unconfigured tenant', {
+    logger.warn('Identity provider claimed for previously unconfigured tenant', {
+      component: 'auth/oidc',
       tenantId,
       issuer,
       clientId: body.clientId,
@@ -206,7 +216,8 @@ export async function POST(
 
     return NextResponse.json({ success: true, tenantId });
   } catch (error) {
-    logger.error('[OIDC] Config error: {error}', {
+    logger.error('Config error: {error}', {
+      component: 'auth/oidc',
       tenantId,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
@@ -266,7 +277,8 @@ export async function GET(
       userIdpValue: oidc.user_idp_value,
     });
   } catch (error) {
-    logger.error('[OIDC] Config fetch error: {error}', {
+    logger.error('Config fetch error: {error}', {
+      component: 'auth/oidc',
       tenantId,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,

@@ -1,0 +1,822 @@
+'use client';
+
+import { FormEvent, ReactNode, useEffect, useState } from 'react';
+import {
+  WEBEX_USER_SCOPE_OPTIONS,
+  WEBEX_SCOPE_GROUPS,
+  WEBEX_REQUIRED_SCOPES,
+} from '@/lib/webex-scopes';
+import {
+  ATLASSIAN_SCOPE_OPTIONS,
+  ATLASSIAN_SCOPE_GROUPS,
+  ATLASSIAN_JSM_SCOPE_OPTIONS,
+  ATLASSIAN_JSM_SCOPE_GROUPS,
+  ATLASSIAN_OFFLINE_SCOPE,
+} from '@/lib/atlassian-scopes';
+import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
+import ScopePicker from '@/components/scope-picker';
+import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
+
+/**
+ * The three connector forms, each a thin skin over its
+ * /api/admin/[slug]/connectors/* route. GET reports presence only — a stored
+ * secret comes back as `hasX: true`, never as its value — and every PUT
+ * requires the secret again, so the forms say that instead of faking a
+ * filled-in field.
+ */
+
+interface FetchState<T> {
+  loading: boolean;
+  error: string | null;
+  data: T | null;
+}
+
+function useConnectorConfig<T>(url: string): [FetchState<T>, () => void] {
+  const [state, setState] = useState<FetchState<T>>({ loading: true, error: null, data: null });
+  const [nonce, setNonce] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setState((s) => ({ ...s, loading: true, error: null }));
+    fetch(url)
+      .then(async (r) => {
+        const body = await r.json().catch(() => null);
+        if (cancelled) return;
+        if (!r.ok) {
+          const message =
+            typeof body === 'object' && body !== null && typeof body.error === 'string'
+              ? body.error
+              : `Request failed (${r.status})`;
+          setState({ loading: false, error: message, data: null });
+          return;
+        }
+        setState({ loading: false, error: null, data: body });
+      })
+      .catch(() => {
+        if (!cancelled)
+          setState({ loading: false, error: 'Could not reach the server', data: null });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [url, nonce]);
+
+  return [state, () => setNonce((n) => n + 1)];
+}
+
+async function putJson(url: string, body: unknown): Promise<string | null> {
+  try {
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (response.ok) return null;
+    const data: unknown = await response.json().catch(() => null);
+    if (typeof data === 'object' && data !== null) {
+      const record: Record<string, unknown> = { ...data };
+      if (typeof record.error === 'string') return record.error;
+    }
+    return `Request failed (${response.status})`;
+  } catch {
+    return 'Could not reach the server';
+  }
+}
+
+function Card({
+  title,
+  status,
+  children,
+}: {
+  title: string;
+  status: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+      <div className="mb-3 flex items-center justify-between gap-4">
+        <h2 className="font-semibold">{title}</h2>
+        {status}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function StatusPill({ configured, enabled }: { configured: boolean; enabled: boolean }) {
+  if (!configured) {
+    return (
+      <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+        Not configured
+      </span>
+    );
+  }
+  return enabled ? (
+    <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/40 dark:text-green-300">
+      Enabled
+    </span>
+  ) : (
+    <span className="rounded-full bg-yellow-100 px-2.5 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300">
+      Disabled
+    </span>
+  );
+}
+
+const inputClass =
+  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
+const labelClass = 'block text-sm font-medium mb-1';
+const hintClass = 'mt-1 text-xs text-gray-500 dark:text-gray-400';
+
+function SaveRow({
+  busy,
+  notice,
+  error,
+}: {
+  busy: boolean;
+  notice: string | null;
+  error: string | null;
+}) {
+  return (
+    <div className="mt-4 flex items-center gap-3">
+      <button
+        type="submit"
+        disabled={busy}
+        className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+      >
+        {busy ? 'Saving…' : 'Save'}
+      </button>
+      {notice && <span className="text-sm text-green-700 dark:text-green-300">{notice}</span>}
+      {error && <span className="text-sm text-red-700 dark:text-red-300">{error}</span>}
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------- */
+
+interface AtlassianConfig {
+  configured: boolean;
+  enabled: boolean;
+  clientId: string | null;
+  scopes: string | null;
+  redirectUri: string | null;
+  hasClientSecret: boolean;
+}
+
+function AtlassianForm({ slug }: { slug: string }) {
+  return (
+    <AtlassianAppForm
+      slug={slug}
+      connector="atlassian"
+      title="Atlassian (Jira)"
+      groups={ATLASSIAN_SCOPE_GROUPS}
+      options={ATLASSIAN_SCOPE_OPTIONS}
+    />
+  );
+}
+
+function AtlassianJsmForm({ slug }: { slug: string }) {
+  return (
+    <AtlassianAppForm
+      slug={slug}
+      connector="atlassian-jsm"
+      title="Atlassian (Service Management & Ops)"
+      groups={ATLASSIAN_JSM_SCOPE_GROUPS}
+      options={ATLASSIAN_JSM_SCOPE_OPTIONS}
+    />
+  );
+}
+
+/**
+ * One form serves both Atlassian app registrations — Jira, and "Renkei JSM"
+ * (the split exists because Atlassian's all-of scope enforcement times its
+ * consent-URL length cliff makes the combined scope union unfittable on one
+ * app). Each connector stores its own client id/secret and scope ceiling.
+ */
+function AtlassianAppForm({
+  slug,
+  connector,
+  title,
+  groups,
+  options,
+}: {
+  slug: string;
+  connector: string;
+  title: string;
+  groups: ScopeGroup[];
+  options: ScopeOption[];
+}) {
+  const url = `/api/admin/${slug}/connectors/${connector}`;
+  const [state, reload] = useConnectorConfig<AtlassianConfig>(url);
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  // Checked capability bundles, offline_access excluded — it is always sent,
+  // never a choice.
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(
+    () => new Set(options.filter((option) => option.defaultChecked).map((option) => option.id))
+  );
+  const [redirectUri, setRedirectUri] = useState('');
+  const [enabled, setEnabled] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!state.data) return;
+    setClientId(state.data.clientId ?? '');
+    if (state.data.configured && state.data.scopes) {
+      // An option is checked when the stored ceiling covers its whole bundle.
+      // A ceiling saved before the granular migration matches nothing —
+      // leave the defaults checked so re-saving lands on sane granular scopes.
+      const stored = new Set(state.data.scopes.split(/\s+/));
+      const matching = options.filter((option) => optionWithin(option, stored));
+      if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
+    }
+    setRedirectUri(state.data.redirectUri ?? '');
+    setEnabled(state.data.configured ? state.data.enabled : true);
+  }, [state.data]);
+
+  function toggleOption(optionId: string, on: boolean) {
+    setCheckedIds((current) => {
+      const next = new Set(current);
+      if (on) next.add(optionId);
+      else next.delete(optionId);
+      return next;
+    });
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    setError(null);
+    const scopes = [...scopesOfOptions(options, checkedIds), ATLASSIAN_OFFLINE_SCOPE].join(' ');
+    const failure = await putJson(url, {
+      clientId: clientId.trim(),
+      clientSecret: clientSecret.trim(),
+      enabled,
+      scopes,
+      ...(redirectUri.trim() ? { redirectUri: redirectUri.trim() } : {}),
+    });
+    setBusy(false);
+    if (failure) {
+      setError(failure);
+      return;
+    }
+    setClientSecret('');
+    setNotice('Saved');
+    reload();
+  }
+
+  if (state.loading)
+    return (
+      <Card title={title} status={null}>
+        Loading…
+      </Card>
+    );
+  if (state.error) {
+    return (
+      <Card title={title} status={null}>
+        <p className="text-sm text-red-700 dark:text-red-300">{state.error}</p>
+      </Card>
+    );
+  }
+  const config = state.data;
+
+  return (
+    <Card
+      title={title}
+      status={
+        <StatusPill configured={config?.configured ?? false} enabled={config?.enabled ?? false} />
+      }
+    >
+      <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
+        The OAuth 2.0 (3LO) app from{' '}
+        <a
+          href="https://developer.atlassian.com/console/myapps/"
+          className="text-blue-600 hover:underline dark:text-blue-400"
+          target="_blank"
+          rel="noreferrer"
+        >
+          developer.atlassian.com
+        </a>
+        . Its callback URL must be this deployment&apos;s origin +{' '}
+        <code className="font-mono text-xs">/api/oauth/callback</code>.
+      </p>
+      <form onSubmit={(e) => void save(e)} className="space-y-3">
+        <div>
+          <label htmlFor={`${connector}-client-id`} className={labelClass}>
+            Client ID
+          </label>
+          <input
+            id={`${connector}-client-id`}
+            required
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            className={`${inputClass} font-mono`}
+          />
+        </div>
+        <div>
+          <label htmlFor={`${connector}-client-secret`} className={labelClass}>
+            Client secret
+          </label>
+          <input
+            id={`${connector}-client-secret`}
+            type="password"
+            required
+            value={clientSecret}
+            onChange={(e) => setClientSecret(e.target.value)}
+            placeholder={config?.hasClientSecret ? 'Stored — re-enter to save changes' : ''}
+            className={`${inputClass} font-mono`}
+          />
+          {config?.hasClientSecret && (
+            <p className={hintClass}>
+              A secret is stored but never shown. Saving any change requires entering it again.
+            </p>
+          )}
+        </div>
+        <div>
+          <fieldset>
+            <legend className={labelClass}>What users may grant</legend>
+            <ScopePicker
+              groups={groups}
+              options={options}
+              checked={checkedIds}
+              onToggle={toggleOption}
+            />
+            <p className={hintClass}>
+              This is the ceiling: users can narrow it when they connect, never widen it. Every
+              checked scope must also be granted to the app on developer.atlassian.com — Atlassian
+              refuses the authorize step otherwise.{' '}
+              <code className="font-mono text-xs">{ATLASSIAN_OFFLINE_SCOPE}</code> is always
+              included (without it grants die within an hour). Users who already connected keep
+              their old scopes until they reconnect.
+            </p>
+          </fieldset>
+        </div>
+        <div>
+          <label htmlFor={`${connector}-redirect`} className={labelClass}>
+            Redirect URI override <span className="font-normal text-gray-500">(optional)</span>
+          </label>
+          <input
+            id={`${connector}-redirect`}
+            value={redirectUri}
+            onChange={(e) => setRedirectUri(e.target.value)}
+            placeholder="Defaults to this origin + /api/oauth/callback"
+            className={`${inputClass} font-mono`}
+          />
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          Enabled
+        </label>
+        <SaveRow busy={busy} notice={notice} error={error} />
+      </form>
+    </Card>
+  );
+}
+
+/* ----------------------------------------------------------------------- */
+
+interface WebexConfig {
+  configured: boolean;
+  enabled: boolean;
+  hasBotToken: boolean;
+  hasWebhookSecret: boolean;
+}
+
+function WebexForm({ slug }: { slug: string }) {
+  const url = `/api/admin/${slug}/connectors/webex`;
+  const [state, reload] = useConnectorConfig<WebexConfig>(url);
+  const [botToken, setBotToken] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState('');
+  // Generating reveals the field: the operator needs to see what was minted
+  // to store it in their own vault — the server will never show it again.
+  const [secretRevealed, setSecretRevealed] = useState(false);
+  const [enabled, setEnabled] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  function generateSecret() {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    setWebhookSecret(
+      Array.from(bytes)
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('')
+    );
+    setSecretRevealed(true);
+  }
+
+  useEffect(() => {
+    if (!state.data) return;
+    setEnabled(state.data.configured ? state.data.enabled : true);
+  }, [state.data]);
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    setError(null);
+    const failure = await putJson(url, {
+      botToken: botToken.trim(),
+      webhookSecret: webhookSecret.trim(),
+      enabled,
+    });
+    setBusy(false);
+    if (failure) {
+      setError(failure);
+      return;
+    }
+    setBotToken('');
+    setWebhookSecret('');
+    setSecretRevealed(false);
+    setNotice('Saved');
+    reload();
+  }
+
+  if (state.loading)
+    return (
+      <Card title="WebEx" status={null}>
+        Loading…
+      </Card>
+    );
+  if (state.error) {
+    return (
+      <Card title="WebEx" status={null}>
+        <p className="text-sm text-red-700 dark:text-red-300">{state.error}</p>
+      </Card>
+    );
+  }
+  const config = state.data;
+
+  return (
+    <Card
+      title="WebEx"
+      status={
+        <StatusPill configured={config?.configured ?? false} enabled={config?.enabled ?? false} />
+      }
+    >
+      <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
+        The org bot that watches spaces for actionable messages.
+      </p>
+      <form onSubmit={(e) => void save(e)} className="space-y-3">
+        <div>
+          <label htmlFor="wx-token" className={labelClass}>
+            Bot token
+          </label>
+          <input
+            id="wx-token"
+            type="password"
+            required
+            value={botToken}
+            onChange={(e) => setBotToken(e.target.value)}
+            placeholder={config?.hasBotToken ? 'Stored — re-enter to save changes' : ''}
+            className={`${inputClass} font-mono`}
+          />
+        </div>
+        <div>
+          <label htmlFor="wx-secret" className={labelClass}>
+            Webhook secret
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="wx-secret"
+              type={secretRevealed ? 'text' : 'password'}
+              required
+              value={webhookSecret}
+              onChange={(e) => setWebhookSecret(e.target.value)}
+              placeholder={config?.hasWebhookSecret ? 'Stored — re-enter to save changes' : ''}
+              className={`${inputClass} font-mono`}
+            />
+            <button
+              type="button"
+              onClick={generateSecret}
+              className="shrink-0 rounded-md border border-gray-300 px-3 py-2 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+            >
+              Generate
+            </button>
+          </div>
+          <p className={hintClass}>
+            A value you choose, not one WebEx issues — Renkei registers webhooks with it and WebEx
+            signs every delivery using it. Generate fills in 32 random bytes.
+            {config?.hasWebhookSecret || config?.hasBotToken
+              ? ' Secrets are stored but never shown; saving any change requires entering both again.'
+              : ''}
+          </p>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          Enabled
+        </label>
+        <SaveRow busy={busy} notice={notice} error={error} />
+      </form>
+    </Card>
+  );
+}
+
+/* ----------------------------------------------------------------------- */
+
+interface WebexUserConfig {
+  configured: boolean;
+  enabled: boolean;
+  clientId: string | null;
+  scopes: string | null;
+  hasClientSecret: boolean;
+}
+
+function WebexUserForm({ slug }: { slug: string }) {
+  const url = `/api/admin/${slug}/connectors/webex-user`;
+  const [state, reload] = useConnectorConfig<WebexUserConfig>(url);
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  // Checked scopes, spark:kms excluded — it is always sent, never a choice.
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(
+    () => new Set(WEBEX_USER_SCOPE_OPTIONS.map((option) => option.id))
+  );
+  const [enabled, setEnabled] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!state.data) return;
+    setClientId(state.data.clientId ?? '');
+    if (state.data.configured && state.data.scopes) {
+      const stored = new Set(state.data.scopes.split(/\s+/));
+      const matching = WEBEX_USER_SCOPE_OPTIONS.filter((option) => optionWithin(option, stored));
+      if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
+    }
+    setEnabled(state.data.configured ? state.data.enabled : true);
+  }, [state.data]);
+
+  function toggleOption(optionId: string, on: boolean) {
+    setCheckedIds((current) => {
+      const next = new Set(current);
+      if (on) next.add(optionId);
+      else next.delete(optionId);
+      return next;
+    });
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    setError(null);
+    const scopes = [
+      ...scopesOfOptions(WEBEX_USER_SCOPE_OPTIONS, checkedIds),
+      ...WEBEX_REQUIRED_SCOPES,
+    ].join(' ');
+    const failure = await putJson(url, {
+      clientId: clientId.trim(),
+      clientSecret: clientSecret.trim(),
+      enabled,
+      scopes,
+    });
+    setBusy(false);
+    if (failure) {
+      setError(failure);
+      return;
+    }
+    setClientSecret('');
+    setNotice('Saved');
+    reload();
+  }
+
+  if (state.loading)
+    return (
+      <Card title="WebEx (user access)" status={null}>
+        Loading…
+      </Card>
+    );
+  if (state.error) {
+    return (
+      <Card title="WebEx (user access)" status={null}>
+        <p className="text-sm text-red-700 dark:text-red-300">{state.error}</p>
+      </Card>
+    );
+  }
+  const config = state.data;
+
+  return (
+    <Card
+      title="WebEx (user access)"
+      status={
+        <StatusPill configured={config?.configured ?? false} enabled={config?.enabled ?? false} />
+      }
+    >
+      <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
+        An{' '}
+        <a
+          href="https://developer.webex.com/my-apps"
+          className="text-blue-600 hover:underline dark:text-blue-400"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Integration
+        </a>{' '}
+        (not the bot) through which each person grants Renkei read access to their own WebEx — rooms
+        they are in, messages they can see. Its redirect URI must be this deployment&apos;s origin +{' '}
+        <code className="font-mono text-xs">/api/oauth/callback</code>.
+      </p>
+      <form onSubmit={(e) => void save(e)} className="space-y-3">
+        <div>
+          <label htmlFor="wxu-client-id" className={labelClass}>
+            Client ID
+          </label>
+          <input
+            id="wxu-client-id"
+            required
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            className={`${inputClass} font-mono`}
+          />
+        </div>
+        <div>
+          <label htmlFor="wxu-client-secret" className={labelClass}>
+            Client secret
+          </label>
+          <input
+            id="wxu-client-secret"
+            type="password"
+            required
+            value={clientSecret}
+            onChange={(e) => setClientSecret(e.target.value)}
+            placeholder={config?.hasClientSecret ? 'Stored — re-enter to save changes' : ''}
+            className={`${inputClass} font-mono`}
+          />
+          {config?.hasClientSecret && (
+            <p className={hintClass}>
+              A secret is stored but never shown. Saving any change requires entering it again.
+            </p>
+          )}
+        </div>
+        <fieldset>
+          <legend className={labelClass}>What users may grant</legend>
+          <ScopePicker
+            groups={WEBEX_SCOPE_GROUPS}
+            options={WEBEX_USER_SCOPE_OPTIONS}
+            checked={checkedIds}
+            onToggle={toggleOption}
+          />
+          <p className={hintClass}>
+            This is the ceiling: users can narrow it when they connect, never widen it. Every
+            checked scope must also be selected on the Integration at developer.webex.com — WebEx
+            refuses the authorize step otherwise.{' '}
+            <code className="font-mono text-xs">{WEBEX_REQUIRED_SCOPES.join(' ')}</code> are always
+            included (identifying who granted, and decrypting message content). Users who already
+            connected keep their old scopes until they reconnect.
+          </p>
+        </fieldset>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          Enabled
+        </label>
+        <SaveRow busy={busy} notice={notice} error={error} />
+      </form>
+    </Card>
+  );
+}
+
+/* ----------------------------------------------------------------------- */
+
+interface EmbeddingsConfig {
+  configured: boolean;
+  enabled: boolean;
+  baseUrl: string | null;
+  model: string | null;
+  hasApiKey: boolean;
+}
+
+function EmbeddingsForm({ slug }: { slug: string }) {
+  const url = `/api/admin/${slug}/connectors/embeddings`;
+  const [state, reload] = useConnectorConfig<EmbeddingsConfig>(url);
+  const [baseUrl, setBaseUrl] = useState('');
+  const [model, setModel] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [enabled, setEnabled] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!state.data) return;
+    setBaseUrl(state.data.baseUrl ?? '');
+    setModel(state.data.model ?? '');
+    setEnabled(state.data.configured ? state.data.enabled : true);
+  }, [state.data]);
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    setError(null);
+    const failure = await putJson(url, {
+      baseUrl: baseUrl.trim(),
+      model: model.trim(),
+      apiKey: apiKey.trim(),
+      enabled,
+    });
+    setBusy(false);
+    if (failure) {
+      setError(failure);
+      return;
+    }
+    setApiKey('');
+    setNotice('Saved');
+    reload();
+  }
+
+  if (state.loading)
+    return (
+      <Card title="Embeddings" status={null}>
+        Loading…
+      </Card>
+    );
+  if (state.error) {
+    return (
+      <Card title="Embeddings" status={null}>
+        <p className="text-sm text-red-700 dark:text-red-300">{state.error}</p>
+      </Card>
+    );
+  }
+  const config = state.data;
+
+  return (
+    <Card
+      title="Embeddings"
+      status={
+        <StatusPill configured={config?.configured ?? false} enabled={config?.enabled ?? false} />
+      }
+    >
+      <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
+        The provider the knowledge layer uses to embed content for retrieval.
+      </p>
+      <form onSubmit={(e) => void save(e)} className="space-y-3">
+        <div>
+          <label htmlFor="em-base" className={labelClass}>
+            Base URL
+          </label>
+          <input
+            id="em-base"
+            required
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+            placeholder="https://api.openai.com/v1"
+            className={`${inputClass} font-mono`}
+          />
+        </div>
+        <div>
+          <label htmlFor="em-model" className={labelClass}>
+            Model
+          </label>
+          <input
+            id="em-model"
+            required
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="text-embedding-3-small"
+            className={`${inputClass} font-mono`}
+          />
+        </div>
+        <div>
+          <label htmlFor="em-key" className={labelClass}>
+            API key
+          </label>
+          <input
+            id="em-key"
+            type="password"
+            required
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={config?.hasApiKey ? 'Stored — re-enter to save changes' : ''}
+            className={`${inputClass} font-mono`}
+          />
+          {config?.hasApiKey && (
+            <p className={hintClass}>
+              A key is stored but never shown. Saving any change requires entering it again.
+            </p>
+          )}
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          Enabled
+        </label>
+        <SaveRow busy={busy} notice={notice} error={error} />
+      </form>
+    </Card>
+  );
+}
+
+export default function ConnectorForms({ slug }: { slug: string }) {
+  return (
+    <div className="space-y-6">
+      <AtlassianForm slug={slug} />
+      <AtlassianJsmForm slug={slug} />
+      <WebexForm slug={slug} />
+      <WebexUserForm slug={slug} />
+      <EmbeddingsForm slug={slug} />
+    </div>
+  );
+}

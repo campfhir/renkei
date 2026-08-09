@@ -20,4 +20,6 @@ export type {
 export { silentLogger } from './types';
 export { getGrant, setGrant, deleteGrant } from './store';
 export { refreshGrantTokens } from './refresh';
-export { ATLASSIAN, AtlassianAdapter, readAtlassianMetadata } from './atlassian';
+export { scopesFromAccessToken } from './token-claims';
+export { ATLASSIAN, ATLASSIAN_JSM, AtlassianAdapter, readAtlassianMetadata } from './atlassian';
+export { WEBEX_USER, WebexUserAdapter } from './webex';

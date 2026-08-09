@@ -14,11 +14,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
-import {
-  WEBEX_CONNECTOR,
-  WebexClient,
-  createWebexAccessVerifier,
-} from '@renkei/connector-webex';
+import { WEBEX_CONNECTOR, WebexClient, createWebexAccessVerifier } from '@renkei/connector-webex';
 import type { AccessVerifier } from '@renkei/gates';
 import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
 import type { MCPToolContext } from '../common';
@@ -77,7 +73,8 @@ export async function registerKnowledgeTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      logger.info('[Tool] search_knowledge invoked', {
+      logger.info('search_knowledge invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
       });
@@ -142,11 +139,18 @@ export async function registerKnowledgeTools(
         lines.push(`${hits.length} result(s), closest first:`);
         for (const [index, hit] of hits.entries()) {
           const excerpt = hit.content.length <= 500 ? hit.content : `${hit.content.slice(0, 499)}…`;
-          lines.push('', `${index + 1}. [${hit.provider}:${hit.refId}] (distance ${formatDistance(hit.distance)})`, excerpt);
+          lines.push(
+            '',
+            `${index + 1}. [${hit.provider}:${hit.refId}] (distance ${formatDistance(hit.distance)})`,
+            excerpt
+          );
         }
       }
       if (elided > 0) {
-        lines.push('', `${elided} result(s) withheld: your access could not be verified at the source.`);
+        lines.push(
+          '',
+          `${elided} result(s) withheld: your access could not be verified at the source.`
+        );
       }
 
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };

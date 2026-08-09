@@ -27,7 +27,8 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_filters invoked', {
+      logger.info('list_filters invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -35,7 +36,9 @@ export async function registerFilterTools(
       try {
         const { expand } = args;
 
-        let url = `${context.apiBaseUrl}/rest/api/3/filter/search?maxResults=50`;
+        // owner (and jql) only appear when expanded — without this every
+        // filter showed Owner: Unknown.
+        let url = `${context.apiBaseUrl}/rest/api/3/filter/search?maxResults=50&expand=owner,jql`;
         if (expand) {
           url += `&expand=${encodeURIComponent(expand as string)}`;
         }
@@ -77,7 +80,8 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_filter invoked', {
+      logger.info('get_filter invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -93,7 +97,7 @@ export async function registerFilterTools(
         }
 
         const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/filter/${filterId}`,
+          `${context.apiBaseUrl}/rest/api/3/filter/${filterId}?expand=owner,jql`,
           context.accessToken
         );
 
@@ -136,7 +140,8 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] create_filter invoked', {
+      logger.info('create_filter invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -202,7 +207,8 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] delete_filter invoked', {
+      logger.info('delete_filter invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -218,7 +224,7 @@ export async function registerFilterTools(
         }
 
         await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/filter/${filterId}`,
+          `${context.apiBaseUrl}/rest/api/3/filter/${filterId}?expand=owner,jql`,
           context.accessToken,
           { method: 'DELETE' }
         );

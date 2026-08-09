@@ -16,10 +16,11 @@
  */
 
 import { buildPushToRenkeiCard } from '@renkei/connector-webex';
-import { getPublicBaseUrl } from '@renkei/settings';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { captureMessage } from './webex-capture';
+import { cardsFeedUrl } from './feed-url';
+import { logger } from '../logger';
 import { resolveWebexContext, type WebexTenantContext } from './webex-context';
 
 export interface WebexHandlerDeps {
@@ -33,13 +34,6 @@ function payloadMessageId(event: ClaimedEvent): string | null {
   const record: Record<string, unknown> = { ...payload };
   const id = record.id;
   return typeof id === 'string' && id.length > 0 ? id : null;
-}
-
-/** Where the feed lives, for confirmation links; null before the base URL is set. */
-async function cardsFeedUrl(tenantId: string): Promise<string | null> {
-  const base = await getPublicBaseUrl();
-  if (!base.ok || !base.val) return null;
-  return `${base.val}/tenant/${tenantId}/cards`;
 }
 
 export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHandler {
@@ -85,7 +79,10 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
           : 'Captured in Renkei — review and act on it in your card feed.',
       });
       if (!posted.ok) {
-        console.warn(`[worker] could not post capture confirmation for ${message.id}`);
+        logger.warn('could not post capture confirmation', {
+          component: 'webex/ingest',
+          messageId: message.id,
+        });
       }
     } else if (outcome === 'skipped') {
       // Not issue-shaped — offer the deliberate push instead of guessing.
@@ -96,7 +93,10 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
         attachments: [buildPushToRenkeiCard({ messageId: message.id, replyTo: threadRoot })],
       });
       if (!posted.ok) {
-        console.warn(`[worker] could not post push card for ${message.id}`);
+        logger.warn('could not post push card', {
+          component: 'webex/ingest',
+          messageId: message.id,
+        });
       }
     }
     // 'duplicate': the item already exists; a second reply would be noise.

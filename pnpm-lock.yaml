@@ -39,8 +39,8 @@ importers:
   apps/web:
     dependencies:
       '@campfhir/bored-logs':
-        specifier: ^0.3.2
-        version: 0.3.2(kysely@0.29.4)(pg@8.22.0)(react@19.2.4)
+        specifier: ^0.7.1
+        version: 0.7.1(kysely@0.29.4)(pg@8.22.0)(react@19.2.4)
       '@modelcontextprotocol/server':
         specifier: ^2.0.0
         version: 2.0.0
@@ -156,6 +156,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@campfhir/bored-logs':
+        specifier: ^0.7.1
+        version: 0.7.1(kysely@0.29.4)(pg@8.22.0)(react@19.2.4)
       '@renkei/connector-config':
         specifier: workspace:*
         version: link:../../packages/connector-config
@@ -624,6 +627,18 @@ packages:
 
   '@campfhir/bored-logs@0.3.2':
     resolution: {integrity: sha512-JlJjtOem9CkrKNNfIEKzVnyLnHAIIXy6u0pWWwgiuKD8Xpc7xImcVrnVooAAdK/HRpRukJ+jrCVJEWk12TYo4w==}
+    peerDependencies:
+      kysely: '>=0.27'
+      pg: '>=8'
+      react: '>=19'
+    peerDependenciesMeta:
+      kysely:
+        optional: true
+      pg:
+        optional: true
+
+  '@campfhir/bored-logs@0.7.1':
+    resolution: {integrity: sha512-mQt9vOHpIDQUxA+zl3gWfkjxr1CO7mJvPV/HsGrSXZ+UAd6qgSOZqv+ZfQHnwAu5aihKnpUNshu6UeUbxkb6Sg==}
     peerDependencies:
       kysely: '>=0.27'
       pg: '>=8'
@@ -3931,6 +3946,13 @@ snapshots:
   '@bcoe/v8-coverage@0.2.3': {}
 
   '@campfhir/bored-logs@0.3.2(kysely@0.29.4)(pg@8.22.0)(react@19.2.4)':
+    dependencies:
+      react: 19.2.4
+    optionalDependencies:
+      kysely: 0.29.4
+      pg: 8.22.0
+
+  '@campfhir/bored-logs@0.7.1(kysely@0.29.4)(pg@8.22.0)(react@19.2.4)':
     dependencies:
       react: 19.2.4
     optionalDependencies:

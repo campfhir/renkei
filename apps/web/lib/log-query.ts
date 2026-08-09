@@ -109,7 +109,7 @@ export function buildLogQueryOptions(
   tenantId: string,
   accountId?: string,
   window: LogQueryWindow = {}
-): LogQueryOptions {
+): LogQueryOptions & { includeBinaryAttributes: boolean } {
   // Unknown names are dropped rather than passed through: the adapter rejects
   // the whole query on an unrecognised level.
   const levels = [...new Set((window.levels ?? []).filter(isKnownLevel))];
@@ -121,5 +121,10 @@ export function buildLogQueryOptions(
     end: window.end ?? undefined,
     sort: window.sort ?? 'desc',
     limit: window.limit ?? 1000,
+    // Attribute values past ~2KB live in log_attr_blob; without this the
+    // adapter never fetches them and the attribute silently vanishes from
+    // the viewer (which is how the failure request/response bodies went
+    // missing).
+    includeBinaryAttributes: true,
   };
 }

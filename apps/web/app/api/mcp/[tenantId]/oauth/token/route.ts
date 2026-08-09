@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { getDatabase } from '@renkei/db';
 import { randomUUID, createHash } from 'crypto';
@@ -88,7 +89,10 @@ export async function POST(
       );
     }
   } catch (error) {
-    console.error('[OAuth Token] Error:', error);
+    logger.error('Error: {detail}', {
+      component: 'auth/oauth-token',
+      detail: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
@@ -149,7 +153,8 @@ async function handleAuthorizationCodeGrant(
       if (secretCheck === 'unusable') {
         // Not the client's fault, and not something it can act on: no digest is
         // stored for this row, so nothing it presents can ever match.
-        console.error('[OAuth Token] Client row has no usable secret digest', {
+        logger.error('Client row has no usable secret digest', {
+          component: 'auth/oauth-token',
           client_id,
           hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
         });
@@ -271,7 +276,10 @@ async function handleAuthorizationCodeGrant(
       scope: authCode.scope || 'openid profile email',
     });
   } catch (error) {
-    console.error('[OAuth Token] Authorization code grant error:', error);
+    logger.error('Authorization code grant error: {detail}', {
+      component: 'auth/oauth-token',
+      detail: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
@@ -328,7 +336,8 @@ async function handleRefreshTokenGrant(
       if (secretCheck === 'unusable') {
         // Not the client's fault, and not something it can act on: no digest is
         // stored for this row, so nothing it presents can ever match.
-        console.error('[OAuth Token] Client row has no usable secret digest', {
+        logger.error('Client row has no usable secret digest', {
+          component: 'auth/oauth-token',
           client_id,
           hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
         });
@@ -399,7 +408,10 @@ async function handleRefreshTokenGrant(
       scope: token.scope || 'openid profile email',
     });
   } catch (error) {
-    console.error('[OAuth Token] Refresh token grant error:', error);
+    logger.error('Refresh token grant error: {detail}', {
+      component: 'auth/oauth-token',
+      detail: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

@@ -31,7 +31,8 @@ export async function registerAttachmentTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] add_attachment invoked', {
+      logger.info('add_attachment invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -70,11 +71,15 @@ export async function registerAttachmentTools(
         // Through jiraFetch, not bare fetch: an expired token gets refreshed
         // and retried instead of failing the upload, and a refusal surfaces
         // Jira's actual reason rather than a bare status text.
-        await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/attachments`, context.accessToken, {
-          method: 'POST',
-          headers: { 'X-Atlassian-Token': 'no-check' },
-          body: formData,
-        });
+        await jiraFetch(
+          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/attachments`,
+          context.accessToken,
+          {
+            method: 'POST',
+            headers: { 'X-Atlassian-Token': 'no-check' },
+            body: formData,
+          }
+        );
 
         return {
           content: [{ type: 'text' as const, text: `Attached ${filename} to ${issueKey}` }],

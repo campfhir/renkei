@@ -15,7 +15,7 @@ jest.mock('@renkei/knowledge', () => ({
   searchKnowledge: jest.fn(async () => ({ ok: true, val: { hits: [], elided: 0 } })),
 }));
 jest.mock('@renkei/settings', () => ({
-  getPublicBaseUrl: jest.fn(async () => ({ ok: true, val: null })),
+  getPublicBaseUrl: jest.fn(() => null),
 }));
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
@@ -169,8 +169,13 @@ describe('createWebexAttachmentActionHandler', () => {
   it('throws when the action cannot be fetched, so the retry budget applies', async () => {
     stubDb();
     const stub = stubClient(action());
-    stub.client = { ...stub.client, getAttachmentAction: async () => err('WEBEX_API_ERROR' as const) };
+    stub.client = {
+      ...stub.client,
+      getAttachmentAction: async () => err('WEBEX_API_ERROR' as const),
+    };
 
-    await expect(handlerWith(stub)(event())).rejects.toThrow('could not fetch WebEx attachment action');
+    await expect(handlerWith(stub)(event())).rejects.toThrow(
+      'could not fetch WebEx attachment action'
+    );
   });
 });

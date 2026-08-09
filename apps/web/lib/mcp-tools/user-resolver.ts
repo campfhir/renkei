@@ -144,7 +144,8 @@ export async function resolveAccountId(
     displayName: user.displayName,
     expiresAt: Date.now() + CACHE_TTL_MS,
   });
-  logger.debug('[UserResolver] Resolved email to accountId', {
+  logger.debug('Resolved email to accountId', {
+    component: 'jira/user-resolver',
     tenantId: context.tenantId,
     accountId,
   });

@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { jiraFetch, getCachedDisplayName } from '../common';
+import { adfToMarkdown } from './adf';
 import { logger } from '@/lib/logger';
 
 export async function registerCommentTools(
@@ -27,7 +28,8 @@ export async function registerCommentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_comments invoked', {
+      logger.info('list_comments invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -55,8 +57,15 @@ export async function registerCommentTools(
           ...comments.map((c: any) => {
             const author = c.author?.displayName || 'Unknown';
             const date = new Date(c.created).toLocaleString();
-            const text = c.body ? c.body.toString().substring(0, 100) : '';
-            return `• ${author} (${date}): ${text}...`;
+            // Comment bodies are ADF documents, not strings — .toString()
+            // rendered every one as [object Object].
+            const text = c.body ? adfToMarkdown(c.body) : '';
+            const clipped = text.length > 300 ? `${text.slice(0, 300)}…` : text;
+            // JSM projects stamp comments with jsdPublic — surfacing it makes
+            // portal visibility verifiable without eyeballing the portal.
+            const visibility =
+              c.jsdPublic === false ? ' [internal]' : c.jsdPublic === true ? ' [portal]' : '';
+            return `• ${author} (${date})${visibility} (ID: ${c.id}): ${clipped}`;
           }),
         ];
 
@@ -85,7 +94,8 @@ export async function registerCommentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] bulk_get_comments invoked', {
+      logger.info('bulk_get_comments invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -121,8 +131,15 @@ export async function registerCommentTools(
           ...comments.map((c: any) => {
             const author = c.author?.displayName || 'Unknown';
             const date = new Date(c.created).toLocaleString();
-            const text = c.body ? c.body.toString().substring(0, 100) : '';
-            return `• ${author} (${date}): ${text}...`;
+            // Comment bodies are ADF documents, not strings — .toString()
+            // rendered every one as [object Object].
+            const text = c.body ? adfToMarkdown(c.body) : '';
+            const clipped = text.length > 300 ? `${text.slice(0, 300)}…` : text;
+            // JSM projects stamp comments with jsdPublic — surfacing it makes
+            // portal visibility verifiable without eyeballing the portal.
+            const visibility =
+              c.jsdPublic === false ? ' [internal]' : c.jsdPublic === true ? ' [portal]' : '';
+            return `• ${author} (${date})${visibility} (ID: ${c.id}): ${clipped}`;
           }),
         ];
 

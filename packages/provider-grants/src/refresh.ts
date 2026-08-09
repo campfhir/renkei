@@ -16,6 +16,7 @@ import { encrypt } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { getGrant, deleteGrant } from './store';
+import { scopesFromAccessToken } from './token-claims';
 import { silentLogger } from './types';
 import type { GrantLogger, ProviderAdapter, RefreshedTokens, RefreshError } from './types';
 
@@ -160,6 +161,12 @@ export async function refreshGrantTokens(
 
     const { accessToken, refreshToken, expiresAt } = refreshed.val;
 
+    // A refresh mints a new token, so granted_scopes is re-derived from its
+    // claims — a provider quietly narrowing scopes on refresh becomes visible
+    // in the row instead of only in a downstream 401. Opaque tokens decode to
+    // null and leave the column untouched (unknown ≠ revoked).
+    const grantedScopes = scopesFromAccessToken(accessToken);
+
     const updateResult = await wrapAsync(
       () =>
         db
@@ -169,6 +176,7 @@ export async function refreshGrantTokens(
             encrypted_refresh_token: encrypt(refreshToken, encryptionKey),
             expires_at: expiresAt,
             updated_at: new Date(),
+            ...(grantedScopes ? { granted_scopes: grantedScopes } : {}),
           })
           .where('tenant_id', '=', tenantId)
           .where('provider', '=', provider)

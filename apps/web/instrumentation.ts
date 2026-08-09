@@ -1,33 +1,77 @@
 import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
+import packageJson from './package.json';
+
+// register() re-runs on dev recompiles, and the logger it decorates is a
+// process-wide singleton — without this guard each recompile would attach
+// another PostgresAdapter and every log line would be written to the table
+// once per recompile.
+// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+const globalMarks = globalThis as unknown as { __renkeiPgLogAdapterAttached?: boolean };
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
+    if (globalMarks.__renkeiPgLogAdapterAttached) return;
+
+    // The console adapter prints only message + context attrs, never the
+    // logger's application/version — so the build identity goes on the boot
+    // line explicitly, where `docker logs` answers "what is running" without
+    // reaching the database. First, before anything that could fail.
+    logger.info('booting {application} {version}', {
+      component: 'web/instrumentation',
+      application: packageJson.name,
+      version: packageJson.version,
+      commit: process.env.GIT_COMMIT ?? 'dev',
+    });
+
     const { PostgresAdapter } = await import('@campfhir/bored-logs/adapters/psql');
 
     const dbResult = getDatabase();
     if (!dbResult.ok) {
-      logger.error('[instrumentation] Failed to initialize database for bored-logs', {
+      logger.error('Failed to initialize database for bored-logs', {
+        component: 'web/instrumentation',
         error: String(dbResult.err),
       });
       return;
     }
 
-    logger.addAdapter(
-      new PostgresAdapter({
-        db: dbResult.val,
-        level: process.env.LOG_DB_LEVEL ?? 'info',
-        onWarning(w) {
-          if (w.type === 'attr_keys_truncated') {
-            logger.warn('[bored-logs] attribute keys truncated', {});
-          } else if (w.type === 'attr_value_truncated') {
-            logger.warn('[bored-logs] attribute value truncated', {});
-          }
-        },
-      })
-    );
+    // secure()-marked attributes (failed-request payloads) encrypt at rest
+    // when LOG_ENCRYPTION_KEY is set. A malformed key is reported loudly but
+    // does not stop logging — availability over confidentiality, flagged.
+    const { resolveLogCipher } = await import('@/lib/log-encryption');
+    const cipherResult = resolveLogCipher();
+    if (cipherResult.state === 'invalid') {
+      logger.error(
+        'LOG_ENCRYPTION_KEY is malformed; secure log attributes will be stored UNENCRYPTED: {error}',
+        {
+          component: 'web/instrumentation',
+          error: cipherResult.error,
+        }
+      );
+    }
+    const cipher = cipherResult.state === 'on' ? cipherResult.cipher : undefined;
 
-    logger.info('[instrumentation] PostgresAdapter registered', {
+    const adapter = new PostgresAdapter({
+      db: dbResult.val,
+      level: process.env.LOG_DB_LEVEL ?? 'info',
+      ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
+      onWarning(w) {
+        if (w.type === 'attr_keys_truncated') {
+          logger.warn('attribute keys truncated', { component: 'logging/adapter' });
+        } else if (w.type === 'attr_value_truncated') {
+          logger.warn('attribute value truncated', { component: 'logging/adapter' });
+        }
+      },
+    });
+
+    // Idempotent (CREATE IF NOT EXISTS) — brings a table set created by an
+    // older bored-logs up to the current schema on every boot.
+    await adapter.migrate();
+    logger.addAdapter(adapter);
+
+    globalMarks.__renkeiPgLogAdapterAttached = true;
+    logger.info('PostgresAdapter registered', {
+      component: 'web/instrumentation',
       level: process.env.LOG_DB_LEVEL ?? 'info',
     });
 
@@ -47,26 +91,25 @@ async function reportSchemaDrift(): Promise<void> {
   const status = await getMigrationStatus();
 
   if (status.error) {
-    logger.error('[instrumentation] Could not check migration status: {error}', {
+    logger.error('Could not check migration status: {error}', {
+      component: 'web/instrumentation',
       error: status.error,
     });
     return;
   }
 
   if (status.pending.length === 0) {
-    logger.info('[instrumentation] Schema up to date', { applied: status.applied });
+    logger.info('Schema up to date', { component: 'web/instrumentation', applied: status.applied });
     return;
   }
 
-  logger.error(
-    '[instrumentation] DATABASE SCHEMA IS BEHIND THIS BUILD — {count} migration(s) pending',
-    {
-      count: status.pending.length,
-      pending: status.pending.join(', '),
-      applied: status.applied,
-      action: MIGRATION_COMMAND,
-      consequence:
-        'Requests touching the new schema will fail until this is run. /api/health reports 503.',
-    }
-  );
+  logger.error('DATABASE SCHEMA IS BEHIND THIS BUILD — {count} migration(s) pending', {
+    component: 'web/instrumentation',
+    count: status.pending.length,
+    pending: status.pending.join(', '),
+    applied: status.applied,
+    action: MIGRATION_COMMAND,
+    consequence:
+      'Requests touching the new schema will fail until this is run. /api/health reports 503.',
+  });
 }

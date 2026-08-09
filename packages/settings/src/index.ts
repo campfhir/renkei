@@ -39,9 +39,6 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   refreshTokenTtlDays: 30,
 };
 
-
-const PUBLIC_BASE_URL_KEY = 'public_base_url';
-
 const CACHE_TTL_MS = 60_000;
 
 interface CacheEntry<T> {
@@ -50,7 +47,6 @@ interface CacheEntry<T> {
 }
 
 const orgCache = new Map<string, CacheEntry<OrgSettings>>();
-let platformBaseUrlCache: CacheEntry<string | null> | null = null;
 
 function coerce(current: unknown, fallback: boolean | number): boolean | number {
   if (typeof fallback === 'boolean') return typeof current === 'boolean' ? current : fallback;
@@ -96,7 +92,9 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     authorizationCodeTtlSeconds: Number(
       coerce(stored.get('authorization_code_ttl_seconds'), d.authorizationCodeTtlSeconds)
     ),
-    refreshTokenTtlDays: Number(coerce(stored.get('refresh_token_ttl_days'), d.refreshTokenTtlDays)),
+    refreshTokenTtlDays: Number(
+      coerce(stored.get('refresh_token_ttl_days'), d.refreshTokenTtlDays)
+    ),
   };
 
   orgCache.set(tenantId, { value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -152,64 +150,23 @@ export async function setOrgSettings(
 }
 
 /**
- * The deployment's public base URL, or null when unset — callers fall back
- * to trusted request headers (see web's getOrigin), which is also what makes
- * first-boot configuration reachable before this value exists.
+ * The deployment's public base URL from PUBLIC_BASE_URL, or null when unset —
+ * web callers then fall back to trusted proxy headers and finally the request
+ * URL (see web's getOrigin).
+ *
+ * Deliberately NOT a platform_settings row, and an exception to Decision #19's
+ * policy-is-data rule: this value gates the OIDC redirect_uri, so it must be
+ * correct before anyone can authenticate — a setting only reachable behind
+ * sign-in cannot configure sign-in. It previously lived in the database, which
+ * meant hand-seeding by SQL and silent reversion to localhost whenever the
+ * database was rebuilt.
  */
-export async function getPublicBaseUrl(): Promise<Result<string | null, 'DB_ERROR'>> {
-  if (platformBaseUrlCache && platformBaseUrlCache.expiresAt > Date.now()) {
-    return ok(platformBaseUrlCache.value);
-  }
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('platform_settings')
-        .select('value')
-        .where('key', '=', PUBLIC_BASE_URL_KEY)
-        .executeTakeFirst(),
-    'DB_ERROR' as const
-  );
-  if (!rowResult.ok) return rowResult;
-
-  const value = typeof rowResult.val?.value === 'string' ? rowResult.val.value : null;
-  platformBaseUrlCache = { value, expiresAt: Date.now() + CACHE_TTL_MS };
-  return ok(value);
-}
-
-export async function setPublicBaseUrl(url: string): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const result = await wrapAsync(
-    () =>
-      dbResult.val
-        .insertInto('platform_settings')
-        .values({
-          key: PUBLIC_BASE_URL_KEY,
-          value: JSON.stringify(url),
-          updated_at: new Date().toISOString(),
-        })
-        .onConflict((oc) =>
-          oc.column('key').doUpdateSet({
-            value: JSON.stringify(url),
-            updated_at: new Date().toISOString(),
-          })
-        )
-        .execute(),
-    'DB_ERROR' as const
-  );
-  if (!result.ok) return result;
-
-  platformBaseUrlCache = null;
-  return ok();
+export function getPublicBaseUrl(): string | null {
+  const fromEnv = process.env.PUBLIC_BASE_URL?.trim();
+  return fromEnv ? fromEnv.replace(/\/+$/, '') : null;
 }
 
 /** Test hook. */
 export function invalidateSettingsCache(): void {
   orgCache.clear();
-  platformBaseUrlCache = null;
 }

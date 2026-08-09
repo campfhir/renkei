@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
+import { resolveLogCipher } from '@/lib/log-encryption';
 import { buildLogQueryOptions } from '@/lib/log-query';
 import { getSessionFromRequest } from '@/lib/session';
+
+/** encrypt/decrypt for secure()-stored attributes, when LOG_ENCRYPTION_KEY is set. */
+function logCipherOptions() {
+  const resolved = resolveLogCipher();
+  return resolved.state === 'on'
+    ? { encrypt: resolved.cipher.encrypt, decrypt: resolved.cipher.decrypt }
+    : {};
+}
 
 export async function POST(
   request: NextRequest,
@@ -53,7 +62,7 @@ export async function POST(
     if (userRoles.has('renkei-operator')) {
       // Operator can view all logs, filter by tenant only
       const queryOptions = buildLogQueryOptions(userQuery, tenantId);
-      const adapter = new PostgresAdapter({ db });
+      const adapter = new PostgresAdapter({ db, ...logCipherOptions() });
       const result = await adapter.query(queryOptions);
 
       if (!result.ok) {
@@ -96,7 +105,7 @@ export async function POST(
 
       // User can view only their own logs
       const queryOptions = buildLogQueryOptions(userQuery, tenantId, requestedAccountId);
-      const adapter = new PostgresAdapter({ db });
+      const adapter = new PostgresAdapter({ db, ...logCipherOptions() });
       const result = await adapter.query(queryOptions);
 
       if (!result.ok) {

@@ -21,7 +21,6 @@ import { logger } from '@/lib/logger';
  *   - refresh_token grant (token refresh)
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
@@ -72,7 +71,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
   } catch (error) {
-    logger.error('[OAuth Token] Error: {error}', {
+    logger.error('Error: {error}', {
+      component: 'auth/oauth-token',
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
@@ -133,7 +133,8 @@ async function handleAuthorizationCodeGrant(
       if (secretCheck === 'unusable') {
         // Not the client's fault, and not something it can act on: no digest is
         // stored for this row, so nothing it presents can ever match.
-        console.error('[OAuth Token] Client row has no usable secret digest', {
+        logger.error('Client row has no usable secret digest', {
+          component: 'auth/oauth-token',
           client_id,
           hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
         });
@@ -247,7 +248,8 @@ async function handleAuthorizationCodeGrant(
       scope: authCode.scope || 'openid profile email',
     });
   } catch (error) {
-    logger.error('[OAuth Token] Authorization code grant error: {error}', {
+    logger.error('Authorization code grant error: {error}', {
+      component: 'auth/oauth-token',
       error: error instanceof Error ? error.message : String(error),
       clientId: client_id,
       stack: error instanceof Error ? error.stack : undefined,
@@ -305,7 +307,8 @@ async function handleRefreshTokenGrant(
       if (secretCheck === 'unusable') {
         // Not the client's fault, and not something it can act on: no digest is
         // stored for this row, so nothing it presents can ever match.
-        console.error('[OAuth Token] Client row has no usable secret digest', {
+        logger.error('Client row has no usable secret digest', {
+          component: 'auth/oauth-token',
           client_id,
           hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
         });
@@ -366,7 +369,8 @@ async function handleRefreshTokenGrant(
       scope: token.scope || 'openid profile email',
     });
   } catch (error) {
-    logger.error('[OAuth Token] Refresh token grant error: {error}', {
+    logger.error('Refresh token grant error: {error}', {
+      component: 'auth/oauth-token',
       error: error instanceof Error ? error.message : String(error),
       clientId: client_id,
       stack: error instanceof Error ? error.stack : undefined,

@@ -4,27 +4,43 @@ import { ok } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
 /**
- * Get the origin/base URL for the application, respecting reverse proxies securely.
+ * Get the origin/base URL for the application.
  *
- * Uses a defensive strategy to prevent header spoofing:
- * 1. The platform's public_base_url setting (most trustworthy — configured by
- *    an org-admin, stored in the database)
- * 2. X-Forwarded-* headers ONLY if from whitelisted proxy IPs
- * 3. Request URL (as fallback, but logs warning)
+ * Resolution order:
+ * 1. PUBLIC_BASE_URL from the environment — the deployment's declared
+ *    address. When set, it is authoritative: it is the address registered
+ *    with every OAuth provider, so nothing derived per-request may override
+ *    it. It is also the only source available with no request in hand
+ *    (server components, the worker).
+ * 2. X-Forwarded-* headers — how the reverse proxy says the request arrived.
+ *    Trusted, because the deployment contract is that this app always stands
+ *    behind a proxy the operator controls; verifying the proxy per-request is
+ *    not possible anyway (a route handler gets a Web-standard Request with no
+ *    socket underneath, and X-Forwarded-For carries what each hop appended —
+ *    the peer it saw — which for a single proxy is the client, not the
+ *    proxy). Do not publish the app port to untrusted clients directly.
+ * 3. Request URL — bare local development, where the browser talks to the
+ *    app directly and the Host header is its own.
  *
- * The database being unset (or unreachable) falls through to the header
- * chain rather than failing: origin resolution is also how the very first
- * sign-in reaches the deployment before anything has been configured.
- *
- * X-Forwarded headers are only trusted when:
- * - Request comes from a whitelisted proxy IP
- * - Both X-Forwarded-Proto and X-Forwarded-Host are present
+ * None of this comes from the database, deliberately. The origin gates the
+ * OIDC redirect_uri, so it must resolve correctly before anyone can
+ * authenticate — a setting reachable only behind sign-in cannot configure
+ * sign-in, and a database row silently vanishes with a database rebuild.
  */
 export async function getOrigin(request?: NextRequest): Promise<Result<string, 'CONFIG_ERROR'>> {
-  // Priority 1: the stored public base URL is the single source of truth.
-  const configured = await getPublicBaseUrl();
-  if (configured.ok && configured.val) {
-    return ok(configured.val);
+  // Priority 1: the deployment's declared address.
+  const configured = getPublicBaseUrl();
+  if (configured) {
+    return ok(configured);
+  }
+
+  // Priority 2: what the reverse proxy says this request's origin was.
+  if (request) {
+    const forwardedProto = request.headers.get('x-forwarded-proto');
+    const forwardedHost = request.headers.get('x-forwarded-host');
+    if (forwardedProto && forwardedHost) {
+      return ok(`${forwardedProto}://${forwardedHost}`);
+    }
   }
 
   if (!request) {
@@ -32,73 +48,7 @@ export async function getOrigin(request?: NextRequest): Promise<Result<string, '
     return ok('http://localhost:3000');
   }
 
-  // Priority 2: Check X-Forwarded headers ONLY from trusted proxies
-  const forwardedProto = request.headers.get('x-forwarded-proto');
-  const forwardedHost = request.headers.get('x-forwarded-host');
-
-  if (forwardedProto && forwardedHost && isTrustedProxy(request)) {
-    const origin = `${forwardedProto}://${forwardedHost}`;
-    console.log(`[getOrigin] Using X-Forwarded headers from trusted proxy: ${origin}`);
-    return ok(origin);
-  }
-
-  // Priority 3: Extract from request URL (development fallback)
-  // This is less safe as clients could manipulate Host header
+  // Priority 3: derive from the request URL.
   const url = new URL(request.url);
-  const origin = `${url.protocol}//${url.host}`;
-
-  if (forwardedProto || forwardedHost) {
-    console.warn(
-      `[getOrigin] X-Forwarded headers detected but source IP not whitelisted. Using request URL instead: ${origin}. ` +
-      `If behind a proxy, set TRUSTED_PROXY_IPS in env.`
-    );
-  }
-
-  return ok(origin);
-}
-
-/**
- * Check if the request comes from a whitelisted proxy IP.
- *
- * TRUSTED_PROXY_IPS stays an environment variable deliberately: whether to
- * believe a request's forwarding headers must be decided before anything
- * from the database can be trusted to have been reached correctly.
- */
-function isTrustedProxy(request: NextRequest): boolean {
-  // Get client IP from various headers (in order of precedence)
-  const clientIp =
-    request.headers.get('x-forwarded-for')?.split(',')[0].trim() ||
-    request.headers.get('x-real-ip') ||
-    request.headers.get('cf-connecting-ip') ||
-    'unknown';
-
-  // Get configured whitelist (default: localhost only for safety)
-  const trustedIpsEnv = process.env.TRUSTED_PROXY_IPS || '127.0.0.1,::1';
-  const trustedIps = trustedIpsEnv.split(',').map(ip => ip.trim());
-
-  // Check if client IP matches whitelist
-  const isTrusted = trustedIps.some(trustedIp => {
-    // Simple IP matching (handles CIDR notation minimally for basic cases)
-    if (trustedIp === clientIp) return true;
-
-    // Handle localhost aliases
-    if ((trustedIp === '127.0.0.1' || trustedIp === 'localhost') &&
-        (clientIp === '127.0.0.1' || clientIp === 'localhost' || clientIp === '::1')) {
-      return true;
-    }
-
-    // Docker: 172.17.0.0/16 is Docker's default bridge network
-    if (trustedIp === '172.17.0.1' && clientIp.startsWith('172.17.')) return true;
-
-    return false;
-  });
-
-  if (!isTrusted) {
-    console.warn(
-      `[getOrigin] X-Forwarded headers received from untrusted IP: ${clientIp}. ` +
-      `Configured trusted IPs: ${trustedIpsEnv}. Ignoring headers.`
-    );
-  }
-
-  return isTrusted;
+  return ok(`${url.protocol}//${url.host}`);
 }

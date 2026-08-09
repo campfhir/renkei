@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { sessionCookieName } from '@/lib/session';
+import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 import { randomUUID } from 'crypto';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -13,7 +15,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const db = dbResult.val;
   const { searchParams } = new URL(request.url);
   const tenantId = searchParams.get('tenantId');
-  const redirect = searchParams.get('redirect') || '/mcp';
+  // Empty means "no preference": the callback then derives the tenant's home
+  // page from its slug rather than this route hardcoding a landing.
+  const redirect = searchParams.get('redirect') || '';
 
   if (!tenantId) {
     return NextResponse.json({ error: 'Missing tenantId' }, { status: 400 });
@@ -67,7 +71,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .execute();
 
     // Fetch OIDC discovery document to get the authorization endpoint
-    const discoveryUrl = new URL('/.well-known/openid-configuration', oidc.issuer).toString();
+    const discoveryUrl = oidcDiscoveryUrl(oidc.issuer);
     let authorizationEndpoint: string;
 
     console.log(`[OIDC] Fetching discovery from: ${discoveryUrl}`);
@@ -88,7 +92,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         authorizationEndpoint = `${baseIssuer}/oauth2/v2.0/authorize`;
       }
     } catch (error) {
-      console.error('[OIDC] Failed to fetch discovery document:', error);
+      logger.error('Failed to fetch discovery document: {detail}', {
+        component: 'auth/oidc',
+        detail: error instanceof Error ? error.message : String(error),
+      });
       // Fallback to Azure AD OAuth2 v2.0 endpoint
       // Strip trailing /v2.0 from issuer if present to avoid duplication
       const baseIssuer = oidc.issuer.endsWith('/v2.0') ? oidc.issuer.slice(0, -5) : oidc.issuer;

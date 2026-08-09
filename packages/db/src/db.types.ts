@@ -148,6 +148,10 @@ export interface PendingOidcSignin {
   expires_at: Timestamp;
   id: string;
   nonce: string;
+  /** Which provider's OAuth flow this state belongs to; null means Atlassian. */
+  provider: string | null;
+  /** Space-separated scopes the flow requested; null predates narrowing. */
+  scopes: string | null;
   state: string;
   subject: string | null;
   tenant_id: string;
@@ -172,7 +176,10 @@ export interface ProviderGrants {
   metadata: Generated<Json>;
   provider: string;
   provider_account_id: string;
-  scopes: Generated<string[]>;
+  /** What the (possibly user-narrowed) authorize step asked the provider for. */
+  requested_scopes: Generated<string[]>;
+  /** What the minted token actually carries, decoded from its claims; null = opaque token, unknown. */
+  granted_scopes: string[] | null;
   subject: string | null;
   tenant_id: string;
   updated_at: Generated<Timestamp>;

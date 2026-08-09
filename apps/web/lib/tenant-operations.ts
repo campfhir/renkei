@@ -7,6 +7,7 @@ import { readConnectorConfigCached } from '@renkei/connector-config';
 import {
   ATLASSIAN,
   AtlassianAdapter,
+  ATLASSIAN_JSM,
   getGrant,
   setGrant,
   readAtlassianMetadata,
@@ -34,7 +35,10 @@ export interface JiraGrant {
   accessToken: string;
   refreshToken: string;
   expiresAt: string;
-  scopes: string[];
+  /** What the (possibly user-narrowed) authorize step asked Atlassian for. */
+  requestedScopes: string[];
+  /** What the minted token actually carries, from its claims; null = unknown. */
+  grantedScopes: string[] | null;
   /**
    * OIDC subject of the signed-in user who connected this grant. Null only for
    * rows created before grants were owned — those are unusable and must not be
@@ -279,7 +283,8 @@ export async function setJiraGrant(
       accessToken: grant.accessToken,
       refreshToken: grant.refreshToken,
       expiresAt: grant.expiresAt,
-      scopes: grant.scopes,
+      requestedScopes: grant.requestedScopes,
+      grantedScopes: grant.grantedScopes,
       // Site identity is Atlassian-specific, so it lives in metadata rather
       // than as columns every other provider would leave NULL.
       metadata: { cloudId: grant.cloudId, siteUrl: grant.siteUrl },
@@ -318,7 +323,8 @@ export async function getJiraGrant(
     accessToken: grant.accessToken,
     refreshToken: grant.refreshToken,
     expiresAt: grant.expiresAt,
-    scopes: grant.scopes,
+    requestedScopes: grant.requestedScopes,
+    grantedScopes: grant.grantedScopes,
   });
 }
 /**
@@ -333,7 +339,10 @@ export async function getJiraGrant(
  */
 export async function refreshAtlassianTokenDirect(
   tenantId: string,
-  accountId: string
+  accountId: string,
+  // Which Atlassian app's grant to refresh: ATLASSIAN (Jira) or
+  // ATLASSIAN_JSM — each has its own client secret in connector config.
+  provider: string = ATLASSIAN
 ): Promise<
   Result<
     { accessToken: string; refreshToken: string; expiresAt: Date },
@@ -342,25 +351,31 @@ export async function refreshAtlassianTokenDirect(
 > {
   const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!encryptionKeyResult.ok) {
-    logger.error('[Refresh] Failed to parse encryption key', { tenantId, accountId });
-    return err('REFRESH_FAILED' as const);
-  }
-
-  // The client secret is org connector configuration in the database, like
-  // the rest of the Atlassian app registration.
-  const configResult = await readConnectorConfigCached(
-    tenantId,
-    ATLASSIAN,
-    encryptionKeyResult.val
-  );
-  if (!configResult.ok || !configResult.val?.secrets.clientSecret) {
-    logger.error('[Refresh] Atlassian connector config missing; cannot refresh', {
+    logger.error('Failed to parse encryption key', {
+      component: 'grants/refresh',
       tenantId,
       accountId,
     });
     return err('REFRESH_FAILED' as const);
   }
 
-  const adapter = new AtlassianAdapter(configResult.val.secrets.clientSecret);
+  // The client secret is org connector configuration in the database, like
+  // the rest of the Atlassian app registration.
+  const connector = provider === ATLASSIAN_JSM ? ATLASSIAN_JSM : ATLASSIAN;
+  const configResult = await readConnectorConfigCached(
+    tenantId,
+    connector,
+    encryptionKeyResult.val
+  );
+  if (!configResult.ok || !configResult.val?.secrets.clientSecret) {
+    logger.error('Atlassian connector config missing; cannot refresh', {
+      component: 'grants/refresh',
+      tenantId,
+      accountId,
+    });
+    return err('REFRESH_FAILED' as const);
+  }
+
+  const adapter = new AtlassianAdapter(configResult.val.secrets.clientSecret, provider);
   return refreshGrantTokens(adapter, tenantId, accountId, encryptionKeyResult.val, logger);
 }

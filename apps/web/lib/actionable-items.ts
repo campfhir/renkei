@@ -22,8 +22,7 @@ export interface CreateIssueArgs {
 }
 
 export type ExecutionResult =
-  | { ok: true; issueKey: string; url: string }
-  | { ok: false; error: string };
+  { ok: true; issueKey: string; url: string } | { ok: false; error: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -73,7 +72,7 @@ export async function executeCreateIssue(
   }
   const grant = grantResult.val;
 
-  cacheTokenMetadata(grant.accessToken, tenantId, grant.accountId);
+  cacheTokenMetadata(grant.accessToken, tenantId, grant.accountId, grant.subject ?? undefined);
   const apiBaseUrl = `https://api.atlassian.com/ex/jira/${grant.cloudId}`;
 
   try {
@@ -92,7 +91,8 @@ export async function executeCreateIssue(
     const issueKey = isRecord(created) && typeof created.key === 'string' ? created.key : null;
     if (!issueKey) return { ok: false, error: 'Jira did not return an issue key' };
 
-    logger.info('[ActionableItems] Issue created from approved card', {
+    logger.info('Issue created from approved card', {
+      component: 'cards/execute',
       tenantId,
       subject,
       issueKey,
@@ -100,7 +100,12 @@ export async function executeCreateIssue(
     return { ok: true, issueKey, url: `${grant.siteUrl}/browse/${issueKey}` };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.warn('[ActionableItems] Issue creation failed', { tenantId, subject, error: message });
+    logger.warn('Issue creation failed', {
+      component: 'cards/execute',
+      tenantId,
+      subject,
+      error: message,
+    });
     return { ok: false, error: message };
   }
 }

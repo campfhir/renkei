@@ -151,7 +151,7 @@ export async function resolveAccessToken(
 
   if (new Date(row.expires_at) < new Date()) {
     await db.deleteFrom('oauth_access_tokens').where('token_hash', '=', tokenHash).execute();
-    logger.debug('[MCP Token] Expired access token discarded', { tenantId });
+    logger.debug('Expired access token discarded', { component: 'mcp/token', tenantId });
     return null;
   }
 

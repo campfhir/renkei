@@ -8,6 +8,8 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { jiraFetch, getCachedDisplayName, issueUrl } from '../common';
+import { adfToMarkdown } from './adf';
+import { markdownToAdf } from './markdown';
 import { logger } from '@/lib/logger';
 
 export async function registerWorklogTools(
@@ -27,7 +29,8 @@ export async function registerWorklogTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_worklogs invoked', {
+      logger.info('list_worklogs invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -56,7 +59,8 @@ export async function registerWorklogTools(
             const author = w.author?.displayName || 'Unknown';
             const duration = w.timeSpent || 'N/A';
             const started = w.started ? new Date(w.started).toLocaleDateString() : 'N/A';
-            return `• ${author}: ${duration} (${started})${w.comment ? ` - ${w.comment}` : ''}`;
+            // Worklog comments are ADF documents — flattened, not stringified.
+            return `• ${author}: ${duration} (${started}) (ID: ${w.id})${w.comment ? ` - ${adfToMarkdown(w.comment)}` : ''}`;
           }),
         ];
 
@@ -93,7 +97,8 @@ export async function registerWorklogTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] create_worklog invoked', {
+      logger.info('create_worklog invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -118,7 +123,8 @@ export async function registerWorklogTools(
         };
 
         if (comment) {
-          body.comment = comment as string;
+          // The v3 worklog API takes ADF here, not a plain string.
+          body.comment = markdownToAdf(comment as string);
         }
         if (started) {
           body.started = started as string;
@@ -168,7 +174,8 @@ export async function registerWorklogTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] delete_worklog invoked', {
+      logger.info('delete_worklog invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

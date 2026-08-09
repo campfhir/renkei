@@ -13,6 +13,8 @@ import { handlerFor, registerHandler } from './handlers';
 import { createWebexMessageHandler } from './handlers/webex-message';
 import { createWebexAttachmentActionHandler } from './handlers/webex-attachment-action';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
+import { logger, attachPersistentLogging } from './logger';
+import packageJson from '../package.json';
 
 /** Poll cadence: quick when draining a backlog, relaxed when idle. */
 const BUSY_DELAY_MS = 100;
@@ -26,10 +28,18 @@ async function processOne(): Promise<boolean> {
 
   const handler = handlerFor(event);
   if (!handler) {
-    const disposition = await failEvent(event, `no handler registered for ${event.source}/${event.type}`);
-    console.warn(
-      `[worker] no handler for ${event.source}/${event.type} (event ${event.id}, attempt ${event.attempts}) → ${disposition.status}`
+    const disposition = await failEvent(
+      event,
+      `no handler registered for ${event.source}/${event.type}`
     );
+    logger.warn('no handler for {source}/{type} (event {eventId}, attempt {attempts}) → {status}', {
+      component: 'worker/loop',
+      source: event.source,
+      type: event.type,
+      eventId: event.id,
+      attempts: event.attempts,
+      status: disposition.status,
+    });
     return true;
   }
 
@@ -39,8 +49,17 @@ async function processOne(): Promise<boolean> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const disposition = await failEvent(event, message);
-    console.error(
-      `[worker] event ${event.id} (${event.source}/${event.type}) failed on attempt ${event.attempts}: ${message} → ${disposition.status}`
+    logger.error(
+      'event {eventId} ({source}/{type}) failed on attempt {attempts}: {error} → {status}',
+      {
+        component: 'worker/loop',
+        eventId: event.id,
+        source: event.source,
+        type: event.type,
+        attempts: event.attempts,
+        error: message,
+        status: disposition.status,
+      }
     );
   }
   return true;
@@ -59,7 +78,7 @@ function sleep(ms: number): Promise<void> {
 function registerConnectorHandlers(): void {
   registerHandler('webex', 'messages.created', createWebexMessageHandler());
   registerHandler('webex', 'attachmentActions.created', createWebexAttachmentActionHandler());
-  console.log('[worker] webex handlers registered');
+  logger.info('webex handlers registered', { component: 'worker/loop' });
 }
 
 /**
@@ -76,16 +95,24 @@ async function maybeSweepWebhooks(): Promise<void> {
   try {
     await sweepWebexWebhooks();
   } catch (error) {
-    console.error(
-      '[worker] webhook health sweep error:',
-      error instanceof Error ? error.message : String(error)
-    );
+    logger.error('webhook health sweep error: {error}', {
+      component: 'webex/webhook-health',
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
 async function main(): Promise<void> {
+  await attachPersistentLogging();
   registerConnectorHandlers();
-  console.log('[worker] started');
+  // Console output carries only explicit attrs, so the build identity rides
+  // the boot line — `docker logs` answers "what is running" directly.
+  logger.info('started {application} {version}', {
+    component: 'worker/loop',
+    application: packageJson.name,
+    version: packageJson.version,
+    commit: process.env.GIT_COMMIT ?? 'dev',
+  });
   while (running) {
     await maybeSweepWebhooks();
     let hadWork = false;
@@ -94,16 +121,22 @@ async function main(): Promise<void> {
     } catch (error) {
       // A claim/complete failure here is a database problem, not an event
       // problem; back off and let the loop retry.
-      console.error('[worker] loop error:', error instanceof Error ? error.message : String(error));
+      logger.error('loop error: {error}', {
+        component: 'worker/loop',
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     await sleep(hadWork ? BUSY_DELAY_MS : IDLE_DELAY_MS);
   }
+  logger.info('stopped', { component: 'worker/loop' });
+  // Drain the adapters — the HttpAdapter's queue especially — while the
+  // database and event loop are still alive to receive them.
+  await logger.flush();
   await closeDatabase();
-  console.log('[worker] stopped');
 }
 
 function shutdown(signal: string): void {
-  console.log(`[worker] ${signal} received, finishing current event`);
+  logger.info('{signal} received, finishing current event', { component: 'worker/loop', signal });
   running = false;
 }
 

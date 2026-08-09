@@ -25,7 +25,8 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_users invoked', {
+      logger.info('list_users invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -34,17 +35,21 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
         const { query, maxResults = 10 } = args;
         const limit = Math.min(maxResults as number, 50);
 
-        let url = `${context.apiBaseUrl}/rest/api/3/users/search?maxResults=${limit}`;
-        if (query) {
-          url += `&query=${encodeURIComponent(query as string)}`;
-        }
+        // /users/search is get-ALL-users and silently ignores `query` — it
+        // returned page 1 of the directory for every search, which looked
+        // plausible and was always wrong. Filtering lives on /user/search.
+        const url = query
+          ? `${context.apiBaseUrl}/rest/api/3/user/search?maxResults=${limit}&query=${encodeURIComponent(query as string)}`
+          : `${context.apiBaseUrl}/rest/api/3/users/search?maxResults=${limit}`;
 
         const response = await jiraFetch(url, context.accessToken);
         const users = (await response.json()) as any[];
 
         const lines = [
           `Found ${users.length} users:`,
-          ...users.map((u: any) => `• ${u.displayName} (${u.emailAddress}) - ${u.accountId}`),
+          ...users.map(
+            (u: any) => `• ${u.displayName} (${u.emailAddress || 'no email'}) - ${u.accountId}`
+          ),
         ];
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
@@ -72,7 +77,8 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_user invoked', {
+      logger.info('get_user invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -128,7 +134,8 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_groups invoked', {
+      logger.info('list_groups invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -173,7 +180,8 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_group_members invoked', {
+      logger.info('list_group_members invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -226,7 +234,8 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_user_groups invoked', {
+      logger.info('get_user_groups invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -247,7 +256,9 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
         );
 
         const data = (await response.json()) as any;
-        const groups = data.values || [];
+        // /user/groups returns a plain ARRAY — `.values` on an array is the
+        // built-in iterator method, not data, so the old read crashed .map.
+        const groups = Array.isArray(data) ? data : Array.isArray(data?.values) ? data.values : [];
 
         const lines = [
           `User is member of ${groups.length} groups:`,

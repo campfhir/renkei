@@ -7,8 +7,12 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { jiraFetch, getCachedDisplayName, requestUrl } from '../common';
 import { logger } from '@/lib/logger';
+
+function str(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
 
 export async function registerJsmTools(server: McpServer, context: MCPToolContext): Promise<void> {
   // list_service_desks
@@ -24,7 +28,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_service_desks invoked', {
+      logger.info('list_service_desks invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -46,7 +51,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
 
         const lines = [
           `Found ${data.size ?? 0} service desks (showing ${desks.length}):`,
-          ...desks.map((d: any) => `• ${d.name} (${d.key})`),
+          ...desks.map((d: any) => `• ${d.name} (${d.key}) — serviceDeskId: ${d.id}`),
         ];
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
@@ -74,7 +79,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_request_types invoked', {
+      logger.info('list_request_types invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -131,7 +137,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_requests invoked', {
+      logger.info('list_requests invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -153,7 +160,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         const requests = (data.values || []).map((req: any) => ({
           key: req.issueKey,
           summary: req.summary,
-          status: req.currentStatus?.name || 'Unknown',
+          // The field is currentStatus.status — .name does not exist on this DTO.
+          status: req.currentStatus?.status || 'Unknown',
         }));
 
         const lines = [
@@ -186,7 +194,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_request invoked', {
+      logger.info('get_request invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -210,10 +219,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
 
         const lines = [
           `${issueKey}: ${request.summary}`,
-          `Status: ${request.currentStatus?.name || 'Unknown'}`,
+          `Status: ${request.currentStatus?.status || 'Unknown'}`,
           `Request Type: ${request.requestType?.name || 'Unknown'}`,
-          `Created: ${request.created}`,
-          `Updated: ${request.updated}`,
+          // Dates are DateDTO objects; there is no top-level created/updated,
+          // and the payload carries no updated date at all.
+          `Created: ${request.createdDate?.friendly ?? request.createdDate?.iso8601 ?? 'Unknown'}`,
+          `Reporter: ${request.reporter?.displayName ?? 'Unknown'}`,
         ];
 
         if (request.description) {
@@ -247,7 +258,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] create_request invoked', {
+      logger.info('create_request invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -267,15 +279,19 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           };
         }
 
+        // The servicedeskapi wants issue fields nested under
+        // requestFieldValues — top-level summary (platform-API style) is
+        // "Invalid request payload". The 401 scope gate used to fire before
+        // payload validation, which is why this never surfaced until the
+        // JSM app's scopes landed.
         const body: any = {
-          serviceDeskId,
-          requestTypeId,
-          summary,
+          serviceDeskId: String(serviceDeskId),
+          requestTypeId: String(requestTypeId),
+          requestFieldValues: {
+            summary,
+            ...(description ? { description } : {}),
+          },
         };
-
-        if (description) {
-          body.description = description;
-        }
 
         const response = await jiraFetch(
           `${context.apiBaseUrl}/rest/servicedeskapi/request`,
@@ -287,7 +303,16 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         );
 
         const result = (await response.json()) as any;
-        return { content: [{ type: 'text' as const, text: `Created request ${result.issueKey}` }] };
+        // Echo what Jira actually created, not the input.
+        const key = str(result.issueKey) || '(no key in response)';
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Created request ${key}\n\n[Open in portal](${requestUrl(context.siteUrl, key)})`,
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -316,7 +341,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] add_request_comment invoked', {
+      logger.info('add_request_comment invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -338,7 +364,9 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
             method: 'POST',
             body: JSON.stringify({
               body: comment,
-              internal: isInternal,
+              // CommentCreateDTO has exactly {body, public} — `internal` is
+              // not a key this API knows, and the sense is inverted.
+              public: !isInternal,
             }),
           }
         );
@@ -375,7 +403,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_request_transitions invoked', {
+      logger.info('list_request_transitions invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -428,7 +457,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] transition_request invoked', {
+      logger.info('transition_request invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -472,9 +502,10 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           context.accessToken,
           {
             method: 'POST',
-            body: JSON.stringify({
-              transition: { id: transition.id },
-            }),
+            // CustomerTransitionExecutionDTO is {id, additionalComment} —
+            // the platform-style {transition:{id}} wrapper 400s here. The id
+            // is a string in this API even when it looks numeric.
+            body: JSON.stringify({ id: String(transition.id) }),
           }
         );
 
@@ -508,7 +539,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_customers invoked', {
+      logger.info('list_customers invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -525,7 +557,10 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
 
         const response = await jiraFetch(
           `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer?limit=${Math.min(maxResults, 50)}`,
-          context.accessToken
+          context.accessToken,
+          // Atlassian has kept the customer endpoints "experimental" for
+          // years; without the opt-in header they answer 412.
+          { headers: { 'X-ExperimentalApi': 'opt-in' } }
         );
 
         const data = (await response.json()) as any;

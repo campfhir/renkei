@@ -10,7 +10,9 @@
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('@/lib/auth-utils', () => ({ getOperatorSession: jest.fn() }));
+// Access is role-based: checkAccess reads the tenant session, whose real
+// implementation reads cookies() — which has no request scope in a test.
+jest.mock('@/lib/session', () => ({ getSessionFromCookies: jest.fn(async () => null) }));
 jest.mock('@/lib/tenant-operations', () => ({
   setTenantOidc: jest.fn(),
   createTenantOidcIfAbsent: jest.fn(),
@@ -20,9 +22,9 @@ import { NextRequest } from 'next/server';
 import { GET, POST } from './route';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
-const { getOperatorSession: mockGetOperatorSession } = jest.requireMock<{
-  getOperatorSession: jest.Mock;
-}>('@/lib/auth-utils');
+const { getSessionFromCookies: mockGetSession } = jest.requireMock<{
+  getSessionFromCookies: jest.Mock;
+}>('@/lib/session');
 const { setTenantOidc: mockSetTenantOidc, createTenantOidcIfAbsent: mockCreateTenantOidc } =
   jest.requireMock<{ setTenantOidc: jest.Mock; createTenantOidcIfAbsent: jest.Mock }>(
     '@/lib/tenant-operations'
@@ -70,15 +72,23 @@ function params(tenantId = TENANT) {
   return { params: Promise.resolve({ tenantId }) };
 }
 
-function operatorSession(tenantId: string) {
-  return {
-    sessionId: 's1',
-    subject: 'op@example.com',
-    operator: 'Operator',
-    tenantId,
-    issuedAt: Date.now(),
-    expiresAt: Date.now() + 60_000,
-  };
+/**
+ * Grant the operator role for one tenant. The session cookie is per-tenant,
+ * so asked about any other tenant the mock answers "no session" — which is
+ * exactly how a cross-tenant caller presents in production.
+ */
+function grantOperatorFor(tenantId: string) {
+  mockGetSession.mockImplementation(async (tid: string) =>
+    tid === tenantId
+      ? {
+          id: 's1',
+          tenantId: tid,
+          subject: 'op@example.com',
+          roles: ['renkei-operator'],
+          expiresAt: new Date(Date.now() + 60_000),
+        }
+      : null
+  );
 }
 
 const VALID_BODY = {
@@ -100,7 +110,8 @@ function stubDiscovery(issuer: string | null = 'https://idp.example.com') {
 describe('tenant OIDC configuration', () => {
   beforeEach(() => {
     mockGetDatabase.mockReset();
-    mockGetOperatorSession.mockReset();
+    mockGetSession.mockReset();
+    mockGetSession.mockResolvedValue(null);
     mockSetTenantOidc.mockReset();
     mockCreateTenantOidc.mockReset();
     mockSetTenantOidc.mockResolvedValue({ ok: true, val: undefined });
@@ -111,7 +122,7 @@ describe('tenant OIDC configuration', () => {
   describe('POST on an unconfigured tenant', () => {
     it('allows an unauthenticated caller to bootstrap', async () => {
       stubDb({ existingOidc: false });
-      mockGetOperatorSession.mockResolvedValue(null);
+      mockGetSession.mockResolvedValue(null);
 
       const response = await POST(post(VALID_BODY), params());
 
@@ -125,7 +136,7 @@ describe('tenant OIDC configuration', () => {
       // The insert is conditional in the database, so a caller that lost the
       // race is told to authenticate rather than silently replacing the winner.
       stubDb({ existingOidc: false });
-      mockGetOperatorSession.mockResolvedValue(null);
+      mockGetSession.mockResolvedValue(null);
       mockCreateTenantOidc.mockResolvedValue({ ok: true, val: false });
 
       const response = await POST(post(VALID_BODY), params());
@@ -135,7 +146,7 @@ describe('tenant OIDC configuration', () => {
 
     it('still rejects a body missing required fields', async () => {
       stubDb({ existingOidc: false });
-      mockGetOperatorSession.mockResolvedValue(null);
+      mockGetSession.mockResolvedValue(null);
 
       const response = await POST(post({ clientId: 'only-this' }), params());
 
@@ -147,7 +158,7 @@ describe('tenant OIDC configuration', () => {
   describe('POST on a configured tenant', () => {
     it('rejects an unauthenticated caller', async () => {
       stubDb({ existingOidc: true });
-      mockGetOperatorSession.mockResolvedValue(null);
+      mockGetSession.mockResolvedValue(null);
 
       const response = await POST(post(VALID_BODY), params());
 
@@ -158,17 +169,20 @@ describe('tenant OIDC configuration', () => {
 
     it('rejects an operator of a different tenant', async () => {
       stubDb({ existingOidc: true });
-      mockGetOperatorSession.mockResolvedValue(operatorSession(OTHER_TENANT));
+      grantOperatorFor(OTHER_TENANT);
 
       const response = await POST(post(VALID_BODY), params());
 
-      expect(response.status).toBe(403);
+      // 401 rather than 403: a wrong-tenant credential is simply not a
+      // credential for this tenant, so the gate reports "not authenticated"
+      // instead of leaking that the caller holds one elsewhere.
+      expect(response.status).toBe(401);
       expect(mockSetTenantOidc).not.toHaveBeenCalled();
     });
 
     it('allows an operator of this tenant', async () => {
       stubDb({ existingOidc: true });
-      mockGetOperatorSession.mockResolvedValue(operatorSession(TENANT));
+      grantOperatorFor(TENANT);
 
       const response = await POST(post(VALID_BODY), params());
 
@@ -180,7 +194,7 @@ describe('tenant OIDC configuration', () => {
       // The gate runs first, so an unauthenticated caller cannot use this route
       // to make the server issue outbound requests.
       stubDb({ existingOidc: true });
-      mockGetOperatorSession.mockResolvedValue(null);
+      mockGetSession.mockResolvedValue(null);
 
       await POST(post(VALID_BODY), params());
 
@@ -191,7 +205,7 @@ describe('tenant OIDC configuration', () => {
   describe('GET', () => {
     it('rejects an unauthenticated caller before reading anything', async () => {
       stubDb({ existingOidc: true });
-      mockGetOperatorSession.mockResolvedValue(null);
+      mockGetSession.mockResolvedValue(null);
 
       const response = await GET(post({}), params());
 
@@ -201,16 +215,16 @@ describe('tenant OIDC configuration', () => {
 
     it('rejects an operator of a different tenant', async () => {
       stubDb({ existingOidc: true });
-      mockGetOperatorSession.mockResolvedValue(operatorSession(OTHER_TENANT));
+      grantOperatorFor(OTHER_TENANT);
 
       const response = await GET(post({}), params());
 
-      expect(response.status).toBe(403);
+      expect(response.status).toBe(401);
     });
 
     it('serves an operator of this tenant', async () => {
       stubDb({ existingOidc: true });
-      mockGetOperatorSession.mockResolvedValue(operatorSession(TENANT));
+      grantOperatorFor(TENANT);
 
       const response = await GET(post({}), params());
 

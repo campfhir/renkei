@@ -12,7 +12,7 @@ import { getMigrationStatus, MIGRATION_COMMAND } from '@renkei/db';
  * looked healthy right up until an MCP client failed to register.
  */
 export async function GET(): Promise<NextResponse> {
-  logger.debug('[Health] Ping');
+  logger.debug('Ping', { component: 'web/health' });
 
   const status = await getMigrationStatus();
 

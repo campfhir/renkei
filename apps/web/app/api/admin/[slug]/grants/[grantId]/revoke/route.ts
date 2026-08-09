@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getOperatorSession } from '@/lib/auth-utils';
+import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
+import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
 
 /**
@@ -13,12 +14,16 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string; grantId: string }> }
 ): Promise<NextResponse> {
-  const session = await getOperatorSession();
-  if (!session) {
+  const { slug, grantId } = await params;
+  const tenantRef = await tenantForSlug(slug);
+  if (!tenantRef) {
+    return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+  }
+  const access = await checkAccess(tenantRef.id, [ROLE_OPERATOR]);
+  if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { slug, grantId } = await params;
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     return NextResponse.json({ error: 'Database error' }, { status: 500 });

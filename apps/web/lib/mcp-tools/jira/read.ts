@@ -86,28 +86,34 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (_args: Record<string, unknown>) => {
       const cachedDisplayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] whoami invoked', {
+      logger.info('whoami invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName: cachedDisplayName,
         siteUrl: context.siteUrl,
       });
       try {
-        logger.debug('[Tool] whoami fetching user info', {
+        logger.debug('whoami fetching user info', {
+          component: 'mcp/tool',
           url: `${context.apiBaseUrl}/rest/api/3/myself`,
         });
         const response = await jiraFetch(
           `${context.apiBaseUrl}/rest/api/3/myself`,
           context.accessToken
         );
-        logger.debug('[Tool] whoami fetch status', {
+        logger.debug('whoami fetch status', {
+          component: 'mcp/tool',
           status: response.status,
           statusText: response.statusText,
         });
         const me = await response.json();
-        logger.debug('[Tool] whoami response', { data: me });
+        logger.debug('whoami response', { component: 'mcp/tool', data: me });
         if (!isRecord(me)) {
-          logger.error('[Tool] whoami invalid response format', { received: typeof me });
+          logger.error('whoami invalid response format', {
+            component: 'mcp/tool',
+            received: typeof me,
+          });
           return {
             content: [{ type: 'text' as const, text: 'Invalid response from API' }],
             isError: true,
@@ -127,10 +133,11 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           `Account ID: ${accountId}`,
           `Site: ${context.siteUrl}`,
         ];
-        logger.info('[Tool] whoami success', { displayName, accountId });
+        logger.info('whoami success', { component: 'mcp/tool', displayName, accountId });
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        logger.error('[Tool] whoami error', {
+        logger.error('whoami error', {
+          component: 'mcp/tool',
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         });
@@ -162,7 +169,8 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] search_issues invoked', {
+      logger.info('search_issues invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -284,7 +292,8 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] count_issues invoked', {
+      logger.info('count_issues invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -360,7 +369,8 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_issue invoked', {
+      logger.info('get_issue invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -423,6 +433,31 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           `Updated: ${fields.updated}`,
         ];
 
+        // Issue links as a readable section — the phrase, the other end and
+        // its status, and the link id delete_issue_link needs — instead of
+        // the raw JSON dump the generic field renderer produced.
+        const linkLines: string[] = [];
+        if (Array.isArray(fields.issuelinks)) {
+          for (const link of fields.issuelinks) {
+            if (!isRecord(link)) continue;
+            const outward = isRecord(link.outwardIssue) ? link.outwardIssue : null;
+            const inward = isRecord(link.inwardIssue) ? link.inwardIssue : null;
+            const other = outward ?? inward;
+            if (!other) continue;
+            const type: Record<string, unknown> = isRecord(link.type) ? link.type : {};
+            const phrase = outward ? type.outward : type.inward;
+            const otherFields: Record<string, unknown> = isRecord(other.fields) ? other.fields : {};
+            const status = isRecord(otherFields.status) ? otherFields.status.name : null;
+            linkLines.push(
+              `• ${typeof phrase === 'string' ? phrase : 'linked to'} ${String(other.key)}` +
+                `${typeof status === 'string' ? ` [${status}]` : ''} (link ID: ${String(link.id)})`
+            );
+          }
+        }
+        if (linkLines.length > 0) {
+          lines.push('', 'Links:', ...linkLines);
+        }
+
         const extras = renderExtraFields(fields, issue.names, requestedFields, wantEveryField);
         if (extras.length > 0) {
           lines.push('', 'Fields:', ...extras);
@@ -463,7 +498,8 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_boards invoked', {
+      logger.info('list_boards invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -504,7 +540,9 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
 
         const lines = [
           `Found ${data.total || 0} boards (showing ${boards.length}):`,
-          ...boards.map((b: Record<string, unknown>) => `• ${b.name} (${b.type})`),
+          ...boards.map(
+            (b: Record<string, unknown>) => `• ${b.name} (${b.type}) — boardId: ${b.id}`
+          ),
         ];
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
@@ -532,7 +570,8 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_sprints invoked', {
+      logger.info('list_sprints invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -568,7 +607,9 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
               if (!isRecord(s)) {
                 return null;
               }
-              return `• ${s.name} (${s.state})`;
+              // The id feeds move_issue_to_sprint / complete_sprint — the
+              // last member of the ids-missing-from-list-output family.
+              return `• ${s.name} (${s.state}) — sprintId: ${s.id}`;
             })
             .filter((line): line is string => line !== null),
         ];

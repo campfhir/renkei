@@ -74,7 +74,8 @@ export async function DELETE(
         .execute();
     });
 
-    logger.info('[Grant] Revoked by owner', {
+    logger.info('Revoked by owner', {
+      component: 'grants/store',
       tenantId,
       subject: session.subject,
       accountId: grant.provider_account_id,
@@ -91,7 +92,8 @@ export async function DELETE(
         'access at Atlassian, remove it from your account settings there.',
     });
   } catch (error) {
-    logger.error('[Grant] Revocation failed', {
+    logger.error('Revocation failed', {
+      component: 'grants/store',
       tenantId,
       subject: session.subject,
       error: error instanceof Error ? error.message : String(error),

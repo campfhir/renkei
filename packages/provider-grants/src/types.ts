@@ -15,7 +15,13 @@ export interface ProviderGrant {
   accessToken: string;
   refreshToken: string;
   expiresAt: string;
-  scopes: string[];
+  /** What the (possibly user-narrowed) authorize step asked the provider for. */
+  requestedScopes: string[];
+  /**
+   * What the minted token actually carries, decoded from its claims. Null for
+   * opaque tokens (WebEx) — unknown, never assumed equal to the request.
+   */
+  grantedScopes: string[] | null;
   metadata: Record<string, unknown>;
   /**
    * OIDC subject of the signed-in user who connected this grant. Null only for
@@ -50,7 +56,10 @@ export type RefreshError = 'REFRESH_FAILED' | 'GRANT_REVOKED';
 export interface ProviderAdapter {
   /** Key stored in provider_grants.provider, e.g. 'atlassian'. */
   readonly provider: string;
-  refreshTokens(clientId: string, refreshToken: string): Promise<Result<RefreshedTokens, RefreshError>>;
+  refreshTokens(
+    clientId: string,
+    refreshToken: string
+  ): Promise<Result<RefreshedTokens, RefreshError>>;
 }
 
 /** Minimal logger the lifecycle reports through; silent when omitted. */

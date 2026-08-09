@@ -14,13 +14,23 @@ import { getJiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
-import { registerAllTools, cacheTokenMetadata } from '@/lib/mcp-tools';
+import { registerAllTools, cacheTokenMetadata, cacheUserDisplayName } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
+import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
+import {
+  WEBEX_USER,
+  ATLASSIAN_JSM,
+  getGrant,
+  readAtlassianMetadata,
+} from '@renkei/provider-grants';
+import { parseEncryptionKey } from '@renkei/crypto';
 import { getIdentityEmail } from '@/lib/identity';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { createProjection } from '@renkei/capability-registry';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
+import type { Kysely } from 'kysely';
+import type { DB } from '@renkei/db';
 import type { McpServer } from '@modelcontextprotocol/server';
 
 // Cache MCP handlers per (tenantId, accountId)
@@ -31,13 +41,55 @@ function getCacheKey(
   accountId: string,
   readOnly: boolean,
   knowledgeAvailable: boolean,
+  webexAvailable: boolean,
   userEmail: string | null
 ): string {
   // Everything the registered tool set or a handler closure depends on must
   // be part of the key, or a change takes effect only on process restart:
   // the org's read-only mode, whether the knowledge layer is provisioned,
-  // and the caller's recorded email (captured by search_knowledge's closure).
-  return `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:${userEmail ?? ''}`;
+  // whether this caller holds a WebEx user grant, and the caller's recorded
+  // email (captured by search_knowledge's closure).
+  return `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:${webexAvailable ? 'w' : 'nw'}:${userEmail ?? ''}`;
+}
+
+/**
+ * The caller's grant on the second Atlassian app ("Renkei JSM"), decrypted —
+ * or null when they have not connected it (JSM tools then fall back to the
+ * main grant). Effective scopes prefer what the token actually carries.
+ */
+async function resolveJsmGrant(
+  db: Kysely<DB>,
+  tenantId: string,
+  subject: string
+): Promise<{ accessToken: string; cloudId: string; accountId: string; scopes?: string[] } | null> {
+  const row = await db
+    .selectFrom('provider_grants')
+    .select(['provider_account_id'])
+    .where('tenant_id', '=', tenantId)
+    .where('provider', '=', ATLASSIAN_JSM)
+    .where('subject', '=', subject)
+    .limit(1)
+    .executeTakeFirst();
+  if (!row) return null;
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) return null;
+  const grantResult = await getGrant(
+    ATLASSIAN_JSM,
+    tenantId,
+    row.provider_account_id,
+    keyResult.val
+  );
+  if (!grantResult.ok || !grantResult.val) return null;
+  const grant = grantResult.val;
+  const site = readAtlassianMetadata(grant.metadata);
+  if (!site.cloudId) return null;
+  return {
+    accessToken: grant.accessToken,
+    cloudId: site.cloudId,
+    accountId: grant.accountId,
+    scopes: grant.grantedScopes ?? grant.requestedScopes,
+  };
 }
 
 const handler = async (
@@ -79,13 +131,16 @@ const handler = async (
     // first — attributing every comment, transition and worklog to that account.
     const bearer = getBearerToken(request);
     if (!bearer) {
-      logger.warn('[MCP] Request without bearer token', { tenantId });
+      logger.warn('Request without bearer token', { component: 'mcp/transport', tenantId });
       return unauthorizedResponse(tenantId, origin, 'Authorization required');
     }
 
     const tokenRecord = await resolveAccessToken(bearer, tenantId);
     if (!tokenRecord) {
-      logger.warn('[MCP] Request with unknown or expired bearer token', { tenantId });
+      logger.warn('Request with unknown or expired bearer token', {
+        component: 'mcp/transport',
+        tenantId,
+      });
       return unauthorizedResponse(tenantId, origin, 'Invalid or expired access token');
     }
 
@@ -173,7 +228,15 @@ const handler = async (
     // built, and jiraFetch resolves the current one through this cache. This
     // also picks up tokens rotated by another process, since the grant above
     // is read fresh from the database each request.
-    cacheTokenMetadata(grant.accessToken, tenantId, accountId);
+    cacheTokenMetadata(grant.accessToken, tenantId, accountId, subject);
+
+    // Seed the display-name cache from the grant's durable record. The cache
+    // is in-memory, so a restarted container logged every tool call with
+    // displayName: null until the user happened to reconnect or ask who they
+    // are — while provider_grants.display_name held the answer all along.
+    if (grant.displayName) {
+      cacheUserDisplayName(accountId, grant.displayName);
+    }
 
     // The caller's recorded email (identity spine): what the knowledge gate
     // verifies provider access against. Absent = the gate fails closed.
@@ -184,29 +247,83 @@ const handler = async (
     // provider is configured — its capabilities register only then.
     const knowledgeAvailable = (await resolveEmbeddingProvider(tenantId)) !== null;
 
-    // Check cache
-    const cacheKey = getCacheKey(tenantId, accountId, settings.readOnly, knowledgeAvailable, userEmail);
+    // The WebEx user tools register only when this caller has connected
+    // their own WebEx account (the grant is per-user, unlike the org bot).
+    // Its scopes gate which of those tools register.
+    const webexGrantRow = await db
+      .selectFrom('provider_grants')
+      .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
+      .where('tenant_id', '=', tenantId)
+      .where('provider', '=', WEBEX_USER)
+      .where('subject', '=', subject)
+      .limit(1)
+      .executeTakeFirst();
+    const webexAvailable = webexGrantRow !== undefined;
+    // Gate on what the token actually carries when that is known; the
+    // request is only the fallback for opaque tokens.
+    const webexScopes = webexGrantRow
+      ? (webexGrantRow.granted_scopes ?? webexGrantRow.requested_scopes)
+      : [];
+    const jiraScopes = grant.grantedScopes ?? grant.requestedScopes;
+
+    // The second Atlassian app's grant ("Renkei JSM": JSM + Ops scopes) —
+    // JSM/Ops tools run on this token when it exists; absent, they fall back
+    // to the main grant, the pre-split single-app shape.
+    const jsmGrant = await resolveJsmGrant(db, tenantId, subject);
+    if (jsmGrant) {
+      cacheTokenMetadata(
+        jsmGrant.accessToken,
+        tenantId,
+        jsmGrant.accountId,
+        subject,
+        ATLASSIAN_JSM
+      );
+    }
+    const jsmScopes = jsmGrant?.scopes ?? [];
+
+    // Check cache. The tool set now varies with every grant's scopes, so they
+    // are part of the key — a reconnect with different scopes must not be
+    // served a handler built for the old ones.
+    const scopeFingerprint = `${[...jiraScopes].sort().join(',')}|${[...webexScopes].sort().join(',')}|${[...jsmScopes].sort().join(',')}:${jsmGrant ? 'jsm' : 'nojsm'}`;
+    const cacheKey =
+      getCacheKey(
+        tenantId,
+        accountId,
+        settings.readOnly,
+        knowledgeAvailable,
+        webexAvailable,
+        userEmail
+      ) + `:${scopeFingerprint}`;
     let cachedHandler = handlerCache.get(cacheKey);
 
     if (!cachedHandler) {
-      logger.info('[MCP] Creating new handler (cache miss)', { tenantId, accountId });
+      logger.debug('Creating new handler (cache miss)', {
+        component: 'mcp/transport',
+        tenantId,
+        accountId,
+      });
 
       // Create MCP handler with tool registration
       cachedHandler = createMcpHandler(
         async (server: McpServer) => {
           try {
-            logger.info('[MCP] Server created', { tenantId, accountId });
+            logger.verbose('Server created', { component: 'mcp/transport', tenantId, accountId });
 
             const context: MCPToolContext = {
               tenantId,
               accountId,
               siteUrl: grant.siteUrl,
               apiBaseUrl: `https://api.atlassian.com/ex/jira/${grant.cloudId}`,
+              cloudId: grant.cloudId,
               accessToken: grant.accessToken,
               maxJqlResults: settings.maxJqlResults,
               maxAttachmentBytes: settings.maxAttachmentBytes,
               origin,
               userEmail: userEmail ?? undefined,
+              subject,
+              grantedScopes: jiraScopes,
+              webexScopes: webexAvailable ? webexScopes : undefined,
+              jsmGrant: jsmGrant ?? undefined,
               db,
             };
 
@@ -227,6 +344,7 @@ const handler = async (
                 provisionedConnectors: [
                   JIRA_CONNECTOR,
                   ...(knowledgeAvailable ? [KNOWLEDGE_CONNECTOR] : []),
+                  ...(webexAvailable ? [WEBEX_USER_MCP_CONNECTOR] : []),
                 ],
                 hiddenCapabilities: [],
               }
@@ -236,13 +354,21 @@ const handler = async (
               withCapabilityGate(server, projection, KNOWLEDGE_CONNECTOR),
               context
             );
+            if (webexAvailable) {
+              await registerWebexUserTools(
+                withCapabilityGate(server, projection, WEBEX_USER_MCP_CONNECTOR),
+                context
+              );
+            }
 
-            logger.info('[MCP] All tools registered', {
+            logger.verbose('All tools registered', {
+              component: 'mcp/transport',
               tenantId,
               accountId,
             });
           } catch (err) {
-            logger.error('[MCP] Tool registration failed', {
+            logger.error('Tool registration failed', {
+              component: 'mcp/transport',
               tenantId,
               accountId,
               error: err instanceof Error ? err.message : String(err),
@@ -267,13 +393,14 @@ const handler = async (
       // Store in cache
       handlerCache.set(cacheKey, cachedHandler);
     } else {
-      logger.debug('[MCP] Using cached handler', { tenantId, accountId });
+      logger.debug('Using cached handler', { component: 'mcp/transport', tenantId, accountId });
     }
 
     // Handle the request with cached handler
     return await cachedHandler(request);
   } catch (error) {
-    logger.error('[MCP Handler Error] {error}', {
+    logger.error('{error}', {
+      component: 'mcp/transport',
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });

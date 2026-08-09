@@ -1,11 +1,11 @@
 {
-  "name": "renkei",
+  "name": "renkei-monorepo",
   "version": "0.1.0",
   "type": "module",
   "private": true,
   "packageManager": "pnpm@10.33.0",
   "scripts": {
-    "dev": "pnpm --filter @renkei/web dev",
+    "dev": "pnpm --filter renkei dev",
     "build": "pnpm -r build",
     "lint": "eslint .",
     "typecheck": "pnpm -r typecheck",

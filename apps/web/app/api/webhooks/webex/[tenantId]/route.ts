@@ -19,7 +19,11 @@ import { randomUUID } from 'crypto';
 import { getDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
-import { verifyWebexSignature, parseWebhookPayload, WEBEX_CONNECTOR } from '@renkei/connector-webex';
+import {
+  verifyWebexSignature,
+  parseWebhookPayload,
+  WEBEX_CONNECTOR,
+} from '@renkei/connector-webex';
 import { logger } from '@/lib/logger';
 
 export async function POST(
@@ -34,7 +38,10 @@ export async function POST(
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {
-    logger.error('[Webex webhook] TOKEN_ENCRYPTION_KEY is missing or malformed', { tenantId });
+    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
+      component: 'webex/webhook',
+      tenantId,
+    });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
@@ -61,14 +68,15 @@ export async function POST(
   const config = configResult.val;
   const webhookSecret = config?.secrets.webhookSecret;
   if (!config || !config.enabled || !webhookSecret) {
-    logger.warn('[Webex webhook] Delivery for a tenant without an enabled webex connector', {
+    logger.warn('Delivery for a tenant without an enabled webex connector', {
+      component: 'webex/webhook',
       tenantId,
     });
     return NextResponse.json({ error: 'WebEx connector not configured' }, { status: 503 });
   }
 
   if (!verifyWebexSignature(rawBody, signature, webhookSecret)) {
-    logger.warn('[Webex webhook] Rejected delivery with bad signature', { tenantId });
+    logger.warn('Rejected delivery with bad signature', { component: 'webex/webhook', tenantId });
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
@@ -95,6 +103,6 @@ export async function POST(
     })
     .execute();
 
-  logger.info('[Webex webhook] Event accepted', { tenantId, type: payload.val.type });
+  logger.info('Event accepted', { component: 'webex/webhook', tenantId, type: payload.val.type });
   return NextResponse.json({ accepted: true });
 }

@@ -16,7 +16,7 @@ jest.mock('@renkei/knowledge', () => ({
   searchKnowledge: jest.fn(async () => ({ ok: true, val: { hits: [], elided: 0 } })),
 }));
 jest.mock('@renkei/settings', () => ({
-  getPublicBaseUrl: jest.fn(async () => ({ ok: true, val: 'https://renkei.example.com' })),
+  getPublicBaseUrl: jest.fn(() => 'https://renkei.example.com'),
 }));
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
@@ -34,10 +34,16 @@ function stubDb(): { inserted: Array<Record<string, unknown>> } {
     where: () => selectChain,
     executeTakeFirst: async () => undefined,
   };
+  // The feed link resolves the tenant's slug (pages are keyed by slug).
+  const tenantChain = {
+    select: () => tenantChain,
+    where: () => tenantChain,
+    executeTakeFirst: async () => ({ slug: 'tenant-one' }),
+  };
   mockGetDatabase.mockReturnValue({
     ok: true,
     val: {
-      selectFrom: () => selectChain,
+      selectFrom: (table: string) => (table === 'tenants' ? tenantChain : selectChain),
       insertInto: () => ({
         values: (row: Record<string, unknown>) => ({
           execute: async () => {
@@ -124,7 +130,7 @@ describe('createWebexMessageHandler', () => {
     expect(stub.posted).toHaveLength(1);
     expect(stub.posted[0]?.parentId).toBe('msg-1');
     expect(stub.posted[0]?.markdown).toContain('card feed');
-    expect(stub.posted[0]?.markdown).toContain('https://renkei.example.com/tenant/tenant-1/cards');
+    expect(stub.posted[0]?.markdown).toContain('https://renkei.example.com/tenant-one/home');
   });
 
   it('offers the Push to Renkei card for chatter instead of capturing', async () => {
@@ -172,9 +178,9 @@ describe('createWebexMessageHandler', () => {
     stubDb();
     const stub = stubClient(message({}));
 
-    await expect(handlerWith(stub, null)({ ...event(), payload: { roomId: 'room-1' } })).rejects.toThrow(
-      'no message id'
-    );
+    await expect(
+      handlerWith(stub, null)({ ...event(), payload: { roomId: 'room-1' } })
+    ).rejects.toThrow('no message id');
   });
 
   it('propagates an unconfigured-connector error into the retry path', async () => {

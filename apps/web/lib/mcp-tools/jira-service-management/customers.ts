@@ -11,6 +11,52 @@ import { jiraFetch, getCachedDisplayName } from '../common';
 import { resolveAccountId } from '../user-resolver';
 import { logger } from '@/lib/logger';
 
+/**
+ * An accountId for a customer email: create the customer (Jira returns the
+ * account whether new or, on some sites, existing), falling back to user
+ * search for accounts the create endpoint refuses. Null = unresolvable, and
+ * the caller reports it instead of sending an email where an accountId goes.
+ */
+async function resolveCustomerAccountId(
+  context: MCPToolContext,
+  email: string
+): Promise<string | null> {
+  try {
+    const created = await jiraFetch(
+      `${context.apiBaseUrl}/rest/servicedeskapi/customer`,
+      context.accessToken,
+      {
+        method: 'POST',
+        body: JSON.stringify({ email, displayName: email.split('@')[0] }),
+        headers: { 'X-ExperimentalApi': 'opt-in' },
+      }
+    );
+    const body = (await created.json()) as any;
+    if (typeof body?.accountId === 'string' && body.accountId) return body.accountId;
+  } catch {
+    // exists already, or creation refused — try the directory
+  }
+  try {
+    const found = await jiraFetch(
+      `${context.apiBaseUrl}/rest/api/3/user/search?query=${encodeURIComponent(email)}`,
+      context.accessToken
+    );
+    const users = (await found.json()) as any;
+    if (Array.isArray(users)) {
+      const exact = users.find(
+        (u: any) =>
+          typeof u?.emailAddress === 'string' &&
+          u.emailAddress.toLowerCase() === email.toLowerCase()
+      );
+      const pick = exact ?? (users.length === 1 ? users[0] : null);
+      if (pick && typeof pick.accountId === 'string') return pick.accountId;
+    }
+  } catch {
+    // fall through to null
+  }
+  return null;
+}
+
 export async function registerJsmCustomerTools(
   server: McpServer,
   context: MCPToolContext
@@ -30,7 +76,8 @@ export async function registerJsmCustomerTools(
       // Named distinctly: this handler also destructures a `displayName` from
       // args, which is the *customer's* name, not the caller's.
       const invokerDisplayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] create_customer invoked', {
+      logger.info('create_customer invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName: invokerDisplayName,
@@ -51,6 +98,7 @@ export async function registerJsmCustomerTools(
               email,
               displayName: displayName || (email as string).split('@')[0],
             }),
+            headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
 
@@ -91,7 +139,8 @@ export async function registerJsmCustomerTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] add_customer_to_servicedesk invoked', {
+      logger.info('add_customer_to_servicedesk invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -119,6 +168,7 @@ export async function registerJsmCustomerTools(
             body: JSON.stringify({
               accountIds: [accountId],
             }),
+            headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
 
@@ -154,7 +204,8 @@ export async function registerJsmCustomerTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] remove_customer_from_servicedesk invoked', {
+      logger.info('remove_customer_from_servicedesk invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -178,6 +229,7 @@ export async function registerJsmCustomerTools(
           {
             method: 'DELETE',
             body: JSON.stringify({ accountIds: [accountId] }),
+            headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
 
@@ -213,7 +265,8 @@ export async function registerJsmCustomerTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] invite_customers_to_servicedesk invoked', {
+      logger.info('invite_customers_to_servicedesk invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -230,14 +283,34 @@ export async function registerJsmCustomerTools(
           };
         }
 
+        // ServiceDeskCustomerDTO takes accountIds — emails are not account
+        // ids, so each email resolves first: create the customer (returns the
+        // account) or fall back to user search for existing accounts.
+        const resolved: string[] = [];
+        const unresolved: string[] = [];
+        for (const email of emails as string[]) {
+          const accountId = await resolveCustomerAccountId(context, email);
+          if (accountId) resolved.push(accountId);
+          else unresolved.push(email);
+        }
+        if (resolved.length === 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `No accounts could be resolved for: ${unresolved.join(', ')}`,
+              },
+            ],
+            isError: true,
+          };
+        }
         await jiraFetch(
           `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
           context.accessToken,
           {
             method: 'POST',
-            body: JSON.stringify({
-              accountIds: emails,
-            }),
+            body: JSON.stringify({ accountIds: resolved }),
+            headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
 
@@ -245,7 +318,9 @@ export async function registerJsmCustomerTools(
           content: [
             {
               type: 'text' as const,
-              text: `Invited ${emails.length} customers to service desk ${serviceDeskId}`,
+              text:
+                `Invited ${resolved.length} customer(s) to service desk ${serviceDeskId}` +
+                (unresolved.length ? ` — could not resolve: ${unresolved.join(', ')}` : ''),
             },
           ],
         };

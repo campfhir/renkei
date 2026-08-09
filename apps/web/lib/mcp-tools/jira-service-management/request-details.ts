@@ -28,7 +28,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_request_type_fields invoked', {
+      logger.info('get_request_type_fields invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -51,7 +52,9 @@ export async function registerRequestDetailsTools(
         );
 
         const fields = (await response.json()) as any;
-        const fieldList = (fields.values || []).map((f: any) => ({
+        // The payload key is requestTypeFields — .values belongs to the paged
+        // JSM endpoints, so this silently mapped an empty list ("0 fields").
+        const fieldList = (fields.requestTypeFields || fields.values || []).map((f: any) => ({
           id: f.fieldId,
           name: f.name,
           required: f.required,
@@ -87,7 +90,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_request_approvals invoked', {
+      logger.info('list_request_approvals invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -144,7 +148,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_request_sla invoked', {
+      logger.info('get_request_sla invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -165,16 +170,23 @@ export async function registerRequestDetailsTools(
         );
 
         const data = (await response.json()) as any;
-        const slas = (data.values || []).map((s: any) => ({
-          name: s.name,
-          status: s.status,
-          breachTime: s.breachTime?.epoch || 'N/A',
-        }));
+        // SlaInformation has no status/breachTime at the top level: the live
+        // clock is ongoingCycle {breached, paused, remainingTime, breachTime},
+        // finished clocks are completedCycles.
+        const slas = (data.values || []).map((s: any) => {
+          const cycle = s.ongoingCycle;
+          const state = cycle
+            ? cycle.paused
+              ? 'paused'
+              : cycle.breached
+                ? 'BREACHED'
+                : `remaining ${cycle.remainingTime?.friendly ?? '?'}`
+            : `no running cycle (${s.completedCycles?.length ?? 0} completed)`;
+          const breach = cycle?.breachTime?.friendly;
+          return `• ${s.name}: ${state}${breach ? ` — breach at ${breach}` : ''}`;
+        });
 
-        const lines = [
-          `${issueKey} has ${slas.length} SLAs:`,
-          ...slas.map((s: any) => `• ${s.name}: ${s.status} (breach: ${s.breachTime})`),
-        ];
+        const lines = [`${issueKey} has ${slas.length} SLAs:`, ...slas];
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
@@ -201,7 +213,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_request_participants invoked', {
+      logger.info('list_request_participants invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -257,7 +270,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] add_request_participant invoked', {
+      logger.info('add_request_participant invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -308,7 +322,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] remove_request_participant invoked', {
+      logger.info('remove_request_participant invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -363,7 +378,8 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] add_request_attachment invoked', {
+      logger.info('add_request_attachment invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -380,25 +396,67 @@ export async function registerRequestDetailsTools(
           };
         }
 
-        const binaryString = Buffer.from(contentBase64 as string, 'base64').toString('binary');
-        const blob = Buffer.from(binaryString, 'binary');
-        const formData = new FormData();
-        formData.append('file', new Blob([blob]), filename);
+        // The servicedeskapi attachment flow is two-legged: multipart upload
+        // to the SERVICE DESK's attachTemporaryFile, then attach the returned
+        // temporary ids to the request as JSON (AttachmentCreateDTO:
+        // temporaryAttachmentIds + public). The old code POSTed multipart
+        // straight at the request — a shape this API never accepted — and
+        // bypassed jiraFetch, so the failures never even reached the logs.
+        const reqResponse = await jiraFetch(
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${encodeURIComponent(issueKey as string)}`,
+          context.accessToken
+        );
+        const reqBody = (await reqResponse.json()) as any;
+        const serviceDeskId =
+          typeof reqBody?.serviceDeskId === 'string' ? reqBody.serviceDeskId : '';
+        if (!serviceDeskId) {
+          return {
+            content: [
+              { type: 'text' as const, text: `Could not resolve the service desk of ${issueKey}` },
+            ],
+            isError: true,
+          };
+        }
 
-        const response = await fetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/attachment`,
+        const bytes = Buffer.from(contentBase64 as string, 'base64');
+        const formData = new FormData();
+        formData.append('file', new Blob([bytes]), filename as string);
+
+        const upload = await jiraFetch(
+          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/attachTemporaryFile`,
+          context.accessToken,
           {
             method: 'POST',
-            headers: {
-              Authorization: `Bearer ${context.accessToken}`,
-            },
             body: formData,
+            // Required for multipart uploads to Atlassian; without it 404/403.
+            headers: { 'X-Atlassian-Token': 'no-check' },
           }
         );
-
-        if (!response.ok) {
-          throw new Error(`Upload failed: ${response.statusText}`);
+        const uploaded = (await upload.json()) as any;
+        const temporaryAttachmentIds = Array.isArray(uploaded?.temporaryAttachments)
+          ? uploaded.temporaryAttachments
+              .map((t: any) =>
+                typeof t?.temporaryAttachmentId === 'string' ? t.temporaryAttachmentId : ''
+              )
+              .filter(Boolean)
+          : [];
+        if (temporaryAttachmentIds.length === 0) {
+          return {
+            content: [
+              { type: 'text' as const, text: 'Upload succeeded but returned no attachment id' },
+            ],
+            isError: true,
+          };
         }
+
+        await jiraFetch(
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${encodeURIComponent(issueKey as string)}/attachment`,
+          context.accessToken,
+          {
+            method: 'POST',
+            body: JSON.stringify({ temporaryAttachmentIds, public: true }),
+          }
+        );
 
         return {
           content: [{ type: 'text' as const, text: `Attached ${filename} to ${issueKey}` }],

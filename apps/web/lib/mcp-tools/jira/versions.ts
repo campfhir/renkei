@@ -32,7 +32,8 @@ export async function registerVersionTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] list_versions invoked', {
+      logger.info('list_versions invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -54,7 +55,14 @@ export async function registerVersionTools(
 
         const response = await jiraFetch(url, context.accessToken);
         const data = (await response.json()) as any;
-        const versions = data.values || [];
+        // /project/{key}/versions returns a plain ARRAY — and on an array,
+        // `.values` resolves to Array.prototype.values (a function), which
+        // made the old `data.values || []` explode on .map.
+        const versions = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.values)
+            ? data.values
+            : [];
 
         const lines = [
           `Project ${projectKey} has ${versions.length} versions:`,
@@ -95,7 +103,8 @@ export async function registerVersionTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] create_version invoked', {
+      logger.info('create_version invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -167,7 +176,8 @@ export async function registerVersionTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] get_version invoked', {
+      logger.info('get_version invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

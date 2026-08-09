@@ -9,6 +9,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { jiraFetch, getCachedDisplayName } from '../common';
 import { logger } from '@/lib/logger';
+import { buildFieldUpdates } from './field-schema';
 
 export async function registerBulkTools(server: McpServer, context: MCPToolContext): Promise<void> {
   // bulk_update_issues (not in renkei_tools.json but keeping for now)
@@ -24,7 +25,8 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] bulk_update_issues invoked', {
+      logger.info('bulk_update_issues invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -60,29 +62,55 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
           return { content: [{ type: 'text' as const, text: 'No issues matched the JQL query' }] };
         }
 
-        // Update each issue
+        // The same schema-aware resolver update_issue uses: field names or
+        // ids resolve against this site's schema, values are coerced per
+        // field type (priority string → {name}, rich text → ADF, options
+        // validated). Bulk previously PUT the caller's record verbatim,
+        // which is why single-issue updates worked while bulk 400'd.
+        const updates = await buildFieldUpdates(context, fields);
+        if (Object.keys(updates.fields).length === 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `No writable fields resolved.${updates.problems.length ? `\n${updates.problems.map((problem) => `• ${problem}`).join('\n')}` : ''}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
+        // Update each issue, keeping each failure's reason — "N failed" with
+        // no why is undebuggable at 1 issue and ruinous at 50.
         let updated = 0;
-        let failed = 0;
+        const failures: string[] = [];
 
         for (const key of issueKeys) {
           try {
             await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${key}`, context.accessToken, {
               method: 'PUT',
-              body: JSON.stringify({ fields }),
+              body: JSON.stringify({ fields: updates.fields }),
             });
             updated++;
-          } catch {
-            failed++;
+          } catch (error) {
+            failures.push(`${key}: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
 
+        const resolutionNotes = updates.problems.length
+          ? `\nNot written (unresolvable): ${updates.problems.join('; ')}`
+          : '';
+        const summary = `Updated ${updated} issues, ${failures.length} failed (total: ${issueKeys.length}). Applied: ${updates.applied.join(', ')}${resolutionNotes}`;
         return {
           content: [
             {
               type: 'text' as const,
-              text: `Updated ${updated} issues, ${failed} failed (total: ${issueKeys.length})`,
+              text: failures.length
+                ? `${summary}\nFailures:\n${failures.map((f) => `• ${f}`).join('\n')}`
+                : summary,
             },
           ],
+          ...(updated === 0 && failures.length > 0 ? { isError: true } : {}),
         };
       } catch (error) {
         return {
@@ -108,7 +136,8 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] bulk_transition_issues invoked', {
+      logger.info('bulk_transition_issues invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -145,7 +174,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
         }
 
         let transitioned = 0;
-        let failed = 0;
+        const failures: string[] = [];
 
         for (const key of issueKeys) {
           try {
@@ -173,20 +202,29 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
               );
               transitioned++;
             } else {
-              failed++;
+              const names = Array.isArray(transData.transitions)
+                ? transData.transitions.map((t: any) => t.name).join(', ')
+                : '(none)';
+              failures.push(
+                `${key}: no transition named "${transitionName}" — available: ${names}`
+              );
             }
-          } catch {
-            failed++;
+          } catch (error) {
+            failures.push(`${key}: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
 
+        const summary = `Transitioned ${transitioned} issues to "${transitionName}", ${failures.length} failed (total: ${issueKeys.length})`;
         return {
           content: [
             {
               type: 'text' as const,
-              text: `Transitioned ${transitioned} issues to "${transitionName}", ${failed} failed (total: ${issueKeys.length})`,
+              text: failures.length
+                ? `${summary}\nFailures:\n${failures.map((f) => `• ${f}`).join('\n')}`
+                : summary,
             },
           ],
+          ...(transitioned === 0 && failures.length > 0 ? { isError: true } : {}),
         };
       } catch (error) {
         return {

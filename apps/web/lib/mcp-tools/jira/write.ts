@@ -24,6 +24,41 @@ import {
 import { logger } from '@/lib/logger';
 
 // Type guard functions
+/**
+ * Resolve an assignee argument to an Atlassian accountId. Jira Cloud dropped
+ * name/email user identification in field objects (GDPR): `{ name: ... }` is
+ * silently ignored, which made create/update claim an assignee was set while
+ * writing nothing. An accountId-shaped value passes through; anything else
+ * goes through user search and must match exactly one user — ambiguity or a
+ * miss becomes an unwritten value, reported, never a silent no-op.
+ */
+async function resolveAssigneeId(
+  context: MCPToolContext,
+  value: string
+): Promise<{ ok: true; id: string } | { ok: false; reason: string }> {
+  if (!value.includes('@') && /^[0-9a-zA-Z:-]{16,128}$/.test(value)) {
+    return { ok: true, id: value };
+  }
+  const response = await jiraFetch(
+    `${context.apiBaseUrl}/rest/api/3/user/search?query=${encodeURIComponent(value)}`,
+    context.accessToken
+  );
+  const users: unknown = await response.json().catch(() => null);
+  const candidates = Array.isArray(users)
+    ? users.filter(isRecord).filter((u) => isString(u.accountId))
+    : [];
+  const exact = candidates.filter(
+    (u) => isString(u.emailAddress) && u.emailAddress.toLowerCase() === value.toLowerCase()
+  );
+  const pick = exact.length > 0 ? exact : candidates;
+  if (pick.length === 1) return { ok: true, id: String(pick[0].accountId) };
+  if (pick.length === 0) return { ok: false, reason: `no Jira user matches "${value}"` };
+  return {
+    ok: false,
+    reason: `"${value}" matches ${pick.length} users — pass an accountId (search_users shows them)`,
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -157,7 +192,8 @@ async function recordUnwritten(
     );
     return true;
   } catch (error) {
-    logger.warn('[Tool] could not record unwritten fields', {
+    logger.warn('could not record unwritten fields', {
+      component: 'mcp/tool',
       tenantId: context.tenantId,
       issueKey,
       error: error instanceof Error ? error.message : String(error),
@@ -235,7 +271,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] create_issue invoked', {
+      logger.info('create_issue invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -284,8 +321,13 @@ export async function registerWriteTools(
           plan.labels.priority = `Priority → ${priority}`;
         }
         if (assignee && isString(assignee)) {
-          plan.optional.assignee = { name: assignee };
-          plan.labels.assignee = `Assignee → ${assignee}`;
+          const resolved = await resolveAssigneeId(context, assignee);
+          if (resolved.ok) {
+            plan.optional.assignee = { id: resolved.id };
+            plan.labels.assignee = `Assignee → ${assignee}`;
+          } else {
+            extra.unwritten.push({ label: `Assignee → ${assignee}`, reason: resolved.reason });
+          }
         }
         if (labels && isArray(labels)) {
           plan.optional.labels = labels;
@@ -359,7 +401,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] update_issue invoked', {
+      logger.info('update_issue invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -400,8 +443,13 @@ export async function registerWriteTools(
           plan.labels.priority = `Priority → ${priority}`;
         }
         if (assignee && isString(assignee)) {
-          plan.optional.assignee = { name: assignee };
-          plan.labels.assignee = `Assignee → ${assignee}`;
+          const resolved = await resolveAssigneeId(context, assignee);
+          if (resolved.ok) {
+            plan.optional.assignee = { id: resolved.id };
+            plan.labels.assignee = `Assignee → ${assignee}`;
+          } else {
+            extra.unwritten.push({ label: `Assignee → ${assignee}`, reason: resolved.reason });
+          }
         }
         if (labels && isArray(labels)) {
           plan.optional.labels = labels;
@@ -484,7 +532,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] add_comment invoked', {
+      logger.info('add_comment invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -540,7 +589,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] transition_issue invoked', {
+      logger.info('transition_issue invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -653,7 +703,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] log_work invoked', {
+      logger.info('log_work invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -718,7 +769,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] delete_issue invoked', {
+      logger.info('delete_issue invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
@@ -768,7 +820,8 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('[Tool] delete_comment invoked', {
+      logger.info('delete_comment invoked', {
+        component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,

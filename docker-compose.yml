@@ -24,7 +24,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       target: runtime
-    image: renkei-web:latest
+    image: renkei:latest
     container_name: renkei-app
     env_file:
       - apps/web/.env.development

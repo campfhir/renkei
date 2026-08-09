@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { createSession, sessionCookieName, sessionCookieOptions } from '@/lib/session';
 import { identityClaimsFromIdToken, upsertIdentity } from '@/lib/identity';
+import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 
 interface OIDCTokenResponse {
   access_token: string;
@@ -90,7 +92,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     // Fetch OIDC discovery document to get the token endpoint
-    const discoveryUrl = new URL('/.well-known/openid-configuration', oidc.issuer).toString();
+    const discoveryUrl = oidcDiscoveryUrl(oidc.issuer);
     let tokenEndpoint: string;
 
     console.log(`[OIDC] Fetching discovery from: ${discoveryUrl}`);
@@ -111,7 +113,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         tokenEndpoint = `${baseIssuer}/oauth2/v2.0/token`;
       }
     } catch (error) {
-      console.error('[OIDC] Failed to fetch discovery document:', error);
+      logger.error('Failed to fetch discovery document: {detail}', {
+        component: 'auth/oidc',
+        detail: error instanceof Error ? error.message : String(error),
+      });
       // Fallback to Azure AD OAuth2 v2.0 endpoint
       // Strip trailing /v2.0 from issuer if present to avoid duplication
       const baseIssuer = oidc.issuer.endsWith('/v2.0') ? oidc.issuer.slice(0, -5) : oidc.issuer;
@@ -154,7 +159,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const subject = typeof decoded?.sub === 'string' ? decoded.sub : null;
 
     if (!subject) {
-      console.error(`[OIDC ${tenantId}] No 'sub' claim in id_token; cannot establish session`);
+      logger.error("No 'sub' claim in id_token; cannot establish session", {
+        component: 'auth/oidc',
+        tenantId,
+      });
       return NextResponse.json(
         { error: 'Identity provider did not return a subject claim' },
         { status: 400 }
@@ -169,10 +177,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (identityClaims) {
       const recorded = await upsertIdentity(tenantId, subject, identityClaims);
       if (!recorded.ok) {
-        console.warn(`[OIDC ${tenantId}] could not record identity for subject; gates will fail closed`);
+        console.warn(
+          `[OIDC ${tenantId}] could not record identity for subject; gates will fail closed`
+        );
       }
     } else {
-      console.warn(`[OIDC ${tenantId}] id_token carries no email claim; gates will fail closed for this user`);
+      console.warn(
+        `[OIDC ${tenantId}] id_token carries no email claim; gates will fail closed for this user`
+      );
     }
 
     // Decode and mint standardized renkei roles from IDP claims
@@ -209,9 +221,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Delete used state token
     await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
 
-    // Get redirect target from cookie
+    // Get redirect target from cookie; without one, land on the tenant's home
+    // page — the slug tree, not the retired /mcp/[tenantId] page.
     const redirectCookie = request.cookies.get(`oidc_redirect_${tenantId}`)?.value;
-    const redirect = redirectCookie || `/mcp/${tenantId}`;
+    let redirect = redirectCookie || '';
+    if (!redirect) {
+      const tenantRow = await db
+        .selectFrom('tenants')
+        .select('slug')
+        .where('id', '=', tenantId)
+        .executeTakeFirst();
+      redirect = tenantRow ? `/${tenantRow.slug}/home` : '/';
+    }
 
     // Create a server-side session. Subject and roles are stored in the database
     // and never sent to the client; the cookie holds only an opaque id. Previously

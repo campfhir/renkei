@@ -39,7 +39,7 @@ services:
     restart: unless-stopped
 
   migrate:
-    image: scotteremiaroden/jira-work-items-mcp-next:0.1.0-migrate
+    image: scotteremiaroden/renkei-migrate:latest
     container_name: renkei-migrate
     env_file:
       - .env
@@ -53,10 +53,17 @@ services:
     profiles: ['tools']
 
   worker:
-    image: scotteremiaroden/jira-work-items-mcp-next:0.1.0-worker
+    image: scotteremiaroden/renkei-worker:latest
     container_name: renkei-worker
     env_file:
       - .env
+    # Optional e2e log shipping (worker → renkei over HTTP, encrypted +
+    # signed, instead of writing the logs table directly). Generate the whole
+    # .env block with:  pnpm --filter renkei generate:log-ship-keys
+    #   LOG_SHIP_ENDPOINT=http://renkei:3000/api/logs   (turns it on)
+    #   LOG_SHIP_API_KEY / LOG_SHIP_SIGNING_KEYS        (auth + identity)
+    # The renkei service reads LOG_SHIP_API_KEY and LOG_E2E_SERVER_KEYS from
+    # the same .env. Unset, the worker logs straight to Postgres as before.
     environment: *database-urls
     depends_on:
       postgres:
@@ -64,18 +71,18 @@ services:
     restart: unless-stopped
 
   renkei:
-    image: scotteremiaroden/jira-work-items-mcp-next:0.1.0
+    image: scotteremiaroden/renkei:latest
     container_name: renkei-app
     env_file:
       - .env
     environment:
       <<: *database-urls
-      # Whitelist proxy IPs that are allowed to set X-Forwarded-* headers
-      # Default (if not set): 127.0.0.1,::1 (localhost only)
-      # For Docker: 172.17.0.1 (Docker bridge gateway)
-      # For Kubernetes/overlay networks: add the pod/service IP range
-      # Example: TRUSTED_PROXY_IPS=127.0.0.1,172.17.0.1,10.0.0.0/24
-      # TRUSTED_PROXY_IPS: ""  # Set in .env file instead
+      # PUBLIC_BASE_URL in .env is the authoritative origin when set — it is
+      # the address registered with every OAuth provider. Without it, the app
+      # falls back to X-Forwarded-Proto/Host from the reverse proxy, which it
+      # believes unconditionally — so this port must never be reachable by
+      # untrusted clients directly: keep it published on 127.0.0.1 / an
+      # internal network, with the proxy in front.
     ports:
       - '80:3000'
     depends_on:

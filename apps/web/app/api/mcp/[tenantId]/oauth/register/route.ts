@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
@@ -129,7 +130,10 @@ export async function POST(
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
-    console.error('[DCR] Registration error:', error);
+    logger.error('Registration error: {detail}', {
+      component: 'auth/oauth-register',
+      detail: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json(
       { error: 'server_error', error_description: 'An error occurred during registration' },
       { status: 500 }

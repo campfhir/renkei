@@ -2,91 +2,44 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { logger } from '@/lib/logger';
 
+/**
+ * Health checks, Next internals, and log shipping never log: the health probe
+ * arrives every ~30 seconds forever, and every shipped batch hitting
+ * /api/logs would add a proxy row about the act of delivering log rows —
+ * a log stream that is mostly heartbeat is a log stream nobody reads.
+ */
+function isNoiseRoute(pathname: string): boolean {
+  return (
+    pathname === '/api/health' || pathname.startsWith('/api/logs') || pathname.startsWith('/_next/')
+  );
+}
+
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
-  // Skip logging health checks
-  if (pathname !== '/api/health') {
-    // Log all incoming requests
-    logger.info('[proxy] Incoming request: {method} {pathname}', {
-      method: request.method,
-      pathname,
-      url: request.nextUrl.toString(),
-      userAgent: request.headers.get('user-agent'),
-      referer: request.headers.get('referer'),
-      origin: request.headers.get('origin'),
-      contentType: request.headers.get('content-type'),
-      query: request.nextUrl.search,
-      ip: request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip'),
-      timestamp: new Date().toISOString(),
-    });
-  }
-
   try {
-    // Allow public routes: API, static pages, etc.
-    if (
-      pathname.startsWith('/api/') ||
-      pathname.startsWith('/create-organization') ||
-      pathname === '/' ||
-      pathname.startsWith('/_next/') ||
-      pathname.startsWith('/public/')
-    ) {
-      logger.info('[proxy] Public route: {method} {pathname}', {
+    // No auth gate lives here anymore. The page tree is keyed by slug, and a
+    // slug cannot be resolved to the tenant id that names the session cookie
+    // without the database, which the proxy runs before. Every /[slug] page
+    // resolves the tenant and guards itself, redirecting signed-out visitors
+    // into the OIDC flow via signInUrl. One request, one log line.
+    if (!isNoiseRoute(pathname)) {
+      logger.info('{method} {pathname}', {
+        component: 'web/proxy',
         method: request.method,
         pathname,
-        route_type: 'public',
+        query: request.nextUrl.search || undefined,
+        userAgent: request.headers.get('user-agent') ?? undefined,
+        referer: request.headers.get('referer') ?? undefined,
+        // Client address as claimed by the reverse proxy's headers — for
+        // observability only, never a trust decision.
+        ip: request.headers.get('x-forwarded-for') ?? request.headers.get('x-real-ip') ?? undefined,
       });
-      return NextResponse.next();
     }
-
-    // Protect /mcp/* and /tenant/* routes
-    const isProtected = pathname.startsWith('/mcp/') || pathname.startsWith('/tenant/');
-    if (!isProtected) {
-      logger.info('[proxy] Unprotected route: {method} {pathname}', {
-        method: request.method,
-        pathname,
-        route_type: 'unprotected',
-      });
-      return NextResponse.next();
-    }
-
-    // Extract tenantId from path
-    const pathParts = pathname.split('/').filter(Boolean);
-    const tenantId = pathParts[1];
-
-    // Presence check only — this runs before the database is reachable, so it
-    // cannot validate the session. It exists to redirect signed-out users to
-    // login; actual authorization happens in the page/route via getSession*.
-    const token = request.cookies.get(`renkei_session_${tenantId}`)?.value;
-
-    if (!token) {
-      logger.info(
-        '[proxy] Protected route without token: {method} {pathname} tenantId={tenantId}',
-        {
-          method: request.method,
-          pathname,
-          tenantId,
-          route_type: 'protected',
-          action: 'redirect_to_login',
-        }
-      );
-
-      const loginUrl = new URL(`/api/auth/oidc/login`, request.url);
-      loginUrl.searchParams.set('tenantId', tenantId);
-      loginUrl.searchParams.set('redirect', pathname + request.nextUrl.search);
-      return NextResponse.redirect(loginUrl);
-    }
-
-    logger.info('[proxy] Protected route with token: {method} {pathname} tenantId={tenantId}', {
-      method: request.method,
-      pathname,
-      tenantId,
-      route_type: 'protected',
-      action: 'allow',
-    });
     return NextResponse.next();
   } catch (error) {
-    logger.error('[proxy] Error in proxy: {error}', {
+    logger.error('Proxy error: {error}', {
+      component: 'web/proxy',
       error: error instanceof Error ? error.message : String(error),
       method: request.method,
       pathname,

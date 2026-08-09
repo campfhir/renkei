@@ -10,10 +10,11 @@
  */
 
 import { parsePushAction } from '@renkei/connector-webex';
-import { getPublicBaseUrl } from '@renkei/settings';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { captureMessage } from './webex-capture';
+import { cardsFeedUrl } from './feed-url';
+import { logger } from '../logger';
 import { resolveWebexContext, type WebexTenantContext } from './webex-context';
 
 export interface WebexActionHandlerDeps {
@@ -62,9 +63,12 @@ export function createWebexAttachmentActionHandler(
     // the fetched action's room is the authority on where the press happened,
     // and a mismatch means the routing cannot be trusted.
     if (action.roomId && action.roomId !== message.roomId) {
-      console.warn(
-        `[worker] push action ${actionId} room mismatch (action ${action.roomId}, message ${message.roomId}); ignoring`
-      );
+      logger.warn('push action room mismatch; ignoring', {
+        component: 'webex/push-card',
+        actionId,
+        actionRoomId: action.roomId,
+        messageRoomId: message.roomId,
+      });
       return;
     }
 
@@ -84,8 +88,7 @@ export function createWebexAttachmentActionHandler(
       force: true,
     });
 
-    const feed = await getPublicBaseUrl();
-    const feedUrl = feed.ok && feed.val ? `${feed.val}/tenant/${event.tenant_id}/cards` : null;
+    const feedUrl = await cardsFeedUrl(event.tenant_id);
     const confirmation =
       outcome === 'duplicate'
         ? 'Already captured in Renkei.'
@@ -99,7 +102,7 @@ export function createWebexAttachmentActionHandler(
       markdown: confirmation,
     });
     if (!posted.ok) {
-      console.warn(`[worker] could not post push confirmation for action ${actionId}`);
+      logger.warn('could not post push confirmation', { component: 'webex/push-card', actionId });
     }
   };
 }

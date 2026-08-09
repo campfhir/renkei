@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logger } from '@/lib/logger';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
@@ -126,7 +127,10 @@ export async function GET(
 
     return NextResponse.redirect(callbackUrl.toString());
   } catch (error) {
-    console.error('[OAuth Authorize] Error:', error);
+    logger.error('Error: {detail}', {
+      component: 'auth/oauth-authorize',
+      detail: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
