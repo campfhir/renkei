@@ -496,7 +496,10 @@ function secureOrAbsent(value: string | undefined) {
 
 /** Cap a logged body: enough to diagnose, bounded against megabyte payloads. */
 function truncateForLog(text: string): string {
-  return text.length > 4000 ? `${text.slice(0, 4000)}… (${text.length} chars total)` : text;
+  // 1300, not more: secure() bodies encrypt to ~1.4x base64url, and values
+  // past ~2KB fall into blob storage where the adapter does not decrypt on
+  // read — 1300 keeps the ciphertext inline, so the viewer shows plaintext.
+  return text.length > 1300 ? `${text.slice(0, 1300)}… (${text.length} chars total)` : text;
 }
 
 /**
