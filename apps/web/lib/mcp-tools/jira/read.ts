@@ -582,7 +582,9 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
               if (!isRecord(s)) {
                 return null;
               }
-              return `• ${s.name} (${s.state})`;
+              // The id feeds move_issue_to_sprint / complete_sprint — the
+              // last member of the ids-missing-from-list-output family.
+              return `• ${s.name} (${s.state}) — sprintId: ${s.id}`;
             })
             .filter((line): line is string => line !== null),
         ];
