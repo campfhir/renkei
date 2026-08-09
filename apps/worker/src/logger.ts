@@ -100,8 +100,10 @@ function attachHttpShipping(endpoint: string): void {
     level: process.env.LOG_DB_LEVEL ?? 'info',
     useBeaconOnUnload: false,
     // Registration happens at `<endpoint>/register` (the adapter's default).
+    // The default id is NOT packageJson.name: client ids are restricted to
+    // [A-Za-z0-9._:-], and `@renkei/worker` fails on both @ and /.
     encryption: signingKeys
-      ? { clientId: process.env.LOG_SHIP_CLIENT_ID ?? packageJson.name, signingKeys }
+      ? { clientId: process.env.LOG_SHIP_CLIENT_ID ?? 'renkei-worker', signingKeys }
       : {},
     onError: (err) => {
       // Raw console on purpose: logger.error here would enqueue the failure
