@@ -36,7 +36,7 @@ logger.addAdapter(
  * main() at boot. Failure is reported, not fatal: a worker that can log only
  * to stdout still beats one that refuses to start.
  */
-export function attachDbLogging(): void {
+export async function attachDbLogging(): Promise<void> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     logger.error('Could not attach Postgres log adapter; logging to console only', {
@@ -45,10 +45,20 @@ export function attachDbLogging(): void {
     });
     return;
   }
-  logger.addAdapter(
-    new PostgresAdapter({
-      db: dbResult.val,
-      level: process.env.LOG_DB_LEVEL ?? 'info',
-    })
-  );
+  const adapter = new PostgresAdapter({
+    db: dbResult.val,
+    level: process.env.LOG_DB_LEVEL ?? 'info',
+  });
+  try {
+    // Idempotent (CREATE IF NOT EXISTS) — safe on every boot, and what keeps
+    // the log tables current across bored-logs upgrades.
+    await adapter.migrate();
+  } catch (error) {
+    logger.error('Log table migration failed; logging to console only', {
+      component: 'worker/logging',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+  logger.addAdapter(adapter);
 }

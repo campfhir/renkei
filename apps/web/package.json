@@ -11,7 +11,7 @@
     "test": "jest"
   },
   "dependencies": {
-    "@campfhir/bored-logs": "^0.3.2",
+    "@campfhir/bored-logs": "^0.7.1",
     "@renkei/capability-registry": "workspace:*",
     "@renkei/connector-config": "workspace:*",
     "@renkei/connector-webex": "workspace:*",

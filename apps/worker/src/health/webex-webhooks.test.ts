@@ -79,8 +79,8 @@ beforeEach(() => {
   mockGetDatabase.mockReset();
   mockReadConfig.mockReset();
   mockGetPublicBaseUrl.mockReset();
-  jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
-  jest.spyOn(logger, 'error').mockImplementation(() => undefined);
+  jest.spyOn(logger, 'warn').mockImplementation(() => logger);
+  jest.spyOn(logger, 'error').mockImplementation(() => logger);
 });
 
 afterEach(() => {

@@ -35,19 +35,22 @@ export async function register() {
       return;
     }
 
-    logger.addAdapter(
-      new PostgresAdapter({
-        db: dbResult.val,
-        level: process.env.LOG_DB_LEVEL ?? 'info',
-        onWarning(w) {
-          if (w.type === 'attr_keys_truncated') {
-            logger.warn('attribute keys truncated', { component: 'logging/adapter' });
-          } else if (w.type === 'attr_value_truncated') {
-            logger.warn('attribute value truncated', { component: 'logging/adapter' });
-          }
-        },
-      })
-    );
+    const adapter = new PostgresAdapter({
+      db: dbResult.val,
+      level: process.env.LOG_DB_LEVEL ?? 'info',
+      onWarning(w) {
+        if (w.type === 'attr_keys_truncated') {
+          logger.warn('attribute keys truncated', { component: 'logging/adapter' });
+        } else if (w.type === 'attr_value_truncated') {
+          logger.warn('attribute value truncated', { component: 'logging/adapter' });
+        }
+      },
+    });
+
+    // Idempotent (CREATE IF NOT EXISTS) — brings a table set created by an
+    // older bored-logs up to the current schema on every boot.
+    await adapter.migrate();
+    logger.addAdapter(adapter);
 
     globalMarks.__renkeiPgLogAdapterAttached = true;
     logger.info('PostgresAdapter registered', {

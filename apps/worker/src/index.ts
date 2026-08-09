@@ -103,7 +103,7 @@ async function maybeSweepWebhooks(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  attachDbLogging();
+  await attachDbLogging();
   registerConnectorHandlers();
   // Console output carries only explicit attrs, so the build identity rides
   // the boot line — `docker logs` answers "what is running" directly.
