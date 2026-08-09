@@ -5,6 +5,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { getAtlassianApp } from '@/lib/atlassian-app';
 import { ATLASSIAN_REQUIRED_SCOPES } from '@/lib/atlassian-scopes';
 import { getOrigin } from '@/lib/get-origin';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -106,15 +107,25 @@ export async function GET(
     authUrl.searchParams.append('response_type', 'code');
     authUrl.searchParams.append('scope', effectiveScopes);
     authUrl.searchParams.append('state', state);
+    // Required per Atlassian's 3LO docs: always show the consent screen, so
+    // a scope change (e.g. narrowed checkboxes) is re-consented rather than
+    // silently reusing the previous grant's screen-less approval.
+    authUrl.searchParams.append('prompt', 'consent');
 
-    console.log(`[MCP ${tenantId}] Jira OAuth authorize:`);
-    console.log('  client_id:', app.clientId);
-    console.log('  redirect_uri:', app.redirectUri);
-    console.log('  state:', state);
+    logger.info('Jira OAuth authorize redirect', {
+      component: 'auth/oauth',
+      tenantId,
+      clientId: app.clientId,
+      redirectUri: app.redirectUri,
+    });
 
     return NextResponse.redirect(authUrl.toString());
   } catch (error) {
-    console.error('MCP authorize error:', error);
+    logger.error('MCP authorize error: {error}', {
+      component: 'auth/oauth',
+      tenantId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return NextResponse.json({ error: 'Failed to initiate authorization' }, { status: 500 });
   }
 }
