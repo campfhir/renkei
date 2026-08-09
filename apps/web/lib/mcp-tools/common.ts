@@ -8,7 +8,7 @@ import { z } from 'zod';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { refreshAtlassianTokenDirect } from '@/lib/tenant-operations';
-import { logger } from '@/lib/logger';
+import { logger, secure } from '@/lib/logger';
 
 export interface MCPToolContext {
   tenantId: string;
@@ -438,7 +438,10 @@ export async function jiraFetch(
     // Every failure (401/403 included) logs the full exchange — request
     // payload and response body, scoped to tenant and OIDC user — because a
     // status plus a one-line reason was repeatedly not enough to diagnose
-    // anything. The Authorization header never reaches the log.
+    // anything. The Authorization header never reaches the log, and the
+    // bodies are secure()-marked: they can carry user content (comments,
+    // descriptions), so the console masks them, and the Postgres adapter
+    // encrypts them at rest once encrypt/decrypt keys are configured.
     logger.warn('Non-OK response', {
       component: 'jira/fetch',
       tenantId: metadata?.tenantId,
@@ -449,8 +452,8 @@ export async function jiraFetch(
       method: options?.method || 'GET',
       status: response.status,
       reason: failure.reason,
-      requestBody: describeRequestBody(options?.body),
-      responseBody: truncateForLog(failure.raw) || undefined,
+      requestBody: secureOrAbsent(describeRequestBody(options?.body)),
+      responseBody: secureOrAbsent(truncateForLog(failure.raw) || undefined),
       // On auth failures, what the rejected bearer ACTUALLY carries — the
       // grant row's scopes column can echo the request, so "the scope is
       // there" in the DB proves nothing about the token Atlassian evaluated.
@@ -465,6 +468,11 @@ export async function jiraFetch(
   }
 
   return response;
+}
+
+/** secure()-mark a body when present; undefined stays undefined, not '[secure]'. */
+function secureOrAbsent(value: string | undefined) {
+  return value === undefined ? undefined : secure(value);
 }
 
 /** Cap a logged body: enough to diagnose, bounded against megabyte payloads. */

@@ -28,7 +28,7 @@ import {
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
 import { getWebexUserApp } from '@/lib/webex-app';
-import { logger } from '@/lib/logger';
+import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import type { MCPToolContext } from '../common';
 
@@ -148,8 +148,10 @@ async function webexRequest(
       path,
       method: init?.method ?? 'GET',
       status: response.status,
-      requestBody: body === undefined ? undefined : truncateForLog(body),
-      responseBody: truncateForLog(responseBody) || undefined,
+      // secure(): bodies can carry message content — console masks them, and
+      // the Postgres adapter encrypts at rest once keys are configured.
+      requestBody: body === undefined ? undefined : secure(truncateForLog(body)),
+      responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
     return { ok: false, error: describeStatus(response.status) };
   }
