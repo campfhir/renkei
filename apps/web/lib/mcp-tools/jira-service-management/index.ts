@@ -12,9 +12,13 @@ import { registerJsmCustomerTools } from './customers';
 import { registerJsmOpsTools } from './ops';
 import { withScopeGate } from '../capability-gate';
 
-const SD_READ = 'read:servicedesk-request';
-const SD_WRITE = 'write:servicedesk-request';
-const SD_CUSTOMER = 'manage:servicedesk-customer';
+// Granular marker scopes, one per capability bundle in
+// lib/atlassian-scopes.ts — bundles travel whole, so a bundle's presence is
+// provable from any one of its scopes.
+const SD_READ = 'read:request:jira-service-management';
+const SD_WRITE = 'write:request:jira-service-management';
+const CUSTOMER_READ = 'read:customer:jira-service-management';
+const CUSTOMER_WRITE = 'write:customer:jira-service-management';
 const OPS_ALERT_READ = 'read:ops-alert:jira-service-management';
 const OPS_ALERT_WRITE = 'write:ops-alert:jira-service-management';
 const OPS_CONFIG_READ = 'read:ops-config:jira-service-management';
@@ -25,8 +29,8 @@ function serviceDeskScopes(_toolName: string, readOnly: boolean): string[] {
   return readOnly ? [SD_READ] : [SD_READ, SD_WRITE];
 }
 
-function customerScopes(): string[] {
-  return [SD_CUSTOMER];
+function customerScopes(_toolName: string, readOnly: boolean): string[] {
+  return readOnly ? [CUSTOMER_READ] : [CUSTOMER_READ, CUSTOMER_WRITE];
 }
 
 /**

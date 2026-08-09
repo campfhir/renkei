@@ -10,16 +10,21 @@ import McpEndpoint from './mcp-endpoint';
 import { WEBEX_USER, ATLASSIAN } from '@renkei/provider-grants';
 import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
-import { DEFAULT_ATLASSIAN_SCOPES } from '@/lib/atlassian-scopes';
+import { usableAtlassianCeiling } from '@/lib/atlassian-scopes';
 
-/** The org's scope ceiling for a connector, from its non-secret settings. */
-function ceilingFrom(settings: unknown, fallback: string): string[] {
+/** The org's stored scopes string for a connector, from non-secret settings. */
+function storedScopes(settings: unknown): string | null {
   if (typeof settings === 'object' && settings !== null && 'scopes' in settings) {
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowing jsonb
     const scopes = (settings as Record<string, unknown>).scopes;
-    if (typeof scopes === 'string' && scopes) return scopes.split(/\s+/);
+    if (typeof scopes === 'string' && scopes) return scopes;
   }
-  return fallback.split(' ');
+  return null;
+}
+
+/** The org's scope ceiling for a connector, from its non-secret settings. */
+function ceilingFrom(settings: unknown, fallback: string): string[] {
+  return (storedScopes(settings) ?? fallback).split(/\s+/);
 }
 
 /**
@@ -61,7 +66,9 @@ export default async function ConnectorsPage({
   const settingsOf = (connector: string) =>
     configs.find((c) => c.connector === connector)?.settings;
 
-  const atlassianCeiling = ceilingFrom(settingsOf('atlassian'), DEFAULT_ATLASSIAN_SCOPES);
+  // Filtered to catalog-known scopes: a ceiling saved before the granular
+  // migration is all classic and degrades to the defaults until re-saved.
+  const atlassianCeiling = usableAtlassianCeiling(storedScopes(settingsOf('atlassian')));
   const webexCeiling = ceilingFrom(settingsOf(WEBEX_USER_CONNECTOR), DEFAULT_WEBEX_USER_SCOPES);
 
   // The caller's own grants, server-rendered — connection state, and the

@@ -16,7 +16,7 @@ export const ATLASSIAN_CONNECTOR = 'atlassian';
 // The scope catalog lives in atlassian-scopes.ts (pure data, client-importable
 // — the admin form renders it as checkboxes); re-exported here for the server
 // routes that already import it from this module.
-import { DEFAULT_ATLASSIAN_SCOPES } from '@/lib/atlassian-scopes';
+import { DEFAULT_ATLASSIAN_SCOPES, usableAtlassianCeiling } from '@/lib/atlassian-scopes';
 export { DEFAULT_ATLASSIAN_SCOPES };
 
 export interface AtlassianApp {
@@ -70,10 +70,12 @@ export async function getAtlassianApp(
     return null;
   }
 
-  const scopes =
-    typeof config.settings.scopes === 'string' && config.settings.scopes
-      ? config.settings.scopes
-      : DEFAULT_ATLASSIAN_SCOPES;
+  // usableAtlassianCeiling filters the stored ceiling to scopes the granular
+  // catalog knows; settings saved before the granular migration hold classic
+  // scopes and degrade to the default set until an admin re-saves.
+  const scopes = usableAtlassianCeiling(
+    typeof config.settings.scopes === 'string' ? config.settings.scopes : null
+  ).join(' ');
   const redirectUri =
     typeof config.settings.redirectUri === 'string' && config.settings.redirectUri
       ? config.settings.redirectUri

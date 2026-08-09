@@ -12,6 +12,7 @@ import {
   ATLASSIAN_OFFLINE_SCOPE,
 } from '@/lib/atlassian-scopes';
 import ScopePicker from '@/components/scope-picker';
+import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 
 /**
  * The three connector forms, each a thin skin over its
@@ -163,13 +164,12 @@ function AtlassianForm({ slug }: { slug: string }) {
   const [state, reload] = useConnectorConfig<AtlassianConfig>(url);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
-  // Checked scopes, offline_access excluded — it is always sent, never a choice.
-  const [checkedScopes, setCheckedScopes] = useState<Set<string>>(
+  // Checked capability bundles, offline_access excluded — it is always sent,
+  // never a choice.
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(
     () =>
       new Set(
-        ATLASSIAN_SCOPE_OPTIONS.filter((option) => option.defaultChecked).map(
-          (option) => option.scope
-        )
+        ATLASSIAN_SCOPE_OPTIONS.filter((option) => option.defaultChecked).map((option) => option.id)
       )
   );
   const [redirectUri, setRedirectUri] = useState('');
@@ -182,22 +182,22 @@ function AtlassianForm({ slug }: { slug: string }) {
     if (!state.data) return;
     setClientId(state.data.clientId ?? '');
     if (state.data.configured && state.data.scopes) {
+      // An option is checked when the stored ceiling covers its whole bundle.
+      // A ceiling saved before the granular migration matches nothing —
+      // leave the defaults checked so re-saving lands on sane granular scopes.
       const stored = new Set(state.data.scopes.split(/\s+/));
-      setCheckedScopes(
-        new Set(
-          ATLASSIAN_SCOPE_OPTIONS.map((option) => option.scope).filter((scope) => stored.has(scope))
-        )
-      );
+      const matching = ATLASSIAN_SCOPE_OPTIONS.filter((option) => optionWithin(option, stored));
+      if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
     }
     setRedirectUri(state.data.redirectUri ?? '');
     setEnabled(state.data.configured ? state.data.enabled : true);
   }, [state.data]);
 
-  function toggleScope(scope: string, on: boolean) {
-    setCheckedScopes((current) => {
+  function toggleOption(optionId: string, on: boolean) {
+    setCheckedIds((current) => {
       const next = new Set(current);
-      if (on) next.add(scope);
-      else next.delete(scope);
+      if (on) next.add(optionId);
+      else next.delete(optionId);
       return next;
     });
   }
@@ -208,9 +208,7 @@ function AtlassianForm({ slug }: { slug: string }) {
     setNotice(null);
     setError(null);
     const scopes = [
-      ...ATLASSIAN_SCOPE_OPTIONS.map((option) => option.scope).filter((scope) =>
-        checkedScopes.has(scope)
-      ),
+      ...scopesOfOptions(ATLASSIAN_SCOPE_OPTIONS, checkedIds),
       ATLASSIAN_OFFLINE_SCOPE,
     ].join(' ');
     const failure = await putJson(url, {
@@ -303,8 +301,8 @@ function AtlassianForm({ slug }: { slug: string }) {
             <ScopePicker
               groups={ATLASSIAN_SCOPE_GROUPS}
               options={ATLASSIAN_SCOPE_OPTIONS}
-              checked={checkedScopes}
-              onToggle={toggleScope}
+              checked={checkedIds}
+              onToggle={toggleOption}
             />
             <p className={hintClass}>
               This is the ceiling: users can narrow it when they connect, never widen it. Every
@@ -494,8 +492,8 @@ function WebexUserForm({ slug }: { slug: string }) {
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   // Checked scopes, spark:kms excluded — it is always sent, never a choice.
-  const [checkedScopes, setCheckedScopes] = useState<Set<string>>(
-    () => new Set(WEBEX_USER_SCOPE_OPTIONS.map((option) => option.scope))
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(
+    () => new Set(WEBEX_USER_SCOPE_OPTIONS.map((option) => option.id))
   );
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -507,22 +505,17 @@ function WebexUserForm({ slug }: { slug: string }) {
     setClientId(state.data.clientId ?? '');
     if (state.data.configured && state.data.scopes) {
       const stored = new Set(state.data.scopes.split(/\s+/));
-      setCheckedScopes(
-        new Set(
-          WEBEX_USER_SCOPE_OPTIONS.map((option) => option.scope).filter((scope) =>
-            stored.has(scope)
-          )
-        )
-      );
+      const matching = WEBEX_USER_SCOPE_OPTIONS.filter((option) => optionWithin(option, stored));
+      if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
     }
     setEnabled(state.data.configured ? state.data.enabled : true);
   }, [state.data]);
 
-  function toggleScope(scope: string, on: boolean) {
-    setCheckedScopes((current) => {
+  function toggleOption(optionId: string, on: boolean) {
+    setCheckedIds((current) => {
       const next = new Set(current);
-      if (on) next.add(scope);
-      else next.delete(scope);
+      if (on) next.add(optionId);
+      else next.delete(optionId);
       return next;
     });
   }
@@ -533,9 +526,7 @@ function WebexUserForm({ slug }: { slug: string }) {
     setNotice(null);
     setError(null);
     const scopes = [
-      ...WEBEX_USER_SCOPE_OPTIONS.map((option) => option.scope).filter((scope) =>
-        checkedScopes.has(scope)
-      ),
+      ...scopesOfOptions(WEBEX_USER_SCOPE_OPTIONS, checkedIds),
       ...WEBEX_REQUIRED_SCOPES,
     ].join(' ');
     const failure = await putJson(url, {
@@ -627,8 +618,8 @@ function WebexUserForm({ slug }: { slug: string }) {
           <ScopePicker
             groups={WEBEX_SCOPE_GROUPS}
             options={WEBEX_USER_SCOPE_OPTIONS}
-            checked={checkedScopes}
-            onToggle={toggleScope}
+            checked={checkedIds}
+            onToggle={toggleOption}
           />
           <p className={hintClass}>
             This is the ceiling: users can narrow it when they connect, never widen it. Every

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import ScopePicker from '@/components/scope-picker';
 import { WEBEX_SCOPE_GROUPS, WEBEX_USER_SCOPE_OPTIONS } from '@/lib/webex-scopes';
+import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 
 /**
  * The user's own WebEx grant: "Renkei acts on my WebEx." Connection state
@@ -32,25 +33,27 @@ export default function WebexUserConnector({
   const [notice, setNotice] = useState<string | null>(null);
   // Only catalog options count as choices; required scopes (offline_access,
   // kms, people_read) ride along server-side and are not offered here.
-  const pickable = WEBEX_USER_SCOPE_OPTIONS.filter((option) => ceiling.includes(option.scope)).map(
-    (option) => option.scope
-  );
-  const [selectedScopes, setSelectedScopes] = useState<Set<string>>(() => {
-    const seed = priorScopes?.filter((scope) => pickable.includes(scope));
-    return new Set(seed && seed.length > 0 ? seed : pickable);
+  const ceilingSet = new Set(ceiling);
+  const pickable = WEBEX_USER_SCOPE_OPTIONS.filter((option) => optionWithin(option, ceilingSet));
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
+    const prior = priorScopes === null ? null : new Set(priorScopes);
+    const seed = prior
+      ? pickable.filter((option) => optionWithin(option, prior)).map((option) => option.id)
+      : [];
+    return new Set(seed.length > 0 ? seed : pickable.map((option) => option.id));
   });
 
-  function toggleScope(scope: string, on: boolean) {
-    setSelectedScopes((current) => {
+  function toggleOption(optionId: string, on: boolean) {
+    setSelectedIds((current) => {
       const next = new Set(current);
-      if (on) next.add(scope);
-      else next.delete(scope);
+      if (on) next.add(optionId);
+      else next.delete(optionId);
       return next;
     });
   }
 
   const authorizeUrl = `/api/webex/${tenantId}/authorize?scopes=${encodeURIComponent(
-    [...selectedScopes].join(' ')
+    scopesOfOptions(WEBEX_USER_SCOPE_OPTIONS, selectedIds).join(' ')
   )}`;
 
   async function disconnect() {
@@ -107,14 +110,14 @@ export default function WebexUserConnector({
         <div className="mt-3">
           <details className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
             <summary className="cursor-pointer text-sm font-medium">
-              What Renkei may do ({selectedScopes.size} of {pickable.length} permissions)
+              What Renkei may do ({selectedIds.size} of {pickable.length} capabilities)
             </summary>
             <div className="mt-3">
               <ScopePicker
                 groups={WEBEX_SCOPE_GROUPS}
                 options={WEBEX_USER_SCOPE_OPTIONS}
-                checked={selectedScopes}
-                onToggle={toggleScope}
+                checked={selectedIds}
+                onToggle={toggleOption}
                 available={ceiling}
               />
               <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
