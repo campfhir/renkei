@@ -311,18 +311,27 @@ export async function registerJsmOpsTools(
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
       const body: unknown = await response.json().catch(() => null);
-      const participants =
-        typeof body === 'object' && body !== null
-          ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-            (body as Record<string, unknown>).onCallParticipants
-          : null;
-      const names = Array.isArray(participants)
-        ? participants
-            .map((p) => (typeof p === 'string' ? p : str(isRecord(p) ? p.id : null)))
+      // The response is a oneOf keyed by the flat param: flat=true answers
+      // { onCallUsers: string[] } (user ids), flat absent answers
+      // { onCallParticipants: [{id, type, ...}] }. This read both keys wrong
+      // once — flat=true was sent while onCallParticipants was read, so the
+      // tool said "nobody is on call" against every schedule, always.
+      const record = isRecord(body) ? body : {};
+      const flatUsers = Array.isArray(record.onCallUsers)
+        ? record.onCallUsers.filter((u): u is string => typeof u === 'string')
+        : [];
+      const participants = Array.isArray(record.onCallParticipants)
+        ? record.onCallParticipants
+            .map((p) =>
+              isRecord(p) ? `${str(p.id)}${str(p.type) ? ` (${str(p.type)})` : ''}` : ''
+            )
             .filter(Boolean)
         : [];
+      const names = flatUsers.length > 0 ? flatUsers : participants;
       return textResult(
-        names.length === 0 ? 'Nobody is on call for that schedule.' : names.join('\n')
+        names.length === 0
+          ? 'Nobody is on call for that schedule.'
+          : `On call now (user ids — resolve names via get_user):\n${names.join('\n')}`
       );
     }
   );

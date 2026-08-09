@@ -24,7 +24,9 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
     group: 'jira',
     defaultChecked: true,
     scopes: [
+      'read:application-role:jira',
       'read:attachment:jira',
+      'read:avatar:jira',
       'read:comment:jira',
       'read:field-configuration:jira',
       'read:field.default-value:jira',
@@ -44,6 +46,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
       'read:project.component:jira',
       'read:project:jira',
       'read:status:jira',
+      'read:user.property:jira',
       'read:user:jira',
     ],
   },
