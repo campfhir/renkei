@@ -28,6 +28,7 @@ async function resolveCustomerAccountId(
       {
         method: 'POST',
         body: JSON.stringify({ email, displayName: email.split('@')[0] }),
+        headers: { 'X-ExperimentalApi': 'opt-in' },
       }
     );
     const body = (await created.json()) as any;
@@ -97,6 +98,7 @@ export async function registerJsmCustomerTools(
               email,
               displayName: displayName || (email as string).split('@')[0],
             }),
+            headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
 
@@ -166,6 +168,7 @@ export async function registerJsmCustomerTools(
             body: JSON.stringify({
               accountIds: [accountId],
             }),
+            headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
 
@@ -226,6 +229,7 @@ export async function registerJsmCustomerTools(
           {
             method: 'DELETE',
             body: JSON.stringify({ accountIds: [accountId] }),
+            headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
 
@@ -306,6 +310,7 @@ export async function registerJsmCustomerTools(
           {
             method: 'POST',
             body: JSON.stringify({ accountIds: resolved }),
+            headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
 

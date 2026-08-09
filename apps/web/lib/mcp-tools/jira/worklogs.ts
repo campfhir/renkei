@@ -60,7 +60,7 @@ export async function registerWorklogTools(
             const duration = w.timeSpent || 'N/A';
             const started = w.started ? new Date(w.started).toLocaleDateString() : 'N/A';
             // Worklog comments are ADF documents — flattened, not stringified.
-            return `• ${author}: ${duration} (${started})${w.comment ? ` - ${adfToMarkdown(w.comment)}` : ''}`;
+            return `• ${author}: ${duration} (${started}) (ID: ${w.id})${w.comment ? ` - ${adfToMarkdown(w.comment)}` : ''}`;
           }),
         ];
 

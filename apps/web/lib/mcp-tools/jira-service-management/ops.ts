@@ -110,8 +110,9 @@ export async function registerJsmOpsTools(
       title: 'List JSM Operations alerts',
       description:
         'List operations alerts (the Opsgenie-style alerting in Jira Service Management), ' +
-        'newest first. Supports the alert search syntax, e.g. `status:open`, ' +
-        '`status:open AND priority:P1`, `responders:"Team Name"`.',
+        'newest first. Supports the alert search syntax — field:value terms, e.g. `status:open`, ' +
+        '`acknowledged:false`, `status:open AND priority:P1`, `responders:"Team Name"`. ' +
+        'Bare keywords like `NOT acknowledged` are a syntax error (422).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         query: z.string().describe('Alert search query, e.g. status:open').optional(),
@@ -176,6 +177,7 @@ export async function registerJsmOpsTools(
       title: 'Acknowledge a JSM Operations alert',
       description:
         'Acknowledge an alert as the connected user — tells the team someone is on it. ' +
+        'Idempotent: acking an already-acked alert succeeds without changing anything. ' +
         'Requires the write:ops-alert scope.',
       inputSchema: z.object({
         alertId: z.string().min(1).describe('Alert id'),

@@ -557,7 +557,10 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
 
         const response = await jiraFetch(
           `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer?limit=${Math.min(maxResults, 50)}`,
-          context.accessToken
+          context.accessToken,
+          // Atlassian has kept the customer endpoints "experimental" for
+          // years; without the opt-in header they answer 412.
+          { headers: { 'X-ExperimentalApi': 'opt-in' } }
         );
 
         const data = (await response.json()) as any;

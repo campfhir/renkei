@@ -65,7 +65,7 @@ export async function registerCommentTools(
             // portal visibility verifiable without eyeballing the portal.
             const visibility =
               c.jsdPublic === false ? ' [internal]' : c.jsdPublic === true ? ' [portal]' : '';
-            return `• ${author} (${date})${visibility}: ${clipped}`;
+            return `• ${author} (${date})${visibility} (ID: ${c.id}): ${clipped}`;
           }),
         ];
 
@@ -139,7 +139,7 @@ export async function registerCommentTools(
             // portal visibility verifiable without eyeballing the portal.
             const visibility =
               c.jsdPublic === false ? ' [internal]' : c.jsdPublic === true ? ' [portal]' : '';
-            return `• ${author} (${date})${visibility}: ${clipped}`;
+            return `• ${author} (${date})${visibility} (ID: ${c.id}): ${clipped}`;
           }),
         ];
 

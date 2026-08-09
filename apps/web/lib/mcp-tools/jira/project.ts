@@ -77,9 +77,13 @@ export async function registerProjectTools(
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         projectKey: z.string().describe('Project key, e.g. SCRUM (optional)').optional(),
+        query: z
+          .string()
+          .describe('Substring filter on field name or id, e.g. "change" (optional)')
+          .optional(),
       }),
     },
-    async (_args: Record<string, unknown>) => {
+    async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
       logger.info('list_fields invoked', {
         component: 'mcp/tool',
@@ -95,12 +99,29 @@ export async function registerProjectTools(
 
         const fields = (await response.json()) as any[];
 
+        // 378 fields on a real site makes unfiltered paging blind — a
+        // substring filter turns this into a usable lookup.
+        const query = typeof args.query === 'string' ? args.query.toLowerCase() : '';
+        const matching = query
+          ? fields.filter(
+              (f: any) =>
+                String(f.name ?? '')
+                  .toLowerCase()
+                  .includes(query) ||
+                String(f.id ?? '')
+                  .toLowerCase()
+                  .includes(query)
+            )
+          : fields;
+
         const lines = [
-          `Found ${fields.length} fields:`,
-          ...fields
+          query
+            ? `${matching.length} of ${fields.length} fields match "${args.query}":`
+            : `Found ${fields.length} fields:`,
+          ...matching
             .slice(0, 50)
             .map((f: any) => `• ${f.name} (${f.id}) - ${f.schema?.type || 'unknown'}`),
-          fields.length > 50 ? `... and ${fields.length - 50} more` : '',
+          matching.length > 50 ? `... and ${matching.length - 50} more` : '',
         ];
 
         return { content: [{ type: 'text' as const, text: lines.filter(Boolean).join('\n') }] };

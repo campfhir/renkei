@@ -433,6 +433,31 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           `Updated: ${fields.updated}`,
         ];
 
+        // Issue links as a readable section — the phrase, the other end and
+        // its status, and the link id delete_issue_link needs — instead of
+        // the raw JSON dump the generic field renderer produced.
+        const linkLines: string[] = [];
+        if (Array.isArray(fields.issuelinks)) {
+          for (const link of fields.issuelinks) {
+            if (!isRecord(link)) continue;
+            const outward = isRecord(link.outwardIssue) ? link.outwardIssue : null;
+            const inward = isRecord(link.inwardIssue) ? link.inwardIssue : null;
+            const other = outward ?? inward;
+            if (!other) continue;
+            const type: Record<string, unknown> = isRecord(link.type) ? link.type : {};
+            const phrase = outward ? type.outward : type.inward;
+            const otherFields: Record<string, unknown> = isRecord(other.fields) ? other.fields : {};
+            const status = isRecord(otherFields.status) ? otherFields.status.name : null;
+            linkLines.push(
+              `• ${typeof phrase === 'string' ? phrase : 'linked to'} ${String(other.key)}` +
+                `${typeof status === 'string' ? ` [${status}]` : ''} (link ID: ${String(link.id)})`
+            );
+          }
+        }
+        if (linkLines.length > 0) {
+          lines.push('', 'Links:', ...linkLines);
+        }
+
         const extras = renderExtraFields(fields, issue.names, requestedFields, wantEveryField);
         if (extras.length > 0) {
           lines.push('', 'Fields:', ...extras);

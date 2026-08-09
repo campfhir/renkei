@@ -52,7 +52,9 @@ export async function registerRequestDetailsTools(
         );
 
         const fields = (await response.json()) as any;
-        const fieldList = (fields.values || []).map((f: any) => ({
+        // The payload key is requestTypeFields — .values belongs to the paged
+        // JSM endpoints, so this silently mapped an empty list ("0 fields").
+        const fieldList = (fields.requestTypeFields || fields.values || []).map((f: any) => ({
           id: f.fieldId,
           name: f.name,
           required: f.required,
