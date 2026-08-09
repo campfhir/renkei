@@ -1,26 +1,27 @@
-# Granular scopes for the full Renkei tool surface
+# Granular scopes for the full Renkei tool surface — TWO Atlassian apps
 
 Derived from the vendored OpenAPI specs — every endpoint the MCP tools call,
-matched to its operation — then **curated to the primary scopes**: the scope
-naming the thing each tool actually operates on. Lines marked `# trimmed:`
-are the rest of the spec-derived union: response-facet scopes (vote counts,
-avatars, changelogs, entity properties, field configuration metadata) that
-no tool operates on. Requesting all of them made the authorize URL long
-enough that Atlassian's CDN answered 414 once the login/consent redirect
-chain re-encoded it, so they are not requested — but they may stay
-registered on the app harmlessly. If a specific tool answers 401 "scope
-does not match", the `tokenClaims` log line names what the token carries,
-and the one missing scope moves back into its bundle (a catalog + doc
-change only).
+matched to its operation. Atlassian enforces the COMPLETE documented
+granular list per endpoint (proven empirically: working endpoints had zero
+missing scopes, 401ing endpoints had at least one), while its CDN answers
+414 for consent URLs past ~3.1k chars once the login/consent redirect chain
+re-encodes them. The full union cannot satisfy both on one app, so the
+surface is split across **two OAuth 2.0 (3LO) app registrations**:
 
-In the developer console (Permissions tab), each block below is added under
-its own API — all four APIs must be present. The authorize URL then carries
-the union of the checked bundles, plus `offline_access` (not a
-Permissions-page scope — request-time only, it yields the refresh token).
-Full requested union: 84 scopes, ~2.5k chars raw — sized to survive the
-redirect chain.
+- **App 1 — "Renkei" (Jira)**: the Jira API and Jira Software API blocks.
+  Backs the `atlassian` connector.
+- **App 2 — "Renkei JSM"**: the Jira Service Management API and JSM Ops API
+  blocks. Backs the `atlassian-jsm` connector — its own client id/secret,
+  its own consent, its own grant. Both apps register the SAME callback URL
+  (`<origin>/api/oauth/callback`); the pending-state row routes each code
+  exchange to the right app.
 
-## Jira API
+Lines marked `# trimmed:` are spec-listed scopes excluded on purpose (only
+`read:audit-log:jira` remains: listed by GET /search/jql while the code uses
+POST). `offline_access` is request-time only, never a Permissions-page
+scope, and rides both apps' authorize URLs.
+
+## Jira API — app 1 ("Renkei")
 
 ```
 read:application-role:jira
@@ -79,7 +80,7 @@ delete:issue:jira
 delete:project.component:jira
 ```
 
-## Jira Software API
+## Jira Software API — app 1 ("Renkei")
 
 ```
 read:board-scope:jira-software
@@ -89,7 +90,7 @@ write:board-scope:jira-software
 write:sprint:jira-software
 ```
 
-## Jira Service Management API
+## Jira Service Management API — app 2 ("Renkei JSM")
 
 ```
 read:customer:jira-service-management
@@ -114,7 +115,7 @@ delete:request.participant:jira-service-management
 delete:servicedesk.customer:jira-service-management
 ```
 
-## Jira Service Management Ops API
+## Jira Service Management Ops API — app 2 ("Renkei JSM")
 
 ```
 read:ops-alert:jira-service-management

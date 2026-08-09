@@ -58,6 +58,17 @@ export interface MCPToolContext {
   grantedScopes?: string[];
   /** Same, for the caller's WebEx user grant when one exists. */
   webexScopes?: string[];
+  /**
+   * The caller's grant on the second Atlassian app ("Renkei JSM": JSM + Ops
+   * scopes), when connected. JSM/Ops tools run on THIS token; absent, they
+   * fall back to the main grant — the pre-split single-app shape.
+   */
+  jsmGrant?: {
+    accessToken: string;
+    cloudId: string;
+    accountId: string;
+    scopes?: string[];
+  };
   db?: Kysely<DB>;
 }
 
@@ -135,6 +146,8 @@ interface TokenMetadata {
   accountId: string;
   /** OIDC subject of the user this token acts for — scopes failure logs to a person. */
   subject?: string;
+  /** Which Atlassian app minted this token: 'atlassian' (default) or 'atlassian-jsm'. */
+  provider: string;
   expiresAt: number;
 }
 const tokenMetadataCache = new Map<string, TokenMetadata>();
@@ -167,8 +180,11 @@ const refreshInFlight = new Map<string, Promise<string>>();
  */
 const currentTokens = new Map<string, string>();
 
-function getRefreshKey(tenantId: string, accountId: string): string {
-  return `${tenantId}:${accountId}`;
+function getRefreshKey(provider: string, tenantId: string, accountId: string): string {
+  // Provider is part of the key: the SAME Atlassian user holds one grant per
+  // app, and without it the Jira and JSM tokens would overwrite each other in
+  // the freshest-token map.
+  return `${provider}:${tenantId}:${accountId}`;
 }
 
 /**
@@ -179,15 +195,17 @@ export function cacheTokenMetadata(
   accessToken: string,
   tenantId: string,
   accountId: string,
-  subject?: string
+  subject?: string,
+  provider: string = 'atlassian'
 ): void {
   tokenMetadataCache.set(accessToken, {
     tenantId,
     accountId,
     subject,
+    provider,
     expiresAt: Date.now() + 24 * 60 * 60 * 1000,
   });
-  currentTokens.set(getRefreshKey(tenantId, accountId), accessToken);
+  currentTokens.set(getRefreshKey(provider, tenantId, accountId), accessToken);
 }
 
 /**
@@ -303,7 +321,8 @@ export async function jiraFetch(
   // The caller's token may be a stale capture from a cached handler closure;
   // when its owner is known, use the freshest token recorded for that owner.
   let token = metadata
-    ? (currentTokens.get(getRefreshKey(metadata.tenantId, metadata.accountId)) ?? accessToken)
+    ? (currentTokens.get(getRefreshKey(metadata.provider, metadata.tenantId, metadata.accountId)) ??
+      accessToken)
     : accessToken;
   const displayName = metadata?.accountId ? getCachedDisplayName(metadata.accountId) : undefined;
   // Deliberately no token material here, not even a prefix: these records are
@@ -352,8 +371,8 @@ export async function jiraFetch(
       );
     }
 
-    const { tenantId, accountId } = metadata;
-    const refreshKey = getRefreshKey(tenantId, accountId);
+    const { tenantId, accountId, provider } = metadata;
+    const refreshKey = getRefreshKey(provider, tenantId, accountId);
     logger.info('401 response, refreshing token', {
       component: 'jira/fetch',
       tenantId,
@@ -366,7 +385,7 @@ export async function jiraFetch(
 
     if (!refreshPromise) {
       // Start new refresh
-      refreshPromise = refreshAtlassianTokenDirect(tenantId, accountId).then((result) => {
+      refreshPromise = refreshAtlassianTokenDirect(tenantId, accountId, provider).then((result) => {
         // Clean up cache after refresh completes
         refreshInFlight.delete(refreshKey);
 
@@ -387,7 +406,7 @@ export async function jiraFetch(
         // Record the new token so later calls holding the stale capture skip
         // the 401 round trip entirely. Subject carries over — a refresh does
         // not change whose token this is.
-        cacheTokenMetadata(result.val.accessToken, tenantId, accountId, metadata.subject);
+        cacheTokenMetadata(result.val.accessToken, tenantId, accountId, metadata.subject, provider);
         return result.val.accessToken;
       });
 

@@ -9,8 +9,11 @@ import {
 import {
   ATLASSIAN_SCOPE_OPTIONS,
   ATLASSIAN_SCOPE_GROUPS,
+  ATLASSIAN_JSM_SCOPE_OPTIONS,
+  ATLASSIAN_JSM_SCOPE_GROUPS,
   ATLASSIAN_OFFLINE_SCOPE,
 } from '@/lib/atlassian-scopes';
+import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
 import ScopePicker from '@/components/scope-picker';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 
@@ -160,17 +163,56 @@ interface AtlassianConfig {
 }
 
 function AtlassianForm({ slug }: { slug: string }) {
-  const url = `/api/admin/${slug}/connectors/atlassian`;
+  return (
+    <AtlassianAppForm
+      slug={slug}
+      connector="atlassian"
+      title="Atlassian (Jira)"
+      groups={ATLASSIAN_SCOPE_GROUPS}
+      options={ATLASSIAN_SCOPE_OPTIONS}
+    />
+  );
+}
+
+function AtlassianJsmForm({ slug }: { slug: string }) {
+  return (
+    <AtlassianAppForm
+      slug={slug}
+      connector="atlassian-jsm"
+      title="Atlassian (Service Management & Ops)"
+      groups={ATLASSIAN_JSM_SCOPE_GROUPS}
+      options={ATLASSIAN_JSM_SCOPE_OPTIONS}
+    />
+  );
+}
+
+/**
+ * One form serves both Atlassian app registrations — Jira, and "Renkei JSM"
+ * (the split exists because Atlassian's all-of scope enforcement times its
+ * consent-URL length cliff makes the combined scope union unfittable on one
+ * app). Each connector stores its own client id/secret and scope ceiling.
+ */
+function AtlassianAppForm({
+  slug,
+  connector,
+  title,
+  groups,
+  options,
+}: {
+  slug: string;
+  connector: string;
+  title: string;
+  groups: ScopeGroup[];
+  options: ScopeOption[];
+}) {
+  const url = `/api/admin/${slug}/connectors/${connector}`;
   const [state, reload] = useConnectorConfig<AtlassianConfig>(url);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   // Checked capability bundles, offline_access excluded — it is always sent,
   // never a choice.
   const [checkedIds, setCheckedIds] = useState<Set<string>>(
-    () =>
-      new Set(
-        ATLASSIAN_SCOPE_OPTIONS.filter((option) => option.defaultChecked).map((option) => option.id)
-      )
+    () => new Set(options.filter((option) => option.defaultChecked).map((option) => option.id))
   );
   const [redirectUri, setRedirectUri] = useState('');
   const [enabled, setEnabled] = useState(true);
@@ -186,7 +228,7 @@ function AtlassianForm({ slug }: { slug: string }) {
       // A ceiling saved before the granular migration matches nothing —
       // leave the defaults checked so re-saving lands on sane granular scopes.
       const stored = new Set(state.data.scopes.split(/\s+/));
-      const matching = ATLASSIAN_SCOPE_OPTIONS.filter((option) => optionWithin(option, stored));
+      const matching = options.filter((option) => optionWithin(option, stored));
       if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
     }
     setRedirectUri(state.data.redirectUri ?? '');
@@ -207,10 +249,7 @@ function AtlassianForm({ slug }: { slug: string }) {
     setBusy(true);
     setNotice(null);
     setError(null);
-    const scopes = [
-      ...scopesOfOptions(ATLASSIAN_SCOPE_OPTIONS, checkedIds),
-      ATLASSIAN_OFFLINE_SCOPE,
-    ].join(' ');
+    const scopes = [...scopesOfOptions(options, checkedIds), ATLASSIAN_OFFLINE_SCOPE].join(' ');
     const failure = await putJson(url, {
       clientId: clientId.trim(),
       clientSecret: clientSecret.trim(),
@@ -230,13 +269,13 @@ function AtlassianForm({ slug }: { slug: string }) {
 
   if (state.loading)
     return (
-      <Card title="Atlassian (Jira)" status={null}>
+      <Card title={title} status={null}>
         Loading…
       </Card>
     );
   if (state.error) {
     return (
-      <Card title="Atlassian (Jira)" status={null}>
+      <Card title={title} status={null}>
         <p className="text-sm text-red-700 dark:text-red-300">{state.error}</p>
       </Card>
     );
@@ -245,7 +284,7 @@ function AtlassianForm({ slug }: { slug: string }) {
 
   return (
     <Card
-      title="Atlassian (Jira)"
+      title={title}
       status={
         <StatusPill configured={config?.configured ?? false} enabled={config?.enabled ?? false} />
       }
@@ -265,11 +304,11 @@ function AtlassianForm({ slug }: { slug: string }) {
       </p>
       <form onSubmit={(e) => void save(e)} className="space-y-3">
         <div>
-          <label htmlFor="at-client-id" className={labelClass}>
+          <label htmlFor={`${connector}-client-id`} className={labelClass}>
             Client ID
           </label>
           <input
-            id="at-client-id"
+            id={`${connector}-client-id`}
             required
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
@@ -277,11 +316,11 @@ function AtlassianForm({ slug }: { slug: string }) {
           />
         </div>
         <div>
-          <label htmlFor="at-client-secret" className={labelClass}>
+          <label htmlFor={`${connector}-client-secret`} className={labelClass}>
             Client secret
           </label>
           <input
-            id="at-client-secret"
+            id={`${connector}-client-secret`}
             type="password"
             required
             value={clientSecret}
@@ -299,8 +338,8 @@ function AtlassianForm({ slug }: { slug: string }) {
           <fieldset>
             <legend className={labelClass}>What users may grant</legend>
             <ScopePicker
-              groups={ATLASSIAN_SCOPE_GROUPS}
-              options={ATLASSIAN_SCOPE_OPTIONS}
+              groups={groups}
+              options={options}
               checked={checkedIds}
               onToggle={toggleOption}
             />
@@ -315,11 +354,11 @@ function AtlassianForm({ slug }: { slug: string }) {
           </fieldset>
         </div>
         <div>
-          <label htmlFor="at-redirect" className={labelClass}>
+          <label htmlFor={`${connector}-redirect`} className={labelClass}>
             Redirect URI override <span className="font-normal text-gray-500">(optional)</span>
           </label>
           <input
-            id="at-redirect"
+            id={`${connector}-redirect`}
             value={redirectUri}
             onChange={(e) => setRedirectUri(e.target.value)}
             placeholder="Defaults to this origin + /api/oauth/callback"
@@ -774,6 +813,7 @@ export default function ConnectorForms({ slug }: { slug: string }) {
   return (
     <div className="space-y-6">
       <AtlassianForm slug={slug} />
+      <AtlassianJsmForm slug={slug} />
       <WebexForm slug={slug} />
       <WebexUserForm slug={slug} />
       <EmbeddingsForm slug={slug} />

@@ -4,7 +4,14 @@ import { getAtlassianApp } from '@/lib/atlassian-app';
 import { getWebexUserApp } from '@/lib/webex-app';
 import { getDatabase } from '@renkei/db';
 import { setJiraGrant } from '@/lib/tenant-operations';
-import { setGrant, scopesFromAccessToken, WEBEX_USER } from '@renkei/provider-grants';
+import {
+  setGrant,
+  scopesFromAccessToken,
+  ATLASSIAN,
+  ATLASSIAN_JSM,
+  WEBEX_USER,
+} from '@renkei/provider-grants';
+import { getAtlassianJsmApp } from '@/lib/atlassian-app';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
@@ -166,6 +173,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // the column and means Atlassian — the only provider that existed then.
     if (pendingSignIn.provider === 'webex-user') {
       return handleWebexUserCallback(
+        request,
+        tenant,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes
+      );
+    }
+    if (pendingSignIn.provider === 'atlassian-jsm') {
+      return handleAtlassianJsmCallback(
         request,
         tenant,
         pendingSignIn.subject,
@@ -572,5 +588,144 @@ async function handleWebexUserCallback(
   }
 
   logger.info('WebEx user grant stored', { component: 'auth/oauth', tenantId: tenant.id, subject });
+  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+}
+
+/**
+ * Complete the OAuth flow for the second Atlassian app ("Renkei JSM": JSM +
+ * Ops scopes on their own grant). Same token endpoint and callback as the
+ * Jira app — a different client id, and a token that usually carries no Jira
+ * scopes, so identity comes from the token claims and the site identity from
+ * the claims/prior-grant fallbacks the ops-only experiment established.
+ */
+async function handleAtlassianJsmCallback(
+  request: NextRequest,
+  tenant: { id: string; slug: string },
+  subject: string,
+  code: string,
+  requestedScopes: string | null
+): Promise<NextResponse> {
+  logger.info('Atlassian JSM callback', { component: 'auth/oauth', tenantId: tenant.id });
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  const db = dbResult.val;
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  const app = await getAtlassianJsmApp(tenant.id, originResult.val);
+  if (!app) {
+    return NextResponse.json({ error: 'Atlassian JSM connector not configured' }, { status: 503 });
+  }
+
+  const tokenResponse = await fetch('https://auth.atlassian.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      client_id: app.clientId,
+      client_secret: app.clientSecret,
+      code,
+      redirect_uri: app.redirectUri,
+    }),
+  });
+  const tokenData: unknown = await tokenResponse.json().catch(() => null);
+  if (!tokenResponse.ok || !isJiraTokenResponse(tokenData)) {
+    logger.error('Atlassian JSM token exchange failed', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      status: tokenResponse.status,
+    });
+    return NextResponse.json({ error: 'Token exchange failed' }, { status: 502 });
+  }
+
+  // Site identity: a JSM/Ops-scoped token may surface no accessible
+  // resources, so fall through the chain the ops-only experiment proved out —
+  // the code JWT's site ARI, then any prior Atlassian grant in this tenant.
+  let cloudId: string | null = null;
+  try {
+    const resources = await fetch('https://api.atlassian.com/oauth/token/accessible-resources', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}`, Accept: 'application/json' },
+    });
+    const list: unknown = await resources.json().catch(() => null);
+    if (isResourceArray(list) && list.length > 0) cloudId = list[0].id;
+  } catch {
+    // fall through to the claim/prior-grant chain
+  }
+  cloudId ??= cloudIdFromTokenClaims(code) ?? cloudIdFromTokenClaims(tokenData.access_token);
+  if (!cloudId) {
+    const prior = await db
+      .selectFrom('provider_grants')
+      .select('metadata')
+      .where('tenant_id', '=', tenant.id)
+      .where('provider', 'in', [ATLASSIAN, ATLASSIAN_JSM])
+      .executeTakeFirst();
+    if (prior && typeof prior.metadata === 'object' && prior.metadata !== null) {
+       
+      const meta = prior.metadata as Record<string, unknown>;
+      if (typeof meta.cloudId === 'string' && meta.cloudId) cloudId = meta.cloudId;
+    }
+  }
+  if (!cloudId) {
+    logger.error('Atlassian JSM callback could not resolve a cloud id', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'No Jira site resolvable for this token' }, { status: 502 });
+  }
+
+  // The account id comes from the token claims — /myself is closed to a
+  // token without Jira scopes. Display name borrows from the caller's Jira
+  // grant when one exists (same human, same Atlassian account).
+  const accountId = subFromTokenClaims(tokenData.access_token);
+  if (!accountId) {
+    return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
+  }
+  const jiraGrantRow = await db
+    .selectFrom('provider_grants')
+    .select('display_name')
+    .where('tenant_id', '=', tenant.id)
+    .where('provider', '=', ATLASSIAN)
+    .where('subject', '=', subject)
+    .executeTakeFirst();
+  const displayName = jiraGrantRow?.display_name || accountId;
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) {
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  const stored = await setGrant(
+    ATLASSIAN_JSM,
+    tenant.id,
+    {
+      accountId,
+      clientId: app.clientId,
+      displayName,
+      subject,
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token || '',
+      expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
+      requestedScopes: (requestedScopes || app.scopes).split(' '),
+      grantedScopes:
+        scopesFromAccessToken(tokenData.access_token) ??
+        ((typeof tokenData.scope === 'string' && tokenData.scope.trim()) || null)?.split(/\s+/) ??
+        null,
+      metadata: { cloudId, siteUrl: '' },
+    },
+    keyResult.val
+  );
+  if (!stored.ok) {
+    logger.error('Failed to store Atlassian JSM grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Failed to store grant' }, { status: 500 });
+  }
+
+  logger.info('Atlassian JSM grant stored', {
+    component: 'auth/oauth',
+    tenantId: tenant.id,
+    subject,
+  });
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }

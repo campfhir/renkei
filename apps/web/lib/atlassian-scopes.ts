@@ -10,8 +10,9 @@
 
 import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
 
-export const ATLASSIAN_SCOPE_GROUPS: ScopeGroup[] = [
-  { id: 'jira', label: 'Jira' },
+export const ATLASSIAN_SCOPE_GROUPS: ScopeGroup[] = [{ id: 'jira', label: 'Jira' }];
+
+export const ATLASSIAN_JSM_SCOPE_GROUPS: ScopeGroup[] = [
   { id: 'jsm', label: 'Service Management' },
   { id: 'ops', label: 'Operations (alerts & on-call)' },
 ];
@@ -117,12 +118,20 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
     defaultChecked: false,
     scopes: ['write:board-scope:jira-software', 'write:sprint:jira-software'],
   },
+];
+
+/**
+ * The second app's catalog ("Renkei JSM"): JSM + Ops. Everything defaults on
+ * — a dedicated app exists to be used; the org ceiling and per-user
+ * narrowing still apply.
+ */
+export const ATLASSIAN_JSM_SCOPE_OPTIONS: ScopeOption[] = [
   {
     id: 'jsm-read',
     label: 'Read requests',
     hint: 'Requests, comments, participants, approvals, SLAs, request types, service desks',
     group: 'jsm',
-    defaultChecked: false,
+    defaultChecked: true,
     scopes: [
       'read:request.approval:jira-service-management',
       'read:request.comment:jira-service-management',
@@ -139,7 +148,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Create & update requests',
     hint: 'Create requests, comment, attach, transition, manage participants (approvals stay read-only by design)',
     group: 'jsm',
-    defaultChecked: false,
+    defaultChecked: true,
     scopes: [
       'read:request.attachment:jira-service-management',
       'write:request.attachment:jira-service-management',
@@ -155,7 +164,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Manage customers',
     hint: 'List, create, invite, and remove service desk customers',
     group: 'jsm',
-    defaultChecked: false,
+    defaultChecked: true,
     scopes: [
       'read:customer:jira-service-management',
       'write:customer:jira-service-management',
@@ -169,7 +178,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Read alerts',
     hint: 'Alert list and detail',
     group: 'ops',
-    defaultChecked: false,
+    defaultChecked: true,
     scopes: ['read:ops-alert:jira-service-management'],
   },
   {
@@ -177,7 +186,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Act on alerts',
     hint: 'Acknowledge and close',
     group: 'ops',
-    defaultChecked: false,
+    defaultChecked: true,
     scopes: ['write:ops-alert:jira-service-management'],
   },
   {
@@ -185,7 +194,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Read schedules & on-call',
     hint: 'Schedules, rotations, who-is-on-call, teams, escalations',
     group: 'ops',
-    defaultChecked: false,
+    defaultChecked: true,
     scopes: ['read:ops-config:jira-service-management'],
   },
   {
@@ -193,7 +202,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Update schedules',
     hint: 'Overrides and rotation changes — confirm-gated wizards',
     group: 'ops',
-    defaultChecked: false,
+    defaultChecked: true,
     scopes: ['write:ops-config:jira-service-management'],
   },
   {
@@ -201,7 +210,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Delete overrides',
     hint: 'Remove schedule overrides — confirm-gated',
     group: 'ops',
-    defaultChecked: false,
+    defaultChecked: true,
     scopes: ['delete:ops-config:jira-service-management'],
   },
 ];
@@ -213,14 +222,26 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
 export const ATLASSIAN_OFFLINE_SCOPE = 'offline_access';
 export const ATLASSIAN_REQUIRED_SCOPES = [ATLASSIAN_OFFLINE_SCOPE];
 
-/** Every scope the catalog knows, across all bundles. */
+/** Every scope each catalog knows, across its bundles. */
 export const ALL_ATLASSIAN_SCOPES = [
   ...new Set(ATLASSIAN_SCOPE_OPTIONS.flatMap((option) => option.scopes)),
+];
+export const ALL_ATLASSIAN_JSM_SCOPES = [
+  ...new Set(ATLASSIAN_JSM_SCOPE_OPTIONS.flatMap((option) => option.scopes)),
 ];
 
 export const DEFAULT_ATLASSIAN_SCOPES = [
   ...new Set(
     ATLASSIAN_SCOPE_OPTIONS.filter((option) => option.defaultChecked).flatMap(
+      (option) => option.scopes
+    )
+  ),
+  ATLASSIAN_OFFLINE_SCOPE,
+].join(' ');
+
+export const DEFAULT_ATLASSIAN_JSM_SCOPES = [
+  ...new Set(
+    ATLASSIAN_JSM_SCOPE_OPTIONS.filter((option) => option.defaultChecked).flatMap(
       (option) => option.scopes
     )
   ),
@@ -234,10 +255,22 @@ export const DEFAULT_ATLASSIAN_SCOPES = [
  * orgs connectable (at defaults) until an admin re-saves Connector setup.
  */
 export function usableAtlassianCeiling(stored: string | null | undefined): string[] {
-  const known = new Set(ALL_ATLASSIAN_SCOPES);
+  return usableCeiling(stored, ALL_ATLASSIAN_SCOPES, DEFAULT_ATLASSIAN_SCOPES);
+}
+
+export function usableAtlassianJsmCeiling(stored: string | null | undefined): string[] {
+  return usableCeiling(stored, ALL_ATLASSIAN_JSM_SCOPES, DEFAULT_ATLASSIAN_JSM_SCOPES);
+}
+
+function usableCeiling(
+  stored: string | null | undefined,
+  catalog: readonly string[],
+  fallback: string
+): string[] {
+  const known = new Set(catalog);
   const kept = (stored ?? '')
     .split(/\s+/)
     .filter(Boolean)
     .filter((scope) => known.has(scope));
-  return kept.length > 0 ? kept : DEFAULT_ATLASSIAN_SCOPES.split(' ');
+  return kept.length > 0 ? kept : fallback.split(' ');
 }

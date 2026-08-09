@@ -12,12 +12,23 @@ import { readConnectorConfigCached } from '@renkei/connector-config';
 import { logger } from '@/lib/logger';
 
 export const ATLASSIAN_CONNECTOR = 'atlassian';
+/**
+ * The second Atlassian app ("Renkei JSM") — JSM + Ops scopes on their own
+ * grant, because all-of scope enforcement × the consent-URL length cliff
+ * makes the combined union unfittable on one app.
+ */
+export const ATLASSIAN_JSM_CONNECTOR = 'atlassian-jsm';
 
 // The scope catalog lives in atlassian-scopes.ts (pure data, client-importable
 // — the admin form renders it as checkboxes); re-exported here for the server
 // routes that already import it from this module.
-import { DEFAULT_ATLASSIAN_SCOPES, usableAtlassianCeiling } from '@/lib/atlassian-scopes';
-export { DEFAULT_ATLASSIAN_SCOPES };
+import {
+  DEFAULT_ATLASSIAN_SCOPES,
+  DEFAULT_ATLASSIAN_JSM_SCOPES,
+  usableAtlassianCeiling,
+  usableAtlassianJsmCeiling,
+} from '@/lib/atlassian-scopes';
+export { DEFAULT_ATLASSIAN_SCOPES, DEFAULT_ATLASSIAN_JSM_SCOPES };
 
 export interface AtlassianApp {
   clientId: string;
@@ -36,6 +47,23 @@ export async function getAtlassianApp(
   tenantId: string,
   origin: string
 ): Promise<AtlassianApp | null> {
+  return readApp(tenantId, origin, ATLASSIAN_CONNECTOR, usableAtlassianCeiling);
+}
+
+/** The tenant's second Atlassian app (JSM + Ops), same contract. */
+export async function getAtlassianJsmApp(
+  tenantId: string,
+  origin: string
+): Promise<AtlassianApp | null> {
+  return readApp(tenantId, origin, ATLASSIAN_JSM_CONNECTOR, usableAtlassianJsmCeiling);
+}
+
+async function readApp(
+  tenantId: string,
+  origin: string,
+  connector: string,
+  usableCeiling: (stored: string | null) => string[]
+): Promise<AtlassianApp | null> {
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {
     logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
@@ -45,11 +73,7 @@ export async function getAtlassianApp(
     return null;
   }
 
-  const configResult = await readConnectorConfigCached(
-    tenantId,
-    ATLASSIAN_CONNECTOR,
-    keyResult.val
-  );
+  const configResult = await readConnectorConfigCached(tenantId, connector, keyResult.val);
   if (!configResult.ok) {
     logger.error('Could not read atlassian connector config', {
       component: 'connectors/atlassian',
@@ -70,10 +94,10 @@ export async function getAtlassianApp(
     return null;
   }
 
-  // usableAtlassianCeiling filters the stored ceiling to scopes the granular
-  // catalog knows; settings saved before the granular migration hold classic
-  // scopes and degrade to the default set until an admin re-saves.
-  const scopes = usableAtlassianCeiling(
+  // The ceiling filter keeps only scopes this connector's catalog knows;
+  // settings saved before the granular migration (or before the app split)
+  // degrade to the connector's default set until an admin re-saves.
+  const scopes = usableCeiling(
     typeof config.settings.scopes === 'string' ? config.settings.scopes : null
   ).join(' ');
   const redirectUri =

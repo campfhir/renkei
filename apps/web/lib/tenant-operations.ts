@@ -7,6 +7,7 @@ import { readConnectorConfigCached } from '@renkei/connector-config';
 import {
   ATLASSIAN,
   AtlassianAdapter,
+  ATLASSIAN_JSM,
   getGrant,
   setGrant,
   readAtlassianMetadata,
@@ -338,7 +339,10 @@ export async function getJiraGrant(
  */
 export async function refreshAtlassianTokenDirect(
   tenantId: string,
-  accountId: string
+  accountId: string,
+  // Which Atlassian app's grant to refresh: ATLASSIAN (Jira) or
+  // ATLASSIAN_JSM — each has its own client secret in connector config.
+  provider: string = ATLASSIAN
 ): Promise<
   Result<
     { accessToken: string; refreshToken: string; expiresAt: Date },
@@ -357,9 +361,10 @@ export async function refreshAtlassianTokenDirect(
 
   // The client secret is org connector configuration in the database, like
   // the rest of the Atlassian app registration.
+  const connector = provider === ATLASSIAN_JSM ? ATLASSIAN_JSM : ATLASSIAN;
   const configResult = await readConnectorConfigCached(
     tenantId,
-    ATLASSIAN,
+    connector,
     encryptionKeyResult.val
   );
   if (!configResult.ok || !configResult.val?.secrets.clientSecret) {
@@ -371,6 +376,6 @@ export async function refreshAtlassianTokenDirect(
     return err('REFRESH_FAILED' as const);
   }
 
-  const adapter = new AtlassianAdapter(configResult.val.secrets.clientSecret);
+  const adapter = new AtlassianAdapter(configResult.val.secrets.clientSecret, provider);
   return refreshGrantTokens(adapter, tenantId, accountId, encryptionKeyResult.val, logger);
 }

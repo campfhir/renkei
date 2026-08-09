@@ -18,11 +18,19 @@ import { registerAllTools, cacheTokenMetadata, cacheUserDisplayName } from '@/li
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
-import { WEBEX_USER } from '@renkei/provider-grants';
+import {
+  WEBEX_USER,
+  ATLASSIAN_JSM,
+  getGrant,
+  readAtlassianMetadata,
+} from '@renkei/provider-grants';
+import { parseEncryptionKey } from '@renkei/crypto';
 import { getIdentityEmail } from '@/lib/identity';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { createProjection } from '@renkei/capability-registry';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
+import type { Kysely } from 'kysely';
+import type { DB } from '@renkei/db';
 import type { McpServer } from '@modelcontextprotocol/server';
 
 // Cache MCP handlers per (tenantId, accountId)
@@ -42,6 +50,46 @@ function getCacheKey(
   // whether this caller holds a WebEx user grant, and the caller's recorded
   // email (captured by search_knowledge's closure).
   return `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:${webexAvailable ? 'w' : 'nw'}:${userEmail ?? ''}`;
+}
+
+/**
+ * The caller's grant on the second Atlassian app ("Renkei JSM"), decrypted —
+ * or null when they have not connected it (JSM tools then fall back to the
+ * main grant). Effective scopes prefer what the token actually carries.
+ */
+async function resolveJsmGrant(
+  db: Kysely<DB>,
+  tenantId: string,
+  subject: string
+): Promise<{ accessToken: string; cloudId: string; accountId: string; scopes?: string[] } | null> {
+  const row = await db
+    .selectFrom('provider_grants')
+    .select(['provider_account_id'])
+    .where('tenant_id', '=', tenantId)
+    .where('provider', '=', ATLASSIAN_JSM)
+    .where('subject', '=', subject)
+    .limit(1)
+    .executeTakeFirst();
+  if (!row) return null;
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) return null;
+  const grantResult = await getGrant(
+    ATLASSIAN_JSM,
+    tenantId,
+    row.provider_account_id,
+    keyResult.val
+  );
+  if (!grantResult.ok || !grantResult.val) return null;
+  const grant = grantResult.val;
+  const site = readAtlassianMetadata(grant.metadata);
+  if (!site.cloudId) return null;
+  return {
+    accessToken: grant.accessToken,
+    cloudId: site.cloudId,
+    accountId: grant.accountId,
+    scopes: grant.grantedScopes ?? grant.requestedScopes,
+  };
 }
 
 const handler = async (
@@ -218,10 +266,25 @@ const handler = async (
       : [];
     const jiraScopes = grant.grantedScopes ?? grant.requestedScopes;
 
-    // Check cache. The tool set now varies with both grants' scopes, so they
+    // The second Atlassian app's grant ("Renkei JSM": JSM + Ops scopes) —
+    // JSM/Ops tools run on this token when it exists; absent, they fall back
+    // to the main grant, the pre-split single-app shape.
+    const jsmGrant = await resolveJsmGrant(db, tenantId, subject);
+    if (jsmGrant) {
+      cacheTokenMetadata(
+        jsmGrant.accessToken,
+        tenantId,
+        jsmGrant.accountId,
+        subject,
+        ATLASSIAN_JSM
+      );
+    }
+    const jsmScopes = jsmGrant?.scopes ?? [];
+
+    // Check cache. The tool set now varies with every grant's scopes, so they
     // are part of the key — a reconnect with different scopes must not be
     // served a handler built for the old ones.
-    const scopeFingerprint = `${[...jiraScopes].sort().join(',')}|${[...webexScopes].sort().join(',')}`;
+    const scopeFingerprint = `${[...jiraScopes].sort().join(',')}|${[...webexScopes].sort().join(',')}|${[...jsmScopes].sort().join(',')}:${jsmGrant ? 'jsm' : 'nojsm'}`;
     const cacheKey =
       getCacheKey(
         tenantId,
@@ -260,6 +323,7 @@ const handler = async (
               subject,
               grantedScopes: jiraScopes,
               webexScopes: webexAvailable ? webexScopes : undefined,
+              jsmGrant: jsmGrant ?? undefined,
               db,
             };
 

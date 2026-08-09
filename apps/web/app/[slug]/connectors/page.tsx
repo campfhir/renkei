@@ -5,12 +5,13 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import JiraConnector from './jira-connector';
+import JsmConnector from './jsm-connector';
 import WebexUserConnector from './webex-user-connector';
 import McpEndpoint from './mcp-endpoint';
-import { WEBEX_USER, ATLASSIAN } from '@renkei/provider-grants';
+import { WEBEX_USER, ATLASSIAN, ATLASSIAN_JSM } from '@renkei/provider-grants';
 import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
-import { usableAtlassianCeiling } from '@/lib/atlassian-scopes';
+import { usableAtlassianCeiling, usableAtlassianJsmCeiling } from '@/lib/atlassian-scopes';
 
 /** The org's stored scopes string for a connector, from non-secret settings. */
 function storedScopes(settings: unknown): string | null {
@@ -69,11 +70,12 @@ export default async function ConnectorsPage({
   // Filtered to catalog-known scopes: a ceiling saved before the granular
   // migration is all classic and degrades to the defaults until re-saved.
   const atlassianCeiling = usableAtlassianCeiling(storedScopes(settingsOf('atlassian')));
+  const jsmCeiling = usableAtlassianJsmCeiling(storedScopes(settingsOf('atlassian-jsm')));
   const webexCeiling = ceilingFrom(settingsOf(WEBEX_USER_CONNECTOR), DEFAULT_WEBEX_USER_SCOPES);
 
   // The caller's own grants, server-rendered — connection state, and the
   // scopes they previously authorized (seeding the picker on reconnect).
-  const [atlassianGrant, webexGrant] = dbResult.ok
+  const [atlassianGrant, webexGrant, jsmGrant] = dbResult.ok
     ? await Promise.all([
         enabled.has('atlassian')
           ? dbResult.val
@@ -93,8 +95,17 @@ export default async function ConnectorsPage({
               .where('subject', '=', session.subject)
               .executeTakeFirst()
           : Promise.resolve(undefined),
+        enabled.has('atlassian-jsm')
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'requested_scopes'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', ATLASSIAN_JSM)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
       ])
-    : [undefined, undefined];
+    : [undefined, undefined, undefined];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -117,6 +128,16 @@ export default async function ConnectorsPage({
               Not enabled for this organization. An org admin can set it up under Connector setup.
             </p>
           </div>
+        )}
+
+        {enabled.has('atlassian-jsm') && (
+          <JsmConnector
+            tenantId={tenant.id}
+            connected={jsmGrant !== undefined && jsmGrant !== null}
+            displayName={jsmGrant?.display_name ?? null}
+            ceiling={jsmCeiling}
+            priorScopes={jsmGrant?.requested_scopes ?? null}
+          />
         )}
 
         {enabled.has('webex') && (

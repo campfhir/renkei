@@ -68,5 +68,18 @@ export async function registerAllTools(server: McpServer, context: MCPToolContex
     withScopeGate(server, context.grantedScopes, granularJiraScopes),
     context
   );
-  await registerJiraServiceManagementTools(server, context);
+  // JSM/Ops tools run on the second Atlassian app's grant when the caller
+  // has connected it — its own token, cloud id, and scope gates. Without
+  // one, they fall back to the main grant (the pre-split single-app shape).
+  const jsmContext: MCPToolContext = context.jsmGrant
+    ? {
+        ...context,
+        accessToken: context.jsmGrant.accessToken,
+        accountId: context.jsmGrant.accountId,
+        cloudId: context.jsmGrant.cloudId,
+        apiBaseUrl: `https://api.atlassian.com/ex/jira/${context.jsmGrant.cloudId}`,
+        grantedScopes: context.jsmGrant.scopes,
+      }
+    : context;
+  await registerJiraServiceManagementTools(server, jsmContext);
 }

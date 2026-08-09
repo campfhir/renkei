@@ -10,6 +10,13 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
 
 export const ATLASSIAN = 'atlassian';
+/**
+ * The second Atlassian app ("Renkei JSM"): JSM + Ops scopes live on their own
+ * grant because Atlassian enforces every documented granular scope per
+ * endpoint while its CDN 414s consent URLs past ~3.1k chars — the full
+ * combined scope union cannot fit one app's authorize URL.
+ */
+export const ATLASSIAN_JSM = 'atlassian-jsm';
 
 const TOKEN_ENDPOINT = 'https://auth.atlassian.com/oauth/token';
 
@@ -29,11 +36,14 @@ export function readAtlassianMetadata(metadata: Record<string, unknown>): {
 }
 
 export class AtlassianAdapter implements ProviderAdapter {
-  readonly provider = ATLASSIAN;
-
   // client_secret is required for the refresh_token grant, same as the initial
   // code exchange. Omitting it yields 401 access_denied / "Unauthorized".
-  constructor(private readonly clientSecret: string) {}
+  // The provider key is a parameter because both Atlassian apps (ATLASSIAN
+  // and ATLASSIAN_JSM) refresh identically — only the rows differ.
+  constructor(
+    private readonly clientSecret: string,
+    readonly provider: string = ATLASSIAN
+  ) {}
 
   async refreshTokens(
     clientId: string,
