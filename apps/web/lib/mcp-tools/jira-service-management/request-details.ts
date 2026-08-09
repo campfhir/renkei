@@ -394,25 +394,67 @@ export async function registerRequestDetailsTools(
           };
         }
 
-        const binaryString = Buffer.from(contentBase64 as string, 'base64').toString('binary');
-        const blob = Buffer.from(binaryString, 'binary');
-        const formData = new FormData();
-        formData.append('file', new Blob([blob]), filename);
+        // The servicedeskapi attachment flow is two-legged: multipart upload
+        // to the SERVICE DESK's attachTemporaryFile, then attach the returned
+        // temporary ids to the request as JSON (AttachmentCreateDTO:
+        // temporaryAttachmentIds + public). The old code POSTed multipart
+        // straight at the request — a shape this API never accepted — and
+        // bypassed jiraFetch, so the failures never even reached the logs.
+        const reqResponse = await jiraFetch(
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${encodeURIComponent(issueKey as string)}`,
+          context.accessToken
+        );
+        const reqBody = (await reqResponse.json()) as any;
+        const serviceDeskId =
+          typeof reqBody?.serviceDeskId === 'string' ? reqBody.serviceDeskId : '';
+        if (!serviceDeskId) {
+          return {
+            content: [
+              { type: 'text' as const, text: `Could not resolve the service desk of ${issueKey}` },
+            ],
+            isError: true,
+          };
+        }
 
-        const response = await fetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/attachment`,
+        const bytes = Buffer.from(contentBase64 as string, 'base64');
+        const formData = new FormData();
+        formData.append('file', new Blob([bytes]), filename as string);
+
+        const upload = await jiraFetch(
+          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/attachTemporaryFile`,
+          context.accessToken,
           {
             method: 'POST',
-            headers: {
-              Authorization: `Bearer ${context.accessToken}`,
-            },
             body: formData,
+            // Required for multipart uploads to Atlassian; without it 404/403.
+            headers: { 'X-Atlassian-Token': 'no-check' },
           }
         );
-
-        if (!response.ok) {
-          throw new Error(`Upload failed: ${response.statusText}`);
+        const uploaded = (await upload.json()) as any;
+        const temporaryAttachmentIds = Array.isArray(uploaded?.temporaryAttachments)
+          ? uploaded.temporaryAttachments
+              .map((t: any) =>
+                typeof t?.temporaryAttachmentId === 'string' ? t.temporaryAttachmentId : ''
+              )
+              .filter(Boolean)
+          : [];
+        if (temporaryAttachmentIds.length === 0) {
+          return {
+            content: [
+              { type: 'text' as const, text: 'Upload succeeded but returned no attachment id' },
+            ],
+            isError: true,
+          };
         }
+
+        await jiraFetch(
+          `${context.apiBaseUrl}/rest/servicedeskapi/request/${encodeURIComponent(issueKey as string)}/attachment`,
+          context.accessToken,
+          {
+            method: 'POST',
+            body: JSON.stringify({ temporaryAttachmentIds, public: true }),
+          }
+        );
 
         return {
           content: [{ type: 'text' as const, text: `Attached ${filename} to ${issueKey}` }],

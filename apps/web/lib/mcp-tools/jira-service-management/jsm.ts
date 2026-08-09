@@ -502,9 +502,9 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           context.accessToken,
           {
             method: 'POST',
-            body: JSON.stringify({
-              transition: { id: transition.id },
-            }),
+            // CustomerTransitionExecutionDTO is {id, additionalComment} —
+            // the platform-style {transition:{id}} wrapper 400s here.
+            body: JSON.stringify({ id: transition.id }),
           }
         );
 
