@@ -58,9 +58,14 @@ describe('atlassian scope catalog', () => {
 });
 
 describe('two-app split invariants', () => {
-  it('keeps the catalogs disjoint — a scope belongs to exactly one app', () => {
+  it('keeps the catalogs disjoint, except the documented shared scopes', () => {
+    // read:user:jira rides both apps: JSM payloads embed user objects and
+    // all-of enforcement demands it on most servicedeskapi endpoints.
+    const shared = new Set(['read:user:jira']);
     const jira = new Set(ALL_ATLASSIAN_SCOPES);
-    const overlap = ALL_ATLASSIAN_JSM_SCOPES.filter((scope) => jira.has(scope));
+    const overlap = ALL_ATLASSIAN_JSM_SCOPES.filter(
+      (scope) => jira.has(scope) && !shared.has(scope)
+    );
     expect(overlap).toEqual([]);
   });
 

@@ -141,6 +141,11 @@ export const ATLASSIAN_JSM_SCOPE_OPTIONS: ScopeOption[] = [
       'read:request:jira-service-management',
       'read:requesttype:jira-service-management',
       'read:servicedesk:jira-service-management',
+      // Cross-family on purpose: JSM request payloads embed user objects, and
+      // Atlassian's all-of enforcement demands read:user:jira on most
+      // servicedeskapi endpoints — so the JSM app carries this one Jira-API
+      // scope too.
+      'read:user:jira',
     ],
   },
   {
@@ -157,6 +162,7 @@ export const ATLASSIAN_JSM_SCOPE_OPTIONS: ScopeOption[] = [
       'write:request.status:jira-service-management',
       'write:request:jira-service-management',
       'delete:request.participant:jira-service-management',
+      'read:user:jira',
     ],
   },
   {
@@ -171,6 +177,7 @@ export const ATLASSIAN_JSM_SCOPE_OPTIONS: ScopeOption[] = [
       'read:servicedesk.customer:jira-service-management',
       'write:servicedesk.customer:jira-service-management',
       'delete:servicedesk.customer:jira-service-management',
+      'read:user:jira',
     ],
   },
   {

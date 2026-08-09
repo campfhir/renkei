@@ -92,6 +92,11 @@ write:sprint:jira-software
 
 ## Jira Service Management API — app 2 ("Renkei JSM")
 
+`read:user:jira` is deliberately on BOTH apps: JSM request payloads embed
+user objects and Atlassian's all-of enforcement demands it on most
+servicedeskapi endpoints — in the console, add the **Jira API** product to
+the JSM app carrying just that one scope.
+
 ```
 read:customer:jira-service-management
 read:request.approval:jira-service-management
@@ -104,6 +109,7 @@ read:request:jira-service-management
 read:requesttype:jira-service-management
 read:servicedesk.customer:jira-service-management
 read:servicedesk:jira-service-management
+read:user:jira
 write:customer:jira-service-management
 write:request.attachment:jira-service-management
 write:request.comment:jira-service-management
