@@ -36,7 +36,9 @@ export async function registerFilterTools(
       try {
         const { expand } = args;
 
-        let url = `${context.apiBaseUrl}/rest/api/3/filter/search?maxResults=50`;
+        // owner (and jql) only appear when expanded — without this every
+        // filter showed Owner: Unknown.
+        let url = `${context.apiBaseUrl}/rest/api/3/filter/search?maxResults=50&expand=owner,jql`;
         if (expand) {
           url += `&expand=${encodeURIComponent(expand as string)}`;
         }
@@ -95,7 +97,7 @@ export async function registerFilterTools(
         }
 
         const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/filter/${filterId}`,
+          `${context.apiBaseUrl}/rest/api/3/filter/${filterId}?expand=owner,jql`,
           context.accessToken
         );
 
@@ -222,7 +224,7 @@ export async function registerFilterTools(
         }
 
         await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/filter/${filterId}`,
+          `${context.apiBaseUrl}/rest/api/3/filter/${filterId}?expand=owner,jql`,
           context.accessToken,
           { method: 'DELETE' }
         );

@@ -8,6 +8,8 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { jiraFetch, getCachedDisplayName, issueUrl } from '../common';
+import { adfToMarkdown } from './adf';
+import { markdownToAdf } from './markdown';
 import { logger } from '@/lib/logger';
 
 export async function registerWorklogTools(
@@ -57,7 +59,8 @@ export async function registerWorklogTools(
             const author = w.author?.displayName || 'Unknown';
             const duration = w.timeSpent || 'N/A';
             const started = w.started ? new Date(w.started).toLocaleDateString() : 'N/A';
-            return `• ${author}: ${duration} (${started})${w.comment ? ` - ${w.comment}` : ''}`;
+            // Worklog comments are ADF documents — flattened, not stringified.
+            return `• ${author}: ${duration} (${started})${w.comment ? ` - ${adfToMarkdown(w.comment)}` : ''}`;
           }),
         ];
 
@@ -120,7 +123,8 @@ export async function registerWorklogTools(
         };
 
         if (comment) {
-          body.comment = comment as string;
+          // The v3 worklog API takes ADF here, not a plain string.
+          body.comment = markdownToAdf(comment as string);
         }
         if (started) {
           body.started = started as string;
