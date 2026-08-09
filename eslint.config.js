@@ -13,6 +13,7 @@ export default [
       '**/*.config.mjs',
       'packages/db/scripts/build-migrations.js',
       'apps/web/scripts/fix-async-warnings.ts',
+      'apps/web/scripts/generate-log-ship-keys.mjs',
     ],
   },
   js.configs.recommended,

@@ -3,12 +3,15 @@ import type { NextRequest } from 'next/server';
 import { logger } from '@/lib/logger';
 
 /**
- * Health checks and Next internals never log: the health probe arrives every
- * ~30 seconds forever, and a log stream that is mostly heartbeat is a log
- * stream nobody reads.
+ * Health checks, Next internals, and log shipping never log: the health probe
+ * arrives every ~30 seconds forever, and every shipped batch hitting
+ * /api/logs would add a proxy row about the act of delivering log rows —
+ * a log stream that is mostly heartbeat is a log stream nobody reads.
  */
 function isNoiseRoute(pathname: string): boolean {
-  return pathname === '/api/health' || pathname.startsWith('/_next/');
+  return (
+    pathname === '/api/health' || pathname.startsWith('/api/logs') || pathname.startsWith('/_next/')
+  );
 }
 
 export async function proxy(request: NextRequest) {

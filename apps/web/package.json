@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "generate:log-ship-keys": "node scripts/generate-log-ship-keys.mjs"
   },
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",

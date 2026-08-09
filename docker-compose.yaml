@@ -57,6 +57,13 @@ services:
     container_name: renkei-worker
     env_file:
       - .env
+    # Optional e2e log shipping (worker → renkei over HTTP, encrypted +
+    # signed, instead of writing the logs table directly). Generate the whole
+    # .env block with:  pnpm --filter renkei generate:log-ship-keys
+    #   LOG_SHIP_ENDPOINT=http://renkei:3000/api/logs   (turns it on)
+    #   LOG_SHIP_API_KEY / LOG_SHIP_SIGNING_KEYS        (auth + identity)
+    # The renkei service reads LOG_SHIP_API_KEY and LOG_E2E_SERVER_KEYS from
+    # the same .env. Unset, the worker logs straight to Postgres as before.
     environment: *database-urls
     depends_on:
       postgres:

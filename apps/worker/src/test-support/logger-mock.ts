@@ -8,6 +8,7 @@
 const noop = (): void => undefined;
 
 export const logger = {
+  flush: (): Promise<void> => Promise.resolve(),
   critical: noop,
   error: noop,
   warn: noop,
@@ -21,4 +22,4 @@ export const logger = {
   debug: noop,
 };
 
-export function attachDbLogging(): void {}
+export function attachPersistentLogging(): void {}

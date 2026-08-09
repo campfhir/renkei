@@ -13,7 +13,7 @@ import { handlerFor, registerHandler } from './handlers';
 import { createWebexMessageHandler } from './handlers/webex-message';
 import { createWebexAttachmentActionHandler } from './handlers/webex-attachment-action';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
-import { logger, attachDbLogging } from './logger';
+import { logger, attachPersistentLogging } from './logger';
 import packageJson from '../package.json';
 
 /** Poll cadence: quick when draining a backlog, relaxed when idle. */
@@ -103,7 +103,7 @@ async function maybeSweepWebhooks(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  await attachDbLogging();
+  await attachPersistentLogging();
   registerConnectorHandlers();
   // Console output carries only explicit attrs, so the build identity rides
   // the boot line — `docker logs` answers "what is running" directly.
@@ -128,8 +128,11 @@ async function main(): Promise<void> {
     }
     await sleep(hadWork ? BUSY_DELAY_MS : IDLE_DELAY_MS);
   }
-  await closeDatabase();
   logger.info('stopped', { component: 'worker/loop' });
+  // Drain the adapters — the HttpAdapter's queue especially — while the
+  // database and event loop are still alive to receive them.
+  await logger.flush();
+  await closeDatabase();
 }
 
 function shutdown(signal: string): void {
