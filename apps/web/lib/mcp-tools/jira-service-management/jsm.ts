@@ -364,7 +364,9 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
             method: 'POST',
             body: JSON.stringify({
               body: comment,
-              internal: isInternal,
+              // CommentCreateDTO has exactly {body, public} — `internal` is
+              // not a key this API knows, and the sense is inverted.
+              public: !isInternal,
             }),
           }
         );
