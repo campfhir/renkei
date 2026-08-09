@@ -104,35 +104,69 @@ function describeStatus(status: number): string {
   return `WebEx API answered ${status}`;
 }
 
+/** Who a failed WebEx call was for — every tool passes its MCPToolContext. */
+interface WebexLogScope {
+  tenantId: string;
+  subject?: string;
+}
+
 async function webexRequest(
+  scope: WebexLogScope,
   accessToken: string,
   path: string,
   init?: { method?: string; json?: unknown }
 ): Promise<{ ok: true; response: Response } | { ok: false; error: string }> {
+  const body = init?.json !== undefined ? JSON.stringify(init.json) : undefined;
   let response: Response;
   try {
     response = await fetch(`${API}${path}`, {
       method: init?.method ?? 'GET',
       headers: {
         Authorization: `Bearer ${accessToken}`,
-        ...(init?.json !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       },
-      ...(init?.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
+      ...(body !== undefined ? { body } : {}),
     });
   } catch {
+    logger.warn('WebEx API unreachable', {
+      component: 'webex/fetch',
+      tenantId: scope.tenantId,
+      subject: scope.subject,
+      path,
+      method: init?.method ?? 'GET',
+    });
     return { ok: false, error: 'Could not reach webexapis.com' };
   }
   if (!response.ok) {
+    // The full exchange, scoped to tenant and OIDC user — a status alone was
+    // not enough to troubleshoot. The bearer never reaches the log.
+    const responseBody = await response.text().catch(() => '');
+    logger.warn('WebEx API non-OK response', {
+      component: 'webex/fetch',
+      tenantId: scope.tenantId,
+      subject: scope.subject,
+      path,
+      method: init?.method ?? 'GET',
+      status: response.status,
+      requestBody: body === undefined ? undefined : truncateForLog(body),
+      responseBody: truncateForLog(responseBody) || undefined,
+    });
     return { ok: false, error: describeStatus(response.status) };
   }
   return { ok: true, response };
 }
 
+/** Cap a logged body: enough to diagnose, bounded against megabyte payloads. */
+function truncateForLog(text: string): string {
+  return text.length > 4000 ? `${text.slice(0, 4000)}… (${text.length} chars total)` : text;
+}
+
 async function webexGet(
+  scope: WebexLogScope,
   accessToken: string,
   path: string
 ): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> {
-  const result = await webexRequest(accessToken, path);
+  const result = await webexRequest(scope, accessToken, path);
   if (!result.ok) return result;
   const body: unknown = await result.response.json().catch(() => null);
   if (typeof body !== 'object' || body === null) {
@@ -211,7 +245,11 @@ export async function registerWebexUserTools(
       const access = await resolveWebexAccess(context);
       if (typeof access === 'string') return errText(access);
       const max = typeof args.max === 'number' ? args.max : 30;
-      const result = await webexGet(access.accessToken, `/rooms?max=${max}&sortBy=lastactivity`);
+      const result = await webexGet(
+        context,
+        access.accessToken,
+        `/rooms?max=${max}&sortBy=lastactivity`
+      );
       if (!result.ok) return errText(result.error);
       const rooms = items(result.body).map(
         (room) =>
@@ -242,6 +280,7 @@ export async function registerWebexUserTools(
       if (!roomId) return errText('roomId is required');
       const max = typeof args.max === 'number' ? args.max : 20;
       const result = await webexGet(
+        context,
         access.accessToken,
         `/messages?roomId=${encodeURIComponent(roomId)}&max=${max}`
       );
@@ -267,6 +306,7 @@ export async function registerWebexUserTools(
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
       const result = await webexGet(
+        context,
         access.accessToken,
         `/messages/${encodeURIComponent(messageId)}`
       );
@@ -297,6 +337,7 @@ export async function registerWebexUserTools(
       if (!messageId) return errText('messageId is required');
 
       const result = await webexGet(
+        context,
         access.accessToken,
         `/messages/${encodeURIComponent(messageId)}`
       );
@@ -373,7 +414,7 @@ export async function registerWebexUserTools(
       if (!roomId && !toPersonEmail) return errText('Provide roomId or toPersonEmail.');
       if (roomId && toPersonEmail) return errText('Provide roomId or toPersonEmail, not both.');
 
-      const result = await webexRequest(access.accessToken, '/messages', {
+      const result = await webexRequest(context, access.accessToken, '/messages', {
         method: 'POST',
         json: {
           ...(roomId ? { roomId } : { toPersonEmail }),
@@ -418,7 +459,7 @@ export async function registerWebexUserTools(
       const to = str(args.to) || new Date().toISOString();
       const max = typeof args.max === 'number' ? args.max : 20;
       const query = `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&max=${max}&meetingType=meeting`;
-      const result = await webexGet(access.accessToken, `/meetings?${query}`);
+      const result = await webexGet(context, access.accessToken, `/meetings?${query}`);
       if (!result.ok) return errText(result.error);
       const lines = items(result.body).map(
         (meeting) =>
@@ -451,7 +492,11 @@ export async function registerWebexUserTools(
       if (str(args.meetingId)) parts.push(`meetingId=${encodeURIComponent(str(args.meetingId))}`);
       if (str(args.from)) parts.push(`from=${encodeURIComponent(str(args.from))}`);
       if (str(args.to)) parts.push(`to=${encodeURIComponent(str(args.to))}`);
-      const result = await webexGet(access.accessToken, `/meetingTranscripts?${parts.join('&')}`);
+      const result = await webexGet(
+        context,
+        access.accessToken,
+        `/meetingTranscripts?${parts.join('&')}`
+      );
       if (!result.ok) return errText(result.error);
       const lines = items(result.body).map(
         (transcript) =>
@@ -480,6 +525,7 @@ export async function registerWebexUserTools(
       const transcriptId = str(args.transcriptId);
       if (!transcriptId) return errText('transcriptId is required');
       const result = await webexRequest(
+        context,
         access.accessToken,
         `/meetingTranscripts/${encodeURIComponent(transcriptId)}/download?format=txt`
       );
@@ -518,7 +564,7 @@ export async function registerWebexUserTools(
       if (str(args.meetingId)) parts.push(`meetingId=${encodeURIComponent(str(args.meetingId))}`);
       if (str(args.from)) parts.push(`from=${encodeURIComponent(str(args.from))}`);
       if (str(args.to)) parts.push(`to=${encodeURIComponent(str(args.to))}`);
-      const result = await webexGet(access.accessToken, `/recordings?${parts.join('&')}`);
+      const result = await webexGet(context, access.accessToken, `/recordings?${parts.join('&')}`);
       if (!result.ok) return errText(result.error);
       const lines = items(result.body).map(
         (recording) =>

@@ -133,6 +133,8 @@ export function requestUrl(siteUrl: string, requestKey: string): string {
 interface TokenMetadata {
   tenantId: string;
   accountId: string;
+  /** OIDC subject of the user this token acts for — scopes failure logs to a person. */
+  subject?: string;
   expiresAt: number;
 }
 const tokenMetadataCache = new Map<string, TokenMetadata>();
@@ -173,10 +175,16 @@ function getRefreshKey(tenantId: string, accountId: string): string {
  * Store token metadata for 24h TTL lookup during refresh, and record the
  * token as the freshest known one for its (tenantId, accountId).
  */
-export function cacheTokenMetadata(accessToken: string, tenantId: string, accountId: string): void {
+export function cacheTokenMetadata(
+  accessToken: string,
+  tenantId: string,
+  accountId: string,
+  subject?: string
+): void {
   tokenMetadataCache.set(accessToken, {
     tenantId,
     accountId,
+    subject,
     expiresAt: Date.now() + 24 * 60 * 60 * 1000,
   });
   currentTokens.set(getRefreshKey(tenantId, accountId), accessToken);
@@ -233,11 +241,14 @@ interface Failure {
    * field needs to know which field that was, and the prose is not parseable.
    */
   fieldErrors: Record<string, string>;
+  /** The full response body text, for the failure log — reason is a summary. */
+  raw: string;
 }
 
 async function describeFailure(response: Response): Promise<Failure> {
   const body = await response.text().catch(() => '');
-  if (!body) return { reason: response.statusText || `HTTP ${response.status}`, fieldErrors: {} };
+  if (!body)
+    return { reason: response.statusText || `HTTP ${response.status}`, fieldErrors: {}, raw: '' };
 
   try {
     const parsed: unknown = JSON.parse(body);
@@ -263,13 +274,13 @@ async function describeFailure(response: Response): Promise<Failure> {
         .join('; ');
       if (fieldPart) parts.push(fieldPart);
 
-      if (parts.length > 0) return { reason: parts.join(' | '), fieldErrors };
+      if (parts.length > 0) return { reason: parts.join(' | '), fieldErrors, raw: body };
     }
   } catch {
     // Not JSON — fall through to the truncated raw body.
   }
 
-  return { reason: body.slice(0, 300), fieldErrors: {} };
+  return { reason: body.slice(0, 300), fieldErrors: {}, raw: body };
 }
 
 /**
@@ -374,8 +385,9 @@ export async function jiraFetch(
 
         logger.info('Token refresh success', { component: 'jira/fetch', tenantId, accountId });
         // Record the new token so later calls holding the stale capture skip
-        // the 401 round trip entirely.
-        cacheTokenMetadata(result.val.accessToken, tenantId, accountId);
+        // the 401 round trip entirely. Subject carries over — a refresh does
+        // not change whose token this is.
+        cacheTokenMetadata(result.val.accessToken, tenantId, accountId, metadata.subject);
         return result.val.accessToken;
       });
 
@@ -423,14 +435,22 @@ export async function jiraFetch(
 
   if (!response.ok) {
     const failure = await describeFailure(response);
+    // Every failure (401/403 included) logs the full exchange — request
+    // payload and response body, scoped to tenant and OIDC user — because a
+    // status plus a one-line reason was repeatedly not enough to diagnose
+    // anything. The Authorization header never reaches the log.
     logger.warn('Non-OK response', {
       component: 'jira/fetch',
       tenantId: metadata?.tenantId,
       accountId: metadata?.accountId,
+      subject: metadata?.subject,
+      displayName,
       url,
       method: options?.method || 'GET',
       status: response.status,
       reason: failure.reason,
+      requestBody: describeRequestBody(options?.body),
+      responseBody: truncateForLog(failure.raw) || undefined,
       // On auth failures, what the rejected bearer ACTUALLY carries — the
       // grant row's scopes column can echo the request, so "the scope is
       // there" in the DB proves nothing about the token Atlassian evaluated.
@@ -445,6 +465,23 @@ export async function jiraFetch(
   }
 
   return response;
+}
+
+/** Cap a logged body: enough to diagnose, bounded against megabyte payloads. */
+function truncateForLog(text: string): string {
+  return text.length > 4000 ? `${text.slice(0, 4000)}… (${text.length} chars total)` : text;
+}
+
+/**
+ * The outbound request body as loggable text. Bodies here are JSON strings or
+ * multipart uploads; headers are deliberately NOT represented — the bearer
+ * token must never reach the logs table.
+ */
+function describeRequestBody(body: RequestInit['body'] | undefined): string | undefined {
+  if (body === undefined || body === null) return undefined;
+  if (typeof body === 'string') return truncateForLog(body);
+  if (body instanceof FormData) return '[multipart form data]';
+  return '[non-text body]';
 }
 
 /**

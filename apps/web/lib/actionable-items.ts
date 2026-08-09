@@ -72,7 +72,7 @@ export async function executeCreateIssue(
   }
   const grant = grantResult.val;
 
-  cacheTokenMetadata(grant.accessToken, tenantId, grant.accountId);
+  cacheTokenMetadata(grant.accessToken, tenantId, grant.accountId, grant.subject ?? undefined);
   const apiBaseUrl = `https://api.atlassian.com/ex/jira/${grant.cloudId}`;
 
   try {

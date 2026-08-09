@@ -180,7 +180,7 @@ const handler = async (
     // built, and jiraFetch resolves the current one through this cache. This
     // also picks up tokens rotated by another process, since the grant above
     // is read fresh from the database each request.
-    cacheTokenMetadata(grant.accessToken, tenantId, accountId);
+    cacheTokenMetadata(grant.accessToken, tenantId, accountId, subject);
 
     // Seed the display-name cache from the grant's durable record. The cache
     // is in-memory, so a restarted container logged every tool call with
