@@ -61,7 +61,11 @@ export async function registerCommentTools(
             // rendered every one as [object Object].
             const text = c.body ? adfToMarkdown(c.body) : '';
             const clipped = text.length > 300 ? `${text.slice(0, 300)}…` : text;
-            return `• ${author} (${date}): ${clipped}`;
+            // JSM projects stamp comments with jsdPublic — surfacing it makes
+            // portal visibility verifiable without eyeballing the portal.
+            const visibility =
+              c.jsdPublic === false ? ' [internal]' : c.jsdPublic === true ? ' [portal]' : '';
+            return `• ${author} (${date})${visibility}: ${clipped}`;
           }),
         ];
 
@@ -131,7 +135,11 @@ export async function registerCommentTools(
             // rendered every one as [object Object].
             const text = c.body ? adfToMarkdown(c.body) : '';
             const clipped = text.length > 300 ? `${text.slice(0, 300)}…` : text;
-            return `• ${author} (${date}): ${clipped}`;
+            // JSM projects stamp comments with jsdPublic — surfacing it makes
+            // portal visibility verifiable without eyeballing the portal.
+            const visibility =
+              c.jsdPublic === false ? ' [internal]' : c.jsdPublic === true ? ' [portal]' : '';
+            return `• ${author} (${date})${visibility}: ${clipped}`;
           }),
         ];
 
