@@ -61,11 +61,23 @@ async function build(): Promise<LogShippingHandlers | null> {
   // through this app's ConsoleAdapter would double every line in
   // `docker logs`. ingest() preserves the shipper's application/version, so
   // this logger's own identity never stamps a shipped record.
+  // Shipped secure() values arrive tagged and encrypt at rest here — the
+  // shipper needs no key material (worker payload bodies included).
+  const { resolveLogCipher } = await import('@/lib/log-encryption');
+  const cipherResult = resolveLogCipher();
+  if (cipherResult.state === 'invalid') {
+    logger.error('LOG_ENCRYPTION_KEY is malformed; shipped secure attributes stored UNENCRYPTED', {
+      component: 'web/log-ingest',
+    });
+  }
+  const cipher = cipherResult.state === 'on' ? cipherResult.cipher : undefined;
+
   const sink = createLogger({});
   sink.addAdapter(
     new PostgresAdapter({
       db: dbResult.val,
       level: process.env.LOG_DB_LEVEL ?? 'info',
+      ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
     })
   );
 

@@ -2,6 +2,7 @@ import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import { HttpAdapter, type E2ESigningKeysJwk } from '@campfhir/bored-logs/adapters/http';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { getDatabase } from '@renkei/db';
+import { resolveLogCipher } from './log-encryption';
 import packageJson from '../package.json';
 
 /**
@@ -61,9 +62,18 @@ export async function attachPersistentLogging(): Promise<void> {
     });
     return;
   }
+  const cipherResult = resolveLogCipher();
+  if (cipherResult.state === 'invalid') {
+    logger.error('LOG_ENCRYPTION_KEY is malformed; secure log attributes stored UNENCRYPTED', {
+      component: 'worker/logging',
+      error: cipherResult.error,
+    });
+  }
+  const cipher = cipherResult.state === 'on' ? cipherResult.cipher : undefined;
   const adapter = new PostgresAdapter({
     db: dbResult.val,
     level: process.env.LOG_DB_LEVEL ?? 'info',
+    ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
   });
   try {
     // Idempotent (CREATE IF NOT EXISTS) — safe on every boot, and what keeps

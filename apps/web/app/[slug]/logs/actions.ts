@@ -5,6 +5,7 @@ import type { FilterExpr, LogRow } from '@campfhir/bored-logs';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { buildLogQueryOptions } from '@/lib/log-query';
+import { resolveLogCipher } from '@/lib/log-encryption';
 import { NO_LOWER_BOUND } from './window';
 
 /** What the caller may see, resolved from their session rather than the request. */
@@ -93,7 +94,14 @@ export async function searchLogs(
     return { logs: [], scope, error: 'Connect Jira to see your activity' };
   }
 
-  const result = await new PostgresAdapter({ db }).query(
+  // With decrypt configured, secure()-stored attributes (failed-request
+  // payloads) come back as plaintext in the detail view.
+  const cipherResult = resolveLogCipher();
+  const cipher = cipherResult.state === 'on' ? cipherResult.cipher : undefined;
+  const result = await new PostgresAdapter({
+    db,
+    ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
+  }).query(
     buildLogQueryOptions(search.expr, tenantId, accountId ?? undefined, {
       levels: search.levels,
       // Without a start the adapter substitutes yesterday, which is not what an

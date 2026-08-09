@@ -35,9 +35,26 @@ export async function register() {
       return;
     }
 
+    // secure()-marked attributes (failed-request payloads) encrypt at rest
+    // when LOG_ENCRYPTION_KEY is set. A malformed key is reported loudly but
+    // does not stop logging — availability over confidentiality, flagged.
+    const { resolveLogCipher } = await import('@/lib/log-encryption');
+    const cipherResult = resolveLogCipher();
+    if (cipherResult.state === 'invalid') {
+      logger.error(
+        'LOG_ENCRYPTION_KEY is malformed; secure log attributes will be stored UNENCRYPTED: {error}',
+        {
+          component: 'web/instrumentation',
+          error: cipherResult.error,
+        }
+      );
+    }
+    const cipher = cipherResult.state === 'on' ? cipherResult.cipher : undefined;
+
     const adapter = new PostgresAdapter({
       db: dbResult.val,
       level: process.env.LOG_DB_LEVEL ?? 'info',
+      ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
       onWarning(w) {
         if (w.type === 'attr_keys_truncated') {
           logger.warn('attribute keys truncated', { component: 'logging/adapter' });
