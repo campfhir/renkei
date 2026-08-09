@@ -252,7 +252,9 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
         );
 
         const data = (await response.json()) as any;
-        const groups = data.values || [];
+        // /user/groups returns a plain ARRAY — `.values` on an array is the
+        // built-in iterator method, not data, so the old read crashed .map.
+        const groups = Array.isArray(data) ? data : Array.isArray(data?.values) ? data.values : [];
 
         const lines = [
           `User is member of ${groups.length} groups:`,

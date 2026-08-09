@@ -168,16 +168,23 @@ export async function registerRequestDetailsTools(
         );
 
         const data = (await response.json()) as any;
-        const slas = (data.values || []).map((s: any) => ({
-          name: s.name,
-          status: s.status,
-          breachTime: s.breachTime?.epoch || 'N/A',
-        }));
+        // SlaInformation has no status/breachTime at the top level: the live
+        // clock is ongoingCycle {breached, paused, remainingTime, breachTime},
+        // finished clocks are completedCycles.
+        const slas = (data.values || []).map((s: any) => {
+          const cycle = s.ongoingCycle;
+          const state = cycle
+            ? cycle.paused
+              ? 'paused'
+              : cycle.breached
+                ? 'BREACHED'
+                : `remaining ${cycle.remainingTime?.friendly ?? '?'}`
+            : `no running cycle (${s.completedCycles?.length ?? 0} completed)`;
+          const breach = cycle?.breachTime?.friendly;
+          return `• ${s.name}: ${state}${breach ? ` — breach at ${breach}` : ''}`;
+        });
 
-        const lines = [
-          `${issueKey} has ${slas.length} SLAs:`,
-          ...slas.map((s: any) => `• ${s.name}: ${s.status} (breach: ${s.breachTime})`),
-        ];
+        const lines = [`${issueKey} has ${slas.length} SLAs:`, ...slas];
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {

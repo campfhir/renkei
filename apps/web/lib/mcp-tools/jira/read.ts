@@ -515,7 +515,9 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
 
         const lines = [
           `Found ${data.total || 0} boards (showing ${boards.length}):`,
-          ...boards.map((b: Record<string, unknown>) => `• ${b.name} (${b.type})`),
+          ...boards.map(
+            (b: Record<string, unknown>) => `• ${b.name} (${b.type}) — boardId: ${b.id}`
+          ),
         ];
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };

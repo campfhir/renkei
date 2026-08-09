@@ -47,7 +47,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
 
         const lines = [
           `Found ${data.size ?? 0} service desks (showing ${desks.length}):`,
-          ...desks.map((d: any) => `• ${d.name} (${d.key})`),
+          ...desks.map((d: any) => `• ${d.name} (${d.key}) — serviceDeskId: ${d.id}`),
         ];
 
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
@@ -156,7 +156,8 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         const requests = (data.values || []).map((req: any) => ({
           key: req.issueKey,
           summary: req.summary,
-          status: req.currentStatus?.name || 'Unknown',
+          // The field is currentStatus.status — .name does not exist on this DTO.
+          status: req.currentStatus?.status || 'Unknown',
         }));
 
         const lines = [
@@ -214,10 +215,12 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
 
         const lines = [
           `${issueKey}: ${request.summary}`,
-          `Status: ${request.currentStatus?.name || 'Unknown'}`,
+          `Status: ${request.currentStatus?.status || 'Unknown'}`,
           `Request Type: ${request.requestType?.name || 'Unknown'}`,
-          `Created: ${request.created}`,
-          `Updated: ${request.updated}`,
+          // Dates are DateDTO objects; there is no top-level created/updated,
+          // and the payload carries no updated date at all.
+          `Created: ${request.createdDate?.friendly ?? request.createdDate?.iso8601 ?? 'Unknown'}`,
+          `Reporter: ${request.reporter?.displayName ?? 'Unknown'}`,
         ];
 
         if (request.description) {

@@ -56,9 +56,14 @@ export default function JiraConnector({
     });
   }
 
-  const authorizeUrl = `/api/mcp/${tenantId}/authorize?scopes=${encodeURIComponent(
-    scopesOfOptions(ATLASSIAN_SCOPE_OPTIONS, selectedIds).join(' ')
-  )}`;
+  const selectedScopeString = scopesOfOptions(ATLASSIAN_SCOPE_OPTIONS, selectedIds).join(' ');
+  const authorizeUrl = `/api/mcp/${tenantId}/authorize?scopes=${encodeURIComponent(selectedScopeString)}`;
+  // Atlassian enforces every documented granular scope per endpoint AND its
+  // CDN 414s when the consent redirect chain re-encodes a long authorize URL
+  // (observed cliff ≈ 3.1k chars). Some checkbox combinations cannot satisfy
+  // both — warn before the user finds out as a CloudFront error page.
+  const estimatedUrlLength = 250 + encodeURIComponent(selectedScopeString).length;
+  const overUrlBudget = estimatedUrlLength > 2900;
   const [status, setStatus] = useState<JiraStatus | null>(null);
   // Disconnecting is not reversible without re-authorising Jira, so it asks
   // first rather than acting on one click.
@@ -146,6 +151,13 @@ export default function JiraConnector({
                 Your organization allows at most these. Uncheck anything you don&apos;t want Renkei
                 to have — you can reconnect later to change it.
               </p>
+              {overUrlBudget && (
+                <p className="mt-2 rounded-md bg-amber-50 p-2 text-xs text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                  This combination likely exceeds Atlassian&apos;s consent-URL limit (their CDN
+                  answers 414). Uncheck a group you don&apos;t need right now — e.g. Service
+                  Management or Operations — and reconnect later with a different set.
+                </p>
+              )}
             </div>
           </details>
           <a
