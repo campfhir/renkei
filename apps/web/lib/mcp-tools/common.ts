@@ -431,6 +431,10 @@ export async function jiraFetch(
       method: options?.method || 'GET',
       status: response.status,
       reason: failure.reason,
+      // On auth failures, what the rejected bearer ACTUALLY carries — the
+      // grant row's scopes column can echo the request, so "the scope is
+      // there" in the DB proves nothing about the token Atlassian evaluated.
+      ...(response.status === 401 ? { tokenClaims: describeTokenClaims(token) } : {}),
     });
     throw new JiraApiError(
       `Jira API ${response.status}: ${failure.reason}`,
@@ -441,6 +445,35 @@ export async function jiraFetch(
   }
 
   return response;
+}
+
+/**
+ * The identity/scope claims of an Atlassian access token, for 401 diagnosis.
+ * Decodes the JWT payload without verification — this is our own outbound
+ * credential being described, not untrusted input — and picks only the
+ * claims that explain a scope mismatch. The token itself (and any signature
+ * material) never reaches the log.
+ */
+function describeTokenClaims(token: string): Record<string, unknown> | undefined {
+  const parts = token.split('.');
+  if (parts.length !== 3) return { format: 'opaque (not a JWT)' };
+  try {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<
+      string,
+      unknown
+    >;
+    const picked: Record<string, unknown> = { claimKeys: Object.keys(payload) };
+    for (const [key, value] of Object.entries(payload)) {
+      const lower = key.toLowerCase();
+      if (lower.includes('scope') || lower.includes('client') || key === 'aud' || key === 'iss') {
+        picked[key] = value;
+      }
+    }
+    return picked;
+  } catch {
+    return { format: 'undecodable JWT payload' };
+  }
 }
 
 export class JiraApiError extends Error {
