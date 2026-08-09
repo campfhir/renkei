@@ -503,8 +503,9 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           {
             method: 'POST',
             // CustomerTransitionExecutionDTO is {id, additionalComment} —
-            // the platform-style {transition:{id}} wrapper 400s here.
-            body: JSON.stringify({ id: transition.id }),
+            // the platform-style {transition:{id}} wrapper 400s here. The id
+            // is a string in this API even when it looks numeric.
+            body: JSON.stringify({ id: String(transition.id) }),
           }
         );
 
