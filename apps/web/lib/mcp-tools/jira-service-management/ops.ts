@@ -1,8 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * JSM Operations tools — alerts, schedules, rotations, on-call — over the
- * caller's existing Atlassian grant. Same auth.atlassian.com token, different
- * gateway: api.atlassian.com/jsm/ops/api/{cloudId}/v1 (spec vendored at
+ * caller's existing Atlassian grant, through the same /ex/jira/{cloudId}
+ * gateway as every other 3LO call: api.atlassian.com/ex/jira/{cloudId}/jsm/
+ * ops/api/v1 (spec vendored at
  * docs/jira-service-management-ops-rest-api-open-api-spec.json).
  *
  * The Ops API takes GRANULAR scopes only (read:ops-alert:… etc.), which ship
@@ -28,7 +29,14 @@ function errText(value: string) {
 }
 
 function opsBase(context: MCPToolContext): string | null {
-  return context.cloudId ? `https://api.atlassian.com/jsm/ops/api/${context.cloudId}/v1` : null;
+  // 3LO tokens MUST go through the /ex/jira/{cloudId} gateway — the bare
+  // /jsm/ops/api/{cloudId} base serves basic auth and Forge only, and answers
+  // a 3LO bearer with 401 "scope does not match" no matter what the token
+  // carries (the vendored spec's servers entry lists only the bare base; the
+  // 3LO rewrite rule is prose in the API's About page).
+  return context.cloudId
+    ? `https://api.atlassian.com/ex/jira/${context.cloudId}/jsm/ops/api/v1`
+    : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
