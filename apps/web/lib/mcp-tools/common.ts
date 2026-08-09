@@ -486,6 +486,26 @@ export async function jiraFetch(
     );
   }
 
+  // Successful exchanges log too — a 2xx that did the WRONG thing (the
+  // assignee silently-ignored class of bug) is invisible without the actual
+  // payloads. The body is read from a clone; callers still consume theirs.
+  const okBody = await response
+    .clone()
+    .text()
+    .catch(() => '');
+  logger.info('OK response', {
+    component: 'jira/fetch',
+    tenantId: metadata?.tenantId,
+    accountId: metadata?.accountId,
+    subject: metadata?.subject,
+    displayName,
+    url,
+    method: options?.method || 'GET',
+    status: response.status,
+    requestBody: secureOrAbsent(describeRequestBody(options?.body)),
+    responseBody: secureOrAbsent(truncateForLog(okBody) || undefined),
+  });
+
   return response;
 }
 

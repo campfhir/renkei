@@ -155,6 +155,22 @@ async function webexRequest(
     });
     return { ok: false, error: describeStatus(response.status) };
   }
+  // Success logs too — a 2xx that did the wrong thing is invisible without
+  // the payloads. Response body from a clone; the caller consumes its own.
+  const okBody = await response
+    .clone()
+    .text()
+    .catch(() => '');
+  logger.info('WebEx API OK response', {
+    component: 'webex/fetch',
+    tenantId: scope.tenantId,
+    subject: scope.subject,
+    path,
+    method: init?.method ?? 'GET',
+    status: response.status,
+    requestBody: body === undefined ? undefined : secure(truncateForLog(body)),
+    responseBody: okBody ? secure(truncateForLog(okBody)) : undefined,
+  });
   return { ok: true, response };
 }
 

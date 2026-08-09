@@ -14,6 +14,8 @@ jest.mock('@/lib/tenant-operations', () => ({
 }));
 jest.mock('@/lib/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  secure: (value: unknown) => value,
+  redact: (value: unknown) => value,
 }));
 
 import { jiraFetch, cacheTokenMetadata } from './common';
