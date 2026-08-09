@@ -219,10 +219,13 @@ function list(body: Record<string, unknown>, key: string): Record<string, unknow
 
 function meetingLine(meeting: Record<string, unknown>): string {
   const duration = num(meeting.duration);
+  // The uuid rides along because some endpoints (meeting_summary, per-
+  // occurrence lookups) only accept it — the numeric id is not enough.
   return (
     `${str(meeting.topic) || '(no topic)'} — ${str(meeting.start_time) || '(no start time)'}` +
     (duration !== null ? ` — ${duration} min` : '') +
     ` — id: ${str(meeting.id) || String(meeting.id ?? '')}` +
+    (str(meeting.uuid) ? ` — uuid: ${str(meeting.uuid)}` : '') +
     (str(meeting.join_url) ? ` — [join](${str(meeting.join_url)})` : '')
   );
 }
@@ -554,10 +557,12 @@ export async function registerZoomTools(
       title: 'Zoom · Read — Get a Zoom AI Companion meeting summary',
       description:
         'Fetch the AI Companion summary of a meeting the connected user hosted (AI Companion ' +
-        'must be enabled on the account).',
+        'must be enabled on the account). Accepts the meeting UUID directly, or a numeric ' +
+        'meeting id — which is resolved to the latest occurrence’s UUID first, because the ' +
+        'summary endpoint only answers to UUIDs.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        meetingId: z.string().min(1).describe('Meeting id or UUID'),
+        meetingId: z.string().min(1).describe('Meeting UUID (preferred) or numeric meeting id'),
       }),
     },
     async (args: Record<string, any>) => {
@@ -566,8 +571,20 @@ export async function registerZoomTools(
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
 
+      // The summary endpoint 400s on numeric ids ("Invalid meeting id") —
+      // it wants the occurrence UUID. Resolve numeric ids through the
+      // meeting lookup; if that lookup is refused (scope narrowed away),
+      // fall through with the raw id and let Zoom's error name itself.
+      let summaryKey = meetingId;
+      if (/^\d+$/.test(meetingId)) {
+        const lookup = await zoomGet(context, access.accessToken, `/meetings/${meetingId}`);
+        if (lookup.ok && str(lookup.body.uuid)) {
+          summaryKey = str(lookup.body.uuid);
+        }
+      }
+
       const client = new ZoomClient(access.accessToken);
-      const summary = await client.getMeetingSummary(encodeZoomMeetingId(meetingId));
+      const summary = await client.getMeetingSummary(summaryKey);
       if (!summary.ok) {
         return errText(
           summary.err.type === 'NOT_FOUND'
