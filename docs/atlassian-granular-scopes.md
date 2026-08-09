@@ -2,54 +2,77 @@
 
 Derived from the vendored OpenAPI specs — every endpoint the MCP tools call,
 matched to its operation — then **curated to the primary scopes**: the scope
-naming the thing each tool actually operates on. The specs' per-operation
-lists also carry a long tail of response-facet scopes (vote counts, avatars,
-changelogs, entity properties, field configuration metadata); requesting all
-of them made the authorize URL long enough that Atlassian's CDN answered
-414 once the login/consent redirect chain re-encoded it. The trimmed scopes
-are listed at the bottom — if a specific tool answers 401 "scope does not
-match", the `tokenClaims` log line names what the token carries, and the one
-missing scope gets added back to its bundle.
+naming the thing each tool actually operates on. Lines marked `# trimmed:`
+are the rest of the spec-derived union: response-facet scopes (vote counts,
+avatars, changelogs, entity properties, field configuration metadata) that
+no tool operates on. Requesting all of them made the authorize URL long
+enough that Atlassian's CDN answered 414 once the login/consent redirect
+chain re-encoded it, so they are not requested — but they may stay
+registered on the app harmlessly. If a specific tool answers 401 "scope
+does not match", the `tokenClaims` log line names what the token carries,
+and the one missing scope moves back into its bundle (a catalog + doc
+change only).
 
 In the developer console (Permissions tab), each block below is added under
-its own API. The authorize URL then carries the union of the checked
-bundles, plus `offline_access` (not a Permissions-page scope — request-time
-only, it yields the refresh token). Full union: 63 scopes, ~1.9k chars raw —
-sized to survive the redirect chain.
+its own API — all four APIs must be present. The authorize URL then carries
+the union of the checked bundles, plus `offline_access` (not a
+Permissions-page scope — request-time only, it yields the refresh token).
+Full requested union: 63 scopes, ~1.9k chars raw — sized to survive the
+redirect chain.
 
 ## Jira API
 
 ```
+# trimmed: read:application-role:jira
 read:attachment:jira
+# trimmed: read:audit-log:jira
+# trimmed: read:avatar:jira
+# trimmed: read:comment.property:jira
 read:comment:jira
+# trimmed: read:field-configuration:jira
+# trimmed: read:field.default-value:jira
+# trimmed: read:field.option:jira
 read:field:jira
 read:filter:jira
 read:group:jira
 read:issue-details:jira
 read:issue-link-type:jira
 read:issue-meta:jira
+# trimmed: read:issue-security-level:jira
+# trimmed: read:issue-type-hierarchy:jira
 read:issue-type:jira
+# trimmed: read:issue-worklog.property:jira
 read:issue-worklog:jira
+# trimmed: read:issue.changelog:jira
 read:issue.transition:jira
+# trimmed: read:issue.vote:jira
 read:issue:jira
 read:jql:jira
+# trimmed: read:project-category:jira
+# trimmed: read:project-role:jira
 read:project-version:jira
 read:project.component:jira
 read:project:jira
 read:status:jira
+# trimmed: read:user.property:jira
 read:user:jira
 write:attachment:jira
+# trimmed: write:comment.property:jira
 write:comment:jira
 write:filter:jira
 write:issue-link:jira
+# trimmed: write:issue-worklog.property:jira
 write:issue-worklog:jira
+# trimmed: write:issue.property:jira
 write:issue.time-tracking:jira
 write:issue:jira
 write:project-version:jira
 write:project.component:jira
+# trimmed: delete:comment.property:jira
 delete:comment:jira
 delete:filter:jira
 delete:issue-link:jira
+# trimmed: delete:issue-worklog.property:jira
 delete:issue-worklog:jira
 delete:issue:jira
 delete:project.component:jira
@@ -70,6 +93,7 @@ write:sprint:jira-software
 ```
 read:customer:jira-service-management
 read:request.approval:jira-service-management
+# trimmed: read:request.attachment:jira-service-management
 read:request.comment:jira-service-management
 read:request.participant:jira-service-management
 read:request.sla:jira-service-management
@@ -104,22 +128,6 @@ delete:ops-config:jira-service-management
 ```
 offline_access
 ```
-
-## Trimmed response-facet scopes (re-add one if a tool 401s)
-
-Dropped from the spec-derived union to keep the authorize URL under the CDN's
-nested-redirect limit — each names a response facet, not anything a tool
-operates on: `read:application-role:jira`, `read:audit-log:jira`,
-`read:avatar:jira`, `read:comment.property:jira`,
-`read:field-configuration:jira`, `read:field.default-value:jira`,
-`read:field.option:jira`, `read:issue-security-level:jira`,
-`read:issue-type-hierarchy:jira`, `read:issue-worklog.property:jira`,
-`read:issue.changelog:jira`, `read:issue.vote:jira`,
-`read:project-category:jira`, `read:project-role:jira`,
-`read:user.property:jira`, `write:comment.property:jira`,
-`write:issue-worklog.property:jira`, `write:issue.property:jira`,
-`delete:comment.property:jira`, `delete:issue-worklog.property:jira`,
-`read:request.attachment:jira-service-management`.
 
 ## Dropped from the old classic set
 
