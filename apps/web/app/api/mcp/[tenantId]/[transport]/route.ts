@@ -204,19 +204,24 @@ const handler = async (
     // Its scopes gate which of those tools register.
     const webexGrantRow = await db
       .selectFrom('provider_grants')
-      .select(['provider_account_id', 'scopes'])
+      .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
       .where('tenant_id', '=', tenantId)
       .where('provider', '=', WEBEX_USER)
       .where('subject', '=', subject)
       .limit(1)
       .executeTakeFirst();
     const webexAvailable = webexGrantRow !== undefined;
-    const webexScopes = webexGrantRow?.scopes ?? [];
+    // Gate on what the token actually carries when that is known; the
+    // request is only the fallback for opaque tokens.
+    const webexScopes = webexGrantRow
+      ? (webexGrantRow.granted_scopes ?? webexGrantRow.requested_scopes)
+      : [];
+    const jiraScopes = grant.grantedScopes ?? grant.requestedScopes;
 
     // Check cache. The tool set now varies with both grants' scopes, so they
     // are part of the key — a reconnect with different scopes must not be
     // served a handler built for the old ones.
-    const scopeFingerprint = `${[...grant.scopes].sort().join(',')}|${[...webexScopes].sort().join(',')}`;
+    const scopeFingerprint = `${[...jiraScopes].sort().join(',')}|${[...webexScopes].sort().join(',')}`;
     const cacheKey =
       getCacheKey(
         tenantId,
@@ -253,7 +258,7 @@ const handler = async (
               origin,
               userEmail: userEmail ?? undefined,
               subject,
-              grantedScopes: grant.scopes,
+              grantedScopes: jiraScopes,
               webexScopes: webexAvailable ? webexScopes : undefined,
               db,
             };

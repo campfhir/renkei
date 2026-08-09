@@ -4,7 +4,7 @@ import { getAtlassianApp } from '@/lib/atlassian-app';
 import { getWebexUserApp } from '@/lib/webex-app';
 import { getDatabase } from '@renkei/db';
 import { setJiraGrant } from '@/lib/tenant-operations';
-import { setGrant, WEBEX_USER } from '@renkei/provider-grants';
+import { setGrant, scopesFromAccessToken, WEBEX_USER } from '@renkei/provider-grants';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
@@ -399,15 +399,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token || '',
       expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
-      // The scopes actually granted, from the token response when Atlassian
-      // echoes them, else what the (possibly user-narrowed) authorize step
-      // asked for, else the org ceiling. Tool registration filters on these —
-      // a hardcoded list here once made every tool register forever.
-      scopes: (
-        (typeof tokenData.scope === 'string' && tokenData.scope) ||
-        pendingSignIn.scopes ||
-        atlassianApp.scopes
-      ).split(' '),
+      // Provenance kept separate on purpose: requested is what the (possibly
+      // user-narrowed) authorize step asked for; granted is decoded from the
+      // minted token's own claims — the credential Atlassian's gateway
+      // actually evaluates. The token-response echo is only a fallback, and
+      // nothing here ever assumes granted equals requested.
+      requestedScopes: (pendingSignIn.scopes || atlassianApp.scopes).split(' '),
+      grantedScopes:
+        scopesFromAccessToken(tokenData.access_token) ??
+        ((typeof tokenData.scope === 'string' && tokenData.scope.trim()) || null)?.split(/\s+/) ??
+        null,
     });
 
     logger.info('Jira grant stored successfully', { component: 'auth/oauth', tenantId: tenant.id });
@@ -557,7 +558,9 @@ async function handleWebexUserCallback(
       expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
       // WebEx does not echo scopes in its token response, so the (possibly
       // user-narrowed) request carried through the pending row is the record.
-      scopes: (requestedScopes || app.scopes).split(' '),
+      requestedScopes: (requestedScopes || app.scopes).split(' '),
+      // WebEx access tokens are opaque, so this stays null: unknown, honestly.
+      grantedScopes: scopesFromAccessToken(accessToken),
       metadata: { personEmail: emails[0] ?? null },
       subject,
     },

@@ -71,7 +71,7 @@ export default async function ConnectorsPage({
         enabled.has('atlassian')
           ? dbResult.val
               .selectFrom('provider_grants')
-              .select(['display_name', 'scopes'])
+              .select(['display_name', 'requested_scopes'])
               .where('tenant_id', '=', tenant.id)
               .where('provider', '=', ATLASSIAN)
               .where('subject', '=', session.subject)
@@ -80,7 +80,7 @@ export default async function ConnectorsPage({
         enabled.has(WEBEX_USER_CONNECTOR)
           ? dbResult.val
               .selectFrom('provider_grants')
-              .select(['display_name', 'scopes'])
+              .select(['display_name', 'requested_scopes'])
               .where('tenant_id', '=', tenant.id)
               .where('provider', '=', WEBEX_USER)
               .where('subject', '=', session.subject)
@@ -101,7 +101,7 @@ export default async function ConnectorsPage({
           <JiraConnector
             tenantId={tenant.id}
             ceiling={atlassianCeiling}
-            priorScopes={atlassianGrant?.scopes ?? null}
+            priorScopes={atlassianGrant?.requested_scopes ?? null}
           />
         ) : (
           <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
@@ -128,7 +128,7 @@ export default async function ConnectorsPage({
             connected={webexGrant !== undefined && webexGrant !== null}
             displayName={webexGrant?.display_name ?? null}
             ceiling={webexCeiling}
-            priorScopes={webexGrant?.scopes ?? null}
+            priorScopes={webexGrant?.requested_scopes ?? null}
           />
         )}
 

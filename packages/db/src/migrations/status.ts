@@ -52,6 +52,7 @@ export const EXPECTED_MIGRATIONS = [
   '019-identities',
   '020-pending-oauth-provider',
   '021-pending-oauth-scopes',
+  '022-grant-scope-provenance',
 ];
 
 export interface MigrationStatus {

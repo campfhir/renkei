@@ -43,7 +43,8 @@ export async function setGrant(
           encrypted_access_token: encryptedAccessToken,
           encrypted_refresh_token: encryptedRefreshToken,
           expires_at: grant.expiresAt,
-          scopes: grant.scopes,
+          requested_scopes: grant.requestedScopes,
+          granted_scopes: grant.grantedScopes,
           metadata,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -53,6 +54,10 @@ export async function setGrant(
             encrypted_access_token: encryptedAccessToken,
             encrypted_refresh_token: encryptedRefreshToken,
             expires_at: grant.expiresAt,
+            // Re-stamped on reconnect: the old row's scopes describe the old
+            // authorization, and keeping them once hid a narrowed re-consent.
+            requested_scopes: grant.requestedScopes,
+            granted_scopes: grant.grantedScopes,
             metadata,
             updated_at: new Date().toISOString(),
             // Re-stamp on reconnect so grants predating per-user ownership get
@@ -90,7 +95,8 @@ export async function getGrant(
           'encrypted_access_token',
           'encrypted_refresh_token',
           'expires_at',
-          'scopes',
+          'requested_scopes',
+          'granted_scopes',
           'subject',
         ])
         .where('tenant_id', '=', tenantId)
@@ -120,7 +126,8 @@ export async function getGrant(
     accessToken: accessTokenResult.val,
     refreshToken: refreshTokenResult.val,
     expiresAt: row.expires_at.toISOString(),
-    scopes: row.scopes,
+    requestedScopes: row.requested_scopes,
+    grantedScopes: row.granted_scopes,
     metadata: readMetadata(row.metadata),
   });
 }

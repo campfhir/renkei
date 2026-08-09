@@ -34,7 +34,10 @@ export interface JiraGrant {
   accessToken: string;
   refreshToken: string;
   expiresAt: string;
-  scopes: string[];
+  /** What the (possibly user-narrowed) authorize step asked Atlassian for. */
+  requestedScopes: string[];
+  /** What the minted token actually carries, from its claims; null = unknown. */
+  grantedScopes: string[] | null;
   /**
    * OIDC subject of the signed-in user who connected this grant. Null only for
    * rows created before grants were owned — those are unusable and must not be
@@ -279,7 +282,8 @@ export async function setJiraGrant(
       accessToken: grant.accessToken,
       refreshToken: grant.refreshToken,
       expiresAt: grant.expiresAt,
-      scopes: grant.scopes,
+      requestedScopes: grant.requestedScopes,
+      grantedScopes: grant.grantedScopes,
       // Site identity is Atlassian-specific, so it lives in metadata rather
       // than as columns every other provider would leave NULL.
       metadata: { cloudId: grant.cloudId, siteUrl: grant.siteUrl },
@@ -318,7 +322,8 @@ export async function getJiraGrant(
     accessToken: grant.accessToken,
     refreshToken: grant.refreshToken,
     expiresAt: grant.expiresAt,
-    scopes: grant.scopes,
+    requestedScopes: grant.requestedScopes,
+    grantedScopes: grant.grantedScopes,
   });
 }
 /**
