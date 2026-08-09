@@ -9,6 +9,20 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { jiraFetch, getCachedDisplayName } from '../common';
 import { logger } from '@/lib/logger';
+import { markdownToAdf } from './markdown';
+
+/**
+ * The two field shapes callers reliably get wrong, normalized the way
+ * update_issue does it: a bare priority string wants {name}, a description
+ * string wants ADF. Everything else passes through untouched — bulk callers
+ * own their field shapes.
+ */
+function normalizeBulkFields(fields: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...fields };
+  if (typeof out.priority === 'string') out.priority = { name: out.priority };
+  if (typeof out.description === 'string') out.description = markdownToAdf(out.description);
+  return out;
+}
 
 export async function registerBulkTools(server: McpServer, context: MCPToolContext): Promise<void> {
   // bulk_update_issues (not in renkei_tools.json but keeping for now)
@@ -61,29 +75,35 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
           return { content: [{ type: 'text' as const, text: 'No issues matched the JQL query' }] };
         }
 
-        // Update each issue
+        // Update each issue, keeping each failure's reason — "N failed" with
+        // no why is undebuggable at 1 issue and ruinous at 50.
+        const normalized = normalizeBulkFields(fields);
         let updated = 0;
-        let failed = 0;
+        const failures: string[] = [];
 
         for (const key of issueKeys) {
           try {
             await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${key}`, context.accessToken, {
               method: 'PUT',
-              body: JSON.stringify({ fields }),
+              body: JSON.stringify({ fields: normalized }),
             });
             updated++;
-          } catch {
-            failed++;
+          } catch (error) {
+            failures.push(`${key}: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
 
+        const summary = `Updated ${updated} issues, ${failures.length} failed (total: ${issueKeys.length})`;
         return {
           content: [
             {
               type: 'text' as const,
-              text: `Updated ${updated} issues, ${failed} failed (total: ${issueKeys.length})`,
+              text: failures.length
+                ? `${summary}\nFailures:\n${failures.map((f) => `• ${f}`).join('\n')}`
+                : summary,
             },
           ],
+          ...(updated === 0 && failures.length > 0 ? { isError: true } : {}),
         };
       } catch (error) {
         return {
@@ -147,7 +167,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
         }
 
         let transitioned = 0;
-        let failed = 0;
+        const failures: string[] = [];
 
         for (const key of issueKeys) {
           try {
@@ -175,20 +195,29 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
               );
               transitioned++;
             } else {
-              failed++;
+              const names = Array.isArray(transData.transitions)
+                ? transData.transitions.map((t: any) => t.name).join(', ')
+                : '(none)';
+              failures.push(
+                `${key}: no transition named "${transitionName}" — available: ${names}`
+              );
             }
-          } catch {
-            failed++;
+          } catch (error) {
+            failures.push(`${key}: ${error instanceof Error ? error.message : String(error)}`);
           }
         }
 
+        const summary = `Transitioned ${transitioned} issues to "${transitionName}", ${failures.length} failed (total: ${issueKeys.length})`;
         return {
           content: [
             {
               type: 'text' as const,
-              text: `Transitioned ${transitioned} issues to "${transitionName}", ${failed} failed (total: ${issueKeys.length})`,
+              text: failures.length
+                ? `${summary}\nFailures:\n${failures.map((f) => `• ${f}`).join('\n')}`
+                : summary,
             },
           ],
+          ...(transitioned === 0 && failures.length > 0 ? { isError: true } : {}),
         };
       } catch (error) {
         return {
