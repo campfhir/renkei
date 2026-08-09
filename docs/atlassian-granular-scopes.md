@@ -17,7 +17,7 @@ In the developer console (Permissions tab), each block below is added under
 its own API — all four APIs must be present. The authorize URL then carries
 the union of the checked bundles, plus `offline_access` (not a
 Permissions-page scope — request-time only, it yields the refresh token).
-Full requested union: 63 scopes, ~1.9k chars raw — sized to survive the
+Full requested union: 66 scopes, ~2.0k chars raw — sized to survive the
 redirect chain.
 
 ## Jira API
@@ -29,9 +29,9 @@ read:attachment:jira
 # trimmed: read:avatar:jira
 # trimmed: read:comment.property:jira
 read:comment:jira
-# trimmed: read:field-configuration:jira
-# trimmed: read:field.default-value:jira
-# trimmed: read:field.option:jira
+read:field-configuration:jira
+read:field.default-value:jira
+read:field.option:jira
 read:field:jira
 read:filter:jira
 read:group:jira

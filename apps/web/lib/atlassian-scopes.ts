@@ -26,6 +26,9 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: [
       'read:attachment:jira',
       'read:comment:jira',
+      'read:field-configuration:jira',
+      'read:field.default-value:jira',
+      'read:field.option:jira',
       'read:field:jira',
       'read:filter:jira',
       'read:group:jira',
