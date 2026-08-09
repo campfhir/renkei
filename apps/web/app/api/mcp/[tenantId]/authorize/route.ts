@@ -117,7 +117,22 @@ export async function GET(
       tenantId,
       clientId: app.clientId,
       redirectUri: app.redirectUri,
+      urlLength: authUrl.toString().length,
     });
+    // Atlassian's login/consent chain re-encodes this URL into nested
+    // redirects, and their CDN 414s around ~4k nested chars — which an
+    // ~83-scope union hit in practice. The curated catalog sits well under;
+    // this warns before a future catalog grows back into the cliff.
+    if (authUrl.toString().length > 2600) {
+      logger.warn(
+        'authorize URL is {length} chars; Atlassian CDN 414s near ~4k after nested re-encoding',
+        {
+          component: 'auth/oauth',
+          tenantId,
+          length: authUrl.toString().length,
+        }
+      );
+    }
 
     return NextResponse.redirect(authUrl.toString());
   } catch (error) {
