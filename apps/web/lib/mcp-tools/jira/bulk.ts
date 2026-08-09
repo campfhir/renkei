@@ -9,20 +9,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { jiraFetch, getCachedDisplayName } from '../common';
 import { logger } from '@/lib/logger';
-import { markdownToAdf } from './markdown';
-
-/**
- * The two field shapes callers reliably get wrong, normalized the way
- * update_issue does it: a bare priority string wants {name}, a description
- * string wants ADF. Everything else passes through untouched — bulk callers
- * own their field shapes.
- */
-function normalizeBulkFields(fields: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...fields };
-  if (typeof out.priority === 'string') out.priority = { name: out.priority };
-  if (typeof out.description === 'string') out.description = markdownToAdf(out.description);
-  return out;
-}
+import { buildFieldUpdates } from './field-schema';
 
 export async function registerBulkTools(server: McpServer, context: MCPToolContext): Promise<void> {
   // bulk_update_issues (not in renkei_tools.json but keeping for now)
@@ -75,9 +62,26 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
           return { content: [{ type: 'text' as const, text: 'No issues matched the JQL query' }] };
         }
 
+        // The same schema-aware resolver update_issue uses: field names or
+        // ids resolve against this site's schema, values are coerced per
+        // field type (priority string → {name}, rich text → ADF, options
+        // validated). Bulk previously PUT the caller's record verbatim,
+        // which is why single-issue updates worked while bulk 400'd.
+        const updates = await buildFieldUpdates(context, fields);
+        if (Object.keys(updates.fields).length === 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `No writable fields resolved.${updates.problems.length ? `\n${updates.problems.map((problem) => `• ${problem}`).join('\n')}` : ''}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+
         // Update each issue, keeping each failure's reason — "N failed" with
         // no why is undebuggable at 1 issue and ruinous at 50.
-        const normalized = normalizeBulkFields(fields);
         let updated = 0;
         const failures: string[] = [];
 
@@ -85,7 +89,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
           try {
             await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${key}`, context.accessToken, {
               method: 'PUT',
-              body: JSON.stringify({ fields: normalized }),
+              body: JSON.stringify({ fields: updates.fields }),
             });
             updated++;
           } catch (error) {
@@ -93,7 +97,10 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
           }
         }
 
-        const summary = `Updated ${updated} issues, ${failures.length} failed (total: ${issueKeys.length})`;
+        const resolutionNotes = updates.problems.length
+          ? `\nNot written (unresolvable): ${updates.problems.join('; ')}`
+          : '';
+        const summary = `Updated ${updated} issues, ${failures.length} failed (total: ${issueKeys.length}). Applied: ${updates.applied.join(', ')}${resolutionNotes}`;
         return {
           content: [
             {
