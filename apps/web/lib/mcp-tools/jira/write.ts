@@ -55,7 +55,7 @@ async function resolveAssigneeId(
   if (pick.length === 0) return { ok: false, reason: `no Jira user matches "${value}"` };
   return {
     ok: false,
-    reason: `"${value}" matches ${pick.length} users — pass an accountId (search_users shows them)`,
+    reason: `"${value}" matches ${pick.length} users — pass an accountId (jira_search_users shows them)`,
   };
 }
 
@@ -75,7 +75,7 @@ function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-/** The extra-field arguments create_issue and update_issue both accept. */
+/** The extra-field arguments jira_create_issue and jira_update_issue both accept. */
 const extraFieldSchema = {
   storyPoints: z
     .number()
@@ -103,6 +103,8 @@ interface ExtraFields {
   fields: Record<string, unknown>;
   /** Field id -> `Story Points → 5`. */
   labels: Record<string, string>;
+  /** Field id -> valid options, for refusal messages the caller can act on. */
+  hints: Record<string, string>;
   /** Values that never reached a request: unresolvable names, bad formats. */
   unwritten: UnwrittenField[];
 }
@@ -118,10 +120,11 @@ interface ExtraFields {
 async function collectExtraFields(
   context: MCPToolContext,
   args: Record<string, unknown>,
-  options: { projectKey?: string; issueTypeId?: string } = {}
+  options: { projectKey?: string; issueType?: string; issueKey?: string } = {}
 ): Promise<ExtraFields> {
   const fields: Record<string, unknown> = {};
   const labels: Record<string, string> = {};
+  const hints: Record<string, string> = {};
   const unwritten: UnwrittenField[] = [];
 
   if (isNumber(args.storyPoints)) {
@@ -154,6 +157,7 @@ async function collectExtraFields(
   if (isRecord(args.fields)) {
     const updates = await buildFieldUpdates(context, args.fields, options);
     Object.assign(fields, updates.fields);
+    Object.assign(hints, updates.optionHints);
     for (const [id, value] of Object.entries(updates.fields)) {
       const applied = updates.applied.find((entry) => entry.includes(id));
       // The rendered text, not the JSON. When a write is refused this label is
@@ -167,7 +171,7 @@ async function collectExtraFields(
     }
   }
 
-  return { fields, labels, unwritten };
+  return { fields, labels, hints, unwritten };
 }
 
 /**
@@ -176,7 +180,7 @@ async function collectExtraFields(
  * A failure here is reported but never raised: the issue was written, and losing
  * the note is not worth undoing that.
  */
-async function recordUnwritten(
+export async function recordUnwritten(
   context: MCPToolContext,
   issueKey: string,
   unwritten: readonly UnwrittenField[]
@@ -248,16 +252,17 @@ export async function registerWriteTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // create_issue
+  // jira_create_issue
   server.registerTool(
-    'create_issue',
+    'jira_create_issue',
     {
-      title: 'Create a Jira issue',
+      title: 'Jira · Act — Create a Jira issue',
       description:
         'Create a new Jira issue in a project, including story points, an original estimate ' +
         "and any custom field — field names are resolved against this site's own schema. A " +
         'field the project will not accept on creation is dropped and recorded as a comment ' +
         'rather than failing the whole issue.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         projectKey: z.string().describe('Project key, e.g. SCRUM'),
         issueType: z.string().describe('Issue type: Task, Bug, Story, Subtask, Epic, etc.'),
@@ -271,7 +276,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('create_issue invoked', {
+      logger.info('jira_create_issue invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -295,7 +300,7 @@ export async function registerWriteTools(
 
         const extra = await collectExtraFields(context, args, {
           projectKey: projectKeyStr,
-          issueTypeId: issueTypeStr,
+          issueType: issueTypeStr,
         });
 
         // The issue's identity is what cannot be given up. Everything else,
@@ -310,6 +315,7 @@ export async function registerWriteTools(
           },
           optional: { ...extra.fields },
           labels: { ...extra.labels },
+          hints: { ...extra.hints },
         };
 
         if (description && isString(description)) {
@@ -379,16 +385,17 @@ export async function registerWriteTools(
     }
   );
 
-  // update_issue
+  // jira_update_issue
   server.registerTool(
-    'update_issue',
+    'jira_update_issue',
     {
-      title: 'Update a Jira issue',
+      title: 'Jira · Act — Update a Jira issue',
       description:
         'Update an existing Jira issue. Story points, the original estimate, and any custom ' +
         "field can be set: field names are resolved against this site's own schema, so no " +
         'customfield id needs to be known in advance. A field this project will not accept is ' +
         'dropped and recorded as a comment rather than failing the whole update.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
         summary: z.string().describe('New title (optional)').optional(),
@@ -401,7 +408,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('update_issue invoked', {
+      logger.info('jira_update_issue invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -417,10 +424,9 @@ export async function registerWriteTools(
           };
         }
 
-        // For updates, we don't have the issue type readily available.
-        // The enrichment will use createmeta data if available, but without
-        // issueTypeId the validation will be best-effort.
-        const extra = await collectExtraFields(context, args);
+        // An update knows its issue, so allowed values come from editmeta —
+        // the answer for this exact issue, no issue type needed.
+        const extra = await collectExtraFields(context, args, { issueKey });
 
         // Nothing is mandatory on an update: every field is droppable, so a
         // refused custom field costs that field rather than the summary next to it.
@@ -428,6 +434,7 @@ export async function registerWriteTools(
           required: {},
           optional: { ...extra.fields },
           labels: { ...extra.labels },
+          hints: { ...extra.hints },
         };
 
         if (summary && isString(summary)) {
@@ -519,12 +526,13 @@ export async function registerWriteTools(
     }
   );
 
-  // add_comment
+  // jira_add_comment
   server.registerTool(
-    'add_comment',
+    'jira_add_comment',
     {
-      title: 'Comment on a Jira issue',
+      title: 'Jira · Act — Comment on a Jira issue',
       description: 'Add a comment to a Jira issue.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
         comment: z.string().describe('Comment text (markdown format)'),
@@ -532,7 +540,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('add_comment invoked', {
+      logger.info('jira_add_comment invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -573,12 +581,13 @@ export async function registerWriteTools(
     }
   );
 
-  // transition_issue
+  // jira_transition_issue
   server.registerTool(
-    'transition_issue',
+    'jira_transition_issue',
     {
-      title: 'Move a Jira issue through its workflow',
+      title: 'Jira · Act — Move a Jira issue through its workflow',
       description: 'Transition an issue to a different status.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
         transitionName: z
@@ -589,7 +598,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('transition_issue invoked', {
+      logger.info('jira_transition_issue invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -689,12 +698,13 @@ export async function registerWriteTools(
     }
   );
 
-  // log_work
+  // jira_log_work
   server.registerTool(
-    'log_work',
+    'jira_log_work',
     {
-      title: 'Log work against a Jira issue',
+      title: 'Jira · Act — Log work against a Jira issue',
       description: 'Log time spent on a Jira issue.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
         timeSpent: z.string().describe('Time spent in Jira format: 1d, 2h, 30m, 1w'),
@@ -703,7 +713,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('log_work invoked', {
+      logger.info('jira_log_work invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -750,13 +760,14 @@ export async function registerWriteTools(
     }
   );
 
-  // delete_issue
+  // jira_delete_issue
   server.registerTool(
-    'delete_issue',
+    'jira_delete_issue',
     {
-      title: 'Delete a Jira issue',
+      title: 'Jira · Act — Delete a Jira issue',
       description:
         'Permanently delete a Jira issue. If the issue has subtasks, set deleteSubtasks to true to delete them along with the issue. This action cannot be undone.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
         deleteSubtasks: z
@@ -769,7 +780,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('delete_issue invoked', {
+      logger.info('jira_delete_issue invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -807,12 +818,13 @@ export async function registerWriteTools(
     }
   );
 
-  // delete_comment
+  // jira_delete_comment
   server.registerTool(
-    'delete_comment',
+    'jira_delete_comment',
     {
-      title: 'Delete a comment from a Jira issue',
+      title: 'Jira · Act — Delete a comment from a Jira issue',
       description: 'Permanently delete a comment from a Jira issue.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
         commentId: z.string().describe('Comment ID to delete'),
@@ -820,7 +832,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('delete_comment invoked', {
+      logger.info('jira_delete_comment invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

@@ -14,12 +14,12 @@ export async function registerComponentTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // list_components (already exists in project.ts, but we can add more functionality)
-  // get_component
+  // jira_list_components (already exists in project.ts, but we can add more functionality)
+  // jira_get_component
   server.registerTool(
-    'get_component',
+    'jira_get_component',
     {
-      title: 'Get component details',
+      title: 'Jira · Read — Get component details',
       description: 'Get detailed information about a specific component.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -28,7 +28,7 @@ export async function registerComponentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('get_component invoked', {
+      logger.info('jira_get_component invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -73,11 +73,11 @@ export async function registerComponentTools(
     }
   );
 
-  // create_component
+  // jira_create_component
   server.registerTool(
-    'create_component',
+    'jira_create_component',
     {
-      title: 'Create a project component',
+      title: 'Jira · Act — Create a project component',
       description: 'Create a new component in a project.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -89,7 +89,7 @@ export async function registerComponentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('create_component invoked', {
+      logger.info('jira_create_component invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -146,11 +146,11 @@ export async function registerComponentTools(
     }
   );
 
-  // delete_component
+  // jira_delete_component
   server.registerTool(
-    'delete_component',
+    'jira_delete_component',
     {
-      title: 'Delete a component',
+      title: 'Jira · Act — Delete a component',
       description: 'Delete a component from a project.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -160,7 +160,7 @@ export async function registerComponentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('delete_component invoked', {
+      logger.info('jira_delete_component invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

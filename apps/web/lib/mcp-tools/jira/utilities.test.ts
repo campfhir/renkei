@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
- * Regression tests for the connect_jira tool.
+ * Regression tests for the jira_connect tool.
  *
  * Two bugs are pinned here: the existing-grant check used to be tenant-wide,
  * reporting one user's Jira connection to another; and the connect link was a
@@ -13,7 +13,7 @@ jest.mock('@/lib/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 // utilities.ts → common.ts → tenant-operations → db, which cannot load in a
-// unit test environment; connect_jira only needs the injected context.db.
+// unit test environment; jira_connect only needs the injected context.db.
 jest.mock('@/lib/tenant-operations', () => ({
   refreshAtlassianTokenDirect: jest.fn(),
 }));
@@ -73,13 +73,13 @@ async function connectJira(db: MCPToolContext['db']): Promise<{
 }> {
   const { server, handlers } = fakeServer();
   await registerUtilityTools(server, contextWith(db));
-  const handler = handlers.get('connect_jira');
-  if (!handler) throw new Error('connect_jira was not registered');
+  const handler = handlers.get('jira_connect');
+  if (!handler) throw new Error('jira_connect was not registered');
   const result = await handler({});
   return { text: result.content[0]?.text ?? '', wheres: [] };
 }
 
-describe('connect_jira', () => {
+describe('jira_connect', () => {
   it('checks only the calling user’s grant, never the whole tenant', async () => {
     const { db, wheres } = fakeDb(undefined);
     await connectJira(db);

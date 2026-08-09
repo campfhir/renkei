@@ -12,7 +12,10 @@
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",
     "@renkei/connector-config": "workspace:*",
+    "@renkei/connector-microsoft": "workspace:*",
     "@renkei/connector-webex": "workspace:*",
+    "@renkei/connector-zoom": "workspace:*",
+    "@renkei/provider-grants": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
     "@renkei/gates": "workspace:*",

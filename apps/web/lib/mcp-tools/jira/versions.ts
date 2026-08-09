@@ -14,11 +14,11 @@ export async function registerVersionTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // list_versions
+  // jira_list_versions
   server.registerTool(
-    'list_versions',
+    'jira_list_versions',
     {
-      title: 'List project versions',
+      title: 'Jira · Read — List project versions',
       description: 'List all versions/releases in a project.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -32,7 +32,7 @@ export async function registerVersionTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_versions invoked', {
+      logger.info('jira_list_versions invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -85,11 +85,11 @@ export async function registerVersionTools(
     }
   );
 
-  // create_version
+  // jira_create_version
   server.registerTool(
-    'create_version',
+    'jira_create_version',
     {
-      title: 'Create a project version',
+      title: 'Jira · Act — Create a project version',
       description: 'Create a new version/release in a project.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -103,7 +103,7 @@ export async function registerVersionTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('create_version invoked', {
+      logger.info('jira_create_version invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -163,11 +163,11 @@ export async function registerVersionTools(
     }
   );
 
-  // get_version
+  // jira_get_version
   server.registerTool(
-    'get_version',
+    'jira_get_version',
     {
-      title: 'Get version details',
+      title: 'Jira · Read — Get version details',
       description: 'Get detailed information about a specific version.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -176,7 +176,7 @@ export async function registerVersionTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('get_version invoked', {
+      logger.info('jira_get_version invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

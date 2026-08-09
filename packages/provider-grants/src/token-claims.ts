@@ -23,11 +23,13 @@ export function scopesFromAccessToken(accessToken: string): string[] | null {
     return null;
   }
 
-  // The conventional claims first, then any provider-prefixed variant
+  // The conventional claims first — including Microsoft's `scp`, which the
+  // substring scan below would miss — then any provider-prefixed variant
   // (Atlassian has used namespaced claim URIs before).
   const candidates = [
     payload.scope,
     payload.scopes,
+    payload.scp,
     ...Object.entries(payload)
       .filter(([key]) => key.toLowerCase().includes('scope'))
       .map(([, value]) => value),

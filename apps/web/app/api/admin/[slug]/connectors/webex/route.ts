@@ -89,12 +89,6 @@ export async function PUT(
     return NextResponse.json({ error: 'JSON body required' }, { status: 400 });
   }
   const { botToken, webhookSecret } = body;
-  if (typeof botToken !== 'string' || botToken.length === 0) {
-    return NextResponse.json({ error: 'botToken is required' }, { status: 400 });
-  }
-  if (typeof webhookSecret !== 'string' || webhookSecret.length === 0) {
-    return NextResponse.json({ error: 'webhookSecret is required' }, { status: 400 });
-  }
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
@@ -102,10 +96,35 @@ export async function PUT(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
+  // Secrets survive settings-only saves: setConnectorConfig replaces secrets
+  // wholesale, so a blank/omitted secret is merged with the stored one here.
+  // A secret is required only when none is stored yet.
+  const existing = await getConnectorConfig(tenantId, WEBEX_CONNECTOR, keyResult.val);
+  const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
+  const mergedBotToken =
+    typeof botToken === 'string' && botToken.length > 0 ? botToken : storedSecrets.botToken;
+  if (!mergedBotToken) {
+    return NextResponse.json({ error: 'botToken is required (none stored yet)' }, { status: 400 });
+  }
+  const mergedWebhookSecret =
+    typeof webhookSecret === 'string' && webhookSecret.length > 0
+      ? webhookSecret
+      : storedSecrets.webhookSecret;
+  if (!mergedWebhookSecret) {
+    return NextResponse.json(
+      { error: 'webhookSecret is required (none stored yet)' },
+      { status: 400 }
+    );
+  }
+
   const writeResult = await setConnectorConfig(
     tenantId,
     WEBEX_CONNECTOR,
-    { enabled, settings: {}, secrets: { botToken, webhookSecret } },
+    {
+      enabled,
+      settings: {},
+      secrets: { botToken: mergedBotToken, webhookSecret: mergedWebhookSecret },
+    },
     keyResult.val
   );
   if (!writeResult.ok) {

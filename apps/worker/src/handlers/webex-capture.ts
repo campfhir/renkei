@@ -43,7 +43,7 @@ function genericSuggestion(text: string, note: string | null): MessageClassifica
     title: `Pushed from WebEx: ${headline}`,
     summary: text.length <= 280 ? text : `${text.slice(0, 279)}…`,
     suggestedAction: {
-      tool: 'create_issue',
+      tool: 'jira_create_issue',
       args: {
         summary: headline,
         description:

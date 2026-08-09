@@ -13,30 +13,30 @@ import { withScopeGate } from './capability-gate';
 
 /** The Jira tools that read directory data rather than work items. */
 const USER_DIRECTORY_TOOLS = new Set([
-  'list_users',
-  'get_user',
-  'list_groups',
-  'list_group_members',
-  'get_user_groups',
+  'jira_list_users',
+  'jira_get_user',
+  'jira_list_groups',
+  'jira_list_group_members',
+  'jira_get_user_groups',
 ]);
 
 /** Board/sprint reads and writes go through the Jira Software API. */
-const BOARD_READ_TOOLS = new Set(['list_boards', 'list_sprints']);
+const BOARD_READ_TOOLS = new Set(['jira_list_boards', 'jira_list_sprints']);
 const BOARD_WRITE_TOOLS = new Set([
-  'create_sprint',
-  'complete_sprint',
-  'move_issue_to_sprint',
-  'remove_issue_from_sprint',
+  'jira_create_sprint',
+  'jira_complete_sprint',
+  'jira_move_issue_to_sprint',
+  'jira_remove_issue_from_sprint',
 ]);
 
 /** Delete tools gate on their own delete:* scope — a separate bundle. */
 const DELETE_TOOL_SCOPES: Record<string, string> = {
-  delete_issue: 'delete:issue:jira',
-  delete_comment: 'delete:comment:jira',
-  delete_filter: 'delete:filter:jira',
-  delete_worklog: 'delete:issue-worklog:jira',
-  delete_component: 'delete:project.component:jira',
-  delete_issue_link: 'delete:issue-link:jira',
+  jira_delete_issue: 'delete:issue:jira',
+  jira_delete_comment: 'delete:comment:jira',
+  jira_delete_filter: 'delete:filter:jira',
+  jira_delete_worklog: 'delete:issue-worklog:jira',
+  jira_delete_component: 'delete:project.component:jira',
+  jira_delete_issue_link: 'delete:issue-link:jira',
 };
 
 /**

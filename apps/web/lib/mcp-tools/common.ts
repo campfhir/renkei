@@ -58,6 +58,15 @@ export interface MCPToolContext {
   grantedScopes?: string[];
   /** Same, for the caller's WebEx user grant when one exists. */
   webexScopes?: string[];
+  /** Same, for the caller's Microsoft grant when one exists. */
+  graphScopes?: string[];
+  /**
+   * Same, for the caller's Zoom grant — but computed as requested ∩ granted
+   * (or bare requested when granted is unknown): Zoom tokens always carry
+   * the Marketplace app's full scope set, so bare granted would erase the
+   * user's narrowing.
+   */
+  zoomScopes?: string[];
   /**
    * The caller's grant on the second Atlassian app ("Renkei JSM": JSM + Ops
    * scopes), when connected. JSM/Ops tools run on THIS token; absent, they

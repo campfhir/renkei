@@ -1,7 +1,10 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { getAtlassianApp } from '@/lib/atlassian-app';
 import { getWebexUserApp } from '@/lib/webex-app';
+import { getMicrosoftApp } from '@/lib/microsoft-app';
+import { getZoomApp } from '@/lib/zoom-app';
 import { getDatabase } from '@renkei/db';
 import { setJiraGrant } from '@/lib/tenant-operations';
 import {
@@ -10,6 +13,8 @@ import {
   ATLASSIAN,
   ATLASSIAN_JSM,
   WEBEX_USER,
+  MICROSOFT,
+  ZOOM,
 } from '@renkei/provider-grants';
 import { getAtlassianJsmApp } from '@/lib/atlassian-app';
 import { parseEncryptionKey } from '@renkei/crypto';
@@ -188,6 +193,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         code,
         pendingSignIn.scopes
       );
+    }
+    if (pendingSignIn.provider === 'microsoft') {
+      return handleMicrosoftCallback(
+        request,
+        tenant,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes
+      );
+    }
+    if (pendingSignIn.provider === 'zoom') {
+      return handleZoomCallback(request, tenant, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
 
     logger.info('Jira callback', { component: 'auth/oauth', tenantId: tenant.id });
@@ -592,6 +609,361 @@ async function handleWebexUserCallback(
 }
 
 /**
+ * Complete the OAuth flow for the Microsoft (Entra) app: exchange at the
+ * org's own tenant token endpoint, identity from the id_token claims (oid,
+ * tid, preferred_username) with GET /me as fallback, and a `grant.connected`
+ * event enqueued so the WORKER bootstraps Graph subscriptions and the
+ * initial delta backfill — the subscription handshake calls our webhook
+ * route synchronously, so it cannot run inside this request.
+ */
+async function handleMicrosoftCallback(
+  request: NextRequest,
+  tenant: { id: string; slug: string },
+  subject: string | null,
+  code: string,
+  requestedScopes: string | null
+): Promise<NextResponse> {
+  if (!subject) {
+    logger.error('Microsoft pending flow has no subject; cannot assign grant owner', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json(
+      { error: 'Sign in again before connecting Microsoft' },
+      { status: 400 }
+    );
+  }
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) {
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
+  const app = await getMicrosoftApp(tenant.id, originResult.val);
+  if (!app) {
+    return NextResponse.json(
+      { error: 'Microsoft integration not configured for this organization' },
+      { status: 503 }
+    );
+  }
+
+  const tokenResponse = await fetch(
+    `https://login.microsoftonline.com/${encodeURIComponent(app.directoryTenantId)}/oauth2/v2.0/token`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: app.clientId,
+        client_secret: app.clientSecret,
+        code,
+        redirect_uri: app.redirectUri,
+        scope: requestedScopes || app.scopes,
+      }),
+    }
+  );
+  if (!tokenResponse.ok) {
+    const body = await tokenResponse.text().catch(() => '');
+    logger.error('Microsoft token exchange failed', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      status: tokenResponse.status,
+      body: body.slice(0, 300),
+    });
+    return NextResponse.json({ error: 'Microsoft token exchange failed' }, { status: 502 });
+  }
+  const tokenData: unknown = await tokenResponse.json().catch(() => null);
+  const tokens = tokenData as Record<string, unknown> | null;
+  const accessToken = typeof tokens?.access_token === 'string' ? tokens.access_token : null;
+  if (!accessToken) {
+    logger.error('Microsoft token response carried no access_token', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Malformed Microsoft token response' }, { status: 502 });
+  }
+  const refreshToken = typeof tokens?.refresh_token === 'string' ? tokens.refresh_token : '';
+  const expiresIn = typeof tokens?.expires_in === 'number' ? tokens.expires_in : 3600;
+  const scopeEcho = typeof tokens?.scope === 'string' ? tokens.scope : null;
+  const idToken = typeof tokens?.id_token === 'string' ? tokens.id_token : null;
+
+  // Who granted this. The id_token claims answer directly; /me is the
+  // fallback when a claim is missing (some Entra configs omit email).
+  const claims = idToken ? decodeJwtPayload(idToken) : null;
+  let oid = typeof claims?.oid === 'string' ? claims.oid : null;
+  const tid = typeof claims?.tid === 'string' ? claims.tid : app.directoryTenantId;
+  let upn = typeof claims?.preferred_username === 'string' ? claims.preferred_username : null;
+  let displayName = typeof claims?.name === 'string' ? claims.name : null;
+  let email = typeof claims?.email === 'string' ? claims.email : null;
+
+  if (!oid || !upn || !email) {
+    const meResponse = await fetch('https://graph.microsoft.com/v1.0/me', {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const meData: unknown = await meResponse.json().catch(() => null);
+    const me = meData as Record<string, unknown> | null;
+    if (meResponse.ok && me) {
+      oid = oid ?? (typeof me.id === 'string' ? me.id : null);
+      upn = upn ?? (typeof me.userPrincipalName === 'string' ? me.userPrincipalName : null);
+      displayName = displayName ?? (typeof me.displayName === 'string' ? me.displayName : null);
+      email = email ?? (typeof me.mail === 'string' ? me.mail : null);
+    }
+  }
+  if (!oid || !upn) {
+    logger.error('Could not identify Microsoft user from id_token claims or /me', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Could not identify Microsoft user' }, { status: 502 });
+  }
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) {
+    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store Microsoft grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  const stored = await setGrant(
+    MICROSOFT,
+    tenant.id,
+    {
+      accountId: oid,
+      clientId: app.clientId,
+      displayName: displayName ?? upn,
+      accessToken,
+      refreshToken,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      requestedScopes: (requestedScopes || app.scopes).split(' '),
+      // Graph access tokens carry scp; the token-response echo is the
+      // fallback. Both describe what was actually minted.
+      grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
+      // tid keeps refresh pointed at the right authority; upn/email are what
+      // the refIds and the access verifier are built from.
+      metadata: { tid, upn, email: email ?? null },
+      subject,
+    },
+    keyResult.val
+  );
+  if (!stored.ok) {
+    logger.error('Failed to store Microsoft grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Failed to store Microsoft grant' }, { status: 500 });
+  }
+
+  // Subscription creation + initial delta backfill belong in the worker: the
+  // Graph handshake POSTs to our webhook route while the create call is in
+  // flight, and a backfill is minutes of work, not callback work.
+  const dbResult = getDatabase();
+  if (dbResult.ok) {
+    await dbResult.val
+      .insertInto('events')
+      .values({
+        id: randomUUID(),
+        tenant_id: tenant.id,
+        source: MICROSOFT,
+        type: 'grant.connected',
+        payload: JSON.stringify({ accountId: oid, subject }),
+      })
+      .execute()
+      .catch((error: unknown) => {
+        logger.error('Could not enqueue microsoft/grant.connected; sweep will bootstrap', {
+          component: 'auth/oauth',
+          tenantId: tenant.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  logger.info('Microsoft grant stored', {
+    component: 'auth/oauth',
+    tenantId: tenant.id,
+    subject,
+  });
+  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+}
+
+/**
+ * Complete the OAuth flow for Zoom: Basic-auth code exchange, identity from
+ * GET /users/me. Zoom's consent screen always covers the Marketplace app's
+ * full scope set — the (possibly user-narrowed) request carried through the
+ * pending row is what tool registration narrows by, so it is recorded as
+ * requestedScopes even though Zoom never saw it.
+ */
+async function handleZoomCallback(
+  request: NextRequest,
+  tenant: { id: string; slug: string },
+  subject: string | null,
+  code: string,
+  requestedScopes: string | null
+): Promise<NextResponse> {
+  if (!subject) {
+    logger.error('Zoom pending flow has no subject; cannot assign grant owner', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Sign in again before connecting Zoom' }, { status: 400 });
+  }
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) {
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
+  const app = await getZoomApp(tenant.id, originResult.val);
+  if (!app) {
+    return NextResponse.json(
+      { error: 'Zoom integration not configured for this organization' },
+      { status: 503 }
+    );
+  }
+
+  const basic = Buffer.from(`${app.clientId}:${app.clientSecret}`).toString('base64');
+  const tokenResponse = await fetch('https://zoom.us/oauth/token', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${basic}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: app.redirectUri,
+    }),
+  });
+  if (!tokenResponse.ok) {
+    const body = await tokenResponse.text().catch(() => '');
+    logger.error('Zoom token exchange failed', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      status: tokenResponse.status,
+      body: body.slice(0, 300),
+    });
+    return NextResponse.json({ error: 'Zoom token exchange failed' }, { status: 502 });
+  }
+  const tokenData: unknown = await tokenResponse.json().catch(() => null);
+  const tokens = tokenData as Record<string, unknown> | null;
+  const accessToken = typeof tokens?.access_token === 'string' ? tokens.access_token : null;
+  if (!accessToken) {
+    logger.error('Zoom token response carried no access_token', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Malformed Zoom token response' }, { status: 502 });
+  }
+  const refreshToken = typeof tokens?.refresh_token === 'string' ? tokens.refresh_token : '';
+  const expiresIn = typeof tokens?.expires_in === 'number' ? tokens.expires_in : 3600;
+  const scopeEcho = typeof tokens?.scope === 'string' ? tokens.scope : null;
+
+  // The minted token must be able to say who it belongs to. When the echo
+  // says user:read:user was not granted, /users/me can only fail — say why
+  // instead of letting the 400 speak for itself (a granular Marketplace app
+  // without the scope, or one that dropped it from the build flow).
+  if (scopeEcho && !scopeEcho.split(/[\s,]+/).includes('user:read:user')) {
+    logger.error('Zoom token was minted without user:read:user; cannot identify grantor', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      scopeEcho,
+    });
+    // The echo names what WAS minted, which distinguishes the causes: an
+    // empty/default set means the app ignored or lacks the requested
+    // scopes; a near-complete set missing only this one means it is
+    // marked Optional and was unchecked at consent.
+    return NextResponse.json(
+      {
+        error: 'Could not identify Zoom user',
+        error_description:
+          'The minted token lacks the user:read:user scope. Add user:read:user to the ' +
+          "Marketplace app's scopes (Scopes → Add Scopes, under the Users product) and keep " +
+          'it Required, not Optional — then reconnect. The token actually carried: ' +
+          `${scopeEcho || '(nothing)'}`,
+      },
+      { status: 502 }
+    );
+  }
+
+  // Who granted this. The Zoom user id is the durable key — it is also what
+  // webhook deliveries carry as host_id, which is how a transcript event
+  // finds its way back to this grant.
+  const meResponse = await fetch('https://api.zoom.us/v2/users/me', {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const meBodyText = await meResponse.text().catch(() => '');
+  let meData: unknown = null;
+  try {
+    meData = JSON.parse(meBodyText);
+  } catch {
+    // handled below via zoomUserId null
+  }
+  const me = meData as Record<string, unknown> | null;
+  const zoomUserId = typeof me?.id === 'string' ? me.id : null;
+  if (!meResponse.ok || !zoomUserId) {
+    // Zoom's error body names the missing scope (code 4711) — without it
+    // this failure was undiagnosable from the log line alone.
+    logger.error('Zoom /users/me failed; cannot identify grantor', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      status: meResponse.status,
+      body: meBodyText.slice(0, 300),
+      scopeEcho: scopeEcho ?? '(none echoed)',
+    });
+    const zoomMessage = typeof me?.message === 'string' ? me.message : null;
+    return NextResponse.json(
+      {
+        error: 'Could not identify Zoom user',
+        ...(zoomMessage ? { error_description: zoomMessage } : {}),
+      },
+      { status: 502 }
+    );
+  }
+  const email = typeof me?.email === 'string' ? me.email : null;
+  const displayName =
+    typeof me?.display_name === 'string' && me.display_name
+      ? me.display_name
+      : [me?.first_name, me?.last_name].filter((part) => typeof part === 'string').join(' ') ||
+        zoomUserId;
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) {
+    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store Zoom grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  const stored = await setGrant(
+    ZOOM,
+    tenant.id,
+    {
+      accountId: zoomUserId,
+      clientId: app.clientId,
+      displayName,
+      accessToken,
+      refreshToken,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      requestedScopes: (requestedScopes || app.scopes).split(' '),
+      // Zoom access tokens carry no scope claim; the token-response echo is
+      // the record of what the app was actually minted — always the full
+      // Marketplace set, which is exactly why narrowing gates on requested.
+      grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
+      metadata: { email, zoomAccountId: typeof me?.account_id === 'string' ? me.account_id : null },
+      subject,
+    },
+    keyResult.val
+  );
+  if (!stored.ok) {
+    logger.error('Failed to store Zoom grant', { component: 'auth/oauth', tenantId: tenant.id });
+    return NextResponse.json({ error: 'Failed to store Zoom grant' }, { status: 500 });
+  }
+
+  logger.info('Zoom grant stored', { component: 'auth/oauth', tenantId: tenant.id, subject });
+  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+}
+
+/**
  * Complete the OAuth flow for the second Atlassian app ("Renkei JSM": JSM +
  * Ops scopes on their own grant). Same token endpoint and callback as the
  * Jira app — a different client id, and a token that usually carries no Jira
@@ -660,7 +1032,6 @@ async function handleAtlassianJsmCallback(
       .where('provider', 'in', [ATLASSIAN, ATLASSIAN_JSM])
       .executeTakeFirst();
     if (prior && typeof prior.metadata === 'object' && prior.metadata !== null) {
-       
       const meta = prior.metadata as Record<string, unknown>;
       if (typeof meta.cloudId === 'string' && meta.cloudId) cloudId = meta.cloudId;
     }

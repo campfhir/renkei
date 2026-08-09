@@ -14,18 +14,18 @@ export async function registerIssueLinkTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // list_link_types
+  // jira_list_link_types
   server.registerTool(
-    'list_link_types',
+    'jira_list_link_types',
     {
-      title: 'List available issue link types',
+      title: 'Jira · Read — List available issue link types',
       description: 'List all issue link types available in the Jira instance.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({}),
     },
     async (_args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_link_types invoked', {
+      logger.info('jira_list_link_types invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -42,7 +42,7 @@ export async function registerIssueLinkTools(
 
         const lines = [
           `Found ${linkTypes.length} issue link types:`,
-          // The directional phrases are what disambiguate create_issue_link —
+          // The directional phrases are what disambiguate jira_create_issue_link —
           // "A blocks B" vs "A is blocked by B" is this list's whole value.
           ...linkTypes.map(
             (lt: any) => `• ${lt.name} (${lt.id}): outward "${lt.outward}" / inward "${lt.inward}"`
@@ -61,11 +61,11 @@ export async function registerIssueLinkTools(
     }
   );
 
-  // create_issue_link
+  // jira_create_issue_link
   server.registerTool(
-    'create_issue_link',
+    'jira_create_issue_link',
     {
-      title: 'Create an issue link',
+      title: 'Jira · Act — Create an issue link',
       description: 'Create a relationship between two issues.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -76,7 +76,7 @@ export async function registerIssueLinkTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('create_issue_link invoked', {
+      logger.info('jira_create_issue_link invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -173,11 +173,11 @@ export async function registerIssueLinkTools(
     }
   );
 
-  // delete_issue_link
+  // jira_delete_issue_link
   server.registerTool(
-    'delete_issue_link',
+    'jira_delete_issue_link',
     {
-      title: 'Delete an issue link',
+      title: 'Jira · Act — Delete an issue link',
       description: 'Remove a relationship between two issues.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -186,7 +186,7 @@ export async function registerIssueLinkTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('delete_issue_link invoked', {
+      logger.info('jira_delete_issue_link invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

@@ -15,6 +15,8 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { WEBEX_CONNECTOR, WebexClient, createWebexAccessVerifier } from '@renkei/connector-webex';
+import { MICROSOFT_CONNECTOR, createMicrosoftAccessVerifier } from '@renkei/connector-microsoft';
+import { ZOOM_CONNECTOR, createZoomAccessVerifier } from '@renkei/connector-zoom';
 import type { AccessVerifier } from '@renkei/gates';
 import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
 import type { MCPToolContext } from '../common';
@@ -40,6 +42,14 @@ async function buildVerifiers(tenantId: string): Promise<ReadonlyMap<string, Acc
       createWebexAccessVerifier(new WebexClient(webexResult.val.secrets.botToken))
     );
   }
+
+  // Microsoft and Zoom chunks embed their owner in the refId, so their
+  // verifiers are pure ownership checks — no client, no config needed. They
+  // are registered unconditionally: with no chunks they never fire, and
+  // without them every microsoft/zoom chunk would be default-denied.
+  verifiers.set(MICROSOFT_CONNECTOR, createMicrosoftAccessVerifier());
+  verifiers.set(ZOOM_CONNECTOR, createZoomAccessVerifier());
+
   return verifiers;
 }
 
@@ -54,7 +64,7 @@ export async function registerKnowledgeTools(
   server.registerTool(
     'search_knowledge',
     {
-      title: 'Search org knowledge',
+      title: 'Knowledge · Read — Search org knowledge',
       description:
         'Semantic search over what Renkei has indexed from connected tools ' +
         '(WebEx today; Confluence and SharePoint as they arrive). Results are ' +

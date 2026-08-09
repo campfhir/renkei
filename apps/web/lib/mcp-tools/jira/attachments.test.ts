@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
- * Regression tests for add_attachment.
+ * Regression tests for jira_add_attachment.
  *
  * The upload used to go through bare fetch — no 401 refresh, no structured
  * error — and MAX_ATTACHMENT_BYTES was configured but never enforced.
@@ -52,8 +52,8 @@ async function addAttachmentHandler(maxBytes?: number): Promise<ToolHandler> {
   };
 
   await registerAttachmentTools(server, context);
-  const handler = handlers.get('add_attachment');
-  if (!handler) throw new Error('add_attachment was not registered');
+  const handler = handlers.get('jira_add_attachment');
+  if (!handler) throw new Error('jira_add_attachment was not registered');
   return handler;
 }
 
@@ -61,7 +61,7 @@ beforeEach(() => {
   jiraFetchMock.mockReset();
 });
 
-describe('add_attachment', () => {
+describe('jira_add_attachment', () => {
   it('refuses a file over MAX_ATTACHMENT_BYTES without calling Jira', async () => {
     const handler = await addAttachmentHandler(16);
     const result = await handler({
@@ -92,7 +92,9 @@ describe('add_attachment', () => {
       string,
       { method: string; body: unknown },
     ];
-    expect(url).toBe('https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/PROJ-1/attachments');
+    expect(url).toBe(
+      'https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/PROJ-1/attachments'
+    );
     expect(token).toBe('token');
     expect(options.method).toBe('POST');
     expect(options.body).toBeInstanceOf(FormData);

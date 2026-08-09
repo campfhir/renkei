@@ -26,11 +26,47 @@ export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
-export interface ProviderRefreshLocks {
-  account_id: string;
-  locked_at: Generated<Timestamp>;
-  provider: string;
+export interface ActionableItems {
+  archived_at: Timestamp | null;
+  archived_by: string | null;
+  created_at: Generated<Timestamp>;
+  decided_at: Timestamp | null;
+  decided_by: string | null;
+  evidence: Json;
+  id: string;
+  result: Json | null;
+  source: string;
+  status: Generated<string>;
+  suggested_action: Json;
+  summary: string;
   tenant_id: string;
+  title: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface ConnectorConfigs {
+  connector: string;
+  created_at: Generated<Timestamp>;
+  enabled: Generated<boolean>;
+  encrypted_secrets: string;
+  settings: Generated<Json>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface Events {
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  id: string;
+  last_error: string | null;
+  locked_at: Timestamp | null;
+  payload: Json;
+  run_after: Generated<Timestamp>;
+  source: string;
+  status: Generated<string>;
+  tenant_id: string;
+  type: string;
+  updated_at: Generated<Timestamp>;
 }
 
 export interface Identities {
@@ -50,6 +86,17 @@ export interface JiraSessions {
   last_used_at: Timestamp;
   tenant_id: string;
   user_agent: string | null;
+}
+
+export interface KnowledgeChunks {
+  content: string;
+  created_at: Generated<Timestamp>;
+  embedding: string;
+  id: string;
+  metadata: Generated<Json>;
+  provider: string;
+  ref_id: string;
+  tenant_id: string;
 }
 
 export interface LogAttr {
@@ -148,9 +195,7 @@ export interface PendingOidcSignin {
   expires_at: Timestamp;
   id: string;
   nonce: string;
-  /** Which provider's OAuth flow this state belongs to; null means Atlassian. */
   provider: string | null;
-  /** Space-separated scopes the flow requested; null predates narrowing. */
   scopes: string | null;
   state: string;
   subject: string | null;
@@ -166,6 +211,12 @@ export interface PlatformAuditLog {
   resource_id: string | null;
 }
 
+export interface PlatformSettings {
+  key: string;
+  updated_at: Generated<Timestamp>;
+  value: Json;
+}
+
 export interface ProviderGrants {
   client_id: string;
   created_at: Generated<Timestamp>;
@@ -173,16 +224,21 @@ export interface ProviderGrants {
   encrypted_access_token: string;
   encrypted_refresh_token: string;
   expires_at: Timestamp;
+  granted_scopes: string[] | null;
   metadata: Generated<Json>;
   provider: string;
   provider_account_id: string;
-  /** What the (possibly user-narrowed) authorize step asked the provider for. */
   requested_scopes: Generated<string[]>;
-  /** What the minted token actually carries, decoded from its claims; null = opaque token, unknown. */
-  granted_scopes: string[] | null;
   subject: string | null;
   tenant_id: string;
   updated_at: Generated<Timestamp>;
+}
+
+export interface ProviderRefreshLocks {
+  account_id: string;
+  locked_at: Generated<Timestamp>;
+  provider: string;
+  tenant_id: string;
 }
 
 export interface Sessions {
@@ -229,53 +285,6 @@ export interface Tenants {
   slug: string;
 }
 
-export interface Events {
-  attempts: Generated<number>;
-  created_at: Generated<Timestamp>;
-  id: string;
-  last_error: string | null;
-  locked_at: Timestamp | null;
-  payload: Json;
-  run_after: Generated<Timestamp>;
-  source: string;
-  status: Generated<string>;
-  tenant_id: string;
-  type: string;
-  updated_at: Generated<Timestamp>;
-}
-
-export interface ActionableItems {
-  created_at: Generated<Timestamp>;
-  decided_at: Timestamp | null;
-  decided_by: string | null;
-  evidence: Json;
-  id: string;
-  result: Json | null;
-  source: string;
-  status: Generated<string>;
-  suggested_action: Json;
-  summary: string;
-  tenant_id: string;
-  title: string;
-  updated_at: Generated<Timestamp>;
-}
-
-export interface ConnectorConfigs {
-  connector: string;
-  created_at: Generated<Timestamp>;
-  enabled: Generated<boolean>;
-  encrypted_secrets: string;
-  settings: Generated<Json>;
-  tenant_id: string;
-  updated_at: Generated<Timestamp>;
-}
-
-export interface PlatformSettings {
-  key: string;
-  updated_at: Generated<Timestamp>;
-  value: Json;
-}
-
 export interface TenantSettings {
   key: string;
   tenant_id: string;
@@ -283,16 +292,19 @@ export interface TenantSettings {
   value: Json;
 }
 
-export interface KnowledgeChunks {
-  content: string;
+export interface WebhookSubscriptions {
+  account_id: string;
+  client_state: string;
   created_at: Generated<Timestamp>;
-  /** pgvector value; written and compared via sql fragments, read as text. */
-  embedding: string;
+  delta_link: string | null;
+  expires_at: Timestamp | null;
   id: string;
-  metadata: Generated<Json>;
   provider: string;
-  ref_id: string;
+  resource: string;
+  subject: string | null;
+  subscription_id: string | null;
   tenant_id: string;
+  updated_at: Generated<Timestamp>;
 }
 
 export interface DB {
@@ -300,11 +312,8 @@ export interface DB {
   connector_configs: ConnectorConfigs;
   events: Events;
   identities: Identities;
-  knowledge_chunks: KnowledgeChunks;
-  platform_settings: PlatformSettings;
-  tenant_settings: TenantSettings;
-  provider_refresh_locks: ProviderRefreshLocks;
   jira_sessions: JiraSessions;
+  knowledge_chunks: KnowledgeChunks;
   log_attr: LogAttr;
   log_attr_blob: LogAttrBlob;
   logs: Logs;
@@ -316,10 +325,14 @@ export interface DB {
   operator_sessions: OperatorSessions;
   pending_oidc_signin: PendingOidcSignin;
   platform_audit_log: PlatformAuditLog;
+  platform_settings: PlatformSettings;
   provider_grants: ProviderGrants;
+  provider_refresh_locks: ProviderRefreshLocks;
   sessions: Sessions;
   tenant_domains: TenantDomains;
   tenant_jira_sites: TenantJiraSites;
   tenant_oidc: TenantOidc;
+  tenant_settings: TenantSettings;
   tenants: Tenants;
+  webhook_subscriptions: WebhookSubscriptions;
 }

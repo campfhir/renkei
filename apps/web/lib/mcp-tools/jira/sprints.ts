@@ -114,12 +114,13 @@ export async function registerSprintTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // create_sprint
+  // jira_create_sprint
   server.registerTool(
-    'create_sprint',
+    'jira_create_sprint',
     {
-      title: 'Create a sprint',
+      title: 'Jira · Act — Create a sprint',
       description: 'Create a new sprint on a Jira Software board.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         boardId: z.string().describe('Board ID'),
         name: z.string().describe('Sprint name'),
@@ -130,7 +131,7 @@ export async function registerSprintTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('create_sprint invoked', {
+      logger.info('jira_create_sprint invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -169,14 +170,15 @@ export async function registerSprintTools(
     }
   );
 
-  // move_issue_to_sprint
+  // jira_move_issue_to_sprint
   server.registerTool(
-    'move_issue_to_sprint',
+    'jira_move_issue_to_sprint',
     {
-      title: 'Move a Jira issue to a sprint',
+      title: 'Jira · Act — Move a Jira issue to a sprint',
       description:
         'Move an issue into a sprint. Uses the Agile API, so it works whether or not the ' +
         "project's edit screen exposes the Sprint field.",
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
         sprintId: z.string().describe('Target sprint ID'),
@@ -184,7 +186,7 @@ export async function registerSprintTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('move_issue_to_sprint invoked', {
+      logger.info('jira_move_issue_to_sprint invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -225,21 +227,22 @@ export async function registerSprintTools(
     }
   );
 
-  // remove_issue_from_sprint
+  // jira_remove_issue_from_sprint
   server.registerTool(
-    'remove_issue_from_sprint',
+    'jira_remove_issue_from_sprint',
     {
-      title: 'Remove an issue from a sprint',
+      title: 'Jira · Act — Remove an issue from a sprint',
       description:
         'Move an issue out of its sprint and back to the backlog. Reports which sprint it left, ' +
         'and says so plainly when the issue is not in one.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
       }),
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('remove_issue_from_sprint invoked', {
+      logger.info('jira_remove_issue_from_sprint invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -302,12 +305,13 @@ export async function registerSprintTools(
     }
   );
 
-  // complete_sprint
+  // jira_complete_sprint
   server.registerTool(
-    'complete_sprint',
+    'jira_complete_sprint',
     {
-      title: 'Complete a Scrum sprint',
+      title: 'Jira · Act — Complete a Scrum sprint',
       description: 'Complete (close) a sprint.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         boardId: z.string().describe('Board ID'),
         sprintId: z.string().describe('Sprint ID to complete'),
@@ -315,7 +319,7 @@ export async function registerSprintTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('complete_sprint invoked', {
+      logger.info('jira_complete_sprint invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

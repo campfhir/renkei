@@ -29,11 +29,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Narrow a stored suggested_action to create_issue args. The pipeline wrote
+ * Narrow a stored suggested_action to jira_create_issue args. The pipeline wrote
  * this shape, but it round-tripped through jsonb — verify, don't assume.
+ * Rows written before the connector-prefix rename carry 'create_issue';
+ * both spellings stay accepted so existing cards remain approvable.
  */
 export function readCreateIssueAction(suggestedAction: unknown): CreateIssueArgs | null {
-  if (!isRecord(suggestedAction) || suggestedAction.tool !== 'create_issue') return null;
+  if (!isRecord(suggestedAction)) return null;
+  if (suggestedAction.tool !== 'jira_create_issue' && suggestedAction.tool !== 'create_issue') {
+    return null;
+  }
   const args = suggestedAction.args;
   if (!isRecord(args)) return null;
   const { summary, description, issueType } = args;

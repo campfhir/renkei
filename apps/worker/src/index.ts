@@ -12,7 +12,17 @@ import { claimNextEvent, completeEvent, failEvent } from './queue';
 import { handlerFor, registerHandler } from './handlers';
 import { createWebexMessageHandler } from './handlers/webex-message';
 import { createWebexAttachmentActionHandler } from './handlers/webex-attachment-action';
+import {
+  createMicrosoftGrantConnectedHandler,
+  createMicrosoftChangeNotificationHandler,
+  createMicrosoftLifecycleHandler,
+} from './handlers/microsoft-events';
+import { createZoomTranscriptHandler, createZoomSummaryHandler } from './handlers/zoom-events';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
+import {
+  sweepMicrosoftSubscriptions,
+  MICROSOFT_SUBSCRIPTION_INTERVAL_MS,
+} from './health/microsoft-subscriptions';
 import { logger, attachPersistentLogging } from './logger';
 import packageJson from '../package.json';
 
@@ -78,7 +88,12 @@ function sleep(ms: number): Promise<void> {
 function registerConnectorHandlers(): void {
   registerHandler('webex', 'messages.created', createWebexMessageHandler());
   registerHandler('webex', 'attachmentActions.created', createWebexAttachmentActionHandler());
-  logger.info('webex handlers registered', { component: 'worker/loop' });
+  registerHandler('microsoft', 'grant.connected', createMicrosoftGrantConnectedHandler());
+  registerHandler('microsoft', 'change-notification', createMicrosoftChangeNotificationHandler());
+  registerHandler('microsoft', 'lifecycle', createMicrosoftLifecycleHandler());
+  registerHandler('zoom', 'recording.transcript_completed', createZoomTranscriptHandler());
+  registerHandler('zoom', 'meeting.summary_completed', createZoomSummaryHandler());
+  logger.info('webex, microsoft and zoom handlers registered', { component: 'worker/loop' });
 }
 
 /**
@@ -102,6 +117,25 @@ async function maybeSweepWebhooks(): Promise<void> {
   }
 }
 
+/**
+ * Graph subscriptions expire by design, so this sweep is routine upkeep,
+ * not just repair: renew, recreate, bootstrap, and catch up stale cursors.
+ */
+let nextMicrosoftSweepAt = 0;
+
+async function maybeSweepMicrosoftSubscriptions(): Promise<void> {
+  if (Date.now() < nextMicrosoftSweepAt) return;
+  nextMicrosoftSweepAt = Date.now() + MICROSOFT_SUBSCRIPTION_INTERVAL_MS;
+  try {
+    await sweepMicrosoftSubscriptions();
+  } catch (error) {
+    logger.error('microsoft subscription sweep error: {error}', {
+      component: 'microsoft/subscription-health',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function main(): Promise<void> {
   await attachPersistentLogging();
   registerConnectorHandlers();
@@ -115,6 +149,7 @@ async function main(): Promise<void> {
   });
   while (running) {
     await maybeSweepWebhooks();
+    await maybeSweepMicrosoftSubscriptions();
     let hadWork = false;
     try {
       hadWork = await processOne();

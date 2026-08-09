@@ -61,12 +61,13 @@ export async function registerJsmCustomerTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // create_customer
+  // jsm_create_customer
   server.registerTool(
-    'create_customer',
+    'jsm_create_customer',
     {
-      title: 'Create a new customer',
+      title: 'JSM · Act — Create a new customer',
       description: 'Create a new customer in Jira Service Management.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         email: z.string().describe('Customer email address'),
         displayName: z.string().describe('Customer display name (optional)').optional(),
@@ -76,7 +77,7 @@ export async function registerJsmCustomerTools(
       // Named distinctly: this handler also destructures a `displayName` from
       // args, which is the *customer's* name, not the caller's.
       const invokerDisplayName = getCachedDisplayName(context.accountId);
-      logger.info('create_customer invoked', {
+      logger.info('jsm_create_customer invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -122,14 +123,15 @@ export async function registerJsmCustomerTools(
     }
   );
 
-  // add_customer_to_servicedesk
+  // jsm_add_customer_to_servicedesk
   server.registerTool(
-    'add_customer_to_servicedesk',
+    'jsm_add_customer_to_servicedesk',
     {
-      title: 'Add customers to a service desk',
+      title: 'JSM · Act — Add customers to a service desk',
       description:
         'Add an existing customer to a service desk, by email address or Atlassian account ID. ' +
-        'Use invite_customers_to_servicedesk instead for someone who does not have an account yet.',
+        'Use jsm_invite_customers_to_servicedesk instead for someone who does not have an account yet.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         serviceDeskId: z.string().describe('Service desk ID'),
         user: z
@@ -139,7 +141,7 @@ export async function registerJsmCustomerTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('add_customer_to_servicedesk invoked', {
+      logger.info('jsm_add_customer_to_servicedesk invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -188,13 +190,14 @@ export async function registerJsmCustomerTools(
     }
   );
 
-  // remove_customer_from_servicedesk
+  // jsm_remove_customer_from_servicedesk
   server.registerTool(
-    'remove_customer_from_servicedesk',
+    'jsm_remove_customer_from_servicedesk',
     {
-      title: 'Remove customers from a service desk',
+      title: 'JSM · Act — Remove customers from a service desk',
       description:
         'Remove a customer from a service desk, by email address or Atlassian account ID.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         serviceDeskId: z.string().describe('Service desk ID'),
         user: z
@@ -204,7 +207,7 @@ export async function registerJsmCustomerTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('remove_customer_from_servicedesk invoked', {
+      logger.info('jsm_remove_customer_from_servicedesk invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -252,12 +255,13 @@ export async function registerJsmCustomerTools(
     }
   );
 
-  // invite_customers_to_servicedesk
+  // jsm_invite_customers_to_servicedesk
   server.registerTool(
-    'invite_customers_to_servicedesk',
+    'jsm_invite_customers_to_servicedesk',
     {
-      title: 'Invite email addresses to a service desk',
+      title: 'JSM · Act — Invite email addresses to a service desk',
       description: 'Invite customers to a service desk.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         serviceDeskId: z.string().describe('Service desk ID'),
         emails: z.array(z.string()).describe('Customer emails to invite'),
@@ -265,7 +269,7 @@ export async function registerJsmCustomerTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('invite_customers_to_servicedesk invoked', {
+      logger.info('jsm_invite_customers_to_servicedesk invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

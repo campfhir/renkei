@@ -13,16 +13,24 @@ import {
   ATLASSIAN_JSM_SCOPE_GROUPS,
   ATLASSIAN_OFFLINE_SCOPE,
 } from '@/lib/atlassian-scopes';
+import {
+  MICROSOFT_SCOPE_GROUPS,
+  MICROSOFT_SCOPE_OPTIONS,
+  MICROSOFT_REQUIRED_SCOPES,
+} from '@/lib/microsoft-scopes';
+import { ZOOM_SCOPE_GROUPS, ZOOM_SCOPE_OPTIONS, ZOOM_REQUIRED_SCOPES } from '@/lib/zoom-scopes';
 import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
 import ScopePicker from '@/components/scope-picker';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 
 /**
- * The three connector forms, each a thin skin over its
+ * The connector forms, each a thin skin over its
  * /api/admin/[slug]/connectors/* route. GET reports presence only — a stored
- * secret comes back as `hasX: true`, never as its value — and every PUT
- * requires the secret again, so the forms say that instead of faking a
- * filled-in field.
+ * secret comes back as `hasX: true`, never as its value. Once a secret is
+ * stored, its field may be left blank on save: the blank field is omitted
+ * from the PUT and the server keeps the stored value, so settings-only saves
+ * never demand re-entering secrets. A secret is required only when none is
+ * stored yet.
  */
 
 interface FetchState<T> {
@@ -122,6 +130,24 @@ function StatusPill({ configured, enabled }: { configured: boolean; enabled: boo
   );
 }
 
+/**
+ * The OAuth callback URL, concrete when the deployment's origin is known —
+ * admins paste it into a provider console, so an exact address beats a
+ * description of one. Abstract phrasing only when the public base URL is
+ * not configured yet (and no proxy header revealed the origin).
+ */
+function CallbackUrl({ origin }: { origin: string | null }) {
+  if (origin) {
+    return <code className="font-mono text-xs">{origin}/api/oauth/callback</code>;
+  }
+  return (
+    <>
+      this deployment&apos;s origin + <code className="font-mono text-xs">/api/oauth/callback</code>{' '}
+      (the public base URL is not configured yet, so the exact address cannot be shown)
+    </>
+  );
+}
+
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
 const labelClass = 'block text-sm font-medium mb-1';
@@ -162,10 +188,11 @@ interface AtlassianConfig {
   hasClientSecret: boolean;
 }
 
-function AtlassianForm({ slug }: { slug: string }) {
+function AtlassianForm({ slug, origin }: { slug: string; origin: string | null }) {
   return (
     <AtlassianAppForm
       slug={slug}
+      origin={origin}
       connector="atlassian"
       title="Atlassian (Jira)"
       groups={ATLASSIAN_SCOPE_GROUPS}
@@ -174,10 +201,11 @@ function AtlassianForm({ slug }: { slug: string }) {
   );
 }
 
-function AtlassianJsmForm({ slug }: { slug: string }) {
+function AtlassianJsmForm({ slug, origin }: { slug: string; origin: string | null }) {
   return (
     <AtlassianAppForm
       slug={slug}
+      origin={origin}
       connector="atlassian-jsm"
       title="Atlassian (Service Management & Ops)"
       groups={ATLASSIAN_JSM_SCOPE_GROUPS}
@@ -194,12 +222,14 @@ function AtlassianJsmForm({ slug }: { slug: string }) {
  */
 function AtlassianAppForm({
   slug,
+  origin,
   connector,
   title,
   groups,
   options,
 }: {
   slug: string;
+  origin: string | null;
   connector: string;
   title: string;
   groups: ScopeGroup[];
@@ -252,7 +282,8 @@ function AtlassianAppForm({
     const scopes = [...scopesOfOptions(options, checkedIds), ATLASSIAN_OFFLINE_SCOPE].join(' ');
     const failure = await putJson(url, {
       clientId: clientId.trim(),
-      clientSecret: clientSecret.trim(),
+      // Blank means keep the stored secret — omit it from the payload.
+      ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
       enabled,
       scopes,
       ...(redirectUri.trim() ? { redirectUri: redirectUri.trim() } : {}),
@@ -299,8 +330,7 @@ function AtlassianAppForm({
         >
           developer.atlassian.com
         </a>
-        . Its callback URL must be this deployment&apos;s origin +{' '}
-        <code className="font-mono text-xs">/api/oauth/callback</code>.
+        . Its callback URL must be <CallbackUrl origin={origin} />.
       </p>
       <form onSubmit={(e) => void save(e)} className="space-y-3">
         <div>
@@ -322,16 +352,14 @@ function AtlassianAppForm({
           <input
             id={`${connector}-client-secret`}
             type="password"
-            required
+            required={!config?.hasClientSecret}
             value={clientSecret}
             onChange={(e) => setClientSecret(e.target.value)}
-            placeholder={config?.hasClientSecret ? 'Stored — re-enter to save changes' : ''}
+            placeholder={config?.hasClientSecret ? 'Stored — leave blank to keep' : ''}
             className={`${inputClass} font-mono`}
           />
           {config?.hasClientSecret && (
-            <p className={hintClass}>
-              A secret is stored but never shown. Saving any change requires entering it again.
-            </p>
+            <p className={hintClass}>A secret is stored but never shown; leave blank to keep it.</p>
           )}
         </div>
         <div>
@@ -419,8 +447,9 @@ function WebexForm({ slug }: { slug: string }) {
     setNotice(null);
     setError(null);
     const failure = await putJson(url, {
-      botToken: botToken.trim(),
-      webhookSecret: webhookSecret.trim(),
+      // Blank means keep the stored secret — omit it from the payload.
+      ...(botToken.trim() ? { botToken: botToken.trim() } : {}),
+      ...(webhookSecret.trim() ? { webhookSecret: webhookSecret.trim() } : {}),
       enabled,
     });
     setBusy(false);
@@ -468,10 +497,10 @@ function WebexForm({ slug }: { slug: string }) {
           <input
             id="wx-token"
             type="password"
-            required
+            required={!config?.hasBotToken}
             value={botToken}
             onChange={(e) => setBotToken(e.target.value)}
-            placeholder={config?.hasBotToken ? 'Stored — re-enter to save changes' : ''}
+            placeholder={config?.hasBotToken ? 'Stored — leave blank to keep' : ''}
             className={`${inputClass} font-mono`}
           />
         </div>
@@ -483,10 +512,10 @@ function WebexForm({ slug }: { slug: string }) {
             <input
               id="wx-secret"
               type={secretRevealed ? 'text' : 'password'}
-              required
+              required={!config?.hasWebhookSecret}
               value={webhookSecret}
               onChange={(e) => setWebhookSecret(e.target.value)}
-              placeholder={config?.hasWebhookSecret ? 'Stored — re-enter to save changes' : ''}
+              placeholder={config?.hasWebhookSecret ? 'Stored — leave blank to keep' : ''}
               className={`${inputClass} font-mono`}
             />
             <button
@@ -501,7 +530,7 @@ function WebexForm({ slug }: { slug: string }) {
             A value you choose, not one WebEx issues — Renkei registers webhooks with it and WebEx
             signs every delivery using it. Generate fills in 32 random bytes.
             {config?.hasWebhookSecret || config?.hasBotToken
-              ? ' Secrets are stored but never shown; saving any change requires entering both again.'
+              ? ' Secrets are stored but never shown; leave a field blank to keep its stored value.'
               : ''}
           </p>
         </div>
@@ -525,7 +554,7 @@ interface WebexUserConfig {
   hasClientSecret: boolean;
 }
 
-function WebexUserForm({ slug }: { slug: string }) {
+function WebexUserForm({ slug, origin }: { slug: string; origin: string | null }) {
   const url = `/api/admin/${slug}/connectors/webex-user`;
   const [state, reload] = useConnectorConfig<WebexUserConfig>(url);
   const [clientId, setClientId] = useState('');
@@ -570,7 +599,8 @@ function WebexUserForm({ slug }: { slug: string }) {
     ].join(' ');
     const failure = await putJson(url, {
       clientId: clientId.trim(),
-      clientSecret: clientSecret.trim(),
+      // Blank means keep the stored secret — omit it from the payload.
+      ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
       enabled,
       scopes,
     });
@@ -617,8 +647,8 @@ function WebexUserForm({ slug }: { slug: string }) {
           Integration
         </a>{' '}
         (not the bot) through which each person grants Renkei read access to their own WebEx — rooms
-        they are in, messages they can see. Its redirect URI must be this deployment&apos;s origin +{' '}
-        <code className="font-mono text-xs">/api/oauth/callback</code>.
+        they are in, messages they can see. Its redirect URI must be <CallbackUrl origin={origin} />
+        .
       </p>
       <form onSubmit={(e) => void save(e)} className="space-y-3">
         <div>
@@ -640,16 +670,14 @@ function WebexUserForm({ slug }: { slug: string }) {
           <input
             id="wxu-client-secret"
             type="password"
-            required
+            required={!config?.hasClientSecret}
             value={clientSecret}
             onChange={(e) => setClientSecret(e.target.value)}
-            placeholder={config?.hasClientSecret ? 'Stored — re-enter to save changes' : ''}
+            placeholder={config?.hasClientSecret ? 'Stored — leave blank to keep' : ''}
             className={`${inputClass} font-mono`}
           />
           {config?.hasClientSecret && (
-            <p className={hintClass}>
-              A secret is stored but never shown. Saving any change requires entering it again.
-            </p>
+            <p className={hintClass}>A secret is stored but never shown; leave blank to keep it.</p>
           )}
         </div>
         <fieldset>
@@ -667,6 +695,418 @@ function WebexUserForm({ slug }: { slug: string }) {
             <code className="font-mono text-xs">{WEBEX_REQUIRED_SCOPES.join(' ')}</code> are always
             included (identifying who granted, and decrypting message content). Users who already
             connected keep their old scopes until they reconnect.
+          </p>
+        </fieldset>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          Enabled
+        </label>
+        <SaveRow busy={busy} notice={notice} error={error} />
+      </form>
+    </Card>
+  );
+}
+
+/* ----------------------------------------------------------------------- */
+
+interface MicrosoftConfig {
+  configured: boolean;
+  enabled: boolean;
+  clientId: string | null;
+  directoryTenantId: string | null;
+  scopes: string | null;
+  hasClientSecret: boolean;
+}
+
+function MicrosoftForm({ slug, origin }: { slug: string; origin: string | null }) {
+  const url = `/api/admin/${slug}/connectors/microsoft`;
+  const [state, reload] = useConnectorConfig<MicrosoftConfig>(url);
+  const [clientId, setClientId] = useState('');
+  const [directoryTenantId, setDirectoryTenantId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  // Checked scopes, openid/profile/email/offline_access/User.Read excluded —
+  // they are always sent, never a choice.
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(
+    () => new Set(MICROSOFT_SCOPE_OPTIONS.map((option) => option.id))
+  );
+  const [enabled, setEnabled] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!state.data) return;
+    setClientId(state.data.clientId ?? '');
+    setDirectoryTenantId(state.data.directoryTenantId ?? '');
+    if (state.data.configured && state.data.scopes) {
+      const stored = new Set(state.data.scopes.split(/\s+/));
+      const matching = MICROSOFT_SCOPE_OPTIONS.filter((option) => optionWithin(option, stored));
+      if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
+    }
+    setEnabled(state.data.configured ? state.data.enabled : true);
+  }, [state.data]);
+
+  function toggleOption(optionId: string, on: boolean) {
+    setCheckedIds((current) => {
+      const next = new Set(current);
+      if (on) next.add(optionId);
+      else next.delete(optionId);
+      return next;
+    });
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    setError(null);
+    const scopes = [
+      ...scopesOfOptions(MICROSOFT_SCOPE_OPTIONS, checkedIds),
+      ...MICROSOFT_REQUIRED_SCOPES,
+    ].join(' ');
+    const failure = await putJson(url, {
+      clientId: clientId.trim(),
+      directoryTenantId: directoryTenantId.trim(),
+      // Blank means keep the stored secret — omit it from the payload.
+      ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
+      enabled,
+      scopes,
+    });
+    setBusy(false);
+    if (failure) {
+      setError(failure);
+      return;
+    }
+    setClientSecret('');
+    setNotice('Saved');
+    reload();
+  }
+
+  if (state.loading)
+    return (
+      <Card title="Microsoft 365" status={null}>
+        Loading…
+      </Card>
+    );
+  if (state.error) {
+    return (
+      <Card title="Microsoft 365" status={null}>
+        <p className="text-sm text-red-700 dark:text-red-300">{state.error}</p>
+      </Card>
+    );
+  }
+  const config = state.data;
+
+  return (
+    <Card
+      title="Microsoft 365"
+      status={
+        <StatusPill configured={config?.configured ?? false} enabled={config?.enabled ?? false} />
+      }
+    >
+      <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
+        An{' '}
+        <a
+          href="https://entra.microsoft.com"
+          className="text-blue-600 hover:underline dark:text-blue-400"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Entra app registration
+        </a>{' '}
+        through which each person grants Renkei read access to their own Microsoft 365 — Outlook
+        mail, calendar, To&nbsp;Do tasks. Register a <strong>Web</strong> platform whose redirect
+        URI is <CallbackUrl origin={origin} />, and grant the app delegated Microsoft Graph
+        permissions matching the ceiling below.
+      </p>
+      <form onSubmit={(e) => void save(e)} className="space-y-3">
+        <div>
+          <label htmlFor="ms-client-id" className={labelClass}>
+            Client ID
+          </label>
+          <input
+            id="ms-client-id"
+            required
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            className={`${inputClass} font-mono`}
+          />
+        </div>
+        <div>
+          <label htmlFor="ms-directory-id" className={labelClass}>
+            Directory (tenant) ID
+          </label>
+          <input
+            id="ms-directory-id"
+            required
+            value={directoryTenantId}
+            onChange={(e) => setDirectoryTenantId(e.target.value)}
+            className={`${inputClass} font-mono`}
+          />
+          <p className={hintClass}>
+            The Entra directory GUID from the app registration&apos;s Overview page — not{' '}
+            <code className="font-mono text-xs">common</code>; Renkei authorizes against your
+            directory alone.
+          </p>
+        </div>
+        <div>
+          <label htmlFor="ms-client-secret" className={labelClass}>
+            Client secret
+          </label>
+          <input
+            id="ms-client-secret"
+            type="password"
+            required={!config?.hasClientSecret}
+            value={clientSecret}
+            onChange={(e) => setClientSecret(e.target.value)}
+            placeholder={config?.hasClientSecret ? 'Stored — leave blank to keep' : ''}
+            className={`${inputClass} font-mono`}
+          />
+          {config?.hasClientSecret && (
+            <p className={hintClass}>A secret is stored but never shown; leave blank to keep it.</p>
+          )}
+        </div>
+        <fieldset>
+          <legend className={labelClass}>What users may grant</legend>
+          <ScopePicker
+            groups={MICROSOFT_SCOPE_GROUPS}
+            options={MICROSOFT_SCOPE_OPTIONS}
+            checked={checkedIds}
+            onToggle={toggleOption}
+          />
+          <p className={hintClass}>
+            This is the ceiling: users can narrow it when they connect, never widen it. Every
+            checked capability must also be added to the app registration as delegated Microsoft
+            Graph permissions — Microsoft refuses the authorize step otherwise.{' '}
+            <code className="font-mono text-xs">{MICROSOFT_REQUIRED_SCOPES.join(' ')}</code> are
+            always included (identifying who granted, and keeping the grant refreshable). Users who
+            already connected keep their old scopes until they reconnect.
+          </p>
+        </fieldset>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          Enabled
+        </label>
+        <SaveRow busy={busy} notice={notice} error={error} />
+      </form>
+    </Card>
+  );
+}
+
+/* ----------------------------------------------------------------------- */
+
+interface ZoomConfig {
+  configured: boolean;
+  enabled: boolean;
+  clientId: string | null;
+  scopes: string | null;
+  hasClientSecret: boolean;
+  hasSecretToken: boolean;
+}
+
+function ZoomForm({
+  slug,
+  tenantId,
+  origin,
+}: {
+  slug: string;
+  tenantId: string;
+  origin: string | null;
+}) {
+  const url = `/api/admin/${slug}/connectors/zoom`;
+  const [state, reload] = useConnectorConfig<ZoomConfig>(url);
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  const [secretToken, setSecretToken] = useState('');
+  // Checked scopes, user:read:user excluded — it is always sent, never a
+  // choice.
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(
+    () => new Set(ZOOM_SCOPE_OPTIONS.map((option) => option.id))
+  );
+  const [enabled, setEnabled] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!state.data) return;
+    setClientId(state.data.clientId ?? '');
+    if (state.data.configured && state.data.scopes) {
+      const stored = new Set(state.data.scopes.split(/\s+/));
+      const matching = ZOOM_SCOPE_OPTIONS.filter((option) => optionWithin(option, stored));
+      if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
+    }
+    setEnabled(state.data.configured ? state.data.enabled : true);
+  }, [state.data]);
+
+  function toggleOption(optionId: string, on: boolean) {
+    setCheckedIds((current) => {
+      const next = new Set(current);
+      if (on) next.add(optionId);
+      else next.delete(optionId);
+      return next;
+    });
+  }
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setNotice(null);
+    setError(null);
+    const scopes = [
+      ...scopesOfOptions(ZOOM_SCOPE_OPTIONS, checkedIds),
+      ...ZOOM_REQUIRED_SCOPES,
+    ].join(' ');
+    const failure = await putJson(url, {
+      clientId: clientId.trim(),
+      // Blank means keep the stored secret — omit it from the payload.
+      ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
+      ...(secretToken.trim() ? { secretToken: secretToken.trim() } : {}),
+      enabled,
+      scopes,
+    });
+    setBusy(false);
+    if (failure) {
+      setError(failure);
+      return;
+    }
+    setClientSecret('');
+    setSecretToken('');
+    setNotice('Saved');
+    reload();
+  }
+
+  if (state.loading)
+    return (
+      <Card title="Zoom" status={null}>
+        Loading…
+      </Card>
+    );
+  if (state.error) {
+    return (
+      <Card title="Zoom" status={null}>
+        <p className="text-sm text-red-700 dark:text-red-300">{state.error}</p>
+      </Card>
+    );
+  }
+  const config = state.data;
+
+  return (
+    <Card
+      title="Zoom"
+      status={
+        <StatusPill configured={config?.configured ?? false} enabled={config?.enabled ?? false} />
+      }
+    >
+      <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
+        A user-managed General app from the{' '}
+        <a
+          href="https://marketplace.zoom.us/user/build"
+          className="text-blue-600 hover:underline dark:text-blue-400"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Zoom Marketplace
+        </a>{' '}
+        through which each person grants Renkei access to their own Zoom — meetings, recordings,
+        transcripts, AI Companion summaries. Its redirect URL must be{' '}
+        <CallbackUrl origin={origin} />.
+      </p>
+      <form onSubmit={(e) => void save(e)} className="space-y-3">
+        <div>
+          <label htmlFor="zm-client-id" className={labelClass}>
+            Client ID
+          </label>
+          <input
+            id="zm-client-id"
+            required
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            className={`${inputClass} font-mono`}
+          />
+        </div>
+        <div>
+          <label htmlFor="zm-client-secret" className={labelClass}>
+            Client secret
+          </label>
+          <input
+            id="zm-client-secret"
+            type="password"
+            required={!config?.hasClientSecret}
+            value={clientSecret}
+            onChange={(e) => setClientSecret(e.target.value)}
+            placeholder={config?.hasClientSecret ? 'Stored — leave blank to keep' : ''}
+            className={`${inputClass} font-mono`}
+          />
+          {config?.hasClientSecret && (
+            <p className={hintClass}>A secret is stored but never shown; leave blank to keep it.</p>
+          )}
+        </div>
+        <div>
+          <label htmlFor="zm-secret-token" className={labelClass}>
+            Webhook Secret Token <span className="font-normal text-gray-500">(optional)</span>
+          </label>
+          <input
+            id="zm-secret-token"
+            type="password"
+            value={secretToken}
+            onChange={(e) => setSecretToken(e.target.value)}
+            placeholder={config?.hasSecretToken ? 'Stored — leave blank to keep' : ''}
+            className={`${inputClass} font-mono`}
+          />
+          <div className={hintClass}>
+            <p>Verifies webhook deliveries and answers Zoom&apos;s URL validation. To set up:</p>
+            <ol className="mt-1 list-decimal space-y-1 pl-4">
+              <li>
+                In the Marketplace app, open Features → Access and copy the Secret Token into this
+                field.
+              </li>
+              <li>
+                Under Features → Access, add an Event Subscription with endpoint URL{' '}
+                {origin ? (
+                  <code className="font-mono text-xs">
+                    {origin}/api/webhooks/zoom/{tenantId}
+                  </code>
+                ) : (
+                  <>
+                    this deployment&apos;s origin +{' '}
+                    <code className="font-mono text-xs">/api/webhooks/zoom/{tenantId}</code> (the
+                    public base URL is not configured yet, so the exact address cannot be shown)
+                  </>
+                )}
+                .
+              </li>
+              <li>
+                Subscribe to the events{' '}
+                <code className="font-mono text-xs">recording.transcript_completed</code> and{' '}
+                <code className="font-mono text-xs">meeting.summary_completed</code>.
+              </li>
+              <li>
+                Save the endpoint only after saving this form — Zoom validates the URL immediately,
+                and validation needs the Secret Token stored here first.
+              </li>
+            </ol>
+            {config?.hasSecretToken && (
+              <p className="mt-1">A token is stored but never shown; leave blank to keep it.</p>
+            )}
+          </div>
+        </div>
+        <fieldset>
+          <legend className={labelClass}>What users may grant</legend>
+          <ScopePicker
+            groups={ZOOM_SCOPE_GROUPS}
+            options={ZOOM_SCOPE_OPTIONS}
+            checked={checkedIds}
+            onToggle={toggleOption}
+          />
+          <p className={hintClass}>
+            This catalog must mirror the scopes selected on the Marketplace app: Zoom&apos;s consent
+            screen cannot narrow, so every grant carries the app&apos;s full scope set. A
+            user&apos;s narrower selection is enforced by Renkei at tool registration — unchecked
+            capabilities never register.{' '}
+            <code className="font-mono text-xs">{ZOOM_REQUIRED_SCOPES.join(' ')}</code> is always
+            included (identifying who granted). Users who already connected keep their old selection
+            until they reconnect.
           </p>
         </fieldset>
         <label className="flex items-center gap-2 text-sm">
@@ -715,7 +1155,8 @@ function EmbeddingsForm({ slug }: { slug: string }) {
     const failure = await putJson(url, {
       baseUrl: baseUrl.trim(),
       model: model.trim(),
-      apiKey: apiKey.trim(),
+      // Blank means keep the stored key — omit it from the payload.
+      ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
       enabled,
     });
     setBusy(false);
@@ -787,16 +1228,14 @@ function EmbeddingsForm({ slug }: { slug: string }) {
           <input
             id="em-key"
             type="password"
-            required
+            required={!config?.hasApiKey}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder={config?.hasApiKey ? 'Stored — re-enter to save changes' : ''}
+            placeholder={config?.hasApiKey ? 'Stored — leave blank to keep' : ''}
             className={`${inputClass} font-mono`}
           />
           {config?.hasApiKey && (
-            <p className={hintClass}>
-              A key is stored but never shown. Saving any change requires entering it again.
-            </p>
+            <p className={hintClass}>A key is stored but never shown; leave blank to keep it.</p>
           )}
         </div>
         <label className="flex items-center gap-2 text-sm">
@@ -809,13 +1248,23 @@ function EmbeddingsForm({ slug }: { slug: string }) {
   );
 }
 
-export default function ConnectorForms({ slug }: { slug: string }) {
+export default function ConnectorForms({
+  slug,
+  tenantId,
+  origin,
+}: {
+  slug: string;
+  tenantId: string;
+  origin: string | null;
+}) {
   return (
     <div className="space-y-6">
-      <AtlassianForm slug={slug} />
-      <AtlassianJsmForm slug={slug} />
+      <AtlassianForm slug={slug} origin={origin} />
+      <AtlassianJsmForm slug={slug} origin={origin} />
       <WebexForm slug={slug} />
-      <WebexUserForm slug={slug} />
+      <WebexUserForm slug={slug} origin={origin} />
+      <MicrosoftForm slug={slug} origin={origin} />
+      <ZoomForm slug={slug} tenantId={tenantId} origin={origin} />
       <EmbeddingsForm slug={slug} />
     </div>
   );

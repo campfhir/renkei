@@ -14,11 +14,11 @@ export async function registerProjectTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // list_components
+  // jira_list_components
   server.registerTool(
-    'list_components',
+    'jira_list_components',
     {
-      title: 'List components in a project',
+      title: 'Jira · Read — List components in a project',
       description: 'List components in a Jira project.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -27,7 +27,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_components invoked', {
+      logger.info('jira_list_components invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -68,11 +68,11 @@ export async function registerProjectTools(
     }
   );
 
-  // list_fields
+  // jira_list_fields
   server.registerTool(
-    'list_fields',
+    'jira_list_fields',
     {
-      title: 'List all issue fields (standard and custom)',
+      title: 'Jira · Read — List all issue fields (standard and custom)',
       description: 'List all fields available in a Jira project.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -85,7 +85,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_fields invoked', {
+      logger.info('jira_list_fields invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -136,11 +136,11 @@ export async function registerProjectTools(
     }
   );
 
-  // search_users
+  // jira_search_users
   server.registerTool(
-    'search_users',
+    'jira_search_users',
     {
-      title: 'Search Jira users by name or email',
+      title: 'Jira · Read — Search Jira users by name or email',
       description: 'Search for Jira users by email or name.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -150,7 +150,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('search_users invoked', {
+      logger.info('jira_search_users invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -187,11 +187,11 @@ export async function registerProjectTools(
     }
   );
 
-  // list_transitions
+  // jira_list_transitions
   server.registerTool(
-    'list_transitions',
+    'jira_list_transitions',
     {
-      title: 'List available Jira transitions',
+      title: 'Jira · Read — List available Jira transitions',
       description: 'List available transitions for an issue.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -200,7 +200,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_transitions invoked', {
+      logger.info('jira_list_transitions invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

@@ -29,6 +29,11 @@ export interface FieldWritePlan {
   optional: Record<string, unknown>;
   /** Field id -> `Story Points → 5`, for the reply and the comment. */
   labels: Record<string, string>;
+  /**
+   * Field id -> "Valid options: …", appended to a refusal's reason so the
+   * caller's retry knows what the field would have accepted.
+   */
+  hints?: Record<string, string>;
 }
 
 /** A value that never reached a request, and why. */
@@ -131,9 +136,11 @@ export async function writeWithFieldFallback<T>(
 
       const named = fieldErrorsOf(error);
       for (const field of refused) {
+        const hint = plan.hints?.[field];
+        const reason = named[field] ?? 'refused by Jira';
         dropped.push({
           label: plan.labels[field] ?? field,
-          reason: named[field] ?? 'refused by Jira',
+          reason: hint ? `${reason} — ${hint}` : reason,
         });
         delete optional[field];
       }

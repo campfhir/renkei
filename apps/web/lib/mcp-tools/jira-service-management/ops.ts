@@ -107,7 +107,7 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_list_alerts',
     {
-      title: 'List JSM Operations alerts',
+      title: 'JSM Ops · Read — List JSM Operations alerts',
       description:
         'List operations alerts (the Opsgenie-style alerting in Jira Service Management), ' +
         'newest first. Supports the alert search syntax — field:value terms, e.g. `status:open`, ' +
@@ -139,7 +139,7 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_get_alert',
     {
-      title: 'Get a JSM Operations alert',
+      title: 'JSM Ops · Read — Get a JSM Operations alert',
       description: 'Full detail of one alert by id: description, responders, tags, timestamps.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -174,11 +174,12 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_acknowledge_alert',
     {
-      title: 'Acknowledge a JSM Operations alert',
+      title: 'JSM Ops · Act — Acknowledge a JSM Operations alert',
       description:
         'Acknowledge an alert as the connected user — tells the team someone is on it. ' +
         'Idempotent: acking an already-acked alert succeeds without changing anything. ' +
         'Requires the write:ops-alert scope.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         alertId: z.string().min(1).describe('Alert id'),
       }),
@@ -209,10 +210,11 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_close_alert',
     {
-      title: 'Close a JSM Operations alert',
+      title: 'JSM Ops · Act — Close a JSM Operations alert',
       description:
         'Close an alert as the connected user. Closing is a decision — do it only when the ' +
         'user says the alert is resolved. Requires the write:ops-alert scope.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         alertId: z.string().min(1).describe('Alert id'),
       }),
@@ -239,7 +241,7 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_list_schedules',
     {
-      title: 'List JSM Operations on-call schedules',
+      title: 'JSM Ops · Read — List JSM Operations on-call schedules',
       description:
         'List on-call schedules with their rotations: rotation type, length, and participants. ' +
         'Schedule ids feed jsm_ops_whos_on_call.',
@@ -291,7 +293,7 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_whos_on_call',
     {
-      title: 'Who is on call',
+      title: 'JSM Ops · Read — Who is on call',
       description:
         'The people currently on call for a schedule (or at a given moment). Answers ' +
         '"who do I page right now".',
@@ -333,7 +335,7 @@ export async function registerJsmOpsTools(
       return textResult(
         names.length === 0
           ? 'Nobody is on call for that schedule.'
-          : `On call now (user ids — resolve names via get_user):\n${names.join('\n')}`
+          : `On call now (user ids — resolve names via jira_get_user):\n${names.join('\n')}`
       );
     }
   );
@@ -341,7 +343,7 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_list_overrides',
     {
-      title: 'List schedule overrides',
+      title: 'JSM Ops · Read — List schedule overrides',
       description:
         'The overrides currently on a schedule: who is covering, for which window, on which ' +
         'rotations. Read this before creating an override, to avoid stacking conflicting ones.',
@@ -380,18 +382,19 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_create_override',
     {
-      title: 'Create a schedule override (wizard)',
+      title: 'JSM Ops · Act — Create a schedule override (wizard)',
       description:
         'Put someone on call in place of the rotation for a window — "cover for me Friday". ' +
         'This is a WIZARD: gather each missing piece from the user (it will tell you what is ' +
         'missing), then call WITHOUT confirm to get a preview, show the user that preview, and ' +
         'only after their explicit yes call again with confirm=true. Never invent times or ' +
         'responders. Requires the write:ops-config scope.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         scheduleId: z.string().min(1).describe('Schedule id from jsm_ops_list_schedules'),
         responderAccountId: z
           .string()
-          .describe('Atlassian accountId of who covers — resolve via search_users')
+          .describe('Atlassian accountId of who covers — resolve via jira_search_users')
           .optional(),
         startDate: z.string().describe('ISO start of the coverage window').optional(),
         endDate: z.string().describe('ISO end of the coverage window').optional(),
@@ -425,7 +428,7 @@ export async function registerJsmOpsTools(
       const missing: string[] = [];
       if (!str(args.responderAccountId)) {
         missing.push(
-          'WHO covers: ask the user for the person, resolve their Atlassian accountId with search_users'
+          'WHO covers: ask the user for the person, resolve their Atlassian accountId with jira_search_users'
         );
       }
       if (!str(args.startDate)) {
@@ -494,12 +497,13 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_delete_override',
     {
-      title: 'Delete a schedule override (confirm-gated)',
+      title: 'JSM Ops · Act — Delete a schedule override (confirm-gated)',
       description:
         'Remove an override by its alias — coverage falls back to the rotation. Deletion is not ' +
         'reversible: call WITHOUT confirm first to see exactly which override would go, show the ' +
         'user, and only after their explicit yes call again with confirm=true. Requires the ' +
         'delete:ops-config scope.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         scheduleId: z.string().min(1).describe('Schedule id'),
         alias: z.string().min(1).describe('Override alias from jsm_ops_list_overrides'),
@@ -561,13 +565,14 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_update_rotation',
     {
-      title: 'Update a rotation (wizard)',
+      title: 'JSM Ops · Act — Update a rotation (wizard)',
       description:
         'Change a rotation’s name, window, type, length, or participants. This is a WIZARD: ' +
         'call with only scheduleId+rotationId to see current values, gather the changes from ' +
         'the user, call with the changes for a preview diff, show it, and only after their ' +
         'explicit yes call again with confirm=true. Only the fields you pass change. Requires ' +
         'the write:ops-config scope.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         scheduleId: z.string().min(1).describe('Schedule id'),
         rotationId: z.string().min(1).describe('Rotation id from jsm_ops_list_schedules'),
@@ -578,7 +583,9 @@ export async function registerJsmOpsTools(
         length: z.number().int().min(1).describe('New rotation length (units of type)').optional(),
         participantAccountIds: z
           .array(z.string())
-          .describe('REPLACEMENT participant list, in on-call order — resolve via search_users')
+          .describe(
+            'REPLACEMENT participant list, in on-call order — resolve via jira_search_users'
+          )
           .optional(),
         confirm: z
           .boolean()
@@ -663,7 +670,7 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_list_teams',
     {
-      title: 'List JSM Operations teams',
+      title: 'JSM Ops · Read — List JSM Operations teams',
       description:
         'List the operations teams — the ones schedules, escalations and routing rules belong ' +
         'to. Team ids feed jsm_ops_list_escalations and match the teamId on schedules.',
@@ -690,7 +697,7 @@ export async function registerJsmOpsTools(
   server.registerTool(
     'jsm_ops_list_escalations',
     {
-      title: 'List a team’s escalation policies',
+      title: 'JSM Ops · Read — List a team’s escalation policies',
       description:
         'The escalation policies of one operations team: each rule’s condition, delay, and ' +
         'recipient — how an unacknowledged alert climbs the ladder.',

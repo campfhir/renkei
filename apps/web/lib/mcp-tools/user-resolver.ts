@@ -122,7 +122,7 @@ export async function resolveAccountId(
     throw new Error(
       `No Jira user found with email ${emailOrAccountId}. ` +
         `The address may be hidden by that user's profile visibility settings — ` +
-        `use search_users to find their accountId directly.`
+        `use jira_search_users to find their accountId directly.`
     );
   }
 

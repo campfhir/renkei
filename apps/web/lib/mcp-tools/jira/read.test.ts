@@ -88,12 +88,12 @@ const issue = {
   },
 };
 
-describe('get_issue', () => {
+describe('jira_get_issue', () => {
   it('renders an ADF description as text instead of [object Object]', async () => {
     respondWith(issue);
     const tools = await registerTools();
 
-    const result = await tools.get('get_issue')!({ issueKey: 'CHG-20' });
+    const result = await tools.get('jira_get_issue')!({ issueKey: 'CHG-20' });
     const text = result.content[0].text ?? '';
 
     expect(text).toContain('Description:\nMigrate the billing schema.');
@@ -104,7 +104,7 @@ describe('get_issue', () => {
     respondWith(issue);
     const tools = await registerTools();
 
-    await tools.get('get_issue')!({ issueKey: 'CHG-20' });
+    await tools.get('jira_get_issue')!({ issueKey: 'CHG-20' });
 
     expect(requestedUrls[0]).toBe(
       'https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/CHG-20'
@@ -115,7 +115,7 @@ describe('get_issue', () => {
     respondWith(issue);
     const tools = await registerTools();
 
-    await tools.get('get_issue')!({ issueKey: 'CHG-20', fields: ['12013', 'cf[12014]'] });
+    await tools.get('jira_get_issue')!({ issueKey: 'CHG-20', fields: ['12013', 'cf[12014]'] });
 
     const url = new URL(requestedUrls[0]);
     const fields = (url.searchParams.get('fields') ?? '').split(',');
@@ -130,7 +130,7 @@ describe('get_issue', () => {
     respondWith(issue);
     const tools = await registerTools();
 
-    const result = await tools.get('get_issue')!({
+    const result = await tools.get('jira_get_issue')!({
       issueKey: 'CHG-20',
       fields: ['customfield_12013', '12014'],
     });
@@ -144,7 +144,7 @@ describe('get_issue', () => {
     respondWith(issue);
     const tools = await registerTools();
 
-    const result = await tools.get('get_issue')!({
+    const result = await tools.get('jira_get_issue')!({
       issueKey: 'CHG-20',
       fields: ['12015', 'customfield_99999'],
     });
@@ -158,7 +158,7 @@ describe('get_issue', () => {
     respondWith(issue);
     const tools = await registerTools();
 
-    const result = await tools.get('get_issue')!({ issueKey: 'CHG-20', fields: ['*all'] });
+    const result = await tools.get('jira_get_issue')!({ issueKey: 'CHG-20', fields: ['*all'] });
     const text = result.content[0].text ?? '';
 
     expect(requestedUrls[0]).toContain('fields=*all');
@@ -172,7 +172,7 @@ describe('get_issue', () => {
     respondWith(issue);
     const tools = await registerTools();
 
-    const result = await tools.get('get_issue')!({ issueKey: 'CHG-20' });
+    const result = await tools.get('jira_get_issue')!({ issueKey: 'CHG-20' });
     const text = result.content[0].text ?? '';
 
     expect(text).toContain('CHG-20: Billing schema change');
@@ -182,12 +182,12 @@ describe('get_issue', () => {
   });
 });
 
-describe('count_issues', () => {
+describe('jira_count_issues', () => {
   it('asks the count endpoint rather than paging results', async () => {
     respondWith({ count: 137 });
     const tools = await registerTools();
 
-    const result = await tools.get('count_issues')!({
+    const result = await tools.get('jira_count_issues')!({
       jql: "assignee = 'celia.li@nems.org'",
     });
 
@@ -202,7 +202,7 @@ describe('count_issues', () => {
     respondWith({ count: 137 });
     const tools = await registerTools();
 
-    const result = await tools.get('count_issues')!({ jql: 'project = CAS' });
+    const result = await tools.get('jira_count_issues')!({ jql: 'project = CAS' });
 
     expect(result.content[0].text).toContain('approximate');
   });
@@ -211,7 +211,7 @@ describe('count_issues', () => {
     respondWith({ count: 1 });
     const tools = await registerTools();
 
-    const result = await tools.get('count_issues')!({ jql: 'key = CAS-1' });
+    const result = await tools.get('jira_count_issues')!({ jql: 'key = CAS-1' });
 
     expect(result.content[0].text).toContain('1 issue matches');
   });
@@ -220,7 +220,7 @@ describe('count_issues', () => {
     respondWith({ count: 0 });
     const tools = await registerTools();
 
-    const result = await tools.get('count_issues')!({ jql: '   ' });
+    const result = await tools.get('jira_count_issues')!({ jql: '   ' });
 
     expect(result.isError).toBe(true);
     expect(requestedUrls).toHaveLength(0);
@@ -230,25 +230,25 @@ describe('count_issues', () => {
     respondWith({ errorMessages: ['bad jql'] });
     const tools = await registerTools();
 
-    const result = await tools.get('count_issues')!({ jql: 'nonsense =' });
+    const result = await tools.get('jira_count_issues')!({ jql: 'nonsense =' });
 
     expect(result.isError).toBe(true);
   });
 });
 
-describe('search_issues truncation', () => {
-  it('points at count_issues when more issues match than were returned', async () => {
+describe('jira_search_issues truncation', () => {
+  it('points at jira_count_issues when more issues match than were returned', async () => {
     respondWith({
       issues: [{ key: 'CAS-1', fields: { summary: 'One', status: { name: 'Open' } } }],
       nextPageToken: 'more-please',
     });
     const tools = await registerTools();
 
-    const result = await tools.get('search_issues')!({ jql: 'project = CAS' });
+    const result = await tools.get('jira_search_issues')!({ jql: 'project = CAS' });
 
     // The transcript this comes from: a capped list was read as "100+ tickets",
     // with no way to find the actual number.
-    expect(result.content[0].text).toContain('count_issues');
+    expect(result.content[0].text).toContain('jira_count_issues');
   });
 
   it('says nothing about counting when the results are complete', async () => {
@@ -257,8 +257,8 @@ describe('search_issues truncation', () => {
     });
     const tools = await registerTools();
 
-    const result = await tools.get('search_issues')!({ jql: 'project = CAS' });
+    const result = await tools.get('jira_search_issues')!({ jql: 'project = CAS' });
 
-    expect(result.content[0].text).not.toContain('count_issues');
+    expect(result.content[0].text).not.toContain('jira_count_issues');
   });
 });

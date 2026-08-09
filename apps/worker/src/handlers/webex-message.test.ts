@@ -125,7 +125,7 @@ describe('createWebexMessageHandler', () => {
     const row = inserted[0]!;
     expect(row.tenant_id).toBe('tenant-1');
     expect(String(row.title)).toContain('The build server is down');
-    expect(String(row.suggested_action)).toContain('create_issue');
+    expect(String(row.suggested_action)).toContain('jira_create_issue');
 
     expect(stub.posted).toHaveLength(1);
     expect(stub.posted[0]?.parentId).toBe('msg-1');

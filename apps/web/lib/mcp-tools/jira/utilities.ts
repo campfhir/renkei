@@ -24,14 +24,14 @@ export async function registerUtilityTools(
   server.registerTool(
     'analyze_transcript',
     {
-      title: 'Analyze a meeting transcript for Jira actions',
+      title: 'Jira · Read — Analyze a meeting transcript for Jira actions',
       description:
         'Parses a meeting transcript and recommends MCP tool calls to implement the discussed ' +
         'actions. Detects phrasings like "create a task for X", "assign PROJ-12 to dana", ' +
         '"move PROJ-12 to done", "blocked on the vendor", "spent 2h on PROJ-12" and "pull ' +
         'PROJ-12 into the sprint". Identifies whether the meeting was a standup, sprint ' +
         'planning, a retro or ad-hoc, and weighs each recommendation by how well it fits. ' +
-        'Story points and original estimates are recommended as update_issue calls, which ' +
+        'Story points and original estimates are recommended as jira_update_issue calls, which ' +
         'resolve the field by name against the site. These are recommendations only: no tools ' +
         'are executed. You must review and call them yourself.',
       annotations: { readOnlyHint: true },
@@ -111,18 +111,18 @@ export async function registerUtilityTools(
     }
   );
 
-  // connect_jira
+  // jira_connect
   server.registerTool(
-    'connect_jira',
+    'jira_connect',
     {
-      title: 'Get Jira authentication URL',
+      title: 'Jira · Read — Get Jira authentication URL',
       description:
         'Get the Jira authentication URL to connect your Jira workspace to this tenant. Call this if Jira is not yet connected.',
       annotations: { readOnlyHint: true },
     },
     async (_args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('connect_jira invoked', {
+      logger.info('jira_connect invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

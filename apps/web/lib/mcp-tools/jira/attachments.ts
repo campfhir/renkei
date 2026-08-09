@@ -17,12 +17,13 @@ export async function registerAttachmentTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // add_attachment
+  // jira_add_attachment
   server.registerTool(
-    'add_attachment',
+    'jira_add_attachment',
     {
-      title: 'Attach a file to a Jira issue',
+      title: 'Jira · Act — Attach a file to a Jira issue',
       description: 'Upload a file attachment to a Jira issue.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
         filename: z.string().describe('File name to store as'),
@@ -31,7 +32,7 @@ export async function registerAttachmentTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('add_attachment invoked', {
+      logger.info('jira_add_attachment invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

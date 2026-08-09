@@ -36,7 +36,7 @@ interface Candidate extends RecommendedAction {
   span: readonly [number, number];
   /**
    * Which meetings this reading belongs in, when the tool alone does not say.
-   * Assignment and estimation both call update_issue but fit different rooms.
+   * Assignment and estimation both call jira_update_issue but fit different rooms.
    */
   fit?: MeetingType[];
 }
@@ -94,7 +94,7 @@ const DURATION = '(\\d+(?:\\.\\d+)?\\s*(?:minutes?|mins?|hours?|hrs?|weeks?|days
 
 /**
  * Statuses worth normalising. Anything else is passed through as written and
- * marked low confidence — `transition_issue` matches on name and reports the
+ * marked low confidence — `jira_transition_issue` matches on name and reports the
  * available ones, so a near miss self-corrects on the next call.
  */
 const STATUS_NAMES: Record<string, string> = {
@@ -271,7 +271,7 @@ function findCreateIssues(transcript: string, options: TranscriptOptions): Candi
     actions.push({
       // The project is the one thing a transcript rarely states outright.
       confidence: options.projectKey ? 'high' : 'medium',
-      tool: 'create_issue',
+      tool: 'jira_create_issue',
       summary: options.projectKey
         ? `Create ${issueType} in ${options.projectKey}: "${truncate(summary, 80)}"`
         : `Create ${issueType} (project not named in transcript): "${truncate(summary, 80)}"`,
@@ -326,7 +326,7 @@ function findAssignments(transcript: string, options: TranscriptOptions): Candid
 
       actions.push({
         confidence: resolved.confidence,
-        tool: 'update_issue',
+        tool: 'jira_update_issue',
         summary: `Assign ${resolved.label} to ${assignee}`,
         arguments: {
           ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}),
@@ -383,13 +383,13 @@ function findTransitions(transcript: string, options: TranscriptOptions): Candid
       actions.push({
         // An unrecognised status name is a guess at what this project calls it.
         confidence: known ? resolved.confidence : 'low',
-        tool: 'transition_issue',
+        tool: 'jira_transition_issue',
         summary: known
           ? `Transition ${resolved.label} to ${transitionName}`
-          : `Transition ${resolved.label} to "${transitionName}" (name unverified — call list_transitions)`,
+          : `Transition ${resolved.label} to "${transitionName}" (name unverified — call jira_list_transitions)`,
         arguments: {
           ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}),
-          // transition_issue matches on name, not id: ids differ per project.
+          // jira_transition_issue matches on name, not id: ids differ per project.
           transitionName,
         },
         excerpt: excerptOf(match),
@@ -432,7 +432,7 @@ function findBlockers(transcript: string, options: TranscriptOptions): Candidate
 
       actions.push({
         confidence: resolved.confidence,
-        tool: 'add_comment',
+        tool: 'jira_add_comment',
         summary: `Record on ${resolved.label} that it is blocked on ${truncate(cause, 60)}`,
         arguments: {
           ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}),
@@ -469,7 +469,7 @@ function findWorkLogged(transcript: string, options: TranscriptOptions): Candida
 
       actions.push({
         confidence: resolved.confidence,
-        tool: 'log_work',
+        tool: 'jira_log_work',
         summary: `Log ${spent} against ${resolved.label}`,
         arguments: {
           ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}),
@@ -500,14 +500,14 @@ function findSprintMoves(transcript: string, options: TranscriptOptions): Candid
   for (const match of matchAll(transcript, [intoSprint])) {
     const resolved = resolveTarget(match[1], options);
     actions.push({
-      // move_issue_to_sprint needs a sprint id, which a transcript never says.
+      // jira_move_issue_to_sprint needs a sprint id, which a transcript never says.
       // Without one from the caller this is a real observation with an
       // incomplete call, so it is reported as the weaker reading it is.
       confidence: options.sprintId ? resolved.confidence : 'low',
-      tool: 'move_issue_to_sprint',
+      tool: 'jira_move_issue_to_sprint',
       summary: options.sprintId
         ? `Move ${resolved.label} into sprint ${options.sprintId}`
-        : `Move ${resolved.label} into the sprint (sprint id unknown — call list_sprints)`,
+        : `Move ${resolved.label} into the sprint (sprint id unknown — call jira_list_sprints)`,
       arguments: {
         ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}),
         ...(options.sprintId ? { sprintId: options.sprintId } : {}),
@@ -521,7 +521,7 @@ function findSprintMoves(transcript: string, options: TranscriptOptions): Candid
     const resolved = resolveTarget(match[1], options);
     actions.push({
       confidence: resolved.confidence,
-      tool: 'remove_issue_from_sprint',
+      tool: 'jira_remove_issue_from_sprint',
       summary: `Remove ${resolved.label} from the sprint`,
       arguments: { ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}) },
       excerpt: excerptOf(match),
@@ -535,7 +535,7 @@ function findSprintMoves(transcript: string, options: TranscriptOptions): Candid
 /**
  * Estimation, which is most of what planning does.
  *
- * Story points and the original estimate are both settable through update_issue
+ * Story points and the original estimate are both settable through jira_update_issue
  * now, which resolves the per-instance field by name, so these are ordinary
  * recommendations rather than something to report as impossible. The field id
  * deliberately does not appear here: this function has no API access, and
@@ -602,7 +602,7 @@ function findEstimates(transcript: string, options: TranscriptOptions): Candidat
 
       actions.push({
         confidence: resolved.confidence,
-        tool: 'update_issue',
+        tool: 'jira_update_issue',
         summary: `Set ${summary} on ${resolved.label}`,
         arguments: {
           ...(resolved.issueKey ? { issueKey: resolved.issueKey } : {}),
@@ -647,11 +647,11 @@ function normaliseDuration(spoken: string): string | null {
  * is the honest reading of a sentence heard in the wrong room.
  */
 const EXPECTED_IN: Record<string, MeetingType[]> = {
-  create_issue: ['sprint-planning', 'retro', 'ad-hoc'],
-  move_issue_to_sprint: ['sprint-planning'],
-  remove_issue_from_sprint: ['sprint-planning'],
-  log_work: ['standup', 'ad-hoc'],
-  add_comment: ['standup', 'retro', 'ad-hoc'],
+  jira_create_issue: ['sprint-planning', 'retro', 'ad-hoc'],
+  jira_move_issue_to_sprint: ['sprint-planning'],
+  jira_remove_issue_from_sprint: ['sprint-planning'],
+  jira_log_work: ['standup', 'ad-hoc'],
+  jira_add_comment: ['standup', 'retro', 'ad-hoc'],
 };
 
 function weighForMeeting(candidate: Candidate, type: MeetingType): Candidate {

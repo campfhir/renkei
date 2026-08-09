@@ -7,10 +7,16 @@ import { signInUrl } from '@/lib/sign-in-url';
 import JiraConnector from './jira-connector';
 import JsmConnector from './jsm-connector';
 import WebexUserConnector from './webex-user-connector';
+import MicrosoftConnector from './microsoft-connector';
+import ZoomConnector from './zoom-connector';
 import McpEndpoint from './mcp-endpoint';
-import { WEBEX_USER, ATLASSIAN, ATLASSIAN_JSM } from '@renkei/provider-grants';
+import { WEBEX_USER, ATLASSIAN, ATLASSIAN_JSM, MICROSOFT, ZOOM } from '@renkei/provider-grants';
 import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
+import { MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
+import { ZOOM_CONNECTOR } from '@/lib/zoom-app';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
+import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
+import { DEFAULT_ZOOM_SCOPES } from '@/lib/zoom-scopes';
 import { usableAtlassianCeiling, usableAtlassianJsmCeiling } from '@/lib/atlassian-scopes';
 
 /** The org's stored scopes string for a connector, from non-secret settings. */
@@ -72,10 +78,12 @@ export default async function ConnectorsPage({
   const atlassianCeiling = usableAtlassianCeiling(storedScopes(settingsOf('atlassian')));
   const jsmCeiling = usableAtlassianJsmCeiling(storedScopes(settingsOf('atlassian-jsm')));
   const webexCeiling = ceilingFrom(settingsOf(WEBEX_USER_CONNECTOR), DEFAULT_WEBEX_USER_SCOPES);
+  const microsoftCeiling = ceilingFrom(settingsOf(MICROSOFT_CONNECTOR), DEFAULT_MICROSOFT_SCOPES);
+  const zoomCeiling = ceilingFrom(settingsOf(ZOOM_CONNECTOR), DEFAULT_ZOOM_SCOPES);
 
   // The caller's own grants, server-rendered — connection state, and the
   // scopes they previously authorized (seeding the picker on reconnect).
-  const [atlassianGrant, webexGrant, jsmGrant] = dbResult.ok
+  const [atlassianGrant, webexGrant, jsmGrant, microsoftGrant, zoomGrant] = dbResult.ok
     ? await Promise.all([
         enabled.has('atlassian')
           ? dbResult.val
@@ -104,8 +112,26 @@ export default async function ConnectorsPage({
               .where('subject', '=', session.subject)
               .executeTakeFirst()
           : Promise.resolve(undefined),
+        enabled.has(MICROSOFT_CONNECTOR)
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'requested_scopes'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', MICROSOFT)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+        enabled.has(ZOOM_CONNECTOR)
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'requested_scopes', 'granted_scopes'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', ZOOM)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
       ])
-    : [undefined, undefined, undefined];
+    : [undefined, undefined, undefined, undefined, undefined];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -157,6 +183,36 @@ export default async function ConnectorsPage({
             displayName={webexGrant?.display_name ?? null}
             ceiling={webexCeiling}
             priorScopes={webexGrant?.requested_scopes ?? null}
+          />
+        )}
+
+        {enabled.has(MICROSOFT_CONNECTOR) && (
+          <MicrosoftConnector
+            tenantId={tenant.id}
+            connected={microsoftGrant !== undefined && microsoftGrant !== null}
+            displayName={microsoftGrant?.display_name ?? null}
+            ceiling={microsoftCeiling}
+            priorScopes={microsoftGrant?.requested_scopes ?? null}
+          />
+        )}
+
+        {/* Scope drift the Marketplace app hides: Zoom silently drops any
+            requested scope the app doesn't carry, and the only symptom is
+            tools quietly not registering. Surface the difference here. */}
+        {enabled.has(ZOOM_CONNECTOR) && (
+          <ZoomConnector
+            missingScopes={
+              zoomGrant?.granted_scopes
+                ? (zoomGrant.requested_scopes ?? []).filter(
+                    (scope) => !zoomGrant.granted_scopes?.includes(scope)
+                  )
+                : []
+            }
+            tenantId={tenant.id}
+            connected={zoomGrant !== undefined && zoomGrant !== null}
+            displayName={zoomGrant?.display_name ?? null}
+            ceiling={zoomCeiling}
+            priorScopes={zoomGrant?.requested_scopes ?? null}
           />
         )}
 

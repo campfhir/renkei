@@ -12,7 +12,7 @@
  */
 
 export interface SuggestedAction {
-  tool: 'create_issue';
+  tool: 'jira_create_issue';
   args: {
     summary: string;
     description: string;
@@ -84,7 +84,7 @@ export function classifyMessage(text: string): MessageClassification | null {
     title: `Possible issue report: ${headline}`,
     summary: clip(trimmed, 280),
     suggestedAction: {
-      tool: 'create_issue',
+      tool: 'jira_create_issue',
       args: {
         summary: headline,
         description: `Reported in WebEx:\n\n> ${trimmed.split('\n').join('\n> ')}`,

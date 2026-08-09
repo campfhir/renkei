@@ -14,6 +14,8 @@ export default [
       'packages/db/scripts/build-migrations.js',
       'apps/web/scripts/fix-async-warnings.ts',
       'apps/web/scripts/generate-log-ship-keys.mjs',
+      // Standalone vendoring script: runs via tsx, no tsconfig project covers it.
+      'scripts/trim-graph-openapi.ts',
     ],
   },
   js.configs.recommended,

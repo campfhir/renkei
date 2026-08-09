@@ -81,6 +81,8 @@ const inFlight = new Map<string, Promise<JiraField[]>>();
 export function clearFieldSchemaCache(): void {
   schemaCache.clear();
   inFlight.clear();
+  enrichmentCache.clear();
+  requestTypeCache.clear();
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -181,7 +183,7 @@ export function lookupField(fields: readonly JiraField[], reference: string): Fi
   return {
     ok: false,
     reason: 'unknown',
-    message: `No field matches "${wanted}". Call list_fields to see what this site has.`,
+    message: `No field matches "${wanted}". Call jira_list_fields to see what this site has.`,
   };
 }
 
@@ -208,6 +210,51 @@ export function isRichTextField(field: JiraField): boolean {
   if (field.type === 'doc') return true;
   const custom = field.customType ?? '';
   return RICH_TEXT_CUSTOM_TYPES.some((suffix) => custom.endsWith(suffix));
+}
+
+/**
+ * The JSM Request Type field (`com.atlassian.servicedesk:vp-origin`).
+ *
+ * Its wire format is the request-type ID — a display name 400s — so unlike
+ * every other option-shaped field it cannot be passed through and left to
+ * Jira: the name has to be resolved to the ID first.
+ */
+export function isRequestTypeField(field: JiraField): boolean {
+  return field.type === 'sd-customerrequesttype' || (field.customType ?? '').endsWith(':vp-origin');
+}
+
+/** A field whose valid values are an enumerable option set worth fetching. */
+function isOptionBearing(field: JiraField): boolean {
+  return (
+    field.type === 'option' ||
+    field.type === 'option-with-child' ||
+    isRequestTypeField(field) ||
+    (field.type === 'array' && field.itemType === 'option')
+  );
+}
+
+/** How many options a mismatch message shows before pointing at the tools. */
+const OPTIONS_PREVIEW_LIMIT = 20;
+
+/**
+ * The field's valid options, phrased for the caller's retry. This is the
+ * whole point of fetching allowed values: a mismatch that answers "then
+ * what?" costs one round trip; an opaque 400 costs a whole investigation.
+ */
+export function optionsHint(field: JiraField): string {
+  const options = field.allowedValues ?? [];
+  if (options.length === 0) return '';
+  const shown = options
+    .slice(0, OPTIONS_PREVIEW_LIMIT)
+    .map((opt) =>
+      opt.id && opt.id !== opt.value ? `"${opt.value}" (id ${opt.id})` : `"${opt.value}"`
+    )
+    .join(', ');
+  const more =
+    options.length > OPTIONS_PREVIEW_LIMIT
+      ? `, +${options.length - OPTIONS_PREVIEW_LIMIT} more (jsm_list_request_types / jsm_get_request_type_fields show the full set)`
+      : '';
+  return `Valid options: ${shown}${more}.`;
 }
 
 export type Coercion = { ok: true; value: unknown } | { ok: false; message: string };
@@ -269,6 +316,10 @@ export function coerceFieldValue(field: JiraField, value: unknown): Coercion {
   // on type alone sends a string to a field that only accepts a document.
   if (isRichTextField(field)) return richTextValue(value);
 
+  // Also before the switch: Request Type's own type string would land in the
+  // pass-through default, sending a display name Jira refuses.
+  if (isRequestTypeField(field)) return requestTypeValue(field, value);
+
   switch (field.type) {
     case 'number': {
       const asNumber = typeof value === 'number' ? value : Number(String(value).trim());
@@ -288,7 +339,7 @@ export function coerceFieldValue(field: JiraField, value: unknown): Coercion {
       // Both levels need ids or values the caller has to know; pass through.
       return isRecord(value)
         ? { ok: true, value }
-        : { ok: false, message: `${field.name} needs {value, child} — see list_fields` };
+        : { ok: false, message: `${field.name} needs {value, child} — see jira_list_fields` };
 
     case 'user':
       return userValue(field, value);
@@ -333,15 +384,42 @@ function validateOptionValue(field: JiraField, value: unknown): Coercion {
   );
 
   if (match) {
-    // Use the exact value from the allowed options to ensure case matches
-    return { ok: true, value: { value: match.value } };
+    // The id when the options carry one — unambiguous where two options can
+    // share a rendering — else the exact-case value from the option set.
+    return { ok: true, value: match.id ? { id: match.id } : { value: match.value } };
   }
 
-  // Value not found in allowed options
-  const validOptions = field.allowedValues.map((opt) => `"${opt.value}"`).join(', ');
   return {
     ok: false,
-    message: `${field.name} does not accept "${stringValue}". Valid options: ${validOptions}`,
+    message: `${field.name} does not accept "${stringValue}". ${optionsHint(field)}`,
+  };
+}
+
+/**
+ * Resolve a Request Type reference to the bare request-type ID — the only
+ * form the platform write API accepts for this field. A name is matched
+ * against the enriched option set; a value that already looks like an ID
+ * (matches an option's id, or no option set is known) goes through as-is.
+ */
+function requestTypeValue(field: JiraField, value: unknown): Coercion {
+  if (isRecord(value)) return { ok: true, value };
+
+  const text = String(value).trim();
+  const options = field.allowedValues ?? [];
+
+  // Nothing to check against: send the raw value. An ID works; a name fails
+  // with Jira's own error, and the write fallback records the value.
+  if (options.length === 0) return { ok: true, value: text };
+
+  const lower = text.toLowerCase();
+  const match = options.find(
+    (opt) => (opt.id && opt.id.toLowerCase() === lower) || opt.value.toLowerCase() === lower
+  );
+  if (match) return { ok: true, value: match.id ?? match.value };
+
+  return {
+    ok: false,
+    message: `${field.name} does not accept "${text}". ${optionsHint(field)}`,
   };
 }
 
@@ -352,7 +430,7 @@ function userValue(field: JiraField, value: unknown): Coercion {
   if (text.includes('@')) {
     return {
       ok: false,
-      message: `${field.name} needs an account id, not an email. Call search_users for "${text}".`,
+      message: `${field.name} needs an account id, not an email. Call jira_search_users for "${text}".`,
     };
   }
   return { ok: true, value: { accountId: text } };
@@ -429,7 +507,7 @@ export function findStoryPointsField(fields: readonly JiraField[]): FieldLookup 
     ok: false,
     reason: 'unknown',
     message:
-      'This site has no Story Points field. Call list_fields to see what it uses for estimation.',
+      'This site has no Story Points field. Call jira_list_fields to see what it uses for estimation.',
   };
 }
 
@@ -445,6 +523,23 @@ export interface FieldUpdates {
   applied: string[];
   /** Names that did not resolve, or values that did not fit. */
   problems: string[];
+  /**
+   * Field id → "Valid options: …", for every option-bearing field whose
+   * option set is known. Carried to the write fallback so that when Jira
+   * refuses one of these fields anyway, the refusal names what would have
+   * been accepted instead of leaving the caller to guess.
+   */
+  optionHints: Record<string, string>;
+}
+
+/** Where a write is headed, which decides where its allowed values live. */
+export interface EnrichmentSource {
+  /** Creating: createmeta needs the project. */
+  projectKey?: string;
+  /** Creating: the issue type NAME or id, matched against createmeta's list. */
+  issueType?: string;
+  /** Updating: editmeta answers for this exact issue, no type needed. */
+  issueKey?: string;
 }
 
 /**
@@ -457,10 +552,10 @@ export interface FieldUpdates {
 export async function buildFieldUpdates(
   context: MCPToolContext,
   requested: Record<string, unknown>,
-  options: { projectKey?: string; issueTypeId?: string } = {}
+  options: EnrichmentSource = {}
 ): Promise<FieldUpdates> {
   const entries = Object.entries(requested);
-  if (entries.length === 0) return { fields: {}, applied: [], problems: [] };
+  if (entries.length === 0) return { fields: {}, applied: [], problems: [], optionHints: {} };
 
   let schema = await loadFieldSchema(context);
 
@@ -474,31 +569,49 @@ export async function buildFieldUpdates(
     }
   }
 
-  // Allowed values come from createmeta — an extra, potentially large round
-  // trip — so only pay for it when a requested field is actually a select,
-  // whose value is worth validating before Jira sees it.
+  // Allowed values cost an extra round trip (createmeta or editmeta), so only
+  // pay for it when a requested field actually carries an option set worth
+  // validating before Jira sees it.
   const needsAllowedValues = entries.some(([reference]) => {
     const lookup = lookupField(schema, reference);
-    return lookup.ok && lookup.field.type === 'option';
+    return lookup.ok && isOptionBearing(lookup.field);
   });
   if (needsAllowedValues) {
-    schema = await enrichFieldsWithAllowedValues(
-      context,
-      schema,
-      options.projectKey,
-      options.issueTypeId
-    );
+    schema = await enrichFieldsWithAllowedValues(context, schema, options);
+
+    // Request Type is often absent from create/edit meta (it is JSM's, not
+    // the platform's) — the service-desk API is the fallback option source.
+    const requestTypeUncovered = entries.some(([reference]) => {
+      const lookup = lookupField(schema, reference);
+      return lookup.ok && isRequestTypeField(lookup.field) && !lookup.field.allowedValues?.length;
+    });
+    if (requestTypeUncovered) {
+      const requestTypes = await loadRequestTypeOptions(context);
+      if (requestTypes.length > 0) {
+        schema = schema.map((field) =>
+          isRequestTypeField(field) && !field.allowedValues?.length
+            ? { ...field, allowedValues: requestTypes }
+            : field
+        );
+      }
+    }
   }
 
   const fields: Record<string, unknown> = {};
   const applied: string[] = [];
   const problems: string[] = [];
+  const optionHints: Record<string, string> = {};
 
   for (const [reference, value] of entries) {
     const lookup = lookupField(schema, reference);
     if (!lookup.ok) {
       problems.push(lookup.message);
       continue;
+    }
+
+    if (isOptionBearing(lookup.field)) {
+      const hint = optionsHint(lookup.field);
+      if (hint) optionHints[lookup.field.id] = hint;
     }
 
     const coerced = coerceFieldValue(lookup.field, value);
@@ -511,7 +624,7 @@ export async function buildFieldUpdates(
     applied.push(`${lookup.field.name} (${lookup.field.id})`);
   }
 
-  return { fields, applied, problems };
+  return { fields, applied, problems, optionHints };
 }
 
 function schemaCacheAge(context: MCPToolContext): number | null {
@@ -520,65 +633,115 @@ function schemaCacheAge(context: MCPToolContext): number | null {
 }
 
 /**
- * Fetch allowed values for fields from issue creation metadata.
- * This provides the valid options for select/option fields.
+ * Allowed values track project configuration, not issue content — but they
+ * are also per-project/per-issue, so they get their own short-lived cache
+ * rather than riding on the day-long schema cache.
+ */
+const ENRICHMENT_TTL_MS = 5 * 60 * 1000;
+const enrichmentCache = new Map<
+  string,
+  { options: Record<string, FieldOption[]>; fetchedAt: number }
+>();
+
+function parseOption(opt: unknown): FieldOption {
+  const record = isRecord(opt) ? opt : {};
+  // Selects carry `value`; request types, versions and components carry
+  // `name`. Reading only `value` is how Request Type options came out as
+  // "[object Object]".
+  const value =
+    typeof record.value === 'string'
+      ? record.value
+      : typeof record.name === 'string'
+        ? record.name
+        : String(opt);
+  const id =
+    typeof record.id === 'string'
+      ? record.id
+      : typeof record.id === 'number'
+        ? String(record.id)
+        : undefined;
+  return { value, id };
+}
+
+function collectAllowedValues(
+  target: Record<string, FieldOption[]>,
+  fieldsMeta: Record<string, unknown>
+): void {
+  for (const [fieldId, fieldMeta] of Object.entries(fieldsMeta)) {
+    if (!isRecord(fieldMeta)) continue;
+    const allowedValues = fieldMeta.allowedValues;
+    if (Array.isArray(allowedValues) && allowedValues.length > 0) {
+      target[fieldId] = allowedValues.map(parseOption);
+    }
+  }
+}
+
+/**
+ * Fetch allowed values for option-bearing fields.
  *
- * Only fetches if createmeta is accessible; gracefully falls back if not.
+ * An update reads editmeta — the answer for that exact issue, no issue type
+ * needed. A create reads createmeta filtered to the project, matching the
+ * caller's issue type by NAME or id against the response (the old code sent
+ * the name where the API wanted ids, which silently filtered to nothing).
+ *
+ * Failures fall back to unenriched fields; option values then pass through
+ * for Jira to validate.
  */
 export async function enrichFieldsWithAllowedValues(
   context: MCPToolContext,
   fields: JiraField[],
-  projectKey?: string,
-  issueTypeId?: string
+  source: EnrichmentSource = {}
 ): Promise<JiraField[]> {
+  const cacheKey = source.issueKey
+    ? `${context.apiBaseUrl}|edit|${source.issueKey}`
+    : `${context.apiBaseUrl}|create|${source.projectKey ?? ''}|${(source.issueType ?? '').toLowerCase()}`;
+
+  const cached = enrichmentCache.get(cacheKey);
+  if (cached && Date.now() - cached.fetchedAt < ENRICHMENT_TTL_MS) {
+    return mergeAllowedValues(fields, cached.options);
+  }
+
   try {
-    // Build createmeta URL with optional filters
-    let url = `${context.apiBaseUrl}/rest/api/3/issue/createmeta`;
-    const params: string[] = [];
-
-    if (projectKey) params.push(`projectKeys=${encodeURIComponent(projectKey)}`);
-    if (issueTypeId) params.push(`issueTypeIds=${encodeURIComponent(issueTypeId)}`);
-    params.push('expand=projects.issuetypes.fields');
-
-    if (params.length > 0) {
-      url += `?${params.join('&')}`;
-    }
-
-    // jiraFetch throws on non-2xx, so an inaccessible createmeta lands in the
-    // catch below and the fields go back unenriched.
-    const response = await jiraFetch(url, context.accessToken);
-    const metadata = await response.json();
-
-    // Extract allowed values from projects.issuetypes.fields
     const allowedValuesByFieldId: Record<string, FieldOption[]> = {};
 
-    if (isRecord(metadata) && Array.isArray(metadata.projects)) {
-      for (const projectData of metadata.projects) {
-        if (!isRecord(projectData) || !Array.isArray(projectData.issuetypes)) continue;
-        for (const issueTypeData of projectData.issuetypes) {
-          if (!isRecord(issueTypeData) || !isRecord(issueTypeData.fields)) continue;
-          for (const [fieldId, fieldMeta] of Object.entries(issueTypeData.fields)) {
-            if (!isRecord(fieldMeta)) continue;
+    if (source.issueKey) {
+      const response = await jiraFetch(
+        `${context.apiBaseUrl}/rest/api/3/issue/${encodeURIComponent(source.issueKey)}/editmeta`,
+        context.accessToken
+      );
+      const metadata = await response.json();
+      if (isRecord(metadata) && isRecord(metadata.fields)) {
+        collectAllowedValues(allowedValuesByFieldId, metadata.fields);
+      }
+    } else {
+      const params: string[] = [];
+      if (source.projectKey) params.push(`projectKeys=${encodeURIComponent(source.projectKey)}`);
+      params.push('expand=projects.issuetypes.fields');
+      const response = await jiraFetch(
+        `${context.apiBaseUrl}/rest/api/3/issue/createmeta?${params.join('&')}`,
+        context.accessToken
+      );
+      const metadata = await response.json();
 
-            const allowedValues = fieldMeta.allowedValues;
-            if (Array.isArray(allowedValues) && allowedValues.length > 0) {
-              allowedValuesByFieldId[fieldId] = allowedValues.map((opt) => {
-                const optRecord = isRecord(opt) ? opt : {};
-                const value = typeof optRecord.value === 'string' ? optRecord.value : String(opt);
-                const id = typeof optRecord.id === 'string' ? optRecord.id : undefined;
-                return { value, id };
-              });
+      const wanted = source.issueType?.trim().toLowerCase();
+      if (isRecord(metadata) && Array.isArray(metadata.projects)) {
+        for (const projectData of metadata.projects) {
+          if (!isRecord(projectData) || !Array.isArray(projectData.issuetypes)) continue;
+          for (const issueTypeData of projectData.issuetypes) {
+            if (!isRecord(issueTypeData) || !isRecord(issueTypeData.fields)) continue;
+            if (wanted) {
+              const name = typeof issueTypeData.name === 'string' ? issueTypeData.name : '';
+              const id = typeof issueTypeData.id === 'string' ? issueTypeData.id : '';
+              if (name.toLowerCase() !== wanted && id !== wanted) continue;
             }
+            collectAllowedValues(allowedValuesByFieldId, issueTypeData.fields);
           }
         }
       }
     }
 
-    // Merge allowed values back into fields
-    return fields.map((field) => ({
-      ...field,
-      allowedValues: allowedValuesByFieldId[field.id] || field.allowedValues,
-    }));
+    enrichmentCache.set(cacheKey, { options: allowedValuesByFieldId, fetchedAt: Date.now() });
+    return mergeAllowedValues(fields, allowedValuesByFieldId);
   } catch (error) {
     logger.debug('Error enriching fields with allowed values', {
       component: 'jira/field-schema',
@@ -586,5 +749,57 @@ export async function enrichFieldsWithAllowedValues(
     });
     // Gracefully return fields without allowed values
     return fields;
+  }
+}
+
+function mergeAllowedValues(
+  fields: JiraField[],
+  options: Record<string, FieldOption[]>
+): JiraField[] {
+  return fields.map((field) => ({
+    ...field,
+    allowedValues: options[field.id] || field.allowedValues,
+  }));
+}
+
+/** Request types straight from JSM, when create/edit meta had none. */
+const requestTypeCache = new Map<string, { options: FieldOption[]; fetchedAt: number }>();
+
+async function loadRequestTypeOptions(context: MCPToolContext): Promise<FieldOption[]> {
+  const cached = requestTypeCache.get(context.apiBaseUrl);
+  if (cached && Date.now() - cached.fetchedAt < ENRICHMENT_TTL_MS) return cached.options;
+
+  try {
+    // The cross-service-desk listing, so no serviceDeskId is needed here.
+    // Requires JSM scopes on the grant; without them this lands in the catch
+    // and the value passes through for Jira to name the problem.
+    const response = await jiraFetch(
+      `${context.apiBaseUrl}/rest/servicedeskapi/requesttype`,
+      context.accessToken
+    );
+    const payload = await response.json();
+    const values = isRecord(payload) && Array.isArray(payload.values) ? payload.values : [];
+    const options = values
+      .map((entry) => {
+        if (!isRecord(entry)) return null;
+        const name = typeof entry.name === 'string' ? entry.name : null;
+        const id =
+          typeof entry.id === 'string'
+            ? entry.id
+            : typeof entry.id === 'number'
+              ? String(entry.id)
+              : null;
+        return name && id ? { value: name, id } : null;
+      })
+      .filter((option): option is FieldOption & { id: string } => option !== null);
+
+    requestTypeCache.set(context.apiBaseUrl, { options, fetchedAt: Date.now() });
+    return options;
+  } catch (error) {
+    logger.debug('Could not list request types for field resolution', {
+      component: 'jira/field-schema',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
   }
 }

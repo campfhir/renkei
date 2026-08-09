@@ -53,6 +53,8 @@ export const EXPECTED_MIGRATIONS = [
   '020-pending-oauth-provider',
   '021-pending-oauth-scopes',
   '022-grant-scope-provenance',
+  '023-webhook-subscriptions',
+  '024-actionable-items-archive',
 ];
 
 export interface MigrationStatus {
