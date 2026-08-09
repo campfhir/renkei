@@ -70,6 +70,12 @@ COPY --from=builder /app/apps/web/.next ./apps/web/.next
 COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/apps/web/next.config.ts /app/apps/web/tsconfig.json /app/apps/web/proxy.ts ./apps/web/
 
+# The log-shipping key generator, runnable as a one-off container on a target
+# machine (no repo checkout there):
+#   docker compose -f docker-compose.yaml run --rm --no-deps renkei \
+#     pnpm --filter renkei generate:log-ship-keys
+COPY --from=builder /app/apps/web/scripts/generate-log-ship-keys.mjs ./apps/web/scripts/
+
 # Create a non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nextjs -u 1001
