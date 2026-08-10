@@ -29,8 +29,14 @@ export const KNOWLEDGE_CONNECTOR = 'knowledge';
  * The verifiers for every provider whose chunks might be proposed. A
  * provider without a configured connector contributes no verifier, and the
  * gate denies its chunks by default — never a silent pass.
+ *
+ * Exported so every caller of searchKnowledge — the MCP tool here, and the
+ * self-service search page — wires the exact same ACL gate. Two verifier
+ * sets built separately would drift the moment a connector is added.
  */
-async function buildVerifiers(tenantId: string): Promise<ReadonlyMap<string, AccessVerifier>> {
+export async function buildKnowledgeVerifiers(
+  tenantId: string
+): Promise<ReadonlyMap<string, AccessVerifier>> {
   const verifiers = new Map<string, AccessVerifier>();
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) return verifiers;
@@ -124,7 +130,7 @@ export async function registerKnowledgeTools(
         };
       }
 
-      const verifiers = await buildVerifiers(context.tenantId);
+      const verifiers = await buildKnowledgeVerifiers(context.tenantId);
       const searched = await searchKnowledge({
         tenantId: context.tenantId,
         userEmail,

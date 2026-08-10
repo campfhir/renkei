@@ -1,0 +1,112 @@
+'use server';
+
+/**
+ * Self-service semantic search over the knowledge store — the human-facing
+ * twin of the `search_knowledge` MCP tool, so anyone can see what Renkei
+ * has indexed for them without going through an LLM client.
+ *
+ * "For them" is the entire point: the searching identity is resolved from
+ * the session cookie server-side, never taken from the client, and every
+ * candidate still passes through the same live ACL gate `search_knowledge`
+ * uses (buildKnowledgeVerifiers) — a WebEx chunk is returned only if this
+ * signed-in user is actually in that room right now. There is no way to
+ * search "as" anyone else from this page.
+ */
+
+import { getSessionFromCookies } from '@/lib/session';
+import { getIdentityEmail } from '@/lib/identity';
+import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
+import { buildKnowledgeVerifiers } from '@/lib/mcp-tools/knowledge';
+
+const MIN_K = 1;
+const MAX_K = 30;
+const DEFAULT_K = 10;
+
+export interface KnowledgeSearchHit {
+  provider: string;
+  refId: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  distance: number;
+}
+
+export interface KnowledgeSearchResult {
+  hits: KnowledgeSearchHit[];
+  elided: number;
+  error: string | null;
+  /** The cookie named no live session — the page should send them to sign in. */
+  signedOut?: boolean;
+}
+
+/**
+ * Search the caller's own view of the knowledge store.
+ *
+ * Reachable by direct POST, not just through the UI, so the session — and
+ * with it the identity the ACL gate verifies against — is resolved here on
+ * every call. `tenantId` arriving from the client is safe because the
+ * session cookie is per-tenant: it only names which cookie to read, and
+ * produces no session for a tenant the caller has not signed into.
+ */
+export async function searchMyKnowledge(
+  tenantId: string,
+  query: string,
+  k: number = DEFAULT_K
+): Promise<KnowledgeSearchResult> {
+  const session = await getSessionFromCookies(tenantId);
+  if (!session) {
+    return { hits: [], elided: 0, error: 'Sign in to search your knowledge', signedOut: true };
+  }
+
+  const trimmedQuery = query.trim();
+  if (!trimmedQuery) {
+    return { hits: [], elided: 0, error: null };
+  }
+  const clampedK = Math.min(Math.max(Math.trunc(k) || DEFAULT_K, MIN_K), MAX_K);
+
+  // No recorded email = nothing can be verified = nothing is disclosed —
+  // the same fail-closed rule search_knowledge enforces.
+  const emailResult = await getIdentityEmail(tenantId, session.subject);
+  const userEmail = emailResult.ok ? emailResult.val : null;
+  if (!userEmail) {
+    return {
+      hits: [],
+      elided: 0,
+      error:
+        'Renkei has no email on record for your identity, so access to results cannot be ' +
+        'verified. Sign out and sign in again to refresh it.',
+    };
+  }
+
+  const embedder = await resolveEmbeddingProvider(tenantId);
+  if (!embedder) {
+    return {
+      hits: [],
+      elided: 0,
+      error:
+        'The knowledge layer is not configured for this organization yet — an admin sets up ' +
+        'an embedding provider under Connector setup.',
+    };
+  }
+
+  const verifiers = await buildKnowledgeVerifiers(tenantId);
+  const searched = await searchKnowledge({
+    tenantId,
+    userEmail,
+    query: trimmedQuery,
+    k: clampedK,
+    embedder,
+    verifiers,
+  });
+  if (!searched.ok) {
+    return {
+      hits: [],
+      elided: 0,
+      error:
+        searched.err.type === 'EMBEDDING_FAILED'
+          ? 'The embedding provider could not process that query.'
+          : 'The knowledge store could not be searched.',
+    };
+  }
+
+  return { hits: searched.val.hits, elided: searched.val.elided, error: null };
+}
