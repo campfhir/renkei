@@ -150,6 +150,37 @@ export default function WatchManager({
     }
   }
 
+  /**
+   * Drop what Renkei has indexed for this scope and re-read it from
+   * scratch. Nothing is written to Jira or Confluence — the only thing
+   * deleted is Renkei's own copy.
+   */
+  async function reindex(watch: Watch) {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/tenant/${tenantId}/watches/reindex`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, scopeKey: watch.scopeKey }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setNotice(data.error ?? 'Could not start the rebuild.');
+        return;
+      }
+      setNotice(
+        `Cleared ${Number(data.purged ?? 0).toLocaleString()} indexed item(s). ` +
+          `Re-reading this ${noun} from scratch; nothing was changed in the source.`
+      );
+      await loadWatches();
+    } catch {
+      setNotice('Could not reach the server.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove(watch: Watch) {
     setBusy(true);
     setNotice(null);
@@ -218,6 +249,15 @@ export default function WatchManager({
                 <span className="ml-auto shrink-0 tabular-nums text-gray-500 dark:text-gray-500">
                   {watch.totalItems.toLocaleString()} indexed · {relativeTime(watch.lastSyncedAt)}
                 </span>
+                <button
+                  onClick={() => reindex(watch)}
+                  disabled={busy}
+                  className="shrink-0 text-gray-400 hover:text-gray-700 disabled:opacity-50 dark:hover:text-gray-200"
+                  aria-label={`Re-index ${watch.scopeLabel || watch.scopeKey}`}
+                  title="Clear Renkei's indexed copy and re-read from scratch"
+                >
+                  Re-index
+                </button>
                 <button
                   onClick={() => remove(watch)}
                   disabled={busy}

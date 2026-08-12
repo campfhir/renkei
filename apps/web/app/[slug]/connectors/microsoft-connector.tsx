@@ -172,8 +172,10 @@ export default function MicrosoftConnector({
             )}
           </div>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Re-fetches everything from Outlook and re-runs it through the current cleaning rules —
-            useful after changing classifier rules or teaching a new sender template on Mail review.
+            Replaces what Renkei has indexed: it clears the existing mail, calendar and task
+            entries, then re-fetches everything from Outlook and re-runs it through the current
+            cleaning rules. Nothing in Outlook itself is touched. Useful after changing classifier
+            rules or teaching a new sender template on Mail review.
           </p>
         </div>
       )}

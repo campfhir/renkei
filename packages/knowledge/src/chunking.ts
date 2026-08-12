@@ -12,6 +12,7 @@
  * bare-refId row.
  */
 
+import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -109,6 +110,38 @@ export async function deleteObjectChunks(
   );
   if (!result.ok) return result;
   return ok();
+}
+
+/**
+ * Delete every chunk a connector tagged with `metadata[key] = value` — the
+ * scope-shaped counterpart to deleteObjectChunks.
+ *
+ * Atlassian refIds are issue keys and page ids with no scope in them, so a
+ * ref-id prefix cannot express "everything from project ENG". The poller
+ * records the scope in metadata precisely so purging a watch is possible
+ * without re-listing the whole project from the provider.
+ */
+export async function deleteChunksByMetadata(
+  tenantId: string,
+  provider: string,
+  key: string,
+  value: string
+): Promise<Result<number, 'DB_ERROR'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+
+  const result = await wrapAsync(
+    () =>
+      dbResult.val
+        .deleteFrom('knowledge_chunks')
+        .where('tenant_id', '=', tenantId)
+        .where('provider', '=', provider)
+        .where(sql<boolean>`metadata ->> ${key} = ${value}`)
+        .executeTakeFirst(),
+    'DB_ERROR' as const
+  );
+  if (!result.ok) return result;
+  return ok(Number(result.val.numDeletedRows ?? 0));
 }
 
 function escapeLike(value: string): string {

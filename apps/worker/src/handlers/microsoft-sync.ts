@@ -324,10 +324,37 @@ export async function runSubscriptionSync(
   const db = dbResult.val;
 
   const kind = refKindOfResource(row.resource);
+  const fullRebuild = row.delta_link === null;
   const startUrl = row.delta_link ?? deltaStartUrl(row.resource);
   const round = await runDeltaRound(access.accessToken, startUrl);
   if (!round.ok) {
     throw new Error(`delta round failed for ${row.resource} (tenant ${tenantId})`);
+  }
+
+  // A cursorless round returns the resource's whole current state, so it is
+  // the one moment the old chunks can be dropped safely: anything still
+  // present upstream is about to be re-ingested from this very response.
+  // Without it, re-index can only ADD — items deleted at the source, or now
+  // excluded by changed cleaning rules, would survive forever, and the
+  // content-free calendar shells this sweep learned to skip would never
+  // leave the index.
+  //
+  // Deleted AFTER the fetch succeeded, never before: a failed round would
+  // otherwise leave the mailbox unsearchable until the next one.
+  if (fullRebuild) {
+    const purged = await deleteObjectChunks(
+      tenantId,
+      MICROSOFT,
+      `${access.upn.toLowerCase()}/${kind}/`,
+      { prefixOnly: true }
+    );
+    if (!purged.ok) {
+      logger.warn('could not purge {kind} chunks before rebuild', {
+        component: COMPONENT,
+        tenantId,
+        kind,
+      });
+    }
   }
 
   const embedder = await resolveEmbeddingProvider(tenantId);

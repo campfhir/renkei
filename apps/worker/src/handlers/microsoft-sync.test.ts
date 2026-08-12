@@ -98,6 +98,39 @@ beforeEach(() => {
   mockDeleteObjectChunks.mockResolvedValue(ok());
 });
 
+describe('runSubscriptionSync — rebuild purge', () => {
+  /**
+   * A cursorless round returns the whole current state, so it is the one
+   * safe moment to drop the previous chunks — otherwise re-index can only
+   * ever ADD, and items deleted upstream (or newly excluded by changed
+   * rules) outlive their source.
+   */
+  it('purges the resource namespace before re-ingesting, on a cursorless round', async () => {
+    stubDb();
+    mockRunDeltaRound.mockResolvedValue(ok({ items: [], deltaLink: 'delta-1' }));
+    mockResolveEmbeddingProvider.mockResolvedValue({ embed: async () => [[0.1]] });
+
+    await runSubscriptionSync('tenant-1', access(), { ...row(), delta_link: null });
+
+    expect(mockDeleteObjectChunks).toHaveBeenCalledWith(
+      'tenant-1',
+      'microsoft',
+      'alice@example.com/msg/',
+      { prefixOnly: true }
+    );
+  });
+
+  it('leaves the index alone on an incremental round', async () => {
+    stubDb();
+    mockRunDeltaRound.mockResolvedValue(ok({ items: [], deltaLink: 'delta-2' }));
+    mockResolveEmbeddingProvider.mockResolvedValue({ embed: async () => [[0.1]] });
+
+    await runSubscriptionSync('tenant-1', access(), { ...row(), delta_link: 'delta-1' });
+
+    expect(mockDeleteObjectChunks).not.toHaveBeenCalled();
+  });
+});
+
 describe('runSubscriptionSync — mail branch', () => {
   it('indexes the sanitized content for a human message', async () => {
     mockRunDeltaRound.mockResolvedValue({
@@ -134,7 +167,13 @@ describe('runSubscriptionSync — mail branch', () => {
       expect.anything(),
       expect.objectContaining({ content: 'Subject: Hello\n\nJust checking in.' })
     );
-    expect(mockDeleteObjectChunks).not.toHaveBeenCalled();
+    // The only delete in a cursorless round is the pre-rebuild purge; this
+    // message must not also be cleared individually.
+    expect(mockDeleteObjectChunks).not.toHaveBeenCalledWith(
+      'tenant-1',
+      'microsoft',
+      'alice@example.com/msg/1'
+    );
   });
 
   it('excludes marketing mail — never embedded, any stale chunk cleared', async () => {

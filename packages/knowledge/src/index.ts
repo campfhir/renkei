@@ -29,6 +29,7 @@ export {
   chunkText,
   chunkRefId,
   deleteObjectChunks,
+  deleteChunksByMetadata,
   ingestObjectChunks,
   type ChunkTextOptions,
 } from './chunking';
