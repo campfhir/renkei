@@ -28,19 +28,59 @@ function toolError(text: string) {
   return { content: [{ type: 'text' as const, text }], isError: true };
 }
 
-/** The project's display name, or null when Jira doesn't know that key. */
-async function resolveProject(
+/**
+ * Validate a project key with the SAME call the poller will make.
+ *
+ * The obvious check — GET /rest/api/3/project/{key} — needs
+ * read:project:jira, a different granular scope than the read:issue:jira
+ * this tool gates on and the poller uses. A token carrying one but not the
+ * other answers 401 "scope does not match", so validation could fail on a
+ * project the sync would have read perfectly well. Validating through the
+ * search endpoint removes the extra scope from the picture entirely: if
+ * this succeeds, polling will too, by construction.
+ */
+async function projectIsVisible(
   context: MCPToolContext,
   projectKey: string
-): Promise<{ key: string; name: string } | null> {
-  const response = await jiraFetch(
-    `${context.apiBaseUrl}/rest/api/3/project/${encodeURIComponent(projectKey)}`,
-    context.accessToken
-  );
-  if (!response.ok) return null;
-  const body: any = await response.json().catch(() => null);
-  if (!body || typeof body.key !== 'string') return null;
-  return { key: body.key, name: typeof body.name === 'string' ? body.name : body.key };
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  try {
+    // maxResults 0 — this asks "does this JQL resolve", not for issues. An
+    // empty project is still a valid thing to watch.
+    const response = await jiraFetch(
+      `${context.apiBaseUrl}/rest/api/3/search/jql`,
+      context.accessToken,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          jql: `project = "${projectKey.replace(/"/g, '')}"`,
+          maxResults: 0,
+        }),
+      }
+    );
+    return response.ok ? { ok: true } : { ok: false, reason: `Jira answered ${response.status}` };
+  } catch (error) {
+    // jiraFetch THROWS on any non-2xx (see its doc comment) — an unknown
+    // project key arrives here as a 400, not as a falsy response.ok.
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * The project's display name for the watch label. Best-effort on purpose:
+ * this is the read:project:jira call, and a missing label is cosmetic —
+ * failing the whole watch over it would be the bug described above.
+ */
+async function projectName(context: MCPToolContext, projectKey: string): Promise<string | null> {
+  try {
+    const response = await jiraFetch(
+      `${context.apiBaseUrl}/rest/api/3/project/${encodeURIComponent(projectKey)}`,
+      context.accessToken
+    );
+    const body: any = await response.json().catch(() => null);
+    return body && typeof body.name === 'string' ? body.name : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function registerWatchTools(
@@ -67,27 +107,30 @@ export async function registerWatchTools(
 
       // Validate against Jira before storing: a typo'd key would otherwise
       // become a watch that fails silently in the background forever.
-      const project = await resolveProject(context, projectKey);
-      if (!project) {
+      const visible = await projectIsVisible(context, projectKey);
+      if (!visible.ok) {
         return toolError(
-          `Jira has no project "${projectKey}" visible to you. Check the key with jira_list_projects.`
+          `Could not read project "${projectKey}" as you. ${visible.reason}\n` +
+            'If the key is right, your Jira connection may not carry the read scope this needs — ' +
+            'reconnect Jira on the Connectors page.'
         );
       }
+      const name = (await projectName(context, projectKey)) ?? projectKey;
 
       const result = await upsertWatch(
         { tenantId: context.tenantId, subject: context.subject, accountId: context.accountId },
         'jira',
         'project',
-        project.key,
-        project.name
+        projectKey,
+        name
       );
       if (!result.ok) return toolError(result.error);
 
       return ok(
         result.created
-          ? `Watching ${project.name} (${project.key}). The first indexing pass starts within a ` +
+          ? `Watching ${name} (${projectKey}). The first indexing pass starts within a ` +
               'few minutes; large projects take a while to work through.'
-          : `${project.name} (${project.key}) was already being watched — nothing changed.`
+          : `${name} (${projectKey}) was already being watched — nothing changed.`
       );
     }
   );
