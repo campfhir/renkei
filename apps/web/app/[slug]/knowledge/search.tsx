@@ -401,15 +401,25 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
   /** "12 results across Email and Confluence" — the shape of the answer, before scrolling. */
   const summary = useMemo(() => {
     if (!result || groups.length === 0) return null;
-    const providers = [...new Set(groups.map((group) => sourceLabel(group.best)))];
+    // Browsing returns the newest few from EACH selected source, so a
+    // per-source count is the honest summary: "4 from Jira" tells you Jira
+    // has four indexed items, where a merged total tells you nothing about
+    // whether a source is quiet or simply absent.
+    const counts = new Map<string, number>();
+    for (const group of groups) {
+      const label = sourceLabel(group.best);
+      counts.set(label, (counts.get(label) ?? 0) + 1);
+    }
+    const labels = [...counts.keys()];
+    if (result.browsing) {
+      const parts = [...counts.entries()].map(([label, count]) => `${count} from ${label}`);
+      return `Most recent — ${parts.join(', ')}`;
+    }
     const list =
-      providers.length === 1
-        ? providers[0]
-        : `${providers.slice(0, -1).join(', ')} and ${providers[providers.length - 1]}`;
-    const noun = result.browsing ? 'most recent' : 'result';
-    return result.browsing
-      ? `${groups.length} ${noun} from ${list}`
-      : `${groups.length} ${noun}${groups.length === 1 ? '' : 's'} from ${list}`;
+      labels.length === 1
+        ? labels[0]
+        : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+    return `${groups.length} result${groups.length === 1 ? '' : 's'} from ${list}`;
   }, [result, groups]);
 
   return (

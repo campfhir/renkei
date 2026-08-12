@@ -165,10 +165,27 @@ export interface RecentOptions extends CandidateFilters {
   budgetMs?: number;
 }
 
+/** The source a row belongs to, for per-source quotas. */
+function sourceKeyOf(row: CandidateRow): string {
+  const metadata =
+    typeof row.metadata === 'object' && row.metadata !== null && !Array.isArray(row.metadata)
+      ? row.metadata
+      : {};
+  const kind = 'kind' in metadata && typeof metadata.kind === 'string' ? metadata.kind : '';
+  return `${row.provider}:${kind}`;
+}
+
 /**
  * The most recently DATED indexed items, newest first — what to show when
  * there is no query yet, so a knowledge surface reveals what it actually
  * holds instead of an empty box.
+ *
+ * With several sources selected this returns the newest `k` FROM EACH,
+ * rather than the newest k overall. Browsing is a survey, not a ranking:
+ * one prolific source would otherwise fill the whole page and the others
+ * would read as empty — indistinguishable from not being indexed at all.
+ * Search is different and stays a single ranked list, because there the
+ * ordering carries real meaning.
  *
  * Deliberately not `searchKnowledge` with a blank query: an embedding of ""
  * is meaningless, and ordering by its distance would return an arbitrary
@@ -184,23 +201,40 @@ export async function listRecentKnowledge(
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
 
+  const sources = (options.sources ?? []).filter((source) => source.provider.trim());
   const filters = filterFragments(options);
   const overfetch = Math.max(options.k * 2, options.k + 4);
-  const rowsResult = await wrapAsync(
-    () =>
-      sql<CandidateRow>`
-        SELECT provider, ref_id, content, metadata, source_at, 0 AS distance
-        FROM knowledge_chunks
-        WHERE tenant_id = ${options.tenantId}
-          AND source_at IS NOT NULL
-          AND ${filters.source}
-          AND ${filters.after}
-          AND ${filters.before}
-        ORDER BY source_at DESC
-        LIMIT ${overfetch}
-      `.execute(dbResult.val),
-    'DB_ERROR' as const
-  );
+
+  // One UNION ALL branch per source, each with its own LIMIT, so a quiet
+  // source still contributes its newest rows. A single ORDER BY … LIMIT
+  // over the union would hand the whole budget to whichever source happens
+  // to be most recent.
+  const branch = (where: unknown) => sql`
+    (SELECT provider, ref_id, content, metadata, source_at, 0 AS distance
+     FROM knowledge_chunks
+     WHERE tenant_id = ${options.tenantId}
+       AND source_at IS NOT NULL
+       AND ${where}
+       AND ${filters.after}
+       AND ${filters.before}
+     ORDER BY source_at DESC
+     LIMIT ${overfetch})
+  `;
+  const query =
+    sources.length > 1
+      ? sql<CandidateRow>`${sql.join(
+          sources.map((source) =>
+            branch(
+              source.kind
+                ? sql`(provider = ${source.provider.trim()} AND metadata ->> 'kind' = ${source.kind})`
+                : sql`(provider = ${source.provider.trim()})`
+            )
+          ),
+          sql` UNION ALL `
+        )} ORDER BY source_at DESC`
+      : sql<CandidateRow>`${branch(filters.source)} ORDER BY source_at DESC`;
+
+  const rowsResult = await wrapAsync(() => query.execute(dbResult.val), 'DB_ERROR' as const);
   if (!rowsResult.ok) return rowsResult;
 
   const outcome = await verifyCandidates(
@@ -211,8 +245,23 @@ export async function listRecentKnowledge(
     { budgetMs: options.budgetMs ?? 3_000 }
   );
 
+  // The quota is applied AFTER the gate: culling first and slicing second
+  // would let withheld rows eat a source's whole allowance and leave it
+  // looking empty when it is merely partly restricted.
+  const perSource = new Map<string, number>();
+  const kept =
+    sources.length > 1
+      ? outcome.allowed.filter((row) => {
+          const key = sourceKeyOf(row);
+          const used = perSource.get(key) ?? 0;
+          if (used >= options.k) return false;
+          perSource.set(key, used + 1);
+          return true;
+        })
+      : outcome.allowed.slice(0, options.k);
+
   return ok({
-    hits: outcome.allowed.slice(0, options.k).map(toHit),
+    hits: kept.map(toHit),
     elided: outcome.elided,
   });
 }

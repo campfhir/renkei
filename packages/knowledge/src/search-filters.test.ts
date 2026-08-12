@@ -238,6 +238,25 @@ describe('listRecentKnowledge', () => {
     expect(renderedSql()).toContain('source_at IS NOT NULL');
   });
 
+  it('gives each selected source its own slice instead of one shared limit', async () => {
+    // Browsing is a survey: with one shared LIMIT the newest source fills
+    // the page and every quieter one reads as empty, which is
+    // indistinguishable from "not indexed".
+    await listRecentKnowledge({
+      ...recentOptions,
+      sources: [{ provider: 'microsoft', kind: 'msg' }, { provider: 'jira' }],
+    });
+    const sqlText = renderedSql();
+    expect(sqlText).toContain('UNION ALL');
+    expect(allValues()).toContain('msg');
+    expect(allValues()).toContain('jira');
+  });
+
+  it('stays a single query when only one source is selected', async () => {
+    await listRecentKnowledge({ ...recentOptions, sources: [{ provider: 'jira' }] });
+    expect(renderedSql()).not.toContain('UNION ALL');
+  });
+
   it('applies the same source filters search does', async () => {
     await listRecentKnowledge({ ...recentOptions, sources: [{ provider: 'confluence' }] });
     expect(renderedSql()).toContain('provider =');
