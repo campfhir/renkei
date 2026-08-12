@@ -414,9 +414,20 @@ export async function runSubscriptionSync(
     changed += 1;
   }
 
+  // Counters ride along with the cursor write, in the same statement, so
+  // progress can never claim more than the cursor actually covers. Totals
+  // are a running count, never a denominator: no Graph delta tells you up
+  // front how many items it will yield.
   await db
     .updateTable('webhook_subscriptions')
-    .set({ delta_link: round.val.deltaLink, updated_at: sql`NOW()` })
+    .set({
+      delta_link: round.val.deltaLink,
+      last_synced_at: sql<Date>`NOW()`,
+      last_run_items: changed,
+      total_items: sql<number>`total_items + ${changed}`,
+      sync_status: 'idle',
+      updated_at: sql`NOW()`,
+    })
     .where('id', '=', row.id)
     .execute();
 

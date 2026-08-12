@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import ScopePicker from '@/components/scope-picker';
 import { MICROSOFT_SCOPE_GROUPS, MICROSOFT_SCOPE_OPTIONS } from '@/lib/microsoft-scopes';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
+import SyncProgress from './sync-progress';
 
 /**
  * The user's own Microsoft 365 grant: "Renkei reads my Outlook." Connection
@@ -209,6 +210,8 @@ export default function MicrosoftConnector({
             Disconnect Microsoft 365
           </button>
         ))}
+
+      {connected && <SyncProgress tenantId={tenantId} connector="microsoft" />}
     </div>
   );
 }

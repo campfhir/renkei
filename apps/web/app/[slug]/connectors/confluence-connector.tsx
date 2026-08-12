@@ -8,6 +8,7 @@ import {
   ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS,
 } from '@/lib/atlassian-scopes';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
+import SyncProgress from './sync-progress';
 
 /**
  * The user's grant on the third Atlassian app ("Renkei Confluence") —
@@ -171,6 +172,14 @@ export default function ConfluenceConnector({
             Disconnect Confluence
           </button>
         ))}
+
+      {connected && (
+        <SyncProgress
+          tenantId={tenantId}
+          connector="confluence"
+          emptyHint="No spaces are being indexed. Ask in chat to watch a space (confluence_watch_space) to make its pages searchable by meaning."
+        />
+      )}
     </div>
   );
 }
