@@ -59,6 +59,17 @@ export interface SanitizeForTenantOptions {
   embedder?: EmbeddingProvider;
 }
 
+/**
+ * The ref-id namespace a message dedupes within — everything up to its last
+ * path segment, so 'alice@x.com/msg/AAA' compares only against that
+ * mailbox's other mail. Derived rather than hardcoded so the shape stays
+ * whatever the connector's refId builder decides.
+ */
+function namespaceOf(refId: string): string {
+  const lastSlash = refId.lastIndexOf('/');
+  return lastSlash > 0 ? refId.slice(0, lastSlash + 1) : refId;
+}
+
 function excludedAsDuplicate(result: Extract<SanitizeResult, { action: 'index' }>): SanitizeResult {
   return {
     action: 'excluded',
@@ -99,7 +110,8 @@ export async function sanitizeEmailForTenant(
     const dupResult = await hasRecentDuplicate(
       options.tenantId,
       contentHash,
-      DUPLICATE_LOOKBACK_DAYS
+      DUPLICATE_LOOKBACK_DAYS,
+      { ownerUpn: options.ownerUpn, refId: options.refId }
     );
     if (dupResult.ok && dupResult.val) {
       result = excludedAsDuplicate(result);
@@ -111,7 +123,8 @@ export async function sanitizeEmailForTenant(
       if (embedded.ok && embedded.val[0]) {
         const nearDupResult = await hasNearDuplicateChunk(
           options.tenantId,
-          vectorLiteral(embedded.val[0])
+          vectorLiteral(embedded.val[0]),
+          { refId: options.refId, refIdPrefix: namespaceOf(options.refId) }
         );
         if (nearDupResult.ok && nearDupResult.val) {
           result = excludedAsDuplicate(result);

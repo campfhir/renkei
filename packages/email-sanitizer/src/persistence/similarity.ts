@@ -25,14 +25,33 @@ export const NEAR_DUPLICATE_MAX_DISTANCE = 0.02;
 /** How far back to look for a near-duplicate — bounds the scan, mirrors the exact-hash dedup window. */
 const NEAR_DUPLICATE_LOOKBACK_DAYS = 30;
 
+export interface NearDuplicateScope {
+  /**
+   * The message's own ref id. Its own chunks are excluded from the scan —
+   * without that, re-processing an already-indexed message finds itself at
+   * distance 0, calls itself a duplicate, and DELETES the chunk. A re-index
+   * pass then empties the mail index one message at a time, every step
+   * reporting success.
+   */
+  refId: string;
+  /**
+   * Namespace to compare within, as a ref-id prefix ('alice@x.com/msg/').
+   * Comparing tenant-wide meant one person's mail could be suppressed by a
+   * colleague's similar mail, and — once calendar shells were in the index
+   * — by content from an entirely different connector.
+   */
+  refIdPrefix: string;
+}
+
 /**
- * Whether some already-indexed chunk for this tenant is a near-duplicate of
- * the given embedding vector. `vector` is a pgvector literal (see
- * `@renkei/knowledge`'s `vectorLiteral`).
+ * Whether some OTHER already-indexed chunk in the same namespace is a
+ * near-duplicate of the given embedding vector. `vector` is a pgvector
+ * literal (see `@renkei/knowledge`'s `vectorLiteral`).
  */
 export async function hasNearDuplicateChunk(
   tenantId: string,
-  vector: string
+  vector: string,
+  scope: NearDuplicateScope
 ): Promise<Result<boolean, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -43,6 +62,9 @@ export async function hasNearDuplicateChunk(
         SELECT (embedding <=> ${vector}::vector) AS distance
         FROM knowledge_chunks
         WHERE tenant_id = ${tenantId}
+          AND ref_id LIKE ${`${scope.refIdPrefix}%`}
+          AND ref_id <> ${scope.refId}
+          AND ref_id NOT LIKE ${`${scope.refId}#%`}
           AND created_at >= NOW() - ${NEAR_DUPLICATE_LOOKBACK_DAYS} * INTERVAL '1 day'
         ORDER BY distance
         LIMIT 1

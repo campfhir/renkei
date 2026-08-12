@@ -62,6 +62,39 @@ beforeEach(() => {
 });
 
 describe('sanitizeEmailForTenant — dedup', () => {
+  /**
+   * The scoping arguments are the whole defence against a re-index pass
+   * deleting the mailbox it was asked to refresh: an already-indexed
+   * message finds its own chunk at distance 0, declares itself a
+   * duplicate, and gets removed — every step reporting success.
+   */
+  it('never compares a message against itself, or against another mailbox', async () => {
+    mockHasRecentDuplicate.mockResolvedValue(ok(false));
+    mockHasNearDuplicateChunk.mockResolvedValue(ok(false));
+
+    await sanitizeEmailForTenant({
+      tenantId: 'tenant-1',
+      provider: 'microsoft',
+      refId: 'bob@example.com/msg/1',
+      ownerUpn: 'bob@example.com',
+      raw: humanEmail(),
+      embedder: { embed: async () => ok([[0.1, 0.2]]) },
+    });
+
+    expect(mockHasRecentDuplicate).toHaveBeenCalledWith(
+      'tenant-1',
+      expect.any(String),
+      expect.any(Number),
+      { ownerUpn: 'bob@example.com', refId: 'bob@example.com/msg/1' }
+    );
+    expect(mockHasNearDuplicateChunk).toHaveBeenCalledWith('tenant-1', expect.any(String), {
+      refId: 'bob@example.com/msg/1',
+      // Mail compares only against this mailbox's own mail — not a
+      // colleague's, and not calendar or task chunks from the same tenant.
+      refIdPrefix: 'bob@example.com/msg/',
+    });
+  });
+
   it('indexes normally when nothing is a duplicate', async () => {
     mockHasRecentDuplicate.mockResolvedValue(ok(false));
 
@@ -123,7 +156,11 @@ describe('sanitizeEmailForTenant — dedup', () => {
     });
 
     expect(embed).toHaveBeenCalledWith([expect.stringContaining('Just checking in.')]);
-    expect(mockHasNearDuplicateChunk).toHaveBeenCalledWith('tenant-1', '[0.1,0.2,0.3]');
+    expect(mockHasNearDuplicateChunk).toHaveBeenCalledWith(
+      'tenant-1',
+      '[0.1,0.2,0.3]',
+      expect.objectContaining({ refId: 'bob@example.com/msg/1' })
+    );
     expect(result).toMatchObject({ action: 'excluded', reason: 'duplicate' });
   });
 

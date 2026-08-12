@@ -74,11 +74,20 @@ export async function recordClassification(
   return ok();
 }
 
-/** Whether this exact cleaned content was already indexed for the tenant recently — exact-hash dedup only. */
+/**
+ * Whether this exact cleaned content was already indexed for this MAILBOX
+ * recently — exact-hash dedup only.
+ *
+ * Scoped by owner and excluding the message itself. Tenant-wide it let one
+ * person's mail suppress a colleague's identical copy of the same thread,
+ * and — worse — a message re-processed by the re-index button matched its
+ * OWN earlier log row and was dropped as a duplicate of itself.
+ */
 export async function hasRecentDuplicate(
   tenantId: string,
   contentHash: string,
-  lookbackDays: number
+  lookbackDays: number,
+  scope: { ownerUpn: string; refId: string }
 ): Promise<Result<boolean, 'DB_ERROR'>> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -90,6 +99,8 @@ export async function hasRecentDuplicate(
         .select('id')
         .where('tenant_id', '=', tenantId)
         .where('content_hash', '=', contentHash)
+        .where('owner_upn', '=', scope.ownerUpn.toLowerCase())
+        .where('ref_id', '<>', scope.refId)
         .where('created_at', '>=', sql<Date>`NOW() - ${lookbackDays} * INTERVAL '1 day'`)
         .executeTakeFirst(),
     'DB_ERROR' as const
