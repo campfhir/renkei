@@ -60,6 +60,10 @@ function granularJiraScopes(toolName: string, readOnly: boolean): string[] {
   if (BOARD_WRITE_TOOLS.has(toolName)) return ['write:board-scope:jira-software'];
   if (USER_DIRECTORY_TOOLS.has(toolName)) return ['read:user:jira'];
   if (WATCH_TOOLS.has(toolName)) return ['read:issue:jira'];
+  // Project browsing is its own granular scope; a grant carrying the issue
+  // read scope without this one gets 401 "scope does not match" rather than
+  // an empty list, so gate on the scope the endpoint actually checks.
+  if (toolName === 'jira_list_projects') return ['read:project:jira'];
   const deleteScope = DELETE_TOOL_SCOPES[toolName];
   if (deleteScope) return ['read:issue:jira', deleteScope];
   return readOnly ? ['read:issue:jira'] : ['read:issue:jira', 'write:issue:jira'];

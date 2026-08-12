@@ -44,8 +44,9 @@ async function projectIsVisible(
   projectKey: string
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
-    // maxResults 0 — this asks "does this JQL resolve", not for issues. An
-    // empty project is still a valid thing to watch.
+    // maxResults 1, not 0: this only asks "does this JQL resolve", but Jira
+    // rejects 0 outright ("has to be between 1 and 5,000"). An empty project
+    // is still a valid thing to watch — zero issues back is a pass.
     const response = await jiraFetch(
       `${context.apiBaseUrl}/rest/api/3/search/jql`,
       context.accessToken,
@@ -53,7 +54,8 @@ async function projectIsVisible(
         method: 'POST',
         body: JSON.stringify({
           jql: `project = "${projectKey.replace(/"/g, '')}"`,
-          maxResults: 0,
+          maxResults: 1,
+          fields: ['key'],
         }),
       }
     );
@@ -109,10 +111,16 @@ export async function registerWatchTools(
       // become a watch that fails silently in the background forever.
       const visible = await projectIsVisible(context, projectKey);
       if (!visible.ok) {
+        // The reconnect advice is conditional on purpose: appending it to
+        // every failure sent a caller chasing a scope problem when the real
+        // answer was a malformed request on our side.
+        const looksLikeAuth = /\b(401|403)\b/.test(visible.reason);
         return toolError(
-          `Could not read project "${projectKey}" as you. ${visible.reason}\n` +
-            'If the key is right, your Jira connection may not carry the read scope this needs — ' +
-            'reconnect Jira on the Connectors page.'
+          `Could not read project "${projectKey}" as you. ${visible.reason}` +
+            (looksLikeAuth
+              ? '\nYour Jira connection may not carry the read scope this needs — reconnect Jira ' +
+                'on the Connectors page.'
+              : '\nCheck the key with jira_list_projects.')
         );
       }
       const name = (await projectName(context, projectKey)) ?? projectKey;

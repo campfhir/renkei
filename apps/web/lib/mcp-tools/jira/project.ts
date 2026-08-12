@@ -14,6 +14,81 @@ export async function registerProjectTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
+  // jira_list_projects
+  server.registerTool(
+    'jira_list_projects',
+    {
+      title: 'Jira · Read — List projects',
+      description:
+        'List the Jira projects you can see, with their keys. Every tool that takes a projectKey ' +
+        'wants one of these. Covers software, business and service-desk projects alike — a JSM ' +
+        'project is a Jira project, so there is no need to go via jsm_list_service_desks to find ' +
+        'a key.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe('Substring filter on project name or key, e.g. "eng" (optional)')
+          .optional(),
+        max: z.number().int().min(1).max(100).describe('How many (default 50)').optional(),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('jira_list_projects invoked', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
+      try {
+        const max = typeof args.max === 'number' ? args.max : 50;
+        const query = typeof args.query === 'string' ? args.query.trim() : '';
+        const params = [`maxResults=${max}`, 'orderBy=key'];
+        if (query) params.push(`query=${encodeURIComponent(query)}`);
+        const response = await jiraFetch(
+          `${context.apiBaseUrl}/rest/api/3/project/search?${params.join('&')}`,
+          context.accessToken
+        );
+        const data = (await response.json()) as any;
+        const projects = Array.isArray(data?.values) ? data.values : [];
+        if (projects.length === 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: query ? `No projects match "${query}".` : 'No projects visible to you.',
+              },
+            ],
+          };
+        }
+        const lines = projects.map(
+          (project: any) =>
+            `• ${project.name} — key: ${project.key}` +
+            (project.projectTypeKey ? ` — ${project.projectTypeKey}` : '')
+        );
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                [`${projects.length} project(s):`, ...lines].join('\n'),
+                'a table (Name, Key, Type) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // jira_list_components
   server.registerTool(
     'jira_list_components',
