@@ -40,6 +40,13 @@ const DELETE_TOOL_SCOPES: Record<string, string> = {
 };
 
 /**
+ * Watches change Renkei's own indexing config, never Jira — so they gate on
+ * read access alone. Requiring write:issue:jira would deny them to a
+ * read-only Jira grant, which is exactly the grant that most wants search.
+ */
+const WATCH_TOOLS = new Set(['jira_watch_project', 'jira_unwatch_project', 'jira_list_watches']);
+
+/**
  * Granular Jira scope resolution, keyed on one MARKER scope per capability
  * bundle (lib/atlassian-scopes.ts): bundles travel whole, so a bundle's
  * presence is provable from any one of its scopes. read:issue:jira marks the
@@ -52,6 +59,7 @@ function granularJiraScopes(toolName: string, readOnly: boolean): string[] {
   if (BOARD_READ_TOOLS.has(toolName)) return ['read:board-scope:jira-software'];
   if (BOARD_WRITE_TOOLS.has(toolName)) return ['write:board-scope:jira-software'];
   if (USER_DIRECTORY_TOOLS.has(toolName)) return ['read:user:jira'];
+  if (WATCH_TOOLS.has(toolName)) return ['read:issue:jira'];
   const deleteScope = DELETE_TOOL_SCOPES[toolName];
   if (deleteScope) return ['read:issue:jira', deleteScope];
   return readOnly ? ['read:issue:jira'] : ['read:issue:jira', 'write:issue:jira'];

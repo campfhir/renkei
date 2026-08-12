@@ -21,6 +21,7 @@ import { registerVersionTools } from './versions';
 import { registerComponentTools } from './components';
 import { registerFilterTools } from './filters';
 import { registerCommentTools } from './comments';
+import { registerWatchTools } from './watches';
 
 export async function registerJiraTools(server: McpServer, context: MCPToolContext): Promise<void> {
   // Read-Only Tools
@@ -33,6 +34,7 @@ export async function registerJiraTools(server: McpServer, context: MCPToolConte
   await registerComponentTools(server, context);
   await registerFilterTools(server, context);
   await registerCommentTools(server, context);
+  await registerWatchTools(server, context);
 
   // Mutating Operations
   await registerWriteTools(server, context);

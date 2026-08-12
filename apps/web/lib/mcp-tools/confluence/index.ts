@@ -25,6 +25,7 @@ import { registerAttachmentTools } from './attachments';
 import { registerDatabaseTools } from './databases';
 import { registerWhiteboardTools } from './whiteboards';
 import { registerAnalyticsTools } from './analytics';
+import { registerWatchTools } from './watches';
 
 export const CONFLUENCE_MCP_CONNECTOR = 'atlassian-confluence';
 
@@ -47,4 +48,5 @@ export async function registerConfluenceTools(
   await registerDatabaseTools(server, context);
   await registerWhiteboardTools(server, context);
   await registerAnalyticsTools(server, context);
+  await registerWatchTools(server, context);
 }

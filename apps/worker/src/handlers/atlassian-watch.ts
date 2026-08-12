@@ -1,0 +1,306 @@
+/**
+ * Polling sync for a watched Jira project or Confluence space.
+ *
+ * Polling rather than webhooks is a forced choice, not a preference:
+ * Atlassian gives a plain OAuth app no way to register a Confluence webhook
+ * at all (it is a Connect-app module, with no REST route and no scope), and
+ * Jira's dynamic webhooks cap at five per user with a restrictive JQL
+ * filter and a 30-day expiry. One polling path for both products beats a
+ * split design where only half the content is fresh.
+ *
+ * Shaped after runSubscriptionSync (microsoft-sync.ts): an idempotent core
+ * taking the watch row, callable from the sweep or any future producer,
+ * deliberately NOT an EventHandler.
+ *
+ * Error posture, also copied from there:
+ * - provider/DB failures throw (the caller retries),
+ * - a single item failing to ingest is logged and skipped, because a throw
+ *   would redo a whole round for one bad page,
+ * - the cursor is written LAST, so a crash mid-round replays into
+ *   idempotent upserts rather than skipping past unprocessed items.
+ */
+
+import { sql } from 'kysely';
+import { getDatabase } from '@renkei/db';
+import { atlassianFetch, listOf, rec, str } from '@renkei/connector-atlassian';
+import { resolveEmbeddingProvider, ingestObjectChunks } from '@renkei/knowledge';
+import type { EmbeddingProvider } from '@renkei/knowledge';
+import type { AtlassianAccess } from './atlassian-access';
+import { logger } from '../logger';
+
+const COMPONENT = 'atlassian/watch';
+
+/**
+ * Overlap applied to the high-water mark on every round.
+ *
+ * Jira's search index is explicitly eventually consistent — its own docs
+ * warn that a just-written issue may not appear yet — so a watermark set to
+ * "the newest thing I saw" silently drops anything committed during the
+ * round. Re-reading a couple of minutes of already-seen items is free
+ * (ingestion upserts), missing one is not.
+ */
+const OVERLAP_MS = 2 * 60 * 1000;
+
+/** Pages per round, so one enormous backlog can't monopolize the sweep. */
+const MAX_PAGES = 10;
+
+export interface WatchRow {
+  id: string;
+  tenant_id: string;
+  provider: string;
+  account_id: string;
+  scope_type: string;
+  scope_key: string;
+  cursor: string | null;
+}
+
+export interface WatchSyncResult {
+  /** Items ingested this round — the running count the connectors page shows. */
+  items: number;
+  /** The new high-water mark, or null when nothing moved. */
+  cursor: string | null;
+}
+
+/** An ISO instant `OVERLAP_MS` before the stored cursor, or null for a first run. */
+function windowStart(cursor: string | null): string | null {
+  if (!cursor) return null;
+  const parsed = new Date(cursor);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(parsed.getTime() - OVERLAP_MS).toISOString();
+}
+
+/** Jira wants `yyyy/MM/dd HH:mm` in JQL, not ISO-8601. */
+function jqlTimestamp(iso: string): string {
+  const date = new Date(iso);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return (
+    `${date.getUTCFullYear()}/${pad(date.getUTCMonth() + 1)}/${pad(date.getUTCDate())} ` +
+    `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`
+  );
+}
+
+/** The text an issue contributes to the index: its summary plus description. */
+function jiraContent(issue: Record<string, unknown>): string {
+  const fields = rec(issue.fields);
+  const summary = str(fields.summary);
+  const description = str(fields.description);
+  const status = str(rec(fields.status).name);
+  return [`${str(issue.key)}: ${summary}`, status ? `Status: ${status}` : '', description]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+async function syncJira(
+  tenantId: string,
+  access: AtlassianAccess,
+  row: WatchRow,
+  embedder: EmbeddingProvider
+): Promise<WatchSyncResult> {
+  const since = windowStart(row.cursor);
+  const clauses = [`project = "${row.scope_key.replace(/"/g, '')}"`];
+  // receivedDateTime-style ordering rule: the $orderby field must lead the
+  // filter or Exchange-like engines refuse it. Jira is laxer, but leading
+  // with `updated` also lets it use the index it actually has.
+  if (since) clauses.unshift(`updated >= "${jqlTimestamp(since)}"`);
+  const jql = `${clauses.join(' AND ')} ORDER BY updated ASC`;
+
+  let items = 0;
+  let newest = row.cursor;
+  let nextPageToken: string | null = null;
+
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const response = await atlassianFetch({
+      product: 'jira',
+      cloudId: access.cloudId,
+      accessToken: access.accessToken,
+      path: '/rest/api/3/search/jql',
+      method: 'POST',
+      json: {
+        jql,
+        fields: ['summary', 'description', 'status', 'updated'],
+        maxResults: 100,
+        ...(nextPageToken ? { nextPageToken } : {}),
+      },
+    });
+    if (!response.ok) {
+      throw new Error(
+        `jira search failed for ${row.scope_key} (tenant ${tenantId}): ${response.status} ${response.error}`
+      );
+    }
+
+    const issues = listOf(response.body, 'issues');
+    for (const issue of issues) {
+      const key = str(issue.key);
+      const updated = str(rec(issue.fields).updated);
+      if (!key) continue;
+      const content = jiraContent(issue);
+      if (!content.trim()) continue;
+
+      const ingested = await ingestObjectChunks(tenantId, embedder, {
+        provider: 'jira',
+        refId: key,
+        content,
+        metadata: {
+          kind: 'issue',
+          title: `${key}: ${str(rec(issue.fields).summary)}`,
+          project: row.scope_key,
+          status: str(rec(rec(issue.fields).status).name) || undefined,
+        },
+        sourceAt: updated || null,
+      });
+      if (!ingested.ok) {
+        logger.warn('could not index jira issue {key}', { component: COMPONENT, tenantId, key });
+        continue;
+      }
+      items += 1;
+      if (updated && (!newest || updated > newest)) newest = updated;
+    }
+
+    nextPageToken = str(response.body.nextPageToken) || null;
+    if (!nextPageToken || issues.length === 0) break;
+  }
+
+  return { items, cursor: newest };
+}
+
+async function syncConfluence(
+  tenantId: string,
+  access: AtlassianAccess,
+  row: WatchRow,
+  embedder: EmbeddingProvider
+): Promise<WatchSyncResult> {
+  const since = windowStart(row.cursor);
+  let items = 0;
+  let newest = row.cursor;
+  // Confluence v2 has no delta endpoint; newest-modified-first plus a
+  // watermark is the closest equivalent, so we walk until we reach content
+  // older than the cursor and stop.
+  let path: string | null =
+    `/wiki/api/v2/pages?space-id=${encodeURIComponent(row.scope_key)}` +
+    `&sort=-modified-date&body-format=atlas_doc_format&limit=50`;
+
+  for (let page = 0; page < MAX_PAGES && path; page += 1) {
+    const response = await atlassianFetch({
+      product: 'confluence',
+      cloudId: access.cloudId,
+      accessToken: access.accessToken,
+      path,
+    });
+    if (!response.ok) {
+      throw new Error(
+        `confluence page list failed for space ${row.scope_key} (tenant ${tenantId}): ` +
+          `${response.status} ${response.error}`
+      );
+    }
+
+    const pages = listOf(response.body, 'results');
+    let reachedWatermark = false;
+    for (const entry of pages) {
+      const id = str(entry.id) || String(rec(entry).id ?? '');
+      const modified = str(rec(entry.version).createdAt);
+      if (!id) continue;
+      // Sorted newest-first, so the first item older than the watermark
+      // means every remaining item is too.
+      if (since && modified && modified < since) {
+        reachedWatermark = true;
+        break;
+      }
+
+      const title = str(entry.title);
+      const bodyValue = str(rec(rec(rec(entry.body).atlas_doc_format)).value);
+      const content = [title, adfPlainText(bodyValue)].filter(Boolean).join('\n\n');
+      if (!content.trim()) continue;
+
+      const ingested = await ingestObjectChunks(tenantId, embedder, {
+        provider: 'confluence',
+        refId: id,
+        content,
+        metadata: { kind: 'page', title: title || undefined, spaceId: row.scope_key },
+        sourceAt: modified || null,
+      });
+      if (!ingested.ok) {
+        logger.warn('could not index confluence page {id}', { component: COMPONENT, tenantId, id });
+        continue;
+      }
+      items += 1;
+      if (modified && (!newest || modified > newest)) newest = modified;
+    }
+
+    if (reachedWatermark) break;
+    const nextLink = str(rec(response.body._links).next);
+    path = nextLink || null;
+  }
+
+  return { items, cursor: newest };
+}
+
+/**
+ * ADF JSON to plain text, shallowly — enough for embedding, which cares
+ * about words rather than structure. The rich ADF→Markdown converter lives
+ * in the web app and is not importable here; duplicating it for the sake of
+ * formatting an embedding input would be the wrong trade.
+ */
+function adfPlainText(value: string): string {
+  if (!value) return '';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return '';
+  }
+  const parts: string[] = [];
+  const walk = (node: unknown): void => {
+    const record = rec(node);
+    const text = str(record.text);
+    if (text) parts.push(text);
+    const content = record.content;
+    if (Array.isArray(content)) for (const child of content) walk(child);
+  };
+  walk(parsed);
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * One idempotent polling round for a watch. Records progress and the new
+ * cursor; returns what it did so the sweep can log it.
+ */
+export async function runWatchSync(
+  tenantId: string,
+  access: AtlassianAccess,
+  row: WatchRow
+): Promise<WatchSyncResult> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error('database unavailable');
+  const db = dbResult.val;
+
+  const embedder = await resolveEmbeddingProvider(tenantId);
+  if (!embedder) {
+    // No embedding provider means the knowledge layer is off for this org.
+    // Nothing to do, and not an error worth retrying.
+    return { items: 0, cursor: row.cursor };
+  }
+
+  const result =
+    row.provider === 'jira'
+      ? await syncJira(tenantId, access, row, embedder)
+      : await syncConfluence(tenantId, access, row, embedder);
+
+  // Cursor and counters written LAST and together: a crash before this
+  // point replays the round into idempotent upserts, which is the safe
+  // direction. Advancing the cursor first would skip unprocessed items.
+  await db
+    .updateTable('content_watches')
+    .set({
+      cursor: result.cursor,
+      last_synced_at: sql<Date>`NOW()`,
+      last_run_items: result.items,
+      total_items: sql<number>`total_items + ${result.items}`,
+      sync_status: 'idle',
+      last_error: null,
+      updated_at: sql<Date>`NOW()`,
+    })
+    .where('id', '=', row.id)
+    .execute();
+
+  return result;
+}

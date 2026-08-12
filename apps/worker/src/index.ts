@@ -20,6 +20,7 @@ import {
 } from './handlers/microsoft-events';
 import { createZoomTranscriptHandler, createZoomSummaryHandler } from './handlers/zoom-events';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
+import { sweepAtlassianWatches, ATLASSIAN_WATCH_INTERVAL_MS } from './health/atlassian-watches';
 import {
   sweepMicrosoftSubscriptions,
   MICROSOFT_SUBSCRIPTION_INTERVAL_MS,
@@ -138,6 +139,27 @@ async function maybeSweepMicrosoftSubscriptions(): Promise<void> {
   }
 }
 
+/**
+ * Atlassian content has no push mechanism available to an OAuth app, so
+ * this sweep is not a fallback — it is the only thing keeping watched Jira
+ * projects and Confluence spaces fresh. Per-watch due-times live on the
+ * rows; this gate only decides how often to go looking.
+ */
+let nextAtlassianWatchSweepAt = 0;
+
+async function maybeSweepAtlassianWatches(): Promise<void> {
+  if (Date.now() < nextAtlassianWatchSweepAt) return;
+  nextAtlassianWatchSweepAt = Date.now() + ATLASSIAN_WATCH_INTERVAL_MS;
+  try {
+    await sweepAtlassianWatches();
+  } catch (error) {
+    logger.error('atlassian watch sweep error: {error}', {
+      component: 'atlassian/watch-sweep',
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function main(): Promise<void> {
   await attachPersistentLogging();
   registerConnectorHandlers();
@@ -152,6 +174,7 @@ async function main(): Promise<void> {
   while (running) {
     await maybeSweepWebhooks();
     await maybeSweepMicrosoftSubscriptions();
+    await maybeSweepAtlassianWatches();
     let hadWork = false;
     try {
       hadWork = await processOne();

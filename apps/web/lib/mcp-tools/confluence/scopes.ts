@@ -82,6 +82,15 @@ export function confluenceScopeFor(toolName: string): string[] {
     case 'confluence_get_space':
       return ['read:space:confluence'];
 
+    // A watch resolves the space now and polls its pages later, so both
+    // reads must be present for it to be worth offering.
+    case 'confluence_watch_space':
+    case 'confluence_unwatch_space':
+      return ['read:space:confluence', 'read:page:confluence'];
+    // Listing watches touches only Renkei's own rows.
+    case 'confluence_list_watches':
+      return [];
+
     default:
       // list/get page tools (list_pages, get_page, list_page_versions, list_drafts)
       return ['read:page:confluence'];
