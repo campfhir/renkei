@@ -20,7 +20,10 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     'jsm_list_service_desks',
     {
       title: 'JSM · Read — List Jira Service Management service desks',
-      description: 'List all Jira Service Management service desks.',
+      description:
+        'List all Jira Service Management service desks. Call this before jira_create_issue ' +
+        "whenever you're not already sure a target project is a plain project rather than a " +
+        "service desk — cross-reference the project key against this list's `key` field.",
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         maxResults: z.number().describe('Maximum results (1-100, default 25)').optional(),
@@ -248,7 +251,10 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     'jsm_create_request',
     {
       title: 'JSM · Act — Create a customer or internal request',
-      description: 'Create a customer request in a service desk.',
+      description:
+        'Create a customer request in a service desk. Prefer this over jira_create_issue ' +
+        'whenever the target project is a service desk (see jsm_list_service_desks) — a plain ' +
+        'issue in a service desk project skips its request types and SLAs.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         serviceDeskId: z.string().describe('Service desk ID'),

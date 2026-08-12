@@ -261,7 +261,10 @@ export async function registerWriteTools(
         'Create a new Jira issue in a project, including story points, an original estimate ' +
         "and any custom field — field names are resolved against this site's own schema. A " +
         'field the project will not accept on creation is dropped and recorded as a comment ' +
-        'rather than failing the whole issue.',
+        'rather than failing the whole issue. If you have not already confirmed this project ' +
+        'is a plain software/business project (not a service desk), call jsm_list_service_desks ' +
+        'first and check the project key against it — a service desk project has customer-facing ' +
+        'request types and SLAs that this tool bypasses entirely; prefer jsm_create_request for those.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         projectKey: z.string().describe('Project key, e.g. SCRUM'),

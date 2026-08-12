@@ -219,6 +219,75 @@ async function graphPost(
   };
 }
 
+/** PATCH to Graph; used to add recipients to a reply/forward draft before sending it. */
+async function graphPatch(
+  context: MCPToolContext,
+  accessToken: string,
+  pathAndQuery: string,
+  json: unknown
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const requestBody = JSON.stringify(json);
+  let response: Response;
+  try {
+    response = await fetch(`${GRAPH_BASE_URL}${pathAndQuery}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: requestBody,
+    });
+  } catch {
+    logger.warn('Graph API unreachable', {
+      component: 'outlook/fetch',
+      tenantId: context.tenantId,
+      subject: context.subject,
+      path: pathAndQuery,
+    });
+    return { ok: false, error: 'Could not reach graph.microsoft.com' };
+  }
+  if (!response.ok) {
+    const responseBody = await response.text().catch(() => '');
+    logger.warn('Graph API non-OK response', {
+      component: 'outlook/fetch',
+      tenantId: context.tenantId,
+      subject: context.subject,
+      path: pathAndQuery,
+      method: 'PATCH',
+      status: response.status,
+      requestBody: secure(truncateForLog(requestBody)),
+      responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
+    });
+    return { ok: false, error: describeStatus(response.status) };
+  }
+  return { ok: true };
+}
+
+/** DELETE a Graph resource — used only as best-effort cleanup of an orphaned draft. */
+async function graphDelete(
+  context: MCPToolContext,
+  accessToken: string,
+  pathAndQuery: string
+): Promise<void> {
+  try {
+    const response = await fetch(`${GRAPH_BASE_URL}${pathAndQuery}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) {
+      logger.warn('Could not clean up an orphaned draft', {
+        component: 'outlook/fetch',
+        tenantId: context.tenantId,
+        subject: context.subject,
+        path: pathAndQuery,
+        status: response.status,
+      });
+    }
+  } catch {
+    // Best-effort only — the draft is left in the mailbox's Drafts folder.
+  }
+}
+
 function values(body: Record<string, unknown>): Record<string, unknown>[] {
   return Array.isArray(body.value)
     ? body.value.filter(
@@ -250,10 +319,126 @@ function senderOf(message: Record<string, unknown>): string {
 }
 
 function messageLine(message: Record<string, unknown>): string {
+  const unread = message.isRead === false;
   return (
-    `[${str(message.receivedDateTime)}] ${senderOf(message)} — ${str(message.subject) || '(no subject)'}` +
-    ` — id: ${str(message.id)}\n  ${str(message.bodyPreview).replace(/\n/g, '\n  ')}`
+    `[${str(message.receivedDateTime)}]${unread ? ' (unread)' : ''} ${senderOf(message)} — ` +
+    `${str(message.subject) || '(no subject)'} — id: ${str(message.id)}\n  ` +
+    `${str(message.bodyPreview).replace(/\n/g, '\n  ')}`
   );
+}
+
+function recipientOf(address: string): { emailAddress: { address: string } } {
+  return { emailAddress: { address } };
+}
+
+function addressesOf(entries: unknown): string[] {
+  return Array.isArray(entries)
+    ? entries.map((entry) => str(rec(rec(entry).emailAddress).address)).filter(Boolean)
+    : [];
+}
+
+/** `base` (Graph's auto-populated recipients, if any) plus `extra`, address de-duplicated. */
+function unionAddresses(base: readonly string[], extra: readonly string[]): string[] {
+  const seen = new Set(base.map((address) => address.toLowerCase()));
+  const merged = [...base];
+  for (const address of extra) {
+    const key = address.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(address);
+    }
+  }
+  return merged;
+}
+
+/** `current` categories with `add` merged in and `remove` taken out, order preserved. */
+function withCategoryChanges(
+  current: readonly string[],
+  add: readonly string[],
+  remove: readonly string[]
+): string[] {
+  const removeSet = new Set(remove);
+  const result = current.filter((category) => !removeSet.has(category));
+  for (const category of add) {
+    if (!result.includes(category)) result.push(category);
+  }
+  return result;
+}
+
+/**
+ * Reply / reply-all / forward all follow the same shape once recipients can
+ * be edited: Graph's one-shot `/reply`, `/replyAll`, `/forward` actions only
+ * take a comment (and, for forward, a fixed `toRecipients`) — there is no
+ * way to also add a cc/bcc or extra "to" in that single call. The
+ * `createX` + PATCH + `send` sequence creates a real draft first, so
+ * recipients can be edited before it goes out. `additionalTo`/`cc`/`bcc`
+ * are unioned onto whatever Graph auto-populated (the original sender for
+ * reply, sender + all recipients for reply-all, nothing for forward — so
+ * "union with nothing" is exactly "use what was given").
+ */
+async function sendDraftAction(
+  context: MCPToolContext,
+  accessToken: string,
+  messageId: string,
+  action: 'createReply' | 'createReplyAll' | 'createForward',
+  options: {
+    comment?: string;
+    additionalTo: readonly string[];
+    cc: readonly string[];
+    bcc: readonly string[];
+  }
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const created = await graphPost(
+    context,
+    accessToken,
+    `/me/messages/${encodeURIComponent(messageId)}/${action}`,
+    options.comment ? { comment: options.comment } : {}
+  );
+  if (!created.ok) return created;
+  const draft = created.body ?? {};
+  const draftId = str(draft.id);
+  if (!draftId) return { ok: false, error: 'Graph did not return a draft id' };
+
+  const needsPatch =
+    options.additionalTo.length > 0 || options.cc.length > 0 || options.bcc.length > 0;
+  if (needsPatch) {
+    const toRecipients = unionAddresses(addressesOf(draft.toRecipients), options.additionalTo);
+    const ccRecipients = unionAddresses(addressesOf(draft.ccRecipients), options.cc);
+    const bccRecipients = unionAddresses(addressesOf(draft.bccRecipients), options.bcc);
+    if (toRecipients.length === 0) {
+      // Forward auto-populates nothing, so this only fires for a forward
+      // whose caller-supplied "to" turned out empty — reply/reply-all always
+      // have Graph's own auto-populated sender/all to fall back to.
+      await graphDelete(context, accessToken, `/me/messages/${encodeURIComponent(draftId)}`);
+      return { ok: false, error: 'No recipient to send to' };
+    }
+    const patched = await graphPatch(
+      context,
+      accessToken,
+      `/me/messages/${encodeURIComponent(draftId)}`,
+      {
+        toRecipients: toRecipients.map(recipientOf),
+        ...(ccRecipients.length > 0 ? { ccRecipients: ccRecipients.map(recipientOf) } : {}),
+        ...(bccRecipients.length > 0 ? { bccRecipients: bccRecipients.map(recipientOf) } : {}),
+      }
+    );
+    if (!patched.ok) {
+      await graphDelete(context, accessToken, `/me/messages/${encodeURIComponent(draftId)}`);
+      return patched;
+    }
+  }
+
+  const sent = await graphPost(
+    context,
+    accessToken,
+    `/me/messages/${encodeURIComponent(draftId)}/send`,
+    {}
+  );
+  if (!sent.ok) {
+    await graphDelete(context, accessToken, `/me/messages/${encodeURIComponent(draftId)}`);
+    return sent;
+  }
+  return { ok: true };
 }
 
 function eventLine(event: Record<string, unknown>): string {
@@ -273,12 +458,20 @@ function outlookScopeFor(toolName: string): string[] {
   switch (toolName) {
     case 'outlook_list_events':
     case 'outlook_get_event':
+    case 'outlook_find_meeting_times':
       return ['Calendars.Read'];
     case 'outlook_list_task_lists':
     case 'outlook_list_tasks':
       return ['Tasks.Read'];
     case 'outlook_send_mail':
+    case 'outlook_reply_message':
+    case 'outlook_reply_all_message':
+    case 'outlook_forward_message':
       return ['Mail.Send'];
+    case 'outlook_mark_message':
+    case 'outlook_flag_message':
+    case 'outlook_categorize_message':
+      return ['Mail.ReadWrite'];
     case 'outlook_create_event':
     case 'outlook_respond_event':
       return ['Calendars.ReadWrite'];
@@ -363,7 +556,7 @@ export async function registerOutlookTools(
       const query =
         `/me/mailFolders/${encodeURIComponent(folder)}/messages` +
         `?$top=${max}&$orderby=receivedDateTime desc` +
-        `&$select=id,subject,from,receivedDateTime,bodyPreview`;
+        `&$select=id,subject,from,receivedDateTime,bodyPreview,isRead`;
       const result = await graphGet(context, access.accessToken, query);
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map(messageLine);
@@ -390,7 +583,7 @@ export async function registerOutlookTools(
         context,
         access.accessToken,
         `/me/messages/${encodeURIComponent(messageId)}` +
-          `?$select=id,subject,from,toRecipients,receivedDateTime,body`
+          `?$select=id,subject,from,toRecipients,receivedDateTime,body,isRead,flag,categories`
       );
       if (!result.ok) return errText(result.error);
       const message = result.body;
@@ -407,9 +600,17 @@ export async function registerOutlookTools(
         bodyText.length > MAX
           ? `${bodyText.slice(0, MAX)}\n\n[…truncated: ${bodyText.length - MAX} more characters]`
           : bodyText;
+      const flagStatus = str(rec(message.flag).flagStatus) || 'notFlagged';
+      const categories = Array.isArray(message.categories)
+        ? message.categories.filter((c): c is string => typeof c === 'string')
+        : [];
       return textResult(
         `Subject: ${str(message.subject) || '(no subject)'}\n` +
-          `From: ${senderOf(message)}\nTo: ${to}\nReceived: ${str(message.receivedDateTime)}\n\n` +
+          `From: ${senderOf(message)}\nTo: ${to}\nReceived: ${str(message.receivedDateTime)}\n` +
+          `Read: ${message.isRead === false ? 'No' : 'Yes'}` +
+          (flagStatus !== 'notFlagged' ? `\nFlag: ${flagStatus}` : '') +
+          (categories.length > 0 ? `\nCategories: ${categories.join(', ')}` : '') +
+          '\n\n' +
           capped
       );
     }
@@ -437,7 +638,7 @@ export async function registerOutlookTools(
         context,
         access.accessToken,
         `/me/messages?$search=${encodeURIComponent(`"${query.replace(/"/g, '')}"`)}` +
-          `&$top=${max}&$select=id,subject,from,receivedDateTime,bodyPreview`
+          `&$top=${max}&$select=id,subject,from,receivedDateTime,bodyPreview,isRead`
       );
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map(messageLine);
@@ -771,12 +972,327 @@ export async function registerOutlookTools(
   );
 
   server.registerTool(
+    'outlook_reply_message',
+    {
+      title: 'Outlook · Act — Reply to an email',
+      description:
+        'Reply to the sender of a message the connected user received. Graph auto-populates ' +
+        'the sender as recipient and handles subject/threading/quoting — additionalTo/cc/bcc ' +
+        'add more people beyond that if the user asked for it. Only send what they asked to send.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageId: z
+          .string()
+          .min(1)
+          .describe('Message id from outlook_list_messages/outlook_get_message'),
+        comment: z.string().min(1).describe('Reply body, plain text'),
+        additionalTo: z
+          .array(z.string().min(1))
+          .describe('Extra "to" addresses beyond the original sender')
+          .optional(),
+        cc: z.array(z.string().min(1)).describe('CC addresses to add').optional(),
+        bcc: z.array(z.string().min(1)).describe('BCC addresses to add').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageId = str(args.messageId);
+      if (!messageId) return errText('messageId is required');
+      const comment = str(args.comment);
+      if (!comment) return errText('comment is required');
+      const additionalTo = Array.isArray(args.additionalTo)
+        ? args.additionalTo.map(String).filter(Boolean)
+        : [];
+      const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
+      const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
+
+      const result = await sendDraftAction(context, access.accessToken, messageId, 'createReply', {
+        comment,
+        additionalTo,
+        cc,
+        bcc,
+      });
+      if (!result.ok) return errText(result.error);
+      logger.info('outlook_reply_message sent', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        messageId,
+      });
+      return textResult(
+        'Reply sent.' +
+          (additionalTo.length > 0 ? ` Also to: ${additionalTo.join(', ')}.` : '') +
+          (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
+          (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
+      );
+    }
+  );
+
+  server.registerTool(
+    'outlook_reply_all_message',
+    {
+      title: 'Outlook · Act — Reply all to an email',
+      description:
+        'Reply to everyone on a message the connected user received (sender and all other ' +
+        'recipients). Graph auto-populates that full set and handles subject/threading/quoting ' +
+        '— additionalTo/cc/bcc add more people beyond that if the user asked for it. Only send ' +
+        'what they asked to send.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageId: z
+          .string()
+          .min(1)
+          .describe('Message id from outlook_list_messages/outlook_get_message'),
+        comment: z.string().min(1).describe('Reply body, plain text'),
+        additionalTo: z
+          .array(z.string().min(1))
+          .describe('Extra "to" addresses beyond the original sender/recipients')
+          .optional(),
+        cc: z.array(z.string().min(1)).describe('CC addresses to add').optional(),
+        bcc: z.array(z.string().min(1)).describe('BCC addresses to add').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageId = str(args.messageId);
+      if (!messageId) return errText('messageId is required');
+      const comment = str(args.comment);
+      if (!comment) return errText('comment is required');
+      const additionalTo = Array.isArray(args.additionalTo)
+        ? args.additionalTo.map(String).filter(Boolean)
+        : [];
+      const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
+      const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
+
+      const result = await sendDraftAction(
+        context,
+        access.accessToken,
+        messageId,
+        'createReplyAll',
+        {
+          comment,
+          additionalTo,
+          cc,
+          bcc,
+        }
+      );
+      if (!result.ok) return errText(result.error);
+      logger.info('outlook_reply_all_message sent', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        messageId,
+      });
+      return textResult(
+        'Reply-all sent.' +
+          (additionalTo.length > 0 ? ` Also to: ${additionalTo.join(', ')}.` : '') +
+          (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
+          (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
+      );
+    }
+  );
+
+  server.registerTool(
+    'outlook_forward_message',
+    {
+      title: 'Outlook · Act — Forward an email',
+      description:
+        'Forward a message the connected user received to new recipients, with an optional ' +
+        'note. Unlike reply, Graph auto-populates no recipients for a forward — "to" is ' +
+        'required. Only send what they asked to send.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageId: z
+          .string()
+          .min(1)
+          .describe('Message id from outlook_list_messages/outlook_get_message'),
+        to: z.array(z.string().min(1)).min(1).describe('Recipient email addresses'),
+        comment: z.string().describe('Note prepended above the forwarded message').optional(),
+        cc: z.array(z.string().min(1)).describe('CC addresses').optional(),
+        bcc: z.array(z.string().min(1)).describe('BCC addresses').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageId = str(args.messageId);
+      if (!messageId) return errText('messageId is required');
+      const to = Array.isArray(args.to) ? args.to.map(String).filter(Boolean) : [];
+      if (to.length === 0) return errText('to is required');
+      const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
+      const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
+
+      const result = await sendDraftAction(
+        context,
+        access.accessToken,
+        messageId,
+        'createForward',
+        {
+          comment: str(args.comment) || undefined,
+          additionalTo: to,
+          cc,
+          bcc,
+        }
+      );
+      if (!result.ok) return errText(result.error);
+      logger.info('outlook_forward_message sent', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        messageId,
+      });
+      return textResult(
+        `Forwarded to ${to.join(', ')}.` +
+          (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
+          (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
+      );
+    }
+  );
+
+  server.registerTool(
+    'outlook_mark_message',
+    {
+      title: 'Outlook · Act — Mark a message read or unread',
+      description: 'Set the read/unread status of a message.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageId: z
+          .string()
+          .min(1)
+          .describe('Message id from outlook_list_messages/outlook_get_message'),
+        isRead: z.boolean().describe('true to mark read, false to mark unread'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageId = str(args.messageId);
+      if (!messageId) return errText('messageId is required');
+      if (typeof args.isRead !== 'boolean') return errText('isRead is required');
+
+      const result = await graphPatch(
+        context,
+        access.accessToken,
+        `/me/messages/${encodeURIComponent(messageId)}`,
+        { isRead: args.isRead }
+      );
+      if (!result.ok) return errText(result.error);
+      return textResult(`Marked ${args.isRead ? 'read' : 'unread'}.`);
+    }
+  );
+
+  server.registerTool(
+    'outlook_flag_message',
+    {
+      title: 'Outlook · Act — Flag or unflag a message',
+      description:
+        'Set a follow-up flag on a message: "flagged" to flag it, "complete" to mark a flagged ' +
+        'message done, or "notFlagged" to clear the flag.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageId: z
+          .string()
+          .min(1)
+          .describe('Message id from outlook_list_messages/outlook_get_message'),
+        status: z.enum(['flagged', 'complete', 'notFlagged']).describe('Flag state to set'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageId = str(args.messageId);
+      if (!messageId) return errText('messageId is required');
+      const status = str(args.status);
+      if (!status) return errText('status is required');
+
+      const result = await graphPatch(
+        context,
+        access.accessToken,
+        `/me/messages/${encodeURIComponent(messageId)}`,
+        { flag: { flagStatus: status } }
+      );
+      if (!result.ok) return errText(result.error);
+      return textResult(`Flag set to "${status}".`);
+    }
+  );
+
+  server.registerTool(
+    'outlook_categorize_message',
+    {
+      title: 'Outlook · Act — Categorize a message',
+      description:
+        'Add or remove Outlook color categories on a message — the closest thing Outlook has to ' +
+        'a "pin" or tag (Graph has no separate pin flag on messages). Pass add/remove to adjust ' +
+        'the existing set, or replace to set the exact list (pass replace: [] to clear all ' +
+        'categories).',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageId: z
+          .string()
+          .min(1)
+          .describe('Message id from outlook_list_messages/outlook_get_message'),
+        add: z.array(z.string().min(1)).describe('Category names to add').optional(),
+        remove: z.array(z.string().min(1)).describe('Category names to remove').optional(),
+        replace: z
+          .array(z.string())
+          .describe('Set the exact category list, overriding add/remove (pass [] to clear all)')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageId = str(args.messageId);
+      if (!messageId) return errText('messageId is required');
+      const add = Array.isArray(args.add) ? args.add.map(String).filter(Boolean) : [];
+      const remove = Array.isArray(args.remove) ? args.remove.map(String).filter(Boolean) : [];
+      const replace = Array.isArray(args.replace)
+        ? args.replace.map(String).filter(Boolean)
+        : undefined;
+
+      let categories: string[];
+      if (replace) {
+        categories = replace;
+      } else {
+        if (add.length === 0 && remove.length === 0) {
+          return errText('Provide add, remove, or replace.');
+        }
+        const current = await graphGet(
+          context,
+          access.accessToken,
+          `/me/messages/${encodeURIComponent(messageId)}?$select=categories`
+        );
+        if (!current.ok) return errText(current.error);
+        const existing = Array.isArray(current.body.categories)
+          ? current.body.categories.filter(
+              (category): category is string => typeof category === 'string'
+            )
+          : [];
+        categories = withCategoryChanges(existing, add, remove);
+      }
+
+      const result = await graphPatch(
+        context,
+        access.accessToken,
+        `/me/messages/${encodeURIComponent(messageId)}`,
+        { categories }
+      );
+      if (!result.ok) return errText(result.error);
+      return textResult(
+        categories.length > 0 ? `Categories: ${categories.join(', ')}.` : 'Categories cleared.'
+      );
+    }
+  );
+
+  server.registerTool(
     'outlook_create_event',
     {
       title: 'Outlook · Act — Create a calendar event',
       description:
         'Create an event on the connected user’s calendar. Listing attendees sends them ' +
-        'invitations. Acts as the user — only schedule what they asked for.',
+        'invitations. Split required vs optional attendees — Graph marks each accordingly on ' +
+        'the invite, and outlook_find_meeting_times uses the same split to weigh availability ' +
+        "(required attendees' conflicts rule out a slot; optional attendees' do not). Acts as " +
+        'the user — only schedule what they asked for.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         subject: z.string().min(1).describe('Event title'),
@@ -786,9 +1302,13 @@ export async function registerOutlookTools(
           .string()
           .describe('IANA timezone for start/end (default UTC, e.g. America/Chicago)')
           .optional(),
-        attendees: z
+        requiredAttendees: z
           .array(z.string().min(1))
-          .describe('Attendee email addresses — each receives an invite')
+          .describe('Required attendee email addresses — each receives an invite')
+          .optional(),
+        optionalAttendees: z
+          .array(z.string().min(1))
+          .describe('Optional attendee email addresses — each receives an invite marked optional')
           .optional(),
         body: z.string().describe('Description shown on the invite, plain text').optional(),
         location: z.string().describe('Location text').optional(),
@@ -802,9 +1322,16 @@ export async function registerOutlookTools(
       const access = await resolveOutlookAccess(context);
       if (typeof access === 'string') return errText(access);
       const timezone = str(args.timezone) || 'UTC';
-      const attendees = Array.isArray(args.attendees)
-        ? args.attendees.map(String).filter(Boolean)
+      const requiredAttendees = Array.isArray(args.requiredAttendees)
+        ? args.requiredAttendees.map(String).filter(Boolean)
         : [];
+      const optionalAttendees = Array.isArray(args.optionalAttendees)
+        ? args.optionalAttendees.map(String).filter(Boolean)
+        : [];
+      const attendees = [
+        ...requiredAttendees.map((address) => ({ emailAddress: { address }, type: 'required' })),
+        ...optionalAttendees.map((address) => ({ emailAddress: { address }, type: 'optional' })),
+      ];
 
       const result = await graphPost(context, access.accessToken, '/me/events', {
         subject: str(args.subject),
@@ -812,14 +1339,7 @@ export async function registerOutlookTools(
         end: { dateTime: str(args.end), timeZone: timezone },
         ...(str(args.body) ? { body: { contentType: 'Text', content: str(args.body) } } : {}),
         ...(str(args.location) ? { location: { displayName: str(args.location) } } : {}),
-        ...(attendees.length > 0
-          ? {
-              attendees: attendees.map((address) => ({
-                emailAddress: { address },
-                type: 'required',
-              })),
-            }
-          : {}),
+        ...(attendees.length > 0 ? { attendees } : {}),
         ...(args.onlineMeeting === true
           ? { isOnlineMeeting: true, onlineMeetingProvider: 'teamsForBusiness' }
           : {}),
@@ -833,9 +1353,136 @@ export async function registerOutlookTools(
       });
       return textResult(
         `Created "${str(event.subject) || str(args.subject)}" (id ${str(event.id) || 'unknown'})` +
-          (attendees.length > 0 ? `; invites sent to ${attendees.join(', ')}.` : '.') +
+          (requiredAttendees.length > 0 ? `; required: ${requiredAttendees.join(', ')}` : '') +
+          (optionalAttendees.length > 0 ? `; optional: ${optionalAttendees.join(', ')}` : '') +
+          '.' +
           (str(event.webLink) ? `\n[Open in Outlook](${str(event.webLink)})` : '')
       );
+    }
+  );
+
+  server.registerTool(
+    'outlook_find_meeting_times',
+    {
+      title: 'Outlook · Read — Find meeting times',
+      description:
+        "Suggest meeting slots within a window, checking the connected user's calendar and " +
+        "every named attendee's free/busy — not just the user's own availability. Required " +
+        "attendees' conflicts rule a slot out; optional attendees' conflicts only lower its " +
+        'confidence. Always call this before outlook_create_event when a meeting involves other ' +
+        'people and no specific time was given — propose the top suggestions (with who is free ' +
+        'vs busy) and let the user pick, rather than guessing a time. If duration, a date range, ' +
+        'or attendees are missing, ask the user for them instead of assuming.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        requiredAttendees: z
+          .array(z.string().min(1))
+          .describe('Required attendee email addresses — availability that must be free')
+          .optional(),
+        optionalAttendees: z
+          .array(z.string().min(1))
+          .describe('Optional attendee email addresses — availability that is nice to have')
+          .optional(),
+        durationMinutes: z
+          .number()
+          .int()
+          .min(5)
+          .max(24 * 60)
+          .describe('Meeting length in minutes'),
+        earliestStart: z
+          .string()
+          .min(1)
+          .describe('Earliest acceptable start, ISO-8601 local time (e.g. 2026-08-12T08:00:00)'),
+        latestEnd: z.string().min(1).describe('Latest acceptable end, ISO-8601 local time'),
+        timezone: z
+          .string()
+          .describe('IANA timezone for the window (default UTC, e.g. America/Chicago)')
+          .optional(),
+        max: z
+          .number()
+          .int()
+          .min(1)
+          .max(20)
+          .describe('How many suggestions (default 10)')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const requiredAttendees = Array.isArray(args.requiredAttendees)
+        ? args.requiredAttendees.map(String).filter(Boolean)
+        : [];
+      const optionalAttendees = Array.isArray(args.optionalAttendees)
+        ? args.optionalAttendees.map(String).filter(Boolean)
+        : [];
+      const durationMinutes = typeof args.durationMinutes === 'number' ? args.durationMinutes : 0;
+      if (durationMinutes <= 0) return errText('durationMinutes is required');
+      const earliestStart = str(args.earliestStart);
+      const latestEnd = str(args.latestEnd);
+      if (!earliestStart || !latestEnd) return errText('earliestStart and latestEnd are required');
+      const timezone = str(args.timezone) || 'UTC';
+      const max = typeof args.max === 'number' ? args.max : 10;
+
+      const result = await graphPost(context, access.accessToken, '/me/findMeetingTimes', {
+        attendees: [
+          ...requiredAttendees.map((address) => ({ emailAddress: { address }, type: 'required' })),
+          ...optionalAttendees.map((address) => ({ emailAddress: { address }, type: 'optional' })),
+        ],
+        timeConstraint: {
+          activityDomain: 'work',
+          timeslots: [
+            {
+              start: { dateTime: earliestStart, timeZone: timezone },
+              end: { dateTime: latestEnd, timeZone: timezone },
+            },
+          ],
+        },
+        meetingDuration: `PT${durationMinutes}M`,
+        returnSuggestionReasons: true,
+        maxCandidates: max,
+        // Every required attendee must be free; optional attendees only affect confidence.
+        minimumAttendeePercentage: requiredAttendees.length > 0 ? 100 : 0,
+      });
+      if (!result.ok) return errText(result.error);
+      const body = result.body ?? {};
+      const suggestions = Array.isArray(body.meetingTimeSuggestions)
+        ? body.meetingTimeSuggestions
+        : [];
+      if (suggestions.length === 0) {
+        const reason = str(body.emptySuggestionsReason);
+        return textResult(
+          'No suggestions in that window' +
+            (reason ? ` (${reason}).` : '.') +
+            ' Try widening the date range or dropping an optional attendee.'
+        );
+      }
+
+      const lines = suggestions.map((entry) => {
+        const suggestion = rec(entry);
+        const slot = rec(suggestion.meetingTimeSlot);
+        const start = rec(slot.start);
+        const end = rec(slot.end);
+        const confidence = typeof suggestion.confidence === 'number' ? suggestion.confidence : 0;
+        const attendeeAvailability = Array.isArray(suggestion.attendeeAvailability)
+          ? suggestion.attendeeAvailability
+          : [];
+        const perAttendee = attendeeAvailability
+          .map((a) => {
+            const entryRec = rec(a);
+            const attendee = rec(entryRec.attendee);
+            const address = str(rec(attendee.emailAddress).address);
+            const kind = str(attendee.type) || 'required';
+            return `${address || '(unknown)'} [${kind}]: ${str(entryRec.availability) || 'unknown'}`;
+          })
+          .join('; ');
+        return (
+          `${str(start.dateTime)} → ${str(end.dateTime)} (${str(start.timeZone) || timezone}) — ` +
+          `${confidence}% confidence` +
+          (perAttendee ? `\n  ${perAttendee}` : '')
+        );
+      });
+      return textResult(lines.join('\n\n'));
     }
   );
 
