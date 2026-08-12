@@ -75,13 +75,20 @@ export async function recordClassification(
 }
 
 /**
- * Whether this exact cleaned content was already indexed for this MAILBOX
- * recently — exact-hash dedup only.
+ * Whether an equivalent message is CURRENTLY INDEXED for this mailbox —
+ * exact-hash dedup.
  *
  * Scoped by owner and excluding the message itself. Tenant-wide it let one
  * person's mail suppress a colleague's identical copy of the same thread,
  * and — worse — a message re-processed by the re-index button matched its
  * OWN earlier log row and was dropped as a duplicate of itself.
+ *
+ * The EXISTS clause is the other half of that. The log outlives the index:
+ * a rebuild purges chunks but keeps every log row, so a hash match alone
+ * would answer "yes, seen before" for content that is no longer indexed at
+ * all. Two byte-identical messages could then suppress each other into a
+ * mailbox where neither exists. Dedup must mean "a copy is in the index
+ * right now", not "we processed one of these once".
  */
 export async function hasRecentDuplicate(
   tenantId: string,
@@ -102,6 +109,15 @@ export async function hasRecentDuplicate(
         .where('owner_upn', '=', scope.ownerUpn.toLowerCase())
         .where('ref_id', '<>', scope.refId)
         .where('created_at', '>=', sql<Date>`NOW() - ${lookbackDays} * INTERVAL '1 day'`)
+        .where(
+          sql<boolean>`EXISTS (
+            SELECT 1 FROM knowledge_chunks kc
+            WHERE kc.tenant_id = email_classification_log.tenant_id
+              AND kc.provider = email_classification_log.provider
+              AND (kc.ref_id = email_classification_log.ref_id
+                   OR kc.ref_id LIKE email_classification_log.ref_id || '#%')
+          )`
+        )
         .executeTakeFirst(),
     'DB_ERROR' as const
   );
