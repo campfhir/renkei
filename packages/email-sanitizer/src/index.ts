@@ -36,7 +36,9 @@ export {
   JIRA_SEED_SEGMENTS,
   JSM_SEED_SEGMENTS,
   SEED_BANNERS,
+  DEFAULT_CLASSIFIER_RULES,
   type SeedTemplate,
+  type SeedClassifierRule,
 } from './registry/seed';
 export { sanitizeEmail, type SanitizeInputs } from './pipeline';
 export { sanitizeEmailForTenant, type SanitizeForTenantOptions } from './service';
@@ -45,6 +47,7 @@ export {
   listClassifierRules,
   upsertClassifierRule,
   deleteClassifierRule,
+  seedDefaultClassifierRules,
   type ClassifierRuleInput,
 } from './persistence/rules';
 export {

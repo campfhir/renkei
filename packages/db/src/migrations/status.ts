@@ -58,6 +58,7 @@ export const EXPECTED_MIGRATIONS = [
   '025-email-sanitizer',
   '026-email-banner-patterns',
   '027-knowledge-source-at',
+  '029-seed-classifier-rules',
 ];
 
 export interface MigrationStatus {

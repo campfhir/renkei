@@ -15,6 +15,7 @@ export function isClassifierMatchType(value: string): value is ClassifierRule['m
   return (
     value === 'domain' ||
     value === 'sender_email' ||
+    value === 'sender_email_contains' ||
     value === 'subject_contains' ||
     value === 'sender_domain' ||
     value === 'reply_to_domain' ||

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { isReservedSlug } from '@/lib/tenant-slug';
+import { seedDefaultClassifierRules } from '@renkei/email-sanitizer';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const { domain } = await request.json();
@@ -63,6 +64,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         created_at: new Date().toISOString(),
       })
       .execute();
+
+    // Starting classifier rules, so mail categorization works from the
+    // first sync rather than filing everything as human correspondence
+    // until an admin happens to author rules. Best-effort: a failure here
+    // must not prevent the tenant from existing.
+    const seeded = await seedDefaultClassifierRules(tenantId);
+    if (!seeded.ok) {
+      console.warn(`[Domain] Could not seed classifier rules for ${tenantId}`);
+    }
 
     console.log(`[Domain] Created tenant for ${domain}: ${tenantId}`);
 

@@ -28,13 +28,18 @@ export default async function MailReviewPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <h1 className="mb-1 text-xl font-bold">Mail review</h1>
+      <h1 className="mb-1 text-xl font-bold">Mail classification</h1>
+      <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
+        A record of how your own mail was classified before indexing — human correspondence, a
+        system notification, or marketing (excluded from indexing entirely).{' '}
+        <strong>Nothing here is waiting on you</strong>: every message listed has already been
+        processed. Browse it only if something looks miscategorized.
+      </p>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-        A spot check on how your own mail is being classified before embedding — human
-        correspondence, a system notification, or marketing (excluded entirely). This is private to
-        you; nobody else, including an org-admin, can see this list. If something's wrong, remove it
-        or reclassify it and it's corrected and re-processed automatically — there's usually not
-        much to review here if classification is working well.
+        This is private to you; nobody else, including an org-admin, can see it. Correcting a
+        message re-processes it automatically. If a whole category of mail is landing in the wrong
+        place, an org-admin can fix it for everyone at once under Connector setup → Email sanitizer,
+        rather than correcting messages one at a time here.
       </p>
       <ReviewList tenantId={tenant.id} />
     </div>

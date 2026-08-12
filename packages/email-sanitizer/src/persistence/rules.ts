@@ -8,6 +8,7 @@ import { getDatabase } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ClassifierRule } from '../types';
+import { DEFAULT_CLASSIFIER_RULES } from '../registry/seed';
 
 interface RuleRow {
   id: string;
@@ -121,6 +122,63 @@ export async function upsertClassifierRule(
   );
   if (!result.ok) return result;
   return ok(id);
+}
+
+/**
+ * Give a brand-new tenant the shipped starting rules.
+ *
+ * Called at tenant creation; migration 029 does the same for tenants that
+ * already existed. Both are needed — a migration cannot reach a tenant
+ * created after it ran. Idempotent by (matchType, matchValue), so calling
+ * it twice is harmless and an admin's edit to a seeded rule is never
+ * clobbered.
+ */
+export async function seedDefaultClassifierRules(
+  tenantId: string
+): Promise<Result<{ inserted: number }, 'DB_ERROR'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+
+  const existingResult = await wrapAsync(
+    () =>
+      dbResult.val
+        .selectFrom('email_classifier_rules')
+        .select(['match_type', 'match_value'])
+        .where('tenant_id', '=', tenantId)
+        .execute(),
+    'DB_ERROR' as const
+  );
+  if (!existingResult.ok) return existingResult;
+  const taken = new Set(existingResult.val.map((row) => `${row.match_type} ${row.match_value}`));
+
+  const missing = DEFAULT_CLASSIFIER_RULES.filter(
+    (rule) => !taken.has(`${rule.matchType} ${rule.matchValue}`)
+  );
+  if (missing.length === 0) return ok({ inserted: 0 });
+
+  const result = await wrapAsync(
+    () =>
+      dbResult.val
+        .insertInto('email_classifier_rules')
+        .values(
+          missing.map((rule) => ({
+            id: randomUUID(),
+            tenant_id: tenantId,
+            category: rule.category,
+            match_type: rule.matchType,
+            match_value: rule.matchValue,
+            sender_key: rule.senderKey,
+            priority: rule.priority,
+            enabled: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }))
+        )
+        .execute(),
+    'DB_ERROR' as const
+  );
+  if (!result.ok) return result;
+  return ok({ inserted: missing.length });
 }
 
 export async function deleteClassifierRule(

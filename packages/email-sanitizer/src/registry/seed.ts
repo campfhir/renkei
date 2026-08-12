@@ -66,3 +66,123 @@ export const SEED_BANNERS: readonly string[] = [
   '[EXTERNAL EMAIL] DO NOT CLICK links or attachments unless you recognize the sender ' +
     'and know the content is safe.',
 ];
+
+/**
+ * Classifier rules every tenant starts with.
+ *
+ * These exist because the pipeline's fail-safe default is `human`: with an
+ * empty rule set NOTHING is ever categorized as a notification or
+ * marketing, so a mailbox indexes Zoom recaps and Jira digests as though
+ * they were colleagues' mail. The fail-safe is right — unrecognized mail
+ * must never be dropped — but "no rules at all" made it the only outcome.
+ *
+ * Chosen to be near-zero-false-positive rather than exhaustive. Every rule
+ * keys on something no human-composed message carries: a machine local
+ * part (`no-reply@`), a vendor's notification-only domain, or a fixed
+ * system tag in the Message-ID. Anything ambiguous is deliberately absent —
+ * a false positive here quietly buries real mail, which is far worse than
+ * a false negative that merely leaves noise indexed. Admins extend this at
+ * /[slug]/admin/email-sanitizer, and may edit or delete any of it.
+ *
+ * `marketing` is EXCLUDED from indexing entirely; `system_notification` is
+ * still indexed, but extraction-templated and never mistaken for
+ * correspondence — so the bar for `marketing` is higher.
+ */
+export interface SeedClassifierRule {
+  category: 'human' | 'system_notification' | 'marketing';
+  matchType:
+    | 'domain'
+    | 'sender_email'
+    | 'sender_email_contains'
+    | 'subject_contains'
+    | 'sender_domain'
+    | 'reply_to_domain'
+    | 'message_id_contains';
+  matchValue: string;
+  senderKey: string | null;
+  priority: number;
+  /** Why this rule is safe — surfaced nowhere, kept for whoever edits this list. */
+  rationale: string;
+}
+
+export const DEFAULT_CLASSIFIER_RULES: readonly SeedClassifierRule[] = [
+  // --- machine local parts: the single strongest signal, domain-independent.
+  {
+    category: 'system_notification',
+    matchType: 'sender_email_contains',
+    matchValue: 'no-reply@',
+    senderKey: 'automated',
+    priority: 10,
+    rationale: 'A person does not send from an address that says not to reply to it.',
+  },
+  {
+    category: 'system_notification',
+    matchType: 'sender_email_contains',
+    matchValue: 'noreply@',
+    senderKey: 'automated',
+    priority: 11,
+    rationale: 'Same as no-reply@, unhyphenated spelling.',
+  },
+  {
+    category: 'system_notification',
+    matchType: 'sender_email_contains',
+    matchValue: 'donotreply@',
+    senderKey: 'automated',
+    priority: 12,
+    rationale: 'Same as no-reply@, third common spelling.',
+  },
+  {
+    category: 'system_notification',
+    matchType: 'sender_email_contains',
+    matchValue: 'notifications@',
+    senderKey: 'automated',
+    priority: 13,
+    rationale: 'Reserved mailbox name for machine-generated notices.',
+  },
+  {
+    category: 'system_notification',
+    matchType: 'sender_email_contains',
+    matchValue: 'automated@',
+    senderKey: 'automated',
+    priority: 14,
+    rationale: 'Self-declaring machine sender.',
+  },
+  {
+    category: 'system_notification',
+    matchType: 'sender_email_contains',
+    matchValue: 'mailer-daemon@',
+    senderKey: 'automated',
+    priority: 15,
+    rationale: 'Bounce/delivery notices, never correspondence.',
+  },
+  // --- SharePoint/OneDrive share notices, which impersonate a colleague in
+  // every visible header. The Message-ID is the only reliable tell; see
+  // classify.ts's header comment for the sample that proved this out.
+  {
+    category: 'system_notification',
+    matchType: 'message_id_contains',
+    matchValue: 'odspnotify',
+    senderKey: 'sharepoint',
+    priority: 20,
+    rationale: 'Fixed system tag on SharePoint/OneDrive share notices; From is a real person.',
+  },
+  // --- notification-only vendor domains. Kept to domains that send ONLY
+  // machine mail; a domain that also carries human correspondence (github.com,
+  // atlassian.net) is deliberately handled by the local-part rules above.
+  {
+    category: 'system_notification',
+    matchType: 'domain',
+    matchValue: 'zoom.us',
+    senderKey: 'zoom',
+    priority: 30,
+    rationale: 'Meeting recaps and recording notices.',
+  },
+  {
+    category: 'system_notification',
+    matchType: 'domain',
+    matchValue: 'automation.atlassian.com',
+    senderKey: 'jira',
+    priority: 31,
+    rationale: 'Jira automation rule output.',
+  },
+];

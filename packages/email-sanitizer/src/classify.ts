@@ -5,6 +5,12 @@
  * so an unrecognized sender is never dropped or mishandled, only cleaned
  * generically.
  *
+ * `sender_email_contains` is the workhorse for automated senders: the
+ * local part carries the signal (`no-reply@`, `notifications@`) far more
+ * reliably than the domain does, since one domain sends both machine mail
+ * and real correspondence — `github.com` sends `noreply@` notifications
+ * and person-to-person mail alike, so a `domain` rule would misfile both.
+ *
  * `sender_domain`/`reply_to_domain` exist for a real structural pattern:
  * automated notifications relayed "on behalf of" a human identity — Graph's
  * `sender` (RFC 5322 Sender) differs from `from` when e.g. SharePoint/OneDrive
@@ -67,13 +73,15 @@ export function classify(
         ? domain === value
         : rule.matchType === 'sender_email'
           ? fromAddress === value
-          : rule.matchType === 'sender_domain'
-            ? senderDomain === value
-            : rule.matchType === 'reply_to_domain'
-              ? replyToDomain === value
-              : rule.matchType === 'message_id_contains'
-                ? messageId.includes(value)
-                : subject.includes(value);
+          : rule.matchType === 'sender_email_contains'
+            ? fromAddress.includes(value)
+            : rule.matchType === 'sender_domain'
+              ? senderDomain === value
+              : rule.matchType === 'reply_to_domain'
+                ? replyToDomain === value
+                : rule.matchType === 'message_id_contains'
+                  ? messageId.includes(value)
+                  : subject.includes(value);
     if (matches) {
       return { category: rule.category, matchedRuleId: rule.id, senderKey: rule.senderKey };
     }

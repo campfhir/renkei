@@ -15,6 +15,7 @@ type Category = 'human' | 'system_notification' | 'marketing';
 type MatchType =
   | 'domain'
   | 'sender_email'
+  | 'sender_email_contains'
   | 'subject_contains'
   | 'sender_domain'
   | 'reply_to_domain'
@@ -293,6 +294,9 @@ function RulesCard({ slug }: { slug: string }) {
             >
               <option value="domain">From address domain</option>
               <option value="sender_email">Exact From address</option>
+              <option value="sender_email_contains">
+                From address contains (e.g. "no-reply@")
+              </option>
               <option value="subject_contains">Subject contains</option>
               <option value="sender_domain">
                 Actual sender domain (catches spoofed/relayed mail)
@@ -314,11 +318,13 @@ function RulesCard({ slug }: { slug: string }) {
             placeholder={
               draft.matchType === 'sender_email'
                 ? 'notifications@jira.example.com'
-                : draft.matchType === 'subject_contains'
-                  ? '[jira]'
-                  : draft.matchType === 'message_id_contains'
-                    ? 'odspnotify'
-                    : 'sharepointonline.com'
+                : draft.matchType === 'sender_email_contains'
+                  ? 'no-reply@'
+                  : draft.matchType === 'subject_contains'
+                    ? '[jira]'
+                    : draft.matchType === 'message_id_contains'
+                      ? 'odspnotify'
+                      : 'sharepointonline.com'
             }
             className={`${inputClass} font-mono`}
           />

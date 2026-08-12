@@ -40,6 +40,7 @@ export interface RawEmail {
 export type ClassifierMatchType =
   | 'domain'
   | 'sender_email'
+  | 'sender_email_contains'
   | 'subject_contains'
   | 'sender_domain'
   | 'reply_to_domain'
