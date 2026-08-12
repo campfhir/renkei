@@ -156,6 +156,22 @@ const SOURCE_FILTERS: Record<string, { provider: string; kind?: string }> = {
 export const KNOWLEDGE_SOURCE_NAMES = Object.keys(SOURCE_FILTERS);
 
 /**
+ * The source name a hit would have been filtered under — the inverse of
+ * SOURCE_FILTERS. Results are labelled in the same vocabulary the `sources`
+ * argument accepts, so a caller can narrow a follow-up query by copying the
+ * token back; the storage provider alone can't do that, since `microsoft`
+ * covers mail, calendar and tasks alike.
+ */
+function sourceNameOf(hit: KnowledgeHit): string {
+  const kind = typeof hit.metadata.kind === 'string' ? hit.metadata.kind : undefined;
+  for (const [name, filter] of Object.entries(SOURCE_FILTERS)) {
+    if (filter.provider !== hit.provider) continue;
+    if (filter.kind === undefined || filter.kind === kind) return name;
+  }
+  return hit.provider;
+}
+
+/**
  * Turn selected source names into provider/kind filters.
  *
  * Kinds are only applied when EVERY selected source pins one — mixing
@@ -208,6 +224,7 @@ function renderHits(result: { hits: KnowledgeHit[]; elided: number }, browsing: 
         '',
         `${index + 1}. ${titleOf(hit.metadata) || '(untitled)'}` +
           (hit.sourceAt ? ` — ${hit.sourceAt}` : '') +
+          ` — ${sourceNameOf(hit)}` +
           ` — [${hit.provider}:${hit.refId}]` +
           (browsing ? '' : ` (distance ${formatDistance(hit.distance)})`),
         excerpt
@@ -232,8 +249,9 @@ export async function registerKnowledgeTools(
     {
       title: 'Knowledge · Read — Search org knowledge',
       description:
-        'Semantic search over what Renkei has indexed from connected tools ' +
-        '(WebEx today; Confluence and SharePoint as they arrive). Results are ' +
+        'Semantic search over what Renkei has indexed from connected tools — ' +
+        'Outlook mail/calendar/tasks, Confluence, Jira, Zoom and WebEx, as far as ' +
+        'each has been indexed. Results are ' +
         'verified against the source system for YOUR access before disclosure — ' +
         'anything you cannot open at the source is withheld and reported as a count.',
       annotations: { readOnlyHint: true },

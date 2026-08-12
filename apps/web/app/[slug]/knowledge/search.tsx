@@ -48,6 +48,28 @@ function providerLabel(provider: string): string {
   }
 }
 
+/**
+ * What a result IS, in the same words the filter chips use.
+ *
+ * The connector name alone can't say it: Microsoft covers mail, calendar
+ * and tasks, so badging all three "Outlook" both contradicts the "Email"
+ * chip the user just clicked and hides which of the three a result is.
+ * Falls back to the connector name when a chunk carries no kind.
+ */
+function sourceLabel(hit: KnowledgeSearchHit): string {
+  if (hit.provider === 'microsoft') {
+    switch (str(hit.metadata.kind)) {
+      case 'msg':
+        return 'Email';
+      case 'evt':
+        return 'Calendar';
+      case 'task':
+        return 'Tasks';
+    }
+  }
+  return providerLabel(hit.provider);
+}
+
 function providerBadgeClass(provider: string): string {
   switch (provider) {
     case 'webex':
@@ -217,7 +239,7 @@ function HitCard({ group, terms }: { group: DocumentGroup; terms: string[] }) {
         <span
           className={`rounded-full px-2 py-0.5 text-xs font-medium ${providerBadgeClass(hit.provider)}`}
         >
-          {providerLabel(hit.provider)}
+          {sourceLabel(hit)}
         </span>
         {when && <span className="text-xs text-gray-500 dark:text-gray-400">{when}</span>}
         {group.others.length > 0 && (
@@ -379,7 +401,7 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
   /** "12 results across Email and Confluence" — the shape of the answer, before scrolling. */
   const summary = useMemo(() => {
     if (!result || groups.length === 0) return null;
-    const providers = [...new Set(groups.map((group) => providerLabel(group.best.provider)))];
+    const providers = [...new Set(groups.map((group) => sourceLabel(group.best)))];
     const list =
       providers.length === 1
         ? providers[0]
