@@ -1,0 +1,24 @@
+{
+  "description": "A sender_domain rule catches a SharePoint-style notification relayed on behalf of a colleague — the visible From address is real, but the actual sender differs",
+  "rules": [
+    {
+      "id": "r6",
+      "category": "system_notification",
+      "matchType": "sender_domain",
+      "matchValue": "sharepointonline.com",
+      "senderKey": "sharepoint",
+      "priority": 10,
+      "enabled": true
+    }
+  ],
+  "email": {
+    "fromAddress": "scott.eremia-roden@nems.org",
+    "subject": "Scott shared a file with you",
+    "senderAddress": "no-reply@sharepointonline.com"
+  },
+  "expected": {
+    "category": "system_notification",
+    "matchedRuleId": "r6",
+    "senderKey": "sharepoint"
+  }
+}

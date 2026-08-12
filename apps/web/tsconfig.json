@@ -22,6 +22,7 @@
       "@/*": ["./*"],
       "@renkei/db": ["../../packages/db/src/index.ts"],
       "@renkei/crypto": ["../../packages/crypto/src/index.ts"],
+      "@renkei/email-sanitizer": ["../../packages/email-sanitizer/src/index.ts"],
       "@renkei/provider-grants": ["../../packages/provider-grants/src/index.ts"],
       "@renkei/capability-registry": ["../../packages/capability-registry/src/index.ts"],
       "@renkei/connector-webex": ["../../packages/connector-webex/src/index.ts"],

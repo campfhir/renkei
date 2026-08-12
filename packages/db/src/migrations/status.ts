@@ -55,6 +55,8 @@ export const EXPECTED_MIGRATIONS = [
   '022-grant-scope-provenance',
   '023-webhook-subscriptions',
   '024-actionable-items-archive',
+  '025-email-sanitizer',
+  '026-email-banner-patterns',
 ];
 
 export interface MigrationStatus {

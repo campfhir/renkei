@@ -54,6 +54,65 @@ export interface ConnectorConfigs {
   updated_at: Generated<Timestamp>;
 }
 
+export interface EmailBannerPatterns {
+  created_at: Generated<Timestamp>;
+  enabled: Generated<boolean>;
+  id: string;
+  phrase: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface EmailClassificationLog {
+  account_id: string | null;
+  category: string;
+  content_hash: string | null;
+  created_at: Generated<Timestamp>;
+  excerpt: string;
+  id: string;
+  match_score: number | null;
+  matched_rule_id: string | null;
+  needs_review: Generated<boolean>;
+  overridden_at: Timestamp | null;
+  override_action: string | null;
+  override_category: string | null;
+  override_sender_key: string | null;
+  owner_upn: string;
+  provider: string;
+  ref_id: string;
+  sender_key: string | null;
+  template_id: string | null;
+  template_version: number | null;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface EmailClassifierRules {
+  category: string;
+  created_at: Generated<Timestamp>;
+  enabled: Generated<boolean>;
+  id: string;
+  match_type: string;
+  match_value: string;
+  priority: Generated<number>;
+  sender_key: string | null;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface EmailExtractionTemplates {
+  created_at: Generated<Timestamp>;
+  derived_by_upn: string;
+  id: string;
+  match_threshold: Generated<number>;
+  sender_key: string;
+  spec: Json;
+  status: string;
+  superseded_at: Timestamp | null;
+  tenant_id: string;
+  version: number;
+}
+
 export interface Events {
   attempts: Generated<number>;
   created_at: Generated<Timestamp>;
@@ -310,6 +369,10 @@ export interface WebhookSubscriptions {
 export interface DB {
   actionable_items: ActionableItems;
   connector_configs: ConnectorConfigs;
+  email_banner_patterns: EmailBannerPatterns;
+  email_classification_log: EmailClassificationLog;
+  email_classifier_rules: EmailClassifierRules;
+  email_extraction_templates: EmailExtractionTemplates;
   events: Events;
   identities: Identities;
   jira_sessions: JiraSessions;

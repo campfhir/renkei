@@ -1,0 +1,16 @@
+{
+  "description": "A sender_email rule matches case-insensitively",
+  "rules": [
+    {
+      "id": "r2",
+      "category": "marketing",
+      "matchType": "sender_email",
+      "matchValue": "newsletter@vendor.com",
+      "senderKey": null,
+      "priority": 5,
+      "enabled": true
+    }
+  ],
+  "email": { "fromAddress": "Newsletter@Vendor.com", "subject": "This week's deals" },
+  "expected": { "category": "marketing", "matchedRuleId": "r2", "senderKey": null }
+}

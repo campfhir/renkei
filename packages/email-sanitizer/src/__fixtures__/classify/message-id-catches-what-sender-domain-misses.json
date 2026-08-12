@@ -1,0 +1,34 @@
+{
+  "description": "Real SharePoint share-notification shape: Reply-To is set back to the sharing colleague's own address, so sender_domain/reply_to_domain rules see nothing but a real person — only the Message-ID's fixed odspnotify tag distinguishes it",
+  "rules": [
+    {
+      "id": "r9",
+      "category": "system_notification",
+      "matchType": "reply_to_domain",
+      "matchValue": "sharepointonline.com",
+      "senderKey": "sharepoint",
+      "priority": 5,
+      "enabled": true
+    },
+    {
+      "id": "r10",
+      "category": "system_notification",
+      "matchType": "message_id_contains",
+      "matchValue": "odspnotify",
+      "senderKey": "sharepoint",
+      "priority": 10,
+      "enabled": true
+    }
+  ],
+  "email": {
+    "fromAddress": "murali.athuluri@nems.org",
+    "subject": "Murali (Muralimohan) Athuluri shared \"NEMS_BOD_IT_Cyber_Resilience_Overview\" with you",
+    "replyToAddress": "murali.athuluri@nems.org",
+    "messageId": "<Share-e2c99c89-2b49-4003-a93f-b36f21626a3d.rcid_9d0130a2-c01e-0000-0ebd-f921351b4049.wiid_704ce1a8-890d-488c-9845-4e4e1552d3f2.r0-ioe_1-tid_7ae68e61-9a1d-4576-b09e-a13c1009838e-rh_cae_notifyp-aid_4519386e-2efc-46b9-a863-9fc3d7d18df1@odspnotify>"
+  },
+  "expected": {
+    "category": "system_notification",
+    "matchedRuleId": "r10",
+    "senderKey": "sharepoint"
+  }
+}

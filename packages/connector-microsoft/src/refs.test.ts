@@ -4,7 +4,7 @@
  * chunk suffix appended after the id.
  */
 
-import { microsoftRefId, ownerOfMicrosoftRefId } from './refs';
+import { microsoftRefId, ownerOfMicrosoftRefId, objectIdOfMicrosoftRefId } from './refs';
 
 describe('microsoftRefId', () => {
   it('builds upn/kind/id with the UPN lowercased', () => {
@@ -35,5 +35,26 @@ describe('ownerOfMicrosoftRefId', () => {
     expect(ownerOfMicrosoftRefId('no-separator')).toBeNull();
     expect(ownerOfMicrosoftRefId('/msg/id-1')).toBeNull();
     expect(ownerOfMicrosoftRefId('')).toBeNull();
+  });
+});
+
+describe('objectIdOfMicrosoftRefId', () => {
+  it('recovers the Graph object id for every kind', () => {
+    for (const kind of ['msg', 'evt', 'task'] as const) {
+      const refId = microsoftRefId('sam@contoso.com', kind, 'AAMkAD=');
+      expect(objectIdOfMicrosoftRefId(refId)).toBe('AAMkAD=');
+    }
+  });
+
+  it('includes a chunk suffix if present — callers that want the bare id use the unchunked refId', () => {
+    const refId = `${microsoftRefId('sam@contoso.com', 'msg', 'AAMkAD=')}#0001`;
+    expect(objectIdOfMicrosoftRefId(refId)).toBe('AAMkAD=#0001');
+  });
+
+  it('returns null for malformed refs', () => {
+    expect(objectIdOfMicrosoftRefId('no-separator')).toBeNull();
+    expect(objectIdOfMicrosoftRefId('sam@contoso.com/msg')).toBeNull();
+    expect(objectIdOfMicrosoftRefId('sam@contoso.com/msg/')).toBeNull();
+    expect(objectIdOfMicrosoftRefId('')).toBeNull();
   });
 });

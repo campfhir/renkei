@@ -1,0 +1,16 @@
+{
+  "description": "A sender that restyled its notification template scores below threshold — drift, not a silent bad extraction",
+  "segments": [
+    { "type": "field", "name": "actor" },
+    { "type": "literal", "text": "commented on" },
+    { "type": "field", "name": "issueKey", "pattern": "[A-Z][A-Z0-9]+-\\d+" },
+    { "type": "literal", "text": ":" },
+    { "type": "field", "name": "commentBody" },
+    { "type": "literal", "text": "View Issue" },
+    { "type": "field", "name": "trailing" },
+    { "type": "literal", "text": "This message was sent by Atlassian Jira" }
+  ],
+  "matchThreshold": 0.85,
+  "sample": "Jira Cloud Update -- PROJ-999 status changed to Done by Jane Doe. Click here for details. Sent from the new Atlassian Cloud notification service.",
+  "expectBelowThreshold": true
+}

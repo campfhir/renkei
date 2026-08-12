@@ -31,6 +31,8 @@ import {
   ingestObjectChunks,
   deleteObjectChunks,
 } from '@renkei/knowledge';
+import { sanitizeEmailForTenant } from '@renkei/email-sanitizer';
+import type { RawEmail } from '@renkei/email-sanitizer';
 import { logger } from '../logger';
 import type { MicrosoftAccess } from './microsoft-access';
 
@@ -221,19 +223,39 @@ export async function ensureMicrosoftSubscriptions(
   return rows;
 }
 
-/** Text content per object kind — what gets embedded. */
+/** A Graph message record as the connector-agnostic shape the sanitizer expects. */
+export function rawEmailOf(item: Record<string, unknown>): RawEmail {
+  const from = rec(rec(item.from).emailAddress);
+  // `sender` is Graph's RFC 5322 Sender — the actual authenticated sender,
+  // which differs from `from` on "send on behalf of" mail (SharePoint/OneDrive
+  // sharing notifications are the common case: `from` shows the sharing
+  // colleague, `sender` is a Microsoft system account). `replyTo` is another
+  // common system-relay tell. Both are the classifier's sender_domain/
+  // reply_to_domain match types' data source.
+  const sender = rec(rec(item.sender).emailAddress);
+  const replyToList = Array.isArray(item.replyTo) ? item.replyTo : [];
+  const firstReplyTo = replyToList.length > 0 ? rec(rec(replyToList[0]).emailAddress) : {};
+  const bodyRec = rec(item.body);
+  const htmlOrText = str(bodyRec.content);
+  const contentType: 'html' | 'text' =
+    htmlOrText && str(bodyRec.contentType).toLowerCase() === 'html' ? 'html' : 'text';
+  return {
+    subject: str(item.subject),
+    fromName: str(from.name),
+    fromAddress: str(from.address),
+    senderAddress: str(sender.address) || undefined,
+    replyToAddress: str(firstReplyTo.address) || undefined,
+    // Graph's Message-ID header — the classifier's last-resort signal for
+    // notifications that impersonate a real person in every visible header,
+    // sender/reply-to included (observed on SharePoint/OneDrive share mail).
+    messageId: str(item.internetMessageId) || undefined,
+    receivedAt: str(item.receivedDateTime),
+    body: { content: htmlOrText || str(item.bodyPreview), contentType },
+  };
+}
+
+/** Text content per object kind — what gets embedded. Messages are handled separately (see sanitizeEmailForTenant). */
 function contentOf(kind: MicrosoftRefKind, item: Record<string, unknown>): string {
-  if (kind === 'msg') {
-    const from = rec(rec(item.from).emailAddress);
-    const body = str(rec(item.body).content) || str(item.bodyPreview);
-    return [
-      `Subject: ${str(item.subject)}`,
-      `From: ${str(from.name)} <${str(from.address)}>`,
-      `Received: ${str(item.receivedDateTime)}`,
-      '',
-      body,
-    ].join('\n');
-  }
   if (kind === 'evt') {
     const organizer = rec(rec(item.organizer).emailAddress);
     const attendees = Array.isArray(item.attendees)
@@ -304,6 +326,57 @@ export async function runSubscriptionSync(
     }
 
     if (!embedder) continue; // knowledge layer off for this org
+
+    if (kind === 'msg') {
+      // Mail goes through the sanitizer, not straight to embedding: classify
+      // (human/system-notification/marketing), clean or extract, and log the
+      // decision under this mailbox's own owner_upn — see
+      // packages/email-sanitizer. Never admin-visible; see that package's
+      // persistence/log.ts for why.
+      const sanitized = await sanitizeEmailForTenant({
+        tenantId,
+        provider: MICROSOFT,
+        refId,
+        ownerUpn: access.upn,
+        accountId: access.accountId,
+        raw: rawEmailOf(entry),
+        // Enables near-duplicate detection alongside the exact-hash check;
+        // costs one extra embed call per non-exact-duplicate message (the
+        // content is re-embedded again below for actual storage — a known,
+        // accepted inefficiency rather than reworking ingestObjectChunks to
+        // accept a precomputed vector).
+        embedder,
+      });
+
+      if (sanitized.action === 'excluded') {
+        // Marketing, an exact duplicate, or the owner's own removal — if
+        // something was indexed under an earlier classification, drop it.
+        await deleteObjectChunks(tenantId, MICROSOFT, refId);
+        continue;
+      }
+
+      const ingested = await ingestObjectChunks(tenantId, embedder, {
+        provider: MICROSOFT,
+        refId,
+        content: sanitized.content,
+        metadata: {
+          kind,
+          upn: access.upn,
+          webLink: str(entry.webLink) || undefined,
+          when: str(entry.receivedDateTime) || undefined,
+          subject: str(entry.subject) || undefined,
+          senderKey: sanitized.senderKey ?? undefined,
+          templateVersion: sanitized.templateVersion ?? undefined,
+        },
+      });
+      if (!ingested.ok) {
+        logger.warn('could not index {kind} object', { component: COMPONENT, tenantId, kind });
+        continue;
+      }
+      changed += 1;
+      continue;
+    }
+
     const content = contentOf(kind, entry);
     if (!content.trim()) continue;
     const ingested = await ingestObjectChunks(tenantId, embedder, {

@@ -1,0 +1,22 @@
+{
+  "description": "The seeded Jira template matches a well-formed sample and extracts its fields",
+  "segments": [
+    { "type": "field", "name": "actor" },
+    { "type": "literal", "text": "commented on" },
+    { "type": "field", "name": "issueKey", "pattern": "[A-Z][A-Z0-9]+-\\d+" },
+    { "type": "literal", "text": ":" },
+    { "type": "field", "name": "commentBody" },
+    { "type": "literal", "text": "View Issue" },
+    { "type": "field", "name": "trailing" },
+    { "type": "literal", "text": "This message was sent by Atlassian Jira" }
+  ],
+  "matchThreshold": 0.85,
+  "sample": "Jane Doe commented on PROJ-123:\nLooks good to me, approving now.\nView Issue\nManage notifications\nThis message was sent by Atlassian Jira",
+  "expectedFields": {
+    "actor": "Jane Doe",
+    "issueKey": "PROJ-123",
+    "commentBody": "Looks good to me, approving now.",
+    "trailing": "Manage notifications"
+  },
+  "expectMinScore": 1
+}

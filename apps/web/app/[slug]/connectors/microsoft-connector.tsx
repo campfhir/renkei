@@ -32,6 +32,8 @@ export default function MicrosoftConnector({
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [reindexing, setReindexing] = useState(false);
+  const [reindexNotice, setReindexNotice] = useState<string | null>(null);
   // Only catalog options count as choices; required scopes (openid, profile,
   // email, offline_access, User.Read) ride along server-side and are not
   // offered here.
@@ -74,6 +76,24 @@ export default function MicrosoftConnector({
       setNotice('Could not reach the server');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function reindex() {
+    setReindexing(true);
+    setReindexNotice(null);
+    try {
+      const response = await fetch(`/api/microsoft/${tenantId}/reindex`, { method: 'POST' });
+      const data = await response.json().catch(() => ({}));
+      setReindexNotice(
+        response.ok
+          ? 'Re-indexing started — everything will be re-fetched and re-cleaned in the background.'
+          : (data.error ?? 'Could not start re-indexing')
+      );
+    } catch {
+      setReindexNotice('Could not reach the server');
+    } finally {
+      setReindexing(false);
     }
   }
 
@@ -133,6 +153,27 @@ export default function MicrosoftConnector({
           >
             Connect Microsoft 365
           </a>
+        </div>
+      )}
+
+      {connected && (
+        <div className="mt-3">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => void reindex()}
+              disabled={reindexing}
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+            >
+              {reindexing ? 'Starting…' : 'Re-index'}
+            </button>
+            {reindexNotice && (
+              <span className="text-sm text-gray-600 dark:text-gray-400">{reindexNotice}</span>
+            )}
+          </div>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Re-fetches everything from Outlook and re-runs it through the current cleaning rules —
+            useful after changing classifier rules or teaching a new sender template on Mail review.
+          </p>
         </div>
       )}
 

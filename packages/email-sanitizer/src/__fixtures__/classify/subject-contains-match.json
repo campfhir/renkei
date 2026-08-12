@@ -1,0 +1,19 @@
+{
+  "description": "A subject_contains rule matches a substring of the (lowercased) subject",
+  "rules": [
+    {
+      "id": "r3",
+      "category": "system_notification",
+      "matchType": "subject_contains",
+      "matchValue": "[paycom]",
+      "senderKey": "paycom",
+      "priority": 20,
+      "enabled": true
+    }
+  ],
+  "email": {
+    "fromAddress": "noreply@paycomonline.com",
+    "subject": "[Paycom] Your paycheck is ready"
+  },
+  "expected": { "category": "system_notification", "matchedRuleId": "r3", "senderKey": "paycom" }
+}

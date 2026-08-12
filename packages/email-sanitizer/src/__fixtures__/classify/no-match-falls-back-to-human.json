@@ -1,0 +1,16 @@
+{
+  "description": "A message matching no rule falls back to human — the fail-safe default",
+  "rules": [
+    {
+      "id": "r4",
+      "category": "marketing",
+      "matchType": "domain",
+      "matchValue": "vendor.com",
+      "senderKey": null,
+      "priority": 1,
+      "enabled": true
+    }
+  ],
+  "email": { "fromAddress": "friend@personal-domain.com", "subject": "Dinner this weekend?" },
+  "expected": { "category": "human", "matchedRuleId": null, "senderKey": null }
+}

@@ -16,13 +16,20 @@
 
 import { getDatabase } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
-import { renewGraphSubscription } from '@renkei/connector-microsoft';
+import { renewGraphSubscription, graphRequest } from '@renkei/connector-microsoft';
 import { MICROSOFT } from '@renkei/provider-grants';
+import {
+  resolveEmbeddingProvider,
+  ingestObjectChunks,
+  deleteObjectChunks,
+} from '@renkei/knowledge';
+import { sanitizeEmailForTenant } from '@renkei/email-sanitizer';
+import type { MessageOverride } from '@renkei/email-sanitizer';
 import { sql } from 'kysely';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { resolveMicrosoftAccess } from './microsoft-access';
-import { ensureMicrosoftSubscriptions, runSubscriptionSync } from './microsoft-sync';
+import { ensureMicrosoftSubscriptions, runSubscriptionSync, rawEmailOf } from './microsoft-sync';
 import { logger } from '../logger';
 
 const COMPONENT = 'microsoft/events';
@@ -40,6 +47,31 @@ function requireString(payload: Record<string, unknown>, key: string): string {
     throw new Error(`microsoft event payload has no ${key}`);
   }
   return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isOverrideAction(value: string): value is MessageOverride['action'] {
+  return value === 'exclude' || value === 'reclassify';
+}
+
+function isEmailCategory(value: string): value is NonNullable<MessageOverride['category']> {
+  return value === 'human' || value === 'system_notification' || value === 'marketing';
+}
+
+function requireOverride(payload: Record<string, unknown>): MessageOverride {
+  const raw = payload.override;
+  if (!isRecord(raw) || typeof raw.action !== 'string' || !isOverrideAction(raw.action)) {
+    throw new Error('microsoft message-override event payload has no valid override.action');
+  }
+  return {
+    action: raw.action,
+    category:
+      typeof raw.category === 'string' && isEmailCategory(raw.category) ? raw.category : undefined,
+    senderKey: typeof raw.senderKey === 'string' ? raw.senderKey : undefined,
+  };
 }
 
 export function createMicrosoftGrantConnectedHandler(): EventHandler {
@@ -162,5 +194,82 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
       tenantId,
       lifecycleEvent: lifecycleEvent || '(unknown)',
     });
+  };
+}
+
+/**
+ * message-override — a mailbox owner's own correction from their private
+ * mail-review page (never admin-initiated; see packages/email-sanitizer's
+ * persistence/log.ts for why). Message bodies are never persisted at rest,
+ * so applying an override means re-fetching the one message from Graph,
+ * running it back through the pipeline with the override forced, and
+ * re-indexing or removing accordingly. 'exclude' needs no re-fetch — there
+ * is nothing left to sanitize, only a chunk to remove.
+ */
+export function createMicrosoftMessageOverrideHandler(): EventHandler {
+  return async (event) => {
+    const payload = payloadOf(event);
+    const accountId = requireString(payload, 'accountId');
+    const objectId = requireString(payload, 'objectId');
+    const refId = requireString(payload, 'refId');
+    const override = requireOverride(payload);
+    const tenantId = event.tenant_id;
+
+    if (override.action === 'exclude') {
+      const deleted = await deleteObjectChunks(tenantId, MICROSOFT, refId);
+      if (!deleted.ok) {
+        throw new Error(`could not remove excluded message ${refId} (tenant ${tenantId})`);
+      }
+      return;
+    }
+
+    const access = await resolveMicrosoftAccess(tenantId, accountId);
+    const embedder = await resolveEmbeddingProvider(tenantId);
+    if (!embedder) {
+      logger.warn('message-override skipped: knowledge layer is off for this org', {
+        component: COMPONENT,
+        tenantId,
+      });
+      return;
+    }
+
+    const fetched = await graphRequest(access.accessToken, `/me/messages/${objectId}`);
+    if (!fetched.ok || !isRecord(fetched.val)) {
+      throw new Error(`could not re-fetch message ${objectId} for override (tenant ${tenantId})`);
+    }
+
+    // No embedder here on purpose: near-duplicate dedup is for the automatic
+    // ingest path only (see microsoft-sync.ts). An override is a deliberate
+    // owner correction — silently swallowing it as a "duplicate" of some
+    // other message would undermine the very thing they just asked for.
+    const sanitized = await sanitizeEmailForTenant({
+      tenantId,
+      provider: MICROSOFT,
+      refId,
+      ownerUpn: access.upn,
+      raw: rawEmailOf(fetched.val),
+      override,
+    });
+
+    if (sanitized.action === 'excluded') {
+      await deleteObjectChunks(tenantId, MICROSOFT, refId);
+      return;
+    }
+
+    const ingested = await ingestObjectChunks(tenantId, embedder, {
+      provider: MICROSOFT,
+      refId,
+      content: sanitized.content,
+      metadata: {
+        kind: 'msg',
+        upn: access.upn,
+        senderKey: sanitized.senderKey ?? undefined,
+        templateVersion: sanitized.templateVersion ?? undefined,
+        overridden: true,
+      },
+    });
+    if (!ingested.ok) {
+      throw new Error(`could not index overridden message ${objectId} (tenant ${tenantId})`);
+    }
   };
 }

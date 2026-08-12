@@ -23,7 +23,12 @@
 export const MICROSOFT_CONNECTOR = 'microsoft';
 
 export { GRAPH_BASE_URL, graphRequest } from './client';
-export { microsoftRefId, ownerOfMicrosoftRefId, type MicrosoftRefKind } from './refs';
+export {
+  microsoftRefId,
+  ownerOfMicrosoftRefId,
+  objectIdOfMicrosoftRefId,
+  type MicrosoftRefKind,
+} from './refs';
 export { createMicrosoftAccessVerifier } from './verifier';
 export {
   GRAPH_SUBSCRIPTION_MINUTES,

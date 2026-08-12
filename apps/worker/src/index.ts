@@ -16,6 +16,7 @@ import {
   createMicrosoftGrantConnectedHandler,
   createMicrosoftChangeNotificationHandler,
   createMicrosoftLifecycleHandler,
+  createMicrosoftMessageOverrideHandler,
 } from './handlers/microsoft-events';
 import { createZoomTranscriptHandler, createZoomSummaryHandler } from './handlers/zoom-events';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
@@ -91,6 +92,7 @@ function registerConnectorHandlers(): void {
   registerHandler('microsoft', 'grant.connected', createMicrosoftGrantConnectedHandler());
   registerHandler('microsoft', 'change-notification', createMicrosoftChangeNotificationHandler());
   registerHandler('microsoft', 'lifecycle', createMicrosoftLifecycleHandler());
+  registerHandler('microsoft', 'message-override', createMicrosoftMessageOverrideHandler());
   registerHandler('zoom', 'recording.transcript_completed', createZoomTranscriptHandler());
   registerHandler('zoom', 'meeting.summary_completed', createZoomSummaryHandler());
   logger.info('webex, microsoft and zoom handlers registered', { component: 'worker/loop' });

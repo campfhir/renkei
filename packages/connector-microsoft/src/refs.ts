@@ -29,3 +29,18 @@ export function ownerOfMicrosoftRefId(refId: string): string | null {
   if (slash <= 0) return null;
   return refId.slice(0, slash).toLowerCase();
 }
+
+/**
+ * The Graph object id of a refId — everything after `${upn}/${kind}/`,
+ * chunk suffix included if present. Null when the ref is malformed. The
+ * override flow (a mailbox owner correcting their own message) uses this to
+ * recover the id to re-fetch, since bodies are never persisted at rest.
+ */
+export function objectIdOfMicrosoftRefId(refId: string): string | null {
+  const firstSlash = refId.indexOf('/');
+  if (firstSlash <= 0) return null;
+  const secondSlash = refId.indexOf('/', firstSlash + 1);
+  if (secondSlash === -1) return null;
+  const id = refId.slice(secondSlash + 1);
+  return id || null;
+}

@@ -1,0 +1,20 @@
+{
+  "description": "A message_id_contains rule never fires on an ordinary Outlook-composed message's server-assigned Message-ID",
+  "rules": [
+    {
+      "id": "r11",
+      "category": "system_notification",
+      "matchType": "message_id_contains",
+      "matchValue": "odspnotify",
+      "senderKey": "sharepoint",
+      "priority": 10,
+      "enabled": true
+    }
+  ],
+  "email": {
+    "fromAddress": "friend@personal-domain.com",
+    "subject": "Dinner this weekend?",
+    "messageId": "<a1b2c3d4-e5f6-7890-abcd-ef1234567890@DS1PR16MB6594.namprd16.prod.outlook.com>"
+  },
+  "expected": { "category": "human", "matchedRuleId": null, "senderKey": null }
+}

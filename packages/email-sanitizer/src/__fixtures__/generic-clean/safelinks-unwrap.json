@@ -1,0 +1,5 @@
+{
+  "description": "An Outlook Safe Links wrapper is unwrapped to the real destination URL",
+  "content": "Here is the doc: https://nam02.safelinks.protection.outlook.com/?url=https%3A%2F%2Fexample.com%2Fdoc&data=05%7C01",
+  "expected": "Here is the doc: https://example.com/doc"
+}

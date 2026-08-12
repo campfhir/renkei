@@ -9,6 +9,7 @@ export default {
     // would be excluded by transformIgnorePatterns.
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',
+    '^@renkei/email-sanitizer$': '<rootDir>/../../packages/email-sanitizer/src/index.ts',
     '^@renkei/provider-grants$': '<rootDir>/../../packages/provider-grants/src/index.ts',
     '^@renkei/capability-registry$': '<rootDir>/../../packages/capability-registry/src/index.ts',
     '^@renkei/connector-webex$': '<rootDir>/../../packages/connector-webex/src/index.ts',

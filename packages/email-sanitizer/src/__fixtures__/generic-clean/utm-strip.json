@@ -1,0 +1,5 @@
+{
+  "description": "utm_* tracking query params are stripped from a bare URL while other params survive",
+  "content": "Check out our new feature: https://example.com/features?utm_source=newsletter&utm_medium=email&ref=123",
+  "expected": "Check out our new feature: https://example.com/features?ref=123"
+}

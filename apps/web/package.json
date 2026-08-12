@@ -20,6 +20,7 @@
     "@renkei/connector-zoom": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/email-sanitizer": "workspace:*",
     "@renkei/gates": "workspace:*",
     "@renkei/knowledge": "workspace:*",
     "@renkei/provider-grants": "workspace:*",
