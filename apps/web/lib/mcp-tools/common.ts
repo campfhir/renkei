@@ -78,6 +78,15 @@ export interface MCPToolContext {
     accountId: string;
     scopes?: string[];
   };
+  /**
+   * Same, for the caller's grant on the third Atlassian app ("Renkei
+   * Confluence"). Unlike jsmGrant above, Confluence tools don't reuse
+   * Jira's apiBaseUrl/accessToken context fields — Confluence is a
+   * different product with its own gateway path, so each tool resolves
+   * its own access fresh per call (Outlook/WebEx/Zoom-style). Only the
+   * scopes are needed on the context, for the registration-time gate.
+   */
+  confluenceScopes?: string[];
   db?: Kysely<DB>;
 }
 

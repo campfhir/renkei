@@ -3,9 +3,12 @@ import { join } from 'node:path';
 import {
   ALL_ATLASSIAN_SCOPES,
   ALL_ATLASSIAN_JSM_SCOPES,
+  ALL_ATLASSIAN_CONFLUENCE_SCOPES,
   ATLASSIAN_SCOPE_OPTIONS,
   ATLASSIAN_JSM_SCOPE_OPTIONS,
+  ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS,
   DEFAULT_ATLASSIAN_SCOPES,
+  DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES,
 } from './atlassian-scopes';
 
 /**
@@ -35,10 +38,12 @@ describe('atlassian scope catalog', () => {
     expect(classic).toEqual([]);
   });
 
-  it('has unique option ids across both catalogs', () => {
-    const ids = [...ATLASSIAN_SCOPE_OPTIONS, ...ATLASSIAN_JSM_SCOPE_OPTIONS].map(
-      (option) => option.id
-    );
+  it('has unique option ids across all three catalogs', () => {
+    const ids = [
+      ...ATLASSIAN_SCOPE_OPTIONS,
+      ...ATLASSIAN_JSM_SCOPE_OPTIONS,
+      ...ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS,
+    ].map((option) => option.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
@@ -76,5 +81,70 @@ describe('two-app split invariants', () => {
       const est = 250 + encodeURIComponent([...scopes, 'offline_access'].join(' ')).length;
       expect(est).toBeLessThan(2900);
     }
+  });
+});
+
+/**
+ * The third app ("Renkei Confluence") — a genuinely separate product
+ * surface, not a shared-site sibling like JSM, so its own doc
+ * (docs/atlassian-confluence-granular-scopes.md) is the source of truth
+ * and gets the same tripwire treatment.
+ */
+describe('confluence scope catalog', () => {
+  const doc = readFileSync(
+    join(__dirname, '../../../docs/atlassian-confluence-granular-scopes.md'),
+    'utf8'
+  );
+  const documented = new Set(
+    [...doc.matchAll(/^((?:read|write|delete):[a-z0-9.:_-]+)$/gm)].map((m) => m[1])
+  );
+
+  it('carries exactly the documented granular scopes', () => {
+    const catalog = new Set(ALL_ATLASSIAN_CONFLUENCE_SCOPES);
+    const missingFromCatalog = [...documented].filter((scope) => !catalog.has(scope));
+    const undocumented = [...catalog].filter((scope) => !documented.has(scope));
+    expect(missingFromCatalog).toEqual([]);
+    expect(undocumented).toEqual([]);
+  });
+
+  it('has no classic scopes', () => {
+    const classic = ALL_ATLASSIAN_CONFLUENCE_SCOPES.filter((scope) =>
+      /^read:confluence-|^write:confluence-|^manage:/.test(scope)
+    );
+    expect(classic).toEqual([]);
+  });
+
+  it('every scope carries the confluence product suffix', () => {
+    const wrongProduct = ALL_ATLASSIAN_CONFLUENCE_SCOPES.filter(
+      (scope) => !scope.endsWith(':confluence')
+    );
+    expect(wrongProduct).toEqual([]);
+  });
+
+  it('is disjoint from the Jira and JSM catalogs', () => {
+    const others = new Set([...ALL_ATLASSIAN_SCOPES, ...ALL_ATLASSIAN_JSM_SCOPES]);
+    const overlap = ALL_ATLASSIAN_CONFLUENCE_SCOPES.filter((scope) => others.has(scope));
+    expect(overlap).toEqual([]);
+  });
+
+  it('defaults include offline_access and only default bundles', () => {
+    const defaults = DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES.split(' ');
+    expect(defaults).toContain('offline_access');
+    const defaultBundleScopes = new Set(
+      ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS.filter((option) => option.defaultChecked).flatMap(
+        (option) => option.scopes
+      )
+    );
+    for (const scope of defaults) {
+      if (scope === 'offline_access') continue;
+      expect(defaultBundleScopes.has(scope)).toBe(true);
+    }
+  });
+
+  it('stays comfortably under the consent-URL cliff', () => {
+    const est =
+      250 +
+      encodeURIComponent([...ALL_ATLASSIAN_CONFLUENCE_SCOPES, 'offline_access'].join(' ')).length;
+    expect(est).toBeLessThan(2900);
   });
 });

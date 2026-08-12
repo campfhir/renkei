@@ -12,11 +12,12 @@ import {
   scopesFromAccessToken,
   ATLASSIAN,
   ATLASSIAN_JSM,
+  ATLASSIAN_CONFLUENCE,
   WEBEX_USER,
   MICROSOFT,
   ZOOM,
 } from '@renkei/provider-grants';
-import { getAtlassianJsmApp } from '@/lib/atlassian-app';
+import { getAtlassianJsmApp, getAtlassianConfluenceApp } from '@/lib/atlassian-app';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
@@ -187,6 +188,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     if (pendingSignIn.provider === 'atlassian-jsm') {
       return handleAtlassianJsmCallback(
+        request,
+        tenant,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes
+      );
+    }
+    if (pendingSignIn.provider === 'atlassian-confluence') {
+      return handleAtlassianConfluenceCallback(
         request,
         tenant,
         pendingSignIn.subject,
@@ -1000,12 +1010,22 @@ async function handleAtlassianJsmCallback(
       redirect_uri: app.redirectUri,
     }),
   });
-  const tokenData: unknown = await tokenResponse.json().catch(() => null);
+  const rawTokenBody = await tokenResponse.text().catch(() => '');
+  let tokenData: unknown = null;
+  try {
+    tokenData = JSON.parse(rawTokenBody);
+  } catch {
+    // stays null — isJiraTokenResponse below fails on it, same as a real parse failure
+  }
   if (!tokenResponse.ok || !isJiraTokenResponse(tokenData)) {
     logger.error('Atlassian JSM token exchange failed', {
       component: 'auth/oauth',
       tenantId: tenant.id,
       status: tokenResponse.status,
+      // No token material reaches a failed exchange's body — safe to log
+      // verbatim, and this is exactly what a wrong client_secret needs to
+      // diagnose instead of a bare status code.
+      body: rawTokenBody.slice(0, 300),
     });
     return NextResponse.json({ error: 'Token exchange failed' }, { status: 502 });
   }
@@ -1094,6 +1114,163 @@ async function handleAtlassianJsmCallback(
   }
 
   logger.info('Atlassian JSM grant stored', {
+    component: 'auth/oauth',
+    tenantId: tenant.id,
+    subject,
+  });
+  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+}
+
+/**
+ * The third Atlassian app ("Renkei Confluence"): Confluence's own product
+ * API, a genuinely separate surface from Jira/JSM (not the same-site
+ * shortcut JSM is), but the OAuth mechanics and cloud-id resolution chain
+ * are identical — same auth.atlassian.com, same accessible-resources call,
+ * same JWT-claim/prior-grant fallback (a tenant's Jira and Confluence
+ * products normally live under the same Atlassian site/cloud id, so a
+ * prior Jira/JSM grant's cloud id is still a valid fallback here).
+ */
+async function handleAtlassianConfluenceCallback(
+  request: NextRequest,
+  tenant: { id: string; slug: string },
+  subject: string,
+  code: string,
+  requestedScopes: string | null
+): Promise<NextResponse> {
+  logger.info('Atlassian Confluence callback', { component: 'auth/oauth', tenantId: tenant.id });
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  const db = dbResult.val;
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  const app = await getAtlassianConfluenceApp(tenant.id, originResult.val);
+  if (!app) {
+    return NextResponse.json(
+      { error: 'Atlassian Confluence connector not configured' },
+      { status: 503 }
+    );
+  }
+
+  const tokenResponse = await fetch('https://auth.atlassian.com/oauth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      client_id: app.clientId,
+      client_secret: app.clientSecret,
+      code,
+      redirect_uri: app.redirectUri,
+    }),
+  });
+  const rawTokenBody = await tokenResponse.text().catch(() => '');
+  let tokenData: unknown = null;
+  try {
+    tokenData = JSON.parse(rawTokenBody);
+  } catch {
+    // stays null — isJiraTokenResponse below fails on it, same as a real parse failure
+  }
+  if (!tokenResponse.ok || !isJiraTokenResponse(tokenData)) {
+    logger.error('Atlassian Confluence token exchange failed', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      status: tokenResponse.status,
+      // No token material reaches a failed exchange's body — safe to log
+      // verbatim, and this is exactly what a wrong client_secret needs to
+      // diagnose instead of a bare status code.
+      body: rawTokenBody.slice(0, 300),
+    });
+    return NextResponse.json({ error: 'Token exchange failed' }, { status: 502 });
+  }
+
+  // Site identity: a Confluence-scoped token may surface no accessible
+  // resources, so fall through the same chain JSM uses — the code JWT's
+  // site ARI, then any prior Atlassian grant in this tenant (Jira,
+  // JSM, or a previous Confluence connect).
+  let cloudId: string | null = null;
+  try {
+    const resources = await fetch('https://api.atlassian.com/oauth/token/accessible-resources', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}`, Accept: 'application/json' },
+    });
+    const list: unknown = await resources.json().catch(() => null);
+    if (isResourceArray(list) && list.length > 0) cloudId = list[0].id;
+  } catch {
+    // fall through to the claim/prior-grant chain
+  }
+  cloudId ??= cloudIdFromTokenClaims(code) ?? cloudIdFromTokenClaims(tokenData.access_token);
+  if (!cloudId) {
+    const prior = await db
+      .selectFrom('provider_grants')
+      .select('metadata')
+      .where('tenant_id', '=', tenant.id)
+      .where('provider', 'in', [ATLASSIAN, ATLASSIAN_JSM, ATLASSIAN_CONFLUENCE])
+      .executeTakeFirst();
+    if (prior && typeof prior.metadata === 'object' && prior.metadata !== null) {
+      const meta = prior.metadata as Record<string, unknown>;
+      if (typeof meta.cloudId === 'string' && meta.cloudId) cloudId = meta.cloudId;
+    }
+  }
+  if (!cloudId) {
+    logger.error('Atlassian Confluence callback could not resolve a cloud id', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json(
+      { error: 'No Confluence site resolvable for this token' },
+      { status: 502 }
+    );
+  }
+
+  // The account id comes from the token claims — /myself is closed to a
+  // token without Jira scopes. Display name borrows from the caller's Jira
+  // grant when one exists (same human, same Atlassian account).
+  const accountId = subFromTokenClaims(tokenData.access_token);
+  if (!accountId) {
+    return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
+  }
+  const jiraGrantRow = await db
+    .selectFrom('provider_grants')
+    .select('display_name')
+    .where('tenant_id', '=', tenant.id)
+    .where('provider', '=', ATLASSIAN)
+    .where('subject', '=', subject)
+    .executeTakeFirst();
+  const displayName = jiraGrantRow?.display_name || accountId;
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) {
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  const stored = await setGrant(
+    ATLASSIAN_CONFLUENCE,
+    tenant.id,
+    {
+      accountId,
+      clientId: app.clientId,
+      displayName,
+      subject,
+      accessToken: tokenData.access_token,
+      refreshToken: tokenData.refresh_token || '',
+      expiresAt: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString(),
+      requestedScopes: (requestedScopes || app.scopes).split(' '),
+      grantedScopes:
+        scopesFromAccessToken(tokenData.access_token) ??
+        ((typeof tokenData.scope === 'string' && tokenData.scope.trim()) || null)?.split(/\s+/) ??
+        null,
+      metadata: { cloudId, siteUrl: '' },
+    },
+    keyResult.val
+  );
+  if (!stored.ok) {
+    logger.error('Failed to store Atlassian Confluence grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Failed to store grant' }, { status: 500 });
+  }
+
+  logger.info('Atlassian Confluence grant stored', {
     component: 'auth/oauth',
     tenantId: tenant.id,
     subject,

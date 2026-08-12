@@ -17,6 +17,15 @@ export const ATLASSIAN_JSM_SCOPE_GROUPS: ScopeGroup[] = [
   { id: 'ops', label: 'Operations (alerts & on-call)' },
 ];
 
+export const ATLASSIAN_CONFLUENCE_SCOPE_GROUPS: ScopeGroup[] = [
+  { id: 'spaces', label: 'Spaces' },
+  { id: 'content', label: 'Pages & blog posts' },
+  { id: 'comments', label: 'Comments' },
+  { id: 'attachments', label: 'Attachments' },
+  { id: 'structure', label: 'Databases & whiteboards' },
+  { id: 'analytics', label: 'Analytics' },
+];
+
 export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
   {
     id: 'jira-read',
@@ -223,6 +232,157 @@ export const ATLASSIAN_JSM_SCOPE_OPTIONS: ScopeOption[] = [
 ];
 
 /**
+ * The third app's catalog ("Renkei Confluence"): Confluence's own product
+ * API, its own dedicated app — unlike JSM this isn't the same site's API,
+ * so nothing here shares a scope family with the other two catalogs.
+ * Derivation: docs/atlassian-confluence-granular-scopes.md (a few scope
+ * names are flagged there as unverified against the actual console — this
+ * is a brand-new app, so that's the authoritative source at setup time).
+ */
+export const ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS: ScopeOption[] = [
+  {
+    id: 'confluence-spaces',
+    label: 'View spaces',
+    hint: 'confluence_list_spaces, confluence_get_space — including space permissions',
+    group: 'spaces',
+    defaultChecked: true,
+    scopes: ['read:space:confluence', 'read:space.permission:confluence'],
+  },
+  {
+    id: 'confluence-content-read',
+    label: 'Read pages & blog posts',
+    hint: 'List/get pages and blog posts, version history, drafts',
+    group: 'content',
+    defaultChecked: true,
+    scopes: ['read:page:confluence', 'read:blogpost:confluence'],
+  },
+  {
+    id: 'confluence-content-write',
+    label: 'Create, edit & move pages/blog posts',
+    hint: 'Create, edit (Markdown in, rendered content out), move, and set status — never "archived", which Confluence’s API silently no-ops on',
+    group: 'content',
+    defaultChecked: true,
+    scopes: ['write:page:confluence', 'write:blogpost:confluence'],
+  },
+  {
+    id: 'confluence-content-delete',
+    label: 'Delete pages & blog posts',
+    hint: 'Trash (and purge) pages and blog posts',
+    group: 'content',
+    defaultChecked: true,
+    scopes: ['delete:page:confluence', 'delete:blogpost:confluence'],
+  },
+  {
+    id: 'confluence-search',
+    label: 'Search & look up users',
+    hint: 'confluence_search (full-text/CQL) and confluence_search_users (for tagging/mentions)',
+    group: 'content',
+    defaultChecked: true,
+    scopes: ['read:content-details:confluence'],
+  },
+  {
+    id: 'confluence-labels',
+    label: 'Manage labels',
+    hint: 'List, add, and remove labels on pages/blog posts/attachments',
+    group: 'content',
+    defaultChecked: true,
+    scopes: ['read:label:confluence', 'write:label:confluence'],
+  },
+  {
+    id: 'confluence-tasks',
+    label: 'Read & update tasks',
+    hint: 'List inline tasks and change their status — tasks are authored via "- [ ]" Markdown in a page, not created through this API',
+    group: 'content',
+    defaultChecked: true,
+    scopes: ['read:task:confluence', 'write:task:confluence'],
+  },
+  {
+    id: 'confluence-properties',
+    label: 'Read & set page metadata',
+    hint: 'Arbitrary content-property metadata on a page, separate from its body',
+    group: 'content',
+    defaultChecked: true,
+    scopes: ['read:content.property:confluence', 'write:content.property:confluence'],
+  },
+  {
+    id: 'confluence-comments-read',
+    label: 'Read comments',
+    hint: 'Footer and inline comments on pages/blog posts',
+    group: 'comments',
+    defaultChecked: true,
+    scopes: ['read:comment:confluence'],
+  },
+  {
+    id: 'confluence-comments-write',
+    label: 'Add & edit comments',
+    hint: 'Footer and inline comments, including threaded replies',
+    group: 'comments',
+    defaultChecked: true,
+    scopes: ['write:comment:confluence'],
+  },
+  {
+    id: 'confluence-comments-delete',
+    label: 'Delete comments',
+    hint: 'Remove a comment',
+    group: 'comments',
+    defaultChecked: true,
+    scopes: ['delete:comment:confluence'],
+  },
+  {
+    id: 'confluence-attachments-read',
+    label: 'Read attachments',
+    hint: 'List attachments on a page/blog post',
+    group: 'attachments',
+    defaultChecked: true,
+    scopes: ['read:attachment:confluence'],
+  },
+  {
+    id: 'confluence-attachments-write',
+    label: 'Upload attachments',
+    hint: 'Upload a file to a page/blog post',
+    group: 'attachments',
+    defaultChecked: true,
+    scopes: ['write:attachment:confluence'],
+  },
+  {
+    id: 'confluence-attachments-delete',
+    label: 'Delete attachments',
+    hint: 'Remove an attachment',
+    group: 'attachments',
+    defaultChecked: true,
+    scopes: ['delete:attachment:confluence'],
+  },
+  {
+    id: 'confluence-databases',
+    label: 'Manage databases (metadata only)',
+    hint: 'Create/read/delete a database’s title and location — there is no API for its rows or columns',
+    group: 'structure',
+    defaultChecked: false,
+    scopes: ['read:database:confluence', 'write:database:confluence', 'delete:database:confluence'],
+  },
+  {
+    id: 'confluence-whiteboards',
+    label: 'Manage whiteboards (metadata only)',
+    hint: 'Create/read/delete a whiteboard’s title and location — there is no API for its canvas content',
+    group: 'structure',
+    defaultChecked: false,
+    scopes: [
+      'read:whiteboard:confluence',
+      'write:whiteboard:confluence',
+      'delete:whiteboard:confluence',
+    ],
+  },
+  {
+    id: 'confluence-analytics',
+    label: 'Page view analytics',
+    hint: 'Per-page view/viewer counts — there is no space-level analytics API to read instead',
+    group: 'analytics',
+    defaultChecked: false,
+    scopes: ['read:analytics.content:confluence'],
+  },
+];
+
+/**
  * Always requested, never a choice: without offline_access Atlassian issues
  * no refresh token, and every grant would die within an hour of connecting.
  */
@@ -235,6 +395,9 @@ export const ALL_ATLASSIAN_SCOPES = [
 ];
 export const ALL_ATLASSIAN_JSM_SCOPES = [
   ...new Set(ATLASSIAN_JSM_SCOPE_OPTIONS.flatMap((option) => option.scopes)),
+];
+export const ALL_ATLASSIAN_CONFLUENCE_SCOPES = [
+  ...new Set(ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS.flatMap((option) => option.scopes)),
 ];
 
 export const DEFAULT_ATLASSIAN_SCOPES = [
@@ -255,6 +418,15 @@ export const DEFAULT_ATLASSIAN_JSM_SCOPES = [
   ATLASSIAN_OFFLINE_SCOPE,
 ].join(' ');
 
+export const DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES = [
+  ...new Set(
+    ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS.filter((option) => option.defaultChecked).flatMap(
+      (option) => option.scopes
+    )
+  ),
+  ATLASSIAN_OFFLINE_SCOPE,
+].join(' ');
+
 /**
  * The org's usable ceiling from a stored scopes string. Settings saved before
  * the granular migration hold classic scopes the catalog no longer knows —
@@ -267,6 +439,14 @@ export function usableAtlassianCeiling(stored: string | null | undefined): strin
 
 export function usableAtlassianJsmCeiling(stored: string | null | undefined): string[] {
   return usableCeiling(stored, ALL_ATLASSIAN_JSM_SCOPES, DEFAULT_ATLASSIAN_JSM_SCOPES);
+}
+
+export function usableAtlassianConfluenceCeiling(stored: string | null | undefined): string[] {
+  return usableCeiling(
+    stored,
+    ALL_ATLASSIAN_CONFLUENCE_SCOPES,
+    DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES
+  );
 }
 
 function usableCeiling(

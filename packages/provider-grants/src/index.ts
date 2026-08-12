@@ -21,7 +21,13 @@ export { silentLogger } from './types';
 export { getGrant, setGrant, deleteGrant } from './store';
 export { refreshGrantTokens } from './refresh';
 export { scopesFromAccessToken } from './token-claims';
-export { ATLASSIAN, ATLASSIAN_JSM, AtlassianAdapter, readAtlassianMetadata } from './atlassian';
+export {
+  ATLASSIAN,
+  ATLASSIAN_JSM,
+  ATLASSIAN_CONFLUENCE,
+  AtlassianAdapter,
+  readAtlassianMetadata,
+} from './atlassian';
 export { WEBEX_USER, WebexUserAdapter } from './webex';
 export { ZOOM, ZoomAdapter } from './zoom';
 export { MICROSOFT, MicrosoftAdapter } from './microsoft';

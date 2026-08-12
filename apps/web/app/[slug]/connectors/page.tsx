@@ -6,18 +6,30 @@ import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import JiraConnector from './jira-connector';
 import JsmConnector from './jsm-connector';
+import ConfluenceConnector from './confluence-connector';
 import WebexUserConnector from './webex-user-connector';
 import MicrosoftConnector from './microsoft-connector';
 import ZoomConnector from './zoom-connector';
 import McpEndpoint from './mcp-endpoint';
-import { WEBEX_USER, ATLASSIAN, ATLASSIAN_JSM, MICROSOFT, ZOOM } from '@renkei/provider-grants';
+import {
+  WEBEX_USER,
+  ATLASSIAN,
+  ATLASSIAN_JSM,
+  ATLASSIAN_CONFLUENCE,
+  MICROSOFT,
+  ZOOM,
+} from '@renkei/provider-grants';
 import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
 import { MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
 import { ZOOM_CONNECTOR } from '@/lib/zoom-app';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
 import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
 import { DEFAULT_ZOOM_SCOPES } from '@/lib/zoom-scopes';
-import { usableAtlassianCeiling, usableAtlassianJsmCeiling } from '@/lib/atlassian-scopes';
+import {
+  usableAtlassianCeiling,
+  usableAtlassianJsmCeiling,
+  usableAtlassianConfluenceCeiling,
+} from '@/lib/atlassian-scopes';
 
 /** The org's stored scopes string for a connector, from non-secret settings. */
 function storedScopes(settings: unknown): string | null {
@@ -77,61 +89,74 @@ export default async function ConnectorsPage({
   // migration is all classic and degrades to the defaults until re-saved.
   const atlassianCeiling = usableAtlassianCeiling(storedScopes(settingsOf('atlassian')));
   const jsmCeiling = usableAtlassianJsmCeiling(storedScopes(settingsOf('atlassian-jsm')));
+  const confluenceCeiling = usableAtlassianConfluenceCeiling(
+    storedScopes(settingsOf('atlassian-confluence'))
+  );
   const webexCeiling = ceilingFrom(settingsOf(WEBEX_USER_CONNECTOR), DEFAULT_WEBEX_USER_SCOPES);
   const microsoftCeiling = ceilingFrom(settingsOf(MICROSOFT_CONNECTOR), DEFAULT_MICROSOFT_SCOPES);
   const zoomCeiling = ceilingFrom(settingsOf(ZOOM_CONNECTOR), DEFAULT_ZOOM_SCOPES);
 
   // The caller's own grants, server-rendered — connection state, and the
   // scopes they previously authorized (seeding the picker on reconnect).
-  const [atlassianGrant, webexGrant, jsmGrant, microsoftGrant, zoomGrant] = dbResult.ok
-    ? await Promise.all([
-        enabled.has('atlassian')
-          ? dbResult.val
-              .selectFrom('provider_grants')
-              .select(['display_name', 'requested_scopes'])
-              .where('tenant_id', '=', tenant.id)
-              .where('provider', '=', ATLASSIAN)
-              .where('subject', '=', session.subject)
-              .executeTakeFirst()
-          : Promise.resolve(undefined),
-        enabled.has(WEBEX_USER_CONNECTOR)
-          ? dbResult.val
-              .selectFrom('provider_grants')
-              .select(['display_name', 'requested_scopes'])
-              .where('tenant_id', '=', tenant.id)
-              .where('provider', '=', WEBEX_USER)
-              .where('subject', '=', session.subject)
-              .executeTakeFirst()
-          : Promise.resolve(undefined),
-        enabled.has('atlassian-jsm')
-          ? dbResult.val
-              .selectFrom('provider_grants')
-              .select(['display_name', 'requested_scopes'])
-              .where('tenant_id', '=', tenant.id)
-              .where('provider', '=', ATLASSIAN_JSM)
-              .where('subject', '=', session.subject)
-              .executeTakeFirst()
-          : Promise.resolve(undefined),
-        enabled.has(MICROSOFT_CONNECTOR)
-          ? dbResult.val
-              .selectFrom('provider_grants')
-              .select(['display_name', 'requested_scopes'])
-              .where('tenant_id', '=', tenant.id)
-              .where('provider', '=', MICROSOFT)
-              .where('subject', '=', session.subject)
-              .executeTakeFirst()
-          : Promise.resolve(undefined),
-        enabled.has(ZOOM_CONNECTOR)
-          ? dbResult.val
-              .selectFrom('provider_grants')
-              .select(['display_name', 'requested_scopes', 'granted_scopes'])
-              .where('tenant_id', '=', tenant.id)
-              .where('provider', '=', ZOOM)
-              .where('subject', '=', session.subject)
-              .executeTakeFirst()
-          : Promise.resolve(undefined),
-      ])
-    : [undefined, undefined, undefined, undefined, undefined];
+  const [atlassianGrant, webexGrant, jsmGrant, confluenceGrant, microsoftGrant, zoomGrant] =
+    dbResult.ok
+      ? await Promise.all([
+          enabled.has('atlassian')
+            ? dbResult.val
+                .selectFrom('provider_grants')
+                .select(['display_name', 'requested_scopes'])
+                .where('tenant_id', '=', tenant.id)
+                .where('provider', '=', ATLASSIAN)
+                .where('subject', '=', session.subject)
+                .executeTakeFirst()
+            : Promise.resolve(undefined),
+          enabled.has(WEBEX_USER_CONNECTOR)
+            ? dbResult.val
+                .selectFrom('provider_grants')
+                .select(['display_name', 'requested_scopes'])
+                .where('tenant_id', '=', tenant.id)
+                .where('provider', '=', WEBEX_USER)
+                .where('subject', '=', session.subject)
+                .executeTakeFirst()
+            : Promise.resolve(undefined),
+          enabled.has('atlassian-jsm')
+            ? dbResult.val
+                .selectFrom('provider_grants')
+                .select(['display_name', 'requested_scopes'])
+                .where('tenant_id', '=', tenant.id)
+                .where('provider', '=', ATLASSIAN_JSM)
+                .where('subject', '=', session.subject)
+                .executeTakeFirst()
+            : Promise.resolve(undefined),
+          enabled.has('atlassian-confluence')
+            ? dbResult.val
+                .selectFrom('provider_grants')
+                .select(['display_name', 'requested_scopes'])
+                .where('tenant_id', '=', tenant.id)
+                .where('provider', '=', ATLASSIAN_CONFLUENCE)
+                .where('subject', '=', session.subject)
+                .executeTakeFirst()
+            : Promise.resolve(undefined),
+          enabled.has(MICROSOFT_CONNECTOR)
+            ? dbResult.val
+                .selectFrom('provider_grants')
+                .select(['display_name', 'requested_scopes'])
+                .where('tenant_id', '=', tenant.id)
+                .where('provider', '=', MICROSOFT)
+                .where('subject', '=', session.subject)
+                .executeTakeFirst()
+            : Promise.resolve(undefined),
+          enabled.has(ZOOM_CONNECTOR)
+            ? dbResult.val
+                .selectFrom('provider_grants')
+                .select(['display_name', 'requested_scopes', 'granted_scopes'])
+                .where('tenant_id', '=', tenant.id)
+                .where('provider', '=', ZOOM)
+                .where('subject', '=', session.subject)
+                .executeTakeFirst()
+            : Promise.resolve(undefined),
+        ])
+      : [undefined, undefined, undefined, undefined, undefined, undefined];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -163,6 +188,16 @@ export default async function ConnectorsPage({
             displayName={jsmGrant?.display_name ?? null}
             ceiling={jsmCeiling}
             priorScopes={jsmGrant?.requested_scopes ?? null}
+          />
+        )}
+
+        {enabled.has('atlassian-confluence') && (
+          <ConfluenceConnector
+            tenantId={tenant.id}
+            connected={confluenceGrant !== undefined && confluenceGrant !== null}
+            displayName={confluenceGrant?.display_name ?? null}
+            ceiling={confluenceCeiling}
+            priorScopes={confluenceGrant?.requested_scopes ?? null}
           />
         )}
 

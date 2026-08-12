@@ -11,10 +11,13 @@
  * visible prose in the issue, never a dropped sentence and never a malformed
  * document that Jira rejects with a validation error the model cannot act on.
  *
- * Not supported, by choice: tables, panels, media, mentions, and status
- * lozenges. Each needs instance-specific IDs (account IDs, file references,
- * colour tokens) that a model would have to invent, and an invented mention
- * notifies a real person.
+ * Not supported, by choice: tables, panels, media, and status lozenges —
+ * each needs instance-specific IDs (file references, colour tokens) a
+ * model would have to invent. Mentions ARE supported, deliberately not by
+ * invention: `[~accountId]` (Jira's own wiki-markup mention syntax) is
+ * converted to a real ADF `mention` node by processMentions below, so a
+ * caller can only mention an account id it already has (e.g. from
+ * confluence_search_users or jira_search_users), never a guessed one.
  */
 
 /** A mark applied to a text node — bold, italic, code, link, and so on. */

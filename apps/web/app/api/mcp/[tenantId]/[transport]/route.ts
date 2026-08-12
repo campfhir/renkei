@@ -20,9 +20,11 @@ import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/kno
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
 import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/outlook';
 import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
+import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
 import {
   WEBEX_USER,
   ATLASSIAN_JSM,
+  ATLASSIAN_CONFLUENCE,
   MICROSOFT,
   ZOOM,
   getGrant,
@@ -48,6 +50,7 @@ function getCacheKey(
   webexAvailable: boolean,
   microsoftAvailable: boolean,
   zoomAvailable: boolean,
+  confluenceAvailable: boolean,
   userEmail: string | null
 ): string {
   // Everything the registered tool set or a handler closure depends on must
@@ -57,7 +60,8 @@ function getCacheKey(
   // recorded email (captured by search_knowledge's closure).
   return (
     `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:` +
-    `${webexAvailable ? 'w' : 'nw'}:${microsoftAvailable ? 'm' : 'nm'}:${zoomAvailable ? 'z' : 'nz'}:${userEmail ?? ''}`
+    `${webexAvailable ? 'w' : 'nw'}:${microsoftAvailable ? 'm' : 'nm'}:${zoomAvailable ? 'z' : 'nz'}:` +
+    `${confluenceAvailable ? 'c' : 'nc'}:${userEmail ?? ''}`
   );
 }
 
@@ -312,6 +316,24 @@ const handler = async (
         : zoomGrantRow.requested_scopes
       : [];
 
+    // The Confluence tools register only when this caller has connected the
+    // third Atlassian app ("Renkei Confluence"). Same granted-over-requested
+    // rule as WebEx/Microsoft — Confluence resolves its own access token
+    // fresh per call (see confluence/client.ts), so only availability and
+    // scopes are needed here.
+    const confluenceGrantRow = await db
+      .selectFrom('provider_grants')
+      .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
+      .where('tenant_id', '=', tenantId)
+      .where('provider', '=', ATLASSIAN_CONFLUENCE)
+      .where('subject', '=', subject)
+      .limit(1)
+      .executeTakeFirst();
+    const confluenceAvailable = confluenceGrantRow !== undefined;
+    const confluenceScopes = confluenceGrantRow
+      ? (confluenceGrantRow.granted_scopes ?? confluenceGrantRow.requested_scopes)
+      : [];
+
     // The second Atlassian app's grant ("Renkei JSM": JSM + Ops scopes) —
     // JSM/Ops tools run on this token when it exists; absent, they fall back
     // to the main grant, the pre-split single-app shape.
@@ -333,7 +355,8 @@ const handler = async (
     const scopeFingerprint =
       `${[...jiraScopes].sort().join(',')}|${[...webexScopes].sort().join(',')}|` +
       `${[...jsmScopes].sort().join(',')}:${jsmGrant ? 'jsm' : 'nojsm'}|` +
-      `${[...graphScopes].sort().join(',')}|${[...zoomScopes].sort().join(',')}`;
+      `${[...graphScopes].sort().join(',')}|${[...zoomScopes].sort().join(',')}|` +
+      `${[...confluenceScopes].sort().join(',')}`;
     const cacheKey =
       getCacheKey(
         tenantId,
@@ -343,6 +366,7 @@ const handler = async (
         webexAvailable,
         microsoftAvailable,
         zoomAvailable,
+        confluenceAvailable,
         userEmail
       ) + `:${scopeFingerprint}`;
     let cachedHandler = handlerCache.get(cacheKey);
@@ -376,6 +400,7 @@ const handler = async (
               webexScopes: webexAvailable ? webexScopes : undefined,
               graphScopes: microsoftAvailable ? graphScopes : undefined,
               zoomScopes: zoomAvailable ? zoomScopes : undefined,
+              confluenceScopes: confluenceAvailable ? confluenceScopes : undefined,
               jsmGrant: jsmGrant ?? undefined,
               db,
             };
@@ -400,6 +425,7 @@ const handler = async (
                   ...(webexAvailable ? [WEBEX_USER_MCP_CONNECTOR] : []),
                   ...(microsoftAvailable ? [OUTLOOK_MCP_CONNECTOR] : []),
                   ...(zoomAvailable ? [ZOOM_MCP_CONNECTOR] : []),
+                  ...(confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
                 ],
                 hiddenCapabilities: [],
               }
@@ -424,6 +450,12 @@ const handler = async (
             if (zoomAvailable) {
               await registerZoomTools(
                 withCapabilityGate(server, projection, ZOOM_MCP_CONNECTOR),
+                context
+              );
+            }
+            if (confluenceAvailable) {
+              await registerConfluenceTools(
+                withCapabilityGate(server, projection, CONFLUENCE_MCP_CONNECTOR),
                 context
               );
             }

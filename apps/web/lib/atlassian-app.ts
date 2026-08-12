@@ -18,6 +18,12 @@ export const ATLASSIAN_CONNECTOR = 'atlassian';
  * makes the combined union unfittable on one app.
  */
 export const ATLASSIAN_JSM_CONNECTOR = 'atlassian-jsm';
+/**
+ * The third Atlassian app ("Renkei Confluence") — Confluence's own product
+ * API, on its own dedicated grant. Not the same site's API as Jira/JSM, so
+ * it doesn't share a consent-URL budget with either.
+ */
+export const ATLASSIAN_CONFLUENCE_CONNECTOR = 'atlassian-confluence';
 
 // The scope catalog lives in atlassian-scopes.ts (pure data, client-importable
 // — the admin form renders it as checkboxes); re-exported here for the server
@@ -25,10 +31,16 @@ export const ATLASSIAN_JSM_CONNECTOR = 'atlassian-jsm';
 import {
   DEFAULT_ATLASSIAN_SCOPES,
   DEFAULT_ATLASSIAN_JSM_SCOPES,
+  DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES,
   usableAtlassianCeiling,
   usableAtlassianJsmCeiling,
+  usableAtlassianConfluenceCeiling,
 } from '@/lib/atlassian-scopes';
-export { DEFAULT_ATLASSIAN_SCOPES, DEFAULT_ATLASSIAN_JSM_SCOPES };
+export {
+  DEFAULT_ATLASSIAN_SCOPES,
+  DEFAULT_ATLASSIAN_JSM_SCOPES,
+  DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES,
+};
 
 export interface AtlassianApp {
   clientId: string;
@@ -56,6 +68,19 @@ export async function getAtlassianJsmApp(
   origin: string
 ): Promise<AtlassianApp | null> {
   return readApp(tenantId, origin, ATLASSIAN_JSM_CONNECTOR, usableAtlassianJsmCeiling);
+}
+
+/** The tenant's third Atlassian app (Confluence), same contract. */
+export async function getAtlassianConfluenceApp(
+  tenantId: string,
+  origin: string
+): Promise<AtlassianApp | null> {
+  return readApp(
+    tenantId,
+    origin,
+    ATLASSIAN_CONFLUENCE_CONNECTOR,
+    usableAtlassianConfluenceCeiling
+  );
 }
 
 async function readApp(

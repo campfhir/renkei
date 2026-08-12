@@ -11,6 +11,8 @@ import {
   ATLASSIAN_SCOPE_GROUPS,
   ATLASSIAN_JSM_SCOPE_OPTIONS,
   ATLASSIAN_JSM_SCOPE_GROUPS,
+  ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS,
+  ATLASSIAN_CONFLUENCE_SCOPE_GROUPS,
   ATLASSIAN_OFFLINE_SCOPE,
 } from '@/lib/atlassian-scopes';
 import {
@@ -214,8 +216,21 @@ function AtlassianJsmForm({ slug, origin }: { slug: string; origin: string | nul
   );
 }
 
+function AtlassianConfluenceForm({ slug, origin }: { slug: string; origin: string | null }) {
+  return (
+    <AtlassianAppForm
+      slug={slug}
+      origin={origin}
+      connector="atlassian-confluence"
+      title="Atlassian (Confluence)"
+      groups={ATLASSIAN_CONFLUENCE_SCOPE_GROUPS}
+      options={ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS}
+    />
+  );
+}
+
 /**
- * One form serves both Atlassian app registrations — Jira, and "Renkei JSM"
+ * One form serves all three Atlassian app registrations — Jira, "Renkei JSM"
  * (the split exists because Atlassian's all-of scope enforcement times its
  * consent-URL length cliff makes the combined scope union unfittable on one
  * app). Each connector stores its own client id/secret and scope ceiling.
@@ -1261,6 +1276,7 @@ export default function ConnectorForms({
     <div className="space-y-6">
       <AtlassianForm slug={slug} origin={origin} />
       <AtlassianJsmForm slug={slug} origin={origin} />
+      <AtlassianConfluenceForm slug={slug} origin={origin} />
       <WebexForm slug={slug} />
       <WebexUserForm slug={slug} origin={origin} />
       <MicrosoftForm slug={slug} origin={origin} />
