@@ -54,6 +54,26 @@ export interface ConnectorConfigs {
   updated_at: Generated<Timestamp>;
 }
 
+export interface ContentWatches {
+  account_id: string;
+  created_at: Generated<Timestamp>;
+  cursor: string | null;
+  enabled: Generated<boolean>;
+  id: string;
+  last_error: string | null;
+  last_run_items: Generated<number>;
+  last_synced_at: Timestamp | null;
+  provider: string;
+  scope_key: string;
+  scope_label: string | null;
+  scope_type: string;
+  subject: string;
+  sync_status: Generated<string>;
+  tenant_id: string;
+  total_items: Generated<number>;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface EmailBannerPatterns {
   created_at: Generated<Timestamp>;
   enabled: Generated<boolean>;
@@ -359,17 +379,22 @@ export interface WebhookSubscriptions {
   delta_link: string | null;
   expires_at: Timestamp | null;
   id: string;
+  last_run_items: Generated<number>;
+  last_synced_at: Timestamp | null;
   provider: string;
   resource: string;
   subject: string | null;
   subscription_id: string | null;
+  sync_status: Generated<string>;
   tenant_id: string;
+  total_items: Generated<number>;
   updated_at: Generated<Timestamp>;
 }
 
 export interface DB {
   actionable_items: ActionableItems;
   connector_configs: ConnectorConfigs;
+  content_watches: ContentWatches;
   email_banner_patterns: EmailBannerPatterns;
   email_classification_log: EmailClassificationLog;
   email_classifier_rules: EmailClassifierRules;

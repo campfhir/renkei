@@ -16,9 +16,11 @@ import { Kysely, sql } from 'kysely';
  * mirrored in DEFAULT_CLASSIFIER_RULES (packages/email-sanitizer) with the
  * rationale for each, and admins may edit or delete any of these rows.
  *
- * ON CONFLICT DO NOTHING against the unique-ish shape means re-running is
- * safe, and a tenant that has already customized a rule with the same
- * match keeps theirs.
+ * Idempotent via a NOT EXISTS guard on (match_type, match_value) rather
+ * than a unique constraint — the table intentionally has none, since an
+ * admin may legitimately want two rules with the same match at different
+ * priorities. Re-running is safe, and a tenant that already wrote a rule
+ * with the same match keeps theirs.
  */
 const DEFAULTS: {
   category: string;

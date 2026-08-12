@@ -13,7 +13,9 @@
   },
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",
+    "@modelcontextprotocol/server": "^2.0.0",
     "@renkei/capability-registry": "workspace:*",
+    "@renkei/connector-atlassian": "workspace:*",
     "@renkei/connector-config": "workspace:*",
     "@renkei/connector-microsoft": "workspace:*",
     "@renkei/connector-webex": "workspace:*",
@@ -25,7 +27,6 @@
     "@renkei/knowledge": "workspace:*",
     "@renkei/provider-grants": "workspace:*",
     "@renkei/settings": "workspace:*",
-    "@modelcontextprotocol/server": "^2.0.0",
     "dotenv": "^17.4.2",
     "jose": "^6.2.5",
     "kysely": "^0.29.4",
