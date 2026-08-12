@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 
 export async function registerRequestDetailsTools(
@@ -64,8 +64,23 @@ export async function registerRequestDetailsTools(
           `Request type has ${fieldList.length} fields:`,
           ...fieldList.map((f: any) => `• ${f.name} (${f.id})${f.required ? ' [REQUIRED]' : ''}`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                fieldList.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Field, Type, Required) usually scans faster than this flat list — ' +
+                        'request forms often have many fields.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -122,8 +137,22 @@ export async function registerRequestDetailsTools(
           `${issueKey} has ${approvals.length} approvals:`,
           ...approvals.map((a: any) => `• ${a.name} [${a.status}]`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                approvals.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Approver, Status, Decided) usually scans faster than this flat list.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -187,8 +216,26 @@ export async function registerRequestDetailsTools(
         });
 
         const lines = [`${issueKey} has ${slas.length} SLAs:`, ...slas];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              // A request usually carries just one or two SLA clocks — a
+              // hint only earns its keep once there's an actual multi-row
+              // list to reformat.
+              text:
+                slas.length > 1
+                  ? withPresentationHint(
+                      text,
+                      'a small table (SLA, State, Breach time) usually scans faster than this flat ' +
+                        'list when there is more than one SLA metric.'
+                    )
+                  : text,
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -244,8 +291,22 @@ export async function registerRequestDetailsTools(
           `${issueKey} has ${participants.length} participants:`,
           ...participants.map((p: any) => `• ${p.name} (${p.email})`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                participants.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Name, Email) usually scans faster than this flat list.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [

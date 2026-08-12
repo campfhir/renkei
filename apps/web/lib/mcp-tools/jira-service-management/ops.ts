@@ -16,7 +16,7 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { jiraFetch } from '../common';
+import { jiraFetch, withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
 
@@ -132,7 +132,13 @@ export async function registerJsmOpsTools(
       if (!response.ok) return errText(await describeOpsFailure(response));
       const body: unknown = await response.json().catch(() => null);
       const lines = items(body).map(alertLine);
-      return textResult(lines.length === 0 ? 'No alerts.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No alerts.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Alert, Status, Priority, Created) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
@@ -286,7 +292,13 @@ export async function registerJsmOpsTools(
           ...rotationLines,
         ].join('\n');
       });
-      return textResult(lines.length === 0 ? 'No schedules.' : lines.join('\n\n'));
+      if (lines.length === 0) return textResult('No schedules.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n\n'),
+          'a table (Schedule, Team) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
@@ -332,10 +344,13 @@ export async function registerJsmOpsTools(
             .filter(Boolean)
         : [];
       const names = flatUsers.length > 0 ? flatUsers : participants;
+      if (names.length === 0) return textResult('Nobody is on call for that schedule.');
       return textResult(
-        names.length === 0
-          ? 'Nobody is on call for that schedule.'
-          : `On call now (user ids — resolve names via jira_get_user):\n${names.join('\n')}`
+        withPresentationHint(
+          `On call now (user ids — resolve names via jira_get_user):\n${names.join('\n')}`,
+          "a small card per schedule (who's on call, until when) usually reads better than a flat " +
+            'list here, since it is really a status snapshot rather than a big table of rows.'
+        )
       );
     }
   );
@@ -375,7 +390,13 @@ export async function registerJsmOpsTools(
           ` — alias: ${str(override.alias)}`
         );
       });
-      return textResult(lines.length === 0 ? 'No overrides.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No overrides.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Schedule, Override user, Start, End) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
@@ -690,7 +711,13 @@ export async function registerJsmOpsTools(
       const lines = teams.map(
         (team) => `${str(team.teamName) || '(unnamed)'} — id: ${str(team.teamId)}`
       );
-      return textResult(lines.length === 0 ? 'No operations teams.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No operations teams.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Team, id) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
@@ -734,7 +761,13 @@ export async function registerJsmOpsTools(
           ...rules,
         ].join('\n');
       });
-      return textResult(lines.length === 0 ? 'No escalation policies.' : lines.join('\n\n'));
+      if (lines.length === 0) return textResult('No escalation policies.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n\n'),
+          'a table (Escalation, Team) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 }

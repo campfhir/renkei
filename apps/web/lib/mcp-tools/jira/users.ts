@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 
 export async function registerUserTools(server: McpServer, context: MCPToolContext): Promise<void> {
@@ -52,7 +52,20 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
           ),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (users.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Name, Email, Account id) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -108,7 +121,18 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
           `Avatar: ${user.avatarUrls?.['16x16'] || 'N/A'}`,
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a small profile card (name, email, account id, and anything else returned) ' +
+                  'usually reads better for a single person than a table.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -154,7 +178,20 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
 
         const lines = [`Found ${groups.length} groups:`, ...groups.map((g: any) => `• ${g.name}`)];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (groups.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Group name, id) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -209,7 +246,20 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
           ...members.map((m: any) => `• ${m.displayName} (${m.emailAddress})`),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (members.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Name, Email) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [

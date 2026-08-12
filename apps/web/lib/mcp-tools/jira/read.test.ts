@@ -11,6 +11,8 @@ jest.mock('../common', () => ({
   issueUrl: (siteUrl: string, issueKey: string) => `${siteUrl}/browse/${issueKey}`,
   cacheUserDisplayName: () => undefined,
   getCachedDisplayName: () => 'Tester',
+  withPresentationHint: (body: string, suggestion: string) =>
+    `${body}\n\n(Presentation hint: ${suggestion})`,
 }));
 
 import { registerReadTools } from './read';

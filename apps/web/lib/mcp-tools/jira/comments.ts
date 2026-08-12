@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
 import { adfToMarkdown } from './adf';
 import { logger } from '@/lib/logger';
 
@@ -69,7 +69,21 @@ export async function registerCommentTools(
           }),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (comments.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a chronological comment-thread layout (author, timestamp, then body) usually ' +
+                  'reads more naturally than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -143,7 +157,21 @@ export async function registerCommentTools(
           }),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (comments.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a chronological comment-thread layout (author, timestamp, then body) usually ' +
+                  'reads more naturally than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [

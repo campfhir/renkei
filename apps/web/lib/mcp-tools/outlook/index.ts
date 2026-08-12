@@ -288,6 +288,48 @@ async function graphDelete(
   }
 }
 
+/**
+ * DELETE a Graph resource and report success/failure — unlike `graphDelete`
+ * above (best-effort orphaned-draft cleanup, failures only logged), an
+ * intentional delete like removing a mail folder must surface a failure to
+ * the caller rather than swallow it.
+ */
+async function graphDeleteChecked(
+  context: MCPToolContext,
+  accessToken: string,
+  pathAndQuery: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  let response: Response;
+  try {
+    response = await fetch(`${GRAPH_BASE_URL}${pathAndQuery}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+  } catch {
+    logger.warn('Graph API unreachable', {
+      component: 'outlook/fetch',
+      tenantId: context.tenantId,
+      subject: context.subject,
+      path: pathAndQuery,
+    });
+    return { ok: false, error: 'Could not reach graph.microsoft.com' };
+  }
+  if (!response.ok) {
+    const responseBody = await response.text().catch(() => '');
+    logger.warn('Graph API non-OK response', {
+      component: 'outlook/fetch',
+      tenantId: context.tenantId,
+      subject: context.subject,
+      path: pathAndQuery,
+      method: 'DELETE',
+      status: response.status,
+      responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
+    });
+    return { ok: false, error: describeStatus(response.status) };
+  }
+  return { ok: true };
+}
+
 function values(body: Record<string, unknown>): Record<string, unknown>[] {
   return Array.isArray(body.value)
     ? body.value.filter(
@@ -302,6 +344,18 @@ function textResult(value: string) {
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
+
+/**
+ * A trailing note appended to a list-shaped tool result, nudging the
+ * calling model toward a more scannable reply than echoing this flat text
+ * back verbatim — a table, a grouped/indented layout, whatever fits the
+ * data — without dictating exactly what that looks like. Cheap to add,
+ * easy to ignore when a flat list is already the right call (a couple of
+ * results, or the user asked for raw output).
+ */
+function withPresentationHint(body: string, suggestion: string): string {
+  return `${body}\n\n(Presentation hint: ${suggestion})`;
 }
 
 function str(value: unknown): string {
@@ -471,7 +525,12 @@ function outlookScopeFor(toolName: string): string[] {
     case 'outlook_mark_message':
     case 'outlook_flag_message':
     case 'outlook_categorize_message':
+    case 'outlook_move_message':
       return ['Mail.ReadWrite'];
+    case 'outlook_create_mail_folder':
+    case 'outlook_rename_mail_folder':
+    case 'outlook_delete_mail_folder':
+      return ['MailboxFolder.ReadWrite'];
     case 'outlook_create_event':
     case 'outlook_respond_event':
       return ['Calendars.ReadWrite'];
@@ -533,6 +592,59 @@ export async function registerOutlookTools(
   const server = withScopeGate(rawServer, context.graphScopes, (name) => outlookScopeFor(name));
 
   server.registerTool(
+    'outlook_list_mail_folders',
+    {
+      title: 'Outlook · Read — List mail folders',
+      description:
+        'The connected user’s mail folder tree — id, display name, unread/total item counts. ' +
+        'Folder ids feed outlook_list_messages and outlook_move_message. Well-known folders ' +
+        '(inbox, archive, deleteditems, drafts, sentitems, junkemail) can also be used by name ' +
+        'directly without listing first.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        parentFolderId: z
+          .string()
+          .describe('List this folder’s children instead of the top-level tree')
+          .optional(),
+        max: z.number().int().min(1).max(200).describe('How many (default 50)').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const max = typeof args.max === 'number' ? args.max : 50;
+      const parentFolderId = str(args.parentFolderId);
+      const path = parentFolderId
+        ? `/me/mailFolders/${encodeURIComponent(parentFolderId)}/childFolders`
+        : '/me/mailFolders';
+      const result = await graphGet(
+        context,
+        access.accessToken,
+        `${path}?$top=${max}&$select=id,displayName,unreadItemCount,totalItemCount,childFolderCount`
+      );
+      if (!result.ok) return errText(result.error);
+      const lines = values(result.body).map((folder) => {
+        const unread = typeof folder.unreadItemCount === 'number' ? folder.unreadItemCount : 0;
+        const total = typeof folder.totalItemCount === 'number' ? folder.totalItemCount : 0;
+        const children = typeof folder.childFolderCount === 'number' ? folder.childFolderCount : 0;
+        return (
+          `${str(folder.displayName) || '(unnamed)'} — ${unread} unread / ${total} total` +
+          (children > 0 ? ` — ${children} subfolder(s)` : '') +
+          ` — id: ${str(folder.id)}`
+        );
+      });
+      if (lines.length === 0) return textResult('No folders.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'an indented tree (matching the folder hierarchy) usually reads clearer than a flat ' +
+            'list once there are several subfolders.'
+        )
+      );
+    }
+  );
+
+  server.registerTool(
     'outlook_list_messages',
     {
       title: 'Outlook · Read — List Outlook messages',
@@ -560,7 +672,14 @@ export async function registerOutlookTools(
       const result = await graphGet(context, access.accessToken, query);
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map(messageLine);
-      return textResult(lines.length === 0 ? 'No messages.' : lines.join('\n\n'));
+      if (lines.length === 0) return textResult('No messages.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n\n'),
+          'a table (From, Subject, Received, Read) usually scans faster than this flat list, ' +
+            'especially with more than a handful of results.'
+        )
+      );
     }
   );
 
@@ -642,7 +761,14 @@ export async function registerOutlookTools(
       );
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map(messageLine);
-      return textResult(lines.length === 0 ? 'No matches.' : lines.join('\n\n'));
+      if (lines.length === 0) return textResult('No matches.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n\n'),
+          'a table (From, Subject, Received, Read) usually scans faster than this flat list, ' +
+            'especially with more than a handful of results.'
+        )
+      );
     }
   );
 
@@ -652,7 +778,10 @@ export async function registerOutlookTools(
       title: 'Outlook · Read — List Outlook calendar events',
       description:
         'The connected user’s calendar in a time window (default: last 7 days through the next ' +
-        '30), expanded from recurrences. Event ids feed outlook_get_event.',
+        '30), expanded from recurrences. Event ids feed outlook_get_event. When presenting the ' +
+        'result, consider a calendar-like layout (a day-by-day agenda, or a small table of ' +
+        'day/time/subject) rather than a flat list — usually easier to scan than plain text, ' +
+        'especially across more than a few days.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         from: z.string().describe('ISO start of the window (default: 7 days ago)').optional(),
@@ -675,7 +804,14 @@ export async function registerOutlookTools(
       );
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map(eventLine);
-      return textResult(lines.length === 0 ? 'No events in that window.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No events in that window.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'this reads better to a person as a calendar layout — a day-by-day agenda, or a table ' +
+            'of day/time/subject — than as this flat list.'
+        )
+      );
     }
   );
 
@@ -772,7 +908,14 @@ export async function registerOutlookTools(
           ` — id: ${str(task.id)}`
         );
       });
-      return textResult(lines.length === 0 ? 'No tasks.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No tasks.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a checklist grouped by status (or sorted by due date) usually reads clearer than this ' +
+            'flat list.'
+        )
+      );
     }
   );
 
@@ -804,7 +947,13 @@ export async function registerOutlookTools(
       );
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map((user) => `${userLine(user)} — id: ${str(user.id)}`);
-      return textResult(lines.length === 0 ? 'No directory matches.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No directory matches.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Name, Title, Department, Email) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
@@ -850,7 +999,16 @@ export async function registerOutlookTools(
           ? `Direct reports (${reportLines.length}):\n${reportLines.map((line) => `  • ${line}`).join('\n')}`
           : 'Direct reports: (none)'
       );
-      return textResult(lines.join('\n'));
+      const body = lines.join('\n');
+      return textResult(
+        reportLines.length > 3
+          ? withPresentationHint(
+              body,
+              'a small org-chart layout (manager above, direct reports below) usually reads ' +
+                'clearer than this flat list once there are several reports.'
+            )
+          : body
+      );
     }
   );
 
@@ -897,7 +1055,13 @@ export async function registerOutlookTools(
           (str(group.description) ? ` — ${str(group.description).slice(0, 120)}` : '') +
           ` — id: ${str(group.id)}`
       );
-      return textResult(lines.length === 0 ? 'No groups.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No groups.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Name, Type, Email) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
@@ -925,7 +1089,13 @@ export async function registerOutlookTools(
       );
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map(userLine);
-      return textResult(lines.length === 0 ? 'No members.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No members.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Name, Title, Email) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
@@ -1284,6 +1454,140 @@ export async function registerOutlookTools(
   );
 
   server.registerTool(
+    'outlook_move_message',
+    {
+      title: 'Outlook · Act — Move a message to another folder',
+      description:
+        'Move a message to a different mail folder — e.g. archive it, or file it into a project ' +
+        'folder. destinationFolder accepts either a folder id from outlook_list_mail_folders, or ' +
+        'a well-known folder name directly: inbox, archive, deleteditems, drafts, sentitems, ' +
+        'junkemail. To archive a message, pass "archive" — no need to look up its id first.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageId: z
+          .string()
+          .min(1)
+          .describe('Message id from outlook_list_messages/outlook_get_message'),
+        destinationFolder: z
+          .string()
+          .min(1)
+          .describe('Folder id, or a well-known name like "archive" or "deleteditems"'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageId = str(args.messageId);
+      if (!messageId) return errText('messageId is required');
+      const destinationFolder = str(args.destinationFolder);
+      if (!destinationFolder) return errText('destinationFolder is required');
+
+      const result = await graphPost(
+        context,
+        access.accessToken,
+        `/me/messages/${encodeURIComponent(messageId)}/move`,
+        { destinationId: destinationFolder }
+      );
+      if (!result.ok) return errText(result.error);
+      return textResult(`Moved to "${destinationFolder}".`);
+    }
+  );
+
+  server.registerTool(
+    'outlook_create_mail_folder',
+    {
+      title: 'Outlook · Act — Create a mail folder',
+      description:
+        'Create a new mail folder. Omit parentFolderId for a top-level folder, or pass a folder ' +
+        'id from outlook_list_mail_folders to create it nested inside that one.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        displayName: z.string().min(1).describe('Folder name'),
+        parentFolderId: z
+          .string()
+          .describe('Create as a subfolder of this folder id (default: top-level)')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const displayName = str(args.displayName);
+      if (!displayName) return errText('displayName is required');
+      const parentFolderId = str(args.parentFolderId);
+      const path = parentFolderId
+        ? `/me/mailFolders/${encodeURIComponent(parentFolderId)}/childFolders`
+        : '/me/mailFolders';
+
+      const result = await graphPost(context, access.accessToken, path, { displayName });
+      if (!result.ok) return errText(result.error);
+      const folder = result.body ?? {};
+      return textResult(
+        `Created folder "${str(folder.displayName) || displayName}" — id: ${str(folder.id) || 'unknown'}.`
+      );
+    }
+  );
+
+  server.registerTool(
+    'outlook_rename_mail_folder',
+    {
+      title: 'Outlook · Act — Rename a mail folder',
+      description: 'Rename a mail folder. Does not move it or change its contents.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        folderId: z.string().min(1).describe('Folder id from outlook_list_mail_folders'),
+        displayName: z.string().min(1).describe('New folder name'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const folderId = str(args.folderId);
+      if (!folderId) return errText('folderId is required');
+      const displayName = str(args.displayName);
+      if (!displayName) return errText('displayName is required');
+
+      const result = await graphPatch(
+        context,
+        access.accessToken,
+        `/me/mailFolders/${encodeURIComponent(folderId)}`,
+        { displayName }
+      );
+      if (!result.ok) return errText(result.error);
+      return textResult(`Renamed to "${displayName}".`);
+    }
+  );
+
+  server.registerTool(
+    'outlook_delete_mail_folder',
+    {
+      title: 'Outlook · Act — Delete a mail folder',
+      description:
+        'Delete a mail folder and everything in it. Like deleting from Outlook itself, this ' +
+        'moves the folder to Deleted Items rather than erasing it outright, but nested messages ' +
+        'and subfolders go with it — confirm with the user before calling this.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        folderId: z.string().min(1).describe('Folder id from outlook_list_mail_folders'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const folderId = str(args.folderId);
+      if (!folderId) return errText('folderId is required');
+
+      const result = await graphDeleteChecked(
+        context,
+        access.accessToken,
+        `/me/mailFolders/${encodeURIComponent(folderId)}`
+      );
+      if (!result.ok) return errText(result.error);
+      return textResult('Folder deleted (moved to Deleted Items).');
+    }
+  );
+
+  server.registerTool(
     'outlook_create_event',
     {
       title: 'Outlook · Act — Create a calendar event',
@@ -1482,7 +1786,13 @@ export async function registerOutlookTools(
           (perAttendee ? `\n  ${perAttendee}` : '')
         );
       });
-      return textResult(lines.join('\n\n'));
+      return textResult(
+        withPresentationHint(
+          lines.join('\n\n'),
+          'a table (Time, Confidence, per-attendee availability) usually makes candidate slots ' +
+            'easier to compare than this flat list — present the top few, ask the user to pick.'
+        )
+      );
     }
   );
 

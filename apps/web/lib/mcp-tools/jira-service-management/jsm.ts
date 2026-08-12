@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, requestUrl } from '../common';
+import { jiraFetch, getCachedDisplayName, requestUrl, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 
 function str(value: unknown): string {
@@ -56,8 +56,22 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           `Found ${data.size ?? 0} service desks (showing ${desks.length}):`,
           ...desks.map((d: any) => `• ${d.name} (${d.key}) — serviceDeskId: ${d.id}`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                desks.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Service desk, Project key, id) usually scans faster than this flat list.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -113,8 +127,22 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           `Service desk has ${types.length} request types:`,
           ...types.map((t: any) => `• ${t.name} (ID: ${t.id})`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                types.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Request type, Service desk, id) usually scans faster than this flat list.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -171,8 +199,23 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           `Found ${data.size ?? 0} requests (showing ${requests.length}):`,
           ...requests.map((r: any) => `• ${r.key}: ${r.summary} [${r.status}]`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                requests.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Key, Summary, Status, Requester) usually scans faster than this flat ' +
+                        'list, especially with more than a handful of results.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -583,8 +626,22 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           `Service desk has ${data.size ?? 0} customers (showing ${customers.length}):`,
           ...customers.map((c: any) => `• ${c.name} (${c.email})`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                customers.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Name, Email) usually scans faster than this flat list.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [

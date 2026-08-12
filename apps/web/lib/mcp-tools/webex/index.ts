@@ -30,7 +30,7 @@ import { getDatabase } from '@renkei/db';
 import { getWebexUserApp } from '@/lib/webex-app';
 import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
-import type { MCPToolContext } from '../common';
+import { withPresentationHint, type MCPToolContext } from '../common';
 
 export const WEBEX_USER_MCP_CONNECTOR = 'webex-user';
 
@@ -277,7 +277,13 @@ export async function registerWebexUserTools(
           `${str(room.title) || '(untitled)'} — ${str(room.type)} — id: ${str(room.id)}` +
           (str(room.lastActivity) ? ` — last activity ${str(room.lastActivity)}` : '')
       );
-      return textResult(rooms.length === 0 ? 'No rooms.' : rooms.join('\n'));
+      if (rooms.length === 0) return textResult('No rooms.');
+      return textResult(
+        withPresentationHint(
+          rooms.join('\n'),
+          'a table (Room, Type, Last activity) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
@@ -307,7 +313,14 @@ export async function registerWebexUserTools(
       );
       if (!result.ok) return errText(result.error);
       const lines = items(result.body).map(messageLine);
-      return textResult(lines.length === 0 ? 'No messages.' : lines.join('\n\n'));
+      if (lines.length === 0) return textResult('No messages.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n\n'),
+          'a chat-thread layout (grouped by sender, newest last) usually reads more naturally ' +
+            'than this flat list.'
+        )
+      );
     }
   );
 
@@ -489,7 +502,14 @@ export async function registerWebexUserTools(
           `${str(meeting.title) || '(untitled)'} — ${str(meeting.start)} → ${str(meeting.end)} — ` +
           `state: ${str(meeting.state)} — id: ${str(meeting.id)}`
       );
-      return textResult(lines.length === 0 ? 'No meetings in that window.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No meetings in that window.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a calendar-style day-by-day agenda, or a table of day/time/title/state, usually reads ' +
+            'clearer than this flat list.'
+        )
+      );
     }
   );
 
@@ -526,7 +546,13 @@ export async function registerWebexUserTools(
           `${str(transcript.meetingTopic) || '(no topic)'} — ${str(transcript.startTime)} — ` +
           `id: ${str(transcript.id)}`
       );
-      return textResult(lines.length === 0 ? 'No transcripts.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No transcripts.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Meeting, Date, id) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
@@ -595,7 +621,13 @@ export async function registerWebexUserTools(
           `${typeof recording.durationSeconds === 'number' ? `${Math.round(recording.durationSeconds / 60)} min — ` : ''}` +
           `${str(recording.playbackUrl) ? `[play](${str(recording.playbackUrl)})` : 'no playback link'} — id: ${str(recording.id)}`
       );
-      return textResult(lines.length === 0 ? 'No recordings.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No recordings.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Meeting, Date, Duration, Play link) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 }

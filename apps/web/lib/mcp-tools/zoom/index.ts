@@ -33,7 +33,7 @@ import { getDatabase } from '@renkei/db';
 import { getZoomApp } from '@/lib/zoom-app';
 import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
-import type { MCPToolContext } from '../common';
+import { withPresentationHint, type MCPToolContext } from '../common';
 
 export const ZOOM_MCP_CONNECTOR = 'zoom';
 
@@ -302,7 +302,14 @@ export async function registerZoomTools(
       );
       if (!result.ok) return errText(result.error);
       const lines = list(result.body, 'meetings').map(meetingLine);
-      return textResult(lines.length === 0 ? 'No meetings.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No meetings.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a calendar-style agenda, or a table of time/topic/duration, usually reads clearer ' +
+            'than this flat list.'
+        )
+      );
     }
   );
 
@@ -503,7 +510,13 @@ export async function registerZoomTools(
           `${files} file(s) — meeting id: ${String(meeting.id ?? '')} — uuid: ${str(meeting.uuid)}`
         );
       });
-      return textResult(lines.length === 0 ? 'No recordings in that window.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No recordings in that window.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Meeting, Date, File count) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
@@ -684,9 +697,13 @@ export async function registerZoomTools(
           (str(file.file_link) ? ` — [open](${str(file.file_link)})` : '')
       );
       const nextToken = str(body.next_page_token);
+      const nextLine = nextToken ? `\n\nMore available — pass nextPageToken: ${nextToken}` : '';
+      if (lines.length === 0) return textResult(`No notes found.${nextLine}`);
       return textResult(
-        (lines.length === 0 ? 'No notes found.' : lines.join('\n')) +
-          (nextToken ? `\n\nMore available — pass nextPageToken: ${nextToken}` : '')
+        withPresentationHint(
+          lines.join('\n') + nextLine,
+          'a table (Note, id) usually scans faster than this flat list.'
+        )
       );
     }
   );
@@ -720,7 +737,13 @@ export async function registerZoomTools(
           ` — id: ${str(note.note_id)}` +
           (str(note.note_link) ? ` — [open](${str(note.note_link)})` : '')
       );
-      return textResult(lines.length === 0 ? 'No notes for that meeting.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No notes for that meeting.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Note, Modified, id) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 

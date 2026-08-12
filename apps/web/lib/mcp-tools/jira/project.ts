@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 
 export async function registerProjectTools(
@@ -56,7 +56,20 @@ export async function registerProjectTools(
           ...components.map((c: any) => `• ${c.name} (ID: ${c.id})`),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (components.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Component, Lead, id) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -123,8 +136,23 @@ export async function registerProjectTools(
             .map((f: any) => `• ${f.name} (${f.id}) - ${f.schema?.type || 'unknown'}`),
           matching.length > 50 ? `... and ${matching.length - 50} more` : '',
         ];
+        const text = lines.filter(Boolean).join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.filter(Boolean).join('\n') }] };
+        if (matching.length === 0) {
+          return { content: [{ type: 'text' as const, text }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                text,
+                'a table (Field name, id, Type) usually scans faster than this flat list — ' +
+                  'there can be dozens of custom fields.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -175,7 +203,20 @@ export async function registerProjectTools(
           ...users.map((u: any) => `• ${u.displayName} (${u.emailAddress}) - ${u.accountId}`),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (users.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Name, Email, Account id) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [

@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, issueUrl } from '../common';
+import { jiraFetch, getCachedDisplayName, issueUrl, withPresentationHint } from '../common';
 import { adfToMarkdown } from './adf';
 import { markdownToAdf } from './markdown';
 import { logger } from '@/lib/logger';
@@ -64,7 +64,21 @@ export async function registerWorklogTools(
           }),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (worklogs.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Author, Time spent, Date, Comment) usually scans faster than this flat ' +
+                  'list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [

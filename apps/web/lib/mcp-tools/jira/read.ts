@@ -6,7 +6,13 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, issueUrl, cacheUserDisplayName, getCachedDisplayName } from '../common';
+import {
+  jiraFetch,
+  issueUrl,
+  cacheUserDisplayName,
+  getCachedDisplayName,
+  withPresentationHint,
+} from '../common';
 import { STANDARD_ISSUE_FIELDS, normalizeFieldId, renderFieldValue } from './fields';
 import { logger } from '@/lib/logger';
 
@@ -260,7 +266,21 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           ),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (issues.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Key, Summary, Status, Assignee) usually scans faster than this flat ' +
+                  'list, especially with more than a handful of results.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -545,7 +565,20 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           ),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (boards.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Board, Type, id) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -600,21 +633,32 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         }
         const sprints = isArray(data.values) ? data.values : [];
 
-        const lines = [
-          `Board ${boardId} has ${sprints.length} sprints:`,
-          ...sprints
-            .map((s: unknown) => {
-              if (!isRecord(s)) {
-                return null;
-              }
-              // The id feeds jira_move_issue_to_sprint / jira_complete_sprint — the
-              // last member of the ids-missing-from-list-output family.
-              return `• ${s.name} (${s.state}) — sprintId: ${s.id}`;
-            })
-            .filter((line): line is string => line !== null),
-        ];
+        const sprintLines = sprints
+          .map((s: unknown) => {
+            if (!isRecord(s)) {
+              return null;
+            }
+            // The id feeds jira_move_issue_to_sprint / jira_complete_sprint — the
+            // last member of the ids-missing-from-list-output family.
+            return `• ${s.name} (${s.state}) — sprintId: ${s.id}`;
+          })
+          .filter((line): line is string => line !== null);
+        const lines = [`Board ${boardId} has ${sprints.length} sprints:`, ...sprintLines];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (sprintLines.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Sprint, State, Start, End) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [

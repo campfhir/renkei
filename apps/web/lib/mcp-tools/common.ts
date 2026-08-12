@@ -131,6 +131,21 @@ export function toolError(text: string): MCPToolResult {
   return { type: 'text', text };
 }
 
+/**
+ * A trailing note appended to a list/detail-shaped tool result, nudging the
+ * calling model toward a more scannable reply than echoing this flat text
+ * back verbatim — a table, a card, a grouped layout, whatever fits the data
+ * — without dictating exactly what that looks like. Cheap to add, easy to
+ * ignore when a flat list is already the right call (a couple of results,
+ * or the user asked for raw output). Shared across connectors so every tool
+ * file (Jira, JSM, WebEx, Zoom, Outlook) phrases this the same way; see
+ * `apps/web/lib/mcp-tools/outlook/index.ts` for the pattern this generalized
+ * from.
+ */
+export function withPresentationHint(body: string, suggestion: string): string {
+  return `${body}\n\n(Presentation hint: ${suggestion})`;
+}
+
 /** Generate a link to a Jira issue. */
 export function issueUrl(siteUrl: string, issueKey: string): string {
   return `${siteUrl}/browse/${issueKey}`;

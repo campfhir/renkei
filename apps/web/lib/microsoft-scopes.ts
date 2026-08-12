@@ -22,7 +22,9 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     id: 'Mail.Read',
     scopes: ['Mail.Read'],
     label: 'Read mail',
-    hint: 'outlook_list_messages, outlook_get_message, outlook_search_messages, and inbox ingestion into knowledge',
+    hint:
+      'outlook_list_messages, outlook_get_message, outlook_search_messages, ' +
+      'outlook_list_mail_folders, and inbox ingestion into knowledge',
     group: 'mail',
     defaultChecked: true,
   },
@@ -33,6 +35,34 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     hint: 'outlook_send_mail — sends as the user, only on explicit request; org read-only mode disables it',
     group: 'mail',
     defaultChecked: true,
+  },
+  {
+    id: 'Mail.ReadWrite',
+    scopes: ['Mail.ReadWrite'],
+    label: 'Mark, flag & categorize mail',
+    hint:
+      'outlook_mark_message, outlook_flag_message, outlook_categorize_message, ' +
+      'outlook_move_message — changes message state/location, never content. Off by default: ' +
+      'add Mail.ReadWrite as a delegated Microsoft Graph permission on the Entra app ' +
+      'registration before checking this, or Microsoft will reject the consent. Anyone already ' +
+      "connected needs to reconnect afterward — a user's existing grant only carries the scopes " +
+      'they consented to at connect time.',
+    group: 'mail',
+    defaultChecked: false,
+  },
+  {
+    id: 'MailboxFolder.ReadWrite',
+    scopes: ['MailboxFolder.ReadWrite'],
+    label: 'Manage mail folders',
+    hint:
+      'outlook_create_mail_folder, outlook_rename_mail_folder, outlook_delete_mail_folder — ' +
+      'creates/renames/deletes the folders themselves, not message content. Off by default: add ' +
+      'MailboxFolder.ReadWrite as a delegated Microsoft Graph permission on the Entra app ' +
+      'registration before checking this, or Microsoft will reject the consent. Anyone already ' +
+      "connected needs to reconnect afterward — a user's existing grant only carries the scopes " +
+      'they consented to at connect time.',
+    group: 'mail',
+    defaultChecked: false,
   },
   {
     id: 'Calendars.Read',
