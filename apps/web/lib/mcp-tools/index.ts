@@ -60,10 +60,16 @@ function granularJiraScopes(toolName: string, readOnly: boolean): string[] {
   if (BOARD_WRITE_TOOLS.has(toolName)) return ['write:board-scope:jira-software'];
   if (USER_DIRECTORY_TOOLS.has(toolName)) return ['read:user:jira'];
   if (WATCH_TOOLS.has(toolName)) return ['read:issue:jira'];
-  // Project browsing is its own granular scope; a grant carrying the issue
-  // read scope without this one gets 401 "scope does not match" rather than
-  // an empty list, so gate on the scope the endpoint actually checks.
-  if (toolName === 'jira_list_projects') return ['read:project:jira'];
+  // Project endpoints demand their COMPLETE documented granular set, not
+  // just read:project:jira — Atlassian answers 401 "scope does not match"
+  // if any one is absent. read:project.property:jira is named here as well
+  // because it was missing from the catalog until 2026-08-12: gating on it
+  // keeps the tool hidden for grants minted before that fix, which carry
+  // read:project:jira and still cannot call the endpoint, instead of
+  // offering a tool that can only 401 until the user reconnects.
+  if (toolName === 'jira_list_projects') {
+    return ['read:project:jira', 'read:project.property:jira'];
+  }
   const deleteScope = DELETE_TOOL_SCOPES[toolName];
   if (deleteScope) return ['read:issue:jira', deleteScope];
   return readOnly ? ['read:issue:jira'] : ['read:issue:jira', 'write:issue:jira'];

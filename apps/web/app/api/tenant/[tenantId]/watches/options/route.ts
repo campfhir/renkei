@@ -61,8 +61,9 @@ export async function GET(
         {
           error:
             response.status === 401 || response.status === 403
-              ? 'Your Jira connection cannot list projects (it may not carry read:project:jira). ' +
-                'You can still watch a project by key.'
+              ? 'Your Jira connection cannot list projects yet — the project endpoints require a ' +
+                'scope that was missing from Renkei until recently. Reconnect Jira to pick it up. ' +
+                'Watching works either way; enter a project key below.'
               : `Jira answered ${response.status}.`,
         },
         { status: 400 }

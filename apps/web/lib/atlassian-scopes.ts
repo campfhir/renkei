@@ -63,6 +63,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
       'read:project-role:jira',
       'read:project-version:jira',
       'read:project.component:jira',
+      'read:project.property:jira',
       'read:project:jira',
       'read:status:jira',
       'read:user.property:jira',
