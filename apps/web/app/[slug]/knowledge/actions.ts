@@ -16,7 +16,7 @@
 import { getSessionFromCookies } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
 import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
-import { buildKnowledgeVerifiers } from '@/lib/mcp-tools/knowledge';
+import { buildKnowledgeVerifiers, sourceFiltersFor } from '@/lib/mcp-tools/knowledge';
 
 const MIN_K = 1;
 const MAX_K = 30;
@@ -28,6 +28,17 @@ export interface KnowledgeSearchHit {
   content: string;
   metadata: Record<string, unknown>;
   distance: number;
+  /** The source document's own date, when the connector recorded one. */
+  sourceAt: string | null;
+}
+
+/** What the page can narrow by — the same knobs search_knowledge exposes. */
+export interface KnowledgeSearchFilters {
+  /** Source names from KNOWLEDGE_SOURCE_NAMES; empty means everything. */
+  sources?: string[];
+  /** ISO-8601; undated items are excluded when either bound is set. */
+  after?: string;
+  before?: string;
 }
 
 export interface KnowledgeSearchResult {
@@ -50,7 +61,8 @@ export interface KnowledgeSearchResult {
 export async function searchMyKnowledge(
   tenantId: string,
   query: string,
-  k: number = DEFAULT_K
+  k: number = DEFAULT_K,
+  filters: KnowledgeSearchFilters = {}
 ): Promise<KnowledgeSearchResult> {
   const session = await getSessionFromCookies(tenantId);
   if (!session) {
@@ -88,6 +100,11 @@ export async function searchMyKnowledge(
     };
   }
 
+  // Source names map to provider/kind pairs in one place (the MCP tool's
+  // module) so this page and the tool can never drift apart on what
+  // 'outlook_mail' means.
+  const { providers, kinds } = sourceFiltersFor(filters.sources ?? []);
+
   const verifiers = await buildKnowledgeVerifiers(tenantId);
   const searched = await searchKnowledge({
     tenantId,
@@ -96,6 +113,10 @@ export async function searchMyKnowledge(
     k: clampedK,
     embedder,
     verifiers,
+    ...(providers ? { providers } : {}),
+    ...(kinds ? { kinds } : {}),
+    ...(filters.after ? { after: filters.after } : {}),
+    ...(filters.before ? { before: filters.before } : {}),
   });
   if (!searched.ok) {
     return {

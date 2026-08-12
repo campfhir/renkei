@@ -57,6 +57,7 @@ export const EXPECTED_MIGRATIONS = [
   '024-actionable-items-archive',
   '025-email-sanitizer',
   '026-email-banner-patterns',
+  '027-knowledge-source-at',
 ];
 
 export interface MigrationStatus {

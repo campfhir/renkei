@@ -19,6 +19,21 @@ export interface KnowledgeChunkInput {
   content: string;
   /** Candidate-narrowing/display detail; never authorization. */
   metadata: Record<string, unknown>;
+  /**
+   * The SOURCE document's own timestamp (mail received, page modified…),
+   * ISO-8601 — what date filters mean by "when". Distinct from the row's
+   * `created_at`, which is ingest time and is deliberately not refreshed on
+   * re-ingest. Omit when the connector has no meaningful document date;
+   * NULL reads as "undated" and a date filter excludes it.
+   */
+  sourceAt?: string | null;
+}
+
+/** An unparseable date is stored as NULL (undated) rather than throwing mid-ingest. */
+function sourceAtValue(sourceAt: string | null | undefined): Date | null {
+  if (!sourceAt) return null;
+  const parsed = new Date(sourceAt);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 export async function ingestChunk(
@@ -33,6 +48,7 @@ export async function ingestChunk(
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
 
+  const sourceAt = sourceAtValue(chunk.sourceAt);
   const result = await wrapAsync(
     () =>
       dbResult.val
@@ -45,12 +61,17 @@ export async function ingestChunk(
           metadata: JSON.stringify(chunk.metadata),
           content: chunk.content,
           embedding: sql`${vector}::vector`,
+          source_at: sourceAt,
         })
         .onConflict((oc) =>
+          // source_at must be in the update set too: a re-ingest of an edited
+          // page carries a newer document date, and omitting it here would
+          // pin the row to whatever date the first ingest saw.
           oc.columns(['tenant_id', 'provider', 'ref_id']).doUpdateSet({
             metadata: JSON.stringify(chunk.metadata),
             content: chunk.content,
             embedding: sql`${vector}::vector`,
+            source_at: sourceAt,
           })
         )
         .execute(),

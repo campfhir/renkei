@@ -142,6 +142,9 @@ export async function ingestObjectChunks(
         pieces.length > 1
           ? { ...object.metadata, chunk: index + 1, chunkCount: pieces.length }
           : object.metadata,
+      // Every chunk of one document shares the document's date, so a date
+      // filter can't return some chunks of an item and hide the rest.
+      sourceAt: object.sourceAt,
     });
     if (!ingested.ok) return ingested;
   }

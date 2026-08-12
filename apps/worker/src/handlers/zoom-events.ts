@@ -116,6 +116,7 @@ export function createZoomTranscriptHandler(): EventHandler {
           startTime: facts.startTime || undefined,
           hostEmail: access.hostEmail,
         },
+        sourceAt: facts.startTime || null,
       },
       TRANSCRIPT_CHUNKING
     );
@@ -218,6 +219,7 @@ export function createZoomSummaryHandler(): EventHandler {
         startTime: facts.startTime || undefined,
         hostEmail: access.hostEmail,
       },
+      sourceAt: facts.startTime || null,
     });
     if (!ingested.ok) {
       logger.warn('could not index summary for {meetingId}', {

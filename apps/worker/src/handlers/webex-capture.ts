@@ -77,6 +77,7 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
         personEmail: message.personEmail,
         created: message.created,
       },
+      sourceAt: message.created || null,
     });
     if (!ingested.ok) {
       logger.warn('could not index WebEx message', {

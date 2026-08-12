@@ -53,6 +53,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function str(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
 function isOverrideAction(value: string): value is MessageOverride['action'] {
   return value === 'exclude' || value === 'reclassify';
 }
@@ -256,6 +260,12 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
       return;
     }
 
+    // Carry the same descriptive metadata the automatic sync path writes
+    // (microsoft-sync.ts). Omitting `when`/`subject`/`webLink` here made an
+    // overridden message invisible to any date filter and title-less in the
+    // UI — the correction the owner just made would quietly downgrade the
+    // record instead of improving it.
+    const received = str(fetched.val.receivedDateTime);
     const ingested = await ingestObjectChunks(tenantId, embedder, {
       provider: MICROSOFT,
       refId,
@@ -263,10 +273,14 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
       metadata: {
         kind: 'msg',
         upn: access.upn,
+        webLink: str(fetched.val.webLink) || undefined,
+        when: received || undefined,
+        subject: str(fetched.val.subject) || undefined,
         senderKey: sanitized.senderKey ?? undefined,
         templateVersion: sanitized.templateVersion ?? undefined,
         overridden: true,
       },
+      sourceAt: received || null,
     });
     if (!ingested.ok) {
       throw new Error(`could not index overridden message ${objectId} (tenant ${tenantId})`);

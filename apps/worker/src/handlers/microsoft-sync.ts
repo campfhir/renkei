@@ -368,6 +368,7 @@ export async function runSubscriptionSync(
           senderKey: sanitized.senderKey ?? undefined,
           templateVersion: sanitized.templateVersion ?? undefined,
         },
+        sourceAt: str(entry.receivedDateTime) || null,
       });
       if (!ingested.ok) {
         logger.warn('could not index {kind} object', { component: COMPONENT, tenantId, kind });
@@ -394,6 +395,13 @@ export async function runSubscriptionSync(
           undefined,
         subject: str(entry.subject) || str(entry.title) || undefined,
       },
+      // Same precedence as `when` above: received (mail) → start (event) →
+      // last-modified (task), whichever this kind actually carries.
+      sourceAt:
+        str(entry.receivedDateTime) ||
+        str(rec(entry.start).dateTime) ||
+        str(entry.lastModifiedDateTime) ||
+        null,
     });
     if (!ingested.ok) {
       logger.warn('could not index {kind} object', {

@@ -63,6 +63,47 @@ function formatDistance(distance: number): string {
   return Number.isFinite(distance) ? distance.toFixed(3) : String(distance);
 }
 
+/**
+ * Caller-facing source names → the storage vocabulary. The stored
+ * `provider` is the connector ('microsoft'), not the product a person
+ * would name ('outlook'), and the finer split lives in `metadata.kind`
+ * with a per-connector vocabulary. Mapping here means a caller never has
+ * to know either, and the storage names stay free to change.
+ */
+const SOURCE_FILTERS: Record<string, { provider: string; kind?: string }> = {
+  outlook_mail: { provider: 'microsoft', kind: 'msg' },
+  outlook_calendar: { provider: 'microsoft', kind: 'evt' },
+  outlook_tasks: { provider: 'microsoft', kind: 'task' },
+  zoom: { provider: 'zoom' },
+  webex: { provider: 'webex' },
+  confluence: { provider: 'confluence' },
+  jira: { provider: 'jira' },
+};
+
+export const KNOWLEDGE_SOURCE_NAMES = Object.keys(SOURCE_FILTERS);
+
+/**
+ * Turn selected source names into provider/kind filters.
+ *
+ * Kinds are only applied when EVERY selected source pins one — mixing
+ * 'outlook_mail' (kind 'msg') with 'zoom' (no kind) must not silently
+ * drop the Zoom results, since the two filters are ANDed in SQL and no
+ * Zoom chunk carries kind 'msg'.
+ */
+export function sourceFiltersFor(sources: readonly string[]): {
+  providers?: string[];
+  kinds?: string[];
+} {
+  const selected = sources.map((source) => SOURCE_FILTERS[source]).filter(Boolean);
+  if (selected.length === 0) return {};
+  const providers = [...new Set(selected.map((entry) => entry!.provider))];
+  const kinds = selected.map((entry) => entry!.kind);
+  const everySourcePinsAKind = kinds.every((kind) => kind !== undefined);
+  return everySourcePinsAKind
+    ? { providers, kinds: [...new Set(kinds.filter((kind): kind is string => Boolean(kind)))] }
+    : { providers };
+}
+
 export async function registerKnowledgeTools(
   server: McpServer,
   context: MCPToolContext
@@ -86,6 +127,30 @@ export async function registerKnowledgeTools(
           .max(10)
           .optional()
           .describe('Maximum results to return (1-10, default 5)'),
+        sources: z
+          .array(
+            z.enum([
+              'outlook_mail',
+              'outlook_calendar',
+              'outlook_tasks',
+              'zoom',
+              'webex',
+              'confluence',
+              'jira',
+            ])
+          )
+          .optional()
+          .describe('Only search these sources (default: everything indexed)'),
+        after: z
+          .string()
+          .optional()
+          .describe(
+            'Only items dated on/after this ISO-8601 time. Items the connector never dated are excluded.'
+          ),
+        before: z
+          .string()
+          .optional()
+          .describe('Only items dated before this ISO-8601 time. Undated items are excluded.'),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -130,6 +195,11 @@ export async function registerKnowledgeTools(
         };
       }
 
+      const sources = Array.isArray(args.sources)
+        ? args.sources.filter((source): source is string => typeof source === 'string')
+        : [];
+      const { providers, kinds } = sourceFiltersFor(sources);
+
       const verifiers = await buildKnowledgeVerifiers(context.tenantId);
       const searched = await searchKnowledge({
         tenantId: context.tenantId,
@@ -138,6 +208,10 @@ export async function registerKnowledgeTools(
         k,
         embedder,
         verifiers,
+        ...(providers ? { providers } : {}),
+        ...(kinds ? { kinds } : {}),
+        ...(typeof args.after === 'string' && args.after ? { after: args.after } : {}),
+        ...(typeof args.before === 'string' && args.before ? { before: args.before } : {}),
       });
       if (!searched.ok) {
         const reason =
@@ -155,9 +229,21 @@ export async function registerKnowledgeTools(
         lines.push(`${hits.length} result(s), closest first:`);
         for (const [index, hit] of hits.entries()) {
           const excerpt = hit.content.length <= 500 ? hit.content : `${hit.content.slice(0, 499)}…`;
+          // Title and date come back on every hit but were never rendered —
+          // without them a result is an opaque refId plus a distance.
+          const title =
+            typeof hit.metadata.subject === 'string'
+              ? hit.metadata.subject
+              : typeof hit.metadata.topic === 'string'
+                ? hit.metadata.topic
+                : typeof hit.metadata.title === 'string'
+                  ? hit.metadata.title
+                  : '';
           lines.push(
             '',
-            `${index + 1}. [${hit.provider}:${hit.refId}] (distance ${formatDistance(hit.distance)})`,
+            `${index + 1}. ${title || '(untitled)'}` +
+              (hit.sourceAt ? ` — ${hit.sourceAt}` : '') +
+              ` — [${hit.provider}:${hit.refId}] (distance ${formatDistance(hit.distance)})`,
             excerpt
           );
         }
