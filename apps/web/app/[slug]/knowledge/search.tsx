@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { searchMyKnowledge, type KnowledgeSearchHit, type KnowledgeSearchResult } from './actions';
 import { signInUrl } from '@/lib/sign-in-url';
 
@@ -332,29 +332,49 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
     });
   }
 
+  /**
+   * An empty query is a valid request, not a no-op: the server answers it
+   * with the newest indexed items, so the filters double as a browser.
+   */
+  const run = useCallback(
+    async (currentQuery: string) => {
+      setBusy(true);
+      try {
+        const days = DATE_PRESETS.find((preset) => preset.id === datePreset)?.days ?? null;
+        const after =
+          days === null ? undefined : new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+        const res = await searchMyKnowledge(tenantId, currentQuery, k, {
+          sources: [...sources],
+          ...(after ? { after } : {}),
+        });
+        if (res.signedOut) {
+          window.location.href = signInUrl(tenantId, window.location.pathname);
+          return;
+        }
+        setResult(res);
+        setSearchedQuery(currentQuery);
+        setHasSearched(true);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [tenantId, k, sources, datePreset]
+  );
+
   async function runSearch(e: React.FormEvent): Promise<void> {
     e.preventDefault();
-    if (!query.trim() || busy) return;
-    setBusy(true);
-    try {
-      const days = DATE_PRESETS.find((preset) => preset.id === datePreset)?.days ?? null;
-      const after =
-        days === null ? undefined : new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
-      const res = await searchMyKnowledge(tenantId, query, k, {
-        sources: [...sources],
-        ...(after ? { after } : {}),
-      });
-      if (res.signedOut) {
-        window.location.href = signInUrl(tenantId, window.location.pathname);
-        return;
-      }
-      setResult(res);
-      setSearchedQuery(query);
-      setHasSearched(true);
-    } finally {
-      setBusy(false);
-    }
+    if (busy) return;
+    await run(query);
   }
+
+  // Land on content rather than an empty box, and re-browse whenever the
+  // filters change while there is no query — that is what makes the source
+  // chips usable as "show me the newest mail / WebEx / Confluence".
+  useEffect(() => {
+    if (query.trim()) return;
+    void run('');
+    // `run` already closes over the filter state it depends on.
+  }, [run, query]);
 
   /** "12 results across Email and Confluence" — the shape of the answer, before scrolling. */
   const summary = useMemo(() => {
@@ -364,7 +384,10 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
       providers.length === 1
         ? providers[0]
         : `${providers.slice(0, -1).join(', ')} and ${providers[providers.length - 1]}`;
-    return `${groups.length} result${groups.length === 1 ? '' : 's'} from ${list}`;
+    const noun = result.browsing ? 'most recent' : 'result';
+    return result.browsing
+      ? `${groups.length} ${noun} from ${list}`
+      : `${groups.length} ${noun}${groups.length === 1 ? '' : 's'} from ${list}`;
   }, [result, groups]);
 
   return (
@@ -374,7 +397,7 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="What are you looking for?"
+            placeholder="Search, or leave blank to browse the newest"
             className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
           />
           <select
@@ -442,11 +465,7 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
         </div>
       </form>
 
-      {!hasSearched && !busy && (
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          Type something to search what&apos;s indexed for you.
-        </p>
-      )}
+      {!hasSearched && busy && <p className="text-sm text-gray-600 dark:text-gray-400">Loading…</p>}
 
       {result?.error && (
         <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-300">
@@ -464,8 +483,11 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
           )}
           {groups.length === 0 && (
             <p className="text-sm text-gray-600 dark:text-gray-400">
-              No accessible results
-              {sources.size > 0 || datePreset !== 'any' ? ' for those filters.' : '.'}
+              {result?.browsing
+                ? sources.size > 0 || datePreset !== 'any'
+                  ? 'Nothing indexed yet for those filters.'
+                  : 'Nothing indexed for you yet — connect a source on the Connectors page.'
+                : `No accessible results${sources.size > 0 || datePreset !== 'any' ? ' for those filters.' : '.'}`}
             </p>
           )}
           {groups.map((group) => (

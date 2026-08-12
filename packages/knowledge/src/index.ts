@@ -109,6 +109,109 @@ function sourceAtIso(value: Date | string | null): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+/** What narrows a candidate set, shared by semantic search and recency browse. */
+interface CandidateFilters {
+  providers?: readonly string[];
+  kinds?: readonly string[];
+  after?: string;
+  before?: string;
+}
+
+/**
+ * The WHERE fragments for the filters, each a no-op `TRUE` when absent so
+ * the unfiltered plan stays identical. Built once and shared so browse and
+ * search can never disagree about what a filter means.
+ */
+function filterFragments(filters: CandidateFilters) {
+  const providers = cleanList(filters.providers);
+  const kinds = cleanList(filters.kinds);
+  const after = boundary(filters.after);
+  const before = boundary(filters.before);
+  return {
+    provider: providers.length > 0 ? sql`provider = ANY(${providers})` : sql`TRUE`,
+    kind: kinds.length > 0 ? sql`metadata ->> 'kind' = ANY(${kinds})` : sql`TRUE`,
+    // A dated filter excludes undated rows rather than treating NULL as epoch.
+    after: after ? sql`source_at IS NOT NULL AND source_at >= ${after}` : sql`TRUE`,
+    before: before ? sql`source_at IS NOT NULL AND source_at < ${before}` : sql`TRUE`,
+  };
+}
+
+function toHit(row: CandidateRow): KnowledgeHit {
+  return {
+    provider: row.provider,
+    refId: row.ref_id,
+    content: row.content,
+    metadata:
+      typeof row.metadata === 'object' && row.metadata !== null && !Array.isArray(row.metadata)
+        ? { ...row.metadata }
+        : {},
+    distance: Number(row.distance),
+    sourceAt: sourceAtIso(row.source_at),
+  };
+}
+
+export interface RecentOptions extends CandidateFilters {
+  tenantId: string;
+  /** Whose access the gate verifies. Nothing is disclosed without it. */
+  userEmail: string;
+  k: number;
+  verifiers: ReadonlyMap<string, AccessVerifier>;
+  budgetMs?: number;
+}
+
+/**
+ * The most recently DATED indexed items, newest first — what to show when
+ * there is no query yet, so a knowledge surface reveals what it actually
+ * holds instead of an empty box.
+ *
+ * Deliberately not `searchKnowledge` with a blank query: an embedding of ""
+ * is meaningless, and ordering by its distance would return an arbitrary
+ * slice while looking authoritative. No embedder is needed or accepted
+ * here, so this also works before an org configures one.
+ *
+ * Same ACL gate as search — the index only proposes, and rows the caller
+ * cannot open at the source are withheld and counted.
+ */
+export async function listRecentKnowledge(
+  options: RecentOptions
+): Promise<Result<KnowledgeSearchResult, 'DB_ERROR'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+
+  const filters = filterFragments(options);
+  const overfetch = Math.max(options.k * 2, options.k + 4);
+  const rowsResult = await wrapAsync(
+    () =>
+      sql<CandidateRow>`
+        SELECT provider, ref_id, content, metadata, source_at, 0 AS distance
+        FROM knowledge_chunks
+        WHERE tenant_id = ${options.tenantId}
+          AND source_at IS NOT NULL
+          AND ${filters.provider}
+          AND ${filters.kind}
+          AND ${filters.after}
+          AND ${filters.before}
+        ORDER BY source_at DESC
+        LIMIT ${overfetch}
+      `.execute(dbResult.val),
+    'DB_ERROR' as const
+  );
+  if (!rowsResult.ok) return rowsResult;
+
+  const outcome = await verifyCandidates(
+    options.verifiers,
+    options.userEmail,
+    rowsResult.val.rows,
+    (row) => ({ provider: row.provider, refId: row.ref_id }),
+    { budgetMs: options.budgetMs ?? 3_000 }
+  );
+
+  return ok({
+    hits: outcome.allowed.slice(0, options.k).map(toHit),
+    elided: outcome.elided,
+  });
+}
+
 export async function searchKnowledge(
   options: SearchOptions
 ): Promise<Result<KnowledgeSearchResult, 'EMBEDDING_FAILED' | 'DB_ERROR'>> {
@@ -126,19 +229,8 @@ export async function searchKnowledge(
   // Every narrowing predicate belongs HERE, not in a post-fetch filter: the
   // query returns only `overfetch` rows ordered by distance, so filtering
   // afterwards would discard most of an already-small candidate set and
-  // starve the result list. Each fragment is a no-op (`TRUE`) when its
-  // filter is absent, which keeps the unfiltered plan identical to before.
-  const providers = cleanList(options.providers);
-  const kinds = cleanList(options.kinds);
-  const after = boundary(options.after);
-  const before = boundary(options.before);
-
-  const providerFilter = providers.length > 0 ? sql`provider = ANY(${providers})` : sql`TRUE`;
-  const kindFilter = kinds.length > 0 ? sql`metadata ->> 'kind' = ANY(${kinds})` : sql`TRUE`;
-  // A dated filter excludes undated rows rather than treating NULL as epoch —
-  // "mail from last week" must not sweep in everything a connector never dated.
-  const afterFilter = after ? sql`source_at IS NOT NULL AND source_at >= ${after}` : sql`TRUE`;
-  const beforeFilter = before ? sql`source_at IS NOT NULL AND source_at < ${before}` : sql`TRUE`;
+  // starve the result list.
+  const filters = filterFragments(options);
 
   const rowsResult = await wrapAsync(
     () =>
@@ -147,10 +239,10 @@ export async function searchKnowledge(
                (embedding <=> ${vector}::vector) AS distance
         FROM knowledge_chunks
         WHERE tenant_id = ${options.tenantId}
-          AND ${providerFilter}
-          AND ${kindFilter}
-          AND ${afterFilter}
-          AND ${beforeFilter}
+          AND ${filters.provider}
+          AND ${filters.kind}
+          AND ${filters.after}
+          AND ${filters.before}
         ORDER BY distance
         LIMIT ${overfetch}
       `.execute(dbResult.val),
@@ -173,17 +265,5 @@ export async function searchKnowledge(
     { budgetMs: options.budgetMs ?? 3_000 }
   );
 
-  const hits = outcome.allowed.slice(0, options.k).map((row) => ({
-    provider: row.provider,
-    refId: row.ref_id,
-    content: row.content,
-    metadata:
-      typeof row.metadata === 'object' && row.metadata !== null && !Array.isArray(row.metadata)
-        ? { ...row.metadata }
-        : {},
-    distance: Number(row.distance),
-    sourceAt: sourceAtIso(row.source_at),
-  }));
-
-  return ok({ hits, elided: outcome.elided });
+  return ok({ hits: outcome.allowed.slice(0, options.k).map(toHit), elided: outcome.elided });
 }

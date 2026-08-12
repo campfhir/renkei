@@ -17,8 +17,22 @@ import { readConnectorConfigCached } from '@renkei/connector-config';
 import { WEBEX_CONNECTOR, WebexClient, createWebexAccessVerifier } from '@renkei/connector-webex';
 import { MICROSOFT_CONNECTOR, createMicrosoftAccessVerifier } from '@renkei/connector-microsoft';
 import { ZOOM_CONNECTOR, createZoomAccessVerifier } from '@renkei/connector-zoom';
+import {
+  createJiraAccessVerifier,
+  createConfluenceAccessVerifier,
+  JIRA_KNOWLEDGE_PROVIDER,
+  CONFLUENCE_KNOWLEDGE_PROVIDER,
+} from '@renkei/connector-atlassian';
+import {
+  getGrant,
+  readAtlassianMetadata,
+  ATLASSIAN,
+  ATLASSIAN_CONFLUENCE,
+} from '@renkei/provider-grants';
+import { getDatabase } from '@renkei/db';
 import type { AccessVerifier } from '@renkei/gates';
-import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
+import type { KnowledgeHit } from '@renkei/knowledge';
+import { resolveEmbeddingProvider, searchKnowledge, listRecentKnowledge } from '@renkei/knowledge';
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
 
@@ -56,7 +70,66 @@ export async function buildKnowledgeVerifiers(
   verifiers.set(MICROSOFT_CONNECTOR, createMicrosoftAccessVerifier());
   verifiers.set(ZOOM_CONNECTOR, createZoomAccessVerifier());
 
+  // Atlassian content has no owner encoded in its ref — a page is visible to
+  // whoever the site says it is — so these verifiers ask Atlassian live,
+  // with the CALLING user's own grant. Registered unconditionally for the
+  // same reason as above: absent them, every jira/confluence chunk is
+  // silently withheld, which looks identical to "nothing is indexed".
+  const encryptionKey = keyResult.val;
+  verifiers.set(
+    JIRA_KNOWLEDGE_PROVIDER,
+    createJiraAccessVerifier((userEmail) =>
+      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN, encryptionKey)
+    )
+  );
+  verifiers.set(
+    CONFLUENCE_KNOWLEDGE_PROVIDER,
+    createConfluenceAccessVerifier((userEmail) =>
+      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN_CONFLUENCE, encryptionKey)
+    )
+  );
+
   return verifiers;
+}
+
+/**
+ * The caller's own Atlassian credential, found from their email.
+ *
+ * The gate hands verifiers an EMAIL (the identity spine's key), while
+ * grants are keyed by OIDC subject — so this hops identities → provider
+ * grants. Anything missing returns null, which denies: a user who has not
+ * connected the product cannot be shown its content on the index's word
+ * alone.
+ */
+async function atlassianCredentialFor(
+  tenantId: string,
+  userEmail: string,
+  provider: string,
+  encryptionKey: Parameters<typeof getGrant>[3]
+): Promise<{ accessToken: string; cloudId: string } | null> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return null;
+
+  const row = await dbResult.val
+    .selectFrom('identities')
+    .innerJoin('provider_grants', (join) =>
+      join
+        .onRef('provider_grants.subject', '=', 'identities.subject')
+        .onRef('provider_grants.tenant_id', '=', 'identities.tenant_id')
+    )
+    .select('provider_grants.provider_account_id')
+    .where('identities.tenant_id', '=', tenantId)
+    .where('identities.email', '=', userEmail)
+    .where('provider_grants.provider', '=', provider)
+    .limit(1)
+    .executeTakeFirst();
+  if (!row) return null;
+
+  const grantResult = await getGrant(provider, tenantId, row.provider_account_id, encryptionKey);
+  if (!grantResult.ok || !grantResult.val) return null;
+  const site = readAtlassianMetadata(grantResult.val.metadata);
+  if (!site.cloudId) return null;
+  return { accessToken: grantResult.val.accessToken, cloudId: site.cloudId };
 }
 
 function formatDistance(distance: number): string {
@@ -104,6 +177,52 @@ export function sourceFiltersFor(sources: readonly string[]): {
     : { providers };
 }
 
+/** A hit's human title, from whichever metadata key its connector set. */
+function titleOf(metadata: Record<string, unknown>): string {
+  for (const key of ['subject', 'topic', 'title']) {
+    const value = metadata[key];
+    if (typeof value === 'string' && value) return value;
+  }
+  return '';
+}
+
+/**
+ * One renderer for both paths so search and browse can't drift in shape.
+ * `browsing` only changes the wording — ordering is by recency there, and
+ * a distance of 0 would be a lie if it were labelled as a match score.
+ */
+function renderHits(result: { hits: KnowledgeHit[]; elided: number }, browsing: boolean): string {
+  const { hits, elided } = result;
+  const lines: string[] = [];
+  if (hits.length === 0) {
+    lines.push(browsing ? 'Nothing indexed yet for those filters.' : 'No accessible results.');
+  } else {
+    lines.push(
+      browsing
+        ? `${hits.length} most recent indexed item(s), newest first:`
+        : `${hits.length} result(s), closest first:`
+    );
+    for (const [index, hit] of hits.entries()) {
+      const excerpt = hit.content.length <= 500 ? hit.content : `${hit.content.slice(0, 499)}…`;
+      lines.push(
+        '',
+        `${index + 1}. ${titleOf(hit.metadata) || '(untitled)'}` +
+          (hit.sourceAt ? ` — ${hit.sourceAt}` : '') +
+          ` — [${hit.provider}:${hit.refId}]` +
+          (browsing ? '' : ` (distance ${formatDistance(hit.distance)})`),
+        excerpt
+      );
+    }
+  }
+  if (elided > 0) {
+    lines.push(
+      '',
+      `${elided} result(s) withheld: your access could not be verified at the source.`
+    );
+  }
+  return lines.join('\n');
+}
+
 export async function registerKnowledgeTools(
   server: McpServer,
   context: MCPToolContext
@@ -119,7 +238,14 @@ export async function registerKnowledgeTools(
         'anything you cannot open at the source is withheld and reported as a count.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        query: z.string().min(1).max(2000).describe('What to search for, in natural language'),
+        query: z
+          .string()
+          .max(2000)
+          .describe(
+            'What to search for, in natural language. Leave EMPTY to browse the most recent ' +
+              'indexed items instead of searching — useful with `sources` to answer "what is in ' +
+              'here?" or "what came in lately from Confluence?"'
+          ),
         k: z
           .number()
           .int()
@@ -162,9 +288,6 @@ export async function registerKnowledgeTools(
 
       const query = typeof args.query === 'string' ? args.query : '';
       const k = typeof args.k === 'number' ? Math.min(Math.max(Math.trunc(args.k), 1), 10) : 5;
-      if (!query.trim()) {
-        return { content: [{ type: 'text' as const, text: 'query is required' }], isError: true };
-      }
 
       // No recorded email = nothing can be verified = nothing is disclosed.
       const userEmail = context.userEmail;
@@ -182,6 +305,35 @@ export async function registerKnowledgeTools(
         };
       }
 
+      const sources = Array.isArray(args.sources)
+        ? args.sources.filter((source): source is string => typeof source === 'string')
+        : [];
+      const { providers, kinds } = sourceFiltersFor(sources);
+      const verifiers = await buildKnowledgeVerifiers(context.tenantId);
+
+      // No query: answer with the newest indexed items rather than an
+      // error. Needs no embedder, so "what's in here?" works even before an
+      // org configures one.
+      if (!query.trim()) {
+        const recent = await listRecentKnowledge({
+          tenantId: context.tenantId,
+          userEmail,
+          k,
+          verifiers,
+          ...(providers ? { providers } : {}),
+          ...(kinds ? { kinds } : {}),
+          ...(typeof args.after === 'string' && args.after ? { after: args.after } : {}),
+          ...(typeof args.before === 'string' && args.before ? { before: args.before } : {}),
+        });
+        if (!recent.ok) {
+          return {
+            content: [{ type: 'text' as const, text: 'The knowledge store could not be read.' }],
+            isError: true,
+          };
+        }
+        return { content: [{ type: 'text' as const, text: renderHits(recent.val, true) }] };
+      }
+
       const embedder = await resolveEmbeddingProvider(context.tenantId);
       if (!embedder) {
         return {
@@ -195,12 +347,6 @@ export async function registerKnowledgeTools(
         };
       }
 
-      const sources = Array.isArray(args.sources)
-        ? args.sources.filter((source): source is string => typeof source === 'string')
-        : [];
-      const { providers, kinds } = sourceFiltersFor(sources);
-
-      const verifiers = await buildKnowledgeVerifiers(context.tenantId);
       const searched = await searchKnowledge({
         tenantId: context.tenantId,
         userEmail,
@@ -221,41 +367,7 @@ export async function registerKnowledgeTools(
         return { content: [{ type: 'text' as const, text: reason }], isError: true };
       }
 
-      const { hits, elided } = searched.val;
-      const lines: string[] = [];
-      if (hits.length === 0) {
-        lines.push('No accessible results.');
-      } else {
-        lines.push(`${hits.length} result(s), closest first:`);
-        for (const [index, hit] of hits.entries()) {
-          const excerpt = hit.content.length <= 500 ? hit.content : `${hit.content.slice(0, 499)}…`;
-          // Title and date come back on every hit but were never rendered —
-          // without them a result is an opaque refId plus a distance.
-          const title =
-            typeof hit.metadata.subject === 'string'
-              ? hit.metadata.subject
-              : typeof hit.metadata.topic === 'string'
-                ? hit.metadata.topic
-                : typeof hit.metadata.title === 'string'
-                  ? hit.metadata.title
-                  : '';
-          lines.push(
-            '',
-            `${index + 1}. ${title || '(untitled)'}` +
-              (hit.sourceAt ? ` — ${hit.sourceAt}` : '') +
-              ` — [${hit.provider}:${hit.refId}] (distance ${formatDistance(hit.distance)})`,
-            excerpt
-          );
-        }
-      }
-      if (elided > 0) {
-        lines.push(
-          '',
-          `${elided} result(s) withheld: your access could not be verified at the source.`
-        );
-      }
-
-      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+      return { content: [{ type: 'text' as const, text: renderHits(searched.val, false) }] };
     }
   );
 }

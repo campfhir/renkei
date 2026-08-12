@@ -15,7 +15,7 @@
 
 import { getSessionFromCookies } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
-import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
+import { resolveEmbeddingProvider, searchKnowledge, listRecentKnowledge } from '@renkei/knowledge';
 import { buildKnowledgeVerifiers, sourceFiltersFor } from '@/lib/mcp-tools/knowledge';
 
 const MIN_K = 1;
@@ -47,6 +47,8 @@ export interface KnowledgeSearchResult {
   error: string | null;
   /** The cookie named no live session — the page should send them to sign in. */
   signedOut?: boolean;
+  /** True when these are the newest items rather than matches for a query. */
+  browsing?: boolean;
 }
 
 /**
@@ -70,9 +72,6 @@ export async function searchMyKnowledge(
   }
 
   const trimmedQuery = query.trim();
-  if (!trimmedQuery) {
-    return { hits: [], elided: 0, error: null };
-  }
   const clampedK = Math.min(Math.max(Math.trunc(k) || DEFAULT_K, MIN_K), MAX_K);
 
   // No recorded email = nothing can be verified = nothing is disclosed —
@@ -89,6 +88,33 @@ export async function searchMyKnowledge(
     };
   }
 
+  // Source names map to provider/kind pairs in one place (the MCP tool's
+  // module) so this page and the tool can never drift apart on what
+  // 'outlook_mail' means.
+  const { providers, kinds } = sourceFiltersFor(filters.sources ?? []);
+  const verifiers = await buildKnowledgeVerifiers(tenantId);
+
+  // No query yet: show the newest indexed items instead of an empty page,
+  // so the filters double as a browser ("top 20 mail", "top 20 WebEx").
+  // This path needs no embedder, so browsing still works for an org that
+  // has not configured one.
+  if (!trimmedQuery) {
+    const recent = await listRecentKnowledge({
+      tenantId,
+      userEmail,
+      k: clampedK,
+      verifiers,
+      ...(providers ? { providers } : {}),
+      ...(kinds ? { kinds } : {}),
+      ...(filters.after ? { after: filters.after } : {}),
+      ...(filters.before ? { before: filters.before } : {}),
+    });
+    if (!recent.ok) {
+      return { hits: [], elided: 0, error: 'The knowledge store could not be read.' };
+    }
+    return { hits: recent.val.hits, elided: recent.val.elided, error: null, browsing: true };
+  }
+
   const embedder = await resolveEmbeddingProvider(tenantId);
   if (!embedder) {
     return {
@@ -100,12 +126,6 @@ export async function searchMyKnowledge(
     };
   }
 
-  // Source names map to provider/kind pairs in one place (the MCP tool's
-  // module) so this page and the tool can never drift apart on what
-  // 'outlook_mail' means.
-  const { providers, kinds } = sourceFiltersFor(filters.sources ?? []);
-
-  const verifiers = await buildKnowledgeVerifiers(tenantId);
   const searched = await searchKnowledge({
     tenantId,
     userEmail,

@@ -6,6 +6,19 @@
  * silently return nothing for them.
  */
 
+jest.mock('@renkei/connector-atlassian', () => ({
+  createJiraAccessVerifier: () => ({ provider: 'jira' }),
+  createConfluenceAccessVerifier: () => ({ provider: 'confluence' }),
+  JIRA_KNOWLEDGE_PROVIDER: 'jira',
+  CONFLUENCE_KNOWLEDGE_PROVIDER: 'confluence',
+}));
+jest.mock('@renkei/provider-grants', () => ({
+  getGrant: async () => ({ ok: false }),
+  readAtlassianMetadata: () => ({ cloudId: '', siteUrl: '' }),
+  ATLASSIAN: 'atlassian',
+  ATLASSIAN_CONFLUENCE: 'atlassian-confluence',
+}));
+jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/connector-config', () => ({
   readConnectorConfigCached: async () => ({ ok: false }),

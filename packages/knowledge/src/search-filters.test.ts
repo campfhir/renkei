@@ -39,7 +39,7 @@ jest.mock('@renkei/gates', () => ({
   }),
 }));
 
-import { searchKnowledge } from './index';
+import { searchKnowledge, listRecentKnowledge } from './index';
 
 /** The whole SQL text, with interpolations rendered as readable placeholders. */
 function renderedSql(): string {
@@ -183,5 +183,54 @@ describe('searchKnowledge result shape', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.val.hits[0]?.sourceAt).toBeNull();
+  });
+});
+
+describe('listRecentKnowledge', () => {
+  const recentOptions = {
+    tenantId: 'tenant-1',
+    userEmail: 'scott@example.com',
+    k: 5,
+    verifiers: new Map(),
+  };
+
+  it('orders by recency and never embeds anything', async () => {
+    // A blank query has no meaningful embedding; ordering by its distance
+    // would return an arbitrary slice while looking authoritative.
+    await listRecentKnowledge({ ...recentOptions });
+    const sqlText = renderedSql();
+    expect(sqlText).toContain('ORDER BY source_at DESC');
+    expect(sqlText).not.toContain('embedding <=>');
+  });
+
+  it('excludes undated rows, which have no place in a recency list', async () => {
+    await listRecentKnowledge({ ...recentOptions });
+    expect(renderedSql()).toContain('source_at IS NOT NULL');
+  });
+
+  it('applies the same source filters search does', async () => {
+    await listRecentKnowledge({ ...recentOptions, providers: ['confluence'] });
+    expect(renderedSql()).toContain('provider = ANY');
+    expect(allValues()).toContainEqual(['confluence']);
+  });
+
+  it('still runs every candidate through the ACL gate', async () => {
+    rows = [
+      {
+        provider: 'microsoft',
+        ref_id: 'a@b.com/msg/1',
+        content: 'hello',
+        metadata: { subject: 'Hi' },
+        distance: 0,
+        source_at: new Date('2026-08-01T10:00:00Z'),
+      },
+    ];
+    const result = await listRecentKnowledge({ ...recentOptions });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The mocked gate allows everything; what matters is that the shape
+    // carries the gate's elided count rather than bypassing it.
+    expect(result.val).toHaveProperty('elided');
+    expect(result.val.hits[0]?.sourceAt).toBe('2026-08-01T10:00:00.000Z');
   });
 });
