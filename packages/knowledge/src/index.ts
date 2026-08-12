@@ -65,16 +65,15 @@ export interface SearchOptions {
   /** Refs to leave out (e.g. the object that triggered the search). */
   excludeRef?: SourceRef;
   /**
-   * Narrow to these providers ('microsoft', 'zoom', …). Empty/omitted
-   * searches every provider.
+   * Narrow to these sources. Empty/omitted searches everything.
+   *
+   * A source is a provider optionally pinned to one `metadata.kind`, and
+   * the list is OR-ed. That shape is load-bearing: separate provider and
+   * kind lists would AND, so asking for {microsoft,msg} + {jira} would
+   * either drop Jira (no chunk has kind 'msg') or, if the kind were
+   * dropped to save it, quietly widen microsoft to calendar and tasks too.
    */
-  providers?: readonly string[];
-  /**
-   * Narrow to these `metadata.kind` values ('msg', 'evt', 'transcript'…).
-   * The vocabulary is per-connector, so this is normally paired with
-   * `providers` rather than used alone.
-   */
-  kinds?: readonly string[];
+  sources?: readonly SourceFilter[];
   /** Only documents dated on/after this ISO-8601 instant. Undated rows are excluded. */
   after?: string;
   /** Only documents dated before this ISO-8601 instant. Undated rows are excluded. */
@@ -88,11 +87,6 @@ interface CandidateRow {
   metadata: unknown;
   distance: number;
   source_at: Date | string | null;
-}
-
-/** Drops empty/blank entries so an all-blank filter reads as "no filter", not "match nothing". */
-function cleanList(values: readonly string[] | undefined): string[] {
-  return (values ?? []).map((value) => value.trim()).filter(Boolean);
 }
 
 /** A parseable date, or null — a malformed filter is ignored rather than matching nothing. */
@@ -109,10 +103,16 @@ function sourceAtIso(value: Date | string | null): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+/** One selectable source: a provider, optionally pinned to a single kind. */
+export interface SourceFilter {
+  provider: string;
+  /** A `metadata.kind` value; omitted means every kind of that provider. */
+  kind?: string;
+}
+
 /** What narrows a candidate set, shared by semantic search and recency browse. */
 interface CandidateFilters {
-  providers?: readonly string[];
-  kinds?: readonly string[];
+  sources?: readonly SourceFilter[];
   after?: string;
   before?: string;
 }
@@ -123,13 +123,18 @@ interface CandidateFilters {
  * search can never disagree about what a filter means.
  */
 function filterFragments(filters: CandidateFilters) {
-  const providers = cleanList(filters.providers);
-  const kinds = cleanList(filters.kinds);
+  const sources = (filters.sources ?? []).filter((source) => source.provider.trim());
   const after = boundary(filters.after);
   const before = boundary(filters.before);
+  // Each source contributes one AND-ed pair; the pairs are OR-ed together,
+  // so a mixed selection means what it says rather than intersecting.
+  const clauses = sources.map((source) =>
+    source.kind
+      ? sql`(provider = ${source.provider.trim()} AND metadata ->> 'kind' = ${source.kind})`
+      : sql`(provider = ${source.provider.trim()})`
+  );
   return {
-    provider: providers.length > 0 ? sql`provider = ANY(${providers})` : sql`TRUE`,
-    kind: kinds.length > 0 ? sql`metadata ->> 'kind' = ANY(${kinds})` : sql`TRUE`,
+    source: clauses.length > 0 ? sql`(${sql.join(clauses, sql` OR `)})` : sql`TRUE`,
     // A dated filter excludes undated rows rather than treating NULL as epoch.
     after: after ? sql`source_at IS NOT NULL AND source_at >= ${after}` : sql`TRUE`,
     before: before ? sql`source_at IS NOT NULL AND source_at < ${before}` : sql`TRUE`,
@@ -187,8 +192,7 @@ export async function listRecentKnowledge(
         FROM knowledge_chunks
         WHERE tenant_id = ${options.tenantId}
           AND source_at IS NOT NULL
-          AND ${filters.provider}
-          AND ${filters.kind}
+          AND ${filters.source}
           AND ${filters.after}
           AND ${filters.before}
         ORDER BY source_at DESC
@@ -239,8 +243,7 @@ export async function searchKnowledge(
                (embedding <=> ${vector}::vector) AS distance
         FROM knowledge_chunks
         WHERE tenant_id = ${options.tenantId}
-          AND ${filters.provider}
-          AND ${filters.kind}
+          AND ${filters.source}
           AND ${filters.after}
           AND ${filters.before}
         ORDER BY distance

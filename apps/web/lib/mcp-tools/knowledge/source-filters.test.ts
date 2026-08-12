@@ -48,35 +48,35 @@ import { sourceFiltersFor, KNOWLEDGE_SOURCE_NAMES } from './index';
 
 describe('sourceFiltersFor', () => {
   it('returns no filters when nothing is selected', () => {
-    expect(sourceFiltersFor([])).toEqual({});
+    expect(sourceFiltersFor([])).toEqual([]);
   });
 
   it('maps a product name onto the stored provider, not the product name', () => {
     // The column says 'microsoft'; nobody calling this tool would guess that.
-    expect(sourceFiltersFor(['outlook_mail'])).toEqual({
-      providers: ['microsoft'],
-      kinds: ['msg'],
-    });
+    expect(sourceFiltersFor(['outlook_mail'])).toEqual([{ provider: 'microsoft', kind: 'msg' }]);
   });
 
-  it('dedupes providers across sibling sources', () => {
-    const filters = sourceFiltersFor(['outlook_mail', 'outlook_calendar']);
-    expect(filters.providers).toEqual(['microsoft']);
-    expect(filters.kinds?.sort()).toEqual(['evt', 'msg']);
+  it('keeps sibling kinds apart instead of merging them into one list', () => {
+    expect(sourceFiltersFor(['outlook_mail', 'outlook_calendar'])).toEqual([
+      { provider: 'microsoft', kind: 'msg' },
+      { provider: 'microsoft', kind: 'evt' },
+    ]);
   });
 
-  it('drops the kind filter when any selected source has no kind', () => {
-    // outlook_mail pins kind 'msg'; zoom chunks have kind 'transcript'/'summary'.
-    // ANDing kind=['msg'] would return zero Zoom results — the whole reason
-    // this branch exists.
-    const filters = sourceFiltersFor(['outlook_mail', 'zoom']);
-    expect(filters.providers?.sort()).toEqual(['microsoft', 'zoom']);
-    expect(filters.kinds).toBeUndefined();
+  it('keeps a kinded source kinded when paired with an unkinded one', () => {
+    // The bug this replaced: to keep Zoom (which pins no kind), the kind
+    // filter was dropped wholesale, so an "Email" selection also returned
+    // calendar events and tasks. Each source now carries its own kind and
+    // the pairs are OR-ed.
+    expect(sourceFiltersFor(['outlook_mail', 'zoom'])).toEqual([
+      { provider: 'microsoft', kind: 'msg' },
+      { provider: 'zoom' },
+    ]);
   });
 
   it('ignores unknown source names rather than filtering to nothing', () => {
-    expect(sourceFiltersFor(['not_a_source'])).toEqual({});
-    expect(sourceFiltersFor(['not_a_source', 'jira'])).toEqual({ providers: ['jira'] });
+    expect(sourceFiltersFor(['not_a_source'])).toEqual([]);
+    expect(sourceFiltersFor(['not_a_source', 'jira'])).toEqual([{ provider: 'jira' }]);
   });
 
   it('exposes every source name the tool schema offers', () => {

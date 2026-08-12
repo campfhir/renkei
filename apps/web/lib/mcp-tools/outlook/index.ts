@@ -1579,8 +1579,7 @@ export async function registerOutlookTools(
         k: max * 3,
         embedder,
         verifiers,
-        providers: ['microsoft'],
-        kinds: ['msg'],
+        sources: [{ provider: 'microsoft', kind: 'msg' }],
         ...(str(args.after) ? { after: str(args.after) } : {}),
         ...(str(args.before) ? { before: str(args.before) } : {}),
       });

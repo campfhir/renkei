@@ -31,7 +31,7 @@ import {
 } from '@renkei/provider-grants';
 import { getDatabase } from '@renkei/db';
 import type { AccessVerifier } from '@renkei/gates';
-import type { KnowledgeHit } from '@renkei/knowledge';
+import type { KnowledgeHit, SourceFilter } from '@renkei/knowledge';
 import { resolveEmbeddingProvider, searchKnowledge, listRecentKnowledge } from '@renkei/knowledge';
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
@@ -172,25 +172,21 @@ function sourceNameOf(hit: KnowledgeHit): string {
 }
 
 /**
- * Turn selected source names into provider/kind filters.
+ * Turn selected source names into the provider/kind pairs the knowledge
+ * layer ORs together.
  *
- * Kinds are only applied when EVERY selected source pins one — mixing
- * 'outlook_mail' (kind 'msg') with 'zoom' (no kind) must not silently
- * drop the Zoom results, since the two filters are ANDed in SQL and no
- * Zoom chunk carries kind 'msg'.
+ * Each name keeps its own kind. An earlier version handed back separate
+ * provider and kind lists, which the SQL then AND-ed: selecting Email plus
+ * Jira had to drop the kind to keep Jira, and silently returned calendar
+ * events under an "Email" filter.
  */
-export function sourceFiltersFor(sources: readonly string[]): {
-  providers?: string[];
-  kinds?: string[];
-} {
-  const selected = sources.map((source) => SOURCE_FILTERS[source]).filter(Boolean);
-  if (selected.length === 0) return {};
-  const providers = [...new Set(selected.map((entry) => entry!.provider))];
-  const kinds = selected.map((entry) => entry!.kind);
-  const everySourcePinsAKind = kinds.every((kind) => kind !== undefined);
-  return everySourcePinsAKind
-    ? { providers, kinds: [...new Set(kinds.filter((kind): kind is string => Boolean(kind)))] }
-    : { providers };
+export function sourceFiltersFor(sources: readonly string[]): SourceFilter[] {
+  return sources
+    .map((source) => SOURCE_FILTERS[source])
+    .filter((filter): filter is { provider: string; kind?: string } => Boolean(filter))
+    .map((filter) =>
+      filter.kind ? { provider: filter.provider, kind: filter.kind } : { provider: filter.provider }
+    );
 }
 
 /** A hit's human title, from whichever metadata key its connector set. */
@@ -326,7 +322,7 @@ export async function registerKnowledgeTools(
       const sources = Array.isArray(args.sources)
         ? args.sources.filter((source): source is string => typeof source === 'string')
         : [];
-      const { providers, kinds } = sourceFiltersFor(sources);
+      const sourceFilters = sourceFiltersFor(sources);
       const verifiers = await buildKnowledgeVerifiers(context.tenantId);
 
       // No query: answer with the newest indexed items rather than an
@@ -338,8 +334,7 @@ export async function registerKnowledgeTools(
           userEmail,
           k,
           verifiers,
-          ...(providers ? { providers } : {}),
-          ...(kinds ? { kinds } : {}),
+          ...(sourceFilters.length > 0 ? { sources: sourceFilters } : {}),
           ...(typeof args.after === 'string' && args.after ? { after: args.after } : {}),
           ...(typeof args.before === 'string' && args.before ? { before: args.before } : {}),
         });
@@ -372,8 +367,7 @@ export async function registerKnowledgeTools(
         k,
         embedder,
         verifiers,
-        ...(providers ? { providers } : {}),
-        ...(kinds ? { kinds } : {}),
+        ...(sourceFilters.length > 0 ? { sources: sourceFilters } : {}),
         ...(typeof args.after === 'string' && args.after ? { after: args.after } : {}),
         ...(typeof args.before === 'string' && args.before ? { before: args.before } : {}),
       });

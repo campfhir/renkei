@@ -27,6 +27,17 @@ jest.mock('kysely', () => {
     };
     return node;
   };
+  // Real kysely's sql.join, modelled as a fragment whose values alternate
+  // between the pieces and the separator — enough for the renderer and the
+  // value walker below to see straight through it.
+  sql.join = (fragments: unknown[], separator: unknown) => {
+    const values: unknown[] = [];
+    fragments.forEach((fragment, index) => {
+      if (index > 0) values.push(separator);
+      values.push(fragment);
+    });
+    return { strings: new Array(values.length + 1).fill(''), values };
+  };
   return { sql };
 });
 
@@ -41,18 +52,23 @@ jest.mock('@renkei/gates', () => ({
 
 import { searchKnowledge, listRecentKnowledge } from './index';
 
-/** The whole SQL text, with interpolations rendered as readable placeholders. */
-function renderedSql(): string {
-  if (!lastQuery) return '';
-  return lastQuery.strings
+/**
+ * The whole SQL text, with interpolations rendered as readable placeholders.
+ * Recursive, because fragments now nest more than one level deep: a source
+ * filter is a joined list of per-source fragments.
+ */
+function renderFragment(fragment: { strings: readonly string[]; values: unknown[] }): string {
+  return fragment.strings
     .map((part, index) => {
-      if (index >= lastQuery!.values.length) return part;
-      const value = lastQuery!.values[index];
-      // Nested sql`` fragments interpolate as objects carrying their own strings.
-      const nested = isFragment(value) ? value.strings.join('?') : `«${String(value)}»`;
-      return part + nested;
+      if (index >= fragment.values.length) return part;
+      const value = fragment.values[index];
+      return part + (isFragment(value) ? renderFragment(value) : `«${String(value)}»`);
     })
     .join('');
+}
+
+function renderedSql(): string {
+  return lastQuery ? renderFragment(lastQuery) : '';
 }
 
 /**
@@ -106,21 +122,35 @@ describe('searchKnowledge filter construction', () => {
     const sqlText = renderedSql();
     expect(sqlText).toContain('tenant_id =');
     // The no-filter path must stay identical to the original plan.
-    expect(sqlText).not.toContain('provider = ANY');
+    expect(sqlText).not.toContain('provider =');
     expect(sqlText).not.toContain("metadata ->> 'kind'");
     // source_at is always SELECTed; what must be absent is the PREDICATE.
     expect(sqlText).not.toContain('source_at IS NOT NULL');
   });
 
-  it('puts the provider filter in SQL, not in JS', async () => {
-    await searchKnowledge({ ...baseOptions, providers: ['microsoft', 'confluence'] });
-    expect(renderedSql()).toContain('provider = ANY');
-    expect(allValues()).toContainEqual(['microsoft', 'confluence']);
+  it('puts the source filter in SQL, not in JS', async () => {
+    await searchKnowledge({
+      ...baseOptions,
+      sources: [{ provider: 'microsoft' }, { provider: 'confluence' }],
+    });
+    expect(renderedSql()).toContain('provider =');
+    expect(allValues()).toContain('microsoft');
+    expect(allValues()).toContain('confluence');
   });
 
-  it('puts the kind filter in SQL', async () => {
-    await searchKnowledge({ ...baseOptions, kinds: ['msg'] });
-    expect(renderedSql()).toContain("metadata ->> 'kind' = ANY");
+  it('pins the kind alongside its own provider, not across the whole query', async () => {
+    await searchKnowledge({
+      ...baseOptions,
+      sources: [{ provider: 'microsoft', kind: 'msg' }, { provider: 'jira' }],
+    });
+    const sqlText = renderedSql();
+    // The pair is AND-ed inside its own group and OR-ed with the other, so
+    // Jira is not silently required to carry kind 'msg' — and microsoft is
+    // not silently widened to calendar and tasks to save it.
+    expect(sqlText).toContain("metadata ->> 'kind'");
+    expect(sqlText).toContain(' OR ');
+    expect(allValues()).toContain('msg');
+    expect(allValues()).toContain('jira');
   });
 
   it('puts date bounds in SQL and excludes undated rows', async () => {
@@ -138,9 +168,9 @@ describe('searchKnowledge filter construction', () => {
   });
 
   it('treats blank/whitespace filter entries as "no filter", not "match nothing"', async () => {
-    await searchKnowledge({ ...baseOptions, providers: ['  ', ''], kinds: [''] });
+    await searchKnowledge({ ...baseOptions, sources: [{ provider: '  ' }, { provider: '' }] });
     const sqlText = renderedSql();
-    expect(sqlText).not.toContain('provider = ANY');
+    expect(sqlText).not.toContain('provider =');
     expect(sqlText).not.toContain("metadata ->> 'kind'");
   });
 
@@ -209,9 +239,9 @@ describe('listRecentKnowledge', () => {
   });
 
   it('applies the same source filters search does', async () => {
-    await listRecentKnowledge({ ...recentOptions, providers: ['confluence'] });
-    expect(renderedSql()).toContain('provider = ANY');
-    expect(allValues()).toContainEqual(['confluence']);
+    await listRecentKnowledge({ ...recentOptions, sources: [{ provider: 'confluence' }] });
+    expect(renderedSql()).toContain('provider =');
+    expect(allValues()).toContain('confluence');
   });
 
   it('still runs every candidate through the ACL gate', async () => {

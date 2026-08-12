@@ -255,6 +255,27 @@ export function rawEmailOf(item: Record<string, unknown>): RawEmail {
 }
 
 /** Text content per object kind — what gets embedded. Messages are handled separately (see sanitizeEmailForTenant). */
+/**
+ * Is there anything here worth embedding, beyond scheduling scaffolding?
+ *
+ * A calendar entry with no subject, body or preview reduces to "Event:" and
+ * a pair of timestamps. That embeds to near-nothing, matches queries by
+ * accident, and — because events run months into the future — outranks real
+ * content in any recency-ordered view. Mail is exempt: the sanitizer already
+ * decides what mail is worth keeping.
+ */
+function hasSubstance(kind: MicrosoftRefKind, item: Record<string, unknown>): boolean {
+  if (kind === 'evt') {
+    return Boolean(
+      str(item.subject).trim() || str(rec(item.body).content).trim() || str(item.bodyPreview).trim()
+    );
+  }
+  if (kind === 'task') {
+    return Boolean(str(item.title).trim() || str(rec(item.body).content).trim());
+  }
+  return true;
+}
+
 function contentOf(kind: MicrosoftRefKind, item: Record<string, unknown>): string {
   if (kind === 'evt') {
     const organizer = rec(rec(item.organizer).emailAddress);
@@ -378,7 +399,24 @@ export async function runSubscriptionSync(
       continue;
     }
 
-    const content = contentOf(kind, entry);
+    // Delta can hand back a bare shell — an id, a start and an end, with no
+    // subject, organizer or body. Embedding that produces a chunk whose only
+    // content is a timestamp: it matches nothing meaningfully, yet sorts to
+    // the top of any recency browse because calendars run into the future.
+    // One refetch recovers the full item when delta simply omitted it;
+    // anything still empty is dropped, and any earlier empty version of it
+    // removed, rather than left crowding the index.
+    let item = entry;
+    if (kind === 'evt' && !str(entry.subject) && !str(rec(entry.body).content)) {
+      const full = await graphRequest(access.accessToken, `/me/events/${objectId}`);
+      if (full.ok && isRecord(full.val)) item = full.val;
+    }
+
+    const content = contentOf(kind, item);
+    if (!hasSubstance(kind, item)) {
+      await deleteObjectChunks(tenantId, MICROSOFT, refId);
+      continue;
+    }
     if (!content.trim()) continue;
     const ingested = await ingestObjectChunks(tenantId, embedder, {
       provider: MICROSOFT,
@@ -387,20 +425,20 @@ export async function runSubscriptionSync(
       metadata: {
         kind,
         upn: access.upn,
-        webLink: str(entry.webLink) || undefined,
+        webLink: str(item.webLink) || undefined,
         when:
-          str(entry.receivedDateTime) ||
-          str(rec(entry.start).dateTime) ||
-          str(entry.lastModifiedDateTime) ||
+          str(item.receivedDateTime) ||
+          str(rec(item.start).dateTime) ||
+          str(item.lastModifiedDateTime) ||
           undefined,
-        subject: str(entry.subject) || str(entry.title) || undefined,
+        subject: str(item.subject) || str(item.title) || undefined,
       },
       // Same precedence as `when` above: received (mail) → start (event) →
       // last-modified (task), whichever this kind actually carries.
       sourceAt:
-        str(entry.receivedDateTime) ||
-        str(rec(entry.start).dateTime) ||
-        str(entry.lastModifiedDateTime) ||
+        str(item.receivedDateTime) ||
+        str(rec(item.start).dateTime) ||
+        str(item.lastModifiedDateTime) ||
         null,
     });
     if (!ingested.ok) {

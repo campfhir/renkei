@@ -91,7 +91,7 @@ export async function searchMyKnowledge(
   // Source names map to provider/kind pairs in one place (the MCP tool's
   // module) so this page and the tool can never drift apart on what
   // 'outlook_mail' means.
-  const { providers, kinds } = sourceFiltersFor(filters.sources ?? []);
+  const sourceFilters = sourceFiltersFor(filters.sources ?? []);
   const verifiers = await buildKnowledgeVerifiers(tenantId);
 
   // No query yet: show the newest indexed items instead of an empty page,
@@ -104,8 +104,7 @@ export async function searchMyKnowledge(
       userEmail,
       k: clampedK,
       verifiers,
-      ...(providers ? { providers } : {}),
-      ...(kinds ? { kinds } : {}),
+      ...(sourceFilters.length > 0 ? { sources: sourceFilters } : {}),
       ...(filters.after ? { after: filters.after } : {}),
       ...(filters.before ? { before: filters.before } : {}),
     });
@@ -133,8 +132,7 @@ export async function searchMyKnowledge(
     k: clampedK,
     embedder,
     verifiers,
-    ...(providers ? { providers } : {}),
-    ...(kinds ? { kinds } : {}),
+    ...(sourceFilters.length > 0 ? { sources: sourceFilters } : {}),
     ...(filters.after ? { after: filters.after } : {}),
     ...(filters.before ? { before: filters.before } : {}),
   });
