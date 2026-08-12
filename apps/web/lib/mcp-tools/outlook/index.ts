@@ -26,13 +26,15 @@ import {
   MicrosoftAdapter,
   type ProviderGrant,
 } from '@renkei/provider-grants';
-import { GRAPH_BASE_URL } from '@renkei/connector-microsoft';
+import { GRAPH_BASE_URL, objectIdOfMicrosoftRefId } from '@renkei/connector-microsoft';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
+import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
 import { getMicrosoftApp } from '@/lib/microsoft-app';
 import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
-import type { MCPToolContext } from '../common';
+import { buildKnowledgeVerifiers } from '../knowledge';
+import { withPresentationHint, type MCPToolContext } from '../common';
 
 export const OUTLOOK_MCP_CONNECTOR = 'microsoft';
 
@@ -330,6 +332,164 @@ async function graphDeleteChecked(
   return { ok: true };
 }
 
+/** Graph's JSON $batch endpoint accepts at most this many sub-requests per call. */
+const BATCH_CHUNK_SIZE = 20;
+
+interface BatchRequestItem {
+  /** Caller-chosen correlation id — echoed back on the matching result, so a message id doubles as one. */
+  id: string;
+  method: 'GET' | 'PATCH' | 'POST' | 'DELETE';
+  /** Relative to the Graph API root, same as every other helper here (e.g. "/me/messages/{id}"). */
+  url: string;
+  body?: unknown;
+}
+
+interface BatchResultItem {
+  id: string;
+  ok: boolean;
+  body: Record<string, unknown> | null;
+  error?: string;
+}
+
+/** How many times a 429'd sub-request is re-sent before its failure is reported. */
+const BATCH_RETRY_ROUNDS = 3;
+/** Fallback pause when Graph 429s a sub-request without a Retry-After header. */
+const BATCH_DEFAULT_RETRY_MS = 5_000;
+/** Ceiling on any single honored Retry-After, so one hostile value can't hang a tool call. */
+const BATCH_MAX_RETRY_MS = 30_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Send one chunk (≤20) and map Graph's per-sub-request outcomes back onto the inputs. */
+async function runBatchChunk(
+  context: MCPToolContext,
+  accessToken: string,
+  chunk: readonly BatchRequestItem[]
+): Promise<{ results: BatchResultItem[]; retryable: BatchRequestItem[]; retryAfterMs: number }> {
+  const result = await graphPost(context, accessToken, '/$batch', {
+    requests: chunk.map((item) => ({
+      id: item.id,
+      method: item.method,
+      url: item.url,
+      ...(item.body !== undefined
+        ? { headers: { 'Content-Type': 'application/json' }, body: item.body }
+        : {}),
+    })),
+  });
+  if (!result.ok) {
+    return {
+      results: chunk.map((item) => ({ id: item.id, ok: false, body: null, error: result.error })),
+      retryable: [],
+      retryAfterMs: 0,
+    };
+  }
+
+  const responsesRaw = result.body?.responses;
+  const responses = Array.isArray(responsesRaw) ? responsesRaw : [];
+  const results: BatchResultItem[] = [];
+  const retryable: BatchRequestItem[] = [];
+  let retryAfterMs = 0;
+
+  for (const item of chunk) {
+    const entry = rec(responses.find((response) => str(rec(response).id) === item.id));
+    const status = typeof entry.status === 'number' ? entry.status : 0;
+    if (status === 429 || status === 503) {
+      // Throttled, not refused: worth another round rather than reporting a
+      // failure the caller would only re-attempt by hand anyway.
+      retryable.push(item);
+      const retryAfter = Number(str(rec(entry.headers)['Retry-After']));
+      if (Number.isFinite(retryAfter) && retryAfter > 0) {
+        retryAfterMs = Math.max(retryAfterMs, Math.min(retryAfter * 1000, BATCH_MAX_RETRY_MS));
+      }
+      continue;
+    }
+    const ok = status >= 200 && status < 300;
+    results.push({
+      id: item.id,
+      ok,
+      body: ok ? rec(entry.body) : null,
+      error: ok ? undefined : describeBatchItemError(status, entry.body),
+    });
+  }
+
+  return { results, retryable, retryAfterMs };
+}
+
+/**
+ * Run many single-message operations as Graph $batch calls instead of one
+ * HTTP round trip per message — what every outlook_bulk_* tool is built
+ * on. Chunked at BATCH_CHUNK_SIZE (Graph's hard per-batch limit) and run
+ * SEQUENTIALLY on purpose: firing all chunks at once is how a 200-message
+ * action turns into 200 simultaneous mailbox operations and earns a 429
+ * for the whole run. Sub-requests that come back throttled (429/503) are
+ * retried a few rounds, honoring Retry-After when Graph sends one.
+ *
+ * A chunk that fails at the transport/auth level (network error, bad
+ * token) fails every item in that chunk with the same error; a chunk that
+ * succeeds still reports each item's own status, since Graph settles
+ * sub-requests independently.
+ */
+async function graphBatch(
+  context: MCPToolContext,
+  accessToken: string,
+  requests: readonly BatchRequestItem[]
+): Promise<{ ok: true; results: BatchResultItem[] } | { ok: false; error: string }> {
+  const chunks: BatchRequestItem[][] = [];
+  for (let i = 0; i < requests.length; i += BATCH_CHUNK_SIZE) {
+    chunks.push(requests.slice(i, i + BATCH_CHUNK_SIZE));
+  }
+  if (chunks.length === 0) return { ok: true, results: [] };
+
+  const results: BatchResultItem[] = [];
+  for (const chunk of chunks) {
+    let pending: readonly BatchRequestItem[] = chunk;
+    for (let round = 0; round <= BATCH_RETRY_ROUNDS && pending.length > 0; round += 1) {
+      const outcome = await runBatchChunk(context, accessToken, pending);
+      results.push(...outcome.results);
+      pending = outcome.retryable;
+      if (pending.length === 0) break;
+      if (round === BATCH_RETRY_ROUNDS) {
+        // Out of rounds — report the still-throttled items as failures
+        // rather than silently dropping them from the summary.
+        results.push(
+          ...pending.map((item) => ({
+            id: item.id,
+            ok: false,
+            body: null,
+            error: 'Graph kept rate limiting this message (429); try it again later.',
+          }))
+        );
+        break;
+      }
+      await sleep(outcome.retryAfterMs || BATCH_DEFAULT_RETRY_MS);
+    }
+  }
+
+  return { ok: true, results };
+}
+
+function describeBatchItemError(status: number, body: unknown): string {
+  const message = str(rec(rec(body).error).message);
+  return message || describeStatus(status);
+}
+
+/** A one-line-per-failure summary for a bulk action's results — capped so 200 failures don't flood the reply. */
+function summarizeBatch(results: readonly BatchResultItem[], verb: string): string {
+  const succeeded = results.filter((result) => result.ok);
+  const failed = results.filter((result) => !result.ok);
+  const lines = [`${verb}: ${succeeded.length} of ${results.length} succeeded.`];
+  if (failed.length > 0) {
+    const MAX_SHOWN = 20;
+    const shown = failed.slice(0, MAX_SHOWN);
+    lines.push('Failed:');
+    lines.push(...shown.map((result) => `  • ${result.id}: ${result.error ?? 'unknown error'}`));
+    if (failed.length > shown.length) lines.push(`  …and ${failed.length - shown.length} more.`);
+  }
+  return lines.join('\n');
+}
+
 function values(body: Record<string, unknown>): Record<string, unknown>[] {
   return Array.isArray(body.value)
     ? body.value.filter(
@@ -346,18 +506,6 @@ function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
 }
 
-/**
- * A trailing note appended to a list-shaped tool result, nudging the
- * calling model toward a more scannable reply than echoing this flat text
- * back verbatim — a table, a grouped/indented layout, whatever fits the
- * data — without dictating exactly what that looks like. Cheap to add,
- * easy to ignore when a flat list is already the right call (a couple of
- * results, or the user asked for raw output).
- */
-function withPresentationHint(body: string, suggestion: string): string {
-  return `${body}\n\n(Presentation hint: ${suggestion})`;
-}
-
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -372,12 +520,113 @@ function senderOf(message: Record<string, unknown>): string {
   return str(address.name) || str(address.address) || '(unknown sender)';
 }
 
+/**
+ * The GROUPING key: address only, lowercased. Anything involving the
+ * display name is a bad key — automated senders routinely vary it per
+ * message ("Jira (PROJ-1)", "Jira (PROJ-2)") while the address stays
+ * constant, and collapsing exactly that is the point of sender grouping.
+ */
+function senderKeyOf(message: Record<string, unknown>): string {
+  const address = rec(rec(message.from).emailAddress);
+  return (str(address.address) || str(address.name) || '(unknown sender)').toLowerCase();
+}
+
+/** The human-readable label for a group — name plus address when both exist. */
+function senderLabelOf(message: Record<string, unknown>): string {
+  const address = rec(rec(message.from).emailAddress);
+  const email = str(address.address);
+  const name = str(address.name);
+  if (!email) return name || '(unknown sender)';
+  return name ? `${name} <${email}>` : email;
+}
+
+/**
+ * Content types whose bytes are worth decoding straight to text for the
+ * model, rather than handing back base64 it can do nothing with.
+ * Deliberately a allow-list of formats that are genuinely plain text —
+ * PDF/DOCX/XLSX are binary container formats that would decode to noise,
+ * so they're reported as binary instead of pretending to extract them.
+ */
+function isTextualContentType(contentType: string): boolean {
+  const type = contentType.toLowerCase().split(';')[0]?.trim() ?? '';
+  if (type.startsWith('text/')) return true;
+  if (type.endsWith('+json') || type.endsWith('+xml')) return true;
+  return [
+    'application/json',
+    'application/xml',
+    'application/csv',
+    'application/javascript',
+    'application/x-yaml',
+    'application/yaml',
+    'application/sql',
+    'application/x-sh',
+  ].includes(type);
+}
+
+/** Decoded-text ceiling per attachment — matches outlook_get_message's body cap. */
+const ATTACHMENT_TEXT_MAX_CHARS = 60_000;
+/**
+ * Ceiling on raw bytes returned as base64. Far below the org's upload
+ * limit on purpose: base64 inflates ~1.33x and every byte lands in the
+ * model's context, so a 20MB attachment would be ~7M tokens. Past this,
+ * the tool reports the size and refuses rather than blowing up the call.
+ */
+const ATTACHMENT_BASE64_MAX_BYTES = 2_000_000;
+
+function attachmentKindOf(attachment: Record<string, unknown>): string {
+  const odataType = str(attachment['@odata.type']);
+  if (odataType.includes('itemAttachment')) return 'item';
+  if (odataType.includes('referenceAttachment')) return 'reference';
+  return 'file';
+}
+
+function attachmentLine(attachment: Record<string, unknown>): string {
+  const size = typeof attachment.size === 'number' ? attachment.size : 0;
+  const kind = attachmentKindOf(attachment);
+  return (
+    `${str(attachment.name) || '(unnamed)'} — ${str(attachment.contentType) || 'unknown type'}` +
+    ` — ${size} bytes` +
+    (kind !== 'file' ? ` — ${kind} attachment` : '') +
+    (attachment.isInline === true ? ' — inline' : '') +
+    ` — id: ${str(attachment.id)}`
+  );
+}
+
+/**
+ * How many 100-message pages a client-side subject scan may pull before
+ * giving up and handing the caller a pageToken to continue from. Bounded
+ * because a rare substring against a 24k-message mailbox would otherwise
+ * walk the entire thing in one tool call.
+ */
+const SUBJECT_SCAN_PAGE_BUDGET = 10;
+/** Same idea for countOnly, which has to walk rows to build a sender breakdown. */
+const COUNT_SCAN_PAGE_BUDGET = 10;
+
 function messageLine(message: Record<string, unknown>): string {
   const unread = message.isRead === false;
   return (
     `[${str(message.receivedDateTime)}]${unread ? ' (unread)' : ''} ${senderOf(message)} — ` +
     `${str(message.subject) || '(no subject)'} — id: ${str(message.id)}\n  ` +
     `${str(message.bodyPreview).replace(/\n/g, '\n  ')}`
+  );
+}
+
+/**
+ * outlook_bulk_search_messages's line: no body preview (these results feed
+ * bulk actions, not reading), but shows read/flag/category state since
+ * that's usually exactly what the caller filtered on.
+ */
+function bulkSearchLine(message: Record<string, unknown>): string {
+  const flagStatus = str(rec(message.flag).flagStatus) || 'notFlagged';
+  const categories = Array.isArray(message.categories)
+    ? message.categories.filter((category): category is string => typeof category === 'string')
+    : [];
+  return (
+    `${message.isRead === false ? '(unread) ' : ''}${str(message.subject) || '(no subject)'} — ` +
+    `${senderOf(message)} — ${str(message.receivedDateTime)}` +
+    (flagStatus !== 'notFlagged' ? ` — flag: ${flagStatus}` : '') +
+    (categories.length > 0 ? ` — categories: ${categories.join(', ')}` : '') +
+    ` — id: ${str(message.id)}`
   );
 }
 
@@ -526,6 +775,11 @@ function outlookScopeFor(toolName: string): string[] {
     case 'outlook_flag_message':
     case 'outlook_categorize_message':
     case 'outlook_move_message':
+    case 'outlook_bulk_mark_messages':
+    case 'outlook_bulk_flag_messages':
+    case 'outlook_bulk_categorize_messages':
+    case 'outlook_bulk_move_messages':
+    case 'outlook_bulk_archive_messages':
       return ['Mail.ReadWrite'];
     case 'outlook_create_mail_folder':
     case 'outlook_rename_mail_folder':
@@ -736,6 +990,236 @@ export async function registerOutlookTools(
   );
 
   server.registerTool(
+    'outlook_list_attachments',
+    {
+      title: 'Outlook · Read — List a message’s attachments',
+      description:
+        'List the files attached to one message — name, type, size, and the attachment id that ' +
+        'feeds outlook_get_attachment. Inline images (embedded signature logos and the like) are ' +
+        'hidden by default since they are almost never what someone means by "the attachment"; ' +
+        'pass includeInline to see them. Note a message can carry inline images while ' +
+        'hasAttachments is false, so an empty result here is meaningful but a false ' +
+        'hasAttachments is not.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        messageId: z
+          .string()
+          .min(1)
+          .describe('Message id from outlook_list_messages/outlook_bulk_search_messages'),
+        includeInline: z
+          .boolean()
+          .describe('Include inline/embedded images (default false)')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageId = str(args.messageId);
+      if (!messageId) return errText('messageId is required');
+
+      const result = await graphGet(
+        context,
+        access.accessToken,
+        `/me/messages/${encodeURIComponent(messageId)}/attachments` +
+          `?$select=id,name,contentType,size,isInline`
+      );
+      if (!result.ok) return errText(result.error);
+      const all = values(result.body);
+      const attachments =
+        args.includeInline === true ? all : all.filter((entry) => entry.isInline !== true);
+      if (attachments.length === 0) {
+        return textResult(
+          all.length > 0
+            ? `No attachments (${all.length} inline image(s) hidden — pass includeInline to see them).`
+            : 'No attachments.'
+        );
+      }
+      return textResult(
+        withPresentationHint(
+          attachments.map(attachmentLine).join('\n'),
+          'a table (Name, Type, Size, id) usually scans faster than this flat list.'
+        )
+      );
+    }
+  );
+
+  server.registerTool(
+    'outlook_get_attachment',
+    {
+      title: 'Outlook · Read — Download one attachment',
+      description:
+        'Fetch an attachment’s content. Plain-text formats (txt, csv, json, xml, yaml, source ' +
+        'code) are decoded and returned as readable text. Binary formats (PDF, Word, Excel, ' +
+        'images) are returned base64-encoded only when small enough to be worth putting in ' +
+        'context — otherwise the tool reports the size and declines rather than flooding the ' +
+        'conversation. PDFs/Office files are NOT text-extracted; their base64 is raw container ' +
+        'bytes, so treat this as transport, not parsing.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        messageId: z.string().min(1).describe('Message id the attachment belongs to'),
+        attachmentId: z.string().min(1).describe('Attachment id from outlook_list_attachments'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageId = str(args.messageId);
+      if (!messageId) return errText('messageId is required');
+      const attachmentId = str(args.attachmentId);
+      if (!attachmentId) return errText('attachmentId is required');
+
+      const basePath =
+        `/me/messages/${encodeURIComponent(messageId)}` +
+        `/attachments/${encodeURIComponent(attachmentId)}`;
+      const result = await graphGet(context, access.accessToken, basePath);
+      if (!result.ok) return errText(result.error);
+      const attachment = result.body;
+      const name = str(attachment.name) || '(unnamed)';
+      const contentType = str(attachment.contentType) || 'application/octet-stream';
+      const size = typeof attachment.size === 'number' ? attachment.size : 0;
+      const kind = attachmentKindOf(attachment);
+
+      // A reference attachment is a link to a cloud file — there are no
+      // bytes to fetch here at all.
+      if (kind === 'reference') {
+        return textResult(
+          `"${name}" is a link to a cloud file, not an attached copy — there are no bytes to ` +
+            `download through this tool.` +
+            (str(attachment.sourceUrl) ? `\nLink: ${str(attachment.sourceUrl)}` : '')
+        );
+      }
+
+      // An item attachment is an embedded message/event/contact. Re-fetch
+      // with the expand Graph requires to see the item itself.
+      if (kind === 'item') {
+        const expanded = await graphGet(
+          context,
+          access.accessToken,
+          `${basePath}?$expand=microsoft.graph.itemattachment/item`
+        );
+        const item = expanded.ok ? rec(rec(expanded.body).item) : {};
+        const bodyText = str(rec(item.body).content);
+        return textResult(
+          `"${name}" is an embedded item (a forwarded message, event, or contact), not a file.\n` +
+            (str(item.subject) ? `Subject: ${str(item.subject)}\n` : '') +
+            (str(rec(rec(item.from).emailAddress).address)
+              ? `From: ${str(rec(rec(item.from).emailAddress).address)}\n`
+              : '') +
+            (bodyText ? `\n${bodyText.slice(0, ATTACHMENT_TEXT_MAX_CHARS)}` : '')
+        );
+      }
+
+      const contentBytes = str(attachment.contentBytes);
+      if (!contentBytes) {
+        return errText(`Graph returned no content for "${name}" (${size} bytes, ${contentType}).`);
+      }
+
+      if (isTextualContentType(contentType)) {
+        const decoded = Buffer.from(contentBytes, 'base64').toString('utf8');
+        const capped =
+          decoded.length > ATTACHMENT_TEXT_MAX_CHARS
+            ? `${decoded.slice(0, ATTACHMENT_TEXT_MAX_CHARS)}\n\n[…truncated: ${decoded.length - ATTACHMENT_TEXT_MAX_CHARS} more characters]`
+            : decoded;
+        return textResult(`${name} (${contentType}, ${size} bytes):\n\n${capped}`);
+      }
+
+      if (size > ATTACHMENT_BASE64_MAX_BYTES) {
+        return errText(
+          `"${name}" is ${size} bytes of ${contentType} — too large to return inline (limit ` +
+            `${ATTACHMENT_BASE64_MAX_BYTES} bytes for binary content). Its text could not be ` +
+            `extracted either, since this tool does not parse binary formats.`
+        );
+      }
+      return textResult(
+        `${name} (${contentType}, ${size} bytes), base64-encoded — binary content, not text:\n\n` +
+          contentBytes
+      );
+    }
+  );
+
+  server.registerTool(
+    'outlook_bulk_list_attachments',
+    {
+      title: 'Outlook · Read — List attachments across many messages',
+      description:
+        'List attachment metadata for up to 200 messages in one batched call — pair with ' +
+        'outlook_bulk_search_messages(hasAttachments: true) to survey what is attached across a ' +
+        'whole set of mail without one call per message. Returns names/types/sizes/ids; use ' +
+        'outlook_get_attachment to pull any individual file’s content.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        messageIds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(200)
+          .describe('Message ids, e.g. from outlook_bulk_search_messages'),
+        includeInline: z
+          .boolean()
+          .describe('Include inline/embedded images (default false)')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageIds = Array.isArray(args.messageIds)
+        ? args.messageIds.map(String).filter(Boolean)
+        : [];
+      if (messageIds.length === 0) return errText('messageIds is required');
+
+      const batch = await graphBatch(
+        context,
+        access.accessToken,
+        messageIds.map((id) => ({
+          id,
+          method: 'GET' as const,
+          url:
+            `/me/messages/${encodeURIComponent(id)}/attachments` +
+            `?$select=id,name,contentType,size,isInline`,
+        }))
+      );
+      if (!batch.ok) return errText(batch.error);
+
+      const sections: string[] = [];
+      let totalAttachments = 0;
+      const failures: string[] = [];
+      for (const result of batch.results) {
+        if (!result.ok) {
+          failures.push(`  • ${result.id}: ${result.error ?? 'unknown error'}`);
+          continue;
+        }
+        const all = values(result.body ?? {});
+        const attachments =
+          args.includeInline === true ? all : all.filter((entry) => entry.isInline !== true);
+        if (attachments.length === 0) continue;
+        totalAttachments += attachments.length;
+        sections.push(
+          `message ${result.id} (${attachments.length}):\n` +
+            attachments.map((entry) => `    ${attachmentLine(entry)}`).join('\n')
+        );
+      }
+
+      if (sections.length === 0) {
+        return textResult(
+          `No attachments across ${messageIds.length} message(s).` +
+            (failures.length > 0 ? `\n\nFailed to read:\n${failures.join('\n')}` : '')
+        );
+      }
+      const footer =
+        `\n\n${totalAttachments} attachment(s) across ${sections.length} of ` +
+        `${messageIds.length} message(s).` +
+        (failures.length > 0 ? `\n\nFailed to read:\n${failures.join('\n')}` : '');
+      return textResult(
+        withPresentationHint(
+          sections.join('\n\n') + footer,
+          'a table (Message, Attachment, Type, Size, id) usually scans faster than this flat list.'
+        )
+      );
+    }
+  );
+
+  server.registerTool(
     'outlook_search_messages',
     {
       title: 'Outlook · Read — Search Outlook messages',
@@ -767,6 +1251,392 @@ export async function registerOutlookTools(
           lines.join('\n\n'),
           'a table (From, Subject, Received, Read) usually scans faster than this flat list, ' +
             'especially with more than a handful of results.'
+        )
+      );
+    }
+  );
+
+  server.registerTool(
+    'outlook_bulk_search_messages',
+    {
+      title: 'Outlook · Read — Bulk search/filter messages (paged)',
+      description:
+        'Structured search across the mailbox (or one folder) — read/unread, flag status, ' +
+        'categories, sender, subject substring, attachments, received-date range — with paging ' +
+        'via pageToken. Built to feed the outlook_bulk_* action tools: search here for the ' +
+        'messages you mean, then mark/flag/categorize/archive their ids in bulk. Two modes worth ' +
+        'reaching for on a big cleanup: countOnly sizes a category (with a top-senders ' +
+        'breakdown) before you commit, and groupBySender collapses a page into per-sender groups ' +
+        'so automated noise is obvious without reading every subject line. For a freetext query ' +
+        'instead of structured filters, use outlook_search_messages.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        folder: z
+          .string()
+          .describe('Well-known folder name or folder id (default: entire mailbox)')
+          .optional(),
+        isRead: z.boolean().describe('Only read (true) or unread (false) messages').optional(),
+        flagStatus: z
+          .enum(['flagged', 'complete', 'notFlagged'])
+          .describe('Only messages with this flag status')
+          .optional(),
+        categories: z
+          .array(z.string().min(1))
+          .describe('Only messages carrying ALL of these categories')
+          .optional(),
+        hasAttachments: z
+          .boolean()
+          .describe('Only messages with (true) or without (false) attachments')
+          .optional(),
+        from: z.string().describe('Only messages from this exact sender address').optional(),
+        subjectContains: z
+          .string()
+          .describe(
+            'Case-insensitive subject substring. Applied after fetching (Graph cannot filter ' +
+              'mail subjects server-side), so it scans several pages to fill one page of matches.'
+          )
+          .optional(),
+        receivedAfter: z
+          .string()
+          .describe('ISO-8601 — only messages received on/after this time')
+          .optional(),
+        receivedBefore: z
+          .string()
+          .describe('ISO-8601 — only messages received before this time')
+          .optional(),
+        countOnly: z
+          .boolean()
+          .describe(
+            'Dry run: report how many messages match (and the top senders) without listing them ' +
+              '— use this to size a cleanup before committing to it'
+          )
+          .optional(),
+        groupBySender: z
+          .boolean()
+          .describe(
+            'Group the results by sender with per-sender counts instead of listing each message ' +
+              '— makes it far easier to spot automated/noise senders in a large unread pile'
+          )
+          .optional(),
+        max: z.number().int().min(1).max(100).describe('Page size (default 25)').optional(),
+        pageToken: z
+          .string()
+          .describe(
+            'Continue from a previous call’s nextPageToken — ignores every other filter when set'
+          )
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+
+      const max = typeof args.max === 'number' ? args.max : 25;
+      const subjectContains = str(args.subjectContains).toLowerCase();
+      const countOnly = args.countOnly === true;
+      const groupBySender = args.groupBySender === true;
+      const pageToken = str(args.pageToken);
+
+      const basePath = str(args.folder)
+        ? `/me/mailFolders/${encodeURIComponent(str(args.folder))}/messages`
+        : '/me/messages';
+
+      /**
+       * Filter clause order is load-bearing, not cosmetic: Graph documents
+       * that when $filter and $orderby are combined on messages, every
+       * $orderby property must also appear in $filter AND must come before
+       * any property that isn't in the $orderby — otherwise Exchange answers
+       * 400 InefficientFilter ("The restriction or sort order is too complex
+       * for this operation"). Since we always order by receivedDateTime, its
+       * clauses lead.
+       */
+      function buildQuery(top: number, withCount: boolean): string {
+        const quote = (value: string) => value.replace(/'/g, "''");
+        const dateFilters: string[] = [];
+        if (str(args.receivedAfter)) {
+          dateFilters.push(`receivedDateTime ge ${str(args.receivedAfter)}`);
+        }
+        if (str(args.receivedBefore)) {
+          dateFilters.push(`receivedDateTime lt ${str(args.receivedBefore)}`);
+        }
+        const otherFilters: string[] = [];
+        if (typeof args.isRead === 'boolean') otherFilters.push(`isRead eq ${args.isRead}`);
+        if (str(args.flagStatus)) {
+          otherFilters.push(`flag/flagStatus eq '${quote(str(args.flagStatus))}'`);
+        }
+        if (Array.isArray(args.categories)) {
+          for (const category of args.categories) {
+            if (typeof category === 'string' && category) {
+              otherFilters.push(`categories/any(c:c eq '${quote(category)}')`);
+            }
+          }
+        }
+        if (typeof args.hasAttachments === 'boolean') {
+          otherFilters.push(`hasAttachments eq ${args.hasAttachments}`);
+        }
+        if (str(args.from)) {
+          otherFilters.push(`from/emailAddress/address eq '${quote(str(args.from))}'`);
+        }
+        // subjectContains is deliberately NOT here: Graph's mail $filter has
+        // no working contains() for subject (it 400s), and $search — which
+        // does support subject: — cannot be combined with $filter on mail at
+        // all. So substring matching happens client-side below, which also
+        // gets true substring semantics rather than $search's word/prefix
+        // tokenization.
+        const filters = [...dateFilters, ...otherFilters];
+
+        const parts = [
+          `$top=${top}`,
+          '$orderby=receivedDateTime desc',
+          '$select=id,subject,from,receivedDateTime,isRead,flag,categories',
+        ];
+        if (filters.length > 0) parts.push(`$filter=${encodeURIComponent(filters.join(' and '))}`);
+        if (withCount) parts.push('$count=true');
+        return `${basePath}?${parts.join('&')}`;
+      }
+
+      // ---- dry run: a total, plus who it's from, without listing anything.
+      if (countOnly) {
+        // Without a subject filter Graph can answer the count itself in one
+        // call ($count is supported on mail, unlike ConsistencyLevel, which
+        // is a directory-objects-only feature and is deliberately not sent).
+        // A sender breakdown still needs real rows, so scan pages for it.
+        const senderCounts = new Map<string, { label: string; count: number }>();
+        let scanned = 0;
+        let matched = 0;
+        let serverTotal: number | null = null;
+        let next: string | null = buildQuery(100, true);
+        for (let page = 0; page < COUNT_SCAN_PAGE_BUDGET && next; page += 1) {
+          const result = await graphGet(context, access.accessToken, next);
+          if (!result.ok) return errText(result.error);
+          if (serverTotal === null && typeof result.body['@odata.count'] === 'number') {
+            serverTotal = result.body['@odata.count'];
+          }
+          for (const message of values(result.body)) {
+            scanned += 1;
+            if (subjectContains && !str(message.subject).toLowerCase().includes(subjectContains)) {
+              continue;
+            }
+            matched += 1;
+            const key = senderKeyOf(message);
+            const existing = senderCounts.get(key);
+            if (existing) existing.count += 1;
+            else senderCounts.set(key, { label: senderLabelOf(message), count: 1 });
+          }
+          const nextLink = str(result.body['@odata.nextLink']);
+          next = nextLink ? nextLink.replace(GRAPH_BASE_URL, '') : null;
+        }
+
+        const exhausted = next === null;
+        const headline = subjectContains
+          ? `${matched} match${matched === 1 ? '' : 'es'} among the ${scanned} message(s) scanned` +
+            (exhausted ? '.' : ' so far (scan limit reached — there may be more).')
+          : serverTotal !== null
+            ? `${serverTotal} message(s) match.`
+            : `${matched} message(s) match` + (exhausted ? '.' : ' so far (scan limit reached).');
+
+        const topSenders = [...senderCounts.values()]
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 25)
+          .map((entry) => `  ${entry.count} — ${entry.label}`);
+        return textResult(
+          topSenders.length > 0
+            ? `${headline}\n\nTop senders${exhausted ? '' : ' (within the scanned pages)'}:\n${topSenders.join('\n')}`
+            : headline
+        );
+      }
+
+      // ---- listing mode.
+      // A client-side subject filter can throw away most of a page, so keep
+      // pulling pages until one page's worth of MATCHES is collected (or the
+      // scan budget runs out). Without that filter this is a single call and
+      // the loop exits immediately.
+      const collected: Record<string, unknown>[] = [];
+      let scanned = 0;
+      let next: string | null = pageToken || buildQuery(subjectContains ? 100 : max, false);
+      let pagesFetched = 0;
+      const pageBudget = subjectContains ? SUBJECT_SCAN_PAGE_BUDGET : 1;
+
+      while (next && collected.length < max && pagesFetched < pageBudget) {
+        const result = await graphGet(context, access.accessToken, next);
+        if (!result.ok) return errText(result.error);
+        pagesFetched += 1;
+        for (const message of values(result.body)) {
+          scanned += 1;
+          if (subjectContains && !str(message.subject).toLowerCase().includes(subjectContains)) {
+            continue;
+          }
+          if (collected.length < max) collected.push(message);
+        }
+        const nextLink = str(result.body['@odata.nextLink']);
+        next = nextLink ? nextLink.replace(GRAPH_BASE_URL, '') : null;
+      }
+
+      if (collected.length === 0) {
+        return textResult(
+          subjectContains
+            ? `No messages match (scanned ${scanned}).` +
+                (next ? ' Scan limit reached — pass pageToken to keep looking.' : '')
+            : 'No messages match.'
+        );
+      }
+
+      const footerParts = [`${collected.length} message(s)`];
+      if (subjectContains) footerParts.push(`matched out of ${scanned} scanned`);
+      footerParts.push(next ? `more available, pass pageToken: ${next}` : 'no more pages');
+      const footer = `\n\n${footerParts.join(' — ')}`;
+
+      if (groupBySender) {
+        const bySender = new Map<string, { label: string; messages: Record<string, unknown>[] }>();
+        for (const message of collected) {
+          const key = senderKeyOf(message);
+          const bucket = bySender.get(key);
+          if (bucket) bucket.messages.push(message);
+          else bySender.set(key, { label: senderLabelOf(message), messages: [message] });
+        }
+        const groups = [...bySender.values()]
+          .sort((a, b) => b.messages.length - a.messages.length)
+          .map((group) => {
+            const subjects = group.messages
+              .map(
+                (message) =>
+                  `    ${str(message.subject) || '(no subject)'} — id: ${str(message.id)}`
+              )
+              .join('\n');
+            return `${group.label} (${group.messages.length}):\n${subjects}`;
+          });
+        return textResult(
+          withPresentationHint(
+            groups.join('\n\n') + footer,
+            'grouping stays useful in the reply — a section per sender (or a table with a Sender ' +
+              'column) makes automated senders obvious at a glance.'
+          )
+        );
+      }
+
+      return textResult(
+        withPresentationHint(
+          collected.map(bulkSearchLine).join('\n') + footer,
+          'a table (Subject, From, Received, Read, Flag, Categories, id) usually scans faster ' +
+            'than this flat list.'
+        )
+      );
+    }
+  );
+
+  server.registerTool(
+    'outlook_semantic_search_messages',
+    {
+      title: 'Outlook · Read — Find mail by meaning (semantic search)',
+      description:
+        'Search mail by MEANING rather than keywords — "the thread about renegotiating the ' +
+        'vendor contract" finds messages that never use those words. Use this when you know ' +
+        'roughly what a message was about but not what it literally said; use ' +
+        'outlook_bulk_search_messages when you need exhaustive or structured results ' +
+        '(unread, from a sender, a date range).\n\n' +
+        'IMPORTANT: this searches Renkei’s INDEX of your mail, not the live mailbox — it only ' +
+        'covers what has been ingested and embedded, so it can miss very recent or ' +
+        'never-indexed mail and is not a substitute for a real mailbox query. Results carry ' +
+        'message ids, so they feed the outlook_bulk_* action tools directly.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        query: z.string().min(1).max(2000).describe('What the mail is about, in natural language'),
+        max: z.number().int().min(1).max(25).describe('How many (default 10)').optional(),
+        after: z.string().describe('Only mail received on/after this ISO-8601 time').optional(),
+        before: z.string().describe('Only mail received before this ISO-8601 time').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const query = str(args.query);
+      if (!query.trim()) return errText('query is required');
+      const max = typeof args.max === 'number' ? args.max : 10;
+
+      // Same gate as search_knowledge: with no recorded email nothing can be
+      // verified at the source, so nothing is disclosed.
+      const userEmail = context.userEmail;
+      if (!userEmail) {
+        return errText(
+          'Renkei has no email on record for your identity, so access to indexed mail cannot be ' +
+            'verified. Sign in to Renkei again to refresh it.'
+        );
+      }
+
+      const embedder = await resolveEmbeddingProvider(context.tenantId);
+      if (!embedder) {
+        return errText(
+          'Semantic search needs the knowledge layer, which is not configured for this ' +
+            'organization. Use outlook_bulk_search_messages instead.'
+        );
+      }
+
+      const verifiers = await buildKnowledgeVerifiers(context.tenantId);
+      const searched = await searchKnowledge({
+        tenantId: context.tenantId,
+        userEmail,
+        query,
+        // Overfetch: several chunks of one long message collapse to a single
+        // result below, so k results here can be far fewer messages.
+        k: max * 3,
+        embedder,
+        verifiers,
+        providers: ['microsoft'],
+        kinds: ['msg'],
+        ...(str(args.after) ? { after: str(args.after) } : {}),
+        ...(str(args.before) ? { before: str(args.before) } : {}),
+      });
+      if (!searched.ok) {
+        return errText(
+          searched.err.type === 'EMBEDDING_FAILED'
+            ? 'The embedding provider could not process that query.'
+            : 'The knowledge store could not be searched.'
+        );
+      }
+
+      // Collapse chunks back to messages, keeping each message's closest
+      // chunk — otherwise one long mail floods the whole result list.
+      const byMessage = new Map<
+        string,
+        { messageId: string; subject: string; when: string | null; distance: number }
+      >();
+      for (const hit of searched.val.hits) {
+        const objectId = objectIdOfMicrosoftRefId(hit.refId);
+        if (!objectId) continue;
+        // Strip the `#0001` chunk suffix so the id is usable as a message id.
+        const messageId = objectId.split('#')[0] ?? objectId;
+        const existing = byMessage.get(messageId);
+        if (existing && existing.distance <= hit.distance) continue;
+        byMessage.set(messageId, {
+          messageId,
+          subject: typeof hit.metadata.subject === 'string' ? hit.metadata.subject : '',
+          when: hit.sourceAt,
+          distance: hit.distance,
+        });
+      }
+
+      const results = [...byMessage.values()].sort((a, b) => a.distance - b.distance).slice(0, max);
+      if (results.length === 0) {
+        return textResult(
+          searched.val.elided > 0
+            ? `No accessible matches (${searched.val.elided} withheld: access could not be verified at the source).`
+            : 'No matches in the indexed mail.'
+        );
+      }
+
+      const lines = results.map(
+        (result) =>
+          `${result.subject || '(no subject)'}` +
+          (result.when ? ` — ${result.when}` : '') +
+          ` — id: ${result.messageId}`
+      );
+      const footer =
+        `\n\n${results.length} message(s), closest match first.` +
+        (searched.val.elided > 0
+          ? ` ${searched.val.elided} withheld: access could not be verified at the source.`
+          : '');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n') + footer,
+          'a table (Subject, Received, id) usually scans faster than this flat list.'
         )
       );
     }
@@ -1490,6 +2360,300 @@ export async function registerOutlookTools(
       );
       if (!result.ok) return errText(result.error);
       return textResult(`Moved to "${destinationFolder}".`);
+    }
+  );
+
+  server.registerTool(
+    'outlook_bulk_mark_messages',
+    {
+      title: 'Outlook · Act — Mark multiple messages read or unread',
+      description:
+        'Mark up to 200 messages read or unread in one call — pair with outlook_bulk_search_messages ' +
+        'to find the message ids first. Uses Graph batching, so each message succeeds or fails ' +
+        'independently; the reply reports both counts.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageIds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(200)
+          .describe('Message ids, e.g. from outlook_bulk_search_messages'),
+        isRead: z.boolean().describe('true to mark read, false to mark unread'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageIds = Array.isArray(args.messageIds)
+        ? args.messageIds.map(String).filter(Boolean)
+        : [];
+      if (messageIds.length === 0) return errText('messageIds is required');
+      if (typeof args.isRead !== 'boolean') return errText('isRead is required');
+
+      const batch = await graphBatch(
+        context,
+        access.accessToken,
+        messageIds.map((id) => ({
+          id,
+          method: 'PATCH' as const,
+          url: `/me/messages/${encodeURIComponent(id)}`,
+          body: { isRead: args.isRead },
+        }))
+      );
+      if (!batch.ok) return errText(batch.error);
+      return textResult(summarizeBatch(batch.results, `Marked ${args.isRead ? 'read' : 'unread'}`));
+    }
+  );
+
+  server.registerTool(
+    'outlook_bulk_flag_messages',
+    {
+      title: 'Outlook · Act — Flag or unflag multiple messages',
+      description:
+        'Set the same follow-up flag state on up to 200 messages in one call — pair with ' +
+        'outlook_bulk_search_messages to find the message ids first.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageIds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(200)
+          .describe('Message ids, e.g. from outlook_bulk_search_messages'),
+        status: z.enum(['flagged', 'complete', 'notFlagged']).describe('Flag state to set'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageIds = Array.isArray(args.messageIds)
+        ? args.messageIds.map(String).filter(Boolean)
+        : [];
+      if (messageIds.length === 0) return errText('messageIds is required');
+      const status = str(args.status);
+      if (!status) return errText('status is required');
+
+      const batch = await graphBatch(
+        context,
+        access.accessToken,
+        messageIds.map((id) => ({
+          id,
+          method: 'PATCH' as const,
+          url: `/me/messages/${encodeURIComponent(id)}`,
+          body: { flag: { flagStatus: status } },
+        }))
+      );
+      if (!batch.ok) return errText(batch.error);
+      return textResult(summarizeBatch(batch.results, `Flag set to "${status}"`));
+    }
+  );
+
+  server.registerTool(
+    'outlook_bulk_categorize_messages',
+    {
+      title: 'Outlook · Act — Categorize multiple messages',
+      description:
+        'Add, remove, or replace Outlook categories on up to 200 messages in one call. add/remove ' +
+        'reads each message’s current categories first (Graph has no partial-array update), then ' +
+        'writes the merged result — two batched round trips, not one. replace skips the read and ' +
+        'sets the exact same list on every message.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageIds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(200)
+          .describe('Message ids, e.g. from outlook_bulk_search_messages'),
+        add: z.array(z.string().min(1)).describe('Category names to add').optional(),
+        remove: z.array(z.string().min(1)).describe('Category names to remove').optional(),
+        replace: z
+          .array(z.string())
+          .describe(
+            'Set every message to exactly this category list, overriding add/remove (pass [] to clear all)'
+          )
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageIds = Array.isArray(args.messageIds)
+        ? args.messageIds.map(String).filter(Boolean)
+        : [];
+      if (messageIds.length === 0) return errText('messageIds is required');
+      const add = Array.isArray(args.add) ? args.add.map(String).filter(Boolean) : [];
+      const remove = Array.isArray(args.remove) ? args.remove.map(String).filter(Boolean) : [];
+      const replace = Array.isArray(args.replace)
+        ? args.replace.map(String).filter(Boolean)
+        : undefined;
+      if (!replace && add.length === 0 && remove.length === 0) {
+        return errText('Provide add, remove, or replace.');
+      }
+
+      let categoriesFor: (id: string) => string[];
+      if (replace) {
+        categoriesFor = () => replace;
+      } else {
+        const readBatch = await graphBatch(
+          context,
+          access.accessToken,
+          messageIds.map((id) => ({
+            id,
+            method: 'GET' as const,
+            url: `/me/messages/${encodeURIComponent(id)}?$select=categories`,
+          }))
+        );
+        if (!readBatch.ok) return errText(readBatch.error);
+        const existingById = new Map<string, string[]>();
+        for (const result of readBatch.results) {
+          const existing = Array.isArray(result.body?.categories)
+            ? result.body.categories.filter(
+                (category): category is string => typeof category === 'string'
+              )
+            : [];
+          existingById.set(result.id, existing);
+        }
+        categoriesFor = (id) => withCategoryChanges(existingById.get(id) ?? [], add, remove);
+      }
+
+      const writeBatch = await graphBatch(
+        context,
+        access.accessToken,
+        messageIds.map((id) => ({
+          id,
+          method: 'PATCH' as const,
+          url: `/me/messages/${encodeURIComponent(id)}`,
+          body: { categories: categoriesFor(id) },
+        }))
+      );
+      if (!writeBatch.ok) return errText(writeBatch.error);
+      return textResult(summarizeBatch(writeBatch.results, 'Categorized'));
+    }
+  );
+
+  server.registerTool(
+    'outlook_bulk_move_messages',
+    {
+      title: 'Outlook · Act — Move multiple messages to another folder',
+      description:
+        'Move up to 200 messages to a different mail folder in one call — e.g. archive them (pass ' +
+        'destinationFolder: "archive") or file them into a project folder. destinationFolder ' +
+        'accepts either a folder id from outlook_list_mail_folders, or a well-known name: inbox, ' +
+        'archive, deleteditems, drafts, sentitems, junkemail.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageIds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(200)
+          .describe('Message ids, e.g. from outlook_bulk_search_messages'),
+        destinationFolder: z
+          .string()
+          .min(1)
+          .describe('Folder id, or a well-known name like "archive" or "deleteditems"'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageIds = Array.isArray(args.messageIds)
+        ? args.messageIds.map(String).filter(Boolean)
+        : [];
+      if (messageIds.length === 0) return errText('messageIds is required');
+      const destinationFolder = str(args.destinationFolder);
+      if (!destinationFolder) return errText('destinationFolder is required');
+
+      const batch = await graphBatch(
+        context,
+        access.accessToken,
+        messageIds.map((id) => ({
+          id,
+          method: 'POST' as const,
+          url: `/me/messages/${encodeURIComponent(id)}/move`,
+          body: { destinationId: destinationFolder },
+        }))
+      );
+      if (!batch.ok) return errText(batch.error);
+      return textResult(summarizeBatch(batch.results, `Moved to "${destinationFolder}"`));
+    }
+  );
+
+  server.registerTool(
+    'outlook_bulk_archive_messages',
+    {
+      title: 'Outlook · Act — Archive multiple messages (mark read + move)',
+      description:
+        'The inbox-triage workhorse: marks up to 200 messages read AND moves them out of the ' +
+        'inbox in one call, instead of pairing outlook_bulk_mark_messages with ' +
+        'outlook_bulk_move_messages over the same id list. Defaults to the Archive folder; pass ' +
+        'destinationFolder to file them somewhere else instead (a folder id, or a well-known ' +
+        'name like "deleteditems"). Set markRead: false to move without marking read.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        messageIds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(200)
+          .describe('Message ids, e.g. from outlook_bulk_search_messages'),
+        destinationFolder: z
+          .string()
+          .describe('Where to file them (default "archive") — a folder id or well-known name')
+          .optional(),
+        markRead: z.boolean().describe('Also mark them read (default true)').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await resolveOutlookAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const messageIds = Array.isArray(args.messageIds)
+        ? args.messageIds.map(String).filter(Boolean)
+        : [];
+      if (messageIds.length === 0) return errText('messageIds is required');
+      const destinationFolder = str(args.destinationFolder) || 'archive';
+      const markRead = args.markRead !== false;
+
+      // Mark first, move second, and only move what the mark step actually
+      // touched: /move returns a NEW message id in the destination folder, so
+      // marking afterwards would need the post-move ids. Sequencing it this
+      // way keeps both steps keyed on the ids the caller passed in.
+      let readyToMove = messageIds;
+      let markSummary = '';
+      if (markRead) {
+        const markBatch = await graphBatch(
+          context,
+          access.accessToken,
+          messageIds.map((id) => ({
+            id,
+            method: 'PATCH' as const,
+            url: `/me/messages/${encodeURIComponent(id)}`,
+            body: { isRead: true },
+          }))
+        );
+        if (!markBatch.ok) return errText(markBatch.error);
+        readyToMove = markBatch.results.filter((result) => result.ok).map((result) => result.id);
+        const markFailures = markBatch.results.length - readyToMove.length;
+        markSummary =
+          markFailures > 0
+            ? `${summarizeBatch(markBatch.results, 'Marked read')}\n\n`
+            : `Marked read: ${readyToMove.length} of ${messageIds.length} succeeded.\n\n`;
+        if (readyToMove.length === 0) {
+          return textResult(`${markSummary}Nothing left to move.`);
+        }
+      }
+
+      const moveBatch = await graphBatch(
+        context,
+        access.accessToken,
+        readyToMove.map((id) => ({
+          id,
+          method: 'POST' as const,
+          url: `/me/messages/${encodeURIComponent(id)}/move`,
+          body: { destinationId: destinationFolder },
+        }))
+      );
+      if (!moveBatch.ok) return errText(moveBatch.error);
+      return textResult(
+        markSummary + summarizeBatch(moveBatch.results, `Moved to "${destinationFolder}"`)
+      );
     }
   );
 
