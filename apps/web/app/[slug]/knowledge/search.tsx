@@ -83,8 +83,10 @@ function HitCard({ hit }: { hit: KnowledgeSearchHit }) {
         </span>
       </div>
 
-      <p className="mt-2 font-medium">{titleFor(hit)}</p>
-      <p className="mt-1 whitespace-pre-wrap text-sm text-gray-700 dark:text-gray-300">{shown}</p>
+      <p className="mt-2 break-words font-medium">{titleFor(hit)}</p>
+      <p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-700 dark:text-gray-300">
+        {shown}
+      </p>
 
       <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
         {needsTruncation && (
@@ -117,7 +119,7 @@ function HitCard({ hit }: { hit: KnowledgeSearchHit }) {
 
       {showDetails && (
         <div className="mt-2 rounded-md bg-gray-100 p-2 text-xs dark:bg-gray-900">
-          <p className="mb-1 font-mono text-gray-600 dark:text-gray-400">
+          <p className="mb-1 break-all font-mono text-gray-600 dark:text-gray-400">
             {hit.provider}:{hit.refId}
           </p>
           <pre className="overflow-x-auto whitespace-pre-wrap break-all text-gray-600 dark:text-gray-400">
