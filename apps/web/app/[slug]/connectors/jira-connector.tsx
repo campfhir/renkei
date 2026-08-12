@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import ScopePicker from '@/components/scope-picker';
 import { ATLASSIAN_SCOPE_GROUPS, ATLASSIAN_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
-import SyncProgress from './sync-progress';
+import WatchManager from './watch-manager';
 
 interface JiraStatus {
   connected: boolean;
@@ -203,13 +203,7 @@ export default function JiraConnector({
           </button>
         ))}
 
-      {status?.connected && (
-        <SyncProgress
-          tenantId={tenantId}
-          connector="jira"
-          emptyHint="No projects are being indexed. Ask in chat to watch a project (jira_watch_project) to make its issues searchable by meaning."
-        />
-      )}
+      {status?.connected && <WatchManager tenantId={tenantId} provider="jira" />}
     </div>
   );
 }
