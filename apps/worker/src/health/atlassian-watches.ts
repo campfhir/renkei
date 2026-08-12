@@ -57,7 +57,7 @@ export async function sweepAtlassianWatches(): Promise<void> {
       .where((eb) =>
         eb.or([eb('last_synced_at', 'is', null), eb('last_synced_at', '<', dueBefore)])
       )
-      .orderBy('last_synced_at', sql`asc nulls first`)
+      .orderBy('last_synced_at', (ob) => ob.asc().nullsFirst())
       .limit(MAX_WATCHES_PER_PASS)
       .execute();
   } catch (error) {

@@ -152,9 +152,7 @@ describe('runWatchSync — jira', () => {
         ],
       },
     ];
-    mockIngestObjectChunks
-      .mockResolvedValueOnce(ok(1))
-      .mockResolvedValueOnce(err({ message: 'embedder down' }));
+    mockIngestObjectChunks.mockResolvedValueOnce(ok(1)).mockResolvedValueOnce(err('EMBED_FAILED'));
     const result = await runWatchSync('tenant-1', access(), jiraRow(null));
     // The failure is skipped, not thrown — but the watermark stays behind it
     // so the next round re-reads it.
