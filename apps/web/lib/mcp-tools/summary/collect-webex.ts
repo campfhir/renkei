@@ -7,6 +7,15 @@
  * room the caller is in, everything after their lastSeenId. That is the same
  * definition the WebEx client itself uses, rather than a guess based on time.
  *
+ * Memberships are fetched in ONE call rather than one per room. `/memberships`
+ * without a roomId returns every membership the caller has, which is both
+ * fewer round trips and the reason this does not cache them: `lastSeenId` is
+ * the most volatile field WebEx exposes — it moves every time the person
+ * reads anything — so a cached copy would keep reporting already-read
+ * messages as unread, and would be wrong in the direction nobody notices. The
+ * ROSTER of a room is stable enough to cache for days; the read cursor
+ * riding along with it is not, and they arrive together.
+ *
  * Rooms are visited newest-activity first and capped, because a person in
  * eighty spaces would otherwise pay eighty round trips for a morning brief.
  * The cap is reported, since "you have nothing unread" and "I stopped
@@ -68,6 +77,15 @@ export async function collectWebex(
   });
   if (rooms.length === 0) return null;
 
+  // Every membership in one request. Filtering per room would be N calls for
+  // the same data, and lastSeenId is per-membership either way.
+  const lastSeenByRoom = new Map<string, string>();
+  for (const membership of itemsOf(await webexGet(token, '/memberships?max=200'))) {
+    const roomId = str(membership.roomId);
+    const lastSeenId = str(membership.lastSeenId);
+    if (roomId && lastSeenId) lastSeenByRoom.set(roomId, lastSeenId);
+  }
+
   const lines: string[] = [];
   const details: string[] = [];
   let budget = DETAIL_SECTION_MAX_CHARS;
@@ -78,14 +96,9 @@ export async function collectWebex(
     const roomId = str(room.id);
     if (!roomId) continue;
 
-    // lastSeenId is per-membership and is WebEx's own notion of "read".
-    const membership = itemsOf(
-      await webexGet(
-        token,
-        `/memberships?roomId=${encodeURIComponent(roomId)}&personEmail=${encodeURIComponent(access.personEmail ?? '')}`
-      )
-    )[0];
-    const lastSeenId = str(membership?.lastSeenId);
+    // WebEx's own notion of "read": everything after the last message this
+    // person actually looked at.
+    const lastSeenId = lastSeenByRoom.get(roomId) ?? '';
 
     const messages = itemsOf(
       await webexGet(
