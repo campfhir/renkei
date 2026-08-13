@@ -15,7 +15,12 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { WEBEX_CONNECTOR, WebexClient, createWebexAccessVerifier } from '@renkei/connector-webex';
-import { MICROSOFT_CONNECTOR, createMicrosoftAccessVerifier } from '@renkei/connector-microsoft';
+import {
+  MICROSOFT_CONNECTOR,
+  createMicrosoftAccessVerifier,
+  createSharepointAccessVerifier,
+  SHAREPOINT_KNOWLEDGE_PROVIDER,
+} from '@renkei/connector-microsoft';
 import { ZOOM_CONNECTOR, createZoomAccessVerifier } from '@renkei/connector-zoom';
 import {
   createJiraAccessVerifier,
@@ -25,10 +30,14 @@ import {
 } from '@renkei/connector-atlassian';
 import {
   getGrant,
+  refreshGrantTokens,
   readAtlassianMetadata,
   ATLASSIAN,
   ATLASSIAN_CONFLUENCE,
+  MICROSOFT,
+  MicrosoftAdapter,
 } from '@renkei/provider-grants';
+import { getMicrosoftApp } from '@/lib/microsoft-app';
 import { getDatabase } from '@renkei/db';
 import type { AccessVerifier } from '@renkei/gates';
 import type { KnowledgeHit, SourceFilter } from '@renkei/knowledge';
@@ -89,6 +98,17 @@ export async function buildKnowledgeVerifiers(
     )
   );
 
+  // Drive documents are the one Microsoft surface where ownership is NOT the
+  // ACL — a file is shared — so this asks Graph live with the caller's own
+  // token rather than reading an owner out of the ref. Registered
+  // unconditionally for the same reason as the pair above.
+  verifiers.set(
+    SHAREPOINT_KNOWLEDGE_PROVIDER,
+    createSharepointAccessVerifier((userEmail) =>
+      microsoftCredentialFor(tenantId, userEmail, encryptionKey)
+    )
+  );
+
   return verifiers;
 }
 
@@ -132,6 +152,94 @@ async function atlassianCredentialFor(
   return { accessToken: grantResult.val.accessToken, cloudId: site.cloudId };
 }
 
+/** Refresh when the token is inside this window of expiry. */
+const MICROSOFT_REFRESH_MARGIN_MS = 2 * 60 * 1000;
+
+/**
+ * The caller's own Microsoft credential, found from their email — REFRESHED.
+ *
+ * Do not simplify this into atlassianCredentialFor's shape. That one hands
+ * back the stored access token as-is, which is survivable for Atlassian's
+ * long-lived tokens and is NOT here: Microsoft access tokens live about an
+ * hour, so a stored one is usually stale. Every $batch sub-request would
+ * 401, the gate would deny on anything short of an affirmative 200, and the
+ * symptom is "SharePoint search returns nothing" — indistinguishable from
+ * "nothing is indexed", with no error anywhere. Refresh proactively; there
+ * is no room to retry a 401 inside the gate's budget.
+ *
+ * Returning null on a missing Files.Read.All is the same instinct: denying
+ * immediately is cheaper than 20 sub-request 403s, and it gives one place to
+ * see why a user's SharePoint results are empty.
+ */
+async function microsoftCredentialFor(
+  tenantId: string,
+  userEmail: string,
+  encryptionKey: Parameters<typeof getGrant>[3]
+): Promise<{ accessToken: string } | null> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return null;
+
+  // The gate keys on email (the identity spine); grants key on OIDC subject.
+  const row = await dbResult.val
+    .selectFrom('identities')
+    .innerJoin('provider_grants', (join) =>
+      join
+        .onRef('provider_grants.subject', '=', 'identities.subject')
+        .onRef('provider_grants.tenant_id', '=', 'identities.tenant_id')
+    )
+    .select('provider_grants.provider_account_id')
+    .where('identities.tenant_id', '=', tenantId)
+    .where('identities.email', '=', userEmail)
+    .where('provider_grants.provider', '=', MICROSOFT)
+    .limit(1)
+    .executeTakeFirst();
+  if (!row) return null;
+
+  const grantResult = await getGrant(MICROSOFT, tenantId, row.provider_account_id, encryptionKey);
+  if (!grantResult.ok || !grantResult.val) return null;
+  const grant = grantResult.val;
+
+  const scopes = grant.grantedScopes ?? grant.requestedScopes ?? [];
+  if (!scopes.includes('Files.Read.All')) {
+    logger.info('microsoft grant lacks Files.Read.All; withholding drive results', {
+      component: 'knowledge/verify',
+      tenantId,
+      accountId: row.provider_account_id,
+    });
+    return null;
+  }
+
+  if (new Date(grant.expiresAt).getTime() - Date.now() >= MICROSOFT_REFRESH_MARGIN_MS) {
+    return { accessToken: grant.accessToken };
+  }
+
+  const app = await getMicrosoftApp(tenantId, '');
+  if (!app) return null;
+  const tid =
+    typeof grant.metadata.tid === 'string' && grant.metadata.tid
+      ? grant.metadata.tid
+      : app.directoryTenantId;
+  if (!tid) return null;
+
+  const refreshed = await refreshGrantTokens(
+    new MicrosoftAdapter(app.clientSecret, tid),
+    tenantId,
+    row.provider_account_id,
+    encryptionKey,
+    logger
+  );
+  if (!refreshed.ok) {
+    logger.warn('could not refresh microsoft token for drive verification', {
+      component: 'knowledge/verify',
+      tenantId,
+      accountId: row.provider_account_id,
+      error: refreshed.err.type,
+    });
+    return null;
+  }
+  return { accessToken: refreshed.val.accessToken };
+}
+
 function formatDistance(distance: number): string {
   return Number.isFinite(distance) ? distance.toFixed(3) : String(distance);
 }
@@ -151,6 +259,11 @@ const SOURCE_FILTERS: Record<string, { provider: string; kind?: string }> = {
   webex: { provider: 'webex' },
   confluence: { provider: 'confluence' },
   jira: { provider: 'jira' },
+  // Drive documents live under their own provider key rather than
+  // 'microsoft', because the provider column is what selects the ACL
+  // verifier and these need the live one, not mail's ownership check. No
+  // `kind` pin: 'doc' is the only kind stored there.
+  sharepoint: { provider: 'sharepoint' },
 };
 
 export const KNOWLEDGE_SOURCE_NAMES = Object.keys(SOURCE_FILTERS);
@@ -277,6 +390,7 @@ export async function registerKnowledgeTools(
               'webex',
               'confluence',
               'jira',
+              'sharepoint',
             ])
           )
           .optional()

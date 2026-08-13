@@ -30,6 +30,8 @@ export {
   chunkRefId,
   deleteObjectChunks,
   deleteChunksByMetadata,
+  readObjectMetadataBatch,
+  deleteStaleScopeChunks,
   ingestObjectChunks,
   type ChunkTextOptions,
 } from './chunking';

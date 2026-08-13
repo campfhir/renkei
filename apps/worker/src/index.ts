@@ -28,7 +28,7 @@ import {
 } from './handlers/microsoft-events';
 import { createZoomTranscriptHandler, createZoomSummaryHandler } from './handlers/zoom-events';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
-import { sweepAtlassianWatches, ATLASSIAN_WATCH_INTERVAL_MS } from './health/atlassian-watches';
+import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
 import {
   sweepMicrosoftSubscriptions,
   MICROSOFT_SUBSCRIPTION_INTERVAL_MS,
@@ -84,10 +84,10 @@ async function main(): Promise<void> {
       sweepMicrosoftSubscriptions
     ),
     schedulePeriodicSweep(
-      'atlassian watch',
-      'atlassian/watch-sweep',
-      ATLASSIAN_WATCH_INTERVAL_MS,
-      sweepAtlassianWatches
+      'content watch',
+      'content/watch-sweep',
+      CONTENT_WATCH_INTERVAL_MS,
+      sweepContentWatches
     ),
   ];
 

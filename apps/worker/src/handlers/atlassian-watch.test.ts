@@ -84,6 +84,7 @@ function jiraRow(cursor: string | null): WatchRow {
     account_id: 'acct-1',
     scope_type: 'project',
     scope_key: 'ENG',
+    scope_label: null,
     cursor,
   };
 }
@@ -96,6 +97,7 @@ function confluenceRow(cursor: string | null): WatchRow {
     account_id: 'acct-1',
     scope_type: 'space',
     scope_key: '55001',
+    scope_label: null,
     cursor,
   };
 }

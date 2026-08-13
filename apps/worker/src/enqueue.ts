@@ -10,10 +10,20 @@
  *                    chunking?: { maxChars, overlap } }
  *   ingest.email   { refId, ownerUpn, accountId?, raw: RawEmail,
  *                    metadata, sourceAt, override? }
+ *   ingest.document{ provider, refId, accountId, driveId, itemId, name,
+ *                    mimeType, size, cTag, webUrl, path, scopeKey,
+ *                    scopeLabel, sourceAt, syncEpoch }
  *   delete.object  { provider, refId }
  *   purge.prefix   { provider, refIdPrefix }
+ *   reconcile.drive{ provider, driveId, syncEpoch }
  *   enrich.item    { itemId, provider: 'webex', refId, query,
  *                    accessSubject }
+ *
+ * `ingest.document` deliberately carries IDENTIFIERS, not bytes. A 20MB file
+ * base64'd into a jsonb payload would be TOASTed, WAL-replicated and kept in
+ * the dead-letter table indefinitely, and downloading inside the sync round
+ * would outlive the queue's claim lease on any large library. The embedding
+ * worker re-downloads for itself.
  *
  * Ordering is per KEY, not per queue: callers pass the ordering key that
  * names the sequence their messages must keep — a mailbox namespace for
@@ -31,8 +41,10 @@ export const KNOWLEDGE_SOURCE = 'knowledge';
 export type KnowledgeEventType =
   | 'ingest.object'
   | 'ingest.email'
+  | 'ingest.document'
   | 'delete.object'
   | 'purge.prefix'
+  | 'reconcile.drive'
   | 'enrich.item';
 
 /**

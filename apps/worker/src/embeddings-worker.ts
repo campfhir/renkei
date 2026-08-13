@@ -24,8 +24,10 @@ import { KNOWLEDGE_SOURCE } from './enqueue';
 import {
   createKnowledgeIngestObjectHandler,
   createKnowledgeIngestEmailHandler,
+  createKnowledgeIngestDocumentHandler,
   createKnowledgeDeleteObjectHandler,
   createKnowledgePurgePrefixHandler,
+  createKnowledgeReconcileDriveHandler,
   createKnowledgeEnrichItemHandler,
 } from './handlers/knowledge-ingest';
 import { logger, attachPersistentLogging } from './logger';
@@ -33,8 +35,10 @@ import { logger, attachPersistentLogging } from './logger';
 function registerKnowledgeHandlers(): void {
   registerHandler(KNOWLEDGE_SOURCE, 'ingest.object', createKnowledgeIngestObjectHandler());
   registerHandler(KNOWLEDGE_SOURCE, 'ingest.email', createKnowledgeIngestEmailHandler());
+  registerHandler(KNOWLEDGE_SOURCE, 'ingest.document', createKnowledgeIngestDocumentHandler());
   registerHandler(KNOWLEDGE_SOURCE, 'delete.object', createKnowledgeDeleteObjectHandler());
   registerHandler(KNOWLEDGE_SOURCE, 'purge.prefix', createKnowledgePurgePrefixHandler());
+  registerHandler(KNOWLEDGE_SOURCE, 'reconcile.drive', createKnowledgeReconcileDriveHandler());
   registerHandler(KNOWLEDGE_SOURCE, 'enrich.item', createKnowledgeEnrichItemHandler());
   logger.info('knowledge handlers registered', { component: 'worker/embeddings-loop' });
 }

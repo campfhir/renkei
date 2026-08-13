@@ -152,6 +152,87 @@ export async function deleteChunksByMetadata(
   return ok(Number(result.val.numDeletedRows ?? 0));
 }
 
+/**
+ * The stored metadata of each named object, for change detection — one query
+ * per sync round rather than one per item.
+ *
+ * A chunked document has NO row at its bare refId (chunkRefId suffixes every
+ * chunk once there is more than one), so matching has to allow the `#0001`
+ * form too. DISTINCT ON keeps the first chunk of each object, which is all a
+ * cTag comparison needs.
+ */
+export async function readObjectMetadataBatch(
+  tenantId: string,
+  provider: string,
+  refIds: readonly string[]
+): Promise<Result<Map<string, Record<string, unknown>>, 'DB_ERROR'>> {
+  if (refIds.length === 0) return ok(new Map());
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+
+  const patterns = refIds.map((refId) => `${escapeLike(refId)}#%`);
+  const result = await wrapAsync(
+    () =>
+      dbResult.val
+        .selectFrom('knowledge_chunks')
+        .select(['ref_id', 'metadata'])
+        .where('tenant_id', '=', tenantId)
+        .where('provider', '=', provider)
+        .where((eb) =>
+          eb.or([eb('ref_id', 'in', [...refIds]), sql<boolean>`ref_id LIKE ANY(${patterns})`])
+        )
+        .execute(),
+    'DB_ERROR' as const
+  );
+  if (!result.ok) return result;
+
+  const byRefId = new Map<string, Record<string, unknown>>();
+  for (const row of result.val) {
+    const hash = row.ref_id.indexOf('#');
+    const base = hash > 0 ? row.ref_id.slice(0, hash) : row.ref_id;
+    if (byRefId.has(base)) continue;
+    const metadata = row.metadata;
+    if (typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata)) {
+      byRefId.set(base, { ...metadata });
+    }
+  }
+  return ok(byRefId);
+}
+
+/**
+ * Delete a scope's chunks that a completed enumeration did NOT re-stamp —
+ * mark-and-sweep reconciliation.
+ *
+ * The mailbox path purges up front on a cursorless round because re-fetching
+ * mail is cheap. For drives it is not: purging first would discard the cTags
+ * every skip decision depends on and force a whole library to re-download.
+ * So each ingest carries the round's epoch, and once the enumeration closes,
+ * whatever still bears an older epoch is genuinely gone from the source.
+ */
+export async function deleteStaleScopeChunks(
+  tenantId: string,
+  provider: string,
+  scope: { key: string; value: string },
+  epoch: { key: string; value: string }
+): Promise<Result<number, 'DB_ERROR'>> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return err('DB_ERROR' as const);
+
+  const result = await wrapAsync(
+    () =>
+      dbResult.val
+        .deleteFrom('knowledge_chunks')
+        .where('tenant_id', '=', tenantId)
+        .where('provider', '=', provider)
+        .where(sql<boolean>`metadata ->> ${scope.key} = ${scope.value}`)
+        .where(sql<boolean>`metadata ->> ${epoch.key} IS DISTINCT FROM ${epoch.value}`)
+        .executeTakeFirst(),
+    'DB_ERROR' as const
+  );
+  if (!result.ok) return result;
+  return ok(Number(result.val.numDeletedRows ?? 0));
+}
+
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
@@ -194,18 +275,22 @@ export async function ingestObjectChunks(
   }
 
   for (const [index, content] of pieces.entries()) {
-    const upserted = await upsertChunkRow(tenantId, {
-      provider: object.provider,
-      refId: chunkRefId(object.refId, index + 1, pieces.length),
-      content,
-      metadata:
-        pieces.length > 1
-          ? { ...object.metadata, chunk: index + 1, chunkCount: pieces.length }
-          : object.metadata,
-      // Every chunk of one document shares the document's date, so a date
-      // filter can't return some chunks of an item and hide the rest.
-      sourceAt: object.sourceAt,
-    }, vectors[index] ?? []);
+    const upserted = await upsertChunkRow(
+      tenantId,
+      {
+        provider: object.provider,
+        refId: chunkRefId(object.refId, index + 1, pieces.length),
+        content,
+        metadata:
+          pieces.length > 1
+            ? { ...object.metadata, chunk: index + 1, chunkCount: pieces.length }
+            : object.metadata,
+        // Every chunk of one document shares the document's date, so a date
+        // filter can't return some chunks of an item and hide the rest.
+        sourceAt: object.sourceAt,
+      },
+      vectors[index] ?? []
+    );
     if (!upserted.ok) return upserted;
   }
   return ok({ chunks: pieces.length });

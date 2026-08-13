@@ -21,8 +21,12 @@ import {
   resolveEmbeddingProvider,
   ingestObjectChunks,
   deleteObjectChunks,
+  deleteStaleScopeChunks,
   searchKnowledge,
 } from '@renkei/knowledge';
+import { graphDownload } from '@renkei/connector-microsoft';
+import { extractText } from '@renkei/document-text';
+import { resolveMicrosoftAccess } from './microsoft-access';
 import { sanitizeEmailForTenant } from '@renkei/email-sanitizer';
 import type { MessageOverride, RawEmail } from '@renkei/email-sanitizer';
 import { createWebexAccessVerifier } from '@renkei/connector-webex';
@@ -235,6 +239,140 @@ export function createKnowledgePurgePrefixHandler(): EventHandler {
       prefixOnly: true,
     });
     if (!purged.ok) throw new Error(`could not purge ${provider}/${refIdPrefix}*`);
+  };
+}
+
+/**
+ * `knowledge/ingest.document` — download a drive document, extract its text,
+ * index it.
+ *
+ * The bytes are fetched HERE rather than carried on the payload: a 20MB file
+ * base64'd into jsonb would be TOASTed, replicated and retained in the
+ * dead-letter table forever, and downloading inside the sync round would
+ * outlive the queue's claim lease on any sizeable library.
+ *
+ * Failure handling departs from this module's throw-by-default policy, and
+ * deliberately. The dead-letter store is for jobs a human can requeue that
+ * will then succeed; a password-protected PDF fails identically on attempt
+ * 1000. Unindexable files are a permanent, high-volume fact of every
+ * SharePoint tenant, and dead-lettering them would bury the genuine
+ * embeddings outage the dead-letter table exists to make visible. So
+ * permanent outcomes return, transient ones throw.
+ */
+export function createKnowledgeIngestDocumentHandler(): EventHandler {
+  return async (event) => {
+    const payload = payloadOf(event);
+    const provider = required(payload, 'provider');
+    const refId = required(payload, 'refId');
+    const driveId = required(payload, 'driveId');
+    const itemId = required(payload, 'itemId');
+    const accountId = required(payload, 'accountId');
+    const tenantId = event.tenant_id;
+
+    const embedder = await resolveEmbeddingProvider(tenantId);
+    if (!embedder) return; // knowledge layer off for this org
+
+    const access = await resolveMicrosoftAccess(tenantId, accountId);
+    const downloaded = await graphDownload(access.accessToken, driveId, itemId);
+    if (!downloaded.ok) {
+      const status = downloaded.err.cause;
+      if (status === 404) {
+        // Deleted between the sync round and now. Tidy up rather than retry.
+        await deleteObjectChunks(tenantId, provider, refId);
+        return;
+      }
+      if (status === 403 || downloaded.err.type === 'CONTENT_TOO_LARGE') {
+        logger.warn('skipping {refId}: {reason}', {
+          component: COMPONENT,
+          tenantId,
+          refId,
+          reason: status === 403 ? 'no longer readable by the indexing account' : 'too large',
+        });
+        return;
+      }
+      // Network, 5xx, throttling — retryable.
+      throw new Error(`could not download ${refId}: ${downloaded.err.message ?? 'unknown'}`);
+    }
+
+    const name = str(payload.name);
+    const extracted = await extractText(downloaded.val.bytes, {
+      fileName: name,
+      contentType: downloaded.val.contentType ?? str(payload.mimeType),
+    });
+    if (!extracted.ok) {
+      // Every one of these is deterministic: retrying cannot change a file's
+      // format, its password, or its corruption.
+      logger.info('no text from {refId} ({reason})', {
+        component: COMPONENT,
+        tenantId,
+        refId,
+        reason: extracted.err.type,
+      });
+      return;
+    }
+    if (!extracted.val.text) return; // a scan; nothing to embed
+
+    // The cTag we ACTUALLY downloaded, never the payload's: the file may have
+    // changed in between, and recording the older tag would make the next
+    // round skip a version that was never indexed.
+    const cTag = str(downloaded.val.item.cTag) || str(payload.cTag);
+
+    const ingested = await ingestObjectChunks(tenantId, embedder, {
+      provider,
+      refId,
+      content: extracted.val.text,
+      metadata: {
+        kind: 'doc',
+        driveId,
+        itemId,
+        name,
+        path: str(payload.path),
+        webUrl: str(payload.webUrl),
+        mimeType: str(payload.mimeType),
+        format: extracted.val.format,
+        size: typeof payload.size === 'number' ? payload.size : undefined,
+        cTag,
+        scopeKey: str(payload.scopeKey),
+        scopeLabel: str(payload.scopeLabel),
+        syncEpoch: str(payload.syncEpoch),
+        truncated: extracted.val.truncated || undefined,
+      },
+      sourceAt: str(payload.sourceAt) || null,
+    });
+    if (!ingested.ok) throw new Error(`could not index ${refId}: ${ingested.err.type}`);
+  };
+}
+
+/**
+ * `knowledge/reconcile.drive` — mark-and-sweep after a full enumeration.
+ *
+ * Runs last on the drive's ordering key, so every ingest of the round has
+ * already re-stamped its chunks with this epoch. Whatever still carries an
+ * older one is gone from the source — including descendants of a deleted
+ * folder, which drive delta cannot enumerate.
+ */
+export function createKnowledgeReconcileDriveHandler(): EventHandler {
+  return async (event) => {
+    const payload = payloadOf(event);
+    const provider = required(payload, 'provider');
+    const driveId = required(payload, 'driveId');
+    const syncEpoch = required(payload, 'syncEpoch');
+
+    const removed = await deleteStaleScopeChunks(
+      event.tenant_id,
+      provider,
+      { key: 'scopeKey', value: driveId },
+      { key: 'syncEpoch', value: syncEpoch }
+    );
+    if (!removed.ok) throw new Error(`could not reconcile drive ${driveId}`);
+    if (removed.val > 0) {
+      logger.info('reconciled {driveId}: removed {removed} stale chunk(s)', {
+        component: COMPONENT,
+        tenantId: event.tenant_id,
+        driveId,
+        removed: removed.val,
+      });
+    }
   };
 }
 

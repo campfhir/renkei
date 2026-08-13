@@ -48,6 +48,8 @@ export interface WatchRow {
   account_id: string;
   scope_type: string;
   scope_key: string;
+  /** Human label for logs and the connectors page; no provider call needed. */
+  scope_label: string | null;
   cursor: string | null;
 }
 

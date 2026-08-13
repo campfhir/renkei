@@ -1,9 +1,15 @@
 /**
- * Periodic polling of watched Jira projects and Confluence spaces.
+ * Periodic polling of every watched content scope — Jira projects,
+ * Confluence spaces, and SharePoint/OneDrive document libraries.
  *
- * Unlike the Microsoft sweep, this is not repair — it is the ONLY way this
- * content stays fresh, because Atlassian offers a plain OAuth app no push
- * mechanism for either product (see atlassian-watch.ts for the specifics).
+ * Unlike the Microsoft subscription sweep, this is not repair — it is the
+ * ONLY way this content stays fresh. Atlassian offers a plain OAuth app no
+ * push mechanism for either product (see atlassian-watch.ts), and drives are
+ * polled by choice: Graph drive subscriptions exist, but they would bind a
+ * shared library's freshness to one user's notification URL, which stops
+ * working the day that person leaves. RENKEI.md files SharePoint under
+ * poll/delta sync for the same reason, and documents change on human
+ * timescales.
  *
  * The outer cadence is a fixed constant like its sibling sweeps, but the
  * real due-time lives per WATCH ROW: the sweep gate is evaluated before any
@@ -20,11 +26,13 @@ import { ATLASSIAN, ATLASSIAN_CONFLUENCE } from '@renkei/provider-grants';
 import { logger } from '../logger';
 import { resolveAtlassianAccess } from '../handlers/atlassian-access';
 import { runWatchSync, type WatchRow } from '../handlers/atlassian-watch';
+import { resolveMicrosoftAccess } from '../handlers/microsoft-access';
+import { runDriveWatchSync } from '../handlers/sharepoint-watch';
 
-const COMPONENT = 'atlassian/watch-sweep';
+const COMPONENT = 'content/watch-sweep';
 
 /** How often the sweep itself wakes; per-row due-time does the real pacing. */
-export const ATLASSIAN_WATCH_INTERVAL_MS = 5 * 60_000;
+export const CONTENT_WATCH_INTERVAL_MS = 5 * 60_000;
 
 /** How stale a watch may get before it is polled again. */
 const WATCH_DUE_MS = 15 * 60_000;
@@ -37,7 +45,7 @@ function grantProviderFor(watchProvider: string): string {
   return watchProvider === 'confluence' ? ATLASSIAN_CONFLUENCE : ATLASSIAN;
 }
 
-export async function sweepAtlassianWatches(): Promise<void> {
+export async function sweepContentWatches(): Promise<void> {
   const dbResult = getDatabase();
   if (!dbResult.ok) {
     logger.error('database unavailable', { component: COMPONENT });
@@ -50,7 +58,16 @@ export async function sweepAtlassianWatches(): Promise<void> {
   try {
     watches = await db
       .selectFrom('content_watches')
-      .select(['id', 'tenant_id', 'provider', 'account_id', 'scope_type', 'scope_key', 'cursor'])
+      .select([
+        'id',
+        'tenant_id',
+        'provider',
+        'account_id',
+        'scope_type',
+        'scope_key',
+        'scope_label',
+        'cursor',
+      ])
       .where('enabled', '=', true)
       // Never-synced rows (NULL) come first — a watch just created should
       // start indexing without waiting out a full interval.
@@ -69,13 +86,18 @@ export async function sweepAtlassianWatches(): Promise<void> {
   }
 
   if (watches.length === 0) return;
-  logger.info('polling {count} atlassian watch(es)', {
+  logger.info('polling {count} content watch(es)', {
     component: COMPONENT,
     count: watches.length,
   });
 
   for (const watch of watches) {
     try {
+      if (watch.provider === 'sharepoint') {
+        const access = await resolveMicrosoftAccess(watch.tenant_id, watch.account_id);
+        await runDriveWatchSync(watch.tenant_id, access, watch);
+        continue;
+      }
       const access = await resolveAtlassianAccess(
         watch.tenant_id,
         watch.account_id,

@@ -96,13 +96,16 @@ export async function extractPdfText(
   try {
     task = pdfjs.getDocument({
       data: bytes,
-      // Defense in depth against the malicious-PDF class of advisory.
-      isEvalSupported: false,
-      enableScripting: false,
+      // No font rasterization: we want characters, not glyphs, and this keeps
+      // the optional native canvas package irrelevant.
       disableFontFace: true,
       useSystemFonts: false,
       verbosity: 0,
     });
+    // Note the absent `enableScripting` / `isEvalSupported`: pdfjs v6 dropped
+    // both from this API, so there is no embedded-JavaScript switch left to
+    // turn off here. Do not re-add them on the assumption they harden
+    // anything — they would simply be ignored.
     const document = await task.promise;
 
     const parts: string[] = [];
@@ -112,7 +115,9 @@ export async function extractPdfText(
       const content = await page.getTextContent({ includeMarkedContent: false });
       let pageText = '';
       for (const item of content.items) {
-        if (typeof item.str !== 'string') continue;
+        // The array mixes text items with marked-content markers; only the
+        // former carry text.
+        if (!('str' in item)) continue;
         pageText += item.str;
         // pdfjs's own reading-order signal; coordinate-based reflow is a
         // rabbit hole that rarely beats it.
