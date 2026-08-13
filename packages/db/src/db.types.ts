@@ -137,6 +137,7 @@ export interface Events {
   attempts: Generated<number>;
   created_at: Generated<Timestamp>;
   id: string;
+  lane: Generated<string>;
   last_error: string | null;
   locked_at: Timestamp | null;
   payload: Json;
