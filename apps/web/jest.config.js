@@ -17,6 +17,7 @@ export default {
     '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
     '^@renkei/gates$': '<rootDir>/../../packages/gates/src/index.ts',
     '^@renkei/knowledge$': '<rootDir>/../../packages/knowledge/src/index.ts',
+    '^@renkei/queue$': '<rootDir>/../../packages/queue/src/index.ts',
   },
   transform: {
     '^.+\\.tsx?$': [

@@ -1,5 +1,5 @@
 /**
- * One delta round's routing into the embedding lane: a cursorless round
+ * One delta round's routing into the embedding queue: a cursorless round
  * leads with a purge.prefix event, 'msg' entries become ingest.email events
  * (the sanitizer runs in the embedding worker, not here — see
  * knowledge-ingest.test.ts for that wiring), other kinds become
@@ -92,8 +92,8 @@ describe('runSubscriptionSync — rebuild purge', () => {
    * A cursorless round returns the whole current state, so it is the one
    * safe moment to drop the previous chunks — otherwise re-index can only
    * ever ADD, and items deleted upstream (or newly excluded by changed
-   * rules) outlive their source. The purge rides the embedding lane ahead
-   * of the per-item events; lane FIFO keeps it first.
+   * rules) outlive their source. The purge rides the embedding queue ahead
+   * of the per-item jobs; the shared ordering key keeps it first.
    */
   it('enqueues a namespace purge before the per-item events, on a cursorless round', async () => {
     stubDb();
@@ -106,8 +106,12 @@ describe('runSubscriptionSync — rebuild purge', () => {
       'tenant-1',
       'purge.prefix',
       { provider: 'microsoft', refIdPrefix: 'alice@example.com/msg/' },
+      'microsoft/alice@example.com/msg',
     ]);
     expect(calls[1]?.[1]).toBe('ingest.email');
+    // Purge and re-ingests share the mailbox-kind key: the ordering that
+    // used to require a single consumer now survives horizontal scale.
+    expect(calls[1]?.[3]).toBe('microsoft/alice@example.com/msg');
   });
 
   it('enqueues no purge on an incremental round', async () => {
@@ -120,7 +124,7 @@ describe('runSubscriptionSync — rebuild purge', () => {
   });
 });
 
-describe('runSubscriptionSync — routing into the embedding lane', () => {
+describe('runSubscriptionSync — routing into the embedding queue', () => {
   it('turns a mail entry into one ingest.email event carrying the raw message', async () => {
     mockRunDeltaRound.mockResolvedValue({
       ok: true,
@@ -145,7 +149,8 @@ describe('runSubscriptionSync — routing into the embedding lane', () => {
         raw: expect.objectContaining({ subject: 'Hello', fromAddress: 'bob@example.com' }),
         metadata: expect.objectContaining({ kind: 'msg', subject: 'Hello' }),
         sourceAt: '2026-08-10T12:00:00Z',
-      })
+      }),
+      'microsoft/alice@example.com/msg'
     );
   });
 
@@ -161,10 +166,12 @@ describe('runSubscriptionSync — routing into the embedding lane', () => {
     });
 
     expect(result).toEqual({ changed: 0, removed: 1 });
-    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith('tenant-1', 'delete.object', {
-      provider: 'microsoft',
-      refId: 'alice@example.com/msg/msg-9',
-    });
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
+      'tenant-1',
+      'delete.object',
+      { provider: 'microsoft', refId: 'alice@example.com/msg/msg-9' },
+      'microsoft/alice@example.com/msg'
+    );
   });
 
   it('leaves event/task kinds on the contentOf path, as ingest.object events', async () => {
@@ -198,7 +205,8 @@ describe('runSubscriptionSync — routing into the embedding lane', () => {
       expect.objectContaining({
         provider: 'microsoft',
         content: expect.stringContaining('Event: Standup'),
-      })
+      }),
+      'microsoft/alice@example.com/evt'
     );
   });
 

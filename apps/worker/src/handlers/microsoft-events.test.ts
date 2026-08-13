@@ -1,7 +1,7 @@
 /**
  * The message-override handler: a mailbox owner's own correction, applied by
  * re-fetching their one message from Graph (bodies are never persisted at
- * rest) and enqueuing it for the embedding lane with the override forced —
+ * rest) and enqueuing it for the embedding queue with the override forced —
  * the sanitizer itself runs in the embedding worker (knowledge-ingest.ts).
  * 'exclude' is the one action that never re-fetches — there is nothing left
  * to sanitize, only a chunk removal to enqueue.
@@ -70,10 +70,12 @@ describe('createMicrosoftMessageOverrideHandler', () => {
     await handler(event({ action: 'exclude' }));
 
     expect(mockGraphRequest).not.toHaveBeenCalled();
-    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith('tenant-1', 'delete.object', {
-      provider: 'microsoft',
-      refId: 'alice@example.com/msg/msg-1',
-    });
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
+      'tenant-1',
+      'delete.object',
+      { provider: 'microsoft', refId: 'alice@example.com/msg/msg-1' },
+      'microsoft/alice@example.com/msg'
+    );
   });
 
   it('reclassify re-fetches the message and enqueues it with the override riding along', async () => {
@@ -102,7 +104,10 @@ describe('createMicrosoftMessageOverrideHandler', () => {
         raw: expect.objectContaining({ subject: 'Hello', body: expect.anything() }),
         metadata: expect.objectContaining({ overridden: true, subject: 'Hello' }),
         sourceAt: '2026-08-10T12:00:00Z',
-      })
+      }),
+      // The mailbox-kind ordering key: index writes for one mailbox stay
+      // serial across embedding workers.
+      'microsoft/alice@example.com/msg'
     );
   });
 

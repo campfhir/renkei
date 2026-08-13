@@ -24,6 +24,7 @@
     "@renkei/gates": "workspace:*",
     "@renkei/knowledge": "workspace:*",
     "@renkei/provider-grants": "workspace:*",
+    "@renkei/queue": "workspace:*",
     "@renkei/settings": "workspace:*",
     "kysely": "^0.29.4",
     "tsx": "^4.23.5"

@@ -1,5 +1,5 @@
 /**
- * The embedding lane's handlers: failure THROWS (the lane owns only
+ * The embedding queue's handlers: failure THROWS (these jobs own only
  * idempotent index writes, so retry is safe — the inversion of the old
  * inline log-and-continue), a missing provider completes quietly (knowledge
  * off is never an error), and the enrich.item back-fill touches only the
@@ -109,7 +109,7 @@ describe('ingest.object', () => {
     );
   });
 
-  it('throws on an embedding failure so the lane retries it', async () => {
+  it('throws on an embedding failure so the queue retries it', async () => {
     mockIngestObjectChunks.mockResolvedValue(err('EMBEDDING_FAILED' as const));
     await expect(
       createKnowledgeIngestObjectHandler()(event('ingest.object', payload))

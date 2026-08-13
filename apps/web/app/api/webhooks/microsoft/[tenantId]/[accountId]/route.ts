@@ -18,11 +18,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { randomUUID } from 'crypto';
 import { getDatabase } from '@renkei/db';
+import { webhookEventsQueue } from '@renkei/queue';
 import { logger } from '@/lib/logger';
 
 const MICROSOFT_SOURCE = 'microsoft';
+const eventsQueue = webhookEventsQueue();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -99,26 +100,25 @@ export async function POST(
       typeof notification.lifecycleEvent === 'string' ? notification.lifecycleEvent : null;
     const resourceData = isRecord(notification.resourceData) ? notification.resourceData : {};
 
-    await db
-      .insertInto('events')
-      .values({
-        id: randomUUID(),
-        tenant_id: tenantId,
-        source: MICROSOFT_SOURCE,
-        type: lifecycleEvent ? 'lifecycle' : 'change-notification',
-        payload: JSON.stringify({
-          accountId,
-          subscriptionId,
-          lifecycleEvent,
-          resource: typeof notification.resource === 'string' ? notification.resource : null,
-          changeType: typeof notification.changeType === 'string' ? notification.changeType : null,
-          // A routing hint only: the worker re-syncs via delta, never by
-          // trusting ids delivered over the network.
-          resourceId: typeof resourceData.id === 'string' ? resourceData.id : null,
-        }),
-      })
-      .execute();
-    accepted += 1;
+    const enqueued = await eventsQueue.producer.enqueue({
+      tenantId,
+      source: MICROSOFT_SOURCE,
+      type: lifecycleEvent ? 'lifecycle' : 'change-notification',
+      payload: {
+        accountId,
+        subscriptionId,
+        lifecycleEvent,
+        resource: typeof notification.resource === 'string' ? notification.resource : null,
+        changeType: typeof notification.changeType === 'string' ? notification.changeType : null,
+        // A routing hint only: the worker re-syncs via delta, never by
+        // trusting ids delivered over the network.
+        resourceId: typeof resourceData.id === 'string' ? resourceData.id : null,
+      },
+      // One subscription's delta rounds run in order — two workers must not
+      // race the same delta cursor.
+      orderingKey: `microsoft/${accountId}/${subscriptionId}`,
+    });
+    if (enqueued.ok) accepted += 1;
   }
 
   logger.info('Graph notifications accepted', {

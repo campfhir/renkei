@@ -62,10 +62,11 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # The embedding lane's consumer (Decision #20): same image as `worker`,
+  # The embedding queue's consumer (Decision #20): same image as `worker`,
   # different entrypoint. All ingest-time calls to the org-configured
   # embeddings endpoint happen in this process, so however slow that
-  # endpoint is, the interactive worker above never waits on it.
+  # endpoint is, the interactive worker above never waits on it. Safe to
+  # scale to N instances: row-locked claims plus ordering keys.
   embeddings-worker:
     build:
       context: .

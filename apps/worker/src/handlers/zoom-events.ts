@@ -101,25 +101,32 @@ export function createZoomTranscriptHandler(): EventHandler {
       return;
     }
 
-    // Embedding is deferred to the embedding lane (Decision #20): the
+    // Embedding is deferred to the embedding queue (Decision #20): the
     // bounded Zoom fetch/download above stays here, the network-bound
     // chunk-and-embed does not.
     const refId = `${access.hostEmail}/${facts.meetingUuid}/transcript`;
-    await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
-      provider: ZOOM,
-      refId,
-      content: facts.topic ? `Meeting: ${facts.topic}\n\n${text}` : text,
-      metadata: {
-        kind: 'transcript',
-        meetingId: facts.meetingId ?? undefined,
-        meetingUuid: facts.meetingUuid,
-        topic: facts.topic || undefined,
-        startTime: facts.startTime || undefined,
-        hostEmail: access.hostEmail,
+    await enqueueKnowledgeEvent(
+      tenantId,
+      'ingest.object',
+      {
+        provider: ZOOM,
+        refId,
+        content: facts.topic ? `Meeting: ${facts.topic}\n\n${text}` : text,
+        metadata: {
+          kind: 'transcript',
+          meetingId: facts.meetingId ?? undefined,
+          meetingUuid: facts.meetingUuid,
+          topic: facts.topic || undefined,
+          startTime: facts.startTime || undefined,
+          hostEmail: access.hostEmail,
+        },
+        sourceAt: facts.startTime || null,
+        chunking: TRANSCRIPT_CHUNKING,
       },
-      sourceAt: facts.startTime || null,
-      chunking: TRANSCRIPT_CHUNKING,
-    });
+      // Redeliveries of the same transcript stay serial; different meetings
+      // embed in parallel.
+      `zoom/${refId}`
+    );
     logger.info('queued transcript for {meetingUuid} for indexing', {
       component: COMPONENT,
       tenantId,
@@ -196,20 +203,25 @@ export function createZoomSummaryHandler(): EventHandler {
     }
 
     const refId = `${access.hostEmail}/${facts.meetingUuid}/summary`;
-    await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
-      provider: ZOOM,
-      refId,
-      content: text,
-      metadata: {
-        kind: 'summary',
-        meetingId: facts.meetingId,
-        meetingUuid: facts.meetingUuid,
-        topic: facts.topic || undefined,
-        startTime: facts.startTime || undefined,
-        hostEmail: access.hostEmail,
+    await enqueueKnowledgeEvent(
+      tenantId,
+      'ingest.object',
+      {
+        provider: ZOOM,
+        refId,
+        content: text,
+        metadata: {
+          kind: 'summary',
+          meetingId: facts.meetingId,
+          meetingUuid: facts.meetingUuid,
+          topic: facts.topic || undefined,
+          startTime: facts.startTime || undefined,
+          hostEmail: access.hostEmail,
+        },
+        sourceAt: facts.startTime || null,
       },
-      sourceAt: facts.startTime || null,
-    });
+      `zoom/${refId}`
+    );
     logger.info('queued AI summary for meeting {meetingId} for indexing', {
       component: COMPONENT,
       tenantId,

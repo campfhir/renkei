@@ -58,13 +58,16 @@ apps/web/          Next.js: all surfaces, MCP gateway, OAuth/OIDC, admin UI,
                    and (thin) webhook receipt
   app/             App Router: pages, MCP + OAuth + OIDC + admin API routes
   lib/             business logic; mcp-tools/ holds the Jira + JSM tools
-apps/worker/       two long-running processes over one events queue (claim
-                   via FOR UPDATE SKIP LOCKED, retry with backoff,
-                   dead-letter), partitioned by lane (Decision #20):
-                   index.ts consumes the interactive lane (replies, webhook
-                   orchestration); embeddings-worker.ts consumes the
-                   embedding lane (all ingest-time embedding calls), so a
-                   slow embeddings endpoint can never stall a reply
+apps/worker/       two long-running processes, one per queue (Decision
+                   #20): index.ts consumes `events` (replies, webhook
+                   orchestration); embeddings-worker.ts consumes
+                   `embedding_jobs` (all ingest-time embedding calls), so
+                   a slow embeddings endpoint can never stall a reply.
+                   Both scale horizontally: row-locked claims + ordering
+                   keys (see packages/queue)
+packages/queue/    @renkei/queue — the broker-agnostic queue contract
+                   (leases, ack/nack, retry, ordering keys, dead-letter
+                   requeue) with Postgres and in-memory adapters
 packages/db/       @renkei/db — Kysely client, generated schema types, and
                    migrations; shared by web, worker, and the migrate CLI
 docker/            multi-stage Dockerfile (builder / runtime / worker / migrate)
@@ -73,4 +76,4 @@ scripts/           docker build/push and ngrok helpers
 
 ## Deployment
 
-`docker-compose.yaml` (production) runs prebuilt images with a `migrate` service behind the `tools` profile, so `up` never migrates as a side effect. The worker ships as two services off one image — `worker` (interactive lane) and `embeddings-worker` (embedding lane, single instance; see Decision #20) — which must be deployed together with migration 030. See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full guide.
+`docker-compose.yaml` (production) runs prebuilt images with a `migrate` service behind the `tools` profile, so `up` never migrates as a side effect. The worker ships as two services off one image — `worker` (the `events` queue) and `embeddings-worker` (the `embedding_jobs` queue), both horizontally scalable (Decision #20) — which must be deployed together with migration 030. See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full guide.

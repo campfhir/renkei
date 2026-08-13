@@ -1,8 +1,8 @@
 /**
- * Producer side of the embedding lane (Decision #20). Interactive handlers
- * and sweeps call this instead of embedding inline: the INSERT is cheap and
- * local, and the embedding worker — the only consumer of the 'embedding'
- * lane — does the network-bound work on its own clock.
+ * Producer side of the embedding queue (Decision #20). Interactive
+ * handlers and sweeps call this instead of embedding inline: the enqueue
+ * is cheap and local, and the embedding worker — any number of instances —
+ * does the network-bound work on its own clock.
  *
  * Payload shapes, by type (all consumed in handlers/knowledge-ingest.ts):
  *
@@ -13,16 +13,17 @@
  *   delete.object  { provider, refId }
  *   purge.prefix   { provider, refIdPrefix }
  *   enrich.item    { itemId, provider: 'webex', refId, query,
- *                    accessSubject, roomId, messageId }
+ *                    accessSubject }
  *
- * Ordering matters and holds by construction: the lane is FIFO and consumed
- * by a single embedding worker, so a purge enqueued before its re-ingests
- * runs first, and an enrich.item enqueued after its message's ingest.object
- * searches an index that already contains the message.
+ * Ordering is per KEY, not per queue: callers pass the ordering key that
+ * names the sequence their messages must keep — a mailbox namespace for
+ * Microsoft (purge before its re-ingests, deletes after ingests), an
+ * object refId for WebEx/Zoom (a message's enrichment after its ingest).
+ * Messages with different keys process in parallel across however many
+ * embedding workers are running.
  */
 
-import { randomUUID } from 'node:crypto';
-import { getDatabase } from '@renkei/db';
+import { embeddingQueue } from './queue';
 import { logger } from './logger';
 
 export const KNOWLEDGE_SOURCE = 'knowledge';
@@ -35,46 +36,33 @@ export type KnowledgeEventType =
   | 'enrich.item';
 
 /**
- * INSERT one knowledge event into the embedding lane. A failed INSERT is
- * logged and swallowed: every enqueue site sits inside a handler that has
- * already done its interactive work, and failing the whole event to retry
- * one index write would re-run side effects that must not repeat (posted
- * replies, created cards). The index self-heals on the next capture or
- * sweep of the same object — the same trade the old inline path made by
- * logging and continuing on embed failure.
+ * Enqueue one knowledge job. A failed enqueue is logged and swallowed:
+ * every call site sits inside a handler that has already done its
+ * interactive work, and failing the whole event to retry one index write
+ * would re-run side effects that must not repeat (posted replies, created
+ * cards). The index self-heals on the next capture or sweep of the same
+ * object — the same trade the old inline path made by logging and
+ * continuing on embed failure.
  */
 export async function enqueueKnowledgeEvent(
   tenantId: string,
   type: KnowledgeEventType,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  orderingKey: string | null = null
 ): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    logger.error('knowledge event {type} not enqueued: database unavailable', {
+  const enqueued = await embeddingQueue.producer.enqueue({
+    tenantId,
+    source: KNOWLEDGE_SOURCE,
+    type,
+    payload,
+    orderingKey,
+  });
+  if (!enqueued.ok) {
+    logger.error('knowledge job {type} not enqueued: {error}', {
       component: 'worker/enqueue',
       type,
       tenantId,
-    });
-    return;
-  }
-  try {
-    await dbResult.val
-      .insertInto('events')
-      .values({
-        id: randomUUID(),
-        tenant_id: tenantId,
-        source: KNOWLEDGE_SOURCE,
-        type,
-        payload: JSON.stringify(payload),
-        lane: 'embedding',
-      })
-      .execute();
-  } catch (error) {
-    logger.error('knowledge event {type} not enqueued: {error}', {
-      component: 'worker/enqueue',
-      type,
-      tenantId,
-      error: error instanceof Error ? error.message : String(error),
+      error: enqueued.err.message ?? 'unknown',
     });
   }
 }

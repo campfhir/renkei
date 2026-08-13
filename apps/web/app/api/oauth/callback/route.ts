@@ -1,11 +1,11 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 import { NextRequest, NextResponse } from 'next/server';
-import { randomUUID } from 'crypto';
 import { getAtlassianApp } from '@/lib/atlassian-app';
 import { getWebexUserApp } from '@/lib/webex-app';
 import { getMicrosoftApp } from '@/lib/microsoft-app';
 import { getZoomApp } from '@/lib/zoom-app';
 import { getDatabase } from '@renkei/db';
+import { webhookEventsQueue } from '@renkei/queue';
 import { setJiraGrant } from '@/lib/tenant-operations';
 import {
   setGrant,
@@ -767,25 +767,19 @@ async function handleMicrosoftCallback(
   // Subscription creation + initial delta backfill belong in the worker: the
   // Graph handshake POSTs to our webhook route while the create call is in
   // flight, and a backfill is minutes of work, not callback work.
-  const dbResult = getDatabase();
-  if (dbResult.ok) {
-    await dbResult.val
-      .insertInto('events')
-      .values({
-        id: randomUUID(),
-        tenant_id: tenant.id,
-        source: MICROSOFT,
-        type: 'grant.connected',
-        payload: JSON.stringify({ accountId: oid, subject }),
-      })
-      .execute()
-      .catch((error: unknown) => {
-        logger.error('Could not enqueue microsoft/grant.connected; sweep will bootstrap', {
-          component: 'auth/oauth',
-          tenantId: tenant.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+  const enqueued = await webhookEventsQueue().producer.enqueue({
+    tenantId: tenant.id,
+    source: MICROSOFT,
+    type: 'grant.connected',
+    payload: { accountId: oid, subject },
+    orderingKey: `microsoft/${oid}`,
+  });
+  if (!enqueued.ok) {
+    logger.error('Could not enqueue microsoft/grant.connected; sweep will bootstrap', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      error: enqueued.err.message ?? 'unknown',
+    });
   }
 
   logger.info('Microsoft grant stored', {

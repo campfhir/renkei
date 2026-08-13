@@ -1,6 +1,6 @@
 /**
  * The Renkei embedding worker — the other half of Decision #20, consuming
- * only the 'embedding' lane of the events queue.
+ * the `embedding_jobs` queue.
  *
  * Everything network-bound against the org-configured embeddings endpoint
  * lives here: chunk-and-embed ingestion, index deletes and purges, and the
@@ -8,12 +8,16 @@
  * arbitrary org infrastructure — when it is slow, this process is slow, and
  * nothing else is: the interactive worker never waits on it.
  *
+ * Scale this process horizontally at will: claims are row-locked, and the
+ * ordering keys producers set (per mailbox, per object) keep
+ * purge/ingest/delete sequences serial regardless of instance count.
+ *
  * No sweeps run here; those stay with the interactive worker. This process
- * is a pure lane consumer.
+ * is a pure queue consumer.
  */
 
 import { closeDatabase } from '@renkei/db';
-import { claimNextEvent, completeEvent, failEvent } from './queue';
+import { embeddingQueue } from './queue';
 import { handlerFor, registerHandler } from './handlers';
 import { createEventLoop } from './loop';
 import { KNOWLEDGE_SOURCE } from './enqueue';
@@ -36,11 +40,9 @@ function registerKnowledgeHandlers(): void {
 }
 
 const loop = createEventLoop({
-  claim: () => claimNextEvent('embedding'),
-  // Embedding-lane payloads carry full document content; once processed,
-  // the content lives in knowledge_chunks and the row need not keep a copy.
-  complete: (event) => completeEvent(event.id, { clearPayload: true }),
-  fail: failEvent,
+  claim: () => embeddingQueue.consumer.claim(),
+  complete: (event) => embeddingQueue.consumer.complete(event),
+  fail: (event, error) => embeddingQueue.consumer.fail(event, error),
   handlerFor,
   label: 'worker/embeddings-loop',
 });
@@ -48,7 +50,7 @@ const loop = createEventLoop({
 async function main(): Promise<void> {
   await attachPersistentLogging();
   registerKnowledgeHandlers();
-  logger.info('started {application} {version} (embedding lane)', {
+  logger.info('started {application} {version} (embedding queue)', {
     component: 'worker/embeddings-loop',
   });
   await loop.run();

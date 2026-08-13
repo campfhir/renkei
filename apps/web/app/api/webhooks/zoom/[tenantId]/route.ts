@@ -17,8 +17,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { randomUUID } from 'crypto';
 import { getDatabase } from '@renkei/db';
+import { webhookEventsQueue } from '@renkei/queue';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import {
@@ -29,6 +29,8 @@ import {
   ZOOM_CONNECTOR,
 } from '@renkei/connector-zoom';
 import { logger } from '@/lib/logger';
+
+const eventsQueue = webhookEventsQueue();
 
 export async function POST(
   request: NextRequest,
@@ -111,17 +113,26 @@ export async function POST(
   // The full delivery body is the event payload: the worker re-parses it
   // and re-fetches everything of substance from the API under the host's
   // grant — webhook contents are routing hints, not trusted data.
-  await db
-    .insertInto('events')
-    .values({
-      id: randomUUID(),
-      tenant_id: tenantId,
-      source: ZOOM_CONNECTOR,
-      type: payload.val.type,
-      payload: JSON.stringify(body),
-    })
-    .execute();
+  const enqueued = await eventsQueue.producer.enqueue({
+    tenantId,
+    source: ZOOM_CONNECTOR,
+    type: payload.val.type,
+    payload: isRecord(body) ? body : {},
+    // One meeting's transcript/summary events process in order.
+    orderingKey: payload.val.meetingUuid ? `zoom/${tenantId}/${payload.val.meetingUuid}` : null,
+  });
+  if (!enqueued.ok) {
+    logger.error('Event NOT accepted: {error}', {
+      component: 'zoom/webhook',
+      tenantId,
+      error: enqueued.err.message ?? 'unknown',
+    });
+    return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });
+  }
 
   logger.info('Event accepted', { component: 'zoom/webhook', tenantId, type: payload.val.type });
   return NextResponse.json({ accepted: true });
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);

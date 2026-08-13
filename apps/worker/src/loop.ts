@@ -1,11 +1,12 @@
 /**
  * The event-processing loop, extracted from the entrypoint so both worker
  * processes (Decision #20) — and the synthetic multi-stream test — run the
- * exact same machinery with only the lane wiring differing.
+ * exact same machinery with only the queue wiring differing.
  *
  * The loop is deliberately serial: one claimed event, fully handled, then
- * the next. Isolation between event classes comes from lanes and processes,
- * not from in-process concurrency.
+ * the next. Isolation between event classes comes from separate queues and
+ * processes, and concurrency from running more loop instances (row-locked
+ * claims and ordering keys make that safe) — never from in-process fan-out.
  */
 
 import type { ClaimedEvent, Disposition } from './queue';

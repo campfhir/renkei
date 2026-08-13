@@ -215,11 +215,21 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
     const override = requireOverride(payload);
     const tenantId = event.tenant_id;
 
+    // The same mailbox-kind ordering key runSubscriptionSync uses — refIds
+    // are `${upn}/${kind}/${objectId}`, so the first two segments name the
+    // sequence this message's index writes must keep.
+    const orderingKey = `microsoft/${refId.split('/').slice(0, 2).join('/')}`;
+
     if (override.action === 'exclude') {
-      // Through the embedding lane, not inline: if an ingest of this same
-      // message is still queued there, lane FIFO puts this delete after it —
-      // an inline delete could run first and lose the race.
-      await enqueueKnowledgeEvent(tenantId, 'delete.object', { provider: MICROSOFT, refId });
+      // Through the embedding queue, not inline: if an ingest of this same
+      // message is still queued there, the shared ordering key puts this
+      // delete after it — an inline delete could run first and lose the race.
+      await enqueueKnowledgeEvent(
+        tenantId,
+        'delete.object',
+        { provider: MICROSOFT, refId },
+        orderingKey
+      );
       return;
     }
 
@@ -238,8 +248,8 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
       throw new Error(`could not re-fetch message ${objectId} for override (tenant ${tenantId})`);
     }
 
-    // The sanitize-and-ingest runs in the embedding lane (Decision #20);
-    // the override rides the payload so the lane handler forces it through
+    // The sanitize-and-ingest runs in the embedding queue (Decision #20);
+    // the override rides the payload so the queue's handler forces it through
     // the pipeline there. The re-fetch stays here — it is bounded Graph I/O
     // and the message body must not sit in the queue longer than needed.
     //
@@ -249,22 +259,27 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
     // UI — the correction the owner just made would quietly downgrade the
     // record instead of improving it.
     const received = str(fetched.val.receivedDateTime);
-    await enqueueKnowledgeEvent(tenantId, 'ingest.email', {
-      provider: MICROSOFT,
-      refId,
-      ownerUpn: access.upn,
-      accountId,
-      raw: rawEmailOf(fetched.val),
-      override,
-      metadata: {
-        kind: 'msg',
-        upn: access.upn,
-        webLink: str(fetched.val.webLink) || undefined,
-        when: received || undefined,
-        subject: str(fetched.val.subject) || undefined,
-        overridden: true,
+    await enqueueKnowledgeEvent(
+      tenantId,
+      'ingest.email',
+      {
+        provider: MICROSOFT,
+        refId,
+        ownerUpn: access.upn,
+        accountId,
+        raw: rawEmailOf(fetched.val),
+        override,
+        metadata: {
+          kind: 'msg',
+          upn: access.upn,
+          webLink: str(fetched.val.webLink) || undefined,
+          when: received || undefined,
+          subject: str(fetched.val.subject) || undefined,
+          overridden: true,
+        },
+        sourceAt: received || null,
       },
-      sourceAt: received || null,
-    });
+      orderingKey
+    );
   };
 }

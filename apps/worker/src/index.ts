@@ -1,19 +1,21 @@
 /**
  * The Renkei interactive worker — the long-running half of the Decision #17
- * topology, consuming the 'interactive' lane of the events queue.
+ * topology, consuming the webhook `events` queue.
  *
  * Everything that must keep running lives here, never in a web request
  * handler: the events-queue consumer, schedulers-as-producers and provider
- * subscription renewal. The web app's only queue role is INSERTing events.
+ * subscription renewal. The web app's only queue role is producing events.
  *
  * Embedding/ingestion work does NOT live here (Decision #20): handlers
- * enqueue `knowledge/*` events into the embedding lane, consumed by the
- * separate embedding worker process (embeddings-worker.ts), so a slow
- * org-configured embeddings endpoint can never delay a reply.
+ * enqueue `knowledge/*` jobs onto the embedding queue (`embedding_jobs`),
+ * consumed by the separate embedding worker process
+ * (embeddings-worker.ts), so a slow org-configured embeddings endpoint can
+ * never delay a reply. Both queues claim with row locks, so more instances
+ * of either process can be added without coordination.
  */
 
 import { closeDatabase } from '@renkei/db';
-import { claimNextEvent, completeEvent, failEvent } from './queue';
+import { eventsQueue } from './queue';
 import { handlerFor, registerHandler } from './handlers';
 import { createEventLoop, schedulePeriodicSweep } from './loop';
 import { createWebexMessageHandler } from './handlers/webex-message';
@@ -52,9 +54,9 @@ function registerConnectorHandlers(): void {
 }
 
 const loop = createEventLoop({
-  claim: () => claimNextEvent('interactive'),
-  complete: (event) => completeEvent(event.id),
-  fail: failEvent,
+  claim: () => eventsQueue.consumer.claim(),
+  complete: (event) => eventsQueue.consumer.complete(event),
+  fail: (event, error) => eventsQueue.consumer.fail(event, error),
   handlerFor,
   label: 'worker/loop',
 });

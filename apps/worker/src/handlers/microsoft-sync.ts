@@ -9,7 +9,7 @@
  * the exact same round; the orchestration never cares which producer fired.
  *
  * No embedding happens here (Decision #20): a round's index writes are
- * enqueued to the embedding lane per item, so this handler's own runtime
+ * enqueued to the embedding queue per item, so this handler's own runtime
  * is bounded by Graph's clock, never the embeddings endpoint's.
  * Subscription/delta failures DO throw — those are retryable.
  */
@@ -308,11 +308,11 @@ function contentOf(kind: MicrosoftRefKind, item: Record<string, unknown>): strin
 
 /**
  * One delta round for one subscription row: fetch what changed, enqueue it
- * for the embedding lane, persist the new cursor last (at-least-once — a
+ * for the embedding queue, persist the new cursor last (at-least-once — a
  * crashed round re-runs into idempotent enqueues-then-upserts).
  *
  * All index writes — purges, per-item ingests, @removed deletes — ride the
- * embedding lane as individual events (Decision #20). A cursorless full
+ * embedding queue as individual jobs (Decision #20). A cursorless full
  * rebuild that used to embed a whole mailbox inside this ONE event, easily
  * outliving the queue's 10-minute claim lease, becomes one purge event plus
  * one bounded, independently-retryable event per item. Lane FIFO under the
@@ -344,12 +344,18 @@ export async function runSubscriptionSync(
   // leave the index.
   //
   // Enqueued AFTER the fetch succeeded, never before, and ahead of every
-  // per-item enqueue below — the embedding lane runs it first.
+  // per-item enqueue below. All of this round's jobs share the mailbox-kind
+  // ordering key, so the purge runs before its re-ingests and deletes land
+  // after ingests of the same resource — while different mailboxes drain in
+  // parallel across however many embedding workers are running.
+  const orderingKey = `microsoft/${access.upn.toLowerCase()}/${kind}`;
   if (fullRebuild) {
-    await enqueueKnowledgeEvent(tenantId, 'purge.prefix', {
-      provider: MICROSOFT,
-      refIdPrefix: `${access.upn.toLowerCase()}/${kind}/`,
-    });
+    await enqueueKnowledgeEvent(
+      tenantId,
+      'purge.prefix',
+      { provider: MICROSOFT, refIdPrefix: `${access.upn.toLowerCase()}/${kind}/` },
+      orderingKey
+    );
   }
 
   const embedder = await resolveEmbeddingProvider(tenantId);
@@ -363,7 +369,12 @@ export async function runSubscriptionSync(
     const refId = microsoftRefId(access.upn, kind, objectId);
 
     if (isRecord(entry['@removed']) || entry['@removed'] !== undefined) {
-      await enqueueKnowledgeEvent(tenantId, 'delete.object', { provider: MICROSOFT, refId });
+      await enqueueKnowledgeEvent(
+        tenantId,
+        'delete.object',
+        { provider: MICROSOFT, refId },
+        orderingKey
+      );
       removed += 1;
       continue;
     }
@@ -371,26 +382,31 @@ export async function runSubscriptionSync(
     if (!embedder) continue; // knowledge layer off for this org
 
     if (kind === 'msg') {
-      // Mail goes to the embedding lane as one ingest.email event per
+      // Mail goes to the embedding queue as one ingest.email job per
       // message; the sanitizer runs THERE, not here — its near-duplicate
       // check is itself an embedding call, and this loop must stay free of
       // the embeddings endpoint entirely. The sanitizer-derived metadata
       // (senderKey, templateVersion) is merged in by that handler.
-      await enqueueKnowledgeEvent(tenantId, 'ingest.email', {
-        provider: MICROSOFT,
-        refId,
-        ownerUpn: access.upn,
-        accountId: access.accountId,
-        raw: rawEmailOf(entry),
-        metadata: {
-          kind,
-          upn: access.upn,
-          webLink: str(entry.webLink) || undefined,
-          when: str(entry.receivedDateTime) || undefined,
-          subject: str(entry.subject) || undefined,
+      await enqueueKnowledgeEvent(
+        tenantId,
+        'ingest.email',
+        {
+          provider: MICROSOFT,
+          refId,
+          ownerUpn: access.upn,
+          accountId: access.accountId,
+          raw: rawEmailOf(entry),
+          metadata: {
+            kind,
+            upn: access.upn,
+            webLink: str(entry.webLink) || undefined,
+            when: str(entry.receivedDateTime) || undefined,
+            subject: str(entry.subject) || undefined,
+          },
+          sourceAt: str(entry.receivedDateTime) || null,
         },
-        sourceAt: str(entry.receivedDateTime) || null,
-      });
+        orderingKey
+      );
       changed += 1;
       continue;
     }
@@ -410,33 +426,43 @@ export async function runSubscriptionSync(
 
     const content = contentOf(kind, item);
     if (!hasSubstance(kind, item)) {
-      await enqueueKnowledgeEvent(tenantId, 'delete.object', { provider: MICROSOFT, refId });
+      await enqueueKnowledgeEvent(
+        tenantId,
+        'delete.object',
+        { provider: MICROSOFT, refId },
+        orderingKey
+      );
       continue;
     }
     if (!content.trim()) continue;
-    await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
-      provider: MICROSOFT,
-      refId,
-      content,
-      metadata: {
-        kind,
-        upn: access.upn,
-        webLink: str(item.webLink) || undefined,
-        when:
+    await enqueueKnowledgeEvent(
+      tenantId,
+      'ingest.object',
+      {
+        provider: MICROSOFT,
+        refId,
+        content,
+        metadata: {
+          kind,
+          upn: access.upn,
+          webLink: str(item.webLink) || undefined,
+          when:
+            str(item.receivedDateTime) ||
+            str(rec(item.start).dateTime) ||
+            str(item.lastModifiedDateTime) ||
+            undefined,
+          subject: str(item.subject) || str(item.title) || undefined,
+        },
+        // Same precedence as `when` above: received (mail) → start (event) →
+        // last-modified (task), whichever this kind actually carries.
+        sourceAt:
           str(item.receivedDateTime) ||
           str(rec(item.start).dateTime) ||
           str(item.lastModifiedDateTime) ||
-          undefined,
-        subject: str(item.subject) || str(item.title) || undefined,
+          null,
       },
-      // Same precedence as `when` above: received (mail) → start (event) →
-      // last-modified (task), whichever this kind actually carries.
-      sourceAt:
-        str(item.receivedDateTime) ||
-        str(rec(item.start).dateTime) ||
-        str(item.lastModifiedDateTime) ||
-        null,
-    });
+      orderingKey
+    );
     changed += 1;
   }
 

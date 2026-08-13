@@ -20,9 +20,9 @@
  * mean building that backfill capability first, not just resetting a cursor.
  */
 
-import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
+import { webhookEventsQueue } from '@renkei/queue';
 import { getSessionFromRequest } from '@/lib/session';
 import { MICROSOFT } from '@renkei/provider-grants';
 
@@ -81,18 +81,18 @@ export async function POST(
     .where('account_id', '=', accountId)
     .execute();
 
-  await db
-    .insertInto('events')
-    .values(
-      active.map((row) => ({
-        id: randomUUID(),
-        tenant_id: tenantId,
-        source: MICROSOFT,
-        type: 'change-notification',
-        payload: JSON.stringify({ accountId, subscriptionId: row.subscription_id }),
-      }))
-    )
-    .execute();
+  const producer = webhookEventsQueue().producer;
+  for (const row of active) {
+    await producer.enqueue({
+      tenantId,
+      source: MICROSOFT,
+      type: 'change-notification',
+      payload: { accountId, subscriptionId: row.subscription_id },
+      // Same key shape as the Graph webhook route: one subscription's delta
+      // rounds never race each other.
+      orderingKey: `microsoft/${accountId}/${row.subscription_id}`,
+    });
+  }
 
   return NextResponse.json({ reindexing: active.length });
 }

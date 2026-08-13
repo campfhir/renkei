@@ -137,9 +137,9 @@ export interface Events {
   attempts: Generated<number>;
   created_at: Generated<Timestamp>;
   id: string;
-  lane: Generated<string>;
   last_error: string | null;
   locked_at: Timestamp | null;
+  ordering_key: string | null;
   payload: Json;
   run_after: Generated<Timestamp>;
   source: string;
@@ -147,6 +147,48 @@ export interface Events {
   tenant_id: string;
   type: string;
   updated_at: Generated<Timestamp>;
+}
+
+export interface EmbeddingJobs {
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  id: string;
+  last_error: string | null;
+  locked_at: Timestamp | null;
+  ordering_key: string | null;
+  payload: Json;
+  run_after: Generated<Timestamp>;
+  source: string;
+  status: Generated<string>;
+  tenant_id: string;
+  type: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface EventsDeadLetters {
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  dead_at: Generated<Timestamp>;
+  id: string;
+  last_error: string | null;
+  ordering_key: string | null;
+  payload: Json;
+  source: string;
+  tenant_id: string;
+  type: string;
+}
+
+export interface EmbeddingJobsDeadLetters {
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  dead_at: Generated<Timestamp>;
+  id: string;
+  last_error: string | null;
+  ordering_key: string | null;
+  payload: Json;
+  source: string;
+  tenant_id: string;
+  type: string;
 }
 
 export interface Identities {
@@ -400,7 +442,10 @@ export interface DB {
   email_classification_log: EmailClassificationLog;
   email_classifier_rules: EmailClassifierRules;
   email_extraction_templates: EmailExtractionTemplates;
+  embedding_jobs: EmbeddingJobs;
+  embedding_jobs_dead_letters: EmbeddingJobsDeadLetters;
   events: Events;
+  events_dead_letters: EventsDeadLetters;
   identities: Identities;
   jira_sessions: JiraSessions;
   knowledge_chunks: KnowledgeChunks;

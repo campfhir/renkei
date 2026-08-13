@@ -15,9 +15,8 @@
  * information.
  */
 
-import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { webhookEventsQueue } from '@renkei/queue';
 import { getSessionFromRequest } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
 import { isEmailCategory, isMessageOverrideAction } from '@/lib/email-sanitizer-guards';
@@ -92,29 +91,26 @@ export async function POST(
   // pass integrates. A future connector adds its own event/handler pair
   // here; the override itself is already recorded either way.
   if (row.provider === MICROSOFT) {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) {
-      return NextResponse.json({ error: 'Database error' }, { status: 500 });
-    }
     const objectId = objectIdOfMicrosoftRefId(row.refId);
     if (!objectId) {
       return NextResponse.json({ error: 'Malformed refId for this message' }, { status: 500 });
     }
-    await dbResult.val
-      .insertInto('events')
-      .values({
-        id: randomUUID(),
-        tenant_id: tenantId,
-        source: MICROSOFT,
-        type: 'message-override',
-        payload: JSON.stringify({
-          accountId: row.accountId,
-          objectId,
-          refId: row.refId,
-          override: { action, category, senderKey },
-        }),
-      })
-      .execute();
+    const enqueued = await webhookEventsQueue().producer.enqueue({
+      tenantId,
+      source: MICROSOFT,
+      type: 'message-override',
+      payload: {
+        accountId: row.accountId,
+        objectId,
+        refId: row.refId,
+        override: { action, category, senderKey },
+      },
+      // Two overrides of the same message apply in the order they were made.
+      orderingKey: `microsoft/override/${row.refId}`,
+    });
+    if (!enqueued.ok) {
+      return NextResponse.json({ error: 'Could not enqueue the override' }, { status: 500 });
+    }
   }
 
   return NextResponse.json({ ok: true });

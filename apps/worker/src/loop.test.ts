@@ -1,6 +1,6 @@
 /**
  * The extracted event loop's claim/complete/fail contract — the machinery
- * both worker processes share (see multistream.test.ts for the two lanes
+ * both worker processes share (see multistream.test.ts for the two queues
  * running concurrently).
  */
 
@@ -23,7 +23,7 @@ function event(over: Partial<ClaimedEvent> = {}): ClaimedEvent {
   };
 }
 
-const retryDisposition: Disposition = { status: 'pending', delaySeconds: 30 };
+const retryDisposition: Disposition = { status: 'retry', delaySeconds: 30 };
 
 describe('createEventLoop.processOne', () => {
   it('claims, handles, completes', async () => {

@@ -132,18 +132,24 @@ async function syncJira(
       const content = jiraContent(issue);
       if (!content.trim()) continue;
 
-      await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
-        provider: 'jira',
-        refId: key,
-        content,
-        metadata: {
-          kind: 'issue',
-          title: `${key}: ${str(rec(issue.fields).summary)}`,
-          project: row.scope_key,
-          status: str(rec(rec(issue.fields).status).name) || undefined,
+      await enqueueKnowledgeEvent(
+        tenantId,
+        'ingest.object',
+        {
+          provider: 'jira',
+          refId: key,
+          content,
+          metadata: {
+            kind: 'issue',
+            title: `${key}: ${str(rec(issue.fields).summary)}`,
+            project: row.scope_key,
+            status: str(rec(rec(issue.fields).status).name) || undefined,
+          },
+          sourceAt: updated || null,
         },
-        sourceAt: updated || null,
-      });
+        // Successive versions of one issue stay serial; issues parallelize.
+        `jira/${key}`
+      );
       items += 1;
       if (updated && (!newest || updated > newest)) newest = updated;
     }
@@ -202,13 +208,18 @@ async function syncConfluence(
       const content = [title, adfPlainText(bodyValue)].filter(Boolean).join('\n\n');
       if (!content.trim()) continue;
 
-      await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
-        provider: 'confluence',
-        refId: id,
-        content,
-        metadata: { kind: 'page', title: title || undefined, spaceId: row.scope_key },
-        sourceAt: modified || null,
-      });
+      await enqueueKnowledgeEvent(
+        tenantId,
+        'ingest.object',
+        {
+          provider: 'confluence',
+          refId: id,
+          content,
+          metadata: { kind: 'page', title: title || undefined, spaceId: row.scope_key },
+          sourceAt: modified || null,
+        },
+        `confluence/${id}`
+      );
       items += 1;
       if (modified && (!newest || modified > newest)) newest = modified;
     }

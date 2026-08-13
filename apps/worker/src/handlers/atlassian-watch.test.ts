@@ -140,7 +140,8 @@ describe('runWatchSync — jira', () => {
     expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
       'tenant-1',
       'ingest.object',
-      expect.objectContaining({ provider: 'jira', refId: 'ENG-1' })
+      expect.objectContaining({ provider: 'jira', refId: 'ENG-1' }),
+      'jira/ENG-1'
     );
     expect(result.cursor).toBe('2026-08-10T10:00:00.000Z');
     expect(written?.cursor).toBe('2026-08-10T10:00:00.000Z');

@@ -1,5 +1,5 @@
 /**
- * The embedding lane's handlers (Decision #20) — every network call to the
+ * The embedding queue's handlers (Decision #20) — every network call to the
  * org-configured embeddings endpoint the platform makes at ingest time
  * happens here, in the embedding worker process, and nowhere else.
  *
@@ -9,7 +9,7 @@
  * webex-capture logged-and-continued on embed failure because a throw would
  * re-run the whole interactive event and duplicate its side effects (posted
  * replies, created cards). Here the interactive side effects already
- * happened in the other lane; these events own only idempotent index writes
+ * happened in the interactive queue; these jobs own only idempotent index writes
  * (chunk upserts, deletes, a keyed jsonb update), so throwing into the
  * retry/backoff/dead-letter path is finally safe — and an embeddings
  * endpoint outage heals by retry instead of silently dropping documents.
@@ -241,9 +241,9 @@ export function createKnowledgePurgePrefixHandler(): EventHandler {
 /**
  * `knowledge/enrich.item` — the asynchronous related-items back-fill.
  *
- * The interactive lane inserts an actionable item with empty
+ * The interactive worker inserts an actionable item with empty
  * `evidence.related` and posts its reply without waiting; this event then
- * searches the index — which, because the lane is FIFO and the enqueue
+ * searches the index — which, because it shares the ingest's ordering key
  * followed the message's own ingest.object, already contains the message —
  * and writes what it finds into the item.
  *

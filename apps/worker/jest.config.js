@@ -16,6 +16,7 @@ export default {
     '^@renkei/connector-webex$': '<rootDir>/../../packages/connector-webex/src/index.ts',
     '^@renkei/gates$': '<rootDir>/../../packages/gates/src/index.ts',
     '^@renkei/knowledge$': '<rootDir>/../../packages/knowledge/src/index.ts',
+    '^@renkei/queue$': '<rootDir>/../../packages/queue/src/index.ts',
     '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
   },
   transform: {

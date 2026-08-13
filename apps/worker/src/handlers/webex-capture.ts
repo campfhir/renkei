@@ -65,7 +65,7 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
 
   // Knowledge is broader than actionability: index the message whenever the
   // org has an embedding provider. Indexing is deferred to the embedding
-  // lane (Decision #20) — the resolve here is a cheap DB-config check that
+  // queue (Decision #20) — the resolve here is a cheap DB-config check that
   // gates whether there is any point enqueuing; the network-bound embed
   // happens in the embedding worker, never on the reply path.
   const embedder = await resolveEmbeddingProvider(tenantId);
@@ -75,17 +75,26 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
     status: embedder ? 'configured' : 'none — indexing and related-item search skipped',
   });
   if (embedder && text.trim()) {
-    await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
-      provider: 'webex',
-      refId,
-      content: text,
-      metadata: {
-        roomId: message.roomId,
-        personEmail: message.personEmail,
-        created: message.created,
+    // Ordering key: this message's own sequence — its enrich.item below
+    // shares the key, so the related-items search always runs against an
+    // index that already contains the message, however many embedding
+    // workers are draining the queue.
+    await enqueueKnowledgeEvent(
+      tenantId,
+      'ingest.object',
+      {
+        provider: 'webex',
+        refId,
+        content: text,
+        metadata: {
+          roomId: message.roomId,
+          personEmail: message.personEmail,
+          created: message.created,
+        },
+        sourceAt: message.created || null,
       },
-      sourceAt: message.created || null,
-    });
+      `webex/${refId}`
+    );
   }
 
   const classification = classifyMessage(text);
@@ -144,7 +153,7 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
         ...(options.note ? { note: options.note } : {}),
         ...(options.forwardedOrigin ? { forwardedOrigin: options.forwardedOrigin } : {}),
         // Enrichment is asynchronous (Decision #20): the card ships now,
-        // empty, and the embedding lane's enrich.item back-fills these two
+        // empty, and the embedding queue's enrich.item back-fills these two
         // keys once the index has caught up. The search's ACL gate runs
         // there, against the same acting identity recorded below.
         related: [],
@@ -162,18 +171,22 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
   // Similar prior chunks, disclosed only after the live ACL gate clears
   // them for the acting identity — the pusher when there is one, the author
   // otherwise. (Per-viewer verification at display time waits on the
-  // identity spine; see RENKEI.md open questions.) Enqueued after the
-  // message's own ingest.object above, so lane FIFO guarantees the search
-  // runs against an index that already contains this message.
+  // identity spine; see RENKEI.md open questions.) Shares the ingest's
+  // ordering key, so it runs strictly after the message is indexed.
   const accessSubject = options.pushedBy ?? message.personEmail;
   if (embedder && accessSubject && text.trim()) {
-    await enqueueKnowledgeEvent(tenantId, 'enrich.item', {
-      itemId,
-      provider: 'webex',
-      refId,
-      query: text,
-      accessSubject,
-    });
+    await enqueueKnowledgeEvent(
+      tenantId,
+      'enrich.item',
+      {
+        itemId,
+        provider: 'webex',
+        refId,
+        query: text,
+        accessSubject,
+      },
+      `webex/${refId}`
+    );
   }
 
   return 'captured';
