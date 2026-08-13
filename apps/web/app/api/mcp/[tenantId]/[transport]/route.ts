@@ -22,6 +22,13 @@ import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/out
 import { registerSharePointTools, SHAREPOINT_MCP_CONNECTOR } from '@/lib/mcp-tools/sharepoint';
 import { registerOneDriveTools, ONEDRIVE_MCP_CONNECTOR } from '@/lib/mcp-tools/onedrive';
 import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
+import { registerSummaryTools, type SummaryProvider } from '@/lib/mcp-tools/summary';
+import { collectCalendar, collectUnreadMail } from '@/lib/mcp-tools/summary/collect-outlook';
+import { collectSprint } from '@/lib/mcp-tools/summary/collect-jira';
+import {
+  collectSharePointChanges,
+  collectConfluenceChanges,
+} from '@/lib/mcp-tools/summary/collect-docs';
 import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
 import {
   WEBEX_USER,
@@ -472,6 +479,59 @@ const handler = async (
                 context
               );
             }
+            // Composed from the SAME availability the tool registration uses,
+            // so the summary can never reach a source whose tools this caller
+            // does not have. Order is the order it reads in.
+            const summaryProviders: SummaryProvider[] = [
+              ...(microsoftAvailable
+                ? [
+                    {
+                      connector: OUTLOOK_MCP_CONNECTOR,
+                      label: 'Calendar',
+                      toolName: 'outlook_calendar_summary',
+                      collect: collectCalendar,
+                    },
+                    {
+                      connector: OUTLOOK_MCP_CONNECTOR,
+                      label: 'Unread mail',
+                      toolName: 'outlook_mail_summary',
+                      collect: collectUnreadMail,
+                    },
+                  ]
+                : []),
+              {
+                connector: JIRA_CONNECTOR,
+                label: 'Sprint',
+                toolName: 'jira_summary',
+                collect: collectSprint,
+              },
+              ...(sharepointAvailable
+                ? [
+                    {
+                      connector: SHAREPOINT_MCP_CONNECTOR,
+                      label: 'SharePoint documents',
+                      toolName: 'sharepoint_summary',
+                      collect: collectSharePointChanges,
+                    },
+                  ]
+                : []),
+              ...(confluenceAvailable
+                ? [
+                    {
+                      connector: CONFLUENCE_MCP_CONNECTOR,
+                      label: 'Confluence pages',
+                      toolName: 'confluence_summary',
+                      collect: collectConfluenceChanges,
+                    },
+                  ]
+                : []),
+            ];
+            registerSummaryTools(
+              withCapabilityGate(server, projection, JIRA_CONNECTOR),
+              context,
+              summaryProviders
+            );
+
             if (sharepointAvailable) {
               await registerSharePointTools(
                 withCapabilityGate(server, projection, SHAREPOINT_MCP_CONNECTOR),
