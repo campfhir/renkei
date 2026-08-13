@@ -1,7 +1,5 @@
 /**
- * Finding sites and what is in them, plus the site-membership tools.
- *
- * Two honest limits are baked into the names here:
+ * Finding sites and what is in them.
  *
  * `sharepoint_list_site_navigation` does NOT return the configured quick
  * launch. Graph exposes no navigation resource at all — SharePoint's own
@@ -11,12 +9,14 @@
  * same destinations in a different order. The description says so, so the
  * model never claims to have read the real navigation.
  *
- * The membership tools are named `*_site_member` rather than
- * `update_site_access` because that is what they actually do:
- * `/sites/{id}/permissions` is application-only, so the sole delegated route
- * to site access is the Microsoft 365 group behind a team site. A tool
- * promising "site access" would be reached for on a communication site and
- * fail confusingly.
+ * Site MEMBERSHIP is deliberately absent. The only delegated route to it is
+ * the Microsoft 365 group behind a team site, which means
+ * GroupMember.ReadWrite.All — a directory-wide grant that lets the holder
+ * restructure any group in the tenant, and one whose blast radius reaches
+ * Teams, the group mailbox and the group calendar rather than just the site.
+ * That is far too much authority to hand every user of an MCP client for a
+ * capability nobody asked for. Managing site access stays in SharePoint's
+ * own admin surface, where it belongs.
  */
 
 import { z } from 'zod';
@@ -26,8 +26,6 @@ import { withPresentationHint } from '../common';
 import {
   resolveGraphAccess,
   graphGet,
-  graphPost,
-  graphDelete,
   values,
   str,
   num,
@@ -172,123 +170,6 @@ export function registerSiteTools(server: McpServer, context: MCPToolContext): v
           'Render as a grouped outline of the site.'
         )
       );
-    }
-  );
-
-  server.registerTool(
-    'sharepoint_list_site_members',
-    {
-      title: 'SharePoint · Read — List who can reach a team site',
-      description:
-        'Members and owners of the Microsoft 365 group behind a team site. Only group-connected ' +
-        'team sites work this way — communication sites and classic SharePoint groups are not ' +
-        'visible through Graph at all. Needs the Groups scope.',
-      annotations: { readOnlyHint: true },
-      inputSchema: z.object({
-        groupId: z.string().min(1).describe('The Microsoft 365 group id behind the site.'),
-      }),
-    },
-    async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
-      if (typeof access === 'string') return errText(access);
-      const groupId = encodeURIComponent(String(args.groupId));
-
-      const [members, owners] = await Promise.all([
-        graphGet(
-          context,
-          access.accessToken,
-          `/groups/${groupId}/members?$select=id,displayName,mail`
-        ),
-        graphGet(
-          context,
-          access.accessToken,
-          `/groups/${groupId}/owners?$select=id,displayName,mail`
-        ),
-      ]);
-      if (!members.ok) return errText(members.error);
-
-      const render = (entry: Record<string, unknown>) =>
-        `${str(entry.displayName)}${str(entry.mail) ? ` <${str(entry.mail)}>` : ''}`;
-      const lines = [
-        `Owners\n${
-          values(owners.ok ? owners.body : {})
-            .map((o) => `  • ${render(o)}`)
-            .join('\n') || '  (none visible)'
-        }`,
-      ];
-      lines.push(
-        `Members\n${
-          values(members.body)
-            .map((m) => `  • ${render(m)}`)
-            .join('\n') || '  (none)'
-        }`
-      );
-      return textResult(withPresentationHint(lines.join('\n\n'), 'Render as two lists.'));
-    }
-  );
-
-  server.registerTool(
-    'sharepoint_add_site_member',
-    {
-      title: 'SharePoint · Act — Add someone to a team site',
-      description:
-        'Add a person to the Microsoft 365 group behind a team site, which is the only ' +
-        'delegated way to grant site access. THIS CHANGES THE GROUP EVERYWHERE IT IS USED — ' +
-        'its Teams team, its mailbox and its calendar — not only the site.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        groupId: z.string().min(1).describe('The Microsoft 365 group id behind the site.'),
-        userId: z.string().min(1).describe('Directory id of the user to add.'),
-        asOwner: z.boolean().describe('Add as an owner rather than a member.').optional(),
-      }),
-    },
-    async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
-      if (typeof access === 'string') return errText(access);
-
-      const collection = args.asOwner === true ? 'owners' : 'members';
-      const added = await graphPost(
-        context,
-        access.accessToken,
-        `/groups/${encodeURIComponent(String(args.groupId))}/${collection}/$ref`,
-        {
-          '@odata.id': `https://graph.microsoft.com/v1.0/directoryObjects/${String(args.userId)}`,
-        }
-      );
-      if (!added.ok) return errText(added.error);
-      return textResult(
-        `Added the user as a ${collection === 'owners' ? 'owner' : 'member'} of the group. ` +
-          'This affects the whole group — Teams, mailbox and calendar included.'
-      );
-    }
-  );
-
-  server.registerTool(
-    'sharepoint_remove_site_member',
-    {
-      title: 'SharePoint · Act — Remove someone from a team site',
-      description:
-        'Remove a person from the Microsoft 365 group behind a team site. Same blast radius as ' +
-        'adding: it affects the group everywhere, not only the site.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        groupId: z.string().min(1).describe('The Microsoft 365 group id behind the site.'),
-        userId: z.string().min(1).describe('Directory id of the user to remove.'),
-        asOwner: z.boolean().describe('Remove from owners rather than members.').optional(),
-      }),
-    },
-    async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
-      if (typeof access === 'string') return errText(access);
-
-      const collection = args.asOwner === true ? 'owners' : 'members';
-      const removed = await graphDelete(
-        context,
-        access.accessToken,
-        `/groups/${encodeURIComponent(String(args.groupId))}/${collection}/${encodeURIComponent(String(args.userId))}/$ref`
-      );
-      if (!removed.ok) return errText(removed.error);
-      return textResult(`Removed the user from the group's ${collection}.`);
     }
   );
 }

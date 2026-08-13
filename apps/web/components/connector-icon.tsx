@@ -1,20 +1,27 @@
+'use client';
+
+import { useState } from 'react';
+
 /**
  * A small mark per connector, so a page of eight cards can be scanned rather
  * than read.
  *
- * These are SIMPLIFIED, ORIGINAL glyphs in each product's brand colour — a
- * recognisable shape and the right hue — not copies of the official logos.
- * That is deliberate: reproducing a vendor's trademarked mark would mean
- * shipping their asset under their brand rules, and a rough copy looks worse
- * than an honest abstraction. The colour is doing most of the identification
- * work anyway, which is why each glyph keeps its product's palette.
+ * Prefers the vendor's OFFICIAL logo from `public/connector-logos/` (see the
+ * README there for what to add and the brand terms that govern it), and falls
+ * back to a built-in glyph when that file is absent.
  *
- * Pure inline SVG: no network fetch, no icon dependency, and it inherits the
- * page's sizing.
+ * The fallbacks are original shapes in each product's brand colour —
+ * deliberately not imitations of the official marks. Approximating a
+ * trademark from memory produces something that looks authoritative and is
+ * subtly wrong, which is worse than an obvious abstraction. They exist so a
+ * fresh checkout has usable visuals and so a missing asset degrades to
+ * something honest rather than a broken image.
+ *
+ * The fallback is inline SVG, so the no-logo path costs no network request.
  */
 
 interface IconProps {
-  /** Pixel size; the glyphs are drawn on a 24-unit grid. */
+  /** Pixel size; the built-in glyphs are drawn on a 24-unit grid. */
   size?: number;
   className?: string;
 }
@@ -156,14 +163,36 @@ export default function ConnectorIcon({
   size = 24,
   className,
 }: IconProps & { capabilityKey: string; label: string }) {
+  // Assume the official asset is present and step down on error, rather than
+  // probing first: the common deployment has the logos, and a HEAD request
+  // per icon to find out would cost more than the occasional fallback.
+  const [logoMissing, setLogoMissing] = useState(false);
+
+  if (!logoMissing) {
+    return (
+      // Plain <img>, not next/image: these are tiny static SVGs already in
+      // the bundle's public dir, so the optimizer has nothing to optimize and
+      // would only add a loader hop.
+      <img
+        src={`/connector-logos/${capabilityKey}.svg`}
+        alt=""
+        width={size}
+        height={size}
+        className={className}
+        onError={() => setLogoMissing(true)}
+        // Decorative: the label is always rendered beside it, so announcing
+        // the mark too would make a screen reader say everything twice.
+        aria-hidden="true"
+      />
+    );
+  }
+
   return (
     <svg
       width={size}
       height={size}
       viewBox="0 0 24 24"
       className={className}
-      // Decorative: the label is always rendered next to it, so announcing
-      // the glyph too would just make a screen reader say everything twice.
       aria-hidden="true"
       focusable="false"
     >

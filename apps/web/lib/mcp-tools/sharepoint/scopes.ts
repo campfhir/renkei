@@ -9,18 +9,13 @@
  * SharePoint at all; a write tool would be under-gated, which is why every
  * write tool below is listed explicitly).
  *
- * Site membership is the odd one out: /sites/{id}/permissions is
- * application-only, so the only delegated route to site access is the
- * Microsoft 365 group behind the site — a different scope family entirely.
+ * Every tool here sits on the Sites.* family. Site membership is
+ * deliberately not offered at all: the only delegated route to it is
+ * GroupMember.ReadWrite.All, a directory-wide grant that is far too much
+ * authority for a general user (see sites.ts).
  */
 export function sharepointScopeFor(toolName: string): string[] {
   switch (toolName) {
-    case 'sharepoint_list_site_members':
-      return ['Group.Read.All'];
-    case 'sharepoint_add_site_member':
-    case 'sharepoint_remove_site_member':
-      return ['GroupMember.ReadWrite.All'];
-
     case 'sharepoint_create_page':
     case 'sharepoint_update_page':
     case 'sharepoint_publish_page':

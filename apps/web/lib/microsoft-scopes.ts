@@ -156,6 +156,20 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     defaultChecked: false,
   },
   {
+    id: 'Files.ReadWrite.All',
+    scopes: ['Files.Read', 'Files.ReadWrite', 'Files.Read.All', 'Files.ReadWrite.All'],
+    label: 'Edit files shared with me',
+    hint:
+      'The same OneDrive tools, but reaching files in OTHER people’s drives — editing, renaming ' +
+      'or deleting a document a colleague shared with you. Files.ReadWrite alone cannot do this: ' +
+      'a shared document lives in its owner’s drive, and that scope only covers your own. This ' +
+      'bundle carries all four Files scopes, so it is the single box to check for full OneDrive ' +
+      'use. Broad by nature — it reaches every file the user can already open. Requires admin ' +
+      'consent on the Entra app.',
+    group: 'files',
+    defaultChecked: false,
+  },
+  {
     id: 'Sites.Read.All',
     scopes: ['Sites.Read.All'],
     label: 'Read SharePoint',
@@ -175,20 +189,9 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
       'sharepoint_create_page, sharepoint_update_page, sharepoint_upload_document, ' +
       'sharepoint_rename_document, sharepoint_move_document, sharepoint_delete_document, ' +
       'sharepoint_update_document_metadata, sharepoint_share_document. Does NOT change ' +
-      'site-level permissions — Graph has no delegated API for that; see the team-site option ' +
-      'below. Carries Sites.Read.All. Requires admin consent on the Entra app.',
-    group: 'sharepoint',
-    defaultChecked: false,
-  },
-  {
-    id: 'GroupMember.ReadWrite.All',
-    scopes: ['GroupMember.ReadWrite.All'],
-    label: 'Add & remove team site members',
-    hint:
-      'sharepoint_add_site_member, sharepoint_remove_site_member — the only delegated way to ' +
-      'change who can reach a SharePoint site, and only for Microsoft 365 group-connected team ' +
-      'sites. CHANGES THE GROUP EVERYWHERE IT IS USED — Teams, the group mailbox, the group ' +
-      'calendar — not only the site. Requires admin consent on the Entra app.',
+      'site-level permissions — Graph offers no delegated API for that, and Renkei deliberately ' +
+      'does not offer it; manage site access in SharePoint itself. Carries Sites.Read.All. ' +
+      'Requires admin consent on the Entra app.',
     group: 'sharepoint',
     defaultChecked: false,
   },
