@@ -359,7 +359,9 @@ describe('reading document text', () => {
     global.fetch = jest.fn(async (input: unknown) => {
       const url = String(input);
       if (url.includes('/content')) {
-        return new Response(docx, {
+        // Buffer, not the raw Uint8Array: TS will not accept a
+        // Uint8Array<ArrayBufferLike> as a BodyInit.
+        return new Response(Buffer.from(docx), {
           status: 200,
           headers: { 'Content-Type': 'application/octet-stream' },
         });
@@ -398,7 +400,7 @@ describe('reading document text', () => {
     global.fetch = jest.fn(async (input: unknown) => {
       const url = String(input);
       if (url.includes('/content')) {
-        return new Response(encrypted, { status: 200 });
+        return new Response(Buffer.from(encrypted), { status: 200 });
       }
       return new Response(
         JSON.stringify({
