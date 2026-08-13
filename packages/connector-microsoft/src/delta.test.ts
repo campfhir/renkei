@@ -72,6 +72,7 @@ describe('runDeltaRound', () => {
     if (result.ok) {
       expect(result.val.items).toEqual([{ id: 'm1' }, { id: 'm2' }, { id: 'm3' }]);
       expect(result.val.deltaLink).toBe(`${GRAPH_BASE_URL}/me/messages/delta?$deltatoken=d1`);
+      expect(result.val.nextLink).toBeNull();
     }
 
     // The nextLink is followed verbatim as an absolute URL.
@@ -99,16 +100,19 @@ describe('runDeltaRound', () => {
     }
   });
 
-  it('returns a null deltaLink when Graph never produces one', async () => {
+  it('returns null for both links when Graph produces neither', async () => {
     jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(200, { value: [] }));
 
     const result = await runDeltaRound('token-1', '/me/messages/delta');
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.val.deltaLink).toBeNull();
+    if (result.ok) {
+      expect(result.val.deltaLink).toBeNull();
+      expect(result.val.nextLink).toBeNull();
+    }
   });
 
-  it('stops at the page cap instead of looping forever', async () => {
+  it('stops at the page cap and hands back the unfollowed nextLink to resume from', async () => {
     // A fresh Response per call — a body is single-use.
     const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async () =>
       jsonResponse(200, {
@@ -122,11 +126,13 @@ describe('runDeltaRound', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.val.deltaLink).toBeNull();
+      // The continuation the cap cut off — the caller stores it as the
+      // cursor so the next round resumes instead of restarting the series.
+      expect(result.val.nextLink).toBe(`${GRAPH_BASE_URL}/delta?$skiptoken=again`);
       expect(result.val.items).toHaveLength(50);
     }
     expect(fetchMock).toHaveBeenCalledTimes(50);
-  }, // graphRequest is rate-limited for real here (client.ts's module-level
-  // TokenBucket, not mocked) — 50 real page fetches past a 5-request burst
+  }, // TokenBucket, not mocked) — 50 real page fetches past a 5-request burst // graphRequest is rate-limited for real here (client.ts's module-level
   // take several real seconds at 5/sec, past Jest's default 5000ms.
   15_000);
 

@@ -43,6 +43,24 @@ export interface PostgresQueueConfig {
   policy?: RetryPolicy;
   staleClaimMinutes?: number;
   /**
+   * Restrict this consumer to messages from these sources. Lets a worker
+   * instance be fixated on the traffic it exists to serve (e.g. an
+   * interactive worker on 'webex' only) while other instances drain the
+   * rest. Consumer-side only; producers are unaffected.
+   */
+  sources?: readonly string[];
+  /**
+   * Claim evenly across sources instead of strictly oldest-first: each
+   * claim picks a source uniformly at random among those with due work,
+   * then takes that source's oldest deliverable message. With three
+   * backlogged sources each gets ~a third of the consumer, so one chatty
+   * source (a mailbox delta storm) cannot starve an interactive one (a
+   * chat message awaiting a reply). Falls back to the plain oldest-first
+   * claim when the picked source has nothing deliverable, so fairness
+   * never idles a consumer while work exists.
+   */
+  fairAcrossSources?: boolean;
+  /**
    * Blank payloads on completion. For queues whose messages carry full
    * document content (embedding jobs: a transcript can be tens of KB),
    * keeping payloads on every processed row would grow the table without
@@ -93,32 +111,70 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
     },
   };
 
+  // WHERE fragments shared by the claim and the fair source pick. `due` is
+  // the lease/backoff eligibility; the ordering-key gate lives only in the
+  // claim itself (the pick tolerates the approximation — see claim()).
+  const due = () => sql`
+    ((c.status = 'pending' AND c.run_after <= NOW())
+       OR (c.status = 'processing' AND c.locked_at < NOW() - INTERVAL '${staleMinutes()} minutes'))`;
+  const sourceRestriction = () =>
+    config.sources && config.sources.length > 0
+      ? sql` AND c.source IN (${sql.join(config.sources.map((s) => sql`${s}`))})`
+      : sql``;
+
+  type Db = Extract<ReturnType<typeof getDatabase>, { ok: true }>['val'];
+  const claimOne = async (db: Db, pinnedSource: string | null) => {
+    const result = await sql<ClaimedMessage>`
+      UPDATE ${live()}
+      SET status = 'processing', locked_at = NOW(), attempts = attempts + 1, updated_at = NOW()
+      WHERE id = (
+        SELECT c.id FROM ${live()} c
+        WHERE ${due()}
+          ${sourceRestriction()}
+          ${pinnedSource === null ? sql`` : sql`AND c.source = ${pinnedSource}`}
+          AND (c.ordering_key IS NULL OR NOT EXISTS (
+            SELECT 1 FROM ${live()} b
+            WHERE b.ordering_key = c.ordering_key
+              AND b.status IN ('pending', 'processing')
+              AND (b.created_at, b.id) < (c.created_at, c.id)
+          ))
+        ORDER BY c.created_at, c.id
+        LIMIT 1
+        FOR UPDATE OF c SKIP LOCKED
+      )
+      RETURNING id, tenant_id, source, type, payload, attempts
+    `.execute(db);
+    return result.rows[0] ?? null;
+  };
+
   const consumer: QueueConsumer = {
     async claim() {
       const dbResult = getDatabase();
       if (!dbResult.ok) return null;
 
-      const result = await sql<ClaimedMessage>`
-        UPDATE ${live()}
-        SET status = 'processing', locked_at = NOW(), attempts = attempts + 1, updated_at = NOW()
-        WHERE id = (
-          SELECT c.id FROM ${live()} c
-          WHERE ((c.status = 'pending' AND c.run_after <= NOW())
-             OR (c.status = 'processing' AND c.locked_at < NOW() - INTERVAL '${staleMinutes()} minutes'))
-            AND (c.ordering_key IS NULL OR NOT EXISTS (
-              SELECT 1 FROM ${live()} b
-              WHERE b.ordering_key = c.ordering_key
-                AND b.status IN ('pending', 'processing')
-                AND (b.created_at, b.id) < (c.created_at, c.id)
-            ))
-          ORDER BY c.created_at, c.id
+      if (config.fairAcrossSources) {
+        // Uniform pick among sources with due work. Due, not deliverable:
+        // the ordering-key gate is skipped here on purpose — it would make
+        // the pick as expensive as the claim. The cost of the approximation
+        // is a pick that lands on a source whose head is key-blocked; the
+        // oldest-first fallback below covers exactly that.
+        const picked = await sql<{ source: string }>`
+          SELECT source FROM (
+            SELECT DISTINCT c.source FROM ${live()} c
+            WHERE ${due()}
+              ${sourceRestriction()}
+          ) candidates
+          ORDER BY random()
           LIMIT 1
-          FOR UPDATE OF c SKIP LOCKED
-        )
-        RETURNING id, tenant_id, source, type, payload, attempts
-      `.execute(dbResult.val);
+        `.execute(dbResult.val);
+        const source = picked.rows[0]?.source;
+        // No due rows at all — deliverable is a subset of due, so done.
+        if (source === undefined) return null;
+        const claimed = await claimOne(dbResult.val, source);
+        if (claimed) return claimed;
+      }
 
-      return result.rows[0] ?? null;
+      return claimOne(dbResult.val, null);
     },
 
     async complete(message: ClaimedMessage) {
@@ -252,8 +308,16 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
  * Constructed here — and only here — so worker and web can never disagree
  * about a queue's configuration.
  */
-export function webhookEventsQueue(): Queue {
-  return createPostgresQueue({ table: 'events', deadLetterTable: 'events_dead_letters' });
+export function webhookEventsQueue(options?: { sources?: readonly string[] }): Queue {
+  return createPostgresQueue({
+    table: 'events',
+    deadLetterTable: 'events_dead_letters',
+    // Interactive traffic from several connectors shares this queue; fair
+    // claiming keeps one connector's storm from starving the others'
+    // replies. `sources` additionally fixates a consumer instance.
+    fairAcrossSources: true,
+    sources: options?.sources,
+  });
 }
 
 export function embeddingJobsQueue(): Queue {

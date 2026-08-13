@@ -86,7 +86,9 @@ describe('retry and dead-letter lifecycle', () => {
   });
 
   it('moves an exhausted message to the dead-letter store, out of the live queue', async () => {
-    const queue = new InMemoryQueue({ policy: { maxAttempts: 1, baseDelaySeconds: 1, maxDelaySeconds: 1 } });
+    const queue = new InMemoryQueue({
+      policy: { maxAttempts: 1, baseDelaySeconds: 1, maxDelaySeconds: 1 },
+    });
     await queue.producer.enqueue(input({ type: 'poison' }));
     const message = await mustClaim(queue);
     const disposition = await queue.consumer.fail(message, 'unparseable');
@@ -101,12 +103,14 @@ describe('retry and dead-letter lifecycle', () => {
   });
 
   it('requeues a dead letter with a fresh attempt budget — the reprocessing path', async () => {
-    const queue = new InMemoryQueue({ policy: { maxAttempts: 1, baseDelaySeconds: 1, maxDelaySeconds: 1 } });
+    const queue = new InMemoryQueue({
+      policy: { maxAttempts: 1, baseDelaySeconds: 1, maxDelaySeconds: 1 },
+    });
     await queue.producer.enqueue(input({ type: 'poison' }));
     await queue.consumer.fail(await mustClaim(queue), 'transient outage');
 
     const dead = (await queue.deadLetters.list()).ok
-      ? (await queue.deadLetters.list()).val ?? []
+      ? ((await queue.deadLetters.list()).val ?? [])
       : [];
     const requeued = await queue.deadLetters.requeue(dead.map((d) => d.id));
     expect(requeued).toEqual({ ok: true, val: 1 });
@@ -118,7 +122,9 @@ describe('retry and dead-letter lifecycle', () => {
   });
 
   it('purges dead letters permanently, skipping unknown ids without error', async () => {
-    const queue = new InMemoryQueue({ policy: { maxAttempts: 1, baseDelaySeconds: 1, maxDelaySeconds: 1 } });
+    const queue = new InMemoryQueue({
+      policy: { maxAttempts: 1, baseDelaySeconds: 1, maxDelaySeconds: 1 },
+    });
     await queue.producer.enqueue(input());
     await queue.consumer.fail(await mustClaim(queue), 'dead');
     const id = queue.deadSnapshot()[0]!.id;
@@ -169,12 +175,64 @@ describe('ordering keys — the horizontal-scaling contract', () => {
   });
 
   it('dead-lettering a keyed message unblocks its siblings', async () => {
-    const queue = new InMemoryQueue({ policy: { maxAttempts: 1, baseDelaySeconds: 1, maxDelaySeconds: 1 } });
+    const queue = new InMemoryQueue({
+      policy: { maxAttempts: 1, baseDelaySeconds: 1, maxDelaySeconds: 1 },
+    });
     await queue.producer.enqueue(input({ type: 'poison', orderingKey: 'key-a' }));
     await queue.producer.enqueue(input({ type: 'healthy', orderingKey: 'key-a' }));
 
     await queue.consumer.fail(await mustClaim(queue), 'dead');
     const next = await mustClaim(queue);
     expect(next.type).toBe('healthy');
+  });
+});
+
+describe('source fixation and fair claiming', () => {
+  function fromSource(source: string, type: string) {
+    return { tenantId: 'tenant-1', source, type, payload: { n: 1 }, orderingKey: null };
+  }
+
+  it('a sources filter fixates the consumer, leaving other sources untouched', async () => {
+    const queue = new InMemoryQueue({ sources: ['webex'] });
+    await queue.producer.enqueue(fromSource('microsoft', 'noise'));
+    await queue.producer.enqueue(fromSource('webex', 'chat'));
+
+    const claimed = await mustClaim(queue);
+    expect(claimed.source).toBe('webex');
+    // The microsoft message stays for an unfixated instance — this
+    // consumer never sees it.
+    expect(await queue.consumer.claim()).toBeNull();
+  });
+
+  it('a fair claim serves a quiet source past an older backlog — no starvation', async () => {
+    // The pick is uniform over sources sorted by name; a pinned random
+    // makes it deterministic: 0.9 → the later source ('webex'), even
+    // though every 'microsoft' message is older.
+    const queue = new InMemoryQueue({ fairAcrossSources: true, random: () => 0.9 });
+    for (let n = 0; n < 5; n += 1) await queue.producer.enqueue(fromSource('microsoft', `m${n}`));
+    await queue.producer.enqueue(fromSource('webex', 'chat'));
+
+    const claimed = await mustClaim(queue);
+    expect(claimed.source).toBe('webex');
+  });
+
+  it('within the picked source, delivery is still oldest first', async () => {
+    const queue = new InMemoryQueue({ fairAcrossSources: true, random: () => 0 });
+    await queue.producer.enqueue(fromSource('microsoft', 'older'));
+    await queue.producer.enqueue(fromSource('microsoft', 'younger'));
+    await queue.producer.enqueue(fromSource('webex', 'chat'));
+
+    const claimed = await mustClaim(queue);
+    expect(claimed.source).toBe('microsoft');
+    expect(claimed.type).toBe('older');
+  });
+
+  it('fairness with one backlogged source degrades to plain FIFO', async () => {
+    const queue = new InMemoryQueue({ fairAcrossSources: true, random: () => 0.99 });
+    await queue.producer.enqueue(fromSource('microsoft', 'first'));
+    await queue.producer.enqueue(fromSource('microsoft', 'second'));
+
+    expect((await mustClaim(queue)).type).toBe('first');
+    expect((await mustClaim(queue)).type).toBe('second');
   });
 });

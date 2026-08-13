@@ -64,6 +64,12 @@ services:
     #   LOG_SHIP_API_KEY / LOG_SHIP_SIGNING_KEYS        (auth + identity)
     # The renkei service reads LOG_SHIP_API_KEY and LOG_E2E_SERVER_KEYS from
     # the same .env. Unset, the worker logs straight to Postgres as before.
+    #
+    # Claims on the events queue are fair across sources (webex, microsoft,
+    # zoom, ...), so one connector's storm can't starve another's replies.
+    # To go further and dedicate a whole instance, set
+    #   WORKER_EVENT_SOURCES: webex,zoom
+    # here (and run a second worker service without it for the rest).
     environment: *database-urls
     depends_on:
       postgres:

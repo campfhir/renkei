@@ -17,13 +17,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { ok } from '@campfhir/safe-functions/helpers';
-import type {
-  ClaimedMessage,
-  DeadLetter,
-  Disposition,
-  Queue,
-  QueueMessageInput,
-} from './contract';
+import type { ClaimedMessage, DeadLetter, Disposition, Queue, QueueMessageInput } from './contract';
 import { failureDisposition, DEFAULT_RETRY_POLICY, type RetryPolicy } from './policy';
 
 export type MemoryMessageStatus = 'pending' | 'processing' | 'processed';
@@ -50,6 +44,12 @@ export interface InMemoryQueueOptions {
   policy?: RetryPolicy;
   /** Delivery lease in ms; an expired lease makes the message reclaimable. */
   leaseMs?: number;
+  /** Restrict this consumer to these sources (postgres.ts's `sources`). */
+  sources?: readonly string[];
+  /** Even claims across sources (postgres.ts's `fairAcrossSources`). */
+  fairAcrossSources?: boolean;
+  /** Source-pick randomness, injectable so fairness tests are deterministic. */
+  random?: () => number;
 }
 
 export class InMemoryQueue implements Queue {
@@ -57,11 +57,17 @@ export class InMemoryQueue implements Queue {
   private readonly deadRows: DeadLetter[] = [];
   private readonly policy: RetryPolicy;
   private readonly leaseMs: number;
+  private readonly sources?: readonly string[];
+  private readonly fairAcrossSources: boolean;
+  private readonly random: () => number;
   private seq = 0;
 
   constructor(options: InMemoryQueueOptions = {}) {
     this.policy = options.policy ?? DEFAULT_RETRY_POLICY;
     this.leaseMs = options.leaseMs ?? 10 * 60_000;
+    this.sources = options.sources;
+    this.fairAcrossSources = options.fairAcrossSources ?? false;
+    this.random = options.random ?? Math.random;
   }
 
   readonly producer = {
@@ -96,8 +102,9 @@ export class InMemoryQueue implements Queue {
       const live = (row: MemoryMessage): boolean =>
         row.status === 'pending' || row.status === 'processing';
 
-      const row = this.rows
+      const deliverable = this.rows
         .filter(due)
+        .filter((candidate) => !this.sources || this.sources.includes(candidate.source))
         .filter(
           (candidate) =>
             candidate.orderingKey === null ||
@@ -108,7 +115,17 @@ export class InMemoryQueue implements Queue {
                 sibling.seq < candidate.seq
             )
         )
-        .sort((a, b) => a.seq - b.seq)[0];
+        .sort((a, b) => a.seq - b.seq);
+
+      // The fair pick over the exact deliverable set — where postgres.ts
+      // approximates with due-only sources plus an oldest-first fallback,
+      // arrays can afford the precise version of the same semantics.
+      let row: MemoryMessage | undefined = deliverable[0];
+      if (this.fairAcrossSources && deliverable.length > 0) {
+        const distinctSources = [...new Set(deliverable.map((r) => r.source))].sort();
+        const picked = distinctSources[Math.floor(this.random() * distinctSources.length)]!;
+        row = deliverable.find((r) => r.source === picked);
+      }
       if (!row) return null;
 
       row.status = 'processing';

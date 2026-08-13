@@ -16,5 +16,22 @@ import type { Queue } from '@renkei/queue';
 
 export type { ClaimedMessage as ClaimedEvent, Disposition } from '@renkei/queue';
 
-export const eventsQueue: Queue = webhookEventsQueue();
+/**
+ * WORKER_EVENT_SOURCES fixates THIS worker instance on a comma-separated
+ * list of event sources ('webex,zoom'). Unset, the instance consumes every
+ * source — claims are already fair across sources either way; fixation is
+ * for dedicating whole instances (e.g. one container that only serves chat
+ * while another drains the rest).
+ */
+function eventSourcesFromEnv(): readonly string[] | undefined {
+  const raw = process.env.WORKER_EVENT_SOURCES;
+  if (!raw) return undefined;
+  const sources = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return sources.length > 0 ? sources : undefined;
+}
+
+export const eventsQueue: Queue = webhookEventsQueue({ sources: eventSourcesFromEnv() });
 export const embeddingQueue: Queue = embeddingJobsQueue();

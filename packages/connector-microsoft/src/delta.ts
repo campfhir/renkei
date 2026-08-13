@@ -61,15 +61,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Run one full delta round: follow every nextLink, return the accumulated
- * items and the deltaLink to store for the next round. A null deltaLink
- * means Graph never produced one (or the page cap tripped) — the caller
- * should restart the series from an initial URL rather than loop forever.
+ * Run one delta round: follow nextLinks up to the page cap, return the
+ * accumulated items and the cursor for the next round. When Graph closed
+ * the round, that cursor is the deltaLink; when the page cap tripped first,
+ * it is the unfollowed nextLink — resumable exactly like a deltaLink, so
+ * the caller continues the enumeration next round instead of restarting the
+ * series (which, on a resource with more items than one round covers, would
+ * re-fetch the same head forever). Both null means Graph produced neither —
+ * only then should the caller restart from an initial URL.
  */
 export async function runDeltaRound(
   accessToken: string,
   startUrl: string
-): Promise<Result<{ items: unknown[]; deltaLink: string | null }, 'GRAPH_API_ERROR'>> {
+): Promise<
+  Result<{ items: unknown[]; deltaLink: string | null; nextLink: string | null }, 'GRAPH_API_ERROR'>
+> {
   const items: unknown[] = [];
   let url: string | null = startUrl;
   let deltaLink: string | null = null;
@@ -101,5 +107,5 @@ export async function runDeltaRound(
     }
   }
 
-  return ok({ items, deltaLink });
+  return ok({ items, deltaLink, nextLink: deltaLink === null ? url : null });
 }

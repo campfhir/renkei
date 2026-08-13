@@ -38,15 +38,15 @@ const { enqueueKnowledgeEvent: mockEnqueueKnowledgeEvent } = jest.requireMock<{
   enqueueKnowledgeEvent: jest.Mock;
 }>('../enqueue');
 
-function stubDb(): void {
+function stubDb(): jest.Mock {
+  // Returns the `set` spy so cursor-persistence tests can assert what the
+  // round actually wrote back to webhook_subscriptions.
+  const set = jest.fn(() => ({ where: () => ({ execute: async () => [] }) }));
   mockGetDatabase.mockReturnValue({
     ok: true,
-    val: {
-      updateTable: () => ({
-        set: () => ({ where: () => ({ execute: async () => [] }) }),
-      }),
-    },
+    val: { updateTable: () => ({ set }) },
   });
+  return set;
 }
 
 function access(): MicrosoftAccess {
@@ -121,6 +121,56 @@ describe('runSubscriptionSync — rebuild purge', () => {
     await runSubscriptionSync('tenant-1', access(), { ...row(), delta_link: 'delta-1' });
 
     expect(mockEnqueueKnowledgeEvent).not.toHaveBeenCalled();
+  });
+});
+
+describe('runSubscriptionSync — cursor persistence', () => {
+  it('persists the deltaLink and returns to idle when Graph closes the round', async () => {
+    const set = stubDb();
+    mockRunDeltaRound.mockResolvedValue(ok({ items: [], deltaLink: 'delta-2', nextLink: null }));
+
+    await runSubscriptionSync('tenant-1', access(), { ...row(), delta_link: 'delta-1' });
+
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({ delta_link: 'delta-2', sync_status: 'idle' })
+    );
+  });
+
+  /**
+   * The forever-rebuild bug: a page-capped round used to persist NULL,
+   * which reopened the series next round — purge, same first pages,
+   * NULL again — so a mailbox larger than one round never finished
+   * indexing. The capped round's nextLink is as resumable as a deltaLink;
+   * storing it makes the next round continue where this one stopped.
+   */
+  it('persists a capped round’s nextLink so the next round resumes, without a purge', async () => {
+    const set = stubDb();
+    mockRunDeltaRound.mockResolvedValue(
+      ok({ items: [messageEntry()], deltaLink: null, nextLink: 'https://graph/page-11' })
+    );
+
+    await runSubscriptionSync('tenant-1', access(), {
+      ...row(),
+      delta_link: 'https://graph/page-1',
+    });
+
+    expect(set).toHaveBeenCalledWith(
+      expect.objectContaining({ delta_link: 'https://graph/page-11', sync_status: 'syncing' })
+    );
+    // A capped continuation is mid-series, not a fresh one: no purge.
+    const purges = mockEnqueueKnowledgeEvent.mock.calls.filter(
+      (call) => call[1] === 'purge.prefix'
+    );
+    expect(purges).toHaveLength(0);
+  });
+
+  it('clears the cursor only when Graph produced neither link', async () => {
+    const set = stubDb();
+    mockRunDeltaRound.mockResolvedValue(ok({ items: [], deltaLink: null, nextLink: null }));
+
+    await runSubscriptionSync('tenant-1', access(), { ...row(), delta_link: 'delta-1' });
+
+    expect(set).toHaveBeenCalledWith(expect.objectContaining({ delta_link: null }));
   });
 });
 

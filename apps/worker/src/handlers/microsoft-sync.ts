@@ -328,6 +328,9 @@ export async function runSubscriptionSync(
   const db = dbResult.val;
 
   const kind = refKindOfResource(row.resource);
+  // The stored cursor is either a deltaLink (a closed round) or a nextLink
+  // (a round the page cap cut short) — both resume the enumeration exactly
+  // where it stopped. Only a NULL cursor opens a fresh series.
   const fullRebuild = row.delta_link === null;
   const startUrl = row.delta_link ?? deltaStartUrl(row.resource);
   const round = await runDeltaRound(access.accessToken, startUrl);
@@ -470,14 +473,21 @@ export async function runSubscriptionSync(
   // progress can never claim more than the cursor actually covers. Totals
   // are a running count, never a denominator: no Graph delta tells you up
   // front how many items it will yield.
+  //
+  // A capped round persists its nextLink, not NULL: NULL would reopen the
+  // series next round, purge the index and re-fetch the same head pages
+  // forever on any mailbox larger than one round. The nextLink instead
+  // continues the enumeration where the cap stopped it; `sync_status` stays
+  // 'syncing' until Graph closes the series with a real deltaLink.
+  const cursor = round.val.deltaLink ?? round.val.nextLink;
   await db
     .updateTable('webhook_subscriptions')
     .set({
-      delta_link: round.val.deltaLink,
+      delta_link: cursor,
       last_synced_at: sql<Date>`NOW()`,
       last_run_items: changed,
       total_items: sql<number>`total_items + ${changed}`,
-      sync_status: 'idle',
+      sync_status: round.val.deltaLink === null && cursor !== null ? 'syncing' : 'idle',
       updated_at: sql`NOW()`,
     })
     .where('id', '=', row.id)
