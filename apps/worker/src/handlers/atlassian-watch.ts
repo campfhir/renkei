@@ -23,12 +23,9 @@
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { atlassianFetch, listOf, rec, str } from '@renkei/connector-atlassian';
-import { resolveEmbeddingProvider, ingestObjectChunks } from '@renkei/knowledge';
-import type { EmbeddingProvider } from '@renkei/knowledge';
+import { resolveEmbeddingProvider } from '@renkei/knowledge';
+import { enqueueKnowledgeEvent } from '../enqueue';
 import type { AtlassianAccess } from './atlassian-access';
-import { logger } from '../logger';
-
-const COMPONENT = 'atlassian/watch';
 
 /**
  * Overlap applied to the high-water mark on every round.
@@ -93,8 +90,7 @@ function jiraContent(issue: Record<string, unknown>): string {
 async function syncJira(
   tenantId: string,
   access: AtlassianAccess,
-  row: WatchRow,
-  embedder: EmbeddingProvider
+  row: WatchRow
 ): Promise<WatchSyncResult> {
   const since = windowStart(row.cursor);
   const clauses = [`project = "${row.scope_key.replace(/"/g, '')}"`];
@@ -136,7 +132,7 @@ async function syncJira(
       const content = jiraContent(issue);
       if (!content.trim()) continue;
 
-      const ingested = await ingestObjectChunks(tenantId, embedder, {
+      await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
         provider: 'jira',
         refId: key,
         content,
@@ -148,10 +144,6 @@ async function syncJira(
         },
         sourceAt: updated || null,
       });
-      if (!ingested.ok) {
-        logger.warn('could not index jira issue {key}', { component: COMPONENT, tenantId, key });
-        continue;
-      }
       items += 1;
       if (updated && (!newest || updated > newest)) newest = updated;
     }
@@ -166,8 +158,7 @@ async function syncJira(
 async function syncConfluence(
   tenantId: string,
   access: AtlassianAccess,
-  row: WatchRow,
-  embedder: EmbeddingProvider
+  row: WatchRow
 ): Promise<WatchSyncResult> {
   const since = windowStart(row.cursor);
   let items = 0;
@@ -211,17 +202,13 @@ async function syncConfluence(
       const content = [title, adfPlainText(bodyValue)].filter(Boolean).join('\n\n');
       if (!content.trim()) continue;
 
-      const ingested = await ingestObjectChunks(tenantId, embedder, {
+      await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
         provider: 'confluence',
         refId: id,
         content,
         metadata: { kind: 'page', title: title || undefined, spaceId: row.scope_key },
         sourceAt: modified || null,
       });
-      if (!ingested.ok) {
-        logger.warn('could not index confluence page {id}', { component: COMPONENT, tenantId, id });
-        continue;
-      }
       items += 1;
       if (modified && (!newest || modified > newest)) newest = modified;
     }
@@ -282,8 +269,8 @@ export async function runWatchSync(
 
   const result =
     row.provider === 'jira'
-      ? await syncJira(tenantId, access, row, embedder)
-      : await syncConfluence(tenantId, access, row, embedder);
+      ? await syncJira(tenantId, access, row)
+      : await syncConfluence(tenantId, access, row);
 
   // Cursor and counters written LAST and together: a crash before this
   // point replays the round into idempotent upserts, which is the safe

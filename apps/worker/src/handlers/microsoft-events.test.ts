@@ -1,9 +1,10 @@
 /**
  * The message-override handler: a mailbox owner's own correction, applied by
  * re-fetching their one message from Graph (bodies are never persisted at
- * rest) and re-running it through the sanitizer with the override forced.
+ * rest) and enqueuing it for the embedding lane with the override forced —
+ * the sanitizer itself runs in the embedding worker (knowledge-ingest.ts).
  * 'exclude' is the one action that never re-fetches — there is nothing left
- * to sanitize, only a chunk to remove.
+ * to sanitize, only a chunk removal to enqueue.
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
@@ -15,12 +16,8 @@ jest.mock('@renkei/connector-microsoft', () => ({
 }));
 jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: jest.fn(),
-  ingestObjectChunks: jest.fn(),
-  deleteObjectChunks: jest.fn(),
 }));
-jest.mock('@renkei/email-sanitizer', () => ({
-  sanitizeEmailForTenant: jest.fn(),
-}));
+jest.mock('../enqueue', () => ({ enqueueKnowledgeEvent: jest.fn() }));
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import { createMicrosoftMessageOverrideHandler } from './microsoft-events';
@@ -32,18 +29,12 @@ const { resolveMicrosoftAccess: mockResolveMicrosoftAccess } = jest.requireMock<
 const { graphRequest: mockGraphRequest } = jest.requireMock<{ graphRequest: jest.Mock }>(
   '@renkei/connector-microsoft'
 );
-const {
-  resolveEmbeddingProvider: mockResolveEmbeddingProvider,
-  ingestObjectChunks: mockIngestObjectChunks,
-  deleteObjectChunks: mockDeleteObjectChunks,
-} = jest.requireMock<{
+const { resolveEmbeddingProvider: mockResolveEmbeddingProvider } = jest.requireMock<{
   resolveEmbeddingProvider: jest.Mock;
-  ingestObjectChunks: jest.Mock;
-  deleteObjectChunks: jest.Mock;
 }>('@renkei/knowledge');
-const { sanitizeEmailForTenant: mockSanitizeEmailForTenant } = jest.requireMock<{
-  sanitizeEmailForTenant: jest.Mock;
-}>('@renkei/email-sanitizer');
+const { enqueueKnowledgeEvent: mockEnqueueKnowledgeEvent } = jest.requireMock<{
+  enqueueKnowledgeEvent: jest.Mock;
+}>('../enqueue');
 
 function event(override: { action: string; category?: string; senderKey?: string }): ClaimedEvent {
   return {
@@ -70,25 +61,22 @@ beforeEach(() => {
     scopes: ['Mail.Read'],
   });
   mockResolveEmbeddingProvider.mockResolvedValue({ embed: jest.fn() });
-  mockIngestObjectChunks.mockResolvedValue(ok({ chunks: 1 }));
-  mockDeleteObjectChunks.mockResolvedValue(ok());
+  mockEnqueueKnowledgeEvent.mockResolvedValue(undefined);
 });
 
 describe('createMicrosoftMessageOverrideHandler', () => {
-  it('exclude never re-fetches Graph — it only removes the existing chunk', async () => {
+  it('exclude never re-fetches Graph — it enqueues only the chunk removal', async () => {
     const handler = createMicrosoftMessageOverrideHandler();
     await handler(event({ action: 'exclude' }));
 
     expect(mockGraphRequest).not.toHaveBeenCalled();
-    expect(mockSanitizeEmailForTenant).not.toHaveBeenCalled();
-    expect(mockDeleteObjectChunks).toHaveBeenCalledWith(
-      'tenant-1',
-      'microsoft',
-      'alice@example.com/msg/msg-1'
-    );
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith('tenant-1', 'delete.object', {
+      provider: 'microsoft',
+      refId: 'alice@example.com/msg/msg-1',
+    });
   });
 
-  it('reclassify re-fetches the message and indexes whatever the sanitizer returns for the corrected category', async () => {
+  it('reclassify re-fetches the message and enqueues it with the override riding along', async () => {
     mockGraphRequest.mockResolvedValue(
       ok({
         id: 'msg-1',
@@ -98,59 +86,23 @@ describe('createMicrosoftMessageOverrideHandler', () => {
         body: { contentType: 'text', content: 'Full body.' },
       })
     );
-    mockSanitizeEmailForTenant.mockResolvedValue({
-      action: 'index',
-      content: 'Subject: Hello\n\nFull body.',
-      category: 'human',
-      matchedRuleId: null,
-      senderKey: null,
-      templateId: null,
-      templateVersion: null,
-      matchScore: null,
-      needsReview: false,
-    });
 
     const handler = createMicrosoftMessageOverrideHandler();
     await handler(event({ action: 'reclassify', category: 'human' }));
 
-    expect(mockSanitizeEmailForTenant).toHaveBeenCalledWith(
+    expect(mockGraphRequest).toHaveBeenCalledWith('token', '/me/messages/msg-1');
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
+      'tenant-1',
+      'ingest.email',
       expect.objectContaining({
+        provider: 'microsoft',
+        refId: 'alice@example.com/msg/msg-1',
+        ownerUpn: 'alice@example.com',
         override: { action: 'reclassify', category: 'human', senderKey: undefined },
+        raw: expect.objectContaining({ subject: 'Hello', body: expect.anything() }),
+        metadata: expect.objectContaining({ overridden: true, subject: 'Hello' }),
+        sourceAt: '2026-08-10T12:00:00Z',
       })
-    );
-    expect(mockIngestObjectChunks).toHaveBeenCalledWith(
-      'tenant-1',
-      expect.anything(),
-      expect.objectContaining({ content: 'Subject: Hello\n\nFull body.' })
-    );
-  });
-
-  it('reclassify forwards the chosen category/senderKey and removes the chunk if the result excludes it', async () => {
-    mockGraphRequest.mockResolvedValue(
-      ok({ id: 'msg-1', subject: 'Notice', body: { contentType: 'text', content: 'Some notice.' } })
-    );
-    mockSanitizeEmailForTenant.mockResolvedValue({
-      action: 'excluded',
-      reason: 'marketing',
-      category: 'marketing',
-      matchedRuleId: null,
-      senderKey: null,
-      needsReview: false,
-    });
-
-    const handler = createMicrosoftMessageOverrideHandler();
-    await handler(event({ action: 'reclassify', category: 'marketing' }));
-
-    expect(mockSanitizeEmailForTenant).toHaveBeenCalledWith(
-      expect.objectContaining({
-        override: { action: 'reclassify', category: 'marketing', senderKey: undefined },
-      })
-    );
-    expect(mockIngestObjectChunks).not.toHaveBeenCalled();
-    expect(mockDeleteObjectChunks).toHaveBeenCalledWith(
-      'tenant-1',
-      'microsoft',
-      'alice@example.com/msg/msg-1'
     );
   });
 
@@ -161,6 +113,7 @@ describe('createMicrosoftMessageOverrideHandler', () => {
     await expect(handler(event({ action: 'reclassify', category: 'human' }))).rejects.toThrow(
       'could not re-fetch message'
     );
+    expect(mockEnqueueKnowledgeEvent).not.toHaveBeenCalled();
   });
 
   it('throws on an unknown override action', async () => {
@@ -177,6 +130,6 @@ describe('createMicrosoftMessageOverrideHandler', () => {
     await handler(event({ action: 'reclassify', category: 'human' }));
 
     expect(mockGraphRequest).not.toHaveBeenCalled();
-    expect(mockSanitizeEmailForTenant).not.toHaveBeenCalled();
+    expect(mockEnqueueKnowledgeEvent).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,6 @@
 /**
  * The Microsoft ingestion engine: ensure subscriptions exist for a grant,
- * and run delta rounds that turn mailbox changes into knowledge chunks.
+ * and run delta rounds that turn mailbox changes into knowledge events.
  *
  * Notifications never carry content — delta is the truth (RENKEI.md calls
  * delta queries the reliable sync backbone). Each webhook_subscriptions row
@@ -8,9 +8,10 @@
  * path, the bootstrap backfill, and the scheduled staleness sweep all run
  * the exact same round; the orchestration never cares which producer fired.
  *
- * Chunk failures are logged, not thrown (the webex-capture convention): a
- * throw would retry the whole event and re-do work the upsert already
- * absorbed. Subscription/delta failures DO throw — those are retryable.
+ * No embedding happens here (Decision #20): a round's index writes are
+ * enqueued to the embedding lane per item, so this handler's own runtime
+ * is bounded by Graph's clock, never the embeddings endpoint's.
+ * Subscription/delta failures DO throw — those are retryable.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -26,13 +27,9 @@ import {
   type MicrosoftRefKind,
 } from '@renkei/connector-microsoft';
 import { MICROSOFT } from '@renkei/provider-grants';
-import {
-  resolveEmbeddingProvider,
-  ingestObjectChunks,
-  deleteObjectChunks,
-} from '@renkei/knowledge';
-import { sanitizeEmailForTenant } from '@renkei/email-sanitizer';
+import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import type { RawEmail } from '@renkei/email-sanitizer';
+import { enqueueKnowledgeEvent } from '../enqueue';
 import { logger } from '../logger';
 import type { MicrosoftAccess } from './microsoft-access';
 
@@ -310,9 +307,16 @@ function contentOf(kind: MicrosoftRefKind, item: Record<string, unknown>): strin
 }
 
 /**
- * One delta round for one subscription row: fetch what changed, embed it,
- * delete what @removed, persist the new cursor last (at-least-once — a
- * crashed round re-runs into idempotent upserts).
+ * One delta round for one subscription row: fetch what changed, enqueue it
+ * for the embedding lane, persist the new cursor last (at-least-once — a
+ * crashed round re-runs into idempotent enqueues-then-upserts).
+ *
+ * All index writes — purges, per-item ingests, @removed deletes — ride the
+ * embedding lane as individual events (Decision #20). A cursorless full
+ * rebuild that used to embed a whole mailbox inside this ONE event, easily
+ * outliving the queue's 10-minute claim lease, becomes one purge event plus
+ * one bounded, independently-retryable event per item. Lane FIFO under the
+ * single embedding consumer keeps the purge ahead of its re-ingests.
  */
 export async function runSubscriptionSync(
   tenantId: string,
@@ -339,22 +343,13 @@ export async function runSubscriptionSync(
   // content-free calendar shells this sweep learned to skip would never
   // leave the index.
   //
-  // Deleted AFTER the fetch succeeded, never before: a failed round would
-  // otherwise leave the mailbox unsearchable until the next one.
+  // Enqueued AFTER the fetch succeeded, never before, and ahead of every
+  // per-item enqueue below — the embedding lane runs it first.
   if (fullRebuild) {
-    const purged = await deleteObjectChunks(
-      tenantId,
-      MICROSOFT,
-      `${access.upn.toLowerCase()}/${kind}/`,
-      { prefixOnly: true }
-    );
-    if (!purged.ok) {
-      logger.warn('could not purge {kind} chunks before rebuild', {
-        component: COMPONENT,
-        tenantId,
-        kind,
-      });
-    }
+    await enqueueKnowledgeEvent(tenantId, 'purge.prefix', {
+      provider: MICROSOFT,
+      refIdPrefix: `${access.upn.toLowerCase()}/${kind}/`,
+    });
   }
 
   const embedder = await resolveEmbeddingProvider(tenantId);
@@ -368,60 +363,34 @@ export async function runSubscriptionSync(
     const refId = microsoftRefId(access.upn, kind, objectId);
 
     if (isRecord(entry['@removed']) || entry['@removed'] !== undefined) {
-      const deleted = await deleteObjectChunks(tenantId, MICROSOFT, refId);
-      if (deleted.ok) removed += 1;
+      await enqueueKnowledgeEvent(tenantId, 'delete.object', { provider: MICROSOFT, refId });
+      removed += 1;
       continue;
     }
 
     if (!embedder) continue; // knowledge layer off for this org
 
     if (kind === 'msg') {
-      // Mail goes through the sanitizer, not straight to embedding: classify
-      // (human/system-notification/marketing), clean or extract, and log the
-      // decision under this mailbox's own owner_upn — see
-      // packages/email-sanitizer. Never admin-visible; see that package's
-      // persistence/log.ts for why.
-      const sanitized = await sanitizeEmailForTenant({
-        tenantId,
+      // Mail goes to the embedding lane as one ingest.email event per
+      // message; the sanitizer runs THERE, not here — its near-duplicate
+      // check is itself an embedding call, and this loop must stay free of
+      // the embeddings endpoint entirely. The sanitizer-derived metadata
+      // (senderKey, templateVersion) is merged in by that handler.
+      await enqueueKnowledgeEvent(tenantId, 'ingest.email', {
         provider: MICROSOFT,
         refId,
         ownerUpn: access.upn,
         accountId: access.accountId,
         raw: rawEmailOf(entry),
-        // Enables near-duplicate detection alongside the exact-hash check;
-        // costs one extra embed call per non-exact-duplicate message (the
-        // content is re-embedded again below for actual storage — a known,
-        // accepted inefficiency rather than reworking ingestObjectChunks to
-        // accept a precomputed vector).
-        embedder,
-      });
-
-      if (sanitized.action === 'excluded') {
-        // Marketing, an exact duplicate, or the owner's own removal — if
-        // something was indexed under an earlier classification, drop it.
-        await deleteObjectChunks(tenantId, MICROSOFT, refId);
-        continue;
-      }
-
-      const ingested = await ingestObjectChunks(tenantId, embedder, {
-        provider: MICROSOFT,
-        refId,
-        content: sanitized.content,
         metadata: {
           kind,
           upn: access.upn,
           webLink: str(entry.webLink) || undefined,
           when: str(entry.receivedDateTime) || undefined,
           subject: str(entry.subject) || undefined,
-          senderKey: sanitized.senderKey ?? undefined,
-          templateVersion: sanitized.templateVersion ?? undefined,
         },
         sourceAt: str(entry.receivedDateTime) || null,
       });
-      if (!ingested.ok) {
-        logger.warn('could not index {kind} object', { component: COMPONENT, tenantId, kind });
-        continue;
-      }
       changed += 1;
       continue;
     }
@@ -441,11 +410,11 @@ export async function runSubscriptionSync(
 
     const content = contentOf(kind, item);
     if (!hasSubstance(kind, item)) {
-      await deleteObjectChunks(tenantId, MICROSOFT, refId);
+      await enqueueKnowledgeEvent(tenantId, 'delete.object', { provider: MICROSOFT, refId });
       continue;
     }
     if (!content.trim()) continue;
-    const ingested = await ingestObjectChunks(tenantId, embedder, {
+    await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
       provider: MICROSOFT,
       refId,
       content,
@@ -468,14 +437,6 @@ export async function runSubscriptionSync(
         str(item.lastModifiedDateTime) ||
         null,
     });
-    if (!ingested.ok) {
-      logger.warn('could not index {kind} object', {
-        component: COMPONENT,
-        tenantId,
-        kind,
-      });
-      continue;
-    }
     changed += 1;
   }
 

@@ -182,7 +182,6 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
     const outcome = await captureMessage({
       tenantId: event.tenant_id,
       message,
-      client: context.client,
       force: false,
       forwardedOrigin,
     });

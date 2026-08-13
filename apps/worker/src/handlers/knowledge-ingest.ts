@@ -164,6 +164,7 @@ export function createKnowledgeIngestEmailHandler(): EventHandler {
     }
 
     const provider = required(payload, 'provider');
+    const override = overrideOfPayload(payload.override);
     const sanitized = await sanitizeEmailForTenant({
       tenantId: event.tenant_id,
       provider,
@@ -171,8 +172,12 @@ export function createKnowledgeIngestEmailHandler(): EventHandler {
       ownerUpn,
       accountId: str(payload.accountId) || null,
       raw: rawEmailOfPayload(payload.raw),
-      override: overrideOfPayload(payload.override),
-      embedder,
+      override,
+      // No embedder alongside an override, on purpose: near-duplicate dedup
+      // is for the automatic ingest path only. An override is a deliberate
+      // owner correction — silently swallowing it as a "duplicate" of some
+      // other message would undermine the very thing they just asked for.
+      embedder: override ? undefined : embedder,
     });
 
     if (sanitized.action === 'excluded') {

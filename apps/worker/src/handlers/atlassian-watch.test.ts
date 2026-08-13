@@ -14,22 +14,20 @@ jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
 jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: jest.fn(),
-  ingestObjectChunks: jest.fn(),
 }));
+jest.mock('../enqueue', () => ({ enqueueKnowledgeEvent: jest.fn() }));
 
-import { ok, err } from '@campfhir/safe-functions/helpers';
 import { runWatchSync } from './atlassian-watch';
 import type { AtlassianAccess } from './atlassian-access';
 import type { WatchRow } from './atlassian-watch';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
-const {
-  resolveEmbeddingProvider: mockResolveEmbeddingProvider,
-  ingestObjectChunks: mockIngestObjectChunks,
-} = jest.requireMock<{
+const { resolveEmbeddingProvider: mockResolveEmbeddingProvider } = jest.requireMock<{
   resolveEmbeddingProvider: jest.Mock;
-  ingestObjectChunks: jest.Mock;
 }>('@renkei/knowledge');
+const { enqueueKnowledgeEvent: mockEnqueueKnowledgeEvent } = jest.requireMock<{
+  enqueueKnowledgeEvent: jest.Mock;
+}>('../enqueue');
 
 interface FetchCall {
   url: string;
@@ -59,7 +57,7 @@ beforeEach(() => {
     },
   });
   mockResolveEmbeddingProvider.mockResolvedValue({ embed: async () => [[0.1]] });
-  mockIngestObjectChunks.mockResolvedValue(ok(1));
+  mockEnqueueKnowledgeEvent.mockResolvedValue(undefined);
 
   global.fetch = (async (url: string, init?: RequestInit) => {
     calls.push({
@@ -121,7 +119,7 @@ describe('runWatchSync — jira', () => {
     expect(jql.indexOf('updated >=')).toBeLessThan(jql.indexOf('project ='));
   });
 
-  it('advances the cursor to the newest issue it actually ingested', async () => {
+  it('advances the cursor to the newest issue it enqueued for indexing', async () => {
     responses = [
       {
         issues: [
@@ -138,26 +136,15 @@ describe('runWatchSync — jira', () => {
     ];
     const result = await runWatchSync('tenant-1', access(), jiraRow(null));
     expect(result.items).toBe(2);
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledTimes(2);
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
+      'tenant-1',
+      'ingest.object',
+      expect.objectContaining({ provider: 'jira', refId: 'ENG-1' })
+    );
     expect(result.cursor).toBe('2026-08-10T10:00:00.000Z');
     expect(written?.cursor).toBe('2026-08-10T10:00:00.000Z');
     expect(written?.sync_status).toBe('idle');
-  });
-
-  it('does not advance the cursor past an item that failed to index', async () => {
-    responses = [
-      {
-        issues: [
-          { key: 'ENG-1', fields: { summary: 'Indexed', updated: '2026-08-10T09:00:00.000Z' } },
-          { key: 'ENG-2', fields: { summary: 'Broken', updated: '2026-08-10T10:00:00.000Z' } },
-        ],
-      },
-    ];
-    mockIngestObjectChunks.mockResolvedValueOnce(ok(1)).mockResolvedValueOnce(err('EMBED_FAILED'));
-    const result = await runWatchSync('tenant-1', access(), jiraRow(null));
-    // The failure is skipped, not thrown — but the watermark stays behind it
-    // so the next round re-reads it.
-    expect(result.items).toBe(1);
-    expect(result.cursor).toBe('2026-08-10T09:00:00.000Z');
   });
 
   it('throws on a provider failure rather than writing a cursor', async () => {
@@ -215,7 +202,7 @@ describe('runWatchSync — confluence', () => {
     expect(result.cursor).toBe('2026-08-10T12:00:00.000Z');
   });
 
-  it('flattens ADF to text for the embedder', async () => {
+  it('flattens ADF to text for the enqueued ingest', async () => {
     responses = [
       {
         results: [
@@ -235,7 +222,9 @@ describe('runWatchSync — confluence', () => {
       },
     ];
     await runWatchSync('tenant-1', access(), confluenceRow(null));
-    const input = mockIngestObjectChunks.mock.calls[0]?.[2];
+    const [tenantId, type, input] = mockEnqueueKnowledgeEvent.mock.calls[0] ?? [];
+    expect(tenantId).toBe('tenant-1');
+    expect(type).toBe('ingest.object');
     expect(input.provider).toBe('confluence');
     expect(input.refId).toBe('9');
     expect(input.content).toBe('Runbook\n\nrestart the pod');

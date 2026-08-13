@@ -18,14 +18,10 @@ import { getDatabase } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 import { renewGraphSubscription, graphRequest } from '@renkei/connector-microsoft';
 import { MICROSOFT } from '@renkei/provider-grants';
-import {
-  resolveEmbeddingProvider,
-  ingestObjectChunks,
-  deleteObjectChunks,
-} from '@renkei/knowledge';
-import { sanitizeEmailForTenant } from '@renkei/email-sanitizer';
+import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import type { MessageOverride } from '@renkei/email-sanitizer';
 import { sql } from 'kysely';
+import { enqueueKnowledgeEvent } from '../enqueue';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { resolveMicrosoftAccess } from './microsoft-access';
@@ -220,10 +216,10 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
     const tenantId = event.tenant_id;
 
     if (override.action === 'exclude') {
-      const deleted = await deleteObjectChunks(tenantId, MICROSOFT, refId);
-      if (!deleted.ok) {
-        throw new Error(`could not remove excluded message ${refId} (tenant ${tenantId})`);
-      }
+      // Through the embedding lane, not inline: if an ingest of this same
+      // message is still queued there, lane FIFO puts this delete after it —
+      // an inline delete could run first and lose the race.
+      await enqueueKnowledgeEvent(tenantId, 'delete.object', { provider: MICROSOFT, refId });
       return;
     }
 
@@ -242,48 +238,33 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
       throw new Error(`could not re-fetch message ${objectId} for override (tenant ${tenantId})`);
     }
 
-    // No embedder here on purpose: near-duplicate dedup is for the automatic
-    // ingest path only (see microsoft-sync.ts). An override is a deliberate
-    // owner correction — silently swallowing it as a "duplicate" of some
-    // other message would undermine the very thing they just asked for.
-    const sanitized = await sanitizeEmailForTenant({
-      tenantId,
-      provider: MICROSOFT,
-      refId,
-      ownerUpn: access.upn,
-      raw: rawEmailOf(fetched.val),
-      override,
-    });
-
-    if (sanitized.action === 'excluded') {
-      await deleteObjectChunks(tenantId, MICROSOFT, refId);
-      return;
-    }
-
+    // The sanitize-and-ingest runs in the embedding lane (Decision #20);
+    // the override rides the payload so the lane handler forces it through
+    // the pipeline there. The re-fetch stays here — it is bounded Graph I/O
+    // and the message body must not sit in the queue longer than needed.
+    //
     // Carry the same descriptive metadata the automatic sync path writes
     // (microsoft-sync.ts). Omitting `when`/`subject`/`webLink` here made an
     // overridden message invisible to any date filter and title-less in the
     // UI — the correction the owner just made would quietly downgrade the
     // record instead of improving it.
     const received = str(fetched.val.receivedDateTime);
-    const ingested = await ingestObjectChunks(tenantId, embedder, {
+    await enqueueKnowledgeEvent(tenantId, 'ingest.email', {
       provider: MICROSOFT,
       refId,
-      content: sanitized.content,
+      ownerUpn: access.upn,
+      accountId,
+      raw: rawEmailOf(fetched.val),
+      override,
       metadata: {
         kind: 'msg',
         upn: access.upn,
         webLink: str(fetched.val.webLink) || undefined,
         when: received || undefined,
         subject: str(fetched.val.subject) || undefined,
-        senderKey: sanitized.senderKey ?? undefined,
-        templateVersion: sanitized.templateVersion ?? undefined,
         overridden: true,
       },
       sourceAt: received || null,
     });
-    if (!ingested.ok) {
-      throw new Error(`could not index overridden message ${objectId} (tenant ${tenantId})`);
-    }
   };
 }

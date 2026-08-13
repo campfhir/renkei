@@ -88,7 +88,6 @@ export function createWebexAttachmentActionHandler(
     const outcome = await captureMessage({
       tenantId: event.tenant_id,
       message,
-      client: context.client,
       pushedBy,
       note: push.note,
       force: true,

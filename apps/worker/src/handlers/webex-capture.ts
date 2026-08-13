@@ -13,18 +13,16 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { logger } from '../logger';
-import { createWebexAccessVerifier, webexRefId } from '@renkei/connector-webex';
+import { webexRefId } from '@renkei/connector-webex';
 import type { WebexMessage } from '@renkei/connector-webex';
-import { ingestChunk, resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
-import type { KnowledgeHit } from '@renkei/knowledge';
+import { resolveEmbeddingProvider } from '@renkei/knowledge';
+import { enqueueKnowledgeEvent } from '../enqueue';
 import { classifyMessage, type MessageClassification } from '../pipeline/classify';
-import type { WebexTenantContext } from './webex-context';
 import type { ForwardedOrigin } from './webex-forward-context';
 
 export interface CaptureOptions {
   tenantId: string;
   message: WebexMessage;
-  client: WebexTenantContext['client'];
   /** Push metadata: who pressed the button, and their note. */
   pushedBy?: string | null;
   note?: string | null;
@@ -66,9 +64,10 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
   const refId = webexRefId(message.roomId, message.id);
 
   // Knowledge is broader than actionability: index the message whenever the
-  // org has an embedding provider. Upsert-idempotent, so re-capture is safe.
-  // Failures are logged, not retried — a retry would re-run the whole event
-  // and duplicate any card it already produced.
+  // org has an embedding provider. Indexing is deferred to the embedding
+  // lane (Decision #20) — the resolve here is a cheap DB-config check that
+  // gates whether there is any point enqueuing; the network-bound embed
+  // happens in the embedding worker, never on the reply path.
   const embedder = await resolveEmbeddingProvider(tenantId);
   logger.debug('embedding provider for {tenantId}: {status}', {
     component: 'webex/capture',
@@ -76,7 +75,7 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
     status: embedder ? 'configured' : 'none — indexing and related-item search skipped',
   });
   if (embedder && text.trim()) {
-    const ingested = await ingestChunk(tenantId, embedder, {
+    await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
       provider: 'webex',
       refId,
       content: text,
@@ -87,13 +86,6 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
       },
       sourceAt: message.created || null,
     });
-    if (!ingested.ok) {
-      logger.warn('could not index WebEx message', {
-        component: 'webex/capture',
-        messageId: message.id,
-        tenantId,
-      });
-    }
   }
 
   const classification = classifyMessage(text);
@@ -132,29 +124,6 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
     return 'duplicate';
   }
 
-  // Enrichment: similar prior chunks, disclosed only after the live ACL gate
-  // clears them for the acting identity — the pusher when there is one, the
-  // author otherwise. (Per-viewer verification at display time waits on the
-  // identity spine; see RENKEI.md open questions.)
-  const accessSubject = options.pushedBy ?? message.personEmail;
-  let related: KnowledgeHit[] = [];
-  let relatedElided = 0;
-  if (embedder && accessSubject && text.trim()) {
-    const searched = await searchKnowledge({
-      tenantId,
-      userEmail: accessSubject,
-      query: text,
-      k: 3,
-      embedder,
-      verifiers: new Map([['webex', createWebexAccessVerifier(options.client)]]),
-      excludeRef: { provider: 'webex', refId },
-    });
-    if (searched.ok) {
-      related = searched.val.hits;
-      relatedElided = searched.val.elided;
-    }
-  }
-
   const itemId = randomUUID();
   await db
     .insertInto('actionable_items')
@@ -174,13 +143,12 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
         ...(options.pushedBy ? { pushedBy: options.pushedBy } : {}),
         ...(options.note ? { note: options.note } : {}),
         ...(options.forwardedOrigin ? { forwardedOrigin: options.forwardedOrigin } : {}),
-        related: related.map((hit) => ({
-          provider: hit.provider,
-          refId: hit.refId,
-          excerpt: hit.content.slice(0, 200),
-          distance: hit.distance,
-        })),
-        relatedElided,
+        // Enrichment is asynchronous (Decision #20): the card ships now,
+        // empty, and the embedding lane's enrich.item back-fills these two
+        // keys once the index has caught up. The search's ACL gate runs
+        // there, against the same acting identity recorded below.
+        related: [],
+        relatedElided: 0,
       }),
       suggested_action: JSON.stringify(suggestion.suggestedAction),
     })
@@ -190,6 +158,23 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
     messageId: message.id,
     itemId,
   });
+
+  // Similar prior chunks, disclosed only after the live ACL gate clears
+  // them for the acting identity — the pusher when there is one, the author
+  // otherwise. (Per-viewer verification at display time waits on the
+  // identity spine; see RENKEI.md open questions.) Enqueued after the
+  // message's own ingest.object above, so lane FIFO guarantees the search
+  // runs against an index that already contains this message.
+  const accessSubject = options.pushedBy ?? message.personEmail;
+  if (embedder && accessSubject && text.trim()) {
+    await enqueueKnowledgeEvent(tenantId, 'enrich.item', {
+      itemId,
+      provider: 'webex',
+      refId,
+      query: text,
+      accessSubject,
+    });
+  }
 
   return 'captured';
 }

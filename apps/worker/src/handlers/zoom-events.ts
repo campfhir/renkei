@@ -15,7 +15,8 @@
 
 import { ZoomClient, vttToText, parseZoomWebhookPayload } from '@renkei/connector-zoom';
 import { ZOOM } from '@renkei/provider-grants';
-import { resolveEmbeddingProvider, ingestObjectChunks } from '@renkei/knowledge';
+import { resolveEmbeddingProvider } from '@renkei/knowledge';
+import { enqueueKnowledgeEvent } from '../enqueue';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { resolveZoomHostAccess } from './zoom-access';
@@ -100,41 +101,29 @@ export function createZoomTranscriptHandler(): EventHandler {
       return;
     }
 
+    // Embedding is deferred to the embedding lane (Decision #20): the
+    // bounded Zoom fetch/download above stays here, the network-bound
+    // chunk-and-embed does not.
     const refId = `${access.hostEmail}/${facts.meetingUuid}/transcript`;
-    const ingested = await ingestObjectChunks(
-      tenantId,
-      embedder,
-      {
-        provider: ZOOM,
-        refId,
-        content: facts.topic ? `Meeting: ${facts.topic}\n\n${text}` : text,
-        metadata: {
-          kind: 'transcript',
-          meetingId: facts.meetingId ?? undefined,
-          meetingUuid: facts.meetingUuid,
-          topic: facts.topic || undefined,
-          startTime: facts.startTime || undefined,
-          hostEmail: access.hostEmail,
-        },
-        sourceAt: facts.startTime || null,
-      },
-      TRANSCRIPT_CHUNKING
-    );
-    // Logged, not thrown: a retry would re-download the whole transcript to
-    // re-run an upsert that already absorbed whatever succeeded.
-    if (!ingested.ok) {
-      logger.warn('could not index transcript for {meetingUuid}', {
-        component: COMPONENT,
-        tenantId,
+    await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
+      provider: ZOOM,
+      refId,
+      content: facts.topic ? `Meeting: ${facts.topic}\n\n${text}` : text,
+      metadata: {
+        kind: 'transcript',
+        meetingId: facts.meetingId ?? undefined,
         meetingUuid: facts.meetingUuid,
-      });
-      return;
-    }
-    logger.info('indexed transcript for {meetingUuid} in {chunks} chunk(s)', {
+        topic: facts.topic || undefined,
+        startTime: facts.startTime || undefined,
+        hostEmail: access.hostEmail,
+      },
+      sourceAt: facts.startTime || null,
+      chunking: TRANSCRIPT_CHUNKING,
+    });
+    logger.info('queued transcript for {meetingUuid} for indexing', {
       component: COMPONENT,
       tenantId,
       meetingUuid: facts.meetingUuid,
-      chunks: ingested.val.chunks,
     });
   };
 }
@@ -207,7 +196,7 @@ export function createZoomSummaryHandler(): EventHandler {
     }
 
     const refId = `${access.hostEmail}/${facts.meetingUuid}/summary`;
-    const ingested = await ingestObjectChunks(tenantId, embedder, {
+    await enqueueKnowledgeEvent(tenantId, 'ingest.object', {
       provider: ZOOM,
       refId,
       content: text,
@@ -221,15 +210,7 @@ export function createZoomSummaryHandler(): EventHandler {
       },
       sourceAt: facts.startTime || null,
     });
-    if (!ingested.ok) {
-      logger.warn('could not index summary for {meetingId}', {
-        component: COMPONENT,
-        tenantId,
-        meetingId: facts.meetingId,
-      });
-      return;
-    }
-    logger.info('indexed AI summary for meeting {meetingId}', {
+    logger.info('queued AI summary for meeting {meetingId} for indexing', {
       component: COMPONENT,
       tenantId,
       meetingId: facts.meetingId,

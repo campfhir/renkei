@@ -1,10 +1,10 @@
 /**
- * The mail branch of one delta round: every 'msg' entry goes through
- * sanitizeEmailForTenant before it can reach the embedder. This suite mocks
- * that call directly — its own routing/drift behavior is covered by
- * packages/email-sanitizer's fixture suite — and asserts the wiring: an
- * 'index' result reaches ingestObjectChunks with its cleaned content, an
- * 'excluded' result never does and clears any stale chunk instead.
+ * One delta round's routing into the embedding lane: a cursorless round
+ * leads with a purge.prefix event, 'msg' entries become ingest.email events
+ * (the sanitizer runs in the embedding worker, not here — see
+ * knowledge-ingest.test.ts for that wiring), other kinds become
+ * ingest.object, and @removed entries become delete.object. Nothing in this
+ * handler may touch the embeddings endpoint.
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
@@ -19,12 +19,8 @@ jest.mock('@renkei/connector-microsoft', () => ({
 }));
 jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: jest.fn(),
-  ingestObjectChunks: jest.fn(),
-  deleteObjectChunks: jest.fn(),
 }));
-jest.mock('@renkei/email-sanitizer', () => ({
-  sanitizeEmailForTenant: jest.fn(),
-}));
+jest.mock('../enqueue', () => ({ enqueueKnowledgeEvent: jest.fn() }));
 
 import { ok } from '@campfhir/safe-functions/helpers';
 import { runSubscriptionSync } from './microsoft-sync';
@@ -35,18 +31,12 @@ const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mo
 const { runDeltaRound: mockRunDeltaRound } = jest.requireMock<{ runDeltaRound: jest.Mock }>(
   '@renkei/connector-microsoft'
 );
-const {
-  resolveEmbeddingProvider: mockResolveEmbeddingProvider,
-  ingestObjectChunks: mockIngestObjectChunks,
-  deleteObjectChunks: mockDeleteObjectChunks,
-} = jest.requireMock<{
+const { resolveEmbeddingProvider: mockResolveEmbeddingProvider } = jest.requireMock<{
   resolveEmbeddingProvider: jest.Mock;
-  ingestObjectChunks: jest.Mock;
-  deleteObjectChunks: jest.Mock;
 }>('@renkei/knowledge');
-const { sanitizeEmailForTenant: mockSanitizeEmailForTenant } = jest.requireMock<{
-  sanitizeEmailForTenant: jest.Mock;
-}>('@renkei/email-sanitizer');
+const { enqueueKnowledgeEvent: mockEnqueueKnowledgeEvent } = jest.requireMock<{
+  enqueueKnowledgeEvent: jest.Mock;
+}>('../enqueue');
 
 function stubDb(): void {
   mockGetDatabase.mockReturnValue({
@@ -94,8 +84,7 @@ beforeEach(() => {
   jest.resetAllMocks();
   stubDb();
   mockResolveEmbeddingProvider.mockResolvedValue({ embed: jest.fn() });
-  mockIngestObjectChunks.mockResolvedValue(ok({ chunks: 1 }));
-  mockDeleteObjectChunks.mockResolvedValue(ok());
+  mockEnqueueKnowledgeEvent.mockResolvedValue(undefined);
 });
 
 describe('runSubscriptionSync — rebuild purge', () => {
@@ -103,156 +92,82 @@ describe('runSubscriptionSync — rebuild purge', () => {
    * A cursorless round returns the whole current state, so it is the one
    * safe moment to drop the previous chunks — otherwise re-index can only
    * ever ADD, and items deleted upstream (or newly excluded by changed
-   * rules) outlive their source.
+   * rules) outlive their source. The purge rides the embedding lane ahead
+   * of the per-item events; lane FIFO keeps it first.
    */
-  it('purges the resource namespace before re-ingesting, on a cursorless round', async () => {
+  it('enqueues a namespace purge before the per-item events, on a cursorless round', async () => {
     stubDb();
-    mockRunDeltaRound.mockResolvedValue(ok({ items: [], deltaLink: 'delta-1' }));
-    mockResolveEmbeddingProvider.mockResolvedValue({ embed: async () => [[0.1]] });
+    mockRunDeltaRound.mockResolvedValue(ok({ items: [messageEntry()], deltaLink: 'delta-1' }));
 
     await runSubscriptionSync('tenant-1', access(), { ...row(), delta_link: null });
 
-    expect(mockDeleteObjectChunks).toHaveBeenCalledWith(
+    const calls = mockEnqueueKnowledgeEvent.mock.calls;
+    expect(calls[0]).toEqual([
       'tenant-1',
-      'microsoft',
-      'alice@example.com/msg/',
-      { prefixOnly: true }
-    );
+      'purge.prefix',
+      { provider: 'microsoft', refIdPrefix: 'alice@example.com/msg/' },
+    ]);
+    expect(calls[1]?.[1]).toBe('ingest.email');
   });
 
-  it('leaves the index alone on an incremental round', async () => {
+  it('enqueues no purge on an incremental round', async () => {
     stubDb();
     mockRunDeltaRound.mockResolvedValue(ok({ items: [], deltaLink: 'delta-2' }));
-    mockResolveEmbeddingProvider.mockResolvedValue({ embed: async () => [[0.1]] });
 
     await runSubscriptionSync('tenant-1', access(), { ...row(), delta_link: 'delta-1' });
 
-    expect(mockDeleteObjectChunks).not.toHaveBeenCalled();
+    expect(mockEnqueueKnowledgeEvent).not.toHaveBeenCalled();
   });
 });
 
-describe('runSubscriptionSync — mail branch', () => {
-  it('indexes the sanitized content for a human message', async () => {
+describe('runSubscriptionSync — routing into the embedding lane', () => {
+  it('turns a mail entry into one ingest.email event carrying the raw message', async () => {
     mockRunDeltaRound.mockResolvedValue({
       ok: true,
       val: { items: [messageEntry()], deltaLink: 'next' },
     });
-    mockSanitizeEmailForTenant.mockResolvedValue({
-      action: 'index',
-      content: 'Subject: Hello\n\nJust checking in.',
-      category: 'human',
-      matchedRuleId: null,
-      senderKey: null,
-      templateId: null,
-      templateVersion: null,
-      matchScore: null,
-      needsReview: false,
+
+    const result = await runSubscriptionSync('tenant-1', access(), {
+      ...row(),
+      delta_link: 'delta-1',
     });
 
-    const result = await runSubscriptionSync('tenant-1', access(), row());
-
     expect(result).toEqual({ changed: 1, removed: 0 });
-    expect(mockSanitizeEmailForTenant).toHaveBeenCalledWith(
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
+      'tenant-1',
+      'ingest.email',
       expect.objectContaining({
-        tenantId: 'tenant-1',
         provider: 'microsoft',
         refId: 'alice@example.com/msg/msg-1',
         ownerUpn: 'alice@example.com',
+        accountId: 'acct-1',
         raw: expect.objectContaining({ subject: 'Hello', fromAddress: 'bob@example.com' }),
-        embedder: expect.objectContaining({ embed: expect.any(Function) }),
-      })
-    );
-    expect(mockIngestObjectChunks).toHaveBeenCalledWith(
-      'tenant-1',
-      expect.anything(),
-      expect.objectContaining({ content: 'Subject: Hello\n\nJust checking in.' })
-    );
-    // The only delete in a cursorless round is the pre-rebuild purge; this
-    // message must not also be cleared individually.
-    expect(mockDeleteObjectChunks).not.toHaveBeenCalledWith(
-      'tenant-1',
-      'microsoft',
-      'alice@example.com/msg/1'
-    );
-  });
-
-  it('excludes marketing mail — never embedded, any stale chunk cleared', async () => {
-    mockRunDeltaRound.mockResolvedValue({
-      ok: true,
-      val: { items: [messageEntry()], deltaLink: 'next' },
-    });
-    mockSanitizeEmailForTenant.mockResolvedValue({
-      action: 'excluded',
-      reason: 'marketing',
-      category: 'marketing',
-      matchedRuleId: 'rule-1',
-      senderKey: null,
-      needsReview: false,
-    });
-
-    const result = await runSubscriptionSync('tenant-1', access(), row());
-
-    expect(result).toEqual({ changed: 0, removed: 0 });
-    expect(mockIngestObjectChunks).not.toHaveBeenCalled();
-    expect(mockDeleteObjectChunks).toHaveBeenCalledWith(
-      'tenant-1',
-      'microsoft',
-      'alice@example.com/msg/msg-1'
-    );
-  });
-
-  it('indexes a matched system-notification extraction with template metadata', async () => {
-    mockRunDeltaRound.mockResolvedValue({
-      ok: true,
-      val: { items: [messageEntry()], deltaLink: 'next' },
-    });
-    mockSanitizeEmailForTenant.mockResolvedValue({
-      action: 'index',
-      content: 'jira notification\nissueKey: PROJ-1',
-      category: 'system_notification',
-      matchedRuleId: 'rule-2',
-      senderKey: 'jira',
-      templateId: 'tpl-1',
-      templateVersion: 3,
-      matchScore: 0.95,
-      needsReview: false,
-    });
-
-    await runSubscriptionSync('tenant-1', access(), row());
-
-    expect(mockIngestObjectChunks).toHaveBeenCalledWith(
-      'tenant-1',
-      expect.anything(),
-      expect.objectContaining({
-        metadata: expect.objectContaining({ senderKey: 'jira', templateVersion: 3 }),
+        metadata: expect.objectContaining({ kind: 'msg', subject: 'Hello' }),
+        sourceAt: '2026-08-10T12:00:00Z',
       })
     );
   });
 
-  it('still indexes (via the generic cleaner) when the sender has drifted, flagged for review', async () => {
+  it('turns an @removed entry into a delete.object event', async () => {
     mockRunDeltaRound.mockResolvedValue({
       ok: true,
-      val: { items: [messageEntry()], deltaLink: 'next' },
-    });
-    mockSanitizeEmailForTenant.mockResolvedValue({
-      action: 'index',
-      content: 'Subject: Hello\n\nJust checking in.',
-      category: 'system_notification',
-      matchedRuleId: 'rule-2',
-      senderKey: 'jira',
-      templateId: 'tpl-1',
-      templateVersion: 3,
-      matchScore: 0.4,
-      needsReview: true,
+      val: { items: [{ id: 'msg-9', '@removed': { reason: 'deleted' } }], deltaLink: 'next' },
     });
 
-    const result = await runSubscriptionSync('tenant-1', access(), row());
+    const result = await runSubscriptionSync('tenant-1', access(), {
+      ...row(),
+      delta_link: 'delta-1',
+    });
 
-    expect(result).toEqual({ changed: 1, removed: 0 });
-    expect(mockIngestObjectChunks).toHaveBeenCalled();
+    expect(result).toEqual({ changed: 0, removed: 1 });
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith('tenant-1', 'delete.object', {
+      provider: 'microsoft',
+      refId: 'alice@example.com/msg/msg-9',
+    });
   });
 
-  it('leaves event/task kinds on the original contentOf path, untouched by the sanitizer', async () => {
+  it('leaves event/task kinds on the contentOf path, as ingest.object events', async () => {
     mockRunDeltaRound.mockResolvedValue({
       ok: true,
       val: {
@@ -273,14 +188,33 @@ describe('runSubscriptionSync — mail branch', () => {
     const result = await runSubscriptionSync('tenant-1', access(), {
       ...row(),
       resource: 'me/events',
+      delta_link: 'delta-1',
     });
 
     expect(result).toEqual({ changed: 1, removed: 0 });
-    expect(mockSanitizeEmailForTenant).not.toHaveBeenCalled();
-    expect(mockIngestObjectChunks).toHaveBeenCalledWith(
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
       'tenant-1',
-      expect.anything(),
-      expect.objectContaining({ content: expect.stringContaining('Event: Standup') })
+      'ingest.object',
+      expect.objectContaining({
+        provider: 'microsoft',
+        content: expect.stringContaining('Event: Standup'),
+      })
     );
+  });
+
+  it('enqueues nothing for items when the org has no embedding provider', async () => {
+    mockResolveEmbeddingProvider.mockResolvedValue(null);
+    mockRunDeltaRound.mockResolvedValue({
+      ok: true,
+      val: { items: [messageEntry()], deltaLink: 'next' },
+    });
+
+    const result = await runSubscriptionSync('tenant-1', access(), {
+      ...row(),
+      delta_link: 'delta-1',
+    });
+
+    expect(result).toEqual({ changed: 0, removed: 0 });
+    expect(mockEnqueueKnowledgeEvent).not.toHaveBeenCalled();
   });
 });
