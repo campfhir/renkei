@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@campfhir/safe-functions": "^0.1.3",
-    "@renkei/gates": "workspace:*"
+    "@renkei/gates": "workspace:*",
+    "@renkei/rate-limit": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

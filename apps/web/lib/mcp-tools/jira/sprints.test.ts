@@ -85,10 +85,10 @@ beforeEach(() => {
   clearFieldSchemaCache();
 });
 
-describe('move_issue_to_sprint', () => {
+describe('jira_move_issue_to_sprint', () => {
   it('posts to the sprint, not a field update on the issue', async () => {
     serve();
-    const move = (await sprintTools()).get('move_issue_to_sprint')!;
+    const move = (await sprintTools()).get('jira_move_issue_to_sprint')!;
 
     await move({ issueKey: 'CAS-23738', sprintId: '42' });
 
@@ -103,7 +103,7 @@ describe('move_issue_to_sprint', () => {
 
   it('never writes a field called sprint', async () => {
     serve();
-    const move = (await sprintTools()).get('move_issue_to_sprint')!;
+    const move = (await sprintTools()).get('jira_move_issue_to_sprint')!;
 
     await move({ issueKey: 'CAS-23738', sprintId: '42' });
 
@@ -113,10 +113,10 @@ describe('move_issue_to_sprint', () => {
   });
 });
 
-describe('remove_issue_from_sprint', () => {
+describe('jira_remove_issue_from_sprint', () => {
   it('says there is nothing to remove when the issue is in no sprint', async () => {
     serve({ agileIssue: { fields: { sprint: null, closedSprints: [] } } });
-    const remove = (await sprintTools()).get('remove_issue_from_sprint')!;
+    const remove = (await sprintTools()).get('jira_remove_issue_from_sprint')!;
 
     const result = await remove({ issueKey: 'CAS-23738' });
 
@@ -134,7 +134,7 @@ describe('remove_issue_from_sprint', () => {
         { id: 13, name: 'CAS Kanban' },
       ],
     });
-    const remove = (await sprintTools()).get('remove_issue_from_sprint')!;
+    const remove = (await sprintTools()).get('jira_remove_issue_from_sprint')!;
 
     const result = await remove({ issueKey: 'CAS-23738' });
 
@@ -146,7 +146,7 @@ describe('remove_issue_from_sprint', () => {
     serve({
       agileIssue: { fields: { sprint: null, closedSprints: [{ name: 'Sprint 4' }] } },
     });
-    const remove = (await sprintTools()).get('remove_issue_from_sprint')!;
+    const remove = (await sprintTools()).get('jira_remove_issue_from_sprint')!;
 
     const result = await remove({ issueKey: 'CAS-23738' });
 
@@ -157,7 +157,7 @@ describe('remove_issue_from_sprint', () => {
 
   it('moves an issue in a sprint to the backlog, naming what it left', async () => {
     serve({ agileIssue: { fields: { sprint: { name: 'Sprint 7', id: 7 } } } });
-    const remove = (await sprintTools()).get('remove_issue_from_sprint')!;
+    const remove = (await sprintTools()).get('jira_remove_issue_from_sprint')!;
 
     const result = await remove({ issueKey: 'SCRUM-1' });
 
@@ -203,7 +203,7 @@ describe('remove_issue_from_sprint', () => {
       }
     );
 
-    const remove = (await sprintTools()).get('remove_issue_from_sprint')!;
+    const remove = (await sprintTools()).get('jira_remove_issue_from_sprint')!;
     const result = await remove({ issueKey: 'SCRUM-2' });
 
     expect(result.content[0].text).toContain('Sprint 9');
@@ -225,7 +225,7 @@ describe('remove_issue_from_sprint', () => {
       }
     );
 
-    const remove = (await sprintTools()).get('remove_issue_from_sprint')!;
+    const remove = (await sprintTools()).get('jira_remove_issue_from_sprint')!;
     const result = await remove({ issueKey: 'SCRUM-3' });
 
     expect(result.isError).toBeUndefined();
@@ -236,7 +236,7 @@ describe('remove_issue_from_sprint', () => {
 
   it('requires an issue key', async () => {
     serve();
-    const remove = (await sprintTools()).get('remove_issue_from_sprint')!;
+    const remove = (await sprintTools()).get('jira_remove_issue_from_sprint')!;
 
     const result = await remove({});
 

@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
 import { adfToMarkdown } from './adf';
 import { logger } from '@/lib/logger';
 
@@ -15,11 +15,11 @@ export async function registerCommentTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // list_comments
+  // jira_list_comments
   server.registerTool(
-    'list_comments',
+    'jira_list_comments',
     {
-      title: 'List comments on an issue',
+      title: 'Jira · Read — List comments on an issue',
       description: 'List all comments on a specific issue.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -28,7 +28,7 @@ export async function registerCommentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_comments invoked', {
+      logger.info('jira_list_comments invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -69,7 +69,21 @@ export async function registerCommentTools(
           }),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (comments.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a chronological comment-thread layout (author, timestamp, then body) usually ' +
+                  'reads more naturally than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -81,11 +95,11 @@ export async function registerCommentTools(
     }
   );
 
-  // bulk_get_comments
+  // jira_bulk_get_comments
   server.registerTool(
-    'bulk_get_comments',
+    'jira_bulk_get_comments',
     {
-      title: 'Get comments in bulk',
+      title: 'Jira · Read — Get comments in bulk',
       description: 'Fetch multiple comments by ID (efficient bulk retrieval for many comments).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -94,7 +108,7 @@ export async function registerCommentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('bulk_get_comments invoked', {
+      logger.info('jira_bulk_get_comments invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -143,7 +157,21 @@ export async function registerCommentTools(
           }),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (comments.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a chronological comment-thread layout (author, timestamp, then body) usually ' +
+                  'reads more naturally than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [

@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, requestUrl } from '../common';
+import { jiraFetch, getCachedDisplayName, requestUrl, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 
 function str(value: unknown): string {
@@ -15,12 +15,15 @@ function str(value: unknown): string {
 }
 
 export async function registerJsmTools(server: McpServer, context: MCPToolContext): Promise<void> {
-  // list_service_desks
+  // jsm_list_service_desks
   server.registerTool(
-    'list_service_desks',
+    'jsm_list_service_desks',
     {
-      title: 'List Jira Service Management service desks',
-      description: 'List all Jira Service Management service desks.',
+      title: 'JSM · Read — List Jira Service Management service desks',
+      description:
+        'List all Jira Service Management service desks. Call this before jira_create_issue ' +
+        "whenever you're not already sure a target project is a plain project rather than a " +
+        "service desk — cross-reference the project key against this list's `key` field.",
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         maxResults: z.number().describe('Maximum results (1-100, default 25)').optional(),
@@ -28,7 +31,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_service_desks invoked', {
+      logger.info('jsm_list_service_desks invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -53,8 +56,22 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           `Found ${data.size ?? 0} service desks (showing ${desks.length}):`,
           ...desks.map((d: any) => `• ${d.name} (${d.key}) — serviceDeskId: ${d.id}`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                desks.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Service desk, Project key, id) usually scans faster than this flat list.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -66,11 +83,11 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     }
   );
 
-  // list_request_types
+  // jsm_list_request_types
   server.registerTool(
-    'list_request_types',
+    'jsm_list_request_types',
     {
-      title: 'List all request types for a service desk',
+      title: 'JSM · Read — List all request types for a service desk',
       description: 'List request types available on a service desk.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -79,7 +96,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_request_types invoked', {
+      logger.info('jsm_list_request_types invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -110,8 +127,22 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           `Service desk has ${types.length} request types:`,
           ...types.map((t: any) => `• ${t.name} (ID: ${t.id})`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                types.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Request type, Service desk, id) usually scans faster than this flat list.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -123,11 +154,11 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     }
   );
 
-  // list_requests
+  // jsm_list_requests
   server.registerTool(
-    'list_requests',
+    'jsm_list_requests',
     {
-      title: 'List Jira Service Management customer requests',
+      title: 'JSM · Read — List Jira Service Management customer requests',
       description: 'List customer requests in a service desk.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -137,7 +168,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_requests invoked', {
+      logger.info('jsm_list_requests invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -168,8 +199,23 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           `Found ${data.size ?? 0} requests (showing ${requests.length}):`,
           ...requests.map((r: any) => `• ${r.key}: ${r.summary} [${r.status}]`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                requests.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Key, Summary, Status, Requester) usually scans faster than this flat ' +
+                        'list, especially with more than a handful of results.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -181,11 +227,11 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     }
   );
 
-  // get_request
+  // jsm_get_request
   server.registerTool(
-    'get_request',
+    'jsm_get_request',
     {
-      title: 'Read a customer request',
+      title: 'JSM · Read — Read a customer request',
       description: 'Get details for a customer request.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -194,7 +240,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('get_request invoked', {
+      logger.info('jsm_get_request invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -243,12 +289,16 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     }
   );
 
-  // create_request
+  // jsm_create_request
   server.registerTool(
-    'create_request',
+    'jsm_create_request',
     {
-      title: 'Create a customer or internal request',
-      description: 'Create a customer request in a service desk.',
+      title: 'JSM · Act — Create a customer or internal request',
+      description:
+        'Create a customer request in a service desk. Prefer this over jira_create_issue ' +
+        'whenever the target project is a service desk (see jsm_list_service_desks) — a plain ' +
+        'issue in a service desk project skips its request types and SLAs.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         serviceDeskId: z.string().describe('Service desk ID'),
         requestTypeId: z.string().describe('Request type ID'),
@@ -258,7 +308,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('create_request invoked', {
+      logger.info('jsm_create_request invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -324,12 +374,13 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     }
   );
 
-  // add_request_comment
+  // jsm_add_request_comment
   server.registerTool(
-    'add_request_comment',
+    'jsm_add_request_comment',
     {
-      title: 'Comment on a customer request',
+      title: 'JSM · Act — Comment on a customer request',
       description: 'Add a comment to a customer request.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Request key, e.g. SUP-1'),
         comment: z.string().describe('Comment text'),
@@ -341,7 +392,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('add_request_comment invoked', {
+      logger.info('jsm_add_request_comment invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -390,11 +441,11 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     }
   );
 
-  // list_request_transitions
+  // jsm_list_request_transitions
   server.registerTool(
-    'list_request_transitions',
+    'jsm_list_request_transitions',
     {
-      title: 'List customer transitions on a request',
+      title: 'JSM · Read — List customer transitions on a request',
       description: 'List available transitions for a customer request.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -403,7 +454,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_request_transitions invoked', {
+      logger.info('jsm_list_request_transitions invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -444,12 +495,13 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     }
   );
 
-  // transition_request
+  // jsm_transition_request
   server.registerTool(
-    'transition_request',
+    'jsm_transition_request',
     {
-      title: 'Transition a customer request',
+      title: 'JSM · Act — Transition a customer request',
       description: 'Transition a customer request to a new status.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Request key, e.g. SUP-1'),
         transitionName: z.string().describe('Transition name'),
@@ -457,7 +509,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('transition_request invoked', {
+      logger.info('jsm_transition_request invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -525,11 +577,11 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     }
   );
 
-  // list_customers
+  // jsm_list_customers
   server.registerTool(
-    'list_customers',
+    'jsm_list_customers',
     {
-      title: 'List customers in a service desk',
+      title: 'JSM · Read — List customers in a service desk',
       description: 'List customers in a service desk.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -539,7 +591,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_customers invoked', {
+      logger.info('jsm_list_customers invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -574,8 +626,22 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           `Service desk has ${data.size ?? 0} customers (showing ${customers.length}):`,
           ...customers.map((c: any) => `• ${c.name} (${c.email})`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                customers.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Name, Email) usually scans faster than this flat list.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [

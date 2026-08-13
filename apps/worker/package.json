@@ -5,18 +5,26 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:embeddings": "tsx watch src/embeddings-worker.ts",
     "start": "tsx src/index.ts",
+    "start:embeddings": "tsx src/embeddings-worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "jest"
   },
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",
+    "@renkei/connector-atlassian": "workspace:*",
     "@renkei/connector-config": "workspace:*",
+    "@renkei/connector-microsoft": "workspace:*",
     "@renkei/connector-webex": "workspace:*",
+    "@renkei/connector-zoom": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/email-sanitizer": "workspace:*",
     "@renkei/gates": "workspace:*",
     "@renkei/knowledge": "workspace:*",
+    "@renkei/provider-grants": "workspace:*",
+    "@renkei/queue": "workspace:*",
     "@renkei/settings": "workspace:*",
     "kysely": "^0.29.4",
     "tsx": "^4.23.5"

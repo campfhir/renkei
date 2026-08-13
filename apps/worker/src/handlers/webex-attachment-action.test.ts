@@ -130,7 +130,7 @@ describe('createWebexAttachmentActionHandler', () => {
     const evidence = JSON.parse(String(row.evidence));
     expect(evidence.pushedBy).toBe('pusher@example.com');
     expect(evidence.note).toBe('for the board deck');
-    expect(String(row.suggested_action)).toContain('create_issue');
+    expect(String(row.suggested_action)).toContain('jira_create_issue');
 
     expect(stub.posted).toHaveLength(1);
     expect(stub.posted[0]?.markdown).toContain('Captured in Renkei');

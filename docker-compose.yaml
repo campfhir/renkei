@@ -70,6 +70,25 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # The embedding queue's consumer (Decision #20): same image as `worker`,
+  # different entrypoint. All ingest-time calls to the org-configured
+  # embeddings endpoint happen in this process, so however slow that
+  # endpoint is, the interactive worker above never waits on it. Safe to
+  # scale to N instances (drop container_name and use --scale): claims are
+  # row-locked, and ordering keys keep each mailbox's/object's job sequence
+  # serial regardless of instance count.
+  embeddings-worker:
+    image: scotteremiaroden/renkei-worker:latest
+    container_name: renkei-embeddings-worker
+    command: ['pnpm', '--filter', '@renkei/worker', 'start:embeddings']
+    env_file:
+      - .env
+    environment: *database-urls
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   renkei:
     image: scotteremiaroden/renkei:latest
     container_name: renkei-app

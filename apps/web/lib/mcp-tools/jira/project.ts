@@ -7,18 +7,93 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 
 export async function registerProjectTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // list_components
+  // jira_list_projects
   server.registerTool(
-    'list_components',
+    'jira_list_projects',
     {
-      title: 'List components in a project',
+      title: 'Jira · Read — List projects',
+      description:
+        'List the Jira projects you can see, with their keys. Every tool that takes a projectKey ' +
+        'wants one of these. Covers software, business and service-desk projects alike — a JSM ' +
+        'project is a Jira project, so there is no need to go via jsm_list_service_desks to find ' +
+        'a key.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        query: z
+          .string()
+          .describe('Substring filter on project name or key, e.g. "eng" (optional)')
+          .optional(),
+        max: z.number().int().min(1).max(100).describe('How many (default 50)').optional(),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('jira_list_projects invoked', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
+      try {
+        const max = typeof args.max === 'number' ? args.max : 50;
+        const query = typeof args.query === 'string' ? args.query.trim() : '';
+        const params = [`maxResults=${max}`, 'orderBy=key'];
+        if (query) params.push(`query=${encodeURIComponent(query)}`);
+        const response = await jiraFetch(
+          `${context.apiBaseUrl}/rest/api/3/project/search?${params.join('&')}`,
+          context.accessToken
+        );
+        const data = (await response.json()) as any;
+        const projects = Array.isArray(data?.values) ? data.values : [];
+        if (projects.length === 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: query ? `No projects match "${query}".` : 'No projects visible to you.',
+              },
+            ],
+          };
+        }
+        const lines = projects.map(
+          (project: any) =>
+            `• ${project.name} — key: ${project.key}` +
+            (project.projectTypeKey ? ` — ${project.projectTypeKey}` : '')
+        );
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                [`${projects.length} project(s):`, ...lines].join('\n'),
+                'a table (Name, Key, Type) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // jira_list_components
+  server.registerTool(
+    'jira_list_components',
+    {
+      title: 'Jira · Read — List components in a project',
       description: 'List components in a Jira project.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -27,7 +102,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_components invoked', {
+      logger.info('jira_list_components invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -56,7 +131,20 @@ export async function registerProjectTools(
           ...components.map((c: any) => `• ${c.name} (ID: ${c.id})`),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (components.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Component, Lead, id) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -68,11 +156,11 @@ export async function registerProjectTools(
     }
   );
 
-  // list_fields
+  // jira_list_fields
   server.registerTool(
-    'list_fields',
+    'jira_list_fields',
     {
-      title: 'List all issue fields (standard and custom)',
+      title: 'Jira · Read — List all issue fields (standard and custom)',
       description: 'List all fields available in a Jira project.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -85,7 +173,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_fields invoked', {
+      logger.info('jira_list_fields invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -123,8 +211,23 @@ export async function registerProjectTools(
             .map((f: any) => `• ${f.name} (${f.id}) - ${f.schema?.type || 'unknown'}`),
           matching.length > 50 ? `... and ${matching.length - 50} more` : '',
         ];
+        const text = lines.filter(Boolean).join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.filter(Boolean).join('\n') }] };
+        if (matching.length === 0) {
+          return { content: [{ type: 'text' as const, text }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                text,
+                'a table (Field name, id, Type) usually scans faster than this flat list — ' +
+                  'there can be dozens of custom fields.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -136,11 +239,11 @@ export async function registerProjectTools(
     }
   );
 
-  // search_users
+  // jira_search_users
   server.registerTool(
-    'search_users',
+    'jira_search_users',
     {
-      title: 'Search Jira users by name or email',
+      title: 'Jira · Read — Search Jira users by name or email',
       description: 'Search for Jira users by email or name.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -150,7 +253,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('search_users invoked', {
+      logger.info('jira_search_users invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -175,7 +278,20 @@ export async function registerProjectTools(
           ...users.map((u: any) => `• ${u.displayName} (${u.emailAddress}) - ${u.accountId}`),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (users.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Name, Email, Account id) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -187,11 +303,11 @@ export async function registerProjectTools(
     }
   );
 
-  // list_transitions
+  // jira_list_transitions
   server.registerTool(
-    'list_transitions',
+    'jira_list_transitions',
     {
-      title: 'List available Jira transitions',
+      title: 'Jira · Read — List available Jira transitions',
       description: 'List available transitions for an issue.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -200,7 +316,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_transitions invoked', {
+      logger.info('jira_list_transitions invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

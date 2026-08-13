@@ -30,7 +30,7 @@ import { getDatabase } from '@renkei/db';
 import { getWebexUserApp } from '@/lib/webex-app';
 import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
-import type { MCPToolContext } from '../common';
+import { withPresentationHint, type MCPToolContext } from '../common';
 
 export const WEBEX_USER_MCP_CONNECTOR = 'webex-user';
 
@@ -253,7 +253,7 @@ export async function registerWebexUserTools(
   server.registerTool(
     'webex_list_rooms',
     {
-      title: 'List WebEx rooms',
+      title: 'WebEx · Read — List WebEx rooms',
       description:
         'List the WebEx rooms (spaces) the connected user is a member of, most recently active ' +
         'first. Returns room ids for use with webex_list_messages.',
@@ -277,14 +277,20 @@ export async function registerWebexUserTools(
           `${str(room.title) || '(untitled)'} — ${str(room.type)} — id: ${str(room.id)}` +
           (str(room.lastActivity) ? ` — last activity ${str(room.lastActivity)}` : '')
       );
-      return textResult(rooms.length === 0 ? 'No rooms.' : rooms.join('\n'));
+      if (rooms.length === 0) return textResult('No rooms.');
+      return textResult(
+        withPresentationHint(
+          rooms.join('\n'),
+          'a table (Room, Type, Last activity) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
   server.registerTool(
     'webex_list_messages',
     {
-      title: 'List WebEx messages in a room',
+      title: 'WebEx · Read — List WebEx messages in a room',
       description:
         'Read recent messages in a room the connected user is a member of, newest first. ' +
         'Access is the user’s own — rooms they are not in cannot be read.',
@@ -307,14 +313,21 @@ export async function registerWebexUserTools(
       );
       if (!result.ok) return errText(result.error);
       const lines = items(result.body).map(messageLine);
-      return textResult(lines.length === 0 ? 'No messages.' : lines.join('\n\n'));
+      if (lines.length === 0) return textResult('No messages.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n\n'),
+          'a chat-thread layout (grouped by sender, newest last) usually reads more naturally ' +
+            'than this flat list.'
+        )
+      );
     }
   );
 
   server.registerTool(
     'webex_get_message',
     {
-      title: 'Get one WebEx message',
+      title: 'WebEx · Read — Get one WebEx message',
       description: 'Fetch a single message by id, with its full text.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -339,13 +352,14 @@ export async function registerWebexUserTools(
   server.registerTool(
     'webex_capture_message',
     {
-      title: 'Capture a WebEx message into Renkei',
+      title: 'WebEx · Act — Capture a WebEx message into Renkei',
       description:
         'Turn a WebEx message into an actionable item on the Renkei card feed, where a human ' +
         'approves or dismisses it. Nothing is executed and nothing is posted to WebEx — this ' +
         'only records a suggestion.',
       // Writes to Renkei's own feed, never to the provider — but it is a
-      // write, so no readOnlyHint: org read-only mode disables it.
+      // write, so readOnlyHint is false: org read-only mode disables it.
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         messageId: z.string().min(1).describe('Message id to capture'),
         note: z.string().describe('Why this was captured — shown alongside the card').optional(),
@@ -391,9 +405,9 @@ export async function registerWebexUserTools(
             ...(note ? { note } : {}),
           }),
           // The same shape the ambient pipeline writes, so the card's approve
-          // flow (create_issue with a human-chosen project) works unchanged.
+          // flow (jira_create_issue with a human-chosen project) works unchanged.
           suggested_action: JSON.stringify({
-            tool: 'create_issue',
+            tool: 'jira_create_issue',
             args: { summary: title, description: text, issueType: 'Task' },
           }),
         })
@@ -411,12 +425,13 @@ export async function registerWebexUserTools(
   server.registerTool(
     'webex_send_message',
     {
-      title: 'Send a WebEx message',
+      title: 'WebEx · Act — Send a WebEx message',
       description:
         'Post a message as the connected user, to a room or a person — e.g. a summary of Jira ' +
         'tickets assembled with the Jira tools. Markdown supported. This speaks AS the user, so ' +
         'only send what they asked to send.',
-      // The one acting tool: no readOnlyHint, so org read-only mode disables it.
+      // The one acting tool: readOnlyHint false, so org read-only mode disables it.
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         roomId: z.string().describe('Destination room id (from webex_list_rooms)').optional(),
         toPersonEmail: z
@@ -462,7 +477,7 @@ export async function registerWebexUserTools(
   server.registerTool(
     'webex_list_meetings',
     {
-      title: 'List WebEx meetings',
+      title: 'WebEx · Read — List WebEx meetings',
       description:
         'List the connected user’s meetings in a time window — scheduled or ended. Meeting ids ' +
         'feed webex_list_transcripts and webex_list_recordings.',
@@ -487,14 +502,21 @@ export async function registerWebexUserTools(
           `${str(meeting.title) || '(untitled)'} — ${str(meeting.start)} → ${str(meeting.end)} — ` +
           `state: ${str(meeting.state)} — id: ${str(meeting.id)}`
       );
-      return textResult(lines.length === 0 ? 'No meetings in that window.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No meetings in that window.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a calendar-style day-by-day agenda, or a table of day/time/title/state, usually reads ' +
+            'clearer than this flat list.'
+        )
+      );
     }
   );
 
   server.registerTool(
     'webex_list_transcripts',
     {
-      title: 'List WebEx meeting transcripts',
+      title: 'WebEx · Read — List WebEx meeting transcripts',
       description:
         'List transcripts of the connected user’s hosted meetings, optionally narrowed to one ' +
         'meeting. Transcript ids feed webex_get_transcript.',
@@ -524,14 +546,20 @@ export async function registerWebexUserTools(
           `${str(transcript.meetingTopic) || '(no topic)'} — ${str(transcript.startTime)} — ` +
           `id: ${str(transcript.id)}`
       );
-      return textResult(lines.length === 0 ? 'No transcripts.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No transcripts.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Meeting, Date, id) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 
   server.registerTool(
     'webex_get_transcript',
     {
-      title: 'Download a WebEx meeting transcript',
+      title: 'WebEx · Read — Download a WebEx meeting transcript',
       description:
         'Fetch a transcript’s text by id — the raw material for "summarize that meeting and ' +
         'file/announce the outcomes".',
@@ -566,7 +594,7 @@ export async function registerWebexUserTools(
   server.registerTool(
     'webex_list_recordings',
     {
-      title: 'List WebEx meeting recordings',
+      title: 'WebEx · Read — List WebEx meeting recordings',
       description:
         'List recordings of the connected user’s meetings, with playback links. Read-only; the ' +
         'links open in a browser.',
@@ -593,7 +621,13 @@ export async function registerWebexUserTools(
           `${typeof recording.durationSeconds === 'number' ? `${Math.round(recording.durationSeconds / 60)} min — ` : ''}` +
           `${str(recording.playbackUrl) ? `[play](${str(recording.playbackUrl)})` : 'no playback link'} — id: ${str(recording.id)}`
       );
-      return textResult(lines.length === 0 ? 'No recordings.' : lines.join('\n'));
+      if (lines.length === 0) return textResult('No recordings.');
+      return textResult(
+        withPresentationHint(
+          lines.join('\n'),
+          'a table (Meeting, Date, Duration, Play link) usually scans faster than this flat list.'
+        )
+      );
     }
   );
 }

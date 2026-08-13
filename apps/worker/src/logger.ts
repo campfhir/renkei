@@ -15,13 +15,27 @@ import packageJson from '../package.json';
  * A single-process CLI needs no globalThis anchor: one module graph, one
  * evaluation.
  */
+// GIT_COMMIT is baked in by docker-build.sh: every row names the exact
+// build that produced it (0.1.0+sha), absent in bare local runs.
+const commit = process.env.GIT_COMMIT;
+const version = commit ? `${packageJson.version}+${commit}` : packageJson.version;
+
 export const logger = createLogger({
   application: packageJson.name,
-  // GIT_COMMIT is baked in by docker-build.sh: every row names the exact
-  // build that produced it (0.1.0+sha), absent in bare local runs.
-  version: process.env.GIT_COMMIT
-    ? `${packageJson.version}+${process.env.GIT_COMMIT}`
-    : packageJson.version,
+  version,
+  // The reserved `application`/`version` options above stamp every record
+  // for storage and for a custom `.template()`, but the console adapter's
+  // default rendering only ever prints `record.attrs` (never those two
+  // fields) — see ConsoleAdapter's fallback path in @campfhir/bored-logs.
+  // Duplicating them into the `attributes` bag (the documented way to reuse
+  // a name that collides with an option, like `version` here) is what makes
+  // every printed console line carry application/version/commit, not just
+  // an explicit boot line.
+  attributes: {
+    application: packageJson.name,
+    version,
+    commit: commit ?? 'dev',
+  },
 });
 
 logger.addAdapter(

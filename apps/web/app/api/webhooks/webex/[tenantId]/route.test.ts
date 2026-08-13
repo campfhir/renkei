@@ -2,11 +2,18 @@
  * The webhook receipt's contract: the per-tenant secret comes from the
  * connector_configs store (never the environment), the signature is verified
  * over the raw body before anything else is trusted, malformed deliveries
- * are refused, and a valid delivery does exactly one thing — INSERT an event
- * row. No processing here.
+ * are refused, and a valid delivery does exactly one thing — produce one
+ * message onto the webhook events queue. No processing here.
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+jest.mock('@renkei/queue', () => ({
+  webhookEventsQueue: () => ({
+    producer: {
+      enqueue: (message: Record<string, unknown>) => mockEnqueueImpl(message),
+    },
+  }),
+}));
 jest.mock('@renkei/connector-config', () => ({ readConnectorConfigCached: jest.fn() }));
 jest.mock('@/lib/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
@@ -15,6 +22,8 @@ jest.mock('@/lib/logger', () => ({
 import { createHmac, randomBytes } from 'node:crypto';
 import { NextRequest } from 'next/server';
 import { POST } from './route';
+
+let mockEnqueueImpl: (message: Record<string, unknown>) => Promise<{ ok: boolean }>;
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { readConnectorConfigCached: mockReadConfig } = jest.requireMock<{
@@ -25,29 +34,24 @@ const TENANT = '00000000-0000-4000-8000-000000000001';
 const SECRET = 'webhook-secret';
 
 interface Recorded {
-  inserted: Array<Record<string, unknown>>;
+  enqueued: Array<Record<string, unknown>>;
 }
 
 function stubDb(tenantExists = true): Recorded {
-  const recorded: Recorded = { inserted: [] };
+  const recorded: Recorded = { enqueued: [] };
   const selectChain = {
     select: () => selectChain,
     where: () => selectChain,
     executeTakeFirst: async () => (tenantExists ? { id: TENANT } : undefined),
   };
-  const insertChain = (values: Record<string, unknown>) => ({
-    execute: async () => {
-      recorded.inserted.push(values);
-      return [];
-    },
-  });
   mockGetDatabase.mockReturnValue({
     ok: true,
-    val: {
-      selectFrom: () => selectChain,
-      insertInto: () => ({ values: insertChain }),
-    },
+    val: { selectFrom: () => selectChain },
   });
+  mockEnqueueImpl = async (message) => {
+    recorded.enqueued.push(message);
+    return { ok: true };
+  };
   return recorded;
 }
 
@@ -106,11 +110,14 @@ describe('POST /api/webhooks/webex/[tenantId]', () => {
     const response = await POST(delivery(VALID_BODY, sign(VALID_BODY)), params());
 
     expect(response.status).toBe(200);
-    expect(recorded.inserted).toHaveLength(1);
-    const row = recorded.inserted[0]!;
-    expect(row.tenant_id).toBe(TENANT);
-    expect(row.source).toBe('webex');
-    expect(row.type).toBe('messages.created');
+    expect(recorded.enqueued).toHaveLength(1);
+    const message = recorded.enqueued[0]!;
+    expect(message.tenantId).toBe(TENANT);
+    expect(message.source).toBe('webex');
+    expect(message.type).toBe('messages.created');
+    // One room's messages share an ordering key, so several interactive
+    // workers still process a conversation in order.
+    expect(message.orderingKey).toBe(`webex/${TENANT}/room-1`);
   });
 
   it('rejects a bad signature with 401 and inserts nothing', async () => {
@@ -120,7 +127,7 @@ describe('POST /api/webhooks/webex/[tenantId]', () => {
     const response = await POST(delivery(VALID_BODY, 'not-the-signature'), params());
 
     expect(response.status).toBe(401);
-    expect(recorded.inserted).toHaveLength(0);
+    expect(recorded.enqueued).toHaveLength(0);
   });
 
   it('rejects a missing signature', async () => {

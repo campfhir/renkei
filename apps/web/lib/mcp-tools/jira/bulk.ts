@@ -10,14 +10,17 @@ import type { MCPToolContext } from '../common';
 import { jiraFetch, getCachedDisplayName } from '../common';
 import { logger } from '@/lib/logger';
 import { buildFieldUpdates } from './field-schema';
+import { writeWithFieldFallback, type FieldWritePlan } from './field-write';
+import { recordUnwritten } from './write';
 
 export async function registerBulkTools(server: McpServer, context: MCPToolContext): Promise<void> {
-  // bulk_update_issues (not in renkei_tools.json but keeping for now)
+  // jira_bulk_update_issues (not in renkei_tools.json but keeping for now)
   server.registerTool(
-    'bulk_update_issues',
+    'jira_bulk_update_issues',
     {
-      title: 'Update multiple Jira issues',
+      title: 'Jira · Act — Update multiple Jira issues',
       description: 'Update multiple issues at once with the same changes.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         jql: z.string().describe('JQL query to select issues to update'),
         fields: z.record(z.string(), z.any()).describe('Fields to update on all matched issues'),
@@ -25,7 +28,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('bulk_update_issues invoked', {
+      logger.info('jira_bulk_update_issues invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -62,12 +65,14 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
           return { content: [{ type: 'text' as const, text: 'No issues matched the JQL query' }] };
         }
 
-        // The same schema-aware resolver update_issue uses: field names or
+        // The same schema-aware resolver jira_update_issue uses: field names or
         // ids resolve against this site's schema, values are coerced per
         // field type (priority string → {name}, rich text → ADF, options
-        // validated). Bulk previously PUT the caller's record verbatim,
-        // which is why single-issue updates worked while bulk 400'd.
-        const updates = await buildFieldUpdates(context, fields);
+        // validated). Allowed values come from the first matched issue's
+        // editmeta — a JQL selection is near-always homogeneous enough for
+        // its option sets to hold across the batch, and a mismatch only
+        // costs that issue its field via the fallback below.
+        const updates = await buildFieldUpdates(context, fields, { issueKey: issueKeys[0] });
         if (Object.keys(updates.fields).length === 0) {
           return {
             content: [
@@ -80,18 +85,54 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
           };
         }
 
-        // Update each issue, keeping each failure's reason — "N failed" with
-        // no why is undebuggable at 1 issue and ruinous at 50.
+        const labels: Record<string, string> = {};
+        for (const id of Object.keys(updates.fields)) {
+          labels[id] = updates.applied.find((entry) => entry.includes(id)) ?? id;
+        }
+        const plan: FieldWritePlan = {
+          required: {},
+          optional: updates.fields,
+          labels,
+          hints: updates.optionHints,
+        };
+
+        // Update each issue with the same degrading write single-issue
+        // updates get: a field one issue's screen refuses is dropped and
+        // recorded as a comment there, instead of failing that whole issue.
+        // Failures keep their reason — "N failed" with no why is
+        // undebuggable at 1 issue and ruinous at 50.
         let updated = 0;
         const failures: string[] = [];
+        const degraded: string[] = [];
 
         for (const key of issueKeys) {
           try {
-            await jiraFetch(`${context.apiBaseUrl}/rest/api/3/issue/${key}`, context.accessToken, {
-              method: 'PUT',
-              body: JSON.stringify({ fields: updates.fields }),
+            const outcome = await writeWithFieldFallback(plan, async (fieldsToSend) => {
+              await jiraFetch(
+                `${context.apiBaseUrl}/rest/api/3/issue/${key}`,
+                context.accessToken,
+                { method: 'PUT', body: JSON.stringify({ fields: fieldsToSend }) }
+              );
             });
+
+            if (!outcome.sent) {
+              failures.push(
+                `${key}: every field was refused — ${outcome.dropped
+                  .map((field) => `${field.label} (${field.reason})`)
+                  .join('; ')}`
+              );
+              continue;
+            }
+
             updated++;
+            if (outcome.dropped.length > 0) {
+              const commented = await recordUnwritten(context, key, outcome.dropped);
+              degraded.push(
+                `${key}: not set — ${outcome.dropped
+                  .map((field) => `${field.label} (${field.reason})`)
+                  .join('; ')}${commented ? ' [recorded as a comment]' : ''}`
+              );
+            }
           } catch (error) {
             failures.push(`${key}: ${error instanceof Error ? error.message : String(error)}`);
           }
@@ -101,13 +142,17 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
           ? `\nNot written (unresolvable): ${updates.problems.join('; ')}`
           : '';
         const summary = `Updated ${updated} issues, ${failures.length} failed (total: ${issueKeys.length}). Applied: ${updates.applied.join(', ')}${resolutionNotes}`;
+        const detail = [
+          degraded.length ? `Partially applied:\n${degraded.map((d) => `• ${d}`).join('\n')}` : '',
+          failures.length ? `Failures:\n${failures.map((f) => `• ${f}`).join('\n')}` : '',
+        ]
+          .filter(Boolean)
+          .join('\n');
         return {
           content: [
             {
               type: 'text' as const,
-              text: failures.length
-                ? `${summary}\nFailures:\n${failures.map((f) => `• ${f}`).join('\n')}`
-                : summary,
+              text: detail ? `${summary}\n${detail}` : summary,
             },
           ],
           ...(updated === 0 && failures.length > 0 ? { isError: true } : {}),
@@ -123,12 +168,13 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
     }
   );
 
-  // bulk_transition_issues
+  // jira_bulk_transition_issues
   server.registerTool(
-    'bulk_transition_issues',
+    'jira_bulk_transition_issues',
     {
-      title: 'Move multiple Jira issues through workflow',
+      title: 'Jira · Act — Move multiple Jira issues through workflow',
       description: 'Transition multiple issues to the same status.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         jql: z.string().describe('JQL query to select issues'),
         transitionName: z.string().describe('Transition name to apply to all issues'),
@@ -136,7 +182,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('bulk_transition_issues invoked', {
+      logger.info('jira_bulk_transition_issues invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

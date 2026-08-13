@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import ScopePicker from '@/components/scope-picker';
 import { ATLASSIAN_SCOPE_GROUPS, ATLASSIAN_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
+import WatchManager from './watch-manager';
 
 interface JiraStatus {
   connected: boolean;
@@ -201,6 +202,8 @@ export default function JiraConnector({
             Disconnect Jira
           </button>
         ))}
+
+      {status?.connected && <WatchManager tenantId={tenantId} provider="jira" />}
     </div>
   );
 }

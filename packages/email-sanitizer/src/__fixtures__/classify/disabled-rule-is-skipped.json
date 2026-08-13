@@ -1,0 +1,16 @@
+{
+  "description": "A disabled rule never matches, even if its pattern would otherwise apply",
+  "rules": [
+    {
+      "id": "r5",
+      "category": "marketing",
+      "matchType": "domain",
+      "matchValue": "vendor.com",
+      "senderKey": null,
+      "priority": 1,
+      "enabled": false
+    }
+  ],
+  "email": { "fromAddress": "deals@vendor.com", "subject": "Sale today" },
+  "expected": { "category": "human", "matchedRuleId": null, "senderKey": null }
+}

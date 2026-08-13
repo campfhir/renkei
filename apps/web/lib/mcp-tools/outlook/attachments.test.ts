@@ -1,0 +1,297 @@
+/* eslint-disable @typescript-eslint/consistent-type-assertions */
+/**
+ * Guards for the Outlook attachment tools. The interesting behavior is
+ * the branching: inline images hidden by default, textual formats decoded
+ * to readable text, binary formats bounded rather than dumped into
+ * context, and the two non-file attachment kinds (reference/item) handled
+ * instead of silently returning nothing.
+ */
+
+import type { McpServer } from '@modelcontextprotocol/server';
+import type { MCPToolContext } from '../common';
+
+jest.mock('@renkei/provider-grants', () => ({
+  getGrant: async () => ({
+    ok: true,
+    val: {
+      accessToken: 'token-1',
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      accountId: 'acct-1',
+      metadata: { upn: 'scott@example.com' },
+    },
+  }),
+  refreshGrantTokens: async () => ({ ok: true, val: { accessToken: 'token-1' } }),
+  MICROSOFT: 'microsoft',
+  MicrosoftAdapter: class {},
+}));
+jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
+jest.mock('@renkei/db', () => ({
+  getDatabase: () => ({
+    ok: true,
+    val: {
+      selectFrom: () => ({
+        select: () => ({
+          where: () => ({
+            where: () => ({
+              where: () => ({
+                executeTakeFirst: async () => ({ provider_account_id: 'acct-1' }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    },
+  }),
+}));
+jest.mock('@renkei/connector-microsoft', () => ({
+  GRAPH_BASE_URL: 'https://graph.microsoft.com/v1.0',
+}));
+jest.mock('@/lib/microsoft-app', () => ({ getMicrosoftApp: async () => null }));
+jest.mock('@renkei/knowledge', () => ({
+  resolveEmbeddingProvider: async () => null,
+  searchKnowledge: async () => ({ ok: true, val: { hits: [], elided: 0 } }),
+}));
+jest.mock('../knowledge', () => ({ buildKnowledgeVerifiers: async () => new Map() }));
+jest.mock('@/lib/logger', () => ({
+  logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+  secure: (value: unknown) => value,
+}));
+
+import { registerOutlookTools } from './index';
+
+type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean };
+type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
+
+/** Response bodies keyed by a substring of the requested URL. */
+let routes: { match: string; body: Record<string, unknown> }[] = [];
+
+beforeEach(() => {
+  routes = [];
+  global.fetch = (async (url: string, init?: RequestInit) => {
+    const target = String(url);
+    // Batch requests carry their sub-request urls in the payload.
+    if (target.endsWith('/$batch')) {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as {
+        requests: { id: string; url: string }[];
+      };
+      const body = {
+        responses: payload.requests.map((request) => ({
+          id: request.id,
+          status: 200,
+          body: routes.find((route) => request.url.includes(route.match))?.body ?? { value: [] },
+        })),
+      };
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(body),
+        json: async () => body,
+      };
+    }
+    const body = routes.find((route) => target.includes(route.match))?.body ?? { value: [] };
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(body),
+      json: async () => body,
+    };
+  }) as unknown as typeof fetch;
+});
+
+async function tool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  const registered = new Map<string, ToolHandler>();
+  const server = {
+    registerTool: (toolName: string, _config: unknown, handler: ToolHandler) => {
+      registered.set(toolName, handler);
+    },
+  } as unknown as McpServer;
+
+  await registerOutlookTools(server, {
+    tenantId: 'tenant-1',
+    accountId: 'acct-1',
+    subject: 'subject-1',
+    siteUrl: '',
+    apiBaseUrl: '',
+    accessToken: '',
+    maxJqlResults: 100,
+  } as MCPToolContext);
+
+  const handler = registered.get(name);
+  if (!handler) throw new Error(`${name} was not registered`);
+  return handler(args);
+}
+
+const textOf = (result: ToolResult) => result.content[0]?.text ?? '';
+
+describe('outlook_list_attachments', () => {
+  it('hides inline images by default and says how many it hid', async () => {
+    routes = [
+      {
+        match: '/attachments',
+        body: {
+          value: [
+            { id: 'a1', name: 'report.pdf', contentType: 'application/pdf', size: 100 },
+            { id: 'a2', name: 'logo.png', contentType: 'image/png', size: 20, isInline: true },
+          ],
+        },
+      },
+    ];
+    const result = await tool('outlook_list_attachments', { messageId: 'm1' });
+    expect(textOf(result)).toContain('report.pdf');
+    expect(textOf(result)).not.toContain('logo.png');
+  });
+
+  it('includes inline images on request', async () => {
+    routes = [
+      {
+        match: '/attachments',
+        body: {
+          value: [
+            { id: 'a2', name: 'logo.png', contentType: 'image/png', size: 20, isInline: true },
+          ],
+        },
+      },
+    ];
+    const result = await tool('outlook_list_attachments', {
+      messageId: 'm1',
+      includeInline: true,
+    });
+    expect(textOf(result)).toContain('logo.png');
+    expect(textOf(result)).toContain('inline');
+  });
+
+  it('distinguishes "no attachments" from "only inline ones"', async () => {
+    routes = [
+      {
+        match: '/attachments',
+        body: {
+          value: [
+            { id: 'a2', name: 'logo.png', contentType: 'image/png', size: 20, isInline: true },
+          ],
+        },
+      },
+    ];
+    const result = await tool('outlook_list_attachments', { messageId: 'm1' });
+    expect(textOf(result)).toContain('1 inline image(s) hidden');
+  });
+});
+
+describe('outlook_get_attachment', () => {
+  it('decodes a textual attachment to readable text', async () => {
+    routes = [
+      {
+        match: '/attachments/',
+        body: {
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          id: 'a1',
+          name: 'data.csv',
+          contentType: 'text/csv',
+          size: 11,
+          contentBytes: Buffer.from('name,total\na,1').toString('base64'),
+        },
+      },
+    ];
+    const result = await tool('outlook_get_attachment', { messageId: 'm1', attachmentId: 'a1' });
+    expect(textOf(result)).toContain('name,total');
+    expect(textOf(result)).toContain('data.csv');
+  });
+
+  it('returns small binary content as base64, labelled as binary', async () => {
+    routes = [
+      {
+        match: '/attachments/',
+        body: {
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          id: 'a1',
+          name: 'tiny.pdf',
+          contentType: 'application/pdf',
+          size: 4,
+          contentBytes: 'AAAA',
+        },
+      },
+    ];
+    const result = await tool('outlook_get_attachment', { messageId: 'm1', attachmentId: 'a1' });
+    expect(textOf(result)).toContain('base64');
+    expect(textOf(result)).toContain('binary content, not text');
+  });
+
+  it('refuses oversized binary rather than flooding the context', async () => {
+    routes = [
+      {
+        match: '/attachments/',
+        body: {
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          id: 'a1',
+          name: 'huge.pdf',
+          contentType: 'application/pdf',
+          size: 50_000_000,
+          contentBytes: 'AAAA',
+        },
+      },
+    ];
+    const result = await tool('outlook_get_attachment', { messageId: 'm1', attachmentId: 'a1' });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('too large to return inline');
+  });
+
+  it('explains a reference attachment has no bytes to download', async () => {
+    routes = [
+      {
+        match: '/attachments/',
+        body: {
+          '@odata.type': '#microsoft.graph.referenceAttachment',
+          id: 'a1',
+          name: 'Shared doc',
+          contentType: 'application/octet-stream',
+          size: 0,
+          sourceUrl: 'https://contoso.sharepoint.com/doc',
+        },
+      },
+    ];
+    const result = await tool('outlook_get_attachment', { messageId: 'm1', attachmentId: 'a1' });
+    expect(textOf(result)).toContain('link to a cloud file');
+    expect(textOf(result)).toContain('https://contoso.sharepoint.com/doc');
+  });
+
+  it('renders an embedded item attachment instead of returning nothing', async () => {
+    routes = [
+      {
+        match: '/attachments/',
+        body: {
+          '@odata.type': '#microsoft.graph.itemAttachment',
+          id: 'a1',
+          name: 'FW: budget',
+          contentType: 'message/rfc822',
+          size: 500,
+          item: {
+            subject: 'budget numbers',
+            from: { emailAddress: { address: 'dana@example.com' } },
+            body: { content: 'here they are' },
+          },
+        },
+      },
+    ];
+    const result = await tool('outlook_get_attachment', { messageId: 'm1', attachmentId: 'a1' });
+    expect(textOf(result)).toContain('embedded item');
+    expect(textOf(result)).toContain('budget numbers');
+    expect(textOf(result)).toContain('dana@example.com');
+  });
+});
+
+describe('outlook_bulk_list_attachments', () => {
+  it('surveys many messages in one batched call and skips empty ones', async () => {
+    routes = [
+      {
+        match: '/attachments',
+        body: {
+          value: [{ id: 'a1', name: 'report.pdf', contentType: 'application/pdf', size: 100 }],
+        },
+      },
+    ];
+    const result = await tool('outlook_bulk_list_attachments', { messageIds: ['m1', 'm2'] });
+    const text = textOf(result);
+    expect(text).toContain('message m1');
+    expect(text).toContain('report.pdf');
+    expect(text).toContain('2 attachment(s) across 2 of 2 message(s)');
+  });
+});

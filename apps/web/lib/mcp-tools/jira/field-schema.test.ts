@@ -123,7 +123,7 @@ describe('lookupField', () => {
   it('says what to do when nothing matches', () => {
     const missing = lookupField(SCHEMA, 'Nonexistent');
     expect(!missing.ok && missing.reason).toBe('unknown');
-    expect(!missing.ok && missing.message).toContain('list_fields');
+    expect(!missing.ok && missing.message).toContain('jira_list_fields');
   });
 });
 
@@ -187,7 +187,7 @@ describe('coerceFieldValue', () => {
   it('asks for an account id rather than sending an email Jira ignores', () => {
     const result = coerceFieldValue(of('Change Owner'), 'dana@x.test');
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.message).toContain('search_users');
+    expect(!result.ok && result.message).toContain('jira_search_users');
   });
 
   it('checks the shape of a date', () => {
@@ -218,6 +218,72 @@ describe('coerceFieldValue', () => {
       value: { anything: true },
     });
   });
+
+  it('emits the option id when the option set carries one', () => {
+    const decision = field({
+      id: 'customfield_12013',
+      name: 'Decision of Change Request',
+      type: 'option',
+      allowedValues: [{ value: 'Approved', id: '10201' }],
+    });
+    expect(coerceFieldValue(decision, 'approved')).toEqual({ ok: true, value: { id: '10201' } });
+  });
+
+  it('lists the valid options when a select value matches none', () => {
+    const decision = field({
+      id: 'customfield_12013',
+      name: 'Decision of Change Request',
+      type: 'option',
+      allowedValues: [
+        { value: 'Approved', id: '10201' },
+        { value: 'Rejected', id: '10202' },
+      ],
+    });
+    const result = coerceFieldValue(decision, 'Maybe');
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.message).toContain('"Approved" (id 10201)');
+    expect(!result.ok && result.message).toContain('"Rejected" (id 10202)');
+  });
+});
+
+describe('request type (sd-customerrequesttype)', () => {
+  const requestType = (allowedValues?: { value: string; id?: string }[]) =>
+    field({
+      id: 'customfield_10010',
+      name: 'Request Type',
+      type: 'sd-customerrequesttype',
+      customType: 'com.atlassian.servicedesk:vp-origin',
+      allowedValues,
+    });
+
+  it('resolves a display name to the bare request-type id', () => {
+    const rt = requestType([{ value: 'General Request or Inquiry', id: '1111' }]);
+    expect(coerceFieldValue(rt, 'general request or inquiry')).toEqual({
+      ok: true,
+      value: '1111',
+    });
+  });
+
+  it('accepts a raw id, matched against the option set', () => {
+    const rt = requestType([{ value: 'General Request or Inquiry', id: '1111' }]);
+    expect(coerceFieldValue(rt, '1111')).toEqual({ ok: true, value: '1111' });
+    expect(coerceFieldValue(rt, 1111)).toEqual({ ok: true, value: '1111' });
+  });
+
+  it('lists the request types when the name matches none', () => {
+    const rt = requestType([
+      { value: 'General Request or Inquiry', id: '1111' },
+      { value: 'Access Request', id: '1112' },
+    ]);
+    const result = coerceFieldValue(rt, 'Password Reset');
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.message).toContain('"General Request or Inquiry" (id 1111)');
+    expect(!result.ok && result.message).toContain('"Access Request" (id 1112)');
+  });
+
+  it('passes the raw value through when no option set is known', () => {
+    expect(coerceFieldValue(requestType(), '1111')).toEqual({ ok: true, value: '1111' });
+  });
 });
 
 describe('findStoryPointsField', () => {
@@ -246,7 +312,7 @@ describe('findStoryPointsField', () => {
   it('reports a site that has no such field', () => {
     const found = findStoryPointsField([field({ id: 'summary', name: 'Summary' })]);
     expect(found.ok).toBe(false);
-    expect(!found.ok && found.message).toContain('list_fields');
+    expect(!found.ok && found.message).toContain('jira_list_fields');
   });
 });
 
@@ -331,7 +397,7 @@ describe('buildFieldUpdates', () => {
     serveSchema(RAW);
     const updates = await buildFieldUpdates(context, {});
 
-    expect(updates).toEqual({ fields: {}, applied: [], problems: [] });
+    expect(updates).toEqual({ fields: {}, applied: [], problems: [], optionHints: {} });
     expect(jiraFetchMock).not.toHaveBeenCalled();
   });
 
@@ -363,6 +429,150 @@ describe('buildFieldUpdates', () => {
     await buildFieldUpdates(context, { 'Brand New Field': 'x' });
 
     expect(jiraFetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('buildFieldUpdates option enrichment', () => {
+  const RAW_WITH_REQUEST_TYPE = [
+    ...RAW,
+    {
+      id: 'customfield_10010',
+      name: 'Request Type',
+      custom: true,
+      schema: {
+        type: 'sd-customerrequesttype',
+        custom: 'com.atlassian.servicedesk:vp-origin',
+      },
+      clauseNames: ['Request Type'],
+    },
+  ];
+
+  /** Route the mock by endpoint, so one test can serve schema + meta + JSM. */
+  function serveByUrl(routes: Record<string, unknown>): void {
+    jiraFetchMock.mockReset();
+    jiraFetchMock.mockImplementation(async (url: unknown) => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        for (const [needle, payload] of Object.entries(routes)) {
+          if (String(url).includes(needle)) return payload;
+        }
+        throw new Error(`unrouted URL in test: ${String(url)}`);
+      },
+    }));
+  }
+
+  it('resolves a request type display name to its id via editmeta', async () => {
+    serveByUrl({
+      '/editmeta': {
+        fields: {
+          customfield_10010: {
+            allowedValues: [
+              { id: '1111', name: 'General Request or Inquiry' },
+              { id: '1112', name: 'Access Request' },
+            ],
+          },
+        },
+      },
+      '/rest/api/3/field': RAW_WITH_REQUEST_TYPE,
+    });
+
+    const updates = await buildFieldUpdates(
+      context,
+      { 'Request Type': 'General Request or Inquiry' },
+      { issueKey: 'ENG-707' }
+    );
+
+    expect(updates.fields).toEqual({ customfield_10010: '1111' });
+    expect(updates.problems).toEqual([]);
+    expect(updates.optionHints.customfield_10010).toContain('General Request or Inquiry');
+  });
+
+  it('falls back to the service-desk listing when meta carries no request types', async () => {
+    serveByUrl({
+      '/editmeta': { fields: {} },
+      '/rest/servicedeskapi/requesttype': {
+        values: [{ id: '1111', name: 'General Request or Inquiry' }],
+      },
+      '/rest/api/3/field': RAW_WITH_REQUEST_TYPE,
+    });
+
+    const updates = await buildFieldUpdates(
+      context,
+      { 'Request Type': 'General Request or Inquiry' },
+      { issueKey: 'ENG-707' }
+    );
+
+    expect(updates.fields).toEqual({ customfield_10010: '1111' });
+  });
+
+  it('reports the valid options when the value matches none', async () => {
+    serveByUrl({
+      '/editmeta': {
+        fields: {
+          customfield_10010: {
+            allowedValues: [{ id: '1111', name: 'General Request or Inquiry' }],
+          },
+        },
+      },
+      '/rest/api/3/field': RAW_WITH_REQUEST_TYPE,
+    });
+
+    const updates = await buildFieldUpdates(
+      context,
+      { 'Request Type': 'Password Reset' },
+      { issueKey: 'ENG-707' }
+    );
+
+    expect(updates.fields).toEqual({});
+    expect(updates.problems).toHaveLength(1);
+    expect(updates.problems[0]).toContain('"General Request or Inquiry" (id 1111)');
+  });
+
+  it('filters createmeta by issue type name, not the ids the API wants', async () => {
+    serveByUrl({
+      '/rest/api/3/issue/createmeta': {
+        projects: [
+          {
+            issuetypes: [
+              {
+                id: '10001',
+                name: 'Task',
+                fields: {
+                  customfield_10010: {
+                    allowedValues: [{ id: '1111', name: 'General Request or Inquiry' }],
+                  },
+                },
+              },
+              {
+                id: '10002',
+                name: 'Bug',
+                fields: {
+                  customfield_10010: {
+                    allowedValues: [{ id: '9999', name: 'Bug Report' }],
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      },
+      '/rest/api/3/field': RAW_WITH_REQUEST_TYPE,
+    });
+
+    const updates = await buildFieldUpdates(
+      context,
+      { 'Request Type': 'General Request or Inquiry' },
+      { projectKey: 'ENG', issueType: 'Task' }
+    );
+
+    expect(updates.fields).toEqual({ customfield_10010: '1111' });
+    const createmetaCall = jiraFetchMock.mock.calls.find((call) =>
+      String(call[0]).includes('createmeta')
+    );
+    // The name must not be sent as an issueTypeIds filter — that silently
+    // matched nothing, which is the bug this test pins down.
+    expect(String(createmetaCall?.[0])).not.toContain('issueTypeIds');
   });
 });
 

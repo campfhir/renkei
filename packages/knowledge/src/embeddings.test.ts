@@ -24,18 +24,23 @@ describe('OpenAiCompatibleEmbeddings', () => {
   it('posts to /embeddings with the model and returns vectors in order', async () => {
     const fetchMock = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
       jsonResponse(200, {
-        data: [
-          { embedding: [0.1, 0.2] },
-          { embedding: [0.3, 0.4] },
-        ],
+        data: [{ embedding: [0.1, 0.2] }, { embedding: [0.3, 0.4] }],
       })
     );
 
-    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com/v1/', 'key-1', 'small');
+    const provider = new OpenAiCompatibleEmbeddings(
+      'https://llm.example.com/v1/',
+      'key-1',
+      'small'
+    );
     const result = await provider.embed(['a', 'b']);
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.val).toEqual([[0.1, 0.2], [0.3, 0.4]]);
+    if (result.ok)
+      expect(result.val).toEqual([
+        [0.1, 0.2],
+        [0.3, 0.4],
+      ]);
 
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(String(url)).toBe('https://llm.example.com/v1/embeddings');
@@ -63,6 +68,52 @@ describe('OpenAiCompatibleEmbeddings', () => {
     const result = await provider.embed([]);
     if (result.ok) expect(result.val).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('passes an abort signal so a hung endpoint cannot block forever', async () => {
+    const fetchMock = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse(200, { data: [{ embedding: [1] }] }));
+    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm');
+    await provider.embed(['a']);
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('reports a timeout distinctly from an unreachable endpoint', async () => {
+    // AbortSignal.timeout rejects the fetch with an error named
+    // 'TimeoutError' — the same discriminator the connector clients use.
+    jest.spyOn(globalThis, 'fetch').mockRejectedValue(
+      Object.assign(new Error('The operation was aborted due to timeout'), {
+        name: 'TimeoutError',
+      })
+    );
+    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm', 15_000);
+    const result = await provider.embed(['a']);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.err.message).toBe('embeddings endpoint timed out after 15000ms');
+  });
+
+  it('actually aborts: a never-resolving endpoint returns within the configured bound', async () => {
+    // The stub resolves only when the signal it was handed aborts — proof
+    // the timeout wiring reaches fetch, not just that a signal exists.
+    jest.spyOn(globalThis, 'fetch').mockImplementation(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () =>
+            reject(
+              Object.assign(new Error('The operation was aborted due to timeout'), {
+                name: 'TimeoutError',
+              })
+            )
+          );
+        })
+    );
+    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm', 25);
+    const started = Date.now();
+    const result = await provider.embed(['a']);
+    expect(result.ok).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });
 

@@ -54,12 +54,17 @@ export async function POST(
   }
 
   if (body.decision === 'dismiss') {
+    // Dismissing also archives: one click both records the decision and
+    // removes the card from the default feed. The history view still shows
+    // it, so the audit trail loses nothing.
     await db
       .updateTable('actionable_items')
       .set({
         status: 'dismissed',
         decided_by: session.subject,
         decided_at: sql`NOW()`,
+        archived_at: sql`NOW()`,
+        archived_by: session.subject,
         updated_at: sql`NOW()`,
       })
       .where('id', '=', itemId)

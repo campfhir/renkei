@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, issueUrl } from '../common';
+import { jiraFetch, getCachedDisplayName, issueUrl, withPresentationHint } from '../common';
 import { adfToMarkdown } from './adf';
 import { markdownToAdf } from './markdown';
 import { logger } from '@/lib/logger';
@@ -16,11 +16,11 @@ export async function registerWorklogTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // list_worklogs
+  // jira_list_worklogs
   server.registerTool(
-    'list_worklogs',
+    'jira_list_worklogs',
     {
-      title: 'List worklogs on an issue',
+      title: 'Jira · Read — List worklogs on an issue',
       description: 'List all time tracking entries on a specific issue.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -29,7 +29,7 @@ export async function registerWorklogTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_worklogs invoked', {
+      logger.info('jira_list_worklogs invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -64,7 +64,21 @@ export async function registerWorklogTools(
           }),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (worklogs.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Author, Time spent, Date, Comment) usually scans faster than this flat ' +
+                  'list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -76,11 +90,11 @@ export async function registerWorklogTools(
     }
   );
 
-  // create_worklog
+  // jira_create_worklog
   server.registerTool(
-    'create_worklog',
+    'jira_create_worklog',
     {
-      title: 'Create a worklog entry',
+      title: 'Jira · Act — Create a worklog entry',
       description: 'Log time spent on an issue.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -97,7 +111,7 @@ export async function registerWorklogTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('create_worklog invoked', {
+      logger.info('jira_create_worklog invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -160,11 +174,11 @@ export async function registerWorklogTools(
     }
   );
 
-  // delete_worklog
+  // jira_delete_worklog
   server.registerTool(
-    'delete_worklog',
+    'jira_delete_worklog',
     {
-      title: 'Delete a worklog entry',
+      title: 'Jira · Act — Delete a worklog entry',
       description: 'Remove a time tracking entry from an issue.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -174,7 +188,7 @@ export async function registerWorklogTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('delete_worklog invoked', {
+      logger.info('jira_delete_worklog invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

@@ -5,6 +5,19 @@
  * elided count — withheld results are counted, never silently dropped.
  */
 
+jest.mock('@renkei/connector-atlassian', () => ({
+  createJiraAccessVerifier: () => ({ provider: 'jira' }),
+  createConfluenceAccessVerifier: () => ({ provider: 'confluence' }),
+  JIRA_KNOWLEDGE_PROVIDER: 'jira',
+  CONFLUENCE_KNOWLEDGE_PROVIDER: 'confluence',
+}));
+jest.mock('@renkei/provider-grants', () => ({
+  getGrant: async () => ({ ok: false }),
+  readAtlassianMetadata: () => ({ cloudId: '', siteUrl: '' }),
+  ATLASSIAN: 'atlassian',
+  ATLASSIAN_CONFLUENCE: 'atlassian-confluence',
+}));
+jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
 jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: jest.fn(),
   searchKnowledge: jest.fn(),
@@ -36,11 +49,7 @@ interface Registered {
 async function register(context: Partial<MCPToolContext>): Promise<Registered> {
   let registered: Registered | null = null;
   const server = {
-    registerTool: (
-      _name: string,
-      config: Registered['config'],
-      handler: Registered['handler']
-    ) => {
+    registerTool: (_name: string, config: Registered['config'], handler: Registered['handler']) => {
       registered = { config, handler };
     },
   };

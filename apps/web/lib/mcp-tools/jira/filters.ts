@@ -7,18 +7,18 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 
 export async function registerFilterTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // list_filters
+  // jira_list_filters
   server.registerTool(
-    'list_filters',
+    'jira_list_filters',
     {
-      title: 'List saved filters',
+      title: 'Jira · Read — List saved filters',
       description: 'List all filters (saved searches) accessible to the current user.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -27,7 +27,7 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_filters invoked', {
+      logger.info('jira_list_filters invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -55,7 +55,20 @@ export async function registerFilterTools(
           }),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (filters.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Filter name, Owner, id) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -67,11 +80,11 @@ export async function registerFilterTools(
     }
   );
 
-  // get_filter
+  // jira_get_filter
   server.registerTool(
-    'get_filter',
+    'jira_get_filter',
     {
-      title: 'Get filter details',
+      title: 'Jira · Read — Get filter details',
       description: 'Get detailed information about a specific filter including JQL query.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -80,7 +93,7 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('get_filter invoked', {
+      logger.info('jira_get_filter invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -124,11 +137,11 @@ export async function registerFilterTools(
     }
   );
 
-  // create_filter
+  // jira_create_filter
   server.registerTool(
-    'create_filter',
+    'jira_create_filter',
     {
-      title: 'Create a filter',
+      title: 'Jira · Act — Create a filter',
       description: 'Create a new saved filter using a JQL query.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -140,7 +153,7 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('create_filter invoked', {
+      logger.info('jira_create_filter invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -194,11 +207,11 @@ export async function registerFilterTools(
     }
   );
 
-  // delete_filter
+  // jira_delete_filter
   server.registerTool(
-    'delete_filter',
+    'jira_delete_filter',
     {
-      title: 'Delete a filter',
+      title: 'Jira · Act — Delete a filter',
       description: 'Delete a saved filter.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -207,7 +220,7 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('delete_filter invoked', {
+      logger.info('jira_delete_filter invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

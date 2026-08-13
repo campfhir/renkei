@@ -13,6 +13,14 @@ import type { Result } from '@campfhir/safe-functions/types';
 
 export const EMBEDDINGS_CONNECTOR = 'embeddings';
 
+/**
+ * Same bound the connector clients use (see connector-webex's client.ts).
+ * The provider URL is org configuration pointing at arbitrary infrastructure,
+ * which makes it the most likely fetch in the system to hang — and an
+ * unbounded hang here once wedged the worker's whole event loop.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
 /** pgvector input literal: '[0.1,0.2,…]'. */
 export function vectorLiteral(vector: readonly number[]): string {
   return `[${vector.join(',')}]`;
@@ -30,7 +38,8 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
   constructor(
     private readonly baseUrl: string,
     private readonly apiKey: string,
-    private readonly model: string
+    private readonly model: string,
+    private readonly timeoutMs = REQUEST_TIMEOUT_MS
   ) {}
 
   async embed(texts: readonly string[]): Promise<Result<number[][], 'EMBEDDING_FAILED'>> {
@@ -45,9 +54,15 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({ model: this.model, input: texts }),
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
-    } catch {
-      return err('EMBEDDING_FAILED' as const, { message: 'embeddings endpoint unreachable' });
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      return err('EMBEDDING_FAILED' as const, {
+        message: timedOut
+          ? `embeddings endpoint timed out after ${this.timeoutMs}ms`
+          : 'embeddings endpoint unreachable',
+      });
     }
 
     if (!response.ok) {

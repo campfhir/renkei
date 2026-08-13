@@ -32,6 +32,7 @@ export {
   WebexClient,
   type WebexMessage,
   type WebexPerson,
+  type WebexRoom,
   type WebexAttachmentAction,
   type OutgoingMessage,
   type WebexWebhook,

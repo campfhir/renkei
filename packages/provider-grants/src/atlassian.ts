@@ -17,6 +17,13 @@ export const ATLASSIAN = 'atlassian';
  * combined scope union cannot fit one app's authorize URL.
  */
 export const ATLASSIAN_JSM = 'atlassian-jsm';
+/**
+ * A third Atlassian app ("Renkei Confluence"): Confluence's own product API,
+ * on its own dedicated grant. Unlike JSM (the same Jira site's API), this is
+ * a separate product with its own gateway path — it doesn't share Jira's
+ * context fields, just the same adapter and OAuth mechanics.
+ */
+export const ATLASSIAN_CONFLUENCE = 'atlassian-confluence';
 
 const TOKEN_ENDPOINT = 'https://auth.atlassian.com/oauth/token';
 

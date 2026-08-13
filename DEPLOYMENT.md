@@ -106,6 +106,41 @@ npm run build
 ls -la .next/
 ```
 
+## Worker Processes and Queues
+
+The queue consumer ships as **two processes off the same `renkei-worker`
+image**, one per queue (RENKEI.md Decision #20; queues live behind
+`@renkei/queue`, whose Postgres adapter carries them today and could be
+swapped for RabbitMQ/Kafka without touching producers or consumers):
+
+- `worker` — consumes the `events` queue: WebEx replies, webhook
+  orchestration, Graph/Zoom fetches, periodic sweeps. Entrypoint:
+  `pnpm --filter @renkei/worker start`.
+- `embeddings-worker` — consumes the `embedding_jobs` queue: every
+  ingest-time call to the org-configured embeddings endpoint (chunk
+  ingestion, index deletes and purges, related-items back-fill).
+  Entrypoint: `pnpm --filter @renkei/worker start:embeddings`.
+
+**Horizontal scale:** either process may run as N instances. Claims take
+row locks (`FOR UPDATE SKIP LOCKED`), and messages sharing an ordering key
+(one mailbox's index writes, one subscription's delta rounds, one room's
+messages) are delivered strictly in order, one at a time, across all
+instances — distinct keys drain in parallel. With docker compose, drop the
+hardcoded `container_name` and use `--scale embeddings-worker=N`.
+
+**Dead letters:** each queue pairs with a `*_dead_letters` table
+(`events_dead_letters`, `embedding_jobs_dead_letters`). A message that
+spends its retry budget (5 deliveries, exponential backoff) MOVES there
+with its last error. Reprocess after fixing the underlying fault via
+`@renkei/queue`'s `deadLetters.requeue(ids)` (fresh attempt budget,
+original order restored), or inspect/purge with `list`/`purge`.
+
+Both services are declared in `docker-compose.yaml`. Deploy them together
+with migration 030 (`embedding_jobs` + dead-letter tables): the migration
+must run first, and both worker containers must restart on the new image
+in the same rollout — jobs enqueued by new code into `embedding_jobs` are
+only consumed by the new embeddings worker.
+
 ## Deployment Options
 
 ### Option 1: Vercel (Recommended)

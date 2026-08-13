@@ -13,22 +13,23 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { logger } from '../logger';
-import { createWebexAccessVerifier, webexRefId } from '@renkei/connector-webex';
+import { webexRefId } from '@renkei/connector-webex';
 import type { WebexMessage } from '@renkei/connector-webex';
-import { ingestChunk, resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
-import type { KnowledgeHit } from '@renkei/knowledge';
+import { resolveEmbeddingProvider } from '@renkei/knowledge';
+import { enqueueKnowledgeEvent } from '../enqueue';
 import { classifyMessage, type MessageClassification } from '../pipeline/classify';
-import type { WebexTenantContext } from './webex-context';
+import type { ForwardedOrigin } from './webex-forward-context';
 
 export interface CaptureOptions {
   tenantId: string;
   message: WebexMessage;
-  client: WebexTenantContext['client'];
   /** Push metadata: who pressed the button, and their note. */
   pushedBy?: string | null;
   note?: string | null;
   /** True for a push: capture even when the classifier is silent. */
   force: boolean;
+  /** Where this message's content was found to originate, if it was forwarded. */
+  forwardedOrigin?: ForwardedOrigin | null;
 }
 
 function firstLine(text: string): string {
@@ -43,7 +44,7 @@ function genericSuggestion(text: string, note: string | null): MessageClassifica
     title: `Pushed from WebEx: ${headline}`,
     summary: text.length <= 280 ? text : `${text.slice(0, 279)}…`,
     suggestedAction: {
-      tool: 'create_issue',
+      tool: 'jira_create_issue',
       args: {
         summary: headline,
         description:
@@ -63,31 +64,49 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
   const refId = webexRefId(message.roomId, message.id);
 
   // Knowledge is broader than actionability: index the message whenever the
-  // org has an embedding provider. Upsert-idempotent, so re-capture is safe.
-  // Failures are logged, not retried — a retry would re-run the whole event
-  // and duplicate any card it already produced.
+  // org has an embedding provider. Indexing is deferred to the embedding
+  // queue (Decision #20) — the resolve here is a cheap DB-config check that
+  // gates whether there is any point enqueuing; the network-bound embed
+  // happens in the embedding worker, never on the reply path.
   const embedder = await resolveEmbeddingProvider(tenantId);
+  logger.debug('embedding provider for {tenantId}: {status}', {
+    component: 'webex/capture',
+    tenantId,
+    status: embedder ? 'configured' : 'none — indexing and related-item search skipped',
+  });
   if (embedder && text.trim()) {
-    const ingested = await ingestChunk(tenantId, embedder, {
-      provider: 'webex',
-      refId,
-      content: text,
-      metadata: {
-        roomId: message.roomId,
-        personEmail: message.personEmail,
-        created: message.created,
+    // Ordering key: this message's own sequence — its enrich.item below
+    // shares the key, so the related-items search always runs against an
+    // index that already contains the message, however many embedding
+    // workers are draining the queue.
+    await enqueueKnowledgeEvent(
+      tenantId,
+      'ingest.object',
+      {
+        provider: 'webex',
+        refId,
+        content: text,
+        metadata: {
+          roomId: message.roomId,
+          personEmail: message.personEmail,
+          created: message.created,
+        },
+        sourceAt: message.created || null,
       },
-    });
-    if (!ingested.ok) {
-      logger.warn('could not index WebEx message', {
-        component: 'webex/capture',
-        messageId: message.id,
-        tenantId,
-      });
-    }
+      `webex/${refId}`
+    );
   }
 
   const classification = classifyMessage(text);
+  logger.debug('classifier result for {messageId}: {result}', {
+    component: 'webex/capture',
+    messageId: message.id,
+    result: classification
+      ? `"${classification.title}"`
+      : options.force
+        ? 'no opinion, forced (pushed)'
+        : 'no opinion — not issue-shaped, offering push card instead',
+  });
   if (!classification && !options.force) return 'skipped';
   const suggestion = classification ?? genericSuggestion(text, options.note ?? null);
 
@@ -105,35 +124,20 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
     .where('status', '=', 'suggested')
     .where(sql<string>`evidence->>'messageId'`, '=', message.id)
     .executeTakeFirst();
-  if (existing) return 'duplicate';
-
-  // Enrichment: similar prior chunks, disclosed only after the live ACL gate
-  // clears them for the acting identity — the pusher when there is one, the
-  // author otherwise. (Per-viewer verification at display time waits on the
-  // identity spine; see RENKEI.md open questions.)
-  const accessSubject = options.pushedBy ?? message.personEmail;
-  let related: KnowledgeHit[] = [];
-  let relatedElided = 0;
-  if (embedder && accessSubject && text.trim()) {
-    const searched = await searchKnowledge({
-      tenantId,
-      userEmail: accessSubject,
-      query: text,
-      k: 3,
-      embedder,
-      verifiers: new Map([['webex', createWebexAccessVerifier(options.client)]]),
-      excludeRef: { provider: 'webex', refId },
+  if (existing) {
+    logger.debug('actionable item {itemId} already exists for {messageId}', {
+      component: 'webex/capture',
+      messageId: message.id,
+      itemId: existing.id,
     });
-    if (searched.ok) {
-      related = searched.val.hits;
-      relatedElided = searched.val.elided;
-    }
+    return 'duplicate';
   }
 
+  const itemId = randomUUID();
   await db
     .insertInto('actionable_items')
     .values({
-      id: randomUUID(),
+      id: itemId,
       tenant_id: tenantId,
       source: 'webex',
       title: suggestion.title,
@@ -147,17 +151,43 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
         excerpt: text.slice(0, 500),
         ...(options.pushedBy ? { pushedBy: options.pushedBy } : {}),
         ...(options.note ? { note: options.note } : {}),
-        related: related.map((hit) => ({
-          provider: hit.provider,
-          refId: hit.refId,
-          excerpt: hit.content.slice(0, 200),
-          distance: hit.distance,
-        })),
-        relatedElided,
+        ...(options.forwardedOrigin ? { forwardedOrigin: options.forwardedOrigin } : {}),
+        // Enrichment is asynchronous (Decision #20): the card ships now,
+        // empty, and the embedding queue's enrich.item back-fills these two
+        // keys once the index has caught up. The search's ACL gate runs
+        // there, against the same acting identity recorded below.
+        related: [],
+        relatedElided: 0,
       }),
       suggested_action: JSON.stringify(suggestion.suggestedAction),
     })
     .execute();
+  logger.debug('inserted actionable item {itemId} for {messageId}', {
+    component: 'webex/capture',
+    messageId: message.id,
+    itemId,
+  });
+
+  // Similar prior chunks, disclosed only after the live ACL gate clears
+  // them for the acting identity — the pusher when there is one, the author
+  // otherwise. (Per-viewer verification at display time waits on the
+  // identity spine; see RENKEI.md open questions.) Shares the ingest's
+  // ordering key, so it runs strictly after the message is indexed.
+  const accessSubject = options.pushedBy ?? message.personEmail;
+  if (embedder && accessSubject && text.trim()) {
+    await enqueueKnowledgeEvent(
+      tenantId,
+      'enrich.item',
+      {
+        itemId,
+        provider: 'webex',
+        refId,
+        query: text,
+        accessSubject,
+      },
+      `webex/${refId}`
+    );
+  }
 
   return 'captured';
 }

@@ -24,13 +24,13 @@ const PROVISIONED = { provisionedConnectors: [JIRA_CONNECTOR], hiddenCapabilitie
 
 function registerSampleTools(server: McpServer): void {
   server.registerTool(
-    'search_issues',
+    'jira_search_issues',
     { description: 'read', annotations: { readOnlyHint: true } },
     async () => ({ content: [] })
   );
-  server.registerTool('create_issue', { description: 'write' }, async () => ({ content: [] }));
+  server.registerTool('jira_create_issue', { description: 'write' }, async () => ({ content: [] }));
   server.registerTool(
-    'delete_issue',
+    'jira_delete_issue',
     { description: 'write', annotations: { readOnlyHint: false } },
     async () => ({ content: [] })
   );
@@ -43,7 +43,7 @@ describe('withCapabilityGate', () => {
 
     registerSampleTools(gated);
 
-    expect(registered).toEqual(['search_issues', 'create_issue', 'delete_issue']);
+    expect(registered).toEqual(['jira_search_issues', 'jira_create_issue', 'jira_delete_issue']);
   });
 
   it('READ_ONLY: mutating tools are never registered, absent hint included', () => {
@@ -55,19 +55,22 @@ describe('withCapabilityGate', () => {
 
     registerSampleTools(gated);
 
-    expect(registered).toEqual(['search_issues']);
+    expect(registered).toEqual(['jira_search_issues']);
   });
 
   it('an org-disabled capability is not registered', () => {
     const { server, registered } = fakeServer();
     const gated = withCapabilityGate(
       server,
-      createProjection({ ...OPEN_ORG_POLICY, disabledCapabilities: ['delete_issue'] }, PROVISIONED)
+      createProjection(
+        { ...OPEN_ORG_POLICY, disabledCapabilities: ['jira_delete_issue'] },
+        PROVISIONED
+      )
     );
 
     registerSampleTools(gated);
 
-    expect(registered).toEqual(['search_issues', 'create_issue']);
+    expect(registered).toEqual(['jira_search_issues', 'jira_create_issue']);
   });
 
   it('a user hide choice removes the tool from their projection', () => {
@@ -76,13 +79,13 @@ describe('withCapabilityGate', () => {
       server,
       createProjection(OPEN_ORG_POLICY, {
         ...PROVISIONED,
-        hiddenCapabilities: ['create_issue'],
+        hiddenCapabilities: ['jira_create_issue'],
       })
     );
 
     registerSampleTools(gated);
 
-    expect(registered).toEqual(['search_issues', 'delete_issue']);
+    expect(registered).toEqual(['jira_search_issues', 'jira_delete_issue']);
   });
 
   it('passes non-registerTool members through to the underlying server', () => {

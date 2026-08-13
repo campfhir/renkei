@@ -7,18 +7,18 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 
 export async function registerRequestDetailsTools(
   server: McpServer,
   context: MCPToolContext
 ): Promise<void> {
-  // get_request_type_fields
+  // jsm_get_request_type_fields
   server.registerTool(
-    'get_request_type_fields',
+    'jsm_get_request_type_fields',
     {
-      title: 'Describe the form for a request type',
+      title: 'JSM · Read — Describe the form for a request type',
       description: 'Get the form fields for a request type.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -28,7 +28,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('get_request_type_fields invoked', {
+      logger.info('jsm_get_request_type_fields invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -64,8 +64,23 @@ export async function registerRequestDetailsTools(
           `Request type has ${fieldList.length} fields:`,
           ...fieldList.map((f: any) => `• ${f.name} (${f.id})${f.required ? ' [REQUIRED]' : ''}`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                fieldList.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Field, Type, Required) usually scans faster than this flat list — ' +
+                        'request forms often have many fields.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -77,11 +92,11 @@ export async function registerRequestDetailsTools(
     }
   );
 
-  // list_request_approvals
+  // jsm_list_request_approvals
   server.registerTool(
-    'list_request_approvals',
+    'jsm_list_request_approvals',
     {
-      title: 'List approvals on a customer request',
+      title: 'JSM · Read — List approvals on a customer request',
       description: 'List pending approvals on a request.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -90,7 +105,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_request_approvals invoked', {
+      logger.info('jsm_list_request_approvals invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -122,8 +137,22 @@ export async function registerRequestDetailsTools(
           `${issueKey} has ${approvals.length} approvals:`,
           ...approvals.map((a: any) => `• ${a.name} [${a.status}]`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                approvals.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Approver, Status, Decided) usually scans faster than this flat list.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -135,11 +164,11 @@ export async function registerRequestDetailsTools(
     }
   );
 
-  // get_request_sla
+  // jsm_get_request_sla
   server.registerTool(
-    'get_request_sla',
+    'jsm_get_request_sla',
     {
-      title: 'Read the SLA clocks on a customer request',
+      title: 'JSM · Read — Read the SLA clocks on a customer request',
       description: 'Get SLA information for a request.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -148,7 +177,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('get_request_sla invoked', {
+      logger.info('jsm_get_request_sla invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -187,8 +216,26 @@ export async function registerRequestDetailsTools(
         });
 
         const lines = [`${issueKey} has ${slas.length} SLAs:`, ...slas];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              // A request usually carries just one or two SLA clocks — a
+              // hint only earns its keep once there's an actual multi-row
+              // list to reformat.
+              text:
+                slas.length > 1
+                  ? withPresentationHint(
+                      text,
+                      'a small table (SLA, State, Breach time) usually scans faster than this flat ' +
+                        'list when there is more than one SLA metric.'
+                    )
+                  : text,
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -200,11 +247,11 @@ export async function registerRequestDetailsTools(
     }
   );
 
-  // list_request_participants
+  // jsm_list_request_participants
   server.registerTool(
-    'list_request_participants',
+    'jsm_list_request_participants',
     {
-      title: 'List participants on a customer request',
+      title: 'JSM · Read — List participants on a customer request',
       description: 'List participants on a request.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -213,7 +260,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_request_participants invoked', {
+      logger.info('jsm_list_request_participants invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -244,8 +291,22 @@ export async function registerRequestDetailsTools(
           `${issueKey} has ${participants.length} participants:`,
           ...participants.map((p: any) => `• ${p.name} (${p.email})`),
         ];
+        const text = lines.join('\n');
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                participants.length === 0
+                  ? text
+                  : withPresentationHint(
+                      text,
+                      'a table (Name, Email) usually scans faster than this flat list.'
+                    ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -257,12 +318,13 @@ export async function registerRequestDetailsTools(
     }
   );
 
-  // add_request_participant
+  // jsm_add_request_participant
   server.registerTool(
-    'add_request_participant',
+    'jsm_add_request_participant',
     {
-      title: 'Add a participant to a customer request',
+      title: 'JSM · Act — Add a participant to a customer request',
       description: 'Add a participant to a request.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Request key, e.g. SUP-1'),
         accountId: z.string().describe('Account ID of user to add'),
@@ -270,7 +332,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('add_request_participant invoked', {
+      logger.info('jsm_add_request_participant invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -309,12 +371,13 @@ export async function registerRequestDetailsTools(
     }
   );
 
-  // remove_request_participant
+  // jsm_remove_request_participant
   server.registerTool(
-    'remove_request_participant',
+    'jsm_remove_request_participant',
     {
-      title: 'Remove a participant from a customer request',
+      title: 'JSM · Act — Remove a participant from a customer request',
       description: 'Remove a participant from a request.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Request key, e.g. SUP-1'),
         accountId: z.string().describe('Account ID of user to remove'),
@@ -322,7 +385,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('remove_request_participant invoked', {
+      logger.info('jsm_remove_request_participant invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -364,12 +427,13 @@ export async function registerRequestDetailsTools(
     }
   );
 
-  // add_request_attachment
+  // jsm_add_request_attachment
   server.registerTool(
-    'add_request_attachment',
+    'jsm_add_request_attachment',
     {
-      title: 'Attach a file to a customer request',
+      title: 'JSM · Act — Attach a file to a customer request',
       description: 'Upload a file attachment to a request.',
+      annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Request key, e.g. SUP-1'),
         filename: z.string().describe('File name'),
@@ -378,7 +442,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('add_request_attachment invoked', {
+      logger.info('jsm_add_request_attachment invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

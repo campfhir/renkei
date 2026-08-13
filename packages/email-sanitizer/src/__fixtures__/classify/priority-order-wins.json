@@ -1,0 +1,25 @@
+{
+  "description": "When two rules both match, the lower priority number (evaluated first) wins",
+  "rules": [
+    {
+      "id": "low",
+      "category": "marketing",
+      "matchType": "domain",
+      "matchValue": "multi.com",
+      "senderKey": null,
+      "priority": 50,
+      "enabled": true
+    },
+    {
+      "id": "high",
+      "category": "system_notification",
+      "matchType": "domain",
+      "matchValue": "multi.com",
+      "senderKey": "custom",
+      "priority": 5,
+      "enabled": true
+    }
+  ],
+  "email": { "fromAddress": "x@multi.com", "subject": "hi" },
+  "expected": { "category": "system_notification", "matchedRuleId": "high", "senderKey": "custom" }
+}

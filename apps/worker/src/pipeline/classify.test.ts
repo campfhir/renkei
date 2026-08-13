@@ -1,20 +1,20 @@
 /**
  * The classifier's contract: issue-shaped messages become an executable
- * create_issue suggestion; everything else becomes nothing. The output's
+ * jira_create_issue suggestion; everything else becomes nothing. The output's
  * args must be executable verbatim — that is the pipeline's promise.
  */
 
 import { classifyMessage } from './classify';
 
 describe('classifyMessage', () => {
-  it('turns an issue report into a create_issue suggestion', () => {
+  it('turns an issue report into a jira_create_issue suggestion', () => {
     const result = classifyMessage(
       'Login page is broken again\nUsers get a timeout after entering credentials.'
     );
 
     expect(result).not.toBeNull();
     expect(result?.title).toContain('Login page is broken again');
-    expect(result?.suggestedAction.tool).toBe('create_issue');
+    expect(result?.suggestedAction.tool).toBe('jira_create_issue');
     expect(result?.suggestedAction.args.summary).toBe('Login page is broken again');
     expect(result?.suggestedAction.args.description).toContain('> Login page is broken again');
     expect(result?.suggestedAction.args.issueType).toBe('Task');

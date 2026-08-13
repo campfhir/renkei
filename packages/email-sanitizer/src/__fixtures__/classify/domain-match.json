@@ -1,0 +1,16 @@
+{
+  "description": "A domain rule classifies as system_notification with its senderKey",
+  "rules": [
+    {
+      "id": "r1",
+      "category": "system_notification",
+      "matchType": "domain",
+      "matchValue": "jira.example.com",
+      "senderKey": "jira",
+      "priority": 10,
+      "enabled": true
+    }
+  ],
+  "email": { "fromAddress": "notifications@jira.example.com", "subject": "PROJ-123 updated" },
+  "expected": { "category": "system_notification", "matchedRuleId": "r1", "senderKey": "jira" }
+}

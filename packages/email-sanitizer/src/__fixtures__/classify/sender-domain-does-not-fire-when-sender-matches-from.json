@@ -1,0 +1,16 @@
+{
+  "description": "A sender_domain rule never fires on ordinary person-sent mail — no distinct sender means it falls back to the From domain",
+  "rules": [
+    {
+      "id": "r7",
+      "category": "system_notification",
+      "matchType": "sender_domain",
+      "matchValue": "sharepointonline.com",
+      "senderKey": "sharepoint",
+      "priority": 10,
+      "enabled": true
+    }
+  ],
+  "email": { "fromAddress": "friend@personal-domain.com", "subject": "Dinner this weekend?" },
+  "expected": { "category": "human", "matchedRuleId": null, "senderKey": null }
+}

@@ -141,8 +141,8 @@ async function tools(): Promise<Map<string, ToolHandler>> {
   return registered;
 }
 
-const updateIssue = async (): Promise<ToolHandler> => (await tools()).get('update_issue')!;
-const createIssue = async (): Promise<ToolHandler> => (await tools()).get('create_issue')!;
+const updateIssue = async (): Promise<ToolHandler> => (await tools()).get('jira_update_issue')!;
+const createIssue = async (): Promise<ToolHandler> => (await tools()).get('jira_create_issue')!;
 
 const putBody = () => calls.find((call) => call.method === 'PUT')?.body ?? null;
 const putBodies = () => calls.filter((call) => call.method === 'PUT').map((call) => call.body);
@@ -158,7 +158,7 @@ beforeEach(() => {
   clearFieldSchemaCache();
 });
 
-describe('update_issue', () => {
+describe('jira_update_issue', () => {
   it('still updates the plain fields without touching the schema', async () => {
     serve([STORY_POINTS]);
     const update = await updateIssue();
@@ -189,7 +189,7 @@ describe('update_issue', () => {
 
     // Nothing was sendable, so no request was made — but the value survives.
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('list_fields');
+    expect(result.content[0].text).toContain('jira_list_fields');
     expect(putBody()).toBeNull();
     expect(commentText()).toContain('Story points');
   });
@@ -403,7 +403,7 @@ describe('fields a project will not accept', () => {
   });
 });
 
-describe('create_issue', () => {
+describe('jira_create_issue', () => {
   it('sets story points, the estimate and custom fields at creation', async () => {
     serve([STORY_POINTS, DECISION]);
     const create = await createIssue();

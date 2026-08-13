@@ -6,7 +6,13 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, issueUrl, cacheUserDisplayName, getCachedDisplayName } from '../common';
+import {
+  jiraFetch,
+  issueUrl,
+  cacheUserDisplayName,
+  getCachedDisplayName,
+  withPresentationHint,
+} from '../common';
 import { STANDARD_ISSUE_FIELDS, normalizeFieldId, renderFieldValue } from './fields';
 import { logger } from '@/lib/logger';
 
@@ -79,7 +85,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
   server.registerTool(
     'whoami',
     {
-      title: 'Who am I in Jira',
+      title: 'Jira · Read — Who am I in Jira',
       description:
         'Returns the Atlassian account this connection acts as and the site it is pinned to.',
       annotations: { readOnlyHint: true },
@@ -151,11 +157,11 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     }
   );
 
-  // search_issues
+  // jira_search_issues
   server.registerTool(
-    'search_issues',
+    'jira_search_issues',
     {
-      title: 'Search Jira issues with JQL',
+      title: 'Jira · Read — Search Jira issues with JQL',
       description:
         'Runs a JQL query and returns matching issues. Results are capped at 100. ' +
         'Use `project = SCRUM` for a specific project or `status != Done` for filtering.',
@@ -169,7 +175,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('search_issues invoked', {
+      logger.info('jira_search_issues invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -252,7 +258,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         const more = typeof data.nextPageToken === 'string' && data.nextPageToken.length > 0;
         const lines = [
           `Showing ${issues.length} issue${issues.length === 1 ? '' : 's'}` +
-            (more ? ' — more match. Call count_issues with the same JQL for the total.' : '') +
+            (more ? ' — more match. Call jira_count_issues with the same JQL for the total.' : '') +
             ':',
           ...issues.map(
             (i: Record<string, unknown>) =>
@@ -260,7 +266,21 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           ),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (issues.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Key, Summary, Status, Assignee) usually scans faster than this flat ' +
+                  'list, especially with more than a handful of results.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -272,14 +292,14 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     }
   );
 
-  // count_issues
+  // jira_count_issues
   server.registerTool(
-    'count_issues',
+    'jira_count_issues',
     {
-      title: 'Count issues matching JQL',
+      title: 'Jira · Read — Count issues matching JQL',
       description:
         'How many issues match a JQL query, without listing them. Use this when the question is ' +
-        '"how many" — search_issues returns at most 100 and its response carries no total, so a ' +
+        '"how many" — jira_search_issues returns at most 100 and its response carries no total, so a ' +
         'capped result says nothing about how many there really are.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -292,7 +312,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('count_issues invoked', {
+      logger.info('jira_count_issues invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -344,11 +364,11 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     }
   );
 
-  // get_issue
+  // jira_get_issue
   server.registerTool(
-    'get_issue',
+    'jira_get_issue',
     {
-      title: 'Read a Jira issue',
+      title: 'Jira · Read — Read a Jira issue',
       description:
         'Get detailed information about a specific Jira issue. Pass `fields` to include ' +
         'custom fields — their values are printed, not just matched, so this reads back ' +
@@ -369,7 +389,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('get_issue invoked', {
+      logger.info('jira_get_issue invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -434,7 +454,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         ];
 
         // Issue links as a readable section — the phrase, the other end and
-        // its status, and the link id delete_issue_link needs — instead of
+        // its status, and the link id jira_delete_issue_link needs — instead of
         // the raw JSON dump the generic field renderer produced.
         const linkLines: string[] = [];
         if (Array.isArray(fields.issuelinks)) {
@@ -485,11 +505,11 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     }
   );
 
-  // list_boards
+  // jira_list_boards
   server.registerTool(
-    'list_boards',
+    'jira_list_boards',
     {
-      title: 'List Jira Software boards (use this when looking for sprints)',
+      title: 'Jira · Read — List Jira Software boards (use this when looking for sprints)',
       description: 'List Jira Software boards (Scrum and Kanban).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -498,7 +518,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_boards invoked', {
+      logger.info('jira_list_boards invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -545,7 +565,20 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           ),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (boards.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Board, Type, id) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -557,11 +590,11 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     }
   );
 
-  // list_sprints
+  // jira_list_sprints
   server.registerTool(
-    'list_sprints',
+    'jira_list_sprints',
     {
-      title: 'List sprints on a board',
+      title: 'Jira · Read — List sprints on a board',
       description: 'List sprints for a Jira Software board.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -570,7 +603,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_sprints invoked', {
+      logger.info('jira_list_sprints invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -600,21 +633,32 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         }
         const sprints = isArray(data.values) ? data.values : [];
 
-        const lines = [
-          `Board ${boardId} has ${sprints.length} sprints:`,
-          ...sprints
-            .map((s: unknown) => {
-              if (!isRecord(s)) {
-                return null;
-              }
-              // The id feeds move_issue_to_sprint / complete_sprint — the
-              // last member of the ids-missing-from-list-output family.
-              return `• ${s.name} (${s.state}) — sprintId: ${s.id}`;
-            })
-            .filter((line): line is string => line !== null),
-        ];
+        const sprintLines = sprints
+          .map((s: unknown) => {
+            if (!isRecord(s)) {
+              return null;
+            }
+            // The id feeds jira_move_issue_to_sprint / jira_complete_sprint — the
+            // last member of the ids-missing-from-list-output family.
+            return `• ${s.name} (${s.state}) — sprintId: ${s.id}`;
+          })
+          .filter((line): line is string => line !== null);
+        const lines = [`Board ${boardId} has ${sprints.length} sprints:`, ...sprintLines];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (sprintLines.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Sprint, State, Start, End) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [

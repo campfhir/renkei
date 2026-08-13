@@ -11,10 +11,16 @@
  * visible prose in the issue, never a dropped sentence and never a malformed
  * document that Jira rejects with a validation error the model cannot act on.
  *
- * Not supported, by choice: tables, panels, media, mentions, and status
- * lozenges. Each needs instance-specific IDs (account IDs, file references,
- * colour tokens) that a model would have to invent, and an invented mention
- * notifies a real person.
+ * Not supported, by choice: panels, media, and status lozenges — each needs
+ * instance-specific IDs (file references, colour tokens) a model would have
+ * to invent. GFM tables ARE supported: they need no such IDs, adf.ts has
+ * always been able to READ them, and a model asked for a comparison writes
+ * one whether or not the writer understands it — unsupported, a table
+ * arrived as a wall of pipe characters. Mentions ARE supported, deliberately not by
+ * invention: `[~accountId]` (Jira's own wiki-markup mention syntax) is
+ * converted to a real ADF `mention` node by processMentions below, so a
+ * caller can only mention an account id it already has (e.g. from
+ * confluence_search_users or jira_search_users), never a guessed one.
  */
 
 /** A mark applied to a text node — bold, italic, code, link, and so on. */
@@ -46,7 +52,10 @@ export interface AdfDocument {
  * identity — so restoring is stateless. An earlier version tracked position in
  * a shared counter, which desynchronized the moment a blockquote recursed.
  */
-const ESCAPABLE = '\\`*_~[]()#-+>';
+// `|` is last on purpose: the mapping is positional, so appending a
+// character keeps every existing escape's codepoint stable. It is here so a
+// pipe inside a table cell can be written `\|` and survive the row split.
+const ESCAPABLE = '\\`*_~[]()#-+>|';
 const PRIVATE_USE_BASE = 0xe000;
 
 /** Derived from ESCAPABLE so the two cannot drift apart. */
@@ -60,6 +69,9 @@ const HEADING = /^(#{1,6})\s+(.*)$/;
 const RULE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const QUOTE = /^\s*>\s?(.*)$/;
 const LIST_ITEM = /^(\s*)(?:([-*+])|(\d{1,9})[.)])\s+(.*)$/;
+/** The `|---|:--:|` row directly under a table's header. Alignment colons are
+ *  accepted and then ignored: ADF cells carry no alignment attribute. */
+const TABLE_DELIMITER = /^\s*\|?(?:\s*:?-+:?\s*\|)+\s*:?-*:?\s*\|?\s*$/;
 
 export function markdownToAdf(markdown: string): AdfDocument {
   const lines = maskEscapes(markdown).replace(/\r\n?/g, '\n').split('\n');
@@ -142,6 +154,17 @@ function parseBlocks(lines: readonly string[]): AdfNode[] {
       continue;
     }
 
+    if (isTableStart(lines, i)) {
+      const rows: string[] = [line];
+      i += 2; // header + delimiter
+      while (i < lines.length && (lines[i] ?? '').includes('|') && (lines[i] ?? '').trim() !== '') {
+        rows.push(lines[i] ?? '');
+        i += 1;
+      }
+      nodes.push(parseTable(rows));
+      continue;
+    }
+
     if (LIST_ITEM.test(line)) {
       const items: string[] = [];
       while (i < lines.length && LIST_ITEM.test(lines[i] ?? '')) {
@@ -156,7 +179,7 @@ function parseBlocks(lines: readonly string[]): AdfNode[] {
     const body: string[] = [];
     while (i < lines.length) {
       const next = lines[i] ?? '';
-      if (next.trim() === '' || startsBlock(next)) break;
+      if (next.trim() === '' || startsBlock(lines, i)) break;
       body.push(next.trim());
       i += 1;
     }
@@ -166,14 +189,71 @@ function parseBlocks(lines: readonly string[]): AdfNode[] {
   return nodes;
 }
 
-function startsBlock(line: string): boolean {
+function startsBlock(lines: readonly string[], index: number): boolean {
+  const line = lines[index] ?? '';
   return (
     FENCE.test(line) ||
     RULE.test(line) ||
     HEADING.test(line) ||
     QUOTE.test(line) ||
-    LIST_ITEM.test(line)
+    LIST_ITEM.test(line) ||
+    isTableStart(lines, index)
   );
+}
+
+/**
+ * A table begins only where a pipe-bearing line is followed by a delimiter
+ * row. Requiring the pair is what keeps ordinary prose containing a pipe
+ * ("5001 | 50001") from being torn into cells.
+ */
+function isTableStart(lines: readonly string[], index: number): boolean {
+  const line = lines[index] ?? '';
+  const next = lines[index + 1];
+  return line.includes('|') && next !== undefined && TABLE_DELIMITER.test(next);
+}
+
+/** `| a | b |` -> ['a', 'b'], tolerating the optional outer pipes. */
+function splitRow(line: string): string[] {
+  let text = line.trim();
+  if (text.startsWith('|')) text = text.slice(1);
+  if (text.endsWith('|')) text = text.slice(0, -1);
+  // Escapes were masked into private-use characters before parsing, so a
+  // literal split can't be fooled by an escaped pipe inside a cell.
+  return text.split('|').map((cell) => cell.trim());
+}
+
+function tableCell(text: string, header: boolean): AdfNode {
+  const inline = parseInline(text, []);
+  return {
+    type: header ? 'tableHeader' : 'tableCell',
+    attrs: {},
+    // A cell must hold block content, and an empty cell still needs its
+    // paragraph — ADF rejects a cell with no content at all.
+    content: [inline.length > 0 ? { type: 'paragraph', content: inline } : { type: 'paragraph' }],
+  };
+}
+
+function parseTable(rows: readonly string[]): AdfNode {
+  const header = splitRow(rows[0] ?? '');
+  const width = header.length;
+  const content: AdfNode[] = [
+    { type: 'tableRow', content: header.map((cell) => tableCell(cell, true)) },
+  ];
+
+  for (const row of rows.slice(1)) {
+    const cells = splitRow(row);
+    // Ragged rows are normalized rather than rejected: GFM pads short rows
+    // and drops extra cells, and a model miscounting pipes should not cost
+    // the whole document.
+    const padded = Array.from({ length: width }, (_unused, index) => cells[index] ?? '');
+    content.push({ type: 'tableRow', content: padded.map((cell) => tableCell(cell, false)) });
+  }
+
+  return {
+    type: 'table',
+    attrs: { isNumberColumnEnabled: false, layout: 'default' },
+    content,
+  };
 }
 
 function codeBlock(body: string, language: string): AdfNode {

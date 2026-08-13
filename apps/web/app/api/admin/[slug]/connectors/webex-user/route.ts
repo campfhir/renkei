@@ -76,9 +76,6 @@ export async function PUT(
   if (typeof clientId !== 'string' || clientId.length === 0) {
     return NextResponse.json({ error: 'clientId is required' }, { status: 400 });
   }
-  if (typeof clientSecret !== 'string' || clientSecret.length === 0) {
-    return NextResponse.json({ error: 'clientSecret is required' }, { status: 400 });
-  }
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
   const scopes =
     typeof body.scopes === 'string' && body.scopes ? body.scopes : DEFAULT_WEBEX_USER_SCOPES;
@@ -88,10 +85,26 @@ export async function PUT(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
+  // Secrets survive settings-only saves: setConnectorConfig replaces secrets
+  // wholesale, so a blank/omitted secret is merged with the stored one here.
+  // A secret is required only when none is stored yet.
+  const existing = await getConnectorConfig(tenantRef.id, WEBEX_USER_CONNECTOR, keyResult.val);
+  const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
+  const mergedClientSecret =
+    typeof clientSecret === 'string' && clientSecret.length > 0
+      ? clientSecret
+      : storedSecrets.clientSecret;
+  if (!mergedClientSecret) {
+    return NextResponse.json(
+      { error: 'clientSecret is required (none stored yet)' },
+      { status: 400 }
+    );
+  }
+
   const writeResult = await setConnectorConfig(
     tenantRef.id,
     WEBEX_USER_CONNECTOR,
-    { enabled, settings: { clientId, scopes }, secrets: { clientSecret } },
+    { enabled, settings: { clientId, scopes }, secrets: { clientSecret: mergedClientSecret } },
     keyResult.val
   );
   if (!writeResult.ok) {

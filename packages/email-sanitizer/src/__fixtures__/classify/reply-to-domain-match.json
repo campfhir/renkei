@@ -1,0 +1,20 @@
+{
+  "description": "A reply_to_domain rule matches on a no-reply Reply-To address even though From and Sender both look ordinary",
+  "rules": [
+    {
+      "id": "r8",
+      "category": "system_notification",
+      "matchType": "reply_to_domain",
+      "matchValue": "notifications.onedrive.com",
+      "senderKey": "onedrive",
+      "priority": 10,
+      "enabled": true
+    }
+  ],
+  "email": {
+    "fromAddress": "scott.eremia-roden@nems.org",
+    "subject": "A file was shared with you",
+    "replyToAddress": "do-not-reply@notifications.onedrive.com"
+  },
+  "expected": { "category": "system_notification", "matchedRuleId": "r8", "senderKey": "onedrive" }
+}

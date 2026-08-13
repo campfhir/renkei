@@ -7,15 +7,15 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 
 export async function registerUserTools(server: McpServer, context: MCPToolContext): Promise<void> {
-  // list_users
+  // jira_list_users
   server.registerTool(
-    'list_users',
+    'jira_list_users',
     {
-      title: 'List Jira users',
+      title: 'Jira · Read — List Jira users',
       description: 'List users with optional search and pagination.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -25,7 +25,7 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_users invoked', {
+      logger.info('jira_list_users invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -52,7 +52,20 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
           ),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (users.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Name, Email, Account id) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -64,11 +77,11 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     }
   );
 
-  // get_user
+  // jira_get_user
   server.registerTool(
-    'get_user',
+    'jira_get_user',
     {
-      title: 'Get user details',
+      title: 'Jira · Read — Get user details',
       description: 'Get detailed information about a specific user by account ID or email.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -77,7 +90,7 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('get_user invoked', {
+      logger.info('jira_get_user invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -108,7 +121,18 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
           `Avatar: ${user.avatarUrls?.['16x16'] || 'N/A'}`,
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a small profile card (name, email, account id, and anything else returned) ' +
+                  'usually reads better for a single person than a table.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -120,11 +144,11 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     }
   );
 
-  // list_groups
+  // jira_list_groups
   server.registerTool(
-    'list_groups',
+    'jira_list_groups',
     {
-      title: 'List Jira groups',
+      title: 'Jira · Read — List Jira groups',
       description: 'List all groups or search for groups by name.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -134,7 +158,7 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_groups invoked', {
+      logger.info('jira_list_groups invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -154,7 +178,20 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
 
         const lines = [`Found ${groups.length} groups:`, ...groups.map((g: any) => `• ${g.name}`)];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (groups.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Group name, id) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -166,11 +203,11 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     }
   );
 
-  // list_group_members
+  // jira_list_group_members
   server.registerTool(
-    'list_group_members',
+    'jira_list_group_members',
     {
-      title: 'List members of a group',
+      title: 'Jira · Read — List members of a group',
       description: 'List all members of a specific group.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -180,7 +217,7 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('list_group_members invoked', {
+      logger.info('jira_list_group_members invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -209,7 +246,20 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
           ...members.map((m: any) => `• ${m.displayName} (${m.emailAddress})`),
         ];
 
-        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        if (members.length === 0) {
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                lines.join('\n'),
+                'a table (Name, Email) usually scans faster than this flat list.'
+              ),
+            },
+          ],
+        };
       } catch (error) {
         return {
           content: [
@@ -221,11 +271,11 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     }
   );
 
-  // get_user_groups
+  // jira_get_user_groups
   server.registerTool(
-    'get_user_groups',
+    'jira_get_user_groups',
     {
-      title: 'Get groups for a user',
+      title: 'Jira · Read — Get groups for a user',
       description: 'List all groups that a user belongs to.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -234,7 +284,7 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('get_user_groups invoked', {
+      logger.info('jira_get_user_groups invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

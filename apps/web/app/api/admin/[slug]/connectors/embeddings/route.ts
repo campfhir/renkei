@@ -92,9 +92,6 @@ export async function PUT(
   if (typeof model !== 'string' || !model) {
     return NextResponse.json({ error: 'model is required' }, { status: 400 });
   }
-  if (typeof apiKey !== 'string' || !apiKey) {
-    return NextResponse.json({ error: 'apiKey is required' }, { status: 400 });
-  }
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
@@ -102,10 +99,20 @@ export async function PUT(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
+  // Secrets survive settings-only saves: setConnectorConfig replaces secrets
+  // wholesale, so a blank/omitted secret is merged with the stored one here.
+  // A key is required only when none is stored yet.
+  const existing = await getConnectorConfig(tenantId, EMBEDDINGS_CONNECTOR, keyResult.val);
+  const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
+  const mergedApiKey = typeof apiKey === 'string' && apiKey ? apiKey : storedSecrets.apiKey;
+  if (!mergedApiKey) {
+    return NextResponse.json({ error: 'apiKey is required (none stored yet)' }, { status: 400 });
+  }
+
   const writeResult = await setConnectorConfig(
     tenantId,
     EMBEDDINGS_CONNECTOR,
-    { enabled, settings: { baseUrl, model }, secrets: { apiKey } },
+    { enabled, settings: { baseUrl, model }, secrets: { apiKey: mergedApiKey } },
     keyResult.val
   );
   if (!writeResult.ok) {

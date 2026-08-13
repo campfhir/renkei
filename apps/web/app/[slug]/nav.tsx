@@ -93,6 +93,8 @@ export default function AppNav({
       items: [
         { href: `/${slug}/home`, label: 'Home' },
         { href: `/${slug}/connectors`, label: 'Connectors' },
+        { href: `/${slug}/knowledge`, label: 'Knowledge' },
+        { href: `/${slug}/mail-review`, label: 'Mail review' },
         { href: `/${slug}/logs`, label: 'Activity' },
       ],
     },
@@ -102,6 +104,7 @@ export default function AppNav({
             label: 'Organization',
             items: [
               { href: `/${slug}/admin/connectors`, label: 'Connector setup' },
+              { href: `/${slug}/admin/email-sanitizer`, label: 'Email sanitizer' },
               { href: `/${slug}/admin/grants`, label: 'Grants' },
               { href: `/${slug}/admin/people`, label: 'People' },
               { href: `/${slug}/admin/sites`, label: 'Jira sites' },

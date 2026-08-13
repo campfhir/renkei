@@ -58,6 +58,15 @@ export interface MCPToolContext {
   grantedScopes?: string[];
   /** Same, for the caller's WebEx user grant when one exists. */
   webexScopes?: string[];
+  /** Same, for the caller's Microsoft grant when one exists. */
+  graphScopes?: string[];
+  /**
+   * Same, for the caller's Zoom grant — but computed as requested ∩ granted
+   * (or bare requested when granted is unknown): Zoom tokens always carry
+   * the Marketplace app's full scope set, so bare granted would erase the
+   * user's narrowing.
+   */
+  zoomScopes?: string[];
   /**
    * The caller's grant on the second Atlassian app ("Renkei JSM": JSM + Ops
    * scopes), when connected. JSM/Ops tools run on THIS token; absent, they
@@ -69,6 +78,15 @@ export interface MCPToolContext {
     accountId: string;
     scopes?: string[];
   };
+  /**
+   * Same, for the caller's grant on the third Atlassian app ("Renkei
+   * Confluence"). Unlike jsmGrant above, Confluence tools don't reuse
+   * Jira's apiBaseUrl/accessToken context fields — Confluence is a
+   * different product with its own gateway path, so each tool resolves
+   * its own access fresh per call (Outlook/WebEx/Zoom-style). Only the
+   * scopes are needed on the context, for the registration-time gate.
+   */
+  confluenceScopes?: string[];
   db?: Kysely<DB>;
 }
 
@@ -120,6 +138,21 @@ export function okWithLink(text: string, url: string): MCPToolResult {
 
 export function toolError(text: string): MCPToolResult {
   return { type: 'text', text };
+}
+
+/**
+ * A trailing note appended to a list/detail-shaped tool result, nudging the
+ * calling model toward a more scannable reply than echoing this flat text
+ * back verbatim — a table, a card, a grouped layout, whatever fits the data
+ * — without dictating exactly what that looks like. Cheap to add, easy to
+ * ignore when a flat list is already the right call (a couple of results,
+ * or the user asked for raw output). Shared across connectors so every tool
+ * file (Jira, JSM, WebEx, Zoom, Outlook) phrases this the same way; see
+ * `apps/web/lib/mcp-tools/outlook/index.ts` for the pattern this generalized
+ * from.
+ */
+export function withPresentationHint(body: string, suggestion: string): string {
+  return `${body}\n\n(Presentation hint: ${suggestion})`;
 }
 
 /** Generate a link to a Jira issue. */

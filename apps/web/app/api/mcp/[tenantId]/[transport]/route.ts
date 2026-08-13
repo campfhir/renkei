@@ -18,9 +18,15 @@ import { registerAllTools, cacheTokenMetadata, cacheUserDisplayName } from '@/li
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
+import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/outlook';
+import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
+import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
 import {
   WEBEX_USER,
   ATLASSIAN_JSM,
+  ATLASSIAN_CONFLUENCE,
+  MICROSOFT,
+  ZOOM,
   getGrant,
   readAtlassianMetadata,
 } from '@renkei/provider-grants';
@@ -42,14 +48,21 @@ function getCacheKey(
   readOnly: boolean,
   knowledgeAvailable: boolean,
   webexAvailable: boolean,
+  microsoftAvailable: boolean,
+  zoomAvailable: boolean,
+  confluenceAvailable: boolean,
   userEmail: string | null
 ): string {
   // Everything the registered tool set or a handler closure depends on must
   // be part of the key, or a change takes effect only on process restart:
   // the org's read-only mode, whether the knowledge layer is provisioned,
-  // whether this caller holds a WebEx user grant, and the caller's recorded
-  // email (captured by search_knowledge's closure).
-  return `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:${webexAvailable ? 'w' : 'nw'}:${userEmail ?? ''}`;
+  // which per-user connector grants this caller holds, and the caller's
+  // recorded email (captured by search_knowledge's closure).
+  return (
+    `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:` +
+    `${webexAvailable ? 'w' : 'nw'}:${microsoftAvailable ? 'm' : 'nm'}:${zoomAvailable ? 'z' : 'nz'}:` +
+    `${confluenceAvailable ? 'c' : 'nc'}:${userEmail ?? ''}`
+  );
 }
 
 /**
@@ -159,13 +172,14 @@ const handler = async (
       .execute();
 
     if (grants.length === 0) {
-      // No grant found - register only the connect_jira tool
+      // No grant found - register only the jira_connect tool
       const mcpHandler = createMcpHandler(
         async (server: McpServer) => {
           server.registerTool(
-            'connect_jira',
+            'jira_connect',
             {
-              title: 'Connect Jira',
+              title: 'Jira · Read — Connect Jira',
+              annotations: { readOnlyHint: true },
               description:
                 'Jira is not connected. Click this link to authenticate: [Connect Jira](' +
                 origin +
@@ -183,7 +197,7 @@ const handler = async (
         },
         {
           serverInfo: {
-            name: 'Jira Renkei MCP',
+            name: 'Renkei MCP',
             version: '1.0.0',
           },
           instructions: 'Jira authentication required',
@@ -266,6 +280,60 @@ const handler = async (
       : [];
     const jiraScopes = grant.grantedScopes ?? grant.requestedScopes;
 
+    // The Outlook tools register only when this caller has connected their
+    // own Microsoft account. Same granted-over-requested rule as WebEx.
+    const microsoftGrantRow = await db
+      .selectFrom('provider_grants')
+      .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
+      .where('tenant_id', '=', tenantId)
+      .where('provider', '=', MICROSOFT)
+      .where('subject', '=', subject)
+      .limit(1)
+      .executeTakeFirst();
+    const microsoftAvailable = microsoftGrantRow !== undefined;
+    const graphScopes = microsoftGrantRow
+      ? (microsoftGrantRow.granted_scopes ?? microsoftGrantRow.requested_scopes)
+      : [];
+
+    // Zoom inverts the rule: the token ALWAYS carries the Marketplace app's
+    // full scope set (Zoom cannot narrow at consent), so bare granted would
+    // erase the user's narrowing. Requested ∩ granted when both are known;
+    // requested alone otherwise.
+    const zoomGrantRow = await db
+      .selectFrom('provider_grants')
+      .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
+      .where('tenant_id', '=', tenantId)
+      .where('provider', '=', ZOOM)
+      .where('subject', '=', subject)
+      .limit(1)
+      .executeTakeFirst();
+    const zoomAvailable = zoomGrantRow !== undefined;
+    const zoomScopes = zoomGrantRow
+      ? zoomGrantRow.granted_scopes
+        ? zoomGrantRow.requested_scopes.filter((scope) =>
+            zoomGrantRow.granted_scopes?.includes(scope)
+          )
+        : zoomGrantRow.requested_scopes
+      : [];
+
+    // The Confluence tools register only when this caller has connected the
+    // third Atlassian app ("Renkei Confluence"). Same granted-over-requested
+    // rule as WebEx/Microsoft — Confluence resolves its own access token
+    // fresh per call (see confluence/client.ts), so only availability and
+    // scopes are needed here.
+    const confluenceGrantRow = await db
+      .selectFrom('provider_grants')
+      .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
+      .where('tenant_id', '=', tenantId)
+      .where('provider', '=', ATLASSIAN_CONFLUENCE)
+      .where('subject', '=', subject)
+      .limit(1)
+      .executeTakeFirst();
+    const confluenceAvailable = confluenceGrantRow !== undefined;
+    const confluenceScopes = confluenceGrantRow
+      ? (confluenceGrantRow.granted_scopes ?? confluenceGrantRow.requested_scopes)
+      : [];
+
     // The second Atlassian app's grant ("Renkei JSM": JSM + Ops scopes) —
     // JSM/Ops tools run on this token when it exists; absent, they fall back
     // to the main grant, the pre-split single-app shape.
@@ -284,7 +352,11 @@ const handler = async (
     // Check cache. The tool set now varies with every grant's scopes, so they
     // are part of the key — a reconnect with different scopes must not be
     // served a handler built for the old ones.
-    const scopeFingerprint = `${[...jiraScopes].sort().join(',')}|${[...webexScopes].sort().join(',')}|${[...jsmScopes].sort().join(',')}:${jsmGrant ? 'jsm' : 'nojsm'}`;
+    const scopeFingerprint =
+      `${[...jiraScopes].sort().join(',')}|${[...webexScopes].sort().join(',')}|` +
+      `${[...jsmScopes].sort().join(',')}:${jsmGrant ? 'jsm' : 'nojsm'}|` +
+      `${[...graphScopes].sort().join(',')}|${[...zoomScopes].sort().join(',')}|` +
+      `${[...confluenceScopes].sort().join(',')}`;
     const cacheKey =
       getCacheKey(
         tenantId,
@@ -292,6 +364,9 @@ const handler = async (
         settings.readOnly,
         knowledgeAvailable,
         webexAvailable,
+        microsoftAvailable,
+        zoomAvailable,
+        confluenceAvailable,
         userEmail
       ) + `:${scopeFingerprint}`;
     let cachedHandler = handlerCache.get(cacheKey);
@@ -323,6 +398,9 @@ const handler = async (
               subject,
               grantedScopes: jiraScopes,
               webexScopes: webexAvailable ? webexScopes : undefined,
+              graphScopes: microsoftAvailable ? graphScopes : undefined,
+              zoomScopes: zoomAvailable ? zoomScopes : undefined,
+              confluenceScopes: confluenceAvailable ? confluenceScopes : undefined,
               jsmGrant: jsmGrant ?? undefined,
               db,
             };
@@ -345,6 +423,9 @@ const handler = async (
                   JIRA_CONNECTOR,
                   ...(knowledgeAvailable ? [KNOWLEDGE_CONNECTOR] : []),
                   ...(webexAvailable ? [WEBEX_USER_MCP_CONNECTOR] : []),
+                  ...(microsoftAvailable ? [OUTLOOK_MCP_CONNECTOR] : []),
+                  ...(zoomAvailable ? [ZOOM_MCP_CONNECTOR] : []),
+                  ...(confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
                 ],
                 hiddenCapabilities: [],
               }
@@ -357,6 +438,24 @@ const handler = async (
             if (webexAvailable) {
               await registerWebexUserTools(
                 withCapabilityGate(server, projection, WEBEX_USER_MCP_CONNECTOR),
+                context
+              );
+            }
+            if (microsoftAvailable) {
+              await registerOutlookTools(
+                withCapabilityGate(server, projection, OUTLOOK_MCP_CONNECTOR),
+                context
+              );
+            }
+            if (zoomAvailable) {
+              await registerZoomTools(
+                withCapabilityGate(server, projection, ZOOM_MCP_CONNECTOR),
+                context
+              );
+            }
+            if (confluenceAvailable) {
+              await registerConfluenceTools(
+                withCapabilityGate(server, projection, CONFLUENCE_MCP_CONNECTOR),
                 context
               );
             }
@@ -382,10 +481,17 @@ const handler = async (
         },
         {
           serverInfo: {
-            name: 'Jira Renkei MCP',
+            name: 'Renkei MCP',
             version: '1.0.0',
           },
-          instructions: 'Jira work item management via MCP',
+          instructions:
+            'Renkei: org tools over MCP. Tools are named <connector>_<verb>_<noun> and titled ' +
+            '"Connector · Read|Act". Connectors: Jira (jira_*), Jira Service Management ' +
+            '(jsm_*, jsm_ops_*), WebEx (webex_*), Outlook/Microsoft 365 (outlook_*), Zoom ' +
+            '(zoom_*), plus search_knowledge (org knowledge, access-verified per user), ' +
+            'analyze_transcript (meeting transcript to suggested Jira actions) and whoami. ' +
+            'Read tools are safe anywhere; Act tools change systems and are disabled in org ' +
+            'read-only mode.',
           verboseLogs: false,
         }
       );

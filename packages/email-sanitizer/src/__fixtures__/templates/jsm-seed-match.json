@@ -1,0 +1,20 @@
+{
+  "description": "The seeded JSM template matches a well-formed sample and extracts its fields",
+  "segments": [
+    { "type": "literal", "text": "Request" },
+    { "type": "field", "name": "requestKey", "pattern": "[A-Z][A-Z0-9]+-\\d+" },
+    { "type": "literal", "text": "has been updated" },
+    { "type": "field", "name": "statusChange" },
+    { "type": "literal", "text": "View request" },
+    { "type": "field", "name": "trailing" },
+    { "type": "literal", "text": "This message was sent by Jira Service Management" }
+  ],
+  "matchThreshold": 0.85,
+  "sample": "Request HELP-77 has been updated\nStatus changed to In Progress\nView request\nManage notifications\nThis message was sent by Jira Service Management",
+  "expectedFields": {
+    "requestKey": "HELP-77",
+    "statusChange": "Status changed to In Progress",
+    "trailing": "Manage notifications"
+  },
+  "expectMinScore": 1
+}

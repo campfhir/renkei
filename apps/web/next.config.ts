@@ -23,6 +23,8 @@ const nextConfig: NextConfig = {
     '@renkei/capability-registry',
     '@renkei/connector-config',
     '@renkei/connector-webex',
+    '@renkei/connector-microsoft',
+    '@renkei/connector-zoom',
     '@renkei/settings',
     '@renkei/gates',
     '@renkei/knowledge',

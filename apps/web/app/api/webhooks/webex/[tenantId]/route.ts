@@ -2,9 +2,10 @@
  * WebEx webhook receipt — deliberately thin (RENKEI.md Decision #17).
  *
  * This route does exactly three things: verify the delivery signature over
- * the raw body, validate the payload's shape, and INSERT an event row. All
- * processing — fetching the message, classification, producing an actionable
- * item — happens in the worker, which consumes the events table. WebEx
+ * the raw body, validate the payload's shape, and produce onto the webhook
+ * events queue (@renkei/queue). All processing — fetching the message,
+ * classification, producing an actionable item — happens in the worker,
+ * which consumes that queue. WebEx
  * retries slow webhook endpoints aggressively; acknowledging fast and
  * processing asynchronously is the correct shape as well as ours.
  *
@@ -15,8 +16,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { randomUUID } from 'crypto';
 import { getDatabase } from '@renkei/db';
+import { webhookEventsQueue } from '@renkei/queue';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import {
@@ -25,6 +26,8 @@ import {
   WEBEX_CONNECTOR,
 } from '@renkei/connector-webex';
 import { logger } from '@/lib/logger';
+
+const eventsQueue = webhookEventsQueue();
 
 export async function POST(
   request: NextRequest,
@@ -92,16 +95,23 @@ export async function POST(
     return NextResponse.json({ error: 'Malformed webhook payload' }, { status: 400 });
   }
 
-  await db
-    .insertInto('events')
-    .values({
-      id: randomUUID(),
-      tenant_id: tenantId,
-      source: WEBEX_CONNECTOR,
-      type: payload.val.type,
-      payload: JSON.stringify(payload.val.data),
-    })
-    .execute();
+  const enqueued = await eventsQueue.producer.enqueue({
+    tenantId,
+    source: WEBEX_CONNECTOR,
+    type: payload.val.type,
+    payload: payload.val.data,
+    // One room's messages process in order even with several interactive
+    // workers; different rooms parallelize.
+    orderingKey: payload.val.roomId ? `webex/${tenantId}/${payload.val.roomId}` : null,
+  });
+  if (!enqueued.ok) {
+    logger.error('Event NOT accepted: {error}', {
+      component: 'webex/webhook',
+      tenantId,
+      error: enqueued.err.message ?? 'unknown',
+    });
+    return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });
+  }
 
   logger.info('Event accepted', { component: 'webex/webhook', tenantId, type: payload.val.type });
   return NextResponse.json({ accepted: true });

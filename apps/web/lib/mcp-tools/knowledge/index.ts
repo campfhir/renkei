@@ -15,8 +15,24 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
 import { WEBEX_CONNECTOR, WebexClient, createWebexAccessVerifier } from '@renkei/connector-webex';
+import { MICROSOFT_CONNECTOR, createMicrosoftAccessVerifier } from '@renkei/connector-microsoft';
+import { ZOOM_CONNECTOR, createZoomAccessVerifier } from '@renkei/connector-zoom';
+import {
+  createJiraAccessVerifier,
+  createConfluenceAccessVerifier,
+  JIRA_KNOWLEDGE_PROVIDER,
+  CONFLUENCE_KNOWLEDGE_PROVIDER,
+} from '@renkei/connector-atlassian';
+import {
+  getGrant,
+  readAtlassianMetadata,
+  ATLASSIAN,
+  ATLASSIAN_CONFLUENCE,
+} from '@renkei/provider-grants';
+import { getDatabase } from '@renkei/db';
 import type { AccessVerifier } from '@renkei/gates';
-import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
+import type { KnowledgeHit, SourceFilter } from '@renkei/knowledge';
+import { resolveEmbeddingProvider, searchKnowledge, listRecentKnowledge } from '@renkei/knowledge';
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
 
@@ -27,8 +43,14 @@ export const KNOWLEDGE_CONNECTOR = 'knowledge';
  * The verifiers for every provider whose chunks might be proposed. A
  * provider without a configured connector contributes no verifier, and the
  * gate denies its chunks by default — never a silent pass.
+ *
+ * Exported so every caller of searchKnowledge — the MCP tool here, and the
+ * self-service search page — wires the exact same ACL gate. Two verifier
+ * sets built separately would drift the moment a connector is added.
  */
-async function buildVerifiers(tenantId: string): Promise<ReadonlyMap<string, AccessVerifier>> {
+export async function buildKnowledgeVerifiers(
+  tenantId: string
+): Promise<ReadonlyMap<string, AccessVerifier>> {
   const verifiers = new Map<string, AccessVerifier>();
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) return verifiers;
@@ -40,11 +62,178 @@ async function buildVerifiers(tenantId: string): Promise<ReadonlyMap<string, Acc
       createWebexAccessVerifier(new WebexClient(webexResult.val.secrets.botToken))
     );
   }
+
+  // Microsoft and Zoom chunks embed their owner in the refId, so their
+  // verifiers are pure ownership checks — no client, no config needed. They
+  // are registered unconditionally: with no chunks they never fire, and
+  // without them every microsoft/zoom chunk would be default-denied.
+  verifiers.set(MICROSOFT_CONNECTOR, createMicrosoftAccessVerifier());
+  verifiers.set(ZOOM_CONNECTOR, createZoomAccessVerifier());
+
+  // Atlassian content has no owner encoded in its ref — a page is visible to
+  // whoever the site says it is — so these verifiers ask Atlassian live,
+  // with the CALLING user's own grant. Registered unconditionally for the
+  // same reason as above: absent them, every jira/confluence chunk is
+  // silently withheld, which looks identical to "nothing is indexed".
+  const encryptionKey = keyResult.val;
+  verifiers.set(
+    JIRA_KNOWLEDGE_PROVIDER,
+    createJiraAccessVerifier((userEmail) =>
+      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN, encryptionKey)
+    )
+  );
+  verifiers.set(
+    CONFLUENCE_KNOWLEDGE_PROVIDER,
+    createConfluenceAccessVerifier((userEmail) =>
+      atlassianCredentialFor(tenantId, userEmail, ATLASSIAN_CONFLUENCE, encryptionKey)
+    )
+  );
+
   return verifiers;
+}
+
+/**
+ * The caller's own Atlassian credential, found from their email.
+ *
+ * The gate hands verifiers an EMAIL (the identity spine's key), while
+ * grants are keyed by OIDC subject — so this hops identities → provider
+ * grants. Anything missing returns null, which denies: a user who has not
+ * connected the product cannot be shown its content on the index's word
+ * alone.
+ */
+async function atlassianCredentialFor(
+  tenantId: string,
+  userEmail: string,
+  provider: string,
+  encryptionKey: Parameters<typeof getGrant>[3]
+): Promise<{ accessToken: string; cloudId: string } | null> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return null;
+
+  const row = await dbResult.val
+    .selectFrom('identities')
+    .innerJoin('provider_grants', (join) =>
+      join
+        .onRef('provider_grants.subject', '=', 'identities.subject')
+        .onRef('provider_grants.tenant_id', '=', 'identities.tenant_id')
+    )
+    .select('provider_grants.provider_account_id')
+    .where('identities.tenant_id', '=', tenantId)
+    .where('identities.email', '=', userEmail)
+    .where('provider_grants.provider', '=', provider)
+    .limit(1)
+    .executeTakeFirst();
+  if (!row) return null;
+
+  const grantResult = await getGrant(provider, tenantId, row.provider_account_id, encryptionKey);
+  if (!grantResult.ok || !grantResult.val) return null;
+  const site = readAtlassianMetadata(grantResult.val.metadata);
+  if (!site.cloudId) return null;
+  return { accessToken: grantResult.val.accessToken, cloudId: site.cloudId };
 }
 
 function formatDistance(distance: number): string {
   return Number.isFinite(distance) ? distance.toFixed(3) : String(distance);
+}
+
+/**
+ * Caller-facing source names → the storage vocabulary. The stored
+ * `provider` is the connector ('microsoft'), not the product a person
+ * would name ('outlook'), and the finer split lives in `metadata.kind`
+ * with a per-connector vocabulary. Mapping here means a caller never has
+ * to know either, and the storage names stay free to change.
+ */
+const SOURCE_FILTERS: Record<string, { provider: string; kind?: string }> = {
+  outlook_mail: { provider: 'microsoft', kind: 'msg' },
+  outlook_calendar: { provider: 'microsoft', kind: 'evt' },
+  outlook_tasks: { provider: 'microsoft', kind: 'task' },
+  zoom: { provider: 'zoom' },
+  webex: { provider: 'webex' },
+  confluence: { provider: 'confluence' },
+  jira: { provider: 'jira' },
+};
+
+export const KNOWLEDGE_SOURCE_NAMES = Object.keys(SOURCE_FILTERS);
+
+/**
+ * The source name a hit would have been filtered under — the inverse of
+ * SOURCE_FILTERS. Results are labelled in the same vocabulary the `sources`
+ * argument accepts, so a caller can narrow a follow-up query by copying the
+ * token back; the storage provider alone can't do that, since `microsoft`
+ * covers mail, calendar and tasks alike.
+ */
+function sourceNameOf(hit: KnowledgeHit): string {
+  const kind = typeof hit.metadata.kind === 'string' ? hit.metadata.kind : undefined;
+  for (const [name, filter] of Object.entries(SOURCE_FILTERS)) {
+    if (filter.provider !== hit.provider) continue;
+    if (filter.kind === undefined || filter.kind === kind) return name;
+  }
+  return hit.provider;
+}
+
+/**
+ * Turn selected source names into the provider/kind pairs the knowledge
+ * layer ORs together.
+ *
+ * Each name keeps its own kind. An earlier version handed back separate
+ * provider and kind lists, which the SQL then AND-ed: selecting Email plus
+ * Jira had to drop the kind to keep Jira, and silently returned calendar
+ * events under an "Email" filter.
+ */
+export function sourceFiltersFor(sources: readonly string[]): SourceFilter[] {
+  return sources
+    .map((source) => SOURCE_FILTERS[source])
+    .filter((filter): filter is { provider: string; kind?: string } => Boolean(filter))
+    .map((filter) =>
+      filter.kind ? { provider: filter.provider, kind: filter.kind } : { provider: filter.provider }
+    );
+}
+
+/** A hit's human title, from whichever metadata key its connector set. */
+function titleOf(metadata: Record<string, unknown>): string {
+  for (const key of ['subject', 'topic', 'title']) {
+    const value = metadata[key];
+    if (typeof value === 'string' && value) return value;
+  }
+  return '';
+}
+
+/**
+ * One renderer for both paths so search and browse can't drift in shape.
+ * `browsing` only changes the wording — ordering is by recency there, and
+ * a distance of 0 would be a lie if it were labelled as a match score.
+ */
+function renderHits(result: { hits: KnowledgeHit[]; elided: number }, browsing: boolean): string {
+  const { hits, elided } = result;
+  const lines: string[] = [];
+  if (hits.length === 0) {
+    lines.push(browsing ? 'Nothing indexed yet for those filters.' : 'No accessible results.');
+  } else {
+    lines.push(
+      browsing
+        ? `${hits.length} most recent indexed item(s), newest first:`
+        : `${hits.length} result(s), closest first:`
+    );
+    for (const [index, hit] of hits.entries()) {
+      const excerpt = hit.content.length <= 500 ? hit.content : `${hit.content.slice(0, 499)}…`;
+      lines.push(
+        '',
+        `${index + 1}. ${titleOf(hit.metadata) || '(untitled)'}` +
+          (hit.sourceAt ? ` — ${hit.sourceAt}` : '') +
+          ` — ${sourceNameOf(hit)}` +
+          ` — [${hit.provider}:${hit.refId}]` +
+          (browsing ? '' : ` (distance ${formatDistance(hit.distance)})`),
+        excerpt
+      );
+    }
+  }
+  if (elided > 0) {
+    lines.push(
+      '',
+      `${elided} result(s) withheld: your access could not be verified at the source.`
+    );
+  }
+  return lines.join('\n');
 }
 
 export async function registerKnowledgeTools(
@@ -54,15 +243,23 @@ export async function registerKnowledgeTools(
   server.registerTool(
     'search_knowledge',
     {
-      title: 'Search org knowledge',
+      title: 'Knowledge · Read — Search org knowledge',
       description:
-        'Semantic search over what Renkei has indexed from connected tools ' +
-        '(WebEx today; Confluence and SharePoint as they arrive). Results are ' +
+        'Semantic search over what Renkei has indexed from connected tools — ' +
+        'Outlook mail/calendar/tasks, Confluence, Jira, Zoom and WebEx, as far as ' +
+        'each has been indexed. Results are ' +
         'verified against the source system for YOUR access before disclosure — ' +
         'anything you cannot open at the source is withheld and reported as a count.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        query: z.string().min(1).max(2000).describe('What to search for, in natural language'),
+        query: z
+          .string()
+          .max(2000)
+          .describe(
+            'What to search for, in natural language. Leave EMPTY to browse the most recent ' +
+              'indexed items instead of searching — useful with `sources` to answer "what is in ' +
+              'here?" or "what came in lately from Confluence?"'
+          ),
         k: z
           .number()
           .int()
@@ -70,6 +267,30 @@ export async function registerKnowledgeTools(
           .max(10)
           .optional()
           .describe('Maximum results to return (1-10, default 5)'),
+        sources: z
+          .array(
+            z.enum([
+              'outlook_mail',
+              'outlook_calendar',
+              'outlook_tasks',
+              'zoom',
+              'webex',
+              'confluence',
+              'jira',
+            ])
+          )
+          .optional()
+          .describe('Only search these sources (default: everything indexed)'),
+        after: z
+          .string()
+          .optional()
+          .describe(
+            'Only items dated on/after this ISO-8601 time. Items the connector never dated are excluded.'
+          ),
+        before: z
+          .string()
+          .optional()
+          .describe('Only items dated before this ISO-8601 time. Undated items are excluded.'),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -81,9 +302,6 @@ export async function registerKnowledgeTools(
 
       const query = typeof args.query === 'string' ? args.query : '';
       const k = typeof args.k === 'number' ? Math.min(Math.max(Math.trunc(args.k), 1), 10) : 5;
-      if (!query.trim()) {
-        return { content: [{ type: 'text' as const, text: 'query is required' }], isError: true };
-      }
 
       // No recorded email = nothing can be verified = nothing is disclosed.
       const userEmail = context.userEmail;
@@ -101,6 +319,34 @@ export async function registerKnowledgeTools(
         };
       }
 
+      const sources = Array.isArray(args.sources)
+        ? args.sources.filter((source): source is string => typeof source === 'string')
+        : [];
+      const sourceFilters = sourceFiltersFor(sources);
+      const verifiers = await buildKnowledgeVerifiers(context.tenantId);
+
+      // No query: answer with the newest indexed items rather than an
+      // error. Needs no embedder, so "what's in here?" works even before an
+      // org configures one.
+      if (!query.trim()) {
+        const recent = await listRecentKnowledge({
+          tenantId: context.tenantId,
+          userEmail,
+          k,
+          verifiers,
+          ...(sourceFilters.length > 0 ? { sources: sourceFilters } : {}),
+          ...(typeof args.after === 'string' && args.after ? { after: args.after } : {}),
+          ...(typeof args.before === 'string' && args.before ? { before: args.before } : {}),
+        });
+        if (!recent.ok) {
+          return {
+            content: [{ type: 'text' as const, text: 'The knowledge store could not be read.' }],
+            isError: true,
+          };
+        }
+        return { content: [{ type: 'text' as const, text: renderHits(recent.val, true) }] };
+      }
+
       const embedder = await resolveEmbeddingProvider(context.tenantId);
       if (!embedder) {
         return {
@@ -114,7 +360,6 @@ export async function registerKnowledgeTools(
         };
       }
 
-      const verifiers = await buildVerifiers(context.tenantId);
       const searched = await searchKnowledge({
         tenantId: context.tenantId,
         userEmail,
@@ -122,6 +367,9 @@ export async function registerKnowledgeTools(
         k,
         embedder,
         verifiers,
+        ...(sourceFilters.length > 0 ? { sources: sourceFilters } : {}),
+        ...(typeof args.after === 'string' && args.after ? { after: args.after } : {}),
+        ...(typeof args.before === 'string' && args.before ? { before: args.before } : {}),
       });
       if (!searched.ok) {
         const reason =
@@ -131,29 +379,7 @@ export async function registerKnowledgeTools(
         return { content: [{ type: 'text' as const, text: reason }], isError: true };
       }
 
-      const { hits, elided } = searched.val;
-      const lines: string[] = [];
-      if (hits.length === 0) {
-        lines.push('No accessible results.');
-      } else {
-        lines.push(`${hits.length} result(s), closest first:`);
-        for (const [index, hit] of hits.entries()) {
-          const excerpt = hit.content.length <= 500 ? hit.content : `${hit.content.slice(0, 499)}…`;
-          lines.push(
-            '',
-            `${index + 1}. [${hit.provider}:${hit.refId}] (distance ${formatDistance(hit.distance)})`,
-            excerpt
-          );
-        }
-      }
-      if (elided > 0) {
-        lines.push(
-          '',
-          `${elided} result(s) withheld: your access could not be verified at the source.`
-        );
-      }
-
-      return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+      return { content: [{ type: 'text' as const, text: renderHits(searched.val, false) }] };
     }
   );
 }

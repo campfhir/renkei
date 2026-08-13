@@ -31,6 +31,14 @@ describe('scopesFromAccessToken', () => {
     expect(scopesFromAccessToken(token)).toEqual(['a', 'b']);
   });
 
+  it("decodes Microsoft's scp claim", () => {
+    const token = jwtWithPayload({
+      aud: 'https://graph.microsoft.com',
+      scp: 'Mail.Read User.Read',
+    });
+    expect(scopesFromAccessToken(token)).toEqual(['Mail.Read', 'User.Read']);
+  });
+
   it('finds a provider-namespaced scope claim', () => {
     const token = jwtWithPayload({ 'https://id.atlassian.com/scopes': ['x:y'] });
     expect(scopesFromAccessToken(token)).toEqual(['x:y']);
