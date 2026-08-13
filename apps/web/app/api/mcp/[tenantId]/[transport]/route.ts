@@ -19,6 +19,8 @@ import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-g
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
 import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/outlook';
+import { registerSharePointTools, SHAREPOINT_MCP_CONNECTOR } from '@/lib/mcp-tools/sharepoint';
+import { registerOneDriveTools, ONEDRIVE_MCP_CONNECTOR } from '@/lib/mcp-tools/onedrive';
 import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
 import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
 import {
@@ -49,6 +51,8 @@ function getCacheKey(
   knowledgeAvailable: boolean,
   webexAvailable: boolean,
   microsoftAvailable: boolean,
+  sharepointAvailable: boolean,
+  onedriveAvailable: boolean,
   zoomAvailable: boolean,
   confluenceAvailable: boolean,
   userEmail: string | null
@@ -61,6 +65,7 @@ function getCacheKey(
   return (
     `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:` +
     `${webexAvailable ? 'w' : 'nw'}:${microsoftAvailable ? 'm' : 'nm'}:${zoomAvailable ? 'z' : 'nz'}:` +
+    `${sharepointAvailable ? 's' : 'ns'}:${onedriveAvailable ? 'o' : 'no'}:` +
     `${confluenceAvailable ? 'c' : 'nc'}:${userEmail ?? ''}`
   );
 }
@@ -294,6 +299,13 @@ const handler = async (
     const graphScopes = microsoftGrantRow
       ? (microsoftGrantRow.granted_scopes ?? microsoftGrantRow.requested_scopes)
       : [];
+    // One Microsoft grant backs three namespaces, so which of them a caller
+    // has is a question about the SCOPES on that grant, not about a separate
+    // connection: someone who connected for mail alone has no SharePoint.
+    const sharepointAvailable =
+      microsoftAvailable && graphScopes.some((scope) => scope.startsWith('Sites.'));
+    const onedriveAvailable =
+      microsoftAvailable && graphScopes.some((scope) => scope.startsWith('Files.'));
 
     // Zoom inverts the rule: the token ALWAYS carries the Marketplace app's
     // full scope set (Zoom cannot narrow at consent), so bare granted would
@@ -365,6 +377,8 @@ const handler = async (
         knowledgeAvailable,
         webexAvailable,
         microsoftAvailable,
+        sharepointAvailable,
+        onedriveAvailable,
         zoomAvailable,
         confluenceAvailable,
         userEmail
@@ -424,6 +438,8 @@ const handler = async (
                   ...(knowledgeAvailable ? [KNOWLEDGE_CONNECTOR] : []),
                   ...(webexAvailable ? [WEBEX_USER_MCP_CONNECTOR] : []),
                   ...(microsoftAvailable ? [OUTLOOK_MCP_CONNECTOR] : []),
+                  ...(sharepointAvailable ? [SHAREPOINT_MCP_CONNECTOR] : []),
+                  ...(onedriveAvailable ? [ONEDRIVE_MCP_CONNECTOR] : []),
                   ...(zoomAvailable ? [ZOOM_MCP_CONNECTOR] : []),
                   ...(confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
                 ],
@@ -444,6 +460,18 @@ const handler = async (
             if (microsoftAvailable) {
               await registerOutlookTools(
                 withCapabilityGate(server, projection, OUTLOOK_MCP_CONNECTOR),
+                context
+              );
+            }
+            if (sharepointAvailable) {
+              await registerSharePointTools(
+                withCapabilityGate(server, projection, SHAREPOINT_MCP_CONNECTOR),
+                context
+              );
+            }
+            if (onedriveAvailable) {
+              await registerOneDriveTools(
+                withCapabilityGate(server, projection, ONEDRIVE_MCP_CONNECTOR),
                 context
               );
             }
@@ -487,8 +515,9 @@ const handler = async (
           instructions:
             'Renkei: org tools over MCP. Tools are named <connector>_<verb>_<noun> and titled ' +
             '"Connector · Read|Act". Connectors: Jira (jira_*), Jira Service Management ' +
-            '(jsm_*, jsm_ops_*), WebEx (webex_*), Outlook/Microsoft 365 (outlook_*), Zoom ' +
-            '(zoom_*), plus search_knowledge (org knowledge, access-verified per user), ' +
+            '(jsm_*, jsm_ops_*), WebEx (webex_*), Outlook/Microsoft 365 (outlook_*), ' +
+            'SharePoint (sharepoint_*), OneDrive (onedrive_*), Confluence (confluence_*), ' +
+            'Zoom (zoom_*), plus search_knowledge (org knowledge, access-verified per user), ' +
             'analyze_transcript (meeting transcript to suggested Jira actions) and whoami. ' +
             'Read tools are safe anywhere; Act tools change systems and are disabled in org ' +
             'read-only mode.',

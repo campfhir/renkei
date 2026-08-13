@@ -16,6 +16,7 @@ export default {
     '^@renkei/connector-config$': '<rootDir>/../../packages/connector-config/src/index.ts',
     '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
     '^@renkei/gates$': '<rootDir>/../../packages/gates/src/index.ts',
+    '^@renkei/document-text$': '<rootDir>/../../packages/document-text/src/index.ts',
     '^@renkei/knowledge$': '<rootDir>/../../packages/knowledge/src/index.ts',
     '^@renkei/queue$': '<rootDir>/../../packages/queue/src/index.ts',
   },

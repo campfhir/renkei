@@ -71,6 +71,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@renkei/document-text':
+        specifier: workspace:*
+        version: link:../../packages/document-text
       '@renkei/email-sanitizer':
         specifier: workspace:*
         version: link:../../packages/email-sanitizer

@@ -27,6 +27,7 @@ const nextConfig: NextConfig = {
     '@renkei/connector-zoom',
     '@renkei/settings',
     '@renkei/gates',
+    '@renkei/document-text',
     '@renkei/knowledge',
   ],
   async rewrites() {

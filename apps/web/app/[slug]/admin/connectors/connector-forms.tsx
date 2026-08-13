@@ -741,8 +741,13 @@ function MicrosoftForm({ slug, origin }: { slug: string; origin: string | null }
   const [clientSecret, setClientSecret] = useState('');
   // Checked scopes, openid/profile/email/offline_access/User.Read excluded —
   // they are always sent, never a choice.
+  // Honour defaultChecked like the Atlassian form does. Seeding every option
+  // instead would silently pre-check scopes the Entra app has not been
+  // granted — and Microsoft rejects the whole consent when one is missing,
+  // so a new capability would break connecting rather than merely not work.
   const [checkedIds, setCheckedIds] = useState<Set<string>>(
-    () => new Set(MICROSOFT_SCOPE_OPTIONS.map((option) => option.id))
+    () =>
+      new Set(MICROSOFT_SCOPE_OPTIONS.filter((option) => option.defaultChecked).map((o) => o.id))
   );
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
