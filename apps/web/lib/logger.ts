@@ -1,8 +1,6 @@
 import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import packageJson from '../package.json';
 
-type RenkeiLogger = ReturnType<typeof createLogger>;
-
 /**
  * Anchored on globalThis, not the module cache. Next bundles
  * instrumentation.ts, the server routes, and the proxy as separate
@@ -16,18 +14,30 @@ type RenkeiLogger = ReturnType<typeof createLogger>;
  * mcp/tool, auth/oauth, connectors/atlassian, …) so the log API can filter,
  * group, and column on it.
  */
-// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-const globalForLogger = globalThis as unknown as { __renkeiLogger?: RenkeiLogger };
 
-function buildLogger(): RenkeiLogger {
+function buildLogger() {
   // Identity from the package manifest plus the build's git commit (baked in
-  // as GIT_COMMIT by docker-build.sh): every log row names the exact code
-  // that produced it, e.g. 0.1.0+4b9f475 — no more guessing whether the
-  // running image carries a fix.
+  // as GIT_COMMIT by docker-build.sh), e.g. 0.1.0+4b9f475.
   const commit = process.env.GIT_COMMIT;
+  const version = commit ? `${packageJson.version}+${commit}` : packageJson.version;
+
   const built = createLogger({
     application: packageJson.name,
-    version: commit ? `${packageJson.version}+${commit}` : packageJson.version,
+    version,
+    // The reserved `application`/`version` options above stamp every record
+    // for storage and for a custom `.template()`, but the console adapter's
+    // default rendering only ever prints `record.attrs` (never those two
+    // fields) — see ConsoleAdapter's fallback path. Duplicating them into
+    // the `attributes` bag (the documented way to reuse a name that collides
+    // with an option, like `version` here) is what makes every printed
+    // console line — not just an explicit boot line — carry
+    // application/version/commit, so "what build produced this row" never
+    // depends on scrolling back to find it.
+    attributes: {
+      application: packageJson.name,
+      version,
+      commit: commit ?? 'dev',
+    },
   });
 
   built.addAdapter(
@@ -41,6 +51,10 @@ function buildLogger(): RenkeiLogger {
 
   return built;
 }
+
+type RenkeiLogger = ReturnType<typeof buildLogger>;
+// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+const globalForLogger = globalThis as unknown as { __renkeiLogger?: RenkeiLogger };
 
 export const logger = (globalForLogger.__renkeiLogger ??= buildLogger());
 
