@@ -58,8 +58,13 @@ apps/web/          Next.js: all surfaces, MCP gateway, OAuth/OIDC, admin UI,
                    and (thin) webhook receipt
   app/             App Router: pages, MCP + OAuth + OIDC + admin API routes
   lib/             business logic; mcp-tools/ holds the Jira + JSM tools
-apps/worker/       long-running process: events-queue consumer (claim via
-                   FOR UPDATE SKIP LOCKED, retry with backoff, dead-letter)
+apps/worker/       two long-running processes over one events queue (claim
+                   via FOR UPDATE SKIP LOCKED, retry with backoff,
+                   dead-letter), partitioned by lane (Decision #20):
+                   index.ts consumes the interactive lane (replies, webhook
+                   orchestration); embeddings-worker.ts consumes the
+                   embedding lane (all ingest-time embedding calls), so a
+                   slow embeddings endpoint can never stall a reply
 packages/db/       @renkei/db — Kysely client, generated schema types, and
                    migrations; shared by web, worker, and the migrate CLI
 docker/            multi-stage Dockerfile (builder / runtime / worker / migrate)
@@ -68,4 +73,4 @@ scripts/           docker build/push and ngrok helpers
 
 ## Deployment
 
-`docker-compose.yaml` (production) runs prebuilt images with a `migrate` service behind the `tools` profile, so `up` never migrates as a side effect. See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full guide.
+`docker-compose.yaml` (production) runs prebuilt images with a `migrate` service behind the `tools` profile, so `up` never migrates as a side effect. The worker ships as two services off one image — `worker` (interactive lane) and `embeddings-worker` (embedding lane, single instance; see Decision #20) — which must be deployed together with migration 030. See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full guide.

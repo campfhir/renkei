@@ -62,6 +62,27 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # The embedding lane's consumer (Decision #20): same image as `worker`,
+  # different entrypoint. All ingest-time calls to the org-configured
+  # embeddings endpoint happen in this process, so however slow that
+  # endpoint is, the interactive worker above never waits on it.
+  embeddings-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: worker
+    image: renkei-worker:latest
+    container_name: renkei-embeddings-worker
+    command: ['pnpm', '--filter', '@renkei/worker', 'start:embeddings']
+    environment:
+      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   migrate:
     build:
       context: .

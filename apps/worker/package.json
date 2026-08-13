@@ -5,7 +5,9 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
+    "dev:embeddings": "tsx watch src/embeddings-worker.ts",
     "start": "tsx src/index.ts",
+    "start:embeddings": "tsx src/embeddings-worker.ts",
     "typecheck": "tsc --noEmit",
     "test": "jest"
   },

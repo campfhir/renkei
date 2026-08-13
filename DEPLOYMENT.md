@@ -106,6 +106,28 @@ npm run build
 ls -la .next/
 ```
 
+## Worker Processes
+
+The queue consumer ships as **two processes off the same `renkei-worker`
+image**, partitioned by the events table's `lane` column (RENKEI.md
+Decision #20):
+
+- `worker` — the interactive lane: WebEx replies, webhook orchestration,
+  Graph/Zoom fetches, periodic sweeps. Entrypoint: `pnpm --filter
+  @renkei/worker start`.
+- `embeddings-worker` — the embedding lane: every ingest-time call to the
+  org-configured embeddings endpoint (chunk ingestion, index deletes and
+  purges, related-items back-fill). Entrypoint: `pnpm --filter
+  @renkei/worker start:embeddings`. **Run exactly one instance** — the
+  lane's FIFO ordering (purge before re-ingest, delete after ingest)
+  depends on a single consumer.
+
+Both services are declared in `docker-compose.yaml`. Deploy them together
+with migration 030 (`events.lane`): the migration must run first, and both
+worker containers must restart on the new image in the same rollout —
+events enqueued by new code into the embedding lane are only consumed by
+the new embeddings worker.
+
 ## Deployment Options
 
 ### Option 1: Vercel (Recommended)

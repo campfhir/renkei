@@ -70,6 +70,24 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # The embedding lane's consumer (Decision #20): same image as `worker`,
+  # different entrypoint. All ingest-time calls to the org-configured
+  # embeddings endpoint happen in this process, so however slow that
+  # endpoint is, the interactive worker above never waits on it. Keep it a
+  # single instance: the lane's FIFO ordering (purge before re-ingest,
+  # delete after ingest) relies on one consumer.
+  embeddings-worker:
+    image: scotteremiaroden/renkei-worker:latest
+    container_name: renkei-embeddings-worker
+    command: ['pnpm', '--filter', '@renkei/worker', 'start:embeddings']
+    env_file:
+      - .env
+    environment: *database-urls
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   renkei:
     image: scotteremiaroden/renkei:latest
     container_name: renkei-app
