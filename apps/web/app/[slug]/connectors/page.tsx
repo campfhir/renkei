@@ -1,3 +1,4 @@
+import ConnectorIcon from '@/components/connector-icon';
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
@@ -174,7 +175,10 @@ export default async function ConnectorsPage({
           />
         ) : (
           <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
-            <h2 className="font-semibold">Jira</h2>
+            <h2 className="flex items-center gap-2 font-semibold">
+              <ConnectorIcon capabilityKey="jira" label="Jira" size={20} />
+              Jira
+            </h2>
             <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
               Not enabled for this organization. An org admin can set it up under Connector setup.
             </p>
@@ -203,7 +207,10 @@ export default async function ConnectorsPage({
 
         {enabled.has('webex') && (
           <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
-            <h2 className="font-semibold">WebEx (org bot)</h2>
+            <h2 className="flex items-center gap-2 font-semibold">
+              <ConnectorIcon capabilityKey="webex" label="WebEx" size={20} />
+              WebEx (org bot)
+            </h2>
             <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
               Enabled by your organization. Add the bot to a space and mention it, or forward it a
               message in a 1:1 — there is nothing to connect here.

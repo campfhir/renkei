@@ -1,10 +1,11 @@
 import React from 'react';
 import { headers } from 'next/headers';
 import { redirect, notFound } from 'next/navigation';
-import { getPublicBaseUrl } from '@renkei/settings';
+import { getPublicBaseUrl, getOrgSettings } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import ConnectorForms from './connector-forms';
+import ConnectorAvailability from './connector-availability';
 
 /**
  * The deployment's public origin, so the forms can show concrete
@@ -43,6 +44,8 @@ export default async function AdminConnectorsPage({
     redirect(`/${slug}/admin`);
   }
   const origin = await resolveOrigin();
+  const settings = await getOrgSettings(tenantRef.id);
+  const disabledConnectors = settings.ok ? settings.val.disabledConnectors : [];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -51,6 +54,7 @@ export default async function AdminConnectorsPage({
         What your organization runs, with what credentials. Secrets are sealed with the deployment
         key and never shown again after saving.
       </p>
+      <ConnectorAvailability slug={slug} initialDisabled={disabledConnectors} />
       <ConnectorForms slug={slug} tenantId={tenantRef.id} origin={origin} />
     </div>
   );

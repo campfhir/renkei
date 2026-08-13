@@ -17,6 +17,18 @@ import type { Result } from '@campfhir/safe-functions/types';
 export interface OrgSettings {
   /** Org-wide read-only mode: no mutating capability is exposed. */
   readOnly: boolean;
+  /**
+   * Connector keys switched off org-wide — their tools stop being registered
+   * for every user, immediately and without touching anyone's grant.
+   *
+   * Deliberately separate from the connector's `enabled` flag and from the
+   * scope ceiling. Disabling a connector_config stops new CONNECTIONS and
+   * narrowing the ceiling forces everyone to reconnect to get a capability
+   * back; this only hides tools, so flipping it back on restores them with
+   * no user action at all. That makes it the right control for "turn this
+   * off for now".
+   */
+  disabledConnectors: string[];
   /** RFC 7591 dynamic client registration on this org's OAuth server. */
   enableDcr: boolean;
   maxJqlResults: number;
@@ -30,6 +42,7 @@ export interface OrgSettings {
 /** The defaults formerly hardcoded in the environment schema. */
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   readOnly: false,
+  disabledConnectors: [],
   enableDcr: true,
   maxJqlResults: 100,
   maxAttachmentBytes: 20_971_520, // 20MB
@@ -51,6 +64,12 @@ const orgCache = new Map<string, CacheEntry<OrgSettings>>();
 function coerce(current: unknown, fallback: boolean | number): boolean | number {
   if (typeof fallback === 'boolean') return typeof current === 'boolean' ? current : fallback;
   return typeof current === 'number' && Number.isFinite(current) ? current : fallback;
+}
+
+/** The first non-scalar setting, so it needs its own guard rather than coerce. */
+function coerceStringList(current: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(current)) return fallback;
+  return current.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
 }
 
 /**
@@ -80,6 +99,7 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
   const d = DEFAULT_ORG_SETTINGS;
   const settings: OrgSettings = {
     readOnly: Boolean(coerce(stored.get('read_only'), d.readOnly)),
+    disabledConnectors: coerceStringList(stored.get('disabled_connectors'), d.disabledConnectors),
     enableDcr: Boolean(coerce(stored.get('enable_dcr'), d.enableDcr)),
     maxJqlResults: Number(coerce(stored.get('max_jql_results'), d.maxJqlResults)),
     maxAttachmentBytes: Number(coerce(stored.get('max_attachment_bytes'), d.maxAttachmentBytes)),
@@ -110,8 +130,9 @@ export async function setOrgSettings(
   if (!dbResult.ok) return err('DB_ERROR' as const);
   const db = dbResult.val;
 
-  const pairs: Array<[string, boolean | number | undefined]> = [
+  const pairs: Array<[string, boolean | number | string[] | undefined]> = [
     ['read_only', updates.readOnly],
+    ['disabled_connectors', updates.disabledConnectors],
     ['enable_dcr', updates.enableDcr],
     ['max_jql_results', updates.maxJqlResults],
     ['max_attachment_bytes', updates.maxAttachmentBytes],

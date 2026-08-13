@@ -55,7 +55,8 @@ function getCacheKey(
   onedriveAvailable: boolean,
   zoomAvailable: boolean,
   confluenceAvailable: boolean,
-  userEmail: string | null
+  userEmail: string | null,
+  disabledConnectors: readonly string[]
 ): string {
   // Everything the registered tool set or a handler closure depends on must
   // be part of the key, or a change takes effect only on process restart:
@@ -66,7 +67,10 @@ function getCacheKey(
     `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:` +
     `${webexAvailable ? 'w' : 'nw'}:${microsoftAvailable ? 'm' : 'nm'}:${zoomAvailable ? 'z' : 'nz'}:` +
     `${sharepointAvailable ? 's' : 'ns'}:${onedriveAvailable ? 'o' : 'no'}:` +
-    `${confluenceAvailable ? 'c' : 'nc'}:${userEmail ?? ''}`
+    `${confluenceAvailable ? 'c' : 'nc'}:${userEmail ?? ''}:` +
+    // Sorted, so the same set in a different order is the same key rather
+    // than a needless cache miss.
+    `${[...disabledConnectors].sort().join(',')}`
   );
 }
 
@@ -381,7 +385,8 @@ const handler = async (
         onedriveAvailable,
         zoomAvailable,
         confluenceAvailable,
-        userEmail
+        userEmail,
+        settings.disabledConnectors
       ) + `:${scopeFingerprint}`;
     let cachedHandler = handlerCache.get(cacheKey);
 
@@ -429,7 +434,11 @@ const handler = async (
             const projection = createProjection(
               {
                 readOnly: settings.readOnly,
-                disabledConnectors: [],
+                // The org-admin's org-wide off switch (Connector setup →
+                // Available connectors). Unlike narrowing the scope ceiling,
+                // this touches no grant, so flipping it back restores the
+                // tools without anyone reconnecting.
+                disabledConnectors: settings.disabledConnectors,
                 disabledCapabilities: [],
               },
               {

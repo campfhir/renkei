@@ -1,5 +1,6 @@
 'use client';
 
+import ConnectorIcon from '@/components/connector-icon';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import ScopePicker from '@/components/scope-picker';
@@ -101,7 +102,10 @@ export default function MicrosoftConnector({
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
       <div className="flex items-center justify-between gap-4">
-        <h2 className="font-semibold">Microsoft 365 (your account)</h2>
+        <h2 className="flex items-center gap-2 font-semibold">
+          <ConnectorIcon capabilityKey="microsoft" label="Microsoft 365" size={20} />
+          Microsoft 365 (your account)
+        </h2>
         {connected ? (
           <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/40 dark:text-green-300">
             Connected

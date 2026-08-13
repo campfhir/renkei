@@ -1,5 +1,6 @@
 'use client';
 
+import ConnectorIcon from '@/components/connector-icon';
 import { useEffect, useState } from 'react';
 import ScopePicker from '@/components/scope-picker';
 import { ATLASSIAN_SCOPE_GROUPS, ATLASSIAN_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
@@ -110,7 +111,10 @@ export default function JiraConnector({
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
       <div className="flex items-center justify-between gap-4">
-        <h2 className="font-semibold">Jira</h2>
+        <h2 className="flex items-center gap-2 font-semibold">
+          <ConnectorIcon capabilityKey="jira" label="Jira" size={20} />
+          Jira
+        </h2>
         {status === null ? (
           <span className="text-sm text-gray-500">Checking…</span>
         ) : status.connected ? (
