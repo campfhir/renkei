@@ -37,6 +37,17 @@ async function processOne(): Promise<boolean> {
   const event = await claimNextEvent();
   if (!event) return false;
 
+  // Claiming was previously silent on success — the only way to tell a
+  // message was ever picked up was the absence of a failure log, which
+  // looks identical to "never claimed at all". This line disambiguates.
+  logger.debug('claimed event {eventId} ({source}/{type}), attempt {attempts}', {
+    component: 'worker/loop',
+    eventId: event.id,
+    source: event.source,
+    type: event.type,
+    attempts: event.attempts,
+  });
+
   const handler = handlerFor(event);
   if (!handler) {
     const disposition = await failEvent(
@@ -57,6 +68,7 @@ async function processOne(): Promise<boolean> {
   try {
     await handler(event);
     await completeEvent(event.id);
+    logger.debug('completed event {eventId}', { component: 'worker/loop', eventId: event.id });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const disposition = await failEvent(event, message);
