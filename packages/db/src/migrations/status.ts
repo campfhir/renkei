@@ -60,6 +60,7 @@ export const EXPECTED_MIGRATIONS = [
   '027-knowledge-source-at',
   '028-content-watches',
   '029-seed-classifier-rules',
+  '030-events-lane',
 ];
 
 export interface MigrationStatus {

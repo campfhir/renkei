@@ -8,7 +8,11 @@
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('kysely', () => ({ sql: jest.fn() }));
 
-import { chunkText, chunkRefId } from './chunking';
+import { ok } from '@campfhir/safe-functions/helpers';
+import { chunkText, chunkRefId, ingestObjectChunks } from './chunking';
+import type { EmbeddingProvider } from './embeddings';
+
+const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 
 describe('chunkText', () => {
   it('returns nothing for blank input', () => {
@@ -60,5 +64,95 @@ describe('chunkRefId', () => {
   it('zero-pads multi-chunk suffixes', () => {
     expect(chunkRefId('host@x.com/uuid==', 1, 3)).toBe('host@x.com/uuid==#0001');
     expect(chunkRefId('host@x.com/uuid==', 12, 30)).toBe('host@x.com/uuid==#0012');
+  });
+});
+
+describe('ingestObjectChunks — embedding batches', () => {
+  /** A db stub whose delete and insert chains both succeed silently. */
+  function stubDb(): void {
+    mockGetDatabase.mockReturnValue({
+      ok: true,
+      val: {
+        deleteFrom: () => ({
+          where: function where() {
+            return { where, execute: async () => [] };
+          },
+        }),
+        insertInto: () => ({
+          values: () => ({ onConflict: () => ({ execute: async () => [] }) }),
+        }),
+      },
+    });
+  }
+
+  function embedderRecording(calls: string[][]): EmbeddingProvider {
+    return {
+      embed: async (texts) => {
+        calls.push([...texts]);
+        return ok(texts.map(() => [0.1]));
+      },
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    stubDb();
+  });
+
+  const object = (content: string) => ({
+    provider: 'zoom',
+    refId: 'host@x.com/uuid/transcript',
+    content,
+    metadata: {},
+    sourceAt: null,
+  });
+
+  it('embeds a multi-chunk object in one batched call, not one per chunk', async () => {
+    const calls: string[][] = [];
+    const text = Array.from({ length: 40 }, (_, i) => `paragraph ${i} with some words`).join(
+      '\n\n'
+    );
+    const result = await ingestObjectChunks('tenant-1', embedderRecording(calls), object(text), {
+      maxChars: 200,
+      overlap: 20,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.val.chunks).toBeGreaterThan(1);
+    expect(calls).toHaveLength(1);
+    if (result.ok) expect(calls[0]).toHaveLength(result.val.chunks);
+  });
+
+  it('splits into multiple requests only past the 64-piece batch cap', async () => {
+    const calls: string[][] = [];
+    const text = Array.from({ length: 80 }, (_, i) => `p${i} ${'x'.repeat(90)}`).join('\n\n');
+    const result = await ingestObjectChunks('tenant-1', embedderRecording(calls), object(text), {
+      maxChars: 100,
+      overlap: 0,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.val.chunks).toBeGreaterThan(64);
+    expect(calls).toHaveLength(Math.ceil(result.val.chunks / 64));
+    expect(calls[0]).toHaveLength(64);
+  });
+
+  it('skips the embed call entirely when a matching vector is precomputed', async () => {
+    const calls: string[][] = [];
+    const result = await ingestObjectChunks(
+      'tenant-1',
+      embedderRecording(calls),
+      object('short content'),
+      { precomputed: { content: 'short content', vector: [0.5, 0.5] } }
+    );
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('ignores a precomputed vector whose content does not match what will be stored', async () => {
+    const calls: string[][] = [];
+    await ingestObjectChunks('tenant-1', embedderRecording(calls), object('short content'), {
+      precomputed: { content: 'different content', vector: [0.5] },
+    });
+    expect(calls).toHaveLength(1);
   });
 });
