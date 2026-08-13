@@ -1,9 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": [
-      "esnext"
-    ],
+    "lib": ["esnext"],
     "strict": true,
     "noEmit": true,
     "esModuleInterop": true,
@@ -12,20 +10,12 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "types": [
-      "node",
-      "jest"
-    ],
+    "types": ["node", "jest"],
     "paths": {
-      "@renkei/gates": [
-        "../../packages/gates/src/index.ts"
-      ]
+      "@renkei/gates": ["../../packages/gates/src/index.ts"],
+      "@renkei/rate-limit": ["../../packages/rate-limit/src/index.ts"]
     }
   },
-  "include": [
-    "src/**/*.ts"
-  ],
-  "exclude": [
-    "node_modules"
-  ]
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
 }

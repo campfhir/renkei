@@ -12,7 +12,23 @@
  * product segment: `api.atlassian.com/ex/{jira,confluence}/{cloudId}`.
  */
 
+import { TokenBucket } from '@renkei/rate-limit';
+
 export const ATLASSIAN_GATEWAY = 'https://api.atlassian.com/ex';
+/**
+ * Bounds every call out to the gateway — see the identical comment in
+ * connector-webex's client.ts. This client backs the worker's content-watch
+ * sweep (Atlassian has no push mechanism for an OAuth app, so it is the only
+ * thing keeping watches fresh).
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Process-scoped, shared by every caller — see the identical comment in
+ * connector-webex's client.ts. Bounds bursts from the watch sweep polling
+ * many projects/spaces at once.
+ */
+const requestLimiter = new TokenBucket({ capacity: 5, refillPerSecond: 5 });
 
 export type AtlassianProduct = 'jira' | 'confluence';
 
@@ -40,6 +56,7 @@ export async function atlassianFetch(call: AtlassianCall): Promise<AtlassianResp
   const url = `${ATLASSIAN_GATEWAY}/${call.product}/${call.cloudId}${call.path}`;
   const body = call.json === undefined ? undefined : JSON.stringify(call.json);
 
+  await requestLimiter.take();
   let response: Response;
   try {
     response = await fetch(url, {
@@ -50,9 +67,17 @@ export async function atlassianFetch(call: AtlassianCall): Promise<AtlassianResp
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       ...(body === undefined ? {} : { body }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-  } catch {
-    return { ok: false, status: 0, error: 'could not reach api.atlassian.com' };
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === 'TimeoutError';
+    return {
+      ok: false,
+      status: 0,
+      error: timedOut
+        ? `api.atlassian.com timed out after ${REQUEST_TIMEOUT_MS}ms`
+        : 'could not reach api.atlassian.com',
+    };
   }
 
   const text = await response.text().catch(() => '');

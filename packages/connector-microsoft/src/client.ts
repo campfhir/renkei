@@ -10,8 +10,21 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { TokenBucket } from '@renkei/rate-limit';
 
 export const GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0';
+/**
+ * Bounds every call out to Graph — see the identical comment in
+ * connector-webex's client.ts.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Process-scoped, shared by every caller — see the identical comment in
+ * connector-webex's client.ts. Bounds bursts from the subscription health
+ * sweep (many tenants/grants) and from delta-sync paging.
+ */
+const requestLimiter = new TokenBucket({ capacity: 5, refillPerSecond: 5 });
 
 export async function graphRequest(
   accessToken: string,
@@ -20,6 +33,7 @@ export async function graphRequest(
 ): Promise<Result<unknown, 'GRAPH_API_ERROR'>> {
   const url = pathOrUrl.startsWith('https://') ? pathOrUrl : `${GRAPH_BASE_URL}${pathOrUrl}`;
 
+  await requestLimiter.take();
   let response: Response;
   try {
     response = await fetch(url, {
@@ -30,9 +44,17 @@ export async function graphRequest(
         ...(init?.body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(init?.headers ?? {}),
       },
+      // A caller-supplied signal (none today) still wins — theirs may carry
+      // its own cancellation semantics we should not override.
+      signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-  } catch {
-    return err('GRAPH_API_ERROR' as const, { message: 'Graph API unreachable' });
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === 'TimeoutError';
+    return err('GRAPH_API_ERROR' as const, {
+      message: timedOut
+        ? `Graph API timed out after ${REQUEST_TIMEOUT_MS}ms for ${url}`
+        : 'Graph API unreachable',
+    });
   }
 
   if (!response.ok) {

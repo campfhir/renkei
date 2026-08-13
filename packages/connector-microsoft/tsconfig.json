@@ -12,7 +12,8 @@
     "skipLibCheck": true,
     "types": ["node", "jest"],
     "paths": {
-      "@renkei/gates": ["../../packages/gates/src/index.ts"]
+      "@renkei/gates": ["../../packages/gates/src/index.ts"],
+      "@renkei/rate-limit": ["../../packages/rate-limit/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"],

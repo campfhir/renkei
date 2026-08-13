@@ -125,7 +125,10 @@ describe('runDeltaRound', () => {
       expect(result.val.items).toHaveLength(50);
     }
     expect(fetchMock).toHaveBeenCalledTimes(50);
-  });
+  }, // graphRequest is rate-limited for real here (client.ts's module-level
+  // TokenBucket, not mocked) — 50 real page fetches past a 5-request burst
+  // take several real seconds at 5/sec, past Jest's default 5000ms.
+  15_000);
 
   it('propagates a page failure', async () => {
     jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(503, {}));

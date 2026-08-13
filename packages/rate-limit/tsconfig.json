@@ -10,11 +10,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "types": ["node", "jest"],
-    "paths": {
-      "@renkei/gates": ["../../packages/gates/src/index.ts"],
-      "@renkei/rate-limit": ["../../packages/rate-limit/src/index.ts"]
-    }
+    "types": ["node", "jest"]
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules"]

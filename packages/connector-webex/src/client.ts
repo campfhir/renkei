@@ -5,8 +5,25 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { TokenBucket } from '@renkei/rate-limit';
 
 const API_BASE = 'https://webexapis.com/v1';
+/**
+ * Bounds every call out to WebEx. Without this, an unreachable host (DNS not
+ * yet up right after a boot, a stalled connection) hangs `fetch` forever —
+ * and a hung request in the worker's webhook-health sweep or in ambient
+ * message processing has nothing to say why it never came back.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Process-scoped: every WebexClient instance in this process shares one
+ * bucket. A webhook flood (many messages queued at once) or a sweep over
+ * many tenants would otherwise fire a burst of requests at WebEx all at
+ * once; this spreads them out instead. 5/sec steady state with a burst of 5
+ * — generous for normal single-event traffic, a real cap under a flood.
+ */
+const requestLimiter = new TokenBucket({ capacity: 5, refillPerSecond: 5 });
 
 export interface WebexMessage {
   id: string;
@@ -132,6 +149,7 @@ export class WebexClient {
     path: string,
     body?: unknown
   ): Promise<Result<Record<string, unknown>, 'WEBEX_API_ERROR'>> {
+    await requestLimiter.take();
     let response: Response;
     try {
       response = await fetch(`${API_BASE}${path}`, {
@@ -142,9 +160,15 @@ export class WebexClient {
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-    } catch {
-      return err('WEBEX_API_ERROR' as const, { message: 'WebEx API unreachable' });
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      return err('WEBEX_API_ERROR' as const, {
+        message: timedOut
+          ? `WebEx API timed out after ${REQUEST_TIMEOUT_MS}ms for ${path}`
+          : 'WebEx API unreachable',
+      });
     }
 
     if (!response.ok) {

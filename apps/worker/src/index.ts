@@ -100,64 +100,50 @@ function registerConnectorHandlers(): void {
 }
 
 /**
- * Scheduler-as-part-of-the-loop: the sweep runs on its own cadence inside
- * the poll loop (first pass at boot), so a repair is never further away
- * than one poll interval past due. A sweep failure is logged inside the
- * sweep itself and never disturbs event processing.
+ * A periodic sweep, on its own independent timer — never `await`ed by the
+ * event-processing loop.
+ *
+ * Sweeps used to run inline at the front of the poll loop: `await
+ * maybeSweepWebhooks()` before every `processOne()`. That meant a sweep
+ * that got stuck — an unreachable third-party API, back when the connector
+ * clients had no fetch timeout — wedged event processing right along with
+ * it, indefinitely, with nothing logged to explain why. The connector
+ * clients are now bounded (15–60s per call), which caps how long a stuck
+ * sweep can run, but a slow-not-hung sweep could still stack up and delay
+ * every event behind it. Running each sweep on its own timer removes that
+ * coupling entirely: the worst a wedged sweep can do now is wedge itself.
+ *
+ * Self-throttling by construction — `tick` only schedules its own next run
+ * after the current one settles, so a slow sweep skips a beat rather than
+ * piling up concurrent runs of itself. A sweep failure is logged here and
+ * never propagates.
  */
-let nextWebhookSweepAt = 0;
+function schedulePeriodicSweep(
+  label: string,
+  component: string,
+  intervalMs: number,
+  sweep: () => Promise<void>
+): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
 
-async function maybeSweepWebhooks(): Promise<void> {
-  if (Date.now() < nextWebhookSweepAt) return;
-  nextWebhookSweepAt = Date.now() + WEBHOOK_HEALTH_INTERVAL_MS;
-  try {
-    await sweepWebexWebhooks();
-  } catch (error) {
-    logger.error('webhook health sweep error: {error}', {
-      component: 'webex/webhook-health',
-      error: error instanceof Error ? error.message : String(error),
-    });
+  async function tick(): Promise<void> {
+    try {
+      await sweep();
+    } catch (error) {
+      logger.error(`${label} sweep error: {error}`, {
+        component,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (!stopped) timer = setTimeout(tick, intervalMs);
   }
-}
 
-/**
- * Graph subscriptions expire by design, so this sweep is routine upkeep,
- * not just repair: renew, recreate, bootstrap, and catch up stale cursors.
- */
-let nextMicrosoftSweepAt = 0;
-
-async function maybeSweepMicrosoftSubscriptions(): Promise<void> {
-  if (Date.now() < nextMicrosoftSweepAt) return;
-  nextMicrosoftSweepAt = Date.now() + MICROSOFT_SUBSCRIPTION_INTERVAL_MS;
-  try {
-    await sweepMicrosoftSubscriptions();
-  } catch (error) {
-    logger.error('microsoft subscription sweep error: {error}', {
-      component: 'microsoft/subscription-health',
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-}
-
-/**
- * Atlassian content has no push mechanism available to an OAuth app, so
- * this sweep is not a fallback — it is the only thing keeping watched Jira
- * projects and Confluence spaces fresh. Per-watch due-times live on the
- * rows; this gate only decides how often to go looking.
- */
-let nextAtlassianWatchSweepAt = 0;
-
-async function maybeSweepAtlassianWatches(): Promise<void> {
-  if (Date.now() < nextAtlassianWatchSweepAt) return;
-  nextAtlassianWatchSweepAt = Date.now() + ATLASSIAN_WATCH_INTERVAL_MS;
-  try {
-    await sweepAtlassianWatches();
-  } catch (error) {
-    logger.error('atlassian watch sweep error: {error}', {
-      component: 'atlassian/watch-sweep',
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+  void tick(); // first pass at boot, concurrent with event processing starting up
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
 }
 
 async function main(): Promise<void> {
@@ -171,10 +157,31 @@ async function main(): Promise<void> {
     version: packageJson.version,
     commit: process.env.GIT_COMMIT ?? 'dev',
   });
+  // Independent of the poll loop below — see schedulePeriodicSweep's doc
+  // comment for why. Stopped only once event processing has wound down, so
+  // "stopped" in the log means everything actually stopped.
+  const stopSweeps = [
+    schedulePeriodicSweep(
+      'webhook health',
+      'webex/webhook-health',
+      WEBHOOK_HEALTH_INTERVAL_MS,
+      sweepWebexWebhooks
+    ),
+    schedulePeriodicSweep(
+      'microsoft subscription',
+      'microsoft/subscription-health',
+      MICROSOFT_SUBSCRIPTION_INTERVAL_MS,
+      sweepMicrosoftSubscriptions
+    ),
+    schedulePeriodicSweep(
+      'atlassian watch',
+      'atlassian/watch-sweep',
+      ATLASSIAN_WATCH_INTERVAL_MS,
+      sweepAtlassianWatches
+    ),
+  ];
+
   while (running) {
-    await maybeSweepWebhooks();
-    await maybeSweepMicrosoftSubscriptions();
-    await maybeSweepAtlassianWatches();
     let hadWork = false;
     try {
       hadWork = await processOne();
@@ -188,6 +195,7 @@ async function main(): Promise<void> {
     }
     await sleep(hadWork ? BUSY_DELAY_MS : IDLE_DELAY_MS);
   }
+  stopSweeps.forEach((stop) => stop());
   logger.info('stopped', { component: 'worker/loop' });
   // Drain the adapters — the HttpAdapter's queue especially — while the
   // database and event loop are still alive to receive them.

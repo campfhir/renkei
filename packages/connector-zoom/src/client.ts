@@ -10,8 +10,24 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { TokenBucket } from '@renkei/rate-limit';
 
 const API_BASE = 'https://api.zoom.us/v2';
+/**
+ * Bounds every call out to Zoom — see the identical comment in
+ * connector-webex's client.ts. A transcript/recording download can
+ * legitimately take longer than an API call, so it gets its own, longer
+ * bound rather than sharing this one.
+ */
+const REQUEST_TIMEOUT_MS = 15_000;
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+
+/**
+ * Process-scoped, shared by every caller — see the identical comment in
+ * connector-webex's client.ts. One bucket for both API calls and downloads:
+ * both count against the same Zoom app's rate limit.
+ */
+const requestLimiter = new TokenBucket({ capacity: 5, refillPerSecond: 5 });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -49,6 +65,7 @@ export class ZoomClient {
   private async get(
     path: string
   ): Promise<Result<Record<string, unknown>, 'ZOOM_API_ERROR' | 'NOT_FOUND'>> {
+    await requestLimiter.take();
     let response: Response;
     try {
       response = await fetch(`${API_BASE}${path}`, {
@@ -57,9 +74,15 @@ export class ZoomClient {
           Authorization: `Bearer ${this.accessToken}`,
           Accept: 'application/json',
         },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-    } catch {
-      return err('ZOOM_API_ERROR' as const, { message: 'Zoom API unreachable' });
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      return err('ZOOM_API_ERROR' as const, {
+        message: timedOut
+          ? `Zoom API timed out after ${REQUEST_TIMEOUT_MS}ms for ${path}`
+          : 'Zoom API unreachable',
+      });
     }
 
     if (response.status === 404) return err('NOT_FOUND' as const);
@@ -119,14 +142,21 @@ export class ZoomClient {
    * bare fetch at the call site.
    */
   async downloadFromUrl(url: string): Promise<Result<string, 'ZOOM_API_ERROR'>> {
+    await requestLimiter.take();
     let response: Response;
     try {
       response = await fetch(url, {
         method: 'GET',
         headers: { Authorization: `Bearer ${this.accessToken}` },
+        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
       });
-    } catch {
-      return err('ZOOM_API_ERROR' as const, { message: 'Zoom download host unreachable' });
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      return err('ZOOM_API_ERROR' as const, {
+        message: timedOut
+          ? `Zoom download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`
+          : 'Zoom download host unreachable',
+      });
     }
 
     if (!response.ok) {
