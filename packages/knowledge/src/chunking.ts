@@ -158,8 +158,8 @@ export async function deleteChunksByMetadata(
  *
  * A chunked document has NO row at its bare refId (chunkRefId suffixes every
  * chunk once there is more than one), so matching has to allow the `#0001`
- * form too. DISTINCT ON keeps the first chunk of each object, which is all a
- * cTag comparison needs.
+ * form too. Chunks of one object share their metadata, so the first row seen
+ * per object is kept and the rest discarded — all a cTag comparison needs.
  */
 export async function readObjectMetadataBatch(
   tenantId: string,
