@@ -178,7 +178,11 @@ export default function ConnectorIcon({
         alt=""
         width={size}
         height={size}
-        className={className}
+        // object-contain, because the official marks are NOT all square —
+        // OneDrive's cloud is 1.5:1 — and forcing them into a square box
+        // would squash them. The fixed box keeps rows aligned; the mark sits
+        // inside it at its own proportions, unaltered.
+        className={`object-contain ${className ?? ''}`}
         onError={() => setLogoMissing(true)}
         // Decorative: the label is always rendered beside it, so announcing
         // the mark too would make a screen reader say everything twice.

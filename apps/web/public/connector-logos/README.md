@@ -1,22 +1,38 @@
 # Connector logos
 
-Drop each vendor's official SVG here, named after the connector's
-**capabilityKey** (`apps/web/lib/connector-catalog.ts`):
+SVGs here are named after the connector's **capabilityKey**
+(`apps/web/lib/connector-catalog.ts`). `ConnectorIcon` requests
+`/connector-logos/{capabilityKey}.svg` and falls back to a built-in glyph when
+the file is absent, so the UI works with none, some, or all present. Adding a
+file is the whole deployment step.
 
-| File                       | Product                 | Where to get it                    |
-| -------------------------- | ----------------------- | ---------------------------------- |
-| `jira.svg`                 | Jira                    | Atlassian brand / design resources |
-| `atlassian-confluence.svg` | Confluence              | Atlassian brand / design resources |
-| `microsoft.svg`            | Outlook                 | Microsoft brand & trademark assets |
-| `sharepoint.svg`           | SharePoint              | Microsoft brand & trademark assets |
-| `onedrive.svg`             | OneDrive                | Microsoft brand & trademark assets |
-| `webex.svg`                | Webex                   | Cisco/Webex brand resources        |
-| `zoom.svg`                 | Zoom                    | Zoom brand guidelines              |
-| `knowledge.svg`            | _(ours — not a vendor)_ | any in-house mark                  |
+## Present
 
-`ConnectorIcon` requests `/connector-logos/{capabilityKey}.svg` and falls back
-to a built-in glyph when the file is absent, so the UI works with none, some,
-or all of these present. Adding a file is the whole deployment step.
+Sourced from Wikimedia Commons, which lists each as public domain — these
+marks fall below the threshold of originality for copyright. Trademark still
+applies; see below.
+
+| File                       | Commons source                                   |
+| -------------------------- | ------------------------------------------------ |
+| `atlassian-confluence.svg` | `Atlassian Confluence 2017 logo (cropped).svg`   |
+| `microsoft.svg`            | `Microsoft Outlook Icon (2025–present).svg`      |
+| `sharepoint.svg`           | `Microsoft Office SharePoint (2025–present).svg` |
+| `onedrive.svg`             | `Microsoft OneDrive Icon (2025 - present).svg`   |
+
+## Still wanted
+
+Commons has **only wide wordmarks** for these three — no square icon exists
+there, and a wordmark is illegible in a 20px row. They render the built-in
+glyph until someone adds the icon-only mark from the vendor's own brand page:
+
+| File        | Product | Note                                                    |
+| ----------- | ------- | ------------------------------------------------------- |
+| `jira.svg`  | Jira    | Atlassian publishes the icon separately from the lockup |
+| `webex.svg` | Webex   | Cisco brand resources                                   |
+| `zoom.svg`  | Zoom    | Zoom brand guidelines                                   |
+
+`knowledge.svg` has no vendor at all — it is our own surface, so its glyph
+stays unless someone draws an in-house mark for it.
 
 ## Before adding one
 
