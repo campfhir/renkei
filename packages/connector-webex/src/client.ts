@@ -26,6 +26,13 @@ export interface WebexPerson {
   displayName: string | null;
 }
 
+export interface WebexRoom {
+  id: string;
+  title: string | null;
+  type: string | null;
+  lastActivity: string | null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -73,6 +80,34 @@ export interface WebhookRegistration {
   resource: string;
   event: string;
   secret: string;
+}
+
+function readMessage(body: Record<string, unknown>): WebexMessage | null {
+  const id = optionalString(body.id);
+  const roomId = optionalString(body.roomId);
+  if (!id || !roomId) return null;
+
+  return {
+    id,
+    roomId,
+    roomType: optionalString(body.roomType),
+    text: optionalString(body.text),
+    personId: optionalString(body.personId),
+    personEmail: optionalString(body.personEmail),
+    parentId: optionalString(body.parentId),
+    created: optionalString(body.created),
+  };
+}
+
+function readRoom(body: Record<string, unknown>): WebexRoom | null {
+  const id = optionalString(body.id);
+  if (!id) return null;
+  return {
+    id,
+    title: optionalString(body.title),
+    type: optionalString(body.type),
+    lastActivity: optionalString(body.lastActivity),
+  };
 }
 
 function readWebhook(body: Record<string, unknown>): WebexWebhook | null {
@@ -136,24 +171,50 @@ export class WebexClient {
   async getMessage(messageId: string): Promise<Result<WebexMessage, 'WEBEX_API_ERROR'>> {
     const result = await this.get(`/messages/${encodeURIComponent(messageId)}`);
     if (!result.ok) return result;
-    const body = result.val;
-
-    const id = optionalString(body.id);
-    const roomId = optionalString(body.roomId);
-    if (!id || !roomId) {
+    const message = readMessage(result.val);
+    if (!message) {
       return err('WEBEX_API_ERROR' as const, { message: 'message response missing id/roomId' });
     }
+    return ok(message);
+  }
 
-    return ok({
-      id,
-      roomId,
-      roomType: optionalString(body.roomType),
-      text: optionalString(body.text),
-      personId: optionalString(body.personId),
-      personEmail: optionalString(body.personEmail),
-      parentId: optionalString(body.parentId),
-      created: optionalString(body.created),
-    });
+  /**
+   * Rooms the token's owner belongs to, most recently active first. Works
+   * with any bearer — a bot token sees the bot's rooms, a user token sees
+   * the user's own — which is what lets a user's own grant search spaces the
+   * bot was never invited to (see webex-forward-context.ts in the worker).
+   */
+  async listRooms(max = 30): Promise<Result<WebexRoom[], 'WEBEX_API_ERROR'>> {
+    const result = await this.get(`/rooms?max=${max}&sortBy=lastactivity`);
+    if (!result.ok) return result;
+    const items = result.val.items;
+    if (!Array.isArray(items)) {
+      return err('WEBEX_API_ERROR' as const, { message: 'rooms response missing items' });
+    }
+    const rooms: WebexRoom[] = [];
+    for (const item of items) {
+      if (!isRecord(item)) continue;
+      const room = readRoom(item);
+      if (room) rooms.push(room);
+    }
+    return ok(rooms);
+  }
+
+  /** Recent messages in a room, newest first — the token owner's own access. */
+  async listMessages(roomId: string, max = 20): Promise<Result<WebexMessage[], 'WEBEX_API_ERROR'>> {
+    const result = await this.get(`/messages?roomId=${encodeURIComponent(roomId)}&max=${max}`);
+    if (!result.ok) return result;
+    const items = result.val.items;
+    if (!Array.isArray(items)) {
+      return err('WEBEX_API_ERROR' as const, { message: 'messages response missing items' });
+    }
+    const messages: WebexMessage[] = [];
+    for (const item of items) {
+      if (!isRecord(item)) continue;
+      const message = readMessage(item);
+      if (message) messages.push(message);
+    }
+    return ok(messages);
   }
 
   /**
@@ -161,7 +222,10 @@ export class WebexClient {
    * WebEx content: room membership is exactly WebEx's own access rule for
    * messages, verified at query time with the bot credential.
    */
-  async isRoomMember(roomId: string, personEmail: string): Promise<Result<boolean, 'WEBEX_API_ERROR'>> {
+  async isRoomMember(
+    roomId: string,
+    personEmail: string
+  ): Promise<Result<boolean, 'WEBEX_API_ERROR'>> {
     const query = `roomId=${encodeURIComponent(roomId)}&personEmail=${encodeURIComponent(personEmail)}`;
     const result = await this.get(`/memberships?${query}`);
     if (!result.ok) return result;

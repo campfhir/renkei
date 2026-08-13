@@ -2,12 +2,12 @@ import { getDatabase } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 
 /**
- * Where the card feed lives for a tenant, for confirmation links in WebEx
- * messages. Pages are keyed by slug (docs/ui-shell-brief.md), so the tenant
- * id on the event is resolved to its slug here. Null when the deployment has
- * no PUBLIC_BASE_URL — the caller words its confirmation without a link.
+ * `${base}/${tenant.slug}` — where the deployment lives for a tenant, or
+ * null when either the deployment has no PUBLIC_BASE_URL or the tenant id
+ * does not resolve (should not happen: the webhook route validates it before
+ * an event row is ever written). Shared by cardsFeedUrl and registrationUrl.
  */
-export async function cardsFeedUrl(tenantId: string): Promise<string | null> {
+async function tenantUrl(tenantId: string): Promise<string | null> {
   const base = getPublicBaseUrl();
   if (!base) return null;
 
@@ -18,5 +18,26 @@ export async function cardsFeedUrl(tenantId: string): Promise<string | null> {
     .select('slug')
     .where('id', '=', tenantId)
     .executeTakeFirst();
-  return tenant ? `${base}/${tenant.slug}/home` : null;
+  return tenant ? `${base}/${tenant.slug}` : null;
+}
+
+/**
+ * Where the card feed lives for a tenant, for confirmation links in WebEx
+ * messages. Pages are keyed by slug (docs/ui-shell-brief.md). Null when the
+ * deployment or tenant does not resolve — the caller words its confirmation
+ * without a link.
+ */
+export async function cardsFeedUrl(tenantId: string): Promise<string | null> {
+  const url = await tenantUrl(tenantId);
+  return url ? `${url}/home` : null;
+}
+
+/**
+ * Where someone with no Renkei account yet should go to sign in — the
+ * tenant's base URL. Visiting it while signed out is what creates the
+ * identities row (apps/web/lib/identity.ts) the ambient handler checks for
+ * on the next message. Null on the same conditions as cardsFeedUrl.
+ */
+export async function registrationUrl(tenantId: string): Promise<string | null> {
+  return tenantUrl(tenantId);
 }

@@ -2,30 +2,52 @@
  * The webex/messages.created handler — the ambient half of use case #1.
  *
  * The webhook carried only the message id; here the message is fetched with
- * the bot credential and captured (see webex-capture.ts): indexed into
- * knowledge, and — when it reads as an issue report — recorded as a
- * suggested actionable item. Nothing is executed: items wait in the card
- * feed for a human (suggest-then-act, the default posture).
+ * the bot credential. Every message gets a reply of some kind:
  *
- * The bot always answers in-thread, because in a group room it only ever
- * sees messages that deliberately mention it: a capture gets a confirmation,
- * and anything else gets the "Push to Renkei" card so the human can capture
- * what the classifier missed (use case #3 — the interaction stays in the
- * WebEx client). Reply failures are logged, never fatal: the capture is the
+ *  - Sender has no Renkei account (no row in identities for their email):
+ *    a registration nudge with the tenant's base URL, and nothing else —
+ *    there is no identity to capture on behalf of yet.
+ *  - Sender has an account: the message is captured (see webex-capture.ts) —
+ *    indexed into knowledge, and, when it reads as an issue report,
+ *    recorded as a suggested actionable item. Nothing is executed: items
+ *    wait in the card feed for a human (suggest-then-act, the default
+ *    posture). If the sender also has their own WebEx connected, a live
+ *    search of their rooms looks for the forwarded original (see
+ *    webex-forward-context.ts) — a message pasted into this room usually
+ *    started life in a different space the bot cannot see.
+ *
+ * The bot always answers in-thread. A capture gets a confirmation, anything
+ * else gets the "Push to Renkei" card so the human can capture what the
+ * classifier missed (use case #3 — the interaction stays in the WebEx
+ * client). Reply failures are logged, never fatal: the capture is the
  * outcome, the reply is courtesy.
  */
 
-import { buildPushToRenkeiCard } from '@renkei/connector-webex';
+import { buildPushToRenkeiCard, WebexClient } from '@renkei/connector-webex';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { captureMessage } from './webex-capture';
-import { cardsFeedUrl } from './feed-url';
+import { cardsFeedUrl, registrationUrl } from './feed-url';
+import {
+  findForwardedOrigin as findForwardedOriginDefault,
+  type ForwardedOrigin,
+} from './webex-forward-context';
+import {
+  hasLinkedIdentity as hasLinkedIdentityDefault,
+  resolveLinkedWebexUserAccess as resolveLinkedWebexUserAccessDefault,
+} from './webex-linked-user';
 import { logger } from '../logger';
 import { resolveWebexContext, type WebexTenantContext } from './webex-context';
 
 export interface WebexHandlerDeps {
   /** Injectable for tests; defaults to the DB-config-backed resolver. */
   resolveContext?: (tenantId: string) => Promise<WebexTenantContext>;
+  /** Injectable for tests; defaults to the identities-table lookup. */
+  hasLinkedIdentity?: typeof hasLinkedIdentityDefault;
+  /** Injectable for tests; defaults to the provider-grants lookup. */
+  resolveLinkedWebexUserAccess?: typeof resolveLinkedWebexUserAccessDefault;
+  /** Injectable for tests; defaults to the live cross-room search. */
+  findForwardedOrigin?: typeof findForwardedOriginDefault;
 }
 
 function payloadMessageId(event: ClaimedEvent): string | null {
@@ -38,6 +60,10 @@ function payloadMessageId(event: ClaimedEvent): string | null {
 
 export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHandler {
   const resolveContext = deps.resolveContext ?? resolveWebexContext;
+  const checkLinkedIdentity = deps.hasLinkedIdentity ?? hasLinkedIdentityDefault;
+  const resolveUserAccess =
+    deps.resolveLinkedWebexUserAccess ?? resolveLinkedWebexUserAccessDefault;
+  const findOrigin = deps.findForwardedOrigin ?? findForwardedOriginDefault;
 
   return async (event) => {
     const messageId = payloadMessageId(event);
@@ -61,22 +87,70 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
     // them would loop.
     if (context.botPersonId && message.personId === context.botPersonId) return;
 
+    const threadRoot = message.parentId ?? message.id;
+
+    // Every message gets a response of some kind, but capturing on behalf of
+    // someone with no Renkei account would attribute the item to nobody.
+    // personEmail is normally present on real deliveries; when it is not
+    // (some system-generated messages), there is no identity to check, so
+    // fall through to the ordinary capture flow rather than block on it.
+    if (message.personEmail && !(await checkLinkedIdentity(event.tenant_id, message.personEmail))) {
+      const register = await registrationUrl(event.tenant_id);
+      const posted = await context.client.postMessage({
+        roomId: message.roomId,
+        parentId: threadRoot,
+        markdown: register
+          ? `I don't have a Renkei account on file for you yet. Sign in at ${register} to link ` +
+            'one, then send this again and I can help.'
+          : "I don't have a Renkei account on file for you yet — ask your admin how to register.",
+      });
+      if (!posted.ok) {
+        logger.warn('could not post registration nudge', {
+          component: 'webex/ingest',
+          messageId: message.id,
+        });
+      }
+      return;
+    }
+
+    // Best-effort: a forwarded/pasted message usually did not originate in
+    // this room. The sender's own WebEx grant, if they have one, can search
+    // the rooms they belong to that the bot was never invited to.
+    let forwardedOrigin: ForwardedOrigin | null = null;
+    if (message.personEmail && message.text) {
+      const access = await resolveUserAccess(event.tenant_id, message.personEmail);
+      if (access) {
+        forwardedOrigin = await findOrigin({
+          client: new WebexClient(access.accessToken),
+          text: message.text,
+          excludeRoomId: message.roomId,
+        });
+      }
+    }
+
     const outcome = await captureMessage({
       tenantId: event.tenant_id,
       message,
       client: context.client,
       force: false,
+      forwardedOrigin,
     });
 
-    const threadRoot = message.parentId ?? message.id;
+    const originNote = forwardedOrigin
+      ? `\n\nLooks forwarded — found the original in **${forwardedOrigin.roomTitle ?? 'another space'}**` +
+        `${forwardedOrigin.personEmail ? ` from ${forwardedOrigin.personEmail}` : ''}` +
+        `${forwardedOrigin.created ? ` (${forwardedOrigin.created})` : ''}.`
+      : '';
+
     if (outcome === 'captured') {
       const feed = await cardsFeedUrl(event.tenant_id);
       const posted = await context.client.postMessage({
         roomId: message.roomId,
         parentId: threadRoot,
-        markdown: feed
-          ? `Captured in Renkei — review and act on it in [your card feed](${feed}).`
-          : 'Captured in Renkei — review and act on it in your card feed.',
+        markdown:
+          (feed
+            ? `Captured in Renkei — review and act on it in [your card feed](${feed}).`
+            : 'Captured in Renkei — review and act on it in your card feed.') + originNote,
       });
       if (!posted.ok) {
         logger.warn('could not post capture confirmation', {
@@ -89,7 +163,7 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
       const posted = await context.client.postMessage({
         roomId: message.roomId,
         parentId: threadRoot,
-        markdown: 'Want me to capture this?',
+        markdown: `Want me to capture this?${originNote}`,
         attachments: [buildPushToRenkeiCard({ messageId: message.id, replyTo: threadRoot })],
       });
       if (!posted.ok) {

@@ -19,6 +19,7 @@ import { ingestChunk, resolveEmbeddingProvider, searchKnowledge } from '@renkei/
 import type { KnowledgeHit } from '@renkei/knowledge';
 import { classifyMessage, type MessageClassification } from '../pipeline/classify';
 import type { WebexTenantContext } from './webex-context';
+import type { ForwardedOrigin } from './webex-forward-context';
 
 export interface CaptureOptions {
   tenantId: string;
@@ -29,6 +30,8 @@ export interface CaptureOptions {
   note?: string | null;
   /** True for a push: capture even when the classifier is silent. */
   force: boolean;
+  /** Where this message's content was found to originate, if it was forwarded. */
+  forwardedOrigin?: ForwardedOrigin | null;
 }
 
 function firstLine(text: string): string {
@@ -148,6 +151,7 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
         excerpt: text.slice(0, 500),
         ...(options.pushedBy ? { pushedBy: options.pushedBy } : {}),
         ...(options.note ? { note: options.note } : {}),
+        ...(options.forwardedOrigin ? { forwardedOrigin: options.forwardedOrigin } : {}),
         related: related.map((hit) => ({
           provider: hit.provider,
           refId: hit.refId,
