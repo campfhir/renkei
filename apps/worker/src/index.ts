@@ -128,8 +128,10 @@ function schedulePeriodicSweep(
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   async function tick(): Promise<void> {
+    logger.debug(`${label} sweep starting`, { component });
     try {
       await sweep();
+      logger.debug(`${label} sweep finished`, { component });
     } catch (error) {
       logger.error(`${label} sweep error: {error}`, {
         component,
@@ -139,6 +141,10 @@ function schedulePeriodicSweep(
     if (!stopped) timer = setTimeout(tick, intervalMs);
   }
 
+  // CONSOLE_LOG_LEVEL (and LOG_DB_LEVEL for the persisted copy) must be set
+  // to 'debug' for the two lines above to actually show — both default to
+  // 'info' in logger.ts, same as the web app's.
+  logger.debug(`${label} sweep scheduled every ${intervalMs}ms`, { component });
   void tick(); // first pass at boot, concurrent with event processing starting up
   return () => {
     stopped = true;
