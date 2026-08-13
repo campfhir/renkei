@@ -1,0 +1,24 @@
+{
+  "name": "@renkei/document-text",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "test:pdf": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.esm.config.js"
+  },
+  "dependencies": {
+    "@campfhir/safe-functions": "^0.1.3",
+    "pdfjs-dist": "6.2.108"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
+    "typescript": "^5"
+  }
+}
