@@ -21,8 +21,14 @@ import { useState } from 'react';
  */
 
 interface IconProps {
-  /** Pixel size; the built-in glyphs are drawn on a 24-unit grid. */
+  /** Rendered HEIGHT in pixels; the built-in glyphs are drawn on a 24-unit grid. */
   size?: number;
+  /**
+   * Width ceiling for wide marks. Defaults to 4× the height, which fits
+   * everything up to a 4:1 wordmark at full height and letterboxes anything
+   * wider rather than letting one logo run away with the row.
+   */
+  maxWidth?: number;
   className?: string;
 }
 
@@ -161,6 +167,7 @@ export default function ConnectorIcon({
   capabilityKey,
   label,
   size = 24,
+  maxWidth,
   className,
 }: IconProps & { capabilityKey: string; label: string }) {
   // Assume the official asset is present and step down on error, rather than
@@ -176,12 +183,15 @@ export default function ConnectorIcon({
       <img
         src={`/connector-logos/${capabilityKey}.svg`}
         alt=""
-        width={size}
         height={size}
-        // object-contain, because the official marks are NOT all square —
-        // OneDrive's cloud is 1.5:1 — and forcing them into a square box
-        // would squash them. The fixed box keeps rows aligned; the mark sits
-        // inside it at its own proportions, unaltered.
+        // Height is fixed and WIDTH FOLLOWS the mark's own proportions,
+        // because the official assets are anything but square: SharePoint is
+        // 0.9:1, OneDrive 1.5:1, Zoom 4.4:1, the Confluence lockup 8:1.
+        // Forcing a square box would squash a wordmark into an unreadable
+        // smear — and a stretched mark is a modified mark, which brand terms
+        // reliably forbid. object-contain letterboxes anything past the
+        // width ceiling instead of distorting it.
+        style={{ height: size, width: 'auto', maxWidth: maxWidth ?? size * 4 }}
         className={`object-contain ${className ?? ''}`}
         onError={() => setLogoMissing(true)}
         // Decorative: the label is always rendered beside it, so announcing

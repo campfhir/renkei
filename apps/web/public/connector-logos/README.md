@@ -8,31 +8,39 @@ file is the whole deployment step.
 
 ## Present
 
-Sourced from Wikimedia Commons, which lists each as public domain — these
-marks fall below the threshold of originality for copyright. Trademark still
-applies; see below.
+All from Wikimedia Commons, each listed there as public domain — these marks
+sit below the threshold of originality for copyright. Trademark still governs
+use; see below.
 
-| File                       | Commons source                                   |
-| -------------------------- | ------------------------------------------------ |
-| `atlassian-confluence.svg` | `Atlassian Confluence 2017 logo (cropped).svg`   |
-| `microsoft.svg`            | `Microsoft Outlook Icon (2025–present).svg`      |
-| `sharepoint.svg`           | `Microsoft Office SharePoint (2025–present).svg` |
-| `onedrive.svg`             | `Microsoft OneDrive Icon (2025 - present).svg`   |
+| File                       | Commons source                                   | Ratio |
+| -------------------------- | ------------------------------------------------ | ----- |
+| `sharepoint.svg`           | `Microsoft Office SharePoint (2025–present).svg` | 0.90  |
+| `atlassian-confluence.svg` | `Atlassian Confluence 2017 logo (cropped).svg`   | 1.00  |
+| `microsoft.svg`            | `Microsoft Outlook Icon (2025–present).svg`      | 1.06  |
+| `onedrive.svg`             | `Microsoft OneDrive Icon (2025 - present).svg`   | 1.50  |
+| `jira.svg`                 | `Jira Logo.svg`                                  | 2.38  |
+| `webex.svg`                | `Cisco Webex logo - Brandlogos.net.svg`          | 2.64  |
+| `zoom.svg`                 | `Zoom Logo 2022.svg`                             | 4.40  |
 
-## Still wanted
+`knowledge.svg` is absent on purpose: it is our own search surface, not a
+vendor product, so it renders the built-in glyph.
 
-Commons has **only wide wordmarks** for these three — no square icon exists
-there, and a wordmark is illegible in a 20px row. They render the built-in
-glyph until someone adds the icon-only mark from the vendor's own brand page:
+### On those ratios
 
-| File        | Product | Note                                                    |
-| ----------- | ------- | ------------------------------------------------------- |
-| `jira.svg`  | Jira    | Atlassian publishes the icon separately from the lockup |
-| `webex.svg` | Webex   | Cisco brand resources                                   |
-| `zoom.svg`  | Zoom    | Zoom brand guidelines                                   |
+They span 0.9:1 to 4.4:1, and `ConnectorIcon` is built around that rather
+than assuming squares. It fixes HEIGHT and lets width follow the mark's own
+proportions, capped at 4× height by default (`maxWidth` overrides). A
+wordmark therefore stays legible instead of being squashed, and nothing is
+ever stretched — a distorted mark is a modified mark, which brand terms
+reliably forbid.
 
-`knowledge.svg` has no vendor at all — it is our own surface, so its glyph
-stays unless someone draws an in-house mark for it.
+Where marks sit in a list, put them in a fixed-width slot (see
+`connector-availability.tsx`) so a 4:1 wordmark beside a square tile still
+leaves every label starting at the same place.
+
+Prefer the square/icon variant when Commons offers both — Confluence has a
+`(cropped)` file that is the mark alone, where the plain one is an 8:1 lockup
+whose wordmark just repeats the label sitting next to it.
 
 ## Before adding one
 

@@ -75,12 +75,18 @@ export default function ConnectorAvailability({
           const off = disabled.has(connector.capabilityKey);
           return (
             <li key={connector.capabilityKey} className="flex items-center gap-3 py-3">
-              <ConnectorIcon
-                capabilityKey={connector.capabilityKey}
-                label={connector.label}
-                size={28}
-                className={off ? 'opacity-40 grayscale' : ''}
-              />
+              {/* A fixed slot, so marks of wildly different widths (a square
+                  SharePoint tile beside an 8:1 Confluence lockup) still leave
+                  every label starting at the same x. */}
+              <span className="flex w-24 shrink-0 items-center justify-center">
+                <ConnectorIcon
+                  capabilityKey={connector.capabilityKey}
+                  label={connector.label}
+                  size={24}
+                  maxWidth={92}
+                  className={off ? 'opacity-40 grayscale' : ''}
+                />
+              </span>
               <div className="min-w-0 flex-1">
                 <p
                   className={`text-sm font-medium ${off ? 'text-gray-400 dark:text-gray-600' : ''}`}
