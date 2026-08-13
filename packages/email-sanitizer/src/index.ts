@@ -41,7 +41,11 @@ export {
   type SeedClassifierRule,
 } from './registry/seed';
 export { sanitizeEmail, type SanitizeInputs } from './pipeline';
-export { sanitizeEmailForTenant, type SanitizeForTenantOptions } from './service';
+export {
+  sanitizeEmailForTenant,
+  type SanitizeForTenantOptions,
+  type TenantSanitizeResult,
+} from './service';
 
 export {
   listClassifierRules,

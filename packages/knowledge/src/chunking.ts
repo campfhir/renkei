@@ -16,7 +16,7 @@ import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { ingestChunk } from './ingest';
+import { upsertChunkRow } from './ingest';
 import type { KnowledgeChunkInput } from './ingest';
 import type { EmbeddingProvider } from './embeddings';
 
@@ -29,6 +29,14 @@ export interface ChunkTextOptions {
 
 const DEFAULT_MAX_CHARS = 2_000;
 const DEFAULT_OVERLAP = 200;
+
+/**
+ * Pieces per embeddings request. The provider API takes an array, so a
+ * multi-chunk object costs ceil(n/64) round-trips instead of n; 64 keeps
+ * request bodies well under typical provider payload limits at the default
+ * 2000-char chunk size.
+ */
+const EMBED_BATCH_MAX = 64;
 
 /**
  * Split text into chunks of at most maxChars, preferring paragraph breaks,
@@ -158,7 +166,15 @@ export async function ingestObjectChunks(
   tenantId: string,
   embedder: EmbeddingProvider,
   object: KnowledgeChunkInput,
-  options: ChunkTextOptions = {}
+  options: ChunkTextOptions & {
+    /**
+     * A vector some earlier stage already computed for exactly this content
+     * (the email sanitizer's near-duplicate check). Used only when the object
+     * fits in one chunk and the content matches verbatim — otherwise chunk
+     * boundaries differ from what was embedded and the vector would lie.
+     */
+    precomputed?: { content: string; vector: readonly number[] };
+  } = {}
 ): Promise<Result<{ chunks: number }, 'EMBEDDING_FAILED' | 'DB_ERROR'>> {
   const pieces = chunkText(object.content, options);
 
@@ -166,8 +182,19 @@ export async function ingestObjectChunks(
   if (!cleared.ok) return cleared;
   if (pieces.length === 0) return ok({ chunks: 0 });
 
+  const vectors: number[][] = [];
+  if (pieces.length === 1 && options.precomputed && options.precomputed.content === pieces[0]) {
+    vectors.push([...options.precomputed.vector]);
+  } else {
+    for (let at = 0; at < pieces.length; at += EMBED_BATCH_MAX) {
+      const embedded = await embedder.embed(pieces.slice(at, at + EMBED_BATCH_MAX));
+      if (!embedded.ok) return embedded;
+      vectors.push(...embedded.val);
+    }
+  }
+
   for (const [index, content] of pieces.entries()) {
-    const ingested = await ingestChunk(tenantId, embedder, {
+    const upserted = await upsertChunkRow(tenantId, {
       provider: object.provider,
       refId: chunkRefId(object.refId, index + 1, pieces.length),
       content,
@@ -178,8 +205,8 @@ export async function ingestObjectChunks(
       // Every chunk of one document shares the document's date, so a date
       // filter can't return some chunks of an item and hide the rest.
       sourceAt: object.sourceAt,
-    });
-    if (!ingested.ok) return ingested;
+    }, vectors[index] ?? []);
+    if (!upserted.ok) return upserted;
   }
   return ok({ chunks: pieces.length });
 }

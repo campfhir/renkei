@@ -81,9 +81,17 @@ function excludedAsDuplicate(result: Extract<SanitizeResult, { action: 'index' }
   };
 }
 
+/**
+ * The pure pipeline's result plus, when the near-duplicate check ran and the
+ * message is still being indexed, the vector that check computed — the
+ * content it embeds is exactly what gets ingested, so callers can reuse it
+ * instead of paying for a second identical embedding call.
+ */
+export type TenantSanitizeResult = SanitizeResult & { embedding?: number[] };
+
 export async function sanitizeEmailForTenant(
   options: SanitizeForTenantOptions
-): Promise<SanitizeResult> {
+): Promise<TenantSanitizeResult> {
   const [rulesResult, templatesResult, bannersResult] = await Promise.all([
     listClassifierRules(options.tenantId),
     listActiveTemplates(options.tenantId),
@@ -96,7 +104,7 @@ export async function sanitizeEmailForTenant(
   // while an org is still building out its list.
   const bannerPatterns = [...SEED_BANNERS, ...(bannersResult.ok ? bannersResult.val : [])];
 
-  let result = sanitizeEmail({
+  let result: TenantSanitizeResult = sanitizeEmail({
     rules,
     templates,
     raw: options.raw,
@@ -128,6 +136,8 @@ export async function sanitizeEmailForTenant(
         );
         if (nearDupResult.ok && nearDupResult.val) {
           result = excludedAsDuplicate(result);
+        } else {
+          result = { ...result, embedding: embedded.val[0] };
         }
       }
     }

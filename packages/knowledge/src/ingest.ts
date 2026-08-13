@@ -43,7 +43,16 @@ export async function ingestChunk(
 ): Promise<Result<void, 'EMBEDDING_FAILED' | 'DB_ERROR'>> {
   const embedded = await embedder.embed([chunk.content]);
   if (!embedded.ok) return embedded;
-  const vector = vectorLiteral(embedded.val[0] ?? []);
+  return upsertChunkRow(tenantId, chunk, embedded.val[0] ?? []);
+}
+
+/** The upsert half of ingestChunk, for callers that already hold the vector. */
+export async function upsertChunkRow(
+  tenantId: string,
+  chunk: KnowledgeChunkInput,
+  embedding: readonly number[]
+): Promise<Result<void, 'DB_ERROR'>> {
+  const vector = vectorLiteral(embedding);
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
