@@ -17,7 +17,7 @@ import {
 } from '@campfhir/bored-logs/components';
 import { signInUrl } from '@/lib/sign-in-url';
 import { searchLogs, type LogSearchResult } from './actions';
-import { describeWindow, DEFAULT_WINDOW_DAYS, type LogWindow } from './window';
+import { describeWindow, DEFAULT_WINDOW_DAYS, DEFAULT_LOG_LEVELS, type LogWindow } from './window';
 
 /** The levels this gateway actually writes, in severity order. */
 const LEVELS = ['debug', 'info', 'warn', 'error', 'critical'];
@@ -38,9 +38,20 @@ function StatusBadge({ value }: { value: unknown }) {
 }
 
 /** Extra columns beyond the built-in timestamp/level/message, read from `meta`. */
+/*
+ * Component and User are deliberately NOT columns.
+ *
+ * A non-operator is pinned to their own accountId before the query runs
+ * (actions.ts), so every row they can see is theirs — a User column would
+ * repeat one value down the whole page. Component is a short slug that was
+ * costing a full column to say "webex/ingest".
+ *
+ * Both still ride on every record and appear when a row is expanded, and an
+ * operator chasing one person's activity has the accountId filter. What that
+ * buys is the message column: it is the only thing here without a natural
+ * wrap point, and it now takes everything the other columns do not.
+ */
 const COLUMNS: ExtraColumn[] = [
-  { key: 'component', label: 'Component' },
-  { key: 'displayName', label: 'User' },
   { key: 'status', label: 'Status', render: (value) => <StatusBadge value={value} /> },
 ];
 
@@ -60,7 +71,9 @@ export default function LogsViewer({
 }) {
   const [{ logs, scope, error, signedOut }, setResult] = useState(initial);
   const [expr, setExpr] = useState<FilterExpr | null>(null);
-  const [levels, setLevels] = useState<string[]>([]);
+  // Seeded from the same constant the server render used, so the picker
+  // shows the filter that actually produced the rows on screen.
+  const [levels, setLevels] = useState<string[]>(DEFAULT_LOG_LEVELS);
   // Seeded from what the server searched rather than empty. An empty picker
   // above a query scoped to a hidden window is how "no logs" got reported for a
   // tenant whose activity was simply older than that window.
@@ -122,7 +135,10 @@ export default function LogsViewer({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    // data-wide-page widens the layout's shared column for this route (see
+    // globals.css). Logs earn it: a log line has no natural wrap point, so
+    // horizontal room is what makes a message readable at a glance.
+    <div className="flex flex-col gap-4" data-wide-page>
       <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h1 className="text-xl font-semibold">Activity</h1>
         <Link
@@ -233,8 +249,18 @@ export default function LogsViewer({
 
           {ordered.length === 0 && !error && (
             <p className="px-4 py-10 text-center text-sm text-slate-400">
-              No activity {describeWindow(range)}. The page starts at the last {DEFAULT_WINDOW_DAYS}{' '}
-              days — widen the range, or clear both dates for all time.
+              {/* Naming the level filter matters as much as naming the window:
+                  the page starts at warn-and-above, so a quiet result here
+                  usually means "nothing went wrong", not "nothing happened" —
+                  and reporting the latter would be a lie the user cannot see
+                  through. */}
+              No{' '}
+              {levels.length > 0 && levels.length < LEVELS.length
+                ? `${levels.join('/')} activity`
+                : 'activity'}{' '}
+              {describeWindow(range)}. The page starts at {DEFAULT_LOG_LEVELS.join('/')} over the
+              last {DEFAULT_WINDOW_DAYS} days — add levels above to see everything, widen the range,
+              or clear both dates for all time.
             </p>
           )}
         </div>

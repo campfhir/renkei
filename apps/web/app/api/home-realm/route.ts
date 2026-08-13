@@ -61,7 +61,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const origin = originResult.val;
-    return NextResponse.redirect(new URL(`/${tenant.slug}/home`, origin));
+    return NextResponse.redirect(new URL(`/${tenant.slug}`, origin));
   } catch (error) {
     console.error('Home-realm discovery error:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });

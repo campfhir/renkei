@@ -28,8 +28,9 @@ async function tenantUrl(tenantId: string): Promise<string | null> {
  * without a link.
  */
 export async function cardsFeedUrl(tenantId: string): Promise<string | null> {
-  const url = await tenantUrl(tenantId);
-  return url ? `${url}/home` : null;
+  // The tenant root IS the feed — `/home` still redirects there, but linking
+  // through a redirect for every card confirmation is a wasted hop.
+  return tenantUrl(tenantId);
 }
 
 /**

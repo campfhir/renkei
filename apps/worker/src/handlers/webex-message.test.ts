@@ -151,7 +151,8 @@ describe('createWebexMessageHandler', () => {
     expect(stub.posted).toHaveLength(1);
     expect(stub.posted[0]?.parentId).toBe('msg-1');
     expect(stub.posted[0]?.markdown).toContain('card feed');
-    expect(stub.posted[0]?.markdown).toContain('https://renkei.example.com/tenant-one/home');
+    // The tenant root IS the feed; /home only survives as a redirect.
+    expect(stub.posted[0]?.markdown).toContain('https://renkei.example.com/tenant-one)');
   });
 
   it('offers the Push to Renkei card for chatter instead of capturing', async () => {
@@ -187,8 +188,10 @@ describe('createWebexMessageHandler', () => {
     expect(inserted).toHaveLength(0);
     expect(stub.posted).toHaveLength(1);
     expect(stub.posted[0]?.parentId).toBe('msg-1');
+    // The registration nudge points at the tenant root, with no path after
+    // it — visiting that signed out is what creates the identities row.
     expect(stub.posted[0]?.markdown).toContain('https://renkei.example.com/tenant-one');
-    expect(stub.posted[0]?.markdown).not.toContain('/home');
+    expect(stub.posted[0]?.markdown).not.toMatch(/tenant-one\/\w/);
   });
 
   it('words the registration nudge without a link when there is no public base URL', async () => {

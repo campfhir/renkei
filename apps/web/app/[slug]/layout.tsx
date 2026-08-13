@@ -44,7 +44,7 @@ export default async function TenantLayout({
         userName={userName}
         userEmail={identity?.email ?? null}
         isOperator={isOperator}
-        signInHref={signInUrl(tenant.id, `/${tenant.slug}/home`)}
+        signInHref={signInUrl(tenant.id, `/${tenant.slug}`)}
       />
       {/* Wide enough for the log and grant tables; narrow pages center a
           max-w-3xl block of their own inside it. */}

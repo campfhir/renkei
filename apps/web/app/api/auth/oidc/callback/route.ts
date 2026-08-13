@@ -231,7 +231,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         .select('slug')
         .where('id', '=', tenantId)
         .executeTakeFirst();
-      redirect = tenantRow ? `/${tenantRow.slug}/home` : '/';
+      redirect = tenantRow ? `/${tenantRow.slug}` : '/';
     }
 
     // Create a server-side session. Subject and roles are stored in the database

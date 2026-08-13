@@ -91,7 +91,7 @@ export default function AppNav({
     {
       label: 'Workspace',
       items: [
-        { href: `/${slug}/home`, label: 'Home' },
+        { href: `/${slug}`, label: 'Home' },
         { href: `/${slug}/connectors`, label: 'Connectors' },
         { href: `/${slug}/knowledge`, label: 'Knowledge' },
         { href: `/${slug}/mail-review`, label: 'Mail review' },
@@ -147,7 +147,7 @@ export default function AppNav({
           <span className="h-0.5 w-5 rounded bg-gray-700 dark:bg-gray-300" />
         </button>
 
-        <Link href={`/${slug}/home`} className="font-semibold tracking-tight">
+        <Link href={`/${slug}`} className="font-semibold tracking-tight">
           Renkei
           <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">{slug}</span>
         </Link>

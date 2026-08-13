@@ -3,7 +3,7 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { signInUrl } from '@/lib/sign-in-url';
 import { searchLogs } from './actions';
 import LogsViewer from './logs-viewer';
-import { defaultLogWindow } from './window';
+import { defaultLogWindow, DEFAULT_LOG_LEVELS } from './window';
 
 /**
  * Server-render the first page of logs, then hand off to the viewer, which
@@ -28,7 +28,7 @@ export default async function LogsPage({
 
   const initial = await searchLogs(tenant.id, {
     expr: null,
-    levels: [],
+    levels: DEFAULT_LOG_LEVELS,
     start: window.start,
     end: window.end,
     sort: 'desc',

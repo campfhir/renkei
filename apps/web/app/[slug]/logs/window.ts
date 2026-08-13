@@ -16,6 +16,21 @@
 export const DEFAULT_WINDOW_DAYS = 7;
 
 /**
+ * The levels a fresh page load searches.
+ *
+ * Debug and info are the overwhelming majority of rows and almost never what
+ * someone opened this page to find — they came because something looked
+ * wrong. Starting at warn-and-above puts the interesting rows on the first
+ * screen instead of on page nine.
+ *
+ * It lives beside the window default for the same reason that one exists:
+ * the server render and the picker must agree about what is being searched,
+ * or the page shows a filtered result while claiming to show everything.
+ * Both defaults are therefore explicit and both are reflected in the UI.
+ */
+export const DEFAULT_LOG_LEVELS = ['warn', 'error', 'critical'];
+
+/**
  * A lower bound old enough to mean "no lower bound".
  *
  * Passed when the picker is cleared, so that state queries every record rather

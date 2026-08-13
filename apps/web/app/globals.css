@@ -412,18 +412,24 @@ body {
   background: var(--bl-hover);
   cursor: pointer;
 }
-/* `message` takes the remainder under table-fixed. */
+/*
+ * Every column EXCEPT message gets an explicit width. Under
+ * table-layout:fixed the ones without a width divide the remainder equally,
+ * so pinning the rest leaves `message` the only claimant on what is left —
+ * it grows with the window rather than splitting it.
+ *
+ * The component and displayName rules remain for the expanded-row and card
+ * layouts, which still render those fields even though they are no longer
+ * table columns.
+ */
 .log-table [data-column='timestamp'] {
-  width: 13rem;
+  width: 11.5rem;
 }
 .log-table [data-column='level'] {
-  width: 6rem;
-}
-.log-table [data-column='displayName'] {
-  width: 10rem;
+  width: 5rem;
 }
 .log-table [data-column='status'] {
-  width: 6rem;
+  width: 5.5rem;
 }
 .log-table [data-expanded] td {
   background: var(--bl-surface-2);
@@ -532,4 +538,19 @@ body {
   color: var(--bl-muted);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/*
+ * A page that wants the whole window rather than the shared reading column
+ * asks for it here, rather than the layout special-casing routes it should
+ * not need to know about. Tables are the case that earns it: a log line has
+ * no natural wrap point, so horizontal room is the difference between
+ * reading a message and hovering it.
+ *
+ * Capped rather than truly full-bleed — past about 1900px a log line becomes
+ * a saccade rather than a glance — and `min()` keeps the cap from beating
+ * the viewport on smaller screens.
+ */
+main:has([data-wide-page]) {
+  max-width: min(100%, 120rem);
 }
