@@ -1,24 +1,35 @@
 /**
- * The `content_watches` read/write helpers shared by the Jira and
- * Confluence watch tools.
+ * The `content_watches` read/write helpers shared by the Jira, Confluence
+ * and SharePoint watch tools.
  *
- * A watch is a standing instruction — "keep this project/space indexed" —
- * owned by the user who created it, because the worker polls with THAT
- * user's grant. That ownership is the whole safety story: a watch can only
- * ever surface content its owner could already read, and when their grant
- * is revoked the polling simply stops.
+ * A watch is a standing instruction — "keep this project/space/library
+ * indexed" — owned by the user who created it, because the worker polls
+ * with THAT user's grant. That ownership is the whole safety story: a watch
+ * can only ever surface content its owner could already read, and when
+ * their grant is revoked the polling simply stops.
  *
- * Nothing here calls a provider. Validating that the project or space
- * actually exists belongs to the connector's own tool, which already has a
- * client; this layer only owns the row.
+ * For SharePoint the ownership story stops one step short, and the
+ * difference matters: a document library is shared, so what the owner can
+ * read is NOT what every reader may read. Indexing is still bounded by the
+ * watcher's access, but disclosure is decided per reader by the live ACL
+ * gate at retrieval — never by this row.
+ *
+ * Nothing here calls a provider. Validating that the project, space or
+ * library actually exists belongs to the connector's own tool, which
+ * already has a client; this layer only owns the row.
  */
 
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 
-export type WatchProvider = 'jira' | 'confluence';
-export type WatchScopeType = 'project' | 'space';
+/**
+ * Matches the `knowledge_chunks.provider` each poller writes, so the ACL
+ * verifier for a chunk is found by the same key that produced it.
+ */
+export type WatchProvider = 'jira' | 'confluence' | 'sharepoint';
+/** 'drive' covers both a SharePoint document library and a personal OneDrive: both are drives, and scope_key is the driveId either way. */
+export type WatchScopeType = 'project' | 'space' | 'drive';
 
 export interface WatchOwner {
   tenantId: string;

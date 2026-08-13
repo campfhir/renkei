@@ -12,7 +12,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { graphRequest } from './client';
 
-export type DeltaKind = 'mail-inbox' | 'calendar' | 'todo';
+export type DeltaKind = 'mail-inbox' | 'calendar' | 'todo' | 'drive';
 
 export interface InitialDeltaOptions {
   /** Required for 'todo' — Graph has no delta over all lists at once. */
@@ -21,7 +21,33 @@ export interface InitialDeltaOptions {
   windowStart?: Date;
   /** Calendar window end; defaults to 180 days ahead. */
   windowEnd?: Date;
+  /** Required for 'drive' — delta is always scoped to one drive. */
+  driveId?: string;
 }
+
+/**
+ * What a drive delta round needs to decide whether a document changed, and
+ * to describe it, without a second call per item.
+ *
+ * `cTag` is the load-bearing one: it changes only when CONTENT changes,
+ * while `eTag` also bumps on a rename or a metadata edit. Skipping on cTag
+ * is what stops a rename from re-downloading and re-embedding a file.
+ */
+const DRIVE_DELTA_SELECT = [
+  'id',
+  'name',
+  'size',
+  'file',
+  'folder',
+  'package',
+  'root',
+  'deleted',
+  'cTag',
+  'eTag',
+  'lastModifiedDateTime',
+  'webUrl',
+  'parentReference',
+].join(',');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -50,6 +76,15 @@ export function initialDeltaUrl(kind: DeltaKind, opts?: InitialDeltaOptions): st
       }
       return `/me/todo/lists/${encodeURIComponent(opts.listId)}/tasks/delta`;
     }
+    case 'drive': {
+      if (!opts?.driveId) {
+        throw new Error('initialDeltaUrl: drive requires a driveId');
+      }
+      // Deliberately NOT `?token=latest`: a new watch exists to index what
+      // is already in the library, and token=latest would start from now and
+      // silently index only future edits.
+      return `/drives/${encodeURIComponent(opts.driveId)}/root/delta?$select=${DRIVE_DELTA_SELECT}`;
+    }
   }
 }
 
@@ -70,20 +105,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * re-fetch the same head forever). Both null means Graph produced neither —
  * only then should the caller restart from an initial URL.
  */
+export interface DeltaRoundOptions {
+  /**
+   * Page cap for THIS round; defaults to MAX_DELTA_PAGES. Drives pass a
+   * smaller value so one large library cannot monopolise a sweep pass — the
+   * unfollowed nextLink is persisted as the cursor, so the next round simply
+   * continues.
+   */
+  maxPages?: number;
+}
+
 export async function runDeltaRound(
   accessToken: string,
-  startUrl: string
+  startUrl: string,
+  options?: DeltaRoundOptions
 ): Promise<
   Result<{ items: unknown[]; deltaLink: string | null; nextLink: string | null }, 'GRAPH_API_ERROR'>
 > {
   const items: unknown[] = [];
   let url: string | null = startUrl;
   let deltaLink: string | null = null;
+  const maxPages = options?.maxPages ?? MAX_DELTA_PAGES;
 
-  for (let page = 0; page < MAX_DELTA_PAGES && url !== null; page += 1) {
+  for (let page = 0; page < maxPages && url !== null; page += 1) {
     const result: Result<unknown, 'GRAPH_API_ERROR'> = await graphRequest(accessToken, url, {
       // Mail bodies come back as HTML by default; text keeps the index clean.
-      // Non-mail resources ignore the preference, so it is safe to send always.
+      // Graph ignores unknown Prefer tokens, so this is inert on the drive and
+      // to-do resources rather than meaningful to them.
       headers: { Prefer: 'outlook.body-content-type="text"' },
     });
     if (!result.ok) return result;

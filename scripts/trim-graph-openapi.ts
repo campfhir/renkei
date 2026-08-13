@@ -48,8 +48,41 @@ const KEEP_EXACT = new Set([
   '/groups',
   '/groups/{group-id}',
   '/groups/{group-id}/members',
+  // Group membership is the only delegated way to change who reaches a
+  // group-connected SharePoint team site — /sites/{id}/permissions is
+  // application-only.
+  '/groups/{group-id}/members/$ref',
+  '/groups/{group-id}/owners',
+  '/groups/{group-id}/sites/{site-id}',
+  // The site tree, one by one: a bare '/sites' prefix drags in the term
+  // store, analytics, Planner and the whole list surface.
+  '/sites',
+  '/sites/{site-id}',
+  '/sites/{site-id}/sites',
+  '/sites/{site-id}/drive',
+  '/sites/{site-id}/drives',
+  '/sites/{site-id}/lists',
+  '/sites/{site-id}/lists/{list-id}',
+  '/sites/{site-id}/lists/{list-id}/columns',
+  '/sites/{site-id}/pages',
+  '/sites/{site-id}/pages/{baseSitePage-id}',
+  '/sites/{site-id}/permissions',
+  '/me/followedSites',
+  // Resolving a pasted SharePoint/OneDrive URL to a driveItem. Kept exact:
+  // the /shares prefix drags the whole driveItem tree in a second time.
+  '/shares/{sharedDriveItem-id}',
+  '/shares/{sharedDriveItem-id}/driveItem',
 ]);
-/** Paths kept by prefix — the workloads the Outlook connector uses. */
+
+/**
+ * Dropped even when a KEEP rule matches. The Excel workbook API hangs off
+ * /drives/{id}/items/{id}/workbook and is ~1400 paths — three quarters of
+ * everything the drive prefix yields — for a surface no connector calls:
+ * spreadsheets are read as bytes and parsed locally, never cell by cell
+ * over HTTP.
+ */
+const DROP_CONTAINING = ['/workbook', '/analytics'];
+/** Paths kept by prefix — the workloads the connectors use. */
 const KEEP_PREFIXES = [
   '/me/messages',
   '/me/mailFolders',
@@ -59,6 +92,11 @@ const KEEP_PREFIXES = [
   '/me/calendarView', // by the /me/calendar prefix — list them explicitly
   '/me/todo',
   '/subscriptions',
+  // Drives, kept whole (minus DROP_CONTAINING): items, children, content,
+  // delta, permissions and listItem/fields are all needed, and they nest
+  // too deeply to enumerate one by one.
+  '/me/drive',
+  '/drives',
 ];
 
 /** How many schema-to-schema hops from a kept path survive the trim. */
@@ -70,6 +108,8 @@ const isRecord = (value: unknown): value is Json =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 function keepPath(path: string): boolean {
+  // Exclusions win over every KEEP rule, so a broad prefix stays usable.
+  if (DROP_CONTAINING.some((fragment) => path.includes(fragment))) return false;
   if (KEEP_EXACT.has(path)) return true;
   return KEEP_PREFIXES.some(
     (prefix) => path === prefix || path.startsWith(`${prefix}/`) || path.startsWith(`${prefix}(`)

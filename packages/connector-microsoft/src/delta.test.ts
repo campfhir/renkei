@@ -49,6 +49,27 @@ describe('initialDeltaUrl', () => {
     expect(initialDeltaUrl('todo', { listId: 'list-1' })).toBe('/me/todo/lists/list-1/tasks/delta');
     expect(() => initialDeltaUrl('todo')).toThrow();
   });
+
+  it('names the drive root delta, requiring the driveId', () => {
+    const url = initialDeltaUrl('drive', { driveId: 'b!aBc/dEf' });
+    expect(url.startsWith('/drives/b!aBc%2FdEf/root/delta?')).toBe(true);
+    expect(() => initialDeltaUrl('drive')).toThrow();
+  });
+
+  it('selects cTag on drive delta — the field content-change detection needs', () => {
+    // eTag also bumps on a rename, so skipping on it would re-download and
+    // re-embed files whose content never changed.
+    const url = initialDeltaUrl('drive', { driveId: 'd1' });
+    expect(url).toContain('cTag');
+    // `deleted` is how drive delta signals removal — mail's @removed never
+    // appears here, and missing this field means missing every deletion.
+    expect(url).toContain('deleted');
+  });
+
+  it('does not start from token=latest, which would skip existing content', () => {
+    // A new watch exists to index what is ALREADY in the library.
+    expect(initialDeltaUrl('drive', { driveId: 'd1' })).not.toContain('token=latest');
+  });
 });
 
 describe('runDeltaRound', () => {
@@ -132,9 +153,26 @@ describe('runDeltaRound', () => {
       expect(result.val.items).toHaveLength(50);
     }
     expect(fetchMock).toHaveBeenCalledTimes(50);
-  }, // TokenBucket, not mocked) — 50 real page fetches past a 5-request burst // graphRequest is rate-limited for real here (client.ts's module-level
-  // take several real seconds at 5/sec, past Jest's default 5000ms.
+  }, // take several real seconds at 5/sec, past Jest's default 5000ms. // TokenBucket, not mocked) — 50 real page fetches past a 5-request burst // graphRequest is rate-limited for real here (client.ts's module-level
   15_000);
+
+  it('honours a caller-supplied page cap, so one big library cannot hog a sweep', async () => {
+    const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      jsonResponse(200, {
+        value: [{ id: 'x' }],
+        '@odata.nextLink': `${GRAPH_BASE_URL}/delta?$skiptoken=again`,
+      })
+    );
+
+    const result = await runDeltaRound('token-1', '/drives/d1/root/delta', { maxPages: 3 });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    if (result.ok) {
+      expect(result.val.items).toHaveLength(3);
+      // The cursor still advances — a capped round resumes, never restarts.
+      expect(result.val.nextLink).toBe(`${GRAPH_BASE_URL}/delta?$skiptoken=again`);
+    }
+  });
 
   it('propagates a page failure', async () => {
     jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(503, {}));

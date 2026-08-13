@@ -1,18 +1,32 @@
 /**
  * @renkei/connector-microsoft — the Microsoft Graph connector's ingress
- * surface: mail (inbox), calendar, and To Do tasks, per-user.
+ * surface: mail (inbox), calendar, To Do tasks, and drive documents
+ * (SharePoint document libraries and personal OneDrive), per-user.
+ *
+ * The package covers TWO content families whose access rules genuinely
+ * differ, and conflating them is the mistake this header exists to prevent:
+ *
+ *   PERSONAL (mail, calendar, tasks) — indexed into the owner's view alone,
+ *   refId `${upn}/${kind}/${id}`, ownership IS the ACL (verifier.ts).
+ *
+ *   DOCUMENTS (drives) — shared by nature, refId `${driveId}/${itemId}` with
+ *   no owner segment, ACL answered LIVE per reader against Graph
+ *   (drive-verifier.ts). Stored under their own knowledge provider key so
+ *   the right verifier is chosen by a column rather than by sniffing a ref.
  *
  * Data contract (RENKEI.md, connector contract):
- * 1. Content stored: message/event/task content flows through delta rounds
- *    into the knowledge index; this package itself persists nothing.
- * 2. Metadata indexed: the owner's UPN is baked into every refId — that is
- *    the entire ACL story (see verifier.ts).
+ * 1. Content stored: message/event/task/document content flows through delta
+ *    rounds into the knowledge index; this package itself persists nothing.
+ * 2. Metadata indexed: personal items carry their owner's UPN in the refId;
+ *    documents carry drive and item ids, plus cTag for change detection.
  * 3. Retrieval-only: everything else stays live behind graphRequest.
- * 4. Sharing: items are indexed only into their OWNER's view; nothing here
- *    ever crosses users.
- * 5. verifyAccess: pure ownership check over the refId scheme — the item was
- *    fetched with the owner's own delegated grant, so ownership is exactly
- *    Graph's own access rule for these resources.
+ * 4. Sharing: personal items are indexed only into their OWNER's view and
+ *    never cross users. Documents ARE shared — indexing is bounded by the
+ *    watching user's access, but disclosure is decided per reader at
+ *    retrieval, never by who indexed the file.
+ * 5. verifyAccess: ownership equality for personal items; a live per-caller
+ *    Graph $batch for documents, where the provider's own answer is the only
+ *    tractable and correct one.
  *
  * Ingestion is delegated-token scoped (each user's own OAuth grant via
  * @renkei/provider-grants' MicrosoftAdapter) — there is no org credential,
@@ -31,6 +45,18 @@ export {
 } from './refs';
 export { createMicrosoftAccessVerifier } from './verifier';
 export {
+  SHAREPOINT_KNOWLEDGE_PROVIDER,
+  sharepointRefId,
+  partsOfSharepointRefId,
+} from './drive-refs';
+export { createSharepointAccessVerifier, type MicrosoftCredentialLookup } from './drive-verifier';
+export {
+  graphDownload,
+  DRIVE_CONTENT_MAX_BYTES,
+  type GraphContent,
+  type GraphDownloadOptions,
+} from './content';
+export {
   GRAPH_SUBSCRIPTION_MINUTES,
   createGraphSubscription,
   renewGraphSubscription,
@@ -39,4 +65,10 @@ export {
   type CreateSubscriptionOptions,
   type GraphSubscription,
 } from './subscriptions';
-export { initialDeltaUrl, runDeltaRound, type DeltaKind, type InitialDeltaOptions } from './delta';
+export {
+  initialDeltaUrl,
+  runDeltaRound,
+  type DeltaKind,
+  type InitialDeltaOptions,
+  type DeltaRoundOptions,
+} from './delta';
