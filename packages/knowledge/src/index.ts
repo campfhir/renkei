@@ -220,6 +220,10 @@ export async function listRecentKnowledge(
      ORDER BY source_at DESC
      LIMIT ${overfetch})
   `;
+  // The trailing ORDER BY re-sorts the merged union. It must NOT appear in
+  // the single-branch case: without a set operation, Postgres flattens the
+  // parenthesized SELECT and rejects the second sort with "multiple ORDER
+  // BY clauses not allowed" — and the branch already orders itself anyway.
   const query =
     sources.length > 1
       ? sql<CandidateRow>`${sql.join(
@@ -232,7 +236,7 @@ export async function listRecentKnowledge(
           ),
           sql` UNION ALL `
         )} ORDER BY source_at DESC`
-      : sql<CandidateRow>`${branch(filters.source)} ORDER BY source_at DESC`;
+      : sql<CandidateRow>`${branch(filters.source)}`;
 
   const rowsResult = await wrapAsync(() => query.execute(dbResult.val), 'DB_ERROR' as const);
   if (!rowsResult.ok) return rowsResult;
