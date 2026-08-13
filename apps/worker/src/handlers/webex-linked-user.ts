@@ -62,10 +62,22 @@ export async function resolveLinkedWebexUserAccess(
   email: string
 ): Promise<LinkedWebexUserAccess | null> {
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return null;
+  if (!keyResult.ok) {
+    logger.warn('TOKEN_ENCRYPTION_KEY is missing or malformed; skipping cross-space search', {
+      component: 'webex/forward-context',
+      tenantId,
+    });
+    return null;
+  }
 
   const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
+  if (!dbResult.ok) {
+    logger.warn('database unavailable; skipping cross-space search', {
+      component: 'webex/forward-context',
+      tenantId,
+    });
+    return null;
+  }
 
   // Same identities → provider_grants hop the knowledge gate uses for
   // Atlassian (apps/web/lib/mcp-tools/knowledge/index.ts): the gates verify
@@ -83,20 +95,46 @@ export async function resolveLinkedWebexUserAccess(
     .where('provider_grants.provider', '=', WEBEX_USER)
     .limit(1)
     .executeTakeFirst();
-  if (!row) return null;
+  if (!row) {
+    logger.debug('no webex-user grant on file for {email}; skipping cross-space search', {
+      component: 'webex/forward-context',
+      tenantId,
+      email,
+    });
+    return null;
+  }
 
   const grantResult = await getGrant(WEBEX_USER, tenantId, row.provider_account_id, keyResult.val);
-  if (!grantResult.ok || !grantResult.val) return null;
+  if (!grantResult.ok || !grantResult.val) {
+    logger.warn('webex-user grant row exists but could not be read: {error}', {
+      component: 'webex/forward-context',
+      tenantId,
+      email,
+      error: grantResult.ok ? 'grant not found' : grantResult.err,
+    });
+    return null;
+  }
   let grant = grantResult.val;
 
   if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
+    logger.debug('sender’s webex-user token is near expiry; refreshing', {
+      component: 'webex/forward-context',
+      tenantId,
+      email,
+    });
     const configResult = await readConnectorConfigCached(
       tenantId,
       WEBEX_USER_CONNECTOR,
       keyResult.val
     );
     const clientSecret = configResult.ok ? configResult.val?.secrets.clientSecret : undefined;
-    if (!clientSecret) return null;
+    if (!clientSecret) {
+      logger.warn('webex-user connector has no clientSecret; skipping cross-space search', {
+        component: 'webex/forward-context',
+        tenantId,
+      });
+      return null;
+    }
 
     const refreshed = await refreshGrantTokens(
       new WebexUserAdapter(clientSecret),

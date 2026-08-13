@@ -47,7 +47,13 @@ export async function findForwardedOrigin(options: {
   excludeRoomId: string;
 }): Promise<ForwardedOrigin | null> {
   const needle = normalize(options.text);
-  if (needle.length < MIN_MATCHABLE_LENGTH) return null;
+  if (needle.length < MIN_MATCHABLE_LENGTH) {
+    logger.debug('message text too short ({length} chars) to search reliably; skipping', {
+      component: 'webex/forward-context',
+      length: needle.length,
+    });
+    return null;
+  }
 
   const { client } = options;
   const rooms = await client.listRooms(ROOMS_TO_SCAN);
@@ -57,18 +63,33 @@ export async function findForwardedOrigin(options: {
     });
     return null;
   }
+  logger.debug('scanning {count} of the sender’s rooms for a forwarded original', {
+    component: 'webex/forward-context',
+    count: rooms.val.length,
+  });
 
   for (const room of rooms.val) {
     if (room.id === options.excludeRoomId) continue;
 
     const messages = await client.listMessages(room.id, MESSAGES_PER_ROOM);
-    if (!messages.ok) continue;
+    if (!messages.ok) {
+      logger.debug('could not list messages in room {roomId}; skipping it', {
+        component: 'webex/forward-context',
+        roomId: room.id,
+      });
+      continue;
+    }
 
     const hit = messages.val.find(
       (message): message is WebexMessage & { text: string } =>
         !!message.text && normalize(message.text) === needle
     );
     if (hit) {
+      logger.debug('found the forwarded original in room {roomId} ({roomTitle})', {
+        component: 'webex/forward-context',
+        roomId: room.id,
+        roomTitle: room.title ?? 'untitled',
+      });
       return {
         roomId: room.id,
         roomTitle: room.title,
@@ -79,5 +100,8 @@ export async function findForwardedOrigin(options: {
     }
   }
 
+  logger.debug('no forwarded original found among the scanned rooms', {
+    component: 'webex/forward-context',
+  });
   return null;
 }

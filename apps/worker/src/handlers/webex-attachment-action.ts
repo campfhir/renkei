@@ -51,7 +51,13 @@ export function createWebexAttachmentActionHandler(
     const push = parsePushAction(action.inputs);
     // A button from some other card of ours (or a malformed submit) is not an
     // error — it is simply not this handler's work.
-    if (!push) return;
+    if (!push) {
+      logger.debug('attachment action {actionId} is not a push-to-renkei card; ignoring', {
+        component: 'webex/push-card',
+        actionId,
+      });
+      return;
+    }
 
     const messageResult = await context.client.getMessage(push.messageId);
     if (!messageResult.ok) {
@@ -87,6 +93,13 @@ export function createWebexAttachmentActionHandler(
       note: push.note,
       force: true,
     });
+    logger.debug('push capture outcome for {messageId}: {outcome}, pushedBy {pushedBy}', {
+      component: 'webex/push-card',
+      actionId,
+      messageId: message.id,
+      outcome,
+      pushedBy,
+    });
 
     const feedUrl = await cardsFeedUrl(event.tenant_id);
     const confirmation =
@@ -103,6 +116,13 @@ export function createWebexAttachmentActionHandler(
     });
     if (!posted.ok) {
       logger.warn('could not post push confirmation', { component: 'webex/push-card', actionId });
+    } else {
+      logger.debug('posted push confirmation {postedId} to room {roomId}', {
+        component: 'webex/push-card',
+        actionId,
+        postedId: posted.val.id,
+        roomId: message.roomId,
+      });
     }
   };
 }

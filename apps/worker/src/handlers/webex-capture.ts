@@ -70,6 +70,11 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
   // Failures are logged, not retried — a retry would re-run the whole event
   // and duplicate any card it already produced.
   const embedder = await resolveEmbeddingProvider(tenantId);
+  logger.debug('embedding provider for {tenantId}: {status}', {
+    component: 'webex/capture',
+    tenantId,
+    status: embedder ? 'configured' : 'none — indexing and related-item search skipped',
+  });
   if (embedder && text.trim()) {
     const ingested = await ingestChunk(tenantId, embedder, {
       provider: 'webex',
@@ -92,6 +97,15 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
   }
 
   const classification = classifyMessage(text);
+  logger.debug('classifier result for {messageId}: {result}', {
+    component: 'webex/capture',
+    messageId: message.id,
+    result: classification
+      ? `"${classification.title}"`
+      : options.force
+        ? 'no opinion, forced (pushed)'
+        : 'no opinion — not issue-shaped, offering push card instead',
+  });
   if (!classification && !options.force) return 'skipped';
   const suggestion = classification ?? genericSuggestion(text, options.note ?? null);
 
@@ -109,7 +123,14 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
     .where('status', '=', 'suggested')
     .where(sql<string>`evidence->>'messageId'`, '=', message.id)
     .executeTakeFirst();
-  if (existing) return 'duplicate';
+  if (existing) {
+    logger.debug('actionable item {itemId} already exists for {messageId}', {
+      component: 'webex/capture',
+      messageId: message.id,
+      itemId: existing.id,
+    });
+    return 'duplicate';
+  }
 
   // Enrichment: similar prior chunks, disclosed only after the live ACL gate
   // clears them for the acting identity — the pusher when there is one, the
@@ -134,10 +155,11 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
     }
   }
 
+  const itemId = randomUUID();
   await db
     .insertInto('actionable_items')
     .values({
-      id: randomUUID(),
+      id: itemId,
       tenant_id: tenantId,
       source: 'webex',
       title: suggestion.title,
@@ -163,6 +185,11 @@ export async function captureMessage(options: CaptureOptions): Promise<CaptureOu
       suggested_action: JSON.stringify(suggestion.suggestedAction),
     })
     .execute();
+  logger.debug('inserted actionable item {itemId} for {messageId}', {
+    component: 'webex/capture',
+    messageId: message.id,
+    itemId,
+  });
 
   return 'captured';
 }

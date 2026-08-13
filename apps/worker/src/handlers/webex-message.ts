@@ -82,10 +82,26 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
       throw new Error(`could not fetch WebEx message ${messageId}`);
     }
     const message = messageResult.val;
+    logger.debug(
+      'fetched message {messageId} from room {roomId}, sender {personEmail}, {textLength} chars',
+      {
+        component: 'webex/ingest',
+        messageId: message.id,
+        roomId: message.roomId,
+        personEmail: message.personEmail,
+        textLength: message.text?.length ?? 0,
+      }
+    );
 
     // The bot's own replies come back as webhook deliveries too; ingesting
     // them would loop.
-    if (context.botPersonId && message.personId === context.botPersonId) return;
+    if (context.botPersonId && message.personId === context.botPersonId) {
+      logger.debug('skipping the bot’s own message {messageId}', {
+        component: 'webex/ingest',
+        messageId: message.id,
+      });
+      return;
+    }
 
     const threadRoot = message.parentId ?? message.id;
 
@@ -94,7 +110,21 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
     // personEmail is normally present on real deliveries; when it is not
     // (some system-generated messages), there is no identity to check, so
     // fall through to the ordinary capture flow rather than block on it.
-    if (message.personEmail && !(await checkLinkedIdentity(event.tenant_id, message.personEmail))) {
+    const linked = message.personEmail
+      ? await checkLinkedIdentity(event.tenant_id, message.personEmail)
+      : null;
+    logger.debug('identity check for {personEmail}: {result}', {
+      component: 'webex/ingest',
+      messageId: message.id,
+      personEmail: message.personEmail,
+      result:
+        linked === null
+          ? 'no personEmail on delivery — not gated'
+          : linked
+            ? 'linked'
+            : 'not linked',
+    });
+    if (linked === false) {
       const register = await registrationUrl(event.tenant_id);
       const posted = await context.client.postMessage({
         roomId: message.roomId,
@@ -109,6 +139,13 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
           component: 'webex/ingest',
           messageId: message.id,
         });
+      } else {
+        logger.debug('posted registration nudge {postedId} to room {roomId}', {
+          component: 'webex/ingest',
+          messageId: message.id,
+          postedId: posted.val.id,
+          roomId: message.roomId,
+        });
       }
       return;
     }
@@ -119,11 +156,25 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
     let forwardedOrigin: ForwardedOrigin | null = null;
     if (message.personEmail && message.text) {
       const access = await resolveUserAccess(event.tenant_id, message.personEmail);
+      logger.debug('sender’s own webex access: {access}', {
+        component: 'webex/ingest',
+        messageId: message.id,
+        access: access
+          ? 'connected — searching for forwarded origin'
+          : 'not connected — skipping search',
+      });
       if (access) {
         forwardedOrigin = await findOrigin({
           client: new WebexClient(access.accessToken),
           text: message.text,
           excludeRoomId: message.roomId,
+        });
+        logger.debug('forwarded-origin search result: {result}', {
+          component: 'webex/ingest',
+          messageId: message.id,
+          result: forwardedOrigin
+            ? `found in room ${forwardedOrigin.roomId} (${forwardedOrigin.roomTitle ?? 'untitled'})`
+            : 'no match',
         });
       }
     }
@@ -134,6 +185,11 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
       client: context.client,
       force: false,
       forwardedOrigin,
+    });
+    logger.debug('capture outcome for {messageId}: {outcome}', {
+      component: 'webex/ingest',
+      messageId: message.id,
+      outcome,
     });
 
     const originNote = forwardedOrigin
@@ -157,6 +213,13 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
           component: 'webex/ingest',
           messageId: message.id,
         });
+      } else {
+        logger.debug('posted capture confirmation {postedId} to room {roomId}', {
+          component: 'webex/ingest',
+          messageId: message.id,
+          postedId: posted.val.id,
+          roomId: message.roomId,
+        });
       }
     } else if (outcome === 'skipped') {
       // Not issue-shaped — offer the deliberate push instead of guessing.
@@ -171,8 +234,20 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
           component: 'webex/ingest',
           messageId: message.id,
         });
+      } else {
+        logger.debug('posted push card {postedId} to room {roomId}', {
+          component: 'webex/ingest',
+          messageId: message.id,
+          postedId: posted.val.id,
+          roomId: message.roomId,
+        });
       }
+    } else {
+      // 'duplicate': the item already exists; a second reply would be noise.
+      logger.debug('duplicate capture for {messageId} — no reply sent', {
+        component: 'webex/ingest',
+        messageId: message.id,
+      });
     }
-    // 'duplicate': the item already exists; a second reply would be noise.
   };
 }
