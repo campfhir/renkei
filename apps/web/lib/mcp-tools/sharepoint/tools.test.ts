@@ -338,6 +338,88 @@ describe('sharepoint tools', () => {
   });
 });
 
+describe('reading document text', () => {
+  it('extracts a Word document’s text through the pipeline', async () => {
+    const { buildDocx, paragraph } = await import('@renkei/document-text/src/test-support');
+    const docx = buildDocx(paragraph('The vendor agreement renews in March.'));
+
+    routes = [
+      {
+        match: '/items/item-1?$select=id,name,size,file,cTag',
+        body: { id: 'item-1', name: 'contract.docx', size: docx.byteLength },
+      },
+      {
+        match: '/items/item-1?',
+        body: { id: 'item-1', name: 'contract.docx', parentReference: { driveId: 'drive-1' } },
+      },
+    ];
+    // graphDownload fetches metadata then the pre-authenticated URL; without
+    // a downloadUrl it falls back to /content, which this stub answers.
+    const tools = await toolsOf(registerSharePointTools);
+    global.fetch = jest.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes('/content')) {
+        return new Response(docx, {
+          status: 200,
+          headers: { 'Content-Type': 'application/octet-stream' },
+        });
+      }
+      if (url.includes('$select=id,name,size,file,cTag')) {
+        return new Response(
+          JSON.stringify({ id: 'item-1', name: 'contract.docx', size: docx.byteLength }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          id: 'item-1',
+          name: 'contract.docx',
+          parentReference: { driveId: 'drive-1' },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+
+    const result = await tools.get('sharepoint_read_document')!({
+      driveId: 'drive-1',
+      itemId: 'item-1',
+    });
+
+    expect(textOf(result)).toContain('The vendor agreement renews in March.');
+  });
+
+  it('says why a document cannot be read rather than failing opaquely', async () => {
+    const tools = await toolsOf(registerSharePointTools);
+    // A CFB container with the encrypted marker: a password-protected file.
+    const encrypted = new Uint8Array(9000);
+    encrypted.set([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1], 0);
+    encrypted.set(new TextEncoder().encode('EncryptedPackage'), 600);
+
+    global.fetch = jest.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes('/content')) {
+        return new Response(encrypted, { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          id: 'item-1',
+          name: 'secret.docx',
+          size: encrypted.byteLength,
+          parentReference: { driveId: 'drive-1' },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+
+    const result = await tools.get('sharepoint_read_document')!({
+      driveId: 'drive-1',
+      itemId: 'item-1',
+    });
+
+    expect(textOf(result)).toContain('password protected');
+  });
+});
+
 describe('onedrive tools', () => {
   it('defaults to the caller’s own drive without being told', async () => {
     routes = [

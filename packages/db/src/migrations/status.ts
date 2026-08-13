@@ -61,6 +61,7 @@ export const EXPECTED_MIGRATIONS = [
   '028-content-watches',
   '029-seed-classifier-rules',
   '030-embedding-queue',
+  '031-knowledge-ref-prefix-index',
 ];
 
 export interface MigrationStatus {

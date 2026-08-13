@@ -28,6 +28,8 @@ import {
   errText,
   byteSize,
 } from './client';
+import { graphDownload } from '@renkei/connector-microsoft';
+import { extractText } from '@renkei/document-text';
 import { resolveDriveItem, resolveMyDriveId, type ItemSelector } from './resolve';
 
 export interface NamespaceOptions {
@@ -210,6 +212,93 @@ export function registerDocumentTools(
         `itemId: ${str(body.id)}`,
       ];
       return textResult(lines.join('\n'));
+    }
+  );
+
+  server.registerTool(
+    `${prefix}_read_document`,
+    {
+      title: `${title} · Read — Read a document's text`,
+      description:
+        `The text inside a document — Word, Excel, PowerPoint, PDF, or plain text — ready to ` +
+        `quote or summarize. Spreadsheets come back as labelled rows and decks include speaker ` +
+        `notes. Scanned PDFs have no text layer and are reported as such rather than returning ` +
+        `nothing: there is no OCR here.`,
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        ...selector,
+        maxChars: z
+          .number()
+          .int()
+          .min(500)
+          .max(200_000)
+          .describe('Cap the returned text (default 60000).')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const access = await resolveGraphAccess(context);
+      if (typeof access === 'string') return errText(access);
+      const fallback = await defaultDriveFor(options, context, access.accessToken);
+
+      const resolved = await resolveDriveItem(
+        context,
+        access.accessToken,
+        selectorOf(args),
+        fallback
+      );
+      if (!resolved.ok) return errText(resolved.error);
+
+      const downloaded = await graphDownload(
+        access.accessToken,
+        resolved.item.driveId,
+        resolved.item.itemId
+      );
+      if (!downloaded.ok) {
+        return errText(
+          downloaded.err.type === 'CONTENT_TOO_LARGE'
+            ? `"${resolved.item.name}" is too large to read here.`
+            : `Could not download "${resolved.item.name}".`
+        );
+      }
+
+      const extracted = await extractText(downloaded.val.bytes, {
+        fileName: resolved.item.name,
+        contentType: downloaded.val.contentType ?? undefined,
+        maxChars: num(args.maxChars) ?? 60_000,
+      });
+      if (!extracted.ok) {
+        // Each of these is a fact about the file, not a failure of the tool,
+        // so the model is told which one rather than "something went wrong".
+        const because: Record<string, string> = {
+          UNSUPPORTED_FORMAT: 'its format cannot be read as text',
+          ENCRYPTED: 'it is password protected',
+          CORRUPT: 'the file appears to be damaged',
+          EMPTY: 'it contains no text',
+          INPUT_TOO_LARGE: 'it is too large',
+          EXTRACTION_FAILED: 'the text could not be extracted',
+        };
+        return textResult(
+          `Cannot read "${resolved.item.name}" — ${because[extracted.err.type] ?? 'unknown reason'}.\n` +
+            `Link: ${resolved.item.webUrl}`
+        );
+      }
+
+      if (extracted.val.notes.includes('scanned-pdf')) {
+        return textResult(
+          `"${resolved.item.name}" looks like a scan — its pages carry no text layer, and there ` +
+            `is no OCR here.\nLink: ${resolved.item.webUrl}`
+        );
+      }
+
+      const header = `${resolved.item.name}${extracted.val.sections ? ` (${extracted.val.sections} section(s))` : ''}`;
+      const footer = extracted.val.truncated ? '\n\n[Text truncated.]' : '';
+      return textResult(
+        withPresentationHint(
+          `${header}\n\n${extracted.val.text}${footer}`,
+          'Render as the document text; summarize it if that is what was asked.'
+        )
+      );
     }
   );
 
