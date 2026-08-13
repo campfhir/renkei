@@ -38,13 +38,14 @@ const API = 'https://webexapis.com/v1';
 /** Refresh when the token is inside this window of expiry. */
 const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 
-interface WebexAccess {
+export interface WebexAccess {
   accessToken: string;
   personEmail: string | null;
 }
 
 /** The caller's live WebEx token, refreshed through the adapter when stale. */
-async function resolveWebexAccess(context: MCPToolContext): Promise<WebexAccess | string> {
+/** Exported so the summary collectors can reuse the same refresh-aware resolution. */
+export async function resolveWebexAccess(context: MCPToolContext): Promise<WebexAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) return 'Server misconfigured (encryption key).';

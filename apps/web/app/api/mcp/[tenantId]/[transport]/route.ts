@@ -24,7 +24,9 @@ import { registerOneDriveTools, ONEDRIVE_MCP_CONNECTOR } from '@/lib/mcp-tools/o
 import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
 import { registerSummaryTools, type SummaryProvider } from '@/lib/mcp-tools/summary';
 import { collectCalendar, collectUnreadMail } from '@/lib/mcp-tools/summary/collect-outlook';
-import { collectSprint } from '@/lib/mcp-tools/summary/collect-jira';
+import { collectSprint, collectWorkItems } from '@/lib/mcp-tools/summary/collect-jira';
+import { collectZoom } from '@/lib/mcp-tools/summary/collect-zoom';
+import { collectWebex } from '@/lib/mcp-tools/summary/collect-webex';
 import {
   collectSharePointChanges,
   collectConfluenceChanges,
@@ -499,11 +501,20 @@ const handler = async (
                     },
                   ]
                 : []),
+              // Two Jira providers: a sprint is a STATE with its own dates,
+              // work items are a WINDOW. Splitting them is what lets "what
+              // moved yesterday" be asked without dragging the whole sprint in.
               {
                 connector: JIRA_CONNECTOR,
                 label: 'Sprint',
-                toolName: 'jira_summary',
+                toolName: 'sprint_summary',
                 collect: collectSprint,
+              },
+              {
+                connector: JIRA_CONNECTOR,
+                label: 'Work items',
+                toolName: 'work_item_summary',
+                collect: collectWorkItems,
               },
               ...(sharepointAvailable
                 ? [
@@ -522,6 +533,26 @@ const handler = async (
                       label: 'Confluence pages',
                       toolName: 'confluence_summary',
                       collect: collectConfluenceChanges,
+                    },
+                  ]
+                : []),
+              ...(zoomAvailable
+                ? [
+                    {
+                      connector: ZOOM_MCP_CONNECTOR,
+                      label: 'Zoom meetings',
+                      toolName: 'zoom_summary',
+                      collect: collectZoom,
+                    },
+                  ]
+                : []),
+              ...(webexAvailable
+                ? [
+                    {
+                      connector: WEBEX_USER_MCP_CONNECTOR,
+                      label: 'WebEx unread',
+                      toolName: 'webex_summary',
+                      collect: collectWebex,
                     },
                   ]
                 : []),

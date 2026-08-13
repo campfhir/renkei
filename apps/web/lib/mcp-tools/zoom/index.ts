@@ -41,13 +41,14 @@ const API = 'https://api.zoom.us/v2';
 /** Refresh when the token is inside this window of expiry. */
 const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 
-interface ZoomAccess {
+export interface ZoomAccess {
   accessToken: string;
   email: string | null;
 }
 
 /** The caller's live Zoom token, refreshed through the adapter when stale. */
-async function resolveZoomAccess(context: MCPToolContext): Promise<ZoomAccess | string> {
+/** Exported so the summary collectors can reuse the same refresh-aware resolution. */
+export async function resolveZoomAccess(context: MCPToolContext): Promise<ZoomAccess | string> {
   if (!context.subject) return 'No signed-in subject on this MCP session.';
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) return 'Server misconfigured (encryption key).';
