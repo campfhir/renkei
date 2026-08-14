@@ -62,9 +62,15 @@ export async function enqueueKnowledgeEvent(
   payload: Record<string, unknown>,
   orderingKey: string | null = null
 ): Promise<void> {
+  // The provider becomes a fairness LANE on the source. Every knowledge event
+  // used to be `knowledge`, which made the queue's round-robin useless here:
+  // there was only ever one source to be fair between, so a big Confluence
+  // space could enqueue thousands of pages and every Jira issue behind them
+  // waited its turn. Dispatch resolves the lane back to `knowledge`.
+  const provider = typeof payload.provider === 'string' ? payload.provider : null;
   const enqueued = await embeddingQueue.producer.enqueue({
     tenantId,
-    source: KNOWLEDGE_SOURCE,
+    source: provider ? `${KNOWLEDGE_SOURCE}:${provider}` : KNOWLEDGE_SOURCE,
     type,
     payload,
     orderingKey,

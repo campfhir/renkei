@@ -361,5 +361,10 @@ export function embeddingJobsQueue(): Queue {
     table: 'embedding_jobs',
     deadLetterTable: 'embedding_jobs_dead_letters',
     clearPayloadOnComplete: true,
+    // Producers tag the source with a provider lane (`knowledge:jira`), so
+    // one connector re-indexing a large space cannot put every other
+    // connector's work behind it. Without this the queue is strictly
+    // oldest-first, and a 1,000-page space is 1,000 places in the line.
+    fairAcrossSources: true,
   });
 }
