@@ -1,6 +1,7 @@
 'use client';
 
 import StructuredContent from './structured-content';
+import { detailRows } from './detail-rows';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { searchMyKnowledge, type KnowledgeSearchHit, type KnowledgeSearchResult } from './actions';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -323,12 +324,20 @@ function HitCard({ group, terms }: { group: DocumentGroup; terms: string[] }) {
 
       {showDetails && (
         <div className="mt-2 rounded-md bg-gray-100 p-2 text-xs dark:bg-gray-900">
-          <p className="mb-1 break-all font-mono text-gray-600 dark:text-gray-400">
-            {hit.provider}:{hit.refId} — distance {hit.distance.toFixed(3)}
-          </p>
-          <pre className="overflow-x-auto whitespace-pre-wrap break-all text-gray-600 dark:text-gray-400">
-            {JSON.stringify(hit.metadata, null, 2)}
-          </pre>
+          {/*
+            Was a JSON.stringify of the whole metadata bag. That is a debug
+            dump: it repeated the title already at the top of the card, showed
+            keys nobody outside this codebase can read, and quoted every value.
+            The same facts, labelled, minus the ones the card already states.
+          */}
+          <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+            {detailRows(hit).map((row) => (
+              <React.Fragment key={row.label}>
+                <dt className="text-gray-500 dark:text-gray-400">{row.label}</dt>
+                <dd className="break-words text-gray-700 dark:text-gray-300">{row.value}</dd>
+              </React.Fragment>
+            ))}
+          </dl>
         </div>
       )}
     </div>

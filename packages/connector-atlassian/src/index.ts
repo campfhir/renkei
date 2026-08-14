@@ -31,3 +31,4 @@ export const JIRA_KNOWLEDGE_PROVIDER = 'jira';
 export const CONFLUENCE_KNOWLEDGE_PROVIDER = 'confluence';
 
 export { adfToMarkdown, isEmptyAdf, demoteHeadings, type AdfNode } from './adf';
+export { wikiToMarkdown, looksLikeWikiMarkup } from './wiki';

@@ -23,7 +23,14 @@
  * fields are called gets it, and every other custom field, for free.
  */
 
-import { adfToMarkdown, demoteHeadings, listOf, rec, str } from '@renkei/connector-atlassian';
+import {
+  adfToMarkdown,
+  demoteHeadings,
+  listOf,
+  rec,
+  str,
+  wikiToMarkdown,
+} from '@renkei/connector-atlassian';
 
 /** Fields that are noise in a document: internal ids, avatars, and the ones
  * already rendered as headings or metadata. */
@@ -46,12 +53,57 @@ const SKIP_FIELDS = new Set([
   'statuscategorychangedate',
   'issuerestriction',
   'security',
+  // Duplicates `status`, one level less specific.
+  'statusCategory',
+  // Time accounting in seconds. `timetracking` already carries the readable
+  // form and is skipped too; a bare `Timespent: 900` helps nobody.
+  'timespent',
+  'timeestimate',
+  'timeoriginalestimate',
+  'aggregatetimespent',
+  'aggregatetimeestimate',
+  'aggregatetimeoriginalestimate',
 ]);
+
+/**
+ * Values that are machine plumbing wearing a string.
+ *
+ * A real instance returns a board rank as `1|i1dxy7:`, a workflow property as
+ * `10010_*:*_1_*:*_0_*|*_10126_*:*_1_*:*_21949782`, and an empty config as
+ * `{}`. All arrive under custom-field ids with perfectly ordinary display
+ * names, so nothing upstream marks them as noise — but embedding them adds
+ * tokens no one will ever search for, and printing them makes the fields
+ * section unreadable.
+ */
+function looksInternal(text: string): boolean {
+  if (text === '{}' || text === '[]') return true;
+  // Lexorank, e.g. `1|i1dxy7:`
+  if (/^\d+\|[a-z0-9]+:?$/i.test(text)) return true;
+  // Atlassian's `_*:*_` delimited property blobs.
+  if (text.includes('_*:*_')) return true;
+  return false;
+}
+
+/**
+ * A rich-text field's text, whichever form it arrives in.
+ *
+ * REST v3 returns ADF node trees; v2 — and some Cloud responses on instances
+ * still speaking it — returns a plain string. Running the ADF converter over a
+ * string yields nothing, which is the same silent drop that hid descriptions
+ * in the first place, just by a different route. Handling both is two lines
+ * and removes a whole class of "why is this empty".
+ */
+function richText(value: unknown): string {
+  // A string is wiki markup, not markdown — a different language that shares
+  // `#` and disagrees about what it means (see wikiToMarkdown).
+  if (typeof value === 'string') return wikiToMarkdown(value);
+  return adfToMarkdown(value).trim();
+}
 
 /** Per-field ceiling for a one-line value. */
 const MAX_FIELD_CHARS = 500;
 /** Per-field ceiling for a rich-text field, which is prose and earns more room. */
-const MAX_BLOCK_FIELD_CHARS = 2_000;
+const MAX_BLOCK_FIELD_CHARS = 4_000;
 /** Comments kept, newest last — a long-running ticket should not dominate. */
 const MAX_COMMENTS = 20;
 /** Per-comment ceiling. */
@@ -101,7 +153,10 @@ function renderValue(value: unknown): RenderedValue | null {
     // `2026-08-11T08:00:00.000+0000` is a fact about a database, not about the
     // ticket. The day is what anyone reads or searches for.
     if (/^\d{4}-\d{2}-\d{2}T/.test(text)) return { text: text.slice(0, 10), block: false };
-    return { text, block: text.includes('\n') };
+    // A multi-line string field is wiki markup — a backout plan, a test plan.
+    // Converted so its numbered steps stay steps instead of becoming headings.
+    if (text.includes('\n')) return { text: wikiToMarkdown(text), block: true };
+    return { text, block: false };
   }
   if (typeof value === 'number') return { text: String(value), block: false };
   if (typeof value === 'boolean') return { text: value ? 'yes' : 'no', block: false };
@@ -153,6 +208,41 @@ function humanizeFieldId(id: string): string {
   return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : id;
 }
 
+/**
+ * Every account id → display name pair anywhere in the issue.
+ *
+ * Comments mention people as `[~accountid:5b21a397…]`, which embeds an opaque
+ * identifier where a name belongs: unsearchable, unreadable, and pure token
+ * cost. The names are already in the payload — the same people are the
+ * assignee, the reporter, a comment author — so the issue can resolve its own
+ * mentions with no extra call.
+ */
+function accountNames(value: unknown, into: Map<string, string> = new Map()): Map<string, string> {
+  if (Array.isArray(value)) {
+    for (const item of value) accountNames(item, into);
+    return into;
+  }
+  if (typeof value !== 'object' || value === null) return into;
+  const record = rec(value);
+  const id = str(record.accountId);
+  const name = str(record.displayName);
+  if (id && name) into.set(id, name);
+  for (const child of Object.values(record)) accountNames(child, into);
+  return into;
+}
+
+const MENTION = /\[~(?:accountid:)?([^\]]+)\]/g;
+
+/** Swap `[~accountid:…]` for the person's name, or for nothing useful lost. */
+function resolveMentions(text: string, names: Map<string, string>): string {
+  return text.replace(MENTION, (whole, id: string) => {
+    const name = names.get(id.trim());
+    // An id we cannot resolve becomes a neutral marker rather than staying a
+    // 24-character hex string nobody can read or search.
+    return name ? `@${name}` : '@someone';
+  });
+}
+
 function truncate(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
@@ -163,7 +253,7 @@ function shortDate(value: unknown): string {
   return raw.length >= 10 ? raw.slice(0, 10) : raw;
 }
 
-function renderComments(fields: Record<string, unknown>): string[] {
+function renderComments(fields: Record<string, unknown>, names: Map<string, string>): string[] {
   const container = rec(fields.comment);
   const comments = listOf(container, 'comments');
   if (comments.length === 0) return [];
@@ -178,7 +268,7 @@ function renderComments(fields: Record<string, unknown>): string[] {
     const author = str(rec(comment.author).displayName) || 'Unknown';
     const when = shortDate(comment.created);
     const body = truncate(
-      demoteHeadings(adfToMarkdown(comment.body).trim(), DEMOTE_IN_COMMENT),
+      resolveMentions(demoteHeadings(richText(comment.body), DEMOTE_IN_COMMENT), names),
       MAX_COMMENT_CHARS
     );
     if (!body) continue;
@@ -205,9 +295,10 @@ export function jiraDocument(
 
   const sections: string[] = [`# ${summary || key}`, ''];
 
-  const description = demoteHeadings(
-    adfToMarkdown(fields.description).trim(),
-    DEMOTE_IN_DESCRIPTION
+  const mentions = accountNames(issue);
+  const description = resolveMentions(
+    demoteHeadings(richText(fields.description), DEMOTE_IN_DESCRIPTION),
+    mentions
   );
   if (description) {
     sections.push('## Description', '', description, '');
@@ -221,7 +312,7 @@ export function jiraDocument(
   for (const [id, value] of Object.entries(fields)) {
     if (SKIP_FIELDS.has(id)) continue;
     const rendered = renderValue(value);
-    if (!rendered) continue;
+    if (!rendered || looksInternal(rendered.text)) continue;
     const label = str(names[id]) || humanizeFieldId(id);
     if (rendered.block) {
       blockFields.push({
@@ -247,7 +338,7 @@ export function jiraDocument(
     }
   }
 
-  sections.push(...renderComments(fields));
+  sections.push(...renderComments(fields, mentions));
 
   return truncate(sections.join('\n').trim(), MAX_DOCUMENT_CHARS);
 }

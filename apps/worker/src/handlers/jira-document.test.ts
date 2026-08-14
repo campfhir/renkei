@@ -243,3 +243,138 @@ describe('an author’s own headings', () => {
     expect(document).toContain('## Description');
   });
 });
+
+describe('shapes a real instance actually returns', () => {
+  it('takes a description that arrives as a plain string', () => {
+    // v3 returns ADF; v2 — and some Cloud responses — return a string.
+    // Running the ADF converter over a string yields nothing, which is the
+    // same silent drop that hid descriptions before, by a different route.
+    const document = jiraDocument(issue({ summary: 'S', description: 'Review' }));
+    expect(document).toContain('## Description');
+    expect(document).toContain('Review');
+  });
+
+  it('takes a comment body that arrives as a plain string', () => {
+    const document = jiraDocument(
+      issue({
+        summary: 'S',
+        comment: {
+          comments: [
+            {
+              author: { displayName: 'Serena Huang' },
+              created: '2026-06-02T09:00:00.000-0700',
+              body: 'Looks done to me.',
+            },
+          ],
+        },
+      })
+    );
+    expect(document).toContain('Looks done to me.');
+  });
+
+  it('drops machine plumbing that wears a perfectly good field name', () => {
+    // All three came off one real issue, under ordinary display names.
+    const document = jiraDocument(
+      issue({
+        summary: 'S',
+        customfield_10019: '1|i1dxy7:',
+        customfield_10025: '10010_*:*_1_*:*_0_*|*_10126_*:*_1_*:*_21949782',
+        customfield_10000: '{}',
+      }),
+      {
+        customfield_10019: 'Rank',
+        customfield_10025: 'Workflow property',
+        customfield_10000: 'Config',
+      }
+    );
+    expect(document).not.toContain('Rank:');
+    expect(document).not.toContain('Workflow property:');
+    expect(document).not.toContain('Config:');
+  });
+
+  it('drops the status category, which only repeats the status', () => {
+    const document = jiraDocument(
+      issue({ summary: 'S', status: { name: 'Done' }, statusCategory: { name: 'Done' } }),
+      { status: 'Status', statusCategory: 'Status Category' }
+    );
+    expect(document).toContain('Status: Done');
+    expect(document).not.toContain('Status Category');
+  });
+
+  it('drops raw second counts, keeping the readable time tracking out of it', () => {
+    const document = jiraDocument(
+      issue({ summary: 'S', timespent: 900, aggregatetimespent: 900, timeestimate: 0 })
+    );
+    expect(document).not.toContain('900');
+  });
+
+  it('keeps the parent issue, which is real context', () => {
+    const document = jiraDocument(
+      issue({ summary: 'S', parent: { key: 'CAS-22923', fields: { summary: 'May MedLoad' } } }),
+      { parent: 'Parent' }
+    );
+    expect(document).toContain('Parent: CAS-22923');
+  });
+});
+
+describe('wiki markup and mentions', () => {
+  it('keeps a numbered plan numbered instead of turning it into headings', () => {
+    // `#` starts an ordered item in wiki markup and a heading in markdown.
+    // Untranslated, a real backout plan became four headings with no order.
+    const document = jiraDocument(
+      issue({ summary: 'S', customfield_1: '# Redeploy the image\n# Restart the service' }),
+      { customfield_1: 'Backout Plan' }
+    );
+    expect(document).toContain('1. Redeploy the image');
+    expect(document).not.toContain('# Redeploy the image');
+  });
+
+  it('converts wiki headings, which are hN. and not hashes', () => {
+    const document = jiraDocument(
+      issue({ summary: 'S', description: 'h3. Change reason\n\nPrepare the server.' })
+    );
+    // Demoted to sit under `## Description`.
+    expect(document).toContain('##### Change reason');
+  });
+
+  it('resolves a mention to the person’s name using the issue’s own data', () => {
+    // `[~accountid:…]` embeds an opaque id where a name belongs: unsearchable
+    // and pure token cost. The same person appears elsewhere in the payload.
+    const document = jiraDocument(
+      issue({
+        summary: 'S',
+        assignee: { accountId: 'abc123', displayName: 'Damon Garrison' },
+        comment: {
+          comments: [
+            {
+              author: { accountId: 'xyz789', displayName: 'Scott Eremia-Roden' },
+              created: '2026-08-05T22:00:00.000-0700',
+              body: '[~accountid:abc123] — completeness pass applied.',
+            },
+          ],
+        },
+      })
+    );
+    expect(document).toContain('@Damon Garrison');
+    expect(document).not.toContain('abc123');
+  });
+
+  it('does not leave an unresolvable id in the text', () => {
+    const document = jiraDocument(
+      issue({
+        summary: 'S',
+        comment: {
+          comments: [
+            {
+              author: { displayName: 'Someone' },
+              created: '2026-08-05T22:00:00.000-0700',
+              body: '[~accountid:never-seen-before] please review',
+            },
+          ],
+        },
+      })
+    );
+    expect(document).not.toContain('never-seen-before');
+    expect(document).toContain('@someone');
+  });
+});

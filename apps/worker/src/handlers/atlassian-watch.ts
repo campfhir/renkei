@@ -112,9 +112,13 @@ async function syncJira(
         // team actually fills in. Comments are named explicitly because they
         // are not navigable.
         fields: ['*navigable', 'comment'],
-        // Field ids alone would render `customfield_10101: Alice`; this is
-        // how the document gets to say `Request participants: Alice`.
-        expand: ['names'],
+        // A COMMA-DELIMITED STRING, not an array. This endpoint is the
+        // exception and the API spec says so outright: "unlike the majority
+        // of instances where `expand` is specified, `expand` is defined as a
+        // comma-delimited string of values." Sent as an array it does not
+        // expand, so the response carries no `names` map and every custom
+        // field falls back to its raw id.
+        expand: 'names',
         maxResults: 100,
         ...(nextPageToken ? { nextPageToken } : {}),
       },

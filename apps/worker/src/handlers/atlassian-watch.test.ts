@@ -111,6 +111,45 @@ describe('runWatchSync — jira', () => {
     expect(jql).not.toContain('updated >=');
   });
 
+  it('asks Jira for field display names in the shape this endpoint requires', async () => {
+    // `expand` on /search/jql is a COMMA-DELIMITED STRING, unlike almost
+    // everywhere else in the API — the spec calls the exception out. Sent as
+    // an array it silently does not expand, the response carries no `names`
+    // map, and every custom field in the indexed document degrades to its
+    // raw id. It shipped that way once.
+    responses = [{ issues: [] }];
+    await runWatchSync('tenant-1', access(), jiraRow(null));
+    const body = calls[0]?.body ?? {};
+    expect(typeof body.expand).toBe('string');
+    expect(body.expand).toBe('names');
+    // And the fields that carry the document: everything navigable, plus
+    // comments, which are not navigable and must be named.
+    expect(body.fields).toContain('*navigable');
+    expect(body.fields).toContain('comment');
+  });
+
+  it('uses the names map Jira returns to label custom fields', async () => {
+    responses = [
+      {
+        names: { customfield_10101: 'Request participants' },
+        issues: [
+          {
+            key: 'ENG-9',
+            fields: {
+              summary: 'One',
+              updated: '2026-08-10T09:00:00.000Z',
+              customfield_10101: [{ displayName: 'Sam Okafor' }],
+            },
+          },
+        ],
+      },
+    ];
+    await runWatchSync('tenant-1', access(), jiraRow(null));
+    const [, , input] = mockEnqueueKnowledgeEvent.mock.calls[0] ?? [];
+    expect(input.content).toContain('Request participants: Sam Okafor');
+    expect(input.content).not.toContain('customfield_10101');
+  });
+
   it('rewinds the window behind the cursor so eventually-consistent writes are not lost', async () => {
     responses = [{ issues: [] }];
     await runWatchSync('tenant-1', access(), jiraRow('2026-08-10T12:00:00.000Z'));
