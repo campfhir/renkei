@@ -106,6 +106,7 @@ export default function AppNav({
             items: [
               { href: `/${slug}/admin/connectors`, label: 'Connector setup' },
               { href: `/${slug}/admin/email-sanitizer`, label: 'Email sanitizer' },
+              { href: `/${slug}/admin/redaction`, label: 'Sensitive data' },
               { href: `/${slug}/admin/grants`, label: 'Grants' },
               { href: `/${slug}/admin/people`, label: 'People' },
               { href: `/${slug}/admin/sites`, label: 'Jira sites' },

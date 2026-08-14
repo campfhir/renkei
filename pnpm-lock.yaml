@@ -89,6 +89,9 @@ importers:
       '@renkei/queue':
         specifier: workspace:*
         version: link:../../packages/queue
+      '@renkei/redaction':
+        specifier: workspace:*
+        version: link:../../packages/redaction
       '@renkei/settings':
         specifier: workspace:*
         version: link:../../packages/settings
@@ -643,6 +646,28 @@ importers:
         version: 5.9.3
 
   packages/rate-limit:
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  packages/redaction:
+    dependencies:
+      '@renkei/gates':
+        specifier: workspace:*
+        version: link:../gates
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0

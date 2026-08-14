@@ -37,6 +37,25 @@ export interface OrgSettings {
   accessTokenTtlMinutes: number;
   authorizationCodeTtlSeconds: number;
   refreshTokenTtlDays: number;
+  /**
+   * Best-effort removal of identifiers from MCP tool results before they reach
+   * a model (@renkei/redaction). On by default: the shipped detectors are
+   * precise enough to run untuned, and a protection nobody switches on
+   * protects nobody.
+   */
+  redactionEnabled: boolean;
+  /**
+   * Which detectors run. Patient names and phone numbers are absent from the
+   * default on purpose — names because the marker vocabulary varies by org,
+   * phone because signature blocks are full of them.
+   */
+  redactionDetectors: string[];
+  /**
+   * Extra medical-record-number shapes, as regular-expression source. There is
+   * no universal MRN format, so a site whose numbers look like `A-1234567` has
+   * to say so; nothing can infer it.
+   */
+  redactionMrnPatterns: string[];
 }
 
 /** The defaults formerly hardcoded in the environment schema. */
@@ -50,6 +69,9 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   accessTokenTtlMinutes: 60,
   authorizationCodeTtlSeconds: 60,
   refreshTokenTtlDays: 30,
+  redactionEnabled: true,
+  redactionDetectors: ['ssn', 'card', 'mrn', 'dob'],
+  redactionMrnPatterns: [],
 };
 
 const CACHE_TTL_MS = 60_000;
@@ -115,6 +137,12 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     refreshTokenTtlDays: Number(
       coerce(stored.get('refresh_token_ttl_days'), d.refreshTokenTtlDays)
     ),
+    redactionEnabled: Boolean(coerce(stored.get('redaction_enabled'), d.redactionEnabled)),
+    redactionDetectors: coerceStringList(stored.get('redaction_detectors'), d.redactionDetectors),
+    redactionMrnPatterns: coerceStringList(
+      stored.get('redaction_mrn_patterns'),
+      d.redactionMrnPatterns
+    ),
   };
 
   orgCache.set(tenantId, { value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -140,6 +168,9 @@ export async function setOrgSettings(
     ['access_token_ttl_minutes', updates.accessTokenTtlMinutes],
     ['authorization_code_ttl_seconds', updates.authorizationCodeTtlSeconds],
     ['refresh_token_ttl_days', updates.refreshTokenTtlDays],
+    ['redaction_enabled', updates.redactionEnabled],
+    ['redaction_detectors', updates.redactionDetectors],
+    ['redaction_mrn_patterns', updates.redactionMrnPatterns],
   ];
 
   for (const [key, value] of pairs) {

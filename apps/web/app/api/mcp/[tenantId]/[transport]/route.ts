@@ -21,6 +21,13 @@ import {
   registerRenkeiTools,
 } from '@/lib/mcp-tools/registry';
 import { withUsageTracking } from '@/lib/mcp-tools/usage-tracking';
+import { withRedaction } from '@/lib/mcp-tools/redaction-gate';
+import {
+  createPseudonymizer,
+  deriveRedactionKey,
+  knownDetectors,
+  DEFAULT_MCP_POLICY,
+} from '@renkei/redaction';
 import { ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renkei/provider-grants';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getIdentityEmail } from '@/lib/identity';
@@ -32,6 +39,15 @@ import type { McpServer } from '@modelcontextprotocol/server';
 
 // Cache MCP handlers per (tenantId, accountId)
 const handlerCache = new Map<string, (request: Request) => Promise<Response>>();
+
+/**
+ * Derived once per process from the deployment secret, so a given identifier
+ * gets the same pseudonym in every request and every conversation. Deriving it
+ * per call would still redact, but the tokens would stop being comparable,
+ * which is most of what makes them useful.
+ */
+const redactionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+const redactionKey = deriveRedactionKey(redactionKeyResult.ok ? redactionKeyResult.val : null);
 
 function getCacheKey(
   tenantId: string,
@@ -45,7 +61,8 @@ function getCacheKey(
   zoomAvailable: boolean,
   confluenceAvailable: boolean,
   userEmail: string | null,
-  disabledConnectors: readonly string[]
+  disabledConnectors: readonly string[],
+  redaction: string
 ): string {
   // Everything the registered tool set or a handler closure depends on must
   // be part of the key, or a change takes effect only on process restart:
@@ -59,7 +76,11 @@ function getCacheKey(
     `${confluenceAvailable ? 'c' : 'nc'}:${userEmail ?? ''}:` +
     // Sorted, so the same set in a different order is the same key rather
     // than a needless cache miss.
-    `${[...disabledConnectors].sort().join(',')}`
+    `${[...disabledConnectors].sort().join(',')}:` +
+    // The redaction settings are baked into the registered handlers, so a
+    // change to them has to miss the cache or it would not take effect until
+    // the process restarted.
+    `${redaction}`
   );
 }
 
@@ -296,6 +317,12 @@ const handler = async (
       `${[...jsmScopes].sort().join(',')}:${jsmGrant ? 'jsm' : 'nojsm'}|` +
       `${[...graphScopes].sort().join(',')}|${[...zoomScopes].sort().join(',')}|` +
       `${[...confluenceScopes].sort().join(',')}`;
+    // Everything the redaction gate's behaviour depends on, in one string.
+    const redactionFingerprint = settings.redactionEnabled
+      ? `r:${[...settings.redactionDetectors].sort().join(',')}:` +
+        `${settings.redactionMrnPatterns.join('\u0001')}`
+      : 'nr';
+
     const cacheKey =
       getCacheKey(
         tenantId,
@@ -309,7 +336,8 @@ const handler = async (
         zoomAvailable,
         confluenceAvailable,
         userEmail,
-        settings.disabledConnectors
+        settings.disabledConnectors,
+        redactionFingerprint
       ) + `:${scopeFingerprint}`;
     let cachedHandler = handlerCache.get(cacheKey);
 
@@ -330,7 +358,22 @@ const handler = async (
             // actually register: the gates inside it drop the ones this user
             // may not have, and a tool that was never registered cannot be
             // called and so should never appear in usage.
-            const server = withUsageTracking(rawServer, { tenantId, subject });
+            const tracked = withUsageTracking(rawServer, { tenantId, subject });
+
+            // Outside usage tracking, so the timing it records includes the
+            // filtering — that cost is real and belongs in the latency the
+            // tools page shows. When redaction is switched off the server is
+            // passed through unwrapped rather than wrapped in a no-op, the
+            // same idiom withScopeGate uses for "gate not configured".
+            const server = settings.redactionEnabled
+              ? withRedaction(tracked, {
+                  tenantId,
+                  detectors: knownDetectors(settings.redactionDetectors),
+                  mrnPatterns: settings.redactionMrnPatterns,
+                  policy: DEFAULT_MCP_POLICY,
+                  pseudonymizer: createPseudonymizer(redactionKey, tenantId),
+                })
+              : tracked;
 
             const context: MCPToolContext = {
               tenantId,
