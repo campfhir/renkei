@@ -320,7 +320,7 @@ const handler = async (
     // Everything the redaction gate's behaviour depends on, in one string.
     const redactionFingerprint = settings.redactionEnabled
       ? `r:${[...settings.redactionDetectors].sort().join(',')}:` +
-        `${settings.redactionMrnPatterns.join('\u0001')}`
+        `${settings.redactionMrnFormats.join('\u0001')}`
       : 'nr';
 
     const cacheKey =
@@ -369,7 +369,7 @@ const handler = async (
               ? withRedaction(tracked, {
                   tenantId,
                   detectors: knownDetectors(settings.redactionDetectors),
-                  mrnPatterns: settings.redactionMrnPatterns,
+                  mrnFormats: settings.redactionMrnFormats,
                   policy: DEFAULT_MCP_POLICY,
                   pseudonymizer: createPseudonymizer(redactionKey, tenantId),
                 })

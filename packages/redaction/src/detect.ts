@@ -30,6 +30,7 @@
  */
 
 import { luhnValid } from './luhn';
+import { compileFormat } from './format';
 
 /** Labels are the vocabulary the disclosure policy is written against. */
 export const LABEL_SSN = 'phi.ssn';
@@ -101,12 +102,15 @@ interface Candidate extends Finding {
 export interface DetectOptions {
   detectors?: readonly DetectorKey[];
   /**
-   * Extra MRN shapes an org knows about, as regular-expression source. A site
-   * whose numbers look like `A-1234567` can say so; there is no way to infer
-   * it. Invalid patterns are skipped rather than thrown, because a bad admin
-   * entry must not take down every tool call.
+   * Extra MRN shapes an org knows about, written in the pattern language from
+   * `format.ts` — `MR-#######`, not a regular expression. A site whose numbers
+   * look like that can say so; there is no way to infer it. Deliberately NOT
+   * regex: admin-supplied expressions run in a shared multi-tenant process and
+   * can be made to backtrack for minutes (see format.ts). Unparseable entries
+   * are skipped rather than thrown, because a bad settings row must not take
+   * down every tool call.
    */
-  mrnPatterns?: readonly string[];
+  mrnFormats?: readonly string[];
 }
 
 /**
@@ -299,17 +303,13 @@ function detectCards(found: Candidate[], text: string): void {
   }
 }
 
-function detectCustomMrn(found: Candidate[], text: string, patterns: readonly string[]): void {
-  for (const source of patterns) {
-    let pattern: RegExp;
-    try {
-      pattern = new RegExp(source, 'g');
-    } catch {
-      // A malformed admin-authored pattern is skipped. Refusing the whole
-      // result over a bad settings row would turn a typo into an outage.
-      continue;
-    }
-    pushMatches(found, text, pattern, LABEL_MRN, 0, LABELLED);
+function detectCustomMrn(found: Candidate[], text: string, formats: readonly string[]): void {
+  for (const source of formats) {
+    const compiled = compileFormat(source);
+    // A malformed entry is skipped. Refusing the whole result over a bad
+    // settings row would turn a typo into an outage.
+    if (!compiled) continue;
+    pushMatches(found, text, compiled.regex, LABEL_MRN, 0, LABELLED);
   }
 }
 
@@ -342,7 +342,7 @@ export function detect(text: string, options: DetectOptions = {}): Finding[] {
   if (enabled.has('card')) detectCards(found, text);
   if (enabled.has('mrn')) {
     pushMatches(found, text, MRN_LABELLED, LABEL_MRN, 1, LABELLED);
-    detectCustomMrn(found, text, options.mrnPatterns ?? []);
+    detectCustomMrn(found, text, options.mrnFormats ?? []);
   }
   if (enabled.has('dob')) pushMatches(found, text, DOB_LABELLED, LABEL_DOB, 1, LABELLED);
   if (enabled.has('patient_name')) {

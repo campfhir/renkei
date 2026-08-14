@@ -17,18 +17,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
-import { knownDetectors } from '@renkei/redaction';
-
-/** A pattern we are willing to hand to the RegExp constructor. */
-function usablePattern(source: string): boolean {
-  if (source.length === 0 || source.length > 200) return false;
-  try {
-    new RegExp(source);
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { knownDetectors, describeFormatProblem } from '@renkei/redaction';
 
 export async function GET(
   _request: NextRequest,
@@ -48,7 +37,7 @@ export async function GET(
   return NextResponse.json({
     enabled: settings.val.redactionEnabled,
     detectors: settings.val.redactionDetectors,
-    mrnPatterns: settings.val.redactionMrnPatterns,
+    mrnFormats: settings.val.redactionMrnFormats,
   });
 }
 
@@ -91,29 +80,30 @@ export async function PUT(
     updates.redactionDetectors = knownDetectors(strings);
   }
 
-  if ('mrnPatterns' in body) {
-    const submitted = body.mrnPatterns;
+  if ('mrnFormats' in body) {
+    const submitted = body.mrnFormats;
     if (!Array.isArray(submitted) || submitted.some((p) => typeof p !== 'string')) {
-      return NextResponse.json({ error: 'mrnPatterns must be strings' }, { status: 400 });
+      return NextResponse.json({ error: 'mrnFormats must be strings' }, { status: 400 });
     }
-    const patterns: string[] = [];
+    const formats: string[] = [];
     for (const value of submitted) {
       if (typeof value !== 'string') continue;
       const trimmed = value.trim();
       if (trimmed.length === 0) continue;
       // Rejected here rather than skipped at match time: an admin who typed a
-      // broken pattern should be told, not left believing it is protecting
-      // them. The detector still skips bad ones defensively, for rows written
-      // before this check existed.
-      if (!usablePattern(trimmed)) {
+      // broken pattern should be told, not left believing it protects them.
+      // The detector still skips bad ones defensively, for rows written by an
+      // older version.
+      const problem = describeFormatProblem(trimmed);
+      if (problem) {
         return NextResponse.json(
-          { error: `Not a usable pattern: ${trimmed.slice(0, 60)}` },
+          { error: `“${trimmed.slice(0, 40)}” — ${problem}` },
           { status: 400 }
         );
       }
-      patterns.push(trimmed);
+      formats.push(trimmed);
     }
-    updates.redactionMrnPatterns = patterns;
+    updates.redactionMrnFormats = formats;
   }
 
   const saved = await setOrgSettings(tenantRef.id, updates);

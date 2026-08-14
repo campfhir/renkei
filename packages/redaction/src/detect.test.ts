@@ -10,8 +10,8 @@
 
 import { detect, DEFAULT_DETECTORS, LABEL_CARD, LABEL_DOB, LABEL_MRN, LABEL_SSN } from './detect';
 
-const labels = (text: string, detectors = DEFAULT_DETECTORS, mrnPatterns?: string[]) =>
-  detect(text, { detectors, ...(mrnPatterns ? { mrnPatterns } : {}) }).map((f) => f.label);
+const labels = (text: string, detectors = DEFAULT_DETECTORS, mrnFormats?: string[]) =>
+  detect(text, { detectors, ...(mrnFormats ? { mrnFormats } : {}) }).map((f) => f.label);
 
 const values = (text: string, detectors = DEFAULT_DETECTORS) =>
   detect(text, { detectors }).map((f) => f.value);
@@ -84,16 +84,22 @@ describe('medical record numbers', () => {
     expect(labels('Build 8821349')).toEqual([]);
   });
 
-  it('accepts a site-specific pattern the org supplies', () => {
-    expect(labels('Account XY-4417732 seen', ['mrn'], ['\\bXY-\\d{7}\\b'])).toEqual([LABEL_MRN]);
+  it('accepts a site-specific format the org supplies', () => {
+    expect(labels('Account XY-4417732 seen', ['mrn'], ['XY-#######'])).toEqual([LABEL_MRN]);
   });
 
-  it('survives a malformed org pattern instead of throwing', () => {
+  it('survives a malformed org format instead of throwing', () => {
     // A typo in a settings row must not take down every tool call.
     expect(() =>
-      detect('MRN: 4417732', { detectors: ['mrn'], mrnPatterns: ['([unclosed'] })
+      detect('MRN: 4417732', { detectors: ['mrn'], mrnFormats: ['([unclosed'] })
     ).not.toThrow();
     expect(labels('MRN: 4417732', ['mrn'], ['([unclosed'])).toEqual([LABEL_MRN]);
+  });
+
+  it('treats a pasted regular expression as harmless text', () => {
+    // Admin-supplied regex is not accepted anywhere; a pasted one matches
+    // itself literally rather than running as a pattern.
+    expect(labels('Record 4417732 updated', ['mrn'], ['\\d+'])).toEqual([]);
   });
 });
 

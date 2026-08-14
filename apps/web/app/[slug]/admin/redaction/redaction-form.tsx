@@ -65,7 +65,7 @@ const DETECTORS: DetectorInfo[] = [
 interface Config {
   enabled: boolean;
   detectors: string[];
-  mrnPatterns: string[];
+  mrnFormats: string[];
 }
 
 /** Validated rather than asserted — this crosses the network. */
@@ -73,14 +73,14 @@ function asConfig(value: unknown): Config | null {
   if (typeof value !== 'object' || value === null) return null;
   const enabled = 'enabled' in value ? value.enabled : undefined;
   const detectors = 'detectors' in value ? value.detectors : undefined;
-  const patterns = 'mrnPatterns' in value ? value.mrnPatterns : undefined;
-  if (typeof enabled !== 'boolean' || !Array.isArray(detectors) || !Array.isArray(patterns)) {
+  const formats = 'mrnFormats' in value ? value.mrnFormats : undefined;
+  if (typeof enabled !== 'boolean' || !Array.isArray(detectors) || !Array.isArray(formats)) {
     return null;
   }
   return {
     enabled,
     detectors: detectors.filter((d): d is string => typeof d === 'string'),
-    mrnPatterns: patterns.filter((p): p is string => typeof p === 'string'),
+    mrnFormats: formats.filter((p): p is string => typeof p === 'string'),
   };
 }
 
@@ -101,7 +101,7 @@ export default function RedactionForm({ slug }: { slug: string }) {
       const next = asConfig(await response.json());
       if (!next) return;
       setConfig(next);
-      setPatternText(next.mrnPatterns.join('\n'));
+      setPatternText(next.mrnFormats.join('\n'));
     })();
     return () => {
       live = false;
@@ -207,8 +207,23 @@ export default function RedactionForm({ slug }: { slug: string }) {
           Record number formats
         </h2>
         <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
-          One regular expression per line, for record numbers your systems write without a label.
-          Anything matching is replaced wherever it appears.
+          One format per line, for record numbers your systems write without a label. Anything
+          matching is replaced wherever it appears.
+        </p>
+        <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
+          Write the shape, not a regular expression:{' '}
+          <code className="rounded bg-gray-100 px-1 dark:bg-gray-900">#</code> a digit,{' '}
+          <code className="rounded bg-gray-100 px-1 dark:bg-gray-900">@</code> a letter,{' '}
+          <code className="rounded bg-gray-100 px-1 dark:bg-gray-900">*</code> either, and{' '}
+          <code className="rounded bg-gray-100 px-1 dark:bg-gray-900">{'{7}'}</code> or{' '}
+          <code className="rounded bg-gray-100 px-1 dark:bg-gray-900">{'{6,8}'}</code> to repeat the
+          one before it. Everything else matches itself. So{' '}
+          <code className="rounded bg-gray-100 px-1 dark:bg-gray-900">MR-#######</code> matches
+          MR-4417732.
+        </p>
+        <p className="mb-2 text-sm text-gray-500">
+          Regular expressions are deliberately not accepted: one written the wrong way can occupy
+          the server for minutes, and this setting is shared with every other organization on it.
         </p>
         <textarea
           className={`${inputClass} font-mono`}
@@ -217,7 +232,7 @@ export default function RedactionForm({ slug }: { slug: string }) {
           value={patternText}
           disabled={saving || !config.enabled}
           onChange={(e) => setPatternText(e.target.value)}
-          placeholder={'\\bMR-\\d{7}\\b'}
+          placeholder={'MR-#######'}
         />
         <button
           type="button"
@@ -225,7 +240,7 @@ export default function RedactionForm({ slug }: { slug: string }) {
           disabled={saving || !config.enabled}
           onClick={() =>
             void save({
-              mrnPatterns: patternText
+              mrnFormats: patternText
                 .split('\n')
                 .map((line) => line.trim())
                 .filter(Boolean),

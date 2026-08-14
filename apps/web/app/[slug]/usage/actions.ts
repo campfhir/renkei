@@ -139,9 +139,15 @@ export async function getUsageReport(
       .where('started_at', '>=', since);
     if (!tenantWide) trendQuery = trendQuery.where('subject', '=', ownSubject);
 
+    // Grouped by the OUTPUT ALIAS, not by a repeat of the bucket expression.
+    // Repeating it looks equivalent and is not: each `${timeZone}` becomes its
+    // own bound parameter, so Postgres sees `AT TIME ZONE $2` in the select and
+    // `AT TIME ZONE $3` in the group by, decides they are different
+    // expressions, and rejects the query with "started_at must appear in the
+    // GROUP BY clause". Naming the alias once removes the possibility.
     const trendRows = await trendQuery
-      .groupBy(sql`date_trunc('day', started_at AT TIME ZONE ${timeZone})`)
-      .orderBy(sql`date_trunc('day', started_at AT TIME ZONE ${timeZone})`, 'asc')
+      .groupBy(sql`day`)
+      .orderBy(sql`day`, 'asc')
       .execute();
 
     // Per-person totals are the operator's whole reason for this page, and

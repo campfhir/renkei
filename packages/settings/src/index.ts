@@ -51,11 +51,12 @@ export interface OrgSettings {
    */
   redactionDetectors: string[];
   /**
-   * Extra medical-record-number shapes, as regular-expression source. There is
-   * no universal MRN format, so a site whose numbers look like `A-1234567` has
-   * to say so; nothing can infer it.
+   * Extra medical-record-number shapes, in the redaction package's pattern
+   * language (`MR-#######`), NOT regular expressions — admin-supplied regex
+   * runs in a shared process and can be made to backtrack for minutes. There
+   * is no universal MRN format, so a site has to say what its own look like.
    */
-  redactionMrnPatterns: string[];
+  redactionMrnFormats: string[];
 }
 
 /** The defaults formerly hardcoded in the environment schema. */
@@ -71,7 +72,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   refreshTokenTtlDays: 30,
   redactionEnabled: true,
   redactionDetectors: ['ssn', 'card', 'mrn', 'dob'],
-  redactionMrnPatterns: [],
+  redactionMrnFormats: [],
 };
 
 const CACHE_TTL_MS = 60_000;
@@ -139,9 +140,12 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     ),
     redactionEnabled: Boolean(coerce(stored.get('redaction_enabled'), d.redactionEnabled)),
     redactionDetectors: coerceStringList(stored.get('redaction_detectors'), d.redactionDetectors),
-    redactionMrnPatterns: coerceStringList(
-      stored.get('redaction_mrn_patterns'),
-      d.redactionMrnPatterns
+    // A new key rather than a reused one: the old `redaction_mrn_patterns`
+    // held regular expressions, and silently reinterpreting those as patterns
+    // in a different language would change what they match.
+    redactionMrnFormats: coerceStringList(
+      stored.get('redaction_mrn_formats'),
+      d.redactionMrnFormats
     ),
   };
 
@@ -170,7 +174,7 @@ export async function setOrgSettings(
     ['refresh_token_ttl_days', updates.refreshTokenTtlDays],
     ['redaction_enabled', updates.redactionEnabled],
     ['redaction_detectors', updates.redactionDetectors],
-    ['redaction_mrn_patterns', updates.redactionMrnPatterns],
+    ['redaction_mrn_formats', updates.redactionMrnFormats],
   ];
 
   for (const [key, value] of pairs) {

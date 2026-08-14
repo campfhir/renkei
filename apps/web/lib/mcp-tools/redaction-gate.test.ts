@@ -24,7 +24,7 @@ type LooseServer = { registerTool: (name: string, config: unknown, handler?: Han
 const context = (overrides: Partial<RedactionContext> = {}): RedactionContext => ({
   tenantId: 'tenant-1',
   detectors: ['ssn', 'card', 'mrn', 'dob'],
-  mrnPatterns: [],
+  mrnFormats: [],
   policy: DEFAULT_MCP_POLICY,
   pseudonymizer: createPseudonymizer(deriveRedactionKey(Buffer.from('k'.repeat(32))), 'tenant-1'),
   ...overrides,

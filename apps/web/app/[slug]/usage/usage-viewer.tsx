@@ -19,6 +19,7 @@ import ConnectorIcon from '@/components/connector-icon';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getUsageReport, type UsageReport, type ToolUsageRow } from './actions';
+import { friendlyToolName } from './tool-name';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 
 const PERIODS = [
@@ -147,6 +148,80 @@ function TrendChart({ points }: { points: UsageReport['trend'] }) {
         <span>{points[points.length - 1]?.day}</span>
       </div>
     </figure>
+  );
+}
+
+/**
+ * One tool: what it is called, how often it ran, and how it went.
+ *
+ * The identifier is kept on the title attribute rather than on the face of the
+ * card — someone debugging a tool call wants `confluence_update_blogpost`, and
+ * everyone else wants "Edit a blog post". A tool nobody has called is shown
+ * greyed rather than hidden, because "what else can I do" is half the question
+ * this page answers.
+ */
+function ToolCard({ row }: { row: Row }) {
+  const used = row.calls > 0;
+  return (
+    <div
+      title={row.name}
+      className={`flex min-h-[5.5rem] flex-col justify-between rounded-lg border p-3 ${
+        used
+          ? 'border-gray-200 dark:border-gray-800'
+          : 'border-dashed border-gray-200 dark:border-gray-800'
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        {/* Wraps within the fixed card width; the count never wraps away. */}
+        <span
+          className={`text-sm font-medium leading-snug ${used ? '' : 'text-gray-400 dark:text-gray-600'}`}
+        >
+          {friendlyToolName(row.name, row.title)}
+        </span>
+        <span
+          className={`shrink-0 text-lg font-semibold tabular-nums ${
+            used ? '' : 'text-gray-300 dark:text-gray-700'
+          }`}
+        >
+          {used ? row.calls.toLocaleString() : '—'}
+        </span>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        {used ? (
+          <>
+            <span className="text-gray-600 dark:text-gray-400">
+              {(row.calls - row.errors).toLocaleString()} ok
+            </span>
+            {row.errors > 0 ? (
+              <span className="text-red-600 dark:text-red-400">
+                {row.errors.toLocaleString()} failed
+              </span>
+            ) : null}
+            {row.p95Ms > 0 && (
+              <span className="text-gray-500" title="95th percentile — the slow calls">
+                p95 {formatMs(row.p95Ms)}
+              </span>
+            )}
+          </>
+        ) : (
+          <span className="text-gray-400 dark:text-gray-600">Not used yet</span>
+        )}
+        {row.kind === 'act' && (
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+            act
+          </span>
+        )}
+        {row.foreign && (
+          <span
+            className="text-[10px] uppercase text-gray-500"
+            title="Called by someone else in this tenant; not in your own tool set"
+          >
+            other account
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -328,8 +403,7 @@ export default function UsageViewer({
         </section>
       )}
 
-      <section className="flex flex-col gap-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Your tools</h2>
+      <section className="flex flex-col">
         {rows.length === 0 && (
           <p className="text-sm text-gray-500">
             No tools yet — connect an account on the{' '}
@@ -339,70 +413,38 @@ export default function UsageViewer({
             .
           </p>
         )}
+
         {groups.map(([label, groupRows]) => {
           const key = groupRows[0]?.connector;
+          const groupCalls = groupRows.reduce((sum, row) => sum + row.calls, 0);
           return (
             <div key={label}>
-              <h3 className="mb-1 flex items-center gap-2 text-sm font-medium">
-                {key && <ConnectorIcon capabilityKey={key} label={label} size={16} />}
-                <span>{label}</span>
-                <span className="text-gray-500">
-                  {groupRows.reduce((sum, row) => sum + row.calls, 0).toLocaleString()} calls
+              {/*
+                Each heading sticks to the same offset, so as a group scrolls
+                past, the next heading arrives at the top and carries the
+                previous one out of view — one connector named at the top at
+                all times. `top-14` clears the app bar; the opaque background
+                is what stops cards showing through as they pass under.
+              */}
+              <h2 className="sticky top-14 z-10 -mx-2 mb-3 flex items-baseline gap-3 border-b border-gray-200 bg-white px-2 py-2 dark:border-gray-800 dark:bg-black">
+                {key && <ConnectorIcon capabilityKey={key} label={label} size={18} />}
+                <span className="font-semibold">{label}</span>
+                <span className="text-sm font-normal text-gray-500">
+                  {groupCalls.toLocaleString()} {groupCalls === 1 ? 'call' : 'calls'}
                 </span>
-              </h3>
-              <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-900">
-                    <tr>
-                      <th className="px-3 py-2 font-medium">Tool</th>
-                      <th className="px-3 py-2 text-right font-medium">Calls</th>
-                      <th className="px-3 py-2 text-right font-medium">Failed</th>
-                      <th className="px-3 py-2 text-right font-medium">Median</th>
-                      <th className="px-3 py-2 text-right font-medium">p95</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {groupRows.map((row) => (
-                      <tr
-                        key={row.name}
-                        className={`border-t border-gray-200 dark:border-gray-800 ${
-                          row.calls === 0 ? 'text-gray-400 dark:text-gray-600' : ''
-                        }`}
-                      >
-                        <td className="px-3 py-2">
-                          <code className="font-mono text-xs">{row.name}</code>
-                          {row.kind === 'act' && (
-                            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
-                              act
-                            </span>
-                          )}
-                          {row.foreign && (
-                            <span
-                              className="ml-2 text-[10px] uppercase text-gray-500"
-                              title="Called by someone else in this tenant; not in your own tool set"
-                            >
-                              other account
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.calls > 0 ? row.calls.toLocaleString() : '—'}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {row.errors > 0 ? (
-                            <span className="text-red-600 dark:text-red-400">{row.errors}</span>
-                          ) : (
-                            '—'
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {formatMs(row.medianMs)}
-                        </td>
-                        <td className="px-3 py-2 text-right tabular-nums">{formatMs(row.p95Ms)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              </h2>
+
+              {/*
+                A fixed card width rather than one column per tool: tool names
+                are a known, narrow range of lengths, so a uniform card sized
+                for two lines of name keeps the grid even and lets the row
+                count do the talking. Names wrap inside that width instead of
+                stretching it.
+              */}
+              <div className="mb-8 grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-3">
+                {groupRows.map((row) => (
+                  <ToolCard key={row.name} row={row} />
+                ))}
               </div>
             </div>
           );

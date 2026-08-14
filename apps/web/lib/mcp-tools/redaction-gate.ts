@@ -36,7 +36,7 @@ type RegisterToolArgs = Parameters<McpServer['registerTool']>;
 export interface RedactionContext {
   tenantId: string;
   detectors: readonly DetectorKey[];
-  mrnPatterns: readonly string[];
+  mrnFormats: readonly string[];
   policy: DisclosurePolicy;
   pseudonymizer: Pseudonymizer;
 }
@@ -78,7 +78,7 @@ function redactResult(result: unknown, context: RedactionContext): unknown {
       policy: context.policy,
       pseudonymizer: context.pseudonymizer,
       detectors: context.detectors,
-      mrnPatterns: context.mrnPatterns,
+      mrnFormats: context.mrnFormats,
     });
     if (outcome.text === block.text) return block;
     changed = true;
