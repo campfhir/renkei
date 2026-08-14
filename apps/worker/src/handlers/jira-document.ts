@@ -1,0 +1,228 @@
+/**
+ * A Jira issue, flattened into the document that gets embedded.
+ *
+ * What it used to produce was `KEY: summary` plus a status line. The
+ * description was meant to be in there — the old function said so — but REST
+ * v3 returns descriptions as ADF node trees, and running a string coercion
+ * over an object yields an empty string, so every issue in the index carried
+ * its title twice and nothing else. Searching for anything said in a
+ * description could not work, and the knowledge page showed a heading above a
+ * copy of that heading.
+ *
+ * The shape below is one heading, then prose, then facts, then discussion:
+ *
+ *   # <summary>
+ *   ## Description      the ADF description as markdown
+ *   ## Fields           display name: value, one per line
+ *   ## Comments         author, date, body
+ *
+ * Field names come from Jira's own `names` expansion rather than a hardcoded
+ * list. That matters most for the fields nobody can predict: "Request
+ * participants" is a custom field whose id differs per site, so a fixed list
+ * would either miss it or need per-site configuration. Asking Jira what its
+ * fields are called gets it, and every other custom field, for free.
+ */
+
+import { adfToMarkdown, listOf, rec, str } from '@renkei/connector-atlassian';
+
+/** Fields that are noise in a document: internal ids, avatars, and the ones
+ * already rendered as headings or metadata. */
+const SKIP_FIELDS = new Set([
+  'summary',
+  'description',
+  'comment',
+  'attachment',
+  'subtasks',
+  'issuelinks',
+  'worklog',
+  'thumbnail',
+  'lastViewed',
+  'workratio',
+  'watches',
+  'votes',
+  'progress',
+  'aggregateprogress',
+  'timetracking',
+  'statuscategorychangedate',
+  'issuerestriction',
+  'security',
+]);
+
+/** Per-field ceiling for a one-line value. */
+const MAX_FIELD_CHARS = 500;
+/** Per-field ceiling for a rich-text field, which is prose and earns more room. */
+const MAX_BLOCK_FIELD_CHARS = 2_000;
+/** Comments kept, newest last — a long-running ticket should not dominate. */
+const MAX_COMMENTS = 20;
+/** Per-comment ceiling. */
+const MAX_COMMENT_CHARS = 1_500;
+/** Whole-document ceiling, before chunking. */
+const MAX_DOCUMENT_CHARS = 40_000;
+
+/**
+ * A rendered field value.
+ *
+ * `block` marks prose — a rich-text custom field, or anything that came back
+ * with line breaks in it. Those cannot go in a `Label: value` list without
+ * destroying both the value and the list, so they get their own subsection.
+ */
+interface RenderedValue {
+  text: string;
+  block: boolean;
+}
+
+/**
+ * One field value as text, or null when there is nothing worth saying.
+ *
+ * Jira returns the same idea in many shapes — a bare string, `{name}` for a
+ * status, `{displayName}` for a user, `{value}` for a select option, and
+ * arrays of any of those — so this reduces them all to the words a person
+ * would read.
+ */
+function renderValue(value: unknown): RenderedValue | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return null;
+    // `2026-08-11T08:00:00.000+0000` is a fact about a database, not about the
+    // ticket. The day is what anyone reads or searches for.
+    if (/^\d{4}-\d{2}-\d{2}T/.test(text)) return { text: text.slice(0, 10), block: false };
+    return { text, block: text.includes('\n') };
+  }
+  if (typeof value === 'number') return { text: String(value), block: false };
+  if (typeof value === 'boolean') return { text: value ? 'yes' : 'no', block: false };
+
+  if (Array.isArray(value)) {
+    const parts = value.map(renderValue).filter((part): part is RenderedValue => part !== null);
+    if (parts.length === 0) return null;
+    // A list of prose stays prose; a list of names is one comma-joined line.
+    const block = parts.some((part) => part.block);
+    return { text: parts.map((part) => part.text).join(block ? '\n\n' : ', '), block };
+  }
+
+  if (typeof value === 'object') {
+    const record = rec(value);
+    // A rich-text custom field. Jira lets you have those, and they hold real
+    // prose — acceptance criteria, steps to reproduce — so they are worth
+    // rendering properly rather than skipping.
+    if (str(record.type) === 'doc') {
+      const text = adfToMarkdown(record).trim();
+      return text ? { text, block: true } : null;
+    }
+    // The usual wrappers, in the order Jira favours them.
+    for (const key of ['displayName', 'name', 'value', 'emailAddress', 'key']) {
+      const inner = record[key];
+      if (typeof inner === 'string' && inner.trim()) {
+        return { text: inner.trim(), block: false };
+      }
+    }
+    return null;
+  }
+
+  return null;
+}
+
+/**
+ * A readable label for a field id, used only when Jira's `names` map is
+ * missing one. Production always sends the map, so this is the seatbelt: a
+ * field labelled `fixVersions` reads worse than `Fix versions`, and either
+ * beats dropping the field because it had no name.
+ */
+function humanizeFieldId(id: string): string {
+  const spaced = id
+    .replace(/_/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .trim();
+  return spaced ? spaced.charAt(0).toUpperCase() + spaced.slice(1) : id;
+}
+
+function truncate(text: string, limit: number): string {
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+/** `2026-08-14T09:12:00.000+0000` → `2026-08-14`. */
+function shortDate(value: unknown): string {
+  const raw = str(value);
+  return raw.length >= 10 ? raw.slice(0, 10) : raw;
+}
+
+function renderComments(fields: Record<string, unknown>): string[] {
+  const container = rec(fields.comment);
+  const comments = listOf(container, 'comments');
+  if (comments.length === 0) return [];
+
+  // Newest are the ones that matter; keep the tail and say so if trimmed.
+  const kept = comments.slice(-MAX_COMMENTS);
+  const lines: string[] = ['## Comments', ''];
+  if (comments.length > kept.length) {
+    lines.push(`_${comments.length - kept.length} earlier comments not included._`, '');
+  }
+  for (const comment of kept) {
+    const author = str(rec(comment.author).displayName) || 'Unknown';
+    const when = shortDate(comment.created);
+    const body = truncate(adfToMarkdown(comment.body).trim(), MAX_COMMENT_CHARS);
+    if (!body) continue;
+    lines.push(`### ${author}${when ? ` — ${when}` : ''}`, '', body, '');
+  }
+  // Only a heading and no bodies is not a comments section.
+  return lines.length > 2 ? lines : [];
+}
+
+/**
+ * Build the document for one issue.
+ *
+ * `names` is Jira's field-id → display-name map, from `expand: ['names']`.
+ * Without it the fields section would read `customfield_10101: Alice`, which
+ * is not a fact anyone can use.
+ */
+export function jiraDocument(
+  issue: Record<string, unknown>,
+  names: Record<string, unknown> = {}
+): string {
+  const fields = rec(issue.fields);
+  const key = str(issue.key);
+  const summary = str(fields.summary);
+
+  const sections: string[] = [`# ${summary || key}`, ''];
+
+  const description = adfToMarkdown(fields.description).trim();
+  if (description) {
+    sections.push('## Description', '', description, '');
+  }
+
+  const fieldLines: string[] = [];
+  const blockFields: { label: string; text: string }[] = [];
+  // `Key` first: it is the handle a person actually uses, and it is not a
+  // field Jira returns inside `fields`.
+  if (key) fieldLines.push(`Key: ${key}`);
+  for (const [id, value] of Object.entries(fields)) {
+    if (SKIP_FIELDS.has(id)) continue;
+    const rendered = renderValue(value);
+    if (!rendered) continue;
+    const label = str(names[id]) || humanizeFieldId(id);
+    if (rendered.block) {
+      blockFields.push({ label, text: truncate(rendered.text, MAX_BLOCK_FIELD_CHARS) });
+    } else {
+      fieldLines.push(`${label}: ${truncate(rendered.text, MAX_FIELD_CHARS)}`);
+    }
+  }
+  if (fieldLines.length > 0 || blockFields.length > 0) {
+    sections.push('## Fields', '');
+    // Sorted so the same issue produces the same document across syncs —
+    // object key order is stable in practice but not a promise, and a
+    // reordered document is a needless re-embed. `Key` stays pinned first.
+    const [first, ...rest] = fieldLines;
+    if (first) sections.push(first);
+    sections.push(...rest.sort((a, b) => a.localeCompare(b)), '');
+    // Prose fields after the one-liners, each under its own heading so the
+    // list above stays scannable and the prose keeps its line breaks.
+    for (const field of blockFields.sort((a, b) => a.label.localeCompare(b.label))) {
+      sections.push(`### ${field.label}`, '', field.text, '');
+    }
+  }
+
+  sections.push(...renderComments(fields));
+
+  return truncate(sections.join('\n').trim(), MAX_DOCUMENT_CHARS);
+}

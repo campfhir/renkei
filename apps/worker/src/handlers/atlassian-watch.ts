@@ -25,6 +25,7 @@ import { getDatabase } from '@renkei/db';
 import { atlassianFetch, listOf, rec, str } from '@renkei/connector-atlassian';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { enqueueKnowledgeEvent } from '../enqueue';
+import { jiraDocument } from './jira-document';
 import type { AtlassianAccess } from './atlassian-access';
 
 /**
@@ -78,17 +79,6 @@ function jqlTimestamp(iso: string): string {
   );
 }
 
-/** The text an issue contributes to the index: its summary plus description. */
-function jiraContent(issue: Record<string, unknown>): string {
-  const fields = rec(issue.fields);
-  const summary = str(fields.summary);
-  const description = str(fields.description);
-  const status = str(rec(fields.status).name);
-  return [`${str(issue.key)}: ${summary}`, status ? `Status: ${status}` : '', description]
-    .filter(Boolean)
-    .join('\n\n');
-}
-
 async function syncJira(
   tenantId: string,
   access: AtlassianAccess,
@@ -115,7 +105,15 @@ async function syncJira(
       method: 'POST',
       json: {
         jql,
-        fields: ['summary', 'description', 'status', 'updated'],
+        // `*navigable` rather than a fixed list: reporter, assignee, labels
+        // and priority are predictable, but "Request participants" is a
+        // custom field whose id differs per site, and so is most of what a
+        // team actually fills in. Comments are named explicitly because they
+        // are not navigable.
+        fields: ['*navigable', 'comment'],
+        // Field ids alone would render `customfield_10101: Alice`; this is
+        // how the document gets to say `Request participants: Alice`.
+        expand: ['names'],
         maxResults: 100,
         ...(nextPageToken ? { nextPageToken } : {}),
       },
@@ -127,11 +125,13 @@ async function syncJira(
     }
 
     const issues = listOf(response.body, 'issues');
+    // Jira returns one names map for the whole page, not per issue.
+    const names = rec(response.body.names);
     for (const issue of issues) {
       const key = str(issue.key);
       const updated = str(rec(issue.fields).updated);
       if (!key) continue;
-      const content = jiraContent(issue);
+      const content = jiraDocument(issue, names);
       if (!content.trim()) continue;
 
       await enqueueKnowledgeEvent(

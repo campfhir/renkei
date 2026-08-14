@@ -29,3 +29,5 @@ export {
 /** knowledge_chunks.provider values these verifiers answer for. */
 export const JIRA_KNOWLEDGE_PROVIDER = 'jira';
 export const CONFLUENCE_KNOWLEDGE_PROVIDER = 'confluence';
+
+export { adfToMarkdown, isEmptyAdf, type AdfNode } from './adf';
