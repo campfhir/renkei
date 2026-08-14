@@ -22,8 +22,24 @@ export interface ScopeOption {
   /** The OAuth scopes this capability needs; requested together. */
   scopes: string[];
   label: string;
-  /** What checking it lets the MCP tools do, in the operator's terms. */
+  /**
+   * What checking it lets the MCP tools do, in the OPERATOR's terms — tool
+   * names are welcome here, since the reader is choosing an org-wide ceiling
+   * and needs to know exactly what it covers.
+   */
   hint: string;
+  /**
+   * The same capability in the terms of the person granting it.
+   *
+   * Separate from `hint` because the audiences want opposite things: an
+   * operator setting a ceiling needs `outlook_list_messages`, and someone
+   * deciding whether to hand over their mailbox needs "Read your email,
+   * including message contents". Showing an end user a list of tool
+   * identifiers is not consent — it is a shape that looks like consent.
+   *
+   * Falls back to `hint` where that already reads as plain language.
+   */
+  userHint?: string;
   group: string;
   /** Off by default: the scope must exist on the provider app before use. */
   defaultChecked: boolean;

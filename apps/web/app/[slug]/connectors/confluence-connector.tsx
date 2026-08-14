@@ -4,6 +4,7 @@ import ConnectorIcon from '@/components/connector-icon';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import ScopePicker from '@/components/scope-picker';
+import AuthorizedPermissions from '@/components/authorized-permissions';
 import {
   ATLASSIAN_CONFLUENCE_SCOPE_GROUPS,
   ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS,
@@ -129,6 +130,7 @@ export default function ConfluenceConnector({
                 checked={selectedIds}
                 onToggle={toggleOption}
                 available={ceiling}
+                audience="user"
               />
               <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                 Your organization allows at most these. Uncheck anything you don&apos;t want Renkei
@@ -143,6 +145,29 @@ export default function ConfluenceConnector({
             Connect Confluence
           </a>
         </div>
+      )}
+
+      {connected && (
+        <AuthorizedPermissions
+          options={ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS}
+          authorized={priorScopes}
+          connectorLabel="Confluence"
+        >
+          <ScopePicker
+            groups={ATLASSIAN_CONFLUENCE_SCOPE_GROUPS}
+            options={ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS}
+            checked={selectedIds}
+            onToggle={toggleOption}
+            available={ceiling}
+            audience="user"
+          />
+          <a
+            href={authorizeUrl}
+            className="mt-3 inline-block rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+          >
+            Approve updated permissions
+          </a>
+        </AuthorizedPermissions>
       )}
 
       {connected &&

@@ -3,6 +3,7 @@
 import ConnectorIcon from '@/components/connector-icon';
 import { useEffect, useState } from 'react';
 import ScopePicker from '@/components/scope-picker';
+import AuthorizedPermissions from '@/components/authorized-permissions';
 import { ATLASSIAN_SCOPE_GROUPS, ATLASSIAN_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 import WatchManager from './watch-manager';
@@ -138,6 +139,29 @@ export default function JiraConnector({
         <p className="mt-3 rounded-md bg-gray-100 p-2 text-sm dark:bg-gray-900">{notice}</p>
       )}
 
+      {status?.connected && (
+        <AuthorizedPermissions
+          options={ATLASSIAN_SCOPE_OPTIONS}
+          authorized={priorScopes}
+          connectorLabel="Jira"
+        >
+          <ScopePicker
+            groups={ATLASSIAN_SCOPE_GROUPS}
+            options={ATLASSIAN_SCOPE_OPTIONS}
+            checked={selectedIds}
+            onToggle={toggleOption}
+            available={ceiling}
+            audience="user"
+          />
+          <a
+            href={authorizeUrl}
+            className="mt-3 inline-block rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+          >
+            Approve updated permissions
+          </a>
+        </AuthorizedPermissions>
+      )}
+
       {status !== null && !status.connected && (
         <div className="mt-3">
           <details className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
@@ -151,6 +175,7 @@ export default function JiraConnector({
                 checked={selectedIds}
                 onToggle={toggleOption}
                 available={ceiling}
+                audience="user"
               />
               <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                 Your organization allows at most these. Uncheck anything you don&apos;t want Renkei

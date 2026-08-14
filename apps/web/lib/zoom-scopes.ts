@@ -28,6 +28,7 @@ export const ZOOM_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['meeting:read:list_meetings', 'meeting:read:meeting'],
     label: 'Read meetings',
     hint: 'zoom_list_meetings, zoom_get_meeting',
+    userHint: 'See your scheduled Zoom meetings and their details.',
     group: 'meetings',
     defaultChecked: true,
   },
@@ -36,6 +37,7 @@ export const ZOOM_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['meeting:write:meeting', 'meeting:update:meeting', 'meeting:delete:meeting'],
     label: 'Schedule & manage meetings',
     hint: 'zoom_create_meeting, zoom_update_meeting, zoom_delete_meeting — acts as you; org read-only mode disables them',
+    userHint: 'Schedule, change and cancel Zoom meetings as you.',
     group: 'meetings',
     defaultChecked: true,
   },
@@ -48,6 +50,7 @@ export const ZOOM_SCOPE_OPTIONS: ScopeOption[] = [
     ],
     label: 'Read recordings & transcripts',
     hint: 'zoom_list_recordings, zoom_get_transcript, and transcript ingestion into knowledge (meetings you host)',
+    userHint: 'Access your Zoom cloud recordings.',
     group: 'recordings',
     defaultChecked: true,
   },
@@ -56,6 +59,7 @@ export const ZOOM_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['meeting:read:summary'],
     label: 'Read AI meeting summaries',
     hint: 'zoom_get_meeting_summary, and summary ingestion into knowledge — needs AI Companion enabled on the account',
+    userHint: 'Read Zoom’s AI summaries of your meetings.',
     group: 'recordings',
     defaultChecked: true,
   },
@@ -67,6 +71,7 @@ export const ZOOM_SCOPE_OPTIONS: ScopeOption[] = [
       'zoom_list_notes, zoom_get_note — personal meeting notes and their transcripts. Needs ' +
       'My Notes enabled on the account; the API is read-only (Zoom publishes no update ' +
       'endpoint).',
+    userHint: 'Read your Zoom notes and documents.',
     group: 'recordings',
     defaultChecked: true,
   },
@@ -83,6 +88,7 @@ export const ZOOM_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'zoom_search_notes — list or search My Notes without a meeting id. Needs Zoom Docs ' +
       'enabled on the account (separate from My Notes).',
+    userHint: 'Search across your Zoom notes.',
     group: 'recordings',
     defaultChecked: true,
   },
@@ -93,6 +99,7 @@ export const ZOOM_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'zoom_get_doc — any Zoom Doc as Markdown, including My Notes pages (a note IS a doc). ' +
       'Needs Zoom Docs enabled on the account.',
+    userHint: 'Read your Zoom documents.',
     group: 'docs',
     defaultChecked: true,
   },
@@ -103,6 +110,7 @@ export const ZOOM_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'zoom_create_doc, zoom_append_to_doc — write as the user, including appending to a ' +
       "note's doc page; org read-only mode disables them. Needs Zoom Docs enabled.",
+    userHint: 'Create and edit Zoom documents as you.',
     group: 'docs',
     defaultChecked: true,
   },

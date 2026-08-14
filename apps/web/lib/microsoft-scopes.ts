@@ -27,6 +27,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'outlook_list_messages, outlook_get_message, outlook_search_messages, ' +
       'outlook_list_mail_folders, and inbox ingestion into knowledge',
+    userHint: 'Read your email, including message contents, attachments and folders.',
     group: 'mail',
     defaultChecked: true,
   },
@@ -35,6 +36,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['Mail.Send'],
     label: 'Send mail',
     hint: 'outlook_send_mail — sends as the user, only on explicit request; org read-only mode disables it',
+    userHint: 'Send email as you. Only ever on your explicit instruction.',
     group: 'mail',
     defaultChecked: true,
   },
@@ -49,6 +51,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
       'registration before checking this, or Microsoft will reject the consent. Anyone already ' +
       "connected needs to reconnect afterward — a user's existing grant only carries the scopes " +
       'they consented to at connect time.',
+    userHint: 'Mark your mail read or unread, flag it, categorise it, and move it between folders.',
     group: 'mail',
     defaultChecked: false,
   },
@@ -63,6 +66,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
       'registration before checking this, or Microsoft will reject the consent. Anyone already ' +
       "connected needs to reconnect afterward — a user's existing grant only carries the scopes " +
       'they consented to at connect time.',
+    userHint: 'Create, rename and delete folders in your mailbox.',
     group: 'mail',
     defaultChecked: false,
   },
@@ -71,6 +75,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['Calendars.Read'],
     label: 'Read calendar',
     hint: 'outlook_list_events, outlook_get_event, and calendar ingestion into knowledge',
+    userHint: 'Read your calendar: events, times, locations and who was invited.',
     group: 'calendar',
     defaultChecked: true,
   },
@@ -81,6 +86,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'outlook_create_event (sends invites), outlook_respond_event (accept/tentative/decline, ' +
       'propose a new time) — acts as the user; org read-only mode disables them',
+    userHint: 'Create and change events on your calendar, and respond to invitations as you.',
     group: 'calendar',
     defaultChecked: true,
   },
@@ -89,6 +95,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['Tasks.Read'],
     label: 'Read tasks',
     hint: 'outlook_list_task_lists, outlook_list_tasks, and To Do ingestion into knowledge',
+    userHint: 'Read your Microsoft To Do lists and tasks.',
     group: 'tasks',
     defaultChecked: true,
   },
@@ -99,6 +106,8 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'outlook_search_users, outlook_get_user — titles, departments, locations, managers, ' +
       'direct reports. Requires admin consent on the Entra app.',
+    userHint:
+      'Look up colleagues in your organisation’s directory — names, job titles and email addresses.',
     group: 'directory',
     defaultChecked: true,
   },
@@ -109,6 +118,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     hint:
       'outlook_list_groups, outlook_list_group_members — Microsoft 365 groups and distribution ' +
       'lists. Requires admin consent on the Entra app.',
+    userHint: 'See the groups and mailing lists in your organisation, and who belongs to them.',
     group: 'directory',
     defaultChecked: true,
   },
@@ -126,6 +136,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
       'default: add Files.Read as a delegated Microsoft Graph permission on the Entra app ' +
       'registration before checking this, or Microsoft will reject the consent. Anyone already ' +
       'connected needs to reconnect afterward.',
+    userHint: 'Read the files in your own OneDrive.',
     group: 'files',
     defaultChecked: false,
   },
@@ -139,6 +150,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
       'onedrive_share_document — creates, renames, moves, DELETES and shares files as the user. ' +
       'Carries Files.Read, so the read tools come with it. Off by default: add Files.ReadWrite ' +
       'on the Entra app registration first, then reconnect.',
+    userHint: 'Create, edit and delete files in your own OneDrive.',
     group: 'files',
     defaultChecked: false,
   },
@@ -152,6 +164,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
       'are withheld from search even when the documents are indexed. Reaches every file the ' +
       'user can already open, including other people’s drives. Requires admin consent on the ' +
       'Entra app.',
+    userHint: 'Read files and documents that other people have shared with you.',
     group: 'files',
     defaultChecked: false,
   },
@@ -166,6 +179,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
       'bundle carries all four Files scopes, so it is the single box to check for full OneDrive ' +
       'use. Broad by nature — it reaches every file the user can already open. Requires admin ' +
       'consent on the Entra app.',
+    userHint: 'Edit files and documents that other people have shared with you.',
     group: 'files',
     defaultChecked: false,
   },
@@ -178,6 +192,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
       'sharepoint_read_page, sharepoint_list_folder, sharepoint_search_documents, ' +
       'sharepoint_get_document_metadata, and indexing a watched library into knowledge — every ' +
       'SharePoint site the user can already open. Requires admin consent on the Entra app.',
+    userHint: 'Read SharePoint sites, pages and document libraries you already have access to.',
     group: 'sharepoint',
     defaultChecked: false,
   },
@@ -192,6 +207,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
       'site-level permissions — Graph offers no delegated API for that, and Renkei deliberately ' +
       'does not offer it; manage site access in SharePoint itself. Carries Sites.Read.All. ' +
       'Requires admin consent on the Entra app.',
+    userHint: 'Create and change SharePoint pages and documents you already have access to.',
     group: 'sharepoint',
     defaultChecked: false,
   },

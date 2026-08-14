@@ -8,8 +8,16 @@ import { optionWithin } from '@/lib/scope-catalog';
  * catalog, shared by the admin forms (choosing the org ceiling) and the user
  * connect cards (narrowing within it).
  *
+ * The two audiences see different fine print, which is the point of the
+ * `audience` prop. An operator setting a ceiling gets the raw OAuth scopes and
+ * the tool names they cover, because that is what the decision turns on.
+ * Someone deciding whether to hand over their own mailbox gets neither:
+ * `Mail.Read` and `outlook_list_messages` are facts about our implementation,
+ * and showing them in place of "Read your email" makes the checkbox look like
+ * consent without informing it.
+ *
  * Each checkbox is a capability bundle; checked state is keyed by the
- * option's id, and its underlying scopes ride in fine print. `available` is
+ * option's id. `available` is
  * the ceiling: an option renders only when EVERY scope it needs is inside
  * it — a user must not even see a capability the org withheld, and an empty
  * group disappears with its options. Columns go 1 → 2 → 3 with viewport
@@ -21,6 +29,7 @@ export default function ScopePicker({
   checked,
   onToggle,
   available,
+  audience = 'admin',
 }: {
   groups: ScopeGroup[];
   options: ScopeOption[];
@@ -28,6 +37,8 @@ export default function ScopePicker({
   onToggle: (optionId: string, on: boolean) => void;
   /** Scopes the caller may choose from; omit for the full catalog. */
   available?: readonly string[];
+  /** Who is reading. Defaults to the operator view. */
+  audience?: 'admin' | 'user';
 }) {
   const allowed = available === undefined ? null : new Set(available);
   const visible = options.filter((option) => allowed === null || optionWithin(option, allowed));
@@ -53,16 +64,18 @@ export default function ScopePicker({
                   />
                   <span className="min-w-0">
                     {option.label}
-                    <span
-                      className="block truncate font-mono text-[11px] text-gray-400 dark:text-gray-500"
-                      title={option.scopes.join(' ')}
-                    >
-                      {option.scopes.length === 1
-                        ? option.scopes[0]
-                        : `${option.scopes.length} scopes: ${option.scopes.join(' ')}`}
-                    </span>
+                    {audience === 'admin' && (
+                      <span
+                        className="block truncate font-mono text-[11px] text-gray-400 dark:text-gray-500"
+                        title={option.scopes.join(' ')}
+                      >
+                        {option.scopes.length === 1
+                          ? option.scopes[0]
+                          : `${option.scopes.length} scopes: ${option.scopes.join(' ')}`}
+                      </span>
+                    )}
                     <span className="block text-xs text-gray-500 dark:text-gray-400">
-                      {option.hint}
+                      {audience === 'user' ? (option.userHint ?? option.hint) : option.hint}
                     </span>
                   </span>
                 </label>
