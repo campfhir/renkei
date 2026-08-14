@@ -174,10 +174,10 @@ export default function UsageViewer({
   const [report, setReport] = useState(initial);
   const [pending, startTransition] = useTransition();
 
-  function selectPeriod(days: number) {
+  function refresh(days: number, scope: 'self' | 'tenant') {
     startTransition(async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      setReport(await getUsageReport(tenantId, days, timeZone));
+      setReport(await getUsageReport(tenantId, days, timeZone, scope));
     });
   }
 
@@ -238,7 +238,7 @@ export default function UsageViewer({
             key={period.days}
             type="button"
             disabled={pending}
-            onClick={() => selectPeriod(period.days)}
+            onClick={() => refresh(period.days, report.scope)}
             aria-pressed={report.days === period.days}
             className={`rounded-lg border px-3 py-1.5 text-sm disabled:opacity-50 ${
               report.days === period.days
@@ -249,6 +249,26 @@ export default function UsageViewer({
             {period.label}
           </button>
         ))}
+        {report.canSeeTenant && (
+          <span className="ml-auto inline-flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-700">
+            {(['self', 'tenant'] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                disabled={pending}
+                onClick={() => refresh(report.days, option)}
+                aria-pressed={report.scope === option}
+                className={`px-3 py-1.5 text-sm disabled:opacity-50 ${
+                  report.scope === option
+                    ? 'bg-blue-600 font-medium text-white'
+                    : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-900'
+                }`}
+              >
+                {option === 'self' ? 'Just me' : 'Everyone'}
+              </button>
+            ))}
+          </span>
+        )}
         {pending && <span className="text-sm text-gray-500">Loading…</span>}
       </nav>
 

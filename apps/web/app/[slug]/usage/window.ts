@@ -14,6 +14,21 @@ export interface UsagePoint {
   errors: number;
 }
 
+/**
+ * Which rows a request may see.
+ *
+ * The permission comes from the session (`isOperator`); the request can only
+ * narrow it. An operator may ask to look at just their own calls, and everyone
+ * else is pinned to themselves no matter what they ask for — a scope that
+ * could be widened by an argument is not a scope.
+ */
+export function resolveScope(
+  isOperator: boolean,
+  requested: 'self' | 'tenant' | undefined
+): 'self' | 'tenant' {
+  return isOperator && requested !== 'self' ? 'tenant' : 'self';
+}
+
 /** Windows outside this range are the caller misreporting, not a request. */
 export function clampDays(days: number): number {
   if (!Number.isFinite(days)) return 7;

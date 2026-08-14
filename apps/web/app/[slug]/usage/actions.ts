@@ -23,7 +23,7 @@ import { ROLE_OPERATOR, ROLE_USER } from '@/lib/access';
 // Only async functions may be exported from a 'use server' module, so the
 // descriptor type is imported from its own module wherever it is needed.
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
-import { clampDays, safeTimeZone, zeroFill, type UsagePoint } from './window';
+import { clampDays, safeTimeZone, zeroFill, resolveScope, type UsagePoint } from './window';
 
 export interface ToolUsageRow {
   tool: string;
@@ -44,6 +44,8 @@ export interface UserUsageRow {
 
 export interface UsageReport {
   scope: 'self' | 'tenant';
+  /** Whether this caller may see the tenant-wide view at all. */
+  canSeeTenant: boolean;
   days: number;
   totalCalls: number;
   totalErrors: number;
@@ -57,6 +59,7 @@ export interface UsageReport {
 
 const EMPTY: UsageReport = {
   scope: 'self',
+  canSeeTenant: false,
   days: 7,
   totalCalls: 0,
   totalErrors: 0,
@@ -68,7 +71,8 @@ const EMPTY: UsageReport = {
 export async function getUsageReport(
   tenantId: string,
   requestedDays = 7,
-  requestedTimeZone?: string
+  requestedTimeZone?: string,
+  requestedScope?: 'self' | 'tenant'
 ): Promise<UsageReport> {
   const days = clampDays(requestedDays);
   const timeZone = safeTimeZone(requestedTimeZone);
@@ -85,9 +89,14 @@ export async function getUsageReport(
   if (!isOperator && !session.roles.includes(ROLE_USER)) {
     return { ...EMPTY, days, error: 'Your account has no role in this tenant' };
   }
-  const scope: 'self' | 'tenant' = isOperator ? 'tenant' : 'self';
-  // A non-operator is pinned to themselves before the query, not filtered
-  // after it: scope that is applied late is scope that can be forgotten.
+  // `requestedScope` can only NARROW. An operator may ask to see just their
+  // own calls; nobody else's request for 'tenant' is honoured, because the
+  // permission comes from the session and never from the argument.
+  const scope = resolveScope(isOperator, requestedScope);
+  const tenantWide = scope === 'tenant';
+  // A caller without the tenant-wide view is pinned to themselves before the
+  // query, not filtered after it: scope that is applied late is scope that can
+  // be forgotten.
   const ownSubject = session.subject;
 
   const since = sql<Date>`NOW() - MAKE_INTERVAL(days => ${days})`;
@@ -108,7 +117,7 @@ export async function getUsageReport(
       ])
       .where('tenant_id', '=', tenantId)
       .where('started_at', '>=', since);
-    if (!isOperator) toolQuery = toolQuery.where('subject', '=', ownSubject);
+    if (!tenantWide) toolQuery = toolQuery.where('subject', '=', ownSubject);
 
     const toolRows = await toolQuery
       .groupBy(['tool', 'connector'])
@@ -128,7 +137,7 @@ export async function getUsageReport(
       ])
       .where('tenant_id', '=', tenantId)
       .where('started_at', '>=', since);
-    if (!isOperator) trendQuery = trendQuery.where('subject', '=', ownSubject);
+    if (!tenantWide) trendQuery = trendQuery.where('subject', '=', ownSubject);
 
     const trendRows = await trendQuery
       .groupBy(sql`date_trunc('day', started_at AT TIME ZONE ${timeZone})`)
@@ -138,7 +147,7 @@ export async function getUsageReport(
     // Per-person totals are the operator's whole reason for this page, and
     // are not computed at all for anyone else.
     const byUser: UserUsageRow[] = [];
-    if (isOperator) {
+    if (tenantWide) {
       const rows = await db
         .selectFrom('tool_calls')
         .leftJoin('identities', (join) =>
@@ -180,6 +189,7 @@ export async function getUsageReport(
 
     return {
       scope,
+      canSeeTenant: isOperator,
       days,
       totalCalls: tools.reduce((sum, row) => sum + row.calls, 0),
       totalErrors: tools.reduce((sum, row) => sum + row.errors, 0),
@@ -200,6 +210,7 @@ export async function getUsageReport(
     return {
       ...EMPTY,
       scope,
+      canSeeTenant: isOperator,
       days,
       error: error instanceof Error ? error.message : 'Could not read usage',
     };

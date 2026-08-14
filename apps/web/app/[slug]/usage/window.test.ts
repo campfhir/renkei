@@ -7,7 +7,34 @@
  * scan. Those are the three things pinned below.
  */
 
-import { clampDays, safeTimeZone, localDay, zeroFill, type UsagePoint } from './window';
+import {
+  clampDays,
+  safeTimeZone,
+  localDay,
+  zeroFill,
+  resolveScope,
+  type UsagePoint,
+} from './window';
+
+describe('resolveScope', () => {
+  it('gives an operator the tenant-wide view by default', () => {
+    expect(resolveScope(true, undefined)).toBe('tenant');
+    expect(resolveScope(true, 'tenant')).toBe('tenant');
+  });
+
+  it('lets an operator narrow to their own calls', () => {
+    expect(resolveScope(true, 'self')).toBe('self');
+  });
+
+  it('never widens for anyone else, however they ask', () => {
+    // The whole point: this argument reaches the server function directly by
+    // POST, not only through the toggle, so asking for 'tenant' must not be
+    // a way to get it.
+    expect(resolveScope(false, 'tenant')).toBe('self');
+    expect(resolveScope(false, 'self')).toBe('self');
+    expect(resolveScope(false, undefined)).toBe('self');
+  });
+});
 
 describe('clampDays', () => {
   it('keeps a sensible window as asked', () => {
