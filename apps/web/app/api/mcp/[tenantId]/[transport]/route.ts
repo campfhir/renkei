@@ -14,37 +14,16 @@ import { getJiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
-import { registerAllTools, cacheTokenMetadata, cacheUserDisplayName } from '@/lib/mcp-tools';
-import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
+import { cacheTokenMetadata, cacheUserDisplayName } from '@/lib/mcp-tools';
+import {
+  resolveConnectorAvailability,
+  provisionedConnectorsFor,
+  registerRenkeiTools,
+} from '@/lib/mcp-tools/registry';
 import { withUsageTracking } from '@/lib/mcp-tools/usage-tracking';
-import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
-import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
-import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/outlook';
-import { registerSharePointTools, SHAREPOINT_MCP_CONNECTOR } from '@/lib/mcp-tools/sharepoint';
-import { registerOneDriveTools, ONEDRIVE_MCP_CONNECTOR } from '@/lib/mcp-tools/onedrive';
-import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
-import { registerSummaryTools, type SummaryProvider } from '@/lib/mcp-tools/summary';
-import { collectCalendar, collectUnreadMail } from '@/lib/mcp-tools/summary/collect-outlook';
-import { collectSprint, collectWorkItems } from '@/lib/mcp-tools/summary/collect-jira';
-import { collectZoom } from '@/lib/mcp-tools/summary/collect-zoom';
-import { collectWebex } from '@/lib/mcp-tools/summary/collect-webex';
-import {
-  collectSharePointChanges,
-  collectConfluenceChanges,
-} from '@/lib/mcp-tools/summary/collect-docs';
-import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
-import {
-  WEBEX_USER,
-  ATLASSIAN_JSM,
-  ATLASSIAN_CONFLUENCE,
-  MICROSOFT,
-  ZOOM,
-  getGrant,
-  readAtlassianMetadata,
-} from '@renkei/provider-grants';
+import { ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renkei/provider-grants';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getIdentityEmail } from '@/lib/identity';
-import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { createProjection } from '@renkei/capability-registry';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import type { Kysely } from 'kysely';
@@ -276,89 +255,23 @@ const handler = async (
     const emailResult = await getIdentityEmail(tenantId, subject);
     const userEmail = emailResult.ok ? emailResult.val : null;
 
-    // The knowledge connector is provisioned org-wide when an embedding
-    // provider is configured — its capabilities register only then.
-    const knowledgeAvailable = (await resolveEmbeddingProvider(tenantId)) !== null;
-
-    // The WebEx user tools register only when this caller has connected
-    // their own WebEx account (the grant is per-user, unlike the org bot).
-    // Its scopes gate which of those tools register.
-    const webexGrantRow = await db
-      .selectFrom('provider_grants')
-      .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
-      .where('tenant_id', '=', tenantId)
-      .where('provider', '=', WEBEX_USER)
-      .where('subject', '=', subject)
-      .limit(1)
-      .executeTakeFirst();
-    const webexAvailable = webexGrantRow !== undefined;
-    // Gate on what the token actually carries when that is known; the
-    // request is only the fallback for opaque tokens.
-    const webexScopes = webexGrantRow
-      ? (webexGrantRow.granted_scopes ?? webexGrantRow.requested_scopes)
-      : [];
+    // Which connectors this caller has, and on what scopes. Shared with the
+    // tools page so the list it shows is the list this route registers.
+    const availability = await resolveConnectorAvailability(db, tenantId, subject);
+    const {
+      knowledgeAvailable,
+      webexAvailable,
+      webexScopes,
+      microsoftAvailable,
+      graphScopes,
+      sharepointAvailable,
+      onedriveAvailable,
+      zoomAvailable,
+      zoomScopes,
+      confluenceAvailable,
+      confluenceScopes,
+    } = availability;
     const jiraScopes = grant.grantedScopes ?? grant.requestedScopes;
-
-    // The Outlook tools register only when this caller has connected their
-    // own Microsoft account. Same granted-over-requested rule as WebEx.
-    const microsoftGrantRow = await db
-      .selectFrom('provider_grants')
-      .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
-      .where('tenant_id', '=', tenantId)
-      .where('provider', '=', MICROSOFT)
-      .where('subject', '=', subject)
-      .limit(1)
-      .executeTakeFirst();
-    const microsoftAvailable = microsoftGrantRow !== undefined;
-    const graphScopes = microsoftGrantRow
-      ? (microsoftGrantRow.granted_scopes ?? microsoftGrantRow.requested_scopes)
-      : [];
-    // One Microsoft grant backs three namespaces, so which of them a caller
-    // has is a question about the SCOPES on that grant, not about a separate
-    // connection: someone who connected for mail alone has no SharePoint.
-    const sharepointAvailable =
-      microsoftAvailable && graphScopes.some((scope) => scope.startsWith('Sites.'));
-    const onedriveAvailable =
-      microsoftAvailable && graphScopes.some((scope) => scope.startsWith('Files.'));
-
-    // Zoom inverts the rule: the token ALWAYS carries the Marketplace app's
-    // full scope set (Zoom cannot narrow at consent), so bare granted would
-    // erase the user's narrowing. Requested ∩ granted when both are known;
-    // requested alone otherwise.
-    const zoomGrantRow = await db
-      .selectFrom('provider_grants')
-      .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
-      .where('tenant_id', '=', tenantId)
-      .where('provider', '=', ZOOM)
-      .where('subject', '=', subject)
-      .limit(1)
-      .executeTakeFirst();
-    const zoomAvailable = zoomGrantRow !== undefined;
-    const zoomScopes = zoomGrantRow
-      ? zoomGrantRow.granted_scopes
-        ? zoomGrantRow.requested_scopes.filter((scope) =>
-            zoomGrantRow.granted_scopes?.includes(scope)
-          )
-        : zoomGrantRow.requested_scopes
-      : [];
-
-    // The Confluence tools register only when this caller has connected the
-    // third Atlassian app ("Renkei Confluence"). Same granted-over-requested
-    // rule as WebEx/Microsoft — Confluence resolves its own access token
-    // fresh per call (see confluence/client.ts), so only availability and
-    // scopes are needed here.
-    const confluenceGrantRow = await db
-      .selectFrom('provider_grants')
-      .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
-      .where('tenant_id', '=', tenantId)
-      .where('provider', '=', ATLASSIAN_CONFLUENCE)
-      .where('subject', '=', subject)
-      .limit(1)
-      .executeTakeFirst();
-    const confluenceAvailable = confluenceGrantRow !== undefined;
-    const confluenceScopes = confluenceGrantRow
-      ? (confluenceGrantRow.granted_scopes ?? confluenceGrantRow.requested_scopes)
-      : [];
 
     // The second Atlassian app's grant ("Renkei JSM": JSM + Ops scopes) —
     // JSM/Ops tools run on this token when it exists; absent, they fall back
@@ -458,142 +371,11 @@ const handler = async (
                 disabledCapabilities: [],
               },
               {
-                provisionedConnectors: [
-                  JIRA_CONNECTOR,
-                  ...(knowledgeAvailable ? [KNOWLEDGE_CONNECTOR] : []),
-                  ...(webexAvailable ? [WEBEX_USER_MCP_CONNECTOR] : []),
-                  ...(microsoftAvailable ? [OUTLOOK_MCP_CONNECTOR] : []),
-                  ...(sharepointAvailable ? [SHAREPOINT_MCP_CONNECTOR] : []),
-                  ...(onedriveAvailable ? [ONEDRIVE_MCP_CONNECTOR] : []),
-                  ...(zoomAvailable ? [ZOOM_MCP_CONNECTOR] : []),
-                  ...(confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
-                ],
+                provisionedConnectors: provisionedConnectorsFor(availability),
                 hiddenCapabilities: [],
               }
             );
-            await registerAllTools(withCapabilityGate(server, projection), context);
-            await registerKnowledgeTools(
-              withCapabilityGate(server, projection, KNOWLEDGE_CONNECTOR),
-              context
-            );
-            if (webexAvailable) {
-              await registerWebexUserTools(
-                withCapabilityGate(server, projection, WEBEX_USER_MCP_CONNECTOR),
-                context
-              );
-            }
-            if (microsoftAvailable) {
-              await registerOutlookTools(
-                withCapabilityGate(server, projection, OUTLOOK_MCP_CONNECTOR),
-                context
-              );
-            }
-            // Composed from the SAME availability the tool registration uses,
-            // so the summary can never reach a source whose tools this caller
-            // does not have. Order is the order it reads in.
-            const summaryProviders: SummaryProvider[] = [
-              ...(microsoftAvailable
-                ? [
-                    {
-                      connector: OUTLOOK_MCP_CONNECTOR,
-                      label: 'Calendar',
-                      toolName: 'outlook_calendar_summary',
-                      collect: collectCalendar,
-                    },
-                    {
-                      connector: OUTLOOK_MCP_CONNECTOR,
-                      label: 'Unread mail',
-                      toolName: 'outlook_mail_summary',
-                      collect: collectUnreadMail,
-                    },
-                  ]
-                : []),
-              // Two Jira providers: a sprint is a STATE with its own dates,
-              // work items are a WINDOW. Splitting them is what lets "what
-              // moved yesterday" be asked without dragging the whole sprint in.
-              {
-                connector: JIRA_CONNECTOR,
-                label: 'Sprint',
-                toolName: 'sprint_summary',
-                collect: collectSprint,
-              },
-              {
-                connector: JIRA_CONNECTOR,
-                label: 'Work items',
-                toolName: 'work_item_summary',
-                collect: collectWorkItems,
-              },
-              ...(sharepointAvailable
-                ? [
-                    {
-                      connector: SHAREPOINT_MCP_CONNECTOR,
-                      label: 'SharePoint documents',
-                      toolName: 'sharepoint_summary',
-                      collect: collectSharePointChanges,
-                    },
-                  ]
-                : []),
-              ...(confluenceAvailable
-                ? [
-                    {
-                      connector: CONFLUENCE_MCP_CONNECTOR,
-                      label: 'Confluence pages',
-                      toolName: 'confluence_summary',
-                      collect: collectConfluenceChanges,
-                    },
-                  ]
-                : []),
-              ...(zoomAvailable
-                ? [
-                    {
-                      connector: ZOOM_MCP_CONNECTOR,
-                      label: 'Zoom meetings',
-                      toolName: 'zoom_summary',
-                      collect: collectZoom,
-                    },
-                  ]
-                : []),
-              ...(webexAvailable
-                ? [
-                    {
-                      connector: WEBEX_USER_MCP_CONNECTOR,
-                      label: 'WebEx unread',
-                      toolName: 'webex_summary',
-                      collect: collectWebex,
-                    },
-                  ]
-                : []),
-            ];
-            registerSummaryTools(
-              withCapabilityGate(server, projection, JIRA_CONNECTOR),
-              context,
-              summaryProviders
-            );
-
-            if (sharepointAvailable) {
-              await registerSharePointTools(
-                withCapabilityGate(server, projection, SHAREPOINT_MCP_CONNECTOR),
-                context
-              );
-            }
-            if (onedriveAvailable) {
-              await registerOneDriveTools(
-                withCapabilityGate(server, projection, ONEDRIVE_MCP_CONNECTOR),
-                context
-              );
-            }
-            if (zoomAvailable) {
-              await registerZoomTools(
-                withCapabilityGate(server, projection, ZOOM_MCP_CONNECTOR),
-                context
-              );
-            }
-            if (confluenceAvailable) {
-              await registerConfluenceTools(
-                withCapabilityGate(server, projection, CONFLUENCE_MCP_CONNECTOR),
-                context
-              );
-            }
+            await registerRenkeiTools(server, context, availability, projection);
 
             logger.verbose('All tools registered', {
               component: 'mcp/transport',

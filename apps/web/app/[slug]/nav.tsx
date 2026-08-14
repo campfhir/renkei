@@ -94,6 +94,7 @@ export default function AppNav({
         { href: `/${slug}`, label: 'Home' },
         { href: `/${slug}/connectors`, label: 'Connectors' },
         { href: `/${slug}/knowledge`, label: 'Knowledge' },
+        { href: `/${slug}/usage`, label: 'Tools' },
         { href: `/${slug}/mail-review`, label: 'Mail review' },
         { href: `/${slug}/logs`, label: 'Activity' },
       ],

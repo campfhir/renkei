@@ -110,7 +110,7 @@ describe('withUsageTracking', () => {
     await registered.get('outlook_send_mail')!({});
     await flush();
 
-    expect(inserted[0]).toMatchObject({ status: 'error', connector: 'outlook' });
+    expect(inserted[0]).toMatchObject({ status: 'error', connector: 'microsoft' });
   });
 
   it('records a throw and lets it propagate untouched', async () => {

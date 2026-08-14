@@ -1,0 +1,393 @@
+'use client';
+
+/**
+ * Tool usage: what you have, what you use, and how it is behaving.
+ *
+ * Three questions, in the order people ask them. How much am I using this?
+ * (totals and the trend). Which tools, and are any of them slow or failing?
+ * (the per-tool table). And for an operator, who is using it? (the per-person
+ * table, which only they receive — see `actions.ts`).
+ *
+ * Tools with no calls are listed rather than hidden. A usage page that only
+ * showed what had been used could never answer "what else can I do", which is
+ * half of why someone opens it.
+ */
+
+import { useState, useTransition } from 'react';
+import Link from 'next/link';
+import ConnectorIcon from '@/components/connector-icon';
+import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
+import { signInUrl } from '@/lib/sign-in-url';
+import { getUsageReport, type UsageReport, type ToolUsageRow } from './actions';
+import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
+
+const PERIODS = [
+  { days: 1, label: '24 hours' },
+  { days: 7, label: '7 days' },
+  { days: 30, label: '30 days' },
+  { days: 90, label: '90 days' },
+];
+
+/** Catalog label for a capability key, falling back to the key itself. */
+function connectorLabel(key: string | null): string {
+  if (!key) return 'Other';
+  return CONNECTOR_CATALOG.find((entry) => entry.capabilityKey === key)?.label ?? key;
+}
+
+interface Row {
+  name: string;
+  connector: string | null;
+  kind: 'read' | 'act' | null;
+  title: string | null;
+  calls: number;
+  errors: number;
+  medianMs: number;
+  p95Ms: number;
+  /** Called, but not in this caller's own tool set — only seen org-wide. */
+  foreign: boolean;
+}
+
+/**
+ * The tool list, joined to its usage.
+ *
+ * Union rather than either side alone: the catalog holds tools nobody has
+ * called yet, and tenant-wide usage holds tools this operator does not
+ * personally have but someone else does. Dropping either would misreport.
+ */
+function joinRows(tools: ToolDescriptor[], usage: ToolUsageRow[]): Row[] {
+  const byName = new Map<string, Row>();
+  for (const tool of tools) {
+    byName.set(tool.name, {
+      name: tool.name,
+      connector: tool.connector,
+      kind: tool.kind,
+      title: tool.title,
+      calls: 0,
+      errors: 0,
+      medianMs: 0,
+      p95Ms: 0,
+      foreign: false,
+    });
+  }
+  for (const row of usage) {
+    const existing = byName.get(row.tool);
+    if (existing) {
+      existing.calls = row.calls;
+      existing.errors = row.errors;
+      existing.medianMs = row.medianMs;
+      existing.p95Ms = row.p95Ms;
+    } else {
+      byName.set(row.tool, {
+        name: row.tool,
+        connector: row.connector,
+        kind: null,
+        title: null,
+        calls: row.calls,
+        errors: row.errors,
+        medianMs: row.medianMs,
+        p95Ms: row.p95Ms,
+        foreign: true,
+      });
+    }
+  }
+  return [...byName.values()].sort((a, b) => b.calls - a.calls || a.name.localeCompare(b.name));
+}
+
+function formatMs(ms: number): string {
+  if (ms <= 0) return '—';
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
+
+/**
+ * Daily calls as stacked bars, errors in red on top of successes.
+ *
+ * Inline SVG rather than a charting dependency: it is one series with a
+ * highlight, and the whole thing is fewer lines than the import would be.
+ */
+function TrendChart({ points }: { points: UsageReport['trend'] }) {
+  const peak = Math.max(1, ...points.map((point) => point.calls));
+  if (points.length === 0) return null;
+
+  return (
+    <figure className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
+      <figcaption className="mb-3 text-sm font-medium text-gray-700 dark:text-gray-300">
+        Calls per day
+        <span className="ml-2 font-normal text-gray-500">peak {peak}</span>
+      </figcaption>
+      <div className="flex h-32 items-end gap-px" role="img" aria-label="Daily tool calls">
+        {points.map((point) => {
+          const height = (point.calls / peak) * 100;
+          const errorShare = point.calls > 0 ? (point.errors / point.calls) * height : 0;
+          return (
+            <div
+              key={point.day}
+              className="group relative flex-1"
+              style={{ height: '100%' }}
+              title={`${point.day}: ${point.calls} calls, ${point.errors} failed`}
+            >
+              <div
+                className="absolute inset-x-0 bottom-0 flex flex-col justify-end"
+                style={{ height: '100%' }}
+              >
+                <div
+                  className="w-full rounded-t-sm bg-red-500"
+                  style={{ height: `${errorShare}%` }}
+                />
+                <div
+                  className="w-full bg-blue-500 group-hover:bg-blue-400"
+                  style={{ height: `${height - errorShare}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-2 flex justify-between text-xs text-gray-500">
+        <span>{points[0]?.day}</span>
+        <span>{points[points.length - 1]?.day}</span>
+      </div>
+    </figure>
+  );
+}
+
+function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-800">
+      <p className="text-xs uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="text-2xl font-semibold tabular-nums">{value}</p>
+      {hint && <p className="text-xs text-gray-500">{hint}</p>}
+    </div>
+  );
+}
+
+export default function UsageViewer({
+  slug,
+  tenantId,
+  initial,
+  tools,
+}: {
+  slug: string;
+  tenantId: string;
+  initial: UsageReport;
+  tools: ToolDescriptor[];
+}) {
+  const [report, setReport] = useState(initial);
+  const [pending, startTransition] = useTransition();
+
+  function selectPeriod(days: number) {
+    startTransition(async () => {
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      setReport(await getUsageReport(tenantId, days, timeZone));
+    });
+  }
+
+  const rows = joinRows(tools, report.tools);
+  const used = rows.filter((row) => row.calls > 0);
+  // The slowest thing anyone actually waits on, which is the latency question
+  // worth putting on the page.
+  const slowest = [...used].sort((a, b) => b.p95Ms - a.p95Ms)[0];
+  const errorRate = report.totalCalls > 0 ? (report.totalErrors / report.totalCalls) * 100 : 0;
+
+  const byConnector = new Map<string, Row[]>();
+  for (const row of rows) {
+    const key = connectorLabel(row.connector);
+    const list = byConnector.get(key);
+    if (list) list.push(row);
+    else byConnector.set(key, [row]);
+  }
+  const groups = [...byConnector.entries()].sort(
+    (a, b) =>
+      b[1].reduce((sum, row) => sum + row.calls, 0) -
+        a[1].reduce((sum, row) => sum + row.calls, 0) || a[0].localeCompare(b[0])
+  );
+
+  return (
+    <div className="flex flex-col gap-5" data-wide-page>
+      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h1 className="text-xl font-semibold">Tools</h1>
+        <Link
+          href={`/${slug}/connectors`}
+          className="text-sm text-blue-600 hover:underline dark:text-blue-400"
+        >
+          Connectors
+        </Link>
+        <p className="w-full text-sm text-gray-500 dark:text-gray-400">
+          {report.scope === 'tenant'
+            ? 'Every account in this tenant. Tool names and counts only — never arguments or results.'
+            : 'Your own tool calls. Counts and timings only — never arguments or results.'}
+        </p>
+      </header>
+
+      {report.error && (
+        <p className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+          {report.error}
+          {report.signedOut && (
+            <>
+              {' '}
+              <a className="font-medium underline" href={signInUrl(tenantId, `/${slug}/usage`)}>
+                Sign in again
+              </a>
+            </>
+          )}
+        </p>
+      )}
+
+      <nav className="flex flex-wrap items-center gap-2" aria-label="Period">
+        {PERIODS.map((period) => (
+          <button
+            key={period.days}
+            type="button"
+            disabled={pending}
+            onClick={() => selectPeriod(period.days)}
+            aria-pressed={report.days === period.days}
+            className={`rounded-lg border px-3 py-1.5 text-sm disabled:opacity-50 ${
+              report.days === period.days
+                ? 'border-blue-600 bg-blue-50 font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900'
+            }`}
+          >
+            {period.label}
+          </button>
+        ))}
+        {pending && <span className="text-sm text-gray-500">Loading…</span>}
+      </nav>
+
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat label="Calls" value={report.totalCalls.toLocaleString()} />
+        <Stat
+          label="Failed"
+          value={report.totalErrors.toLocaleString()}
+          hint={report.totalCalls > 0 ? `${errorRate.toFixed(1)}% of calls` : undefined}
+        />
+        <Stat label="Tools used" value={`${used.length} of ${rows.length}`} />
+        <Stat
+          label="Slowest (p95)"
+          value={slowest ? formatMs(slowest.p95Ms) : '—'}
+          hint={slowest?.name}
+        />
+      </section>
+
+      <TrendChart points={report.trend} />
+
+      {report.scope === 'tenant' && report.byUser.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+            By person
+          </h2>
+          <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-900">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Person</th>
+                  <th className="px-3 py-2 text-right font-medium">Calls</th>
+                  <th className="px-3 py-2 text-right font-medium">Failed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.byUser.map((user) => (
+                  <tr
+                    key={user.subject ?? user.label}
+                    className="border-t border-gray-200 dark:border-gray-800"
+                  >
+                    <td className="px-3 py-2">{user.label}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {user.calls.toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {user.errors > 0 ? (
+                        <span className="text-red-600 dark:text-red-400">{user.errors}</span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      <section className="flex flex-col gap-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Your tools</h2>
+        {rows.length === 0 && (
+          <p className="text-sm text-gray-500">
+            No tools yet — connect an account on the{' '}
+            <Link href={`/${slug}/connectors`} className="text-blue-600 hover:underline">
+              connectors page
+            </Link>
+            .
+          </p>
+        )}
+        {groups.map(([label, groupRows]) => {
+          const key = groupRows[0]?.connector;
+          return (
+            <div key={label}>
+              <h3 className="mb-1 flex items-center gap-2 text-sm font-medium">
+                {key && <ConnectorIcon capabilityKey={key} label={label} size={16} />}
+                <span>{label}</span>
+                <span className="text-gray-500">
+                  {groupRows.reduce((sum, row) => sum + row.calls, 0).toLocaleString()} calls
+                </span>
+              </h3>
+              <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-900">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">Tool</th>
+                      <th className="px-3 py-2 text-right font-medium">Calls</th>
+                      <th className="px-3 py-2 text-right font-medium">Failed</th>
+                      <th className="px-3 py-2 text-right font-medium">Median</th>
+                      <th className="px-3 py-2 text-right font-medium">p95</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupRows.map((row) => (
+                      <tr
+                        key={row.name}
+                        className={`border-t border-gray-200 dark:border-gray-800 ${
+                          row.calls === 0 ? 'text-gray-400 dark:text-gray-600' : ''
+                        }`}
+                      >
+                        <td className="px-3 py-2">
+                          <code className="font-mono text-xs">{row.name}</code>
+                          {row.kind === 'act' && (
+                            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                              act
+                            </span>
+                          )}
+                          {row.foreign && (
+                            <span
+                              className="ml-2 text-[10px] uppercase text-gray-500"
+                              title="Called by someone else in this tenant; not in your own tool set"
+                            >
+                              other account
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {row.calls > 0 ? row.calls.toLocaleString() : '—'}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {row.errors > 0 ? (
+                            <span className="text-red-600 dark:text-red-400">{row.errors}</span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {formatMs(row.medianMs)}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">{formatMs(row.p95Ms)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
+      </section>
+    </div>
+  );
+}

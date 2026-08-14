@@ -26,14 +26,9 @@ import { randomUUID } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
 import { logger } from '@/lib/logger';
+import { connectorKeyForTool } from './tool-connector';
 
 type RegisterToolArgs = Parameters<McpServer['registerTool']>;
-
-/** The connector a tool belongs to, from its name. */
-function connectorOf(toolName: string): string | null {
-  const underscore = toolName.indexOf('_');
-  return underscore > 0 ? toolName.slice(0, underscore) : null;
-}
 
 /**
  * MCP handlers signal failure with `isError` on the result rather than by
@@ -70,7 +65,7 @@ function record(
       tenant_id: context.tenantId,
       subject: context.subject,
       tool,
-      connector: connectorOf(tool),
+      connector: connectorKeyForTool(tool),
       status,
       started_at: startedAt,
       ended_at: endedAt,
