@@ -107,9 +107,36 @@ export interface DeadLetterStore {
   purge(ids: readonly string[]): Promise<Result<number, 'QUEUE_ERROR'>>;
 }
 
+/**
+ * Discarding queued work that a later decision has superseded.
+ *
+ * Needed because a rebuild is two halves. Deleting what was indexed is one;
+ * the other is deleting the not-yet-processed messages that would rebuild it,
+ * because a queue does not know its payload went stale. Renkei learned this
+ * the hard way: re-indexing a Jira project purged its chunks, and the backlog
+ * then rewrote every one of them from content built by the previous release.
+ * The purge looked like it had done nothing.
+ *
+ * Only PENDING messages are eligible. A claimed message is being worked by
+ * someone right now and pulling it out from under them is a different and much
+ * worse problem than one stale row.
+ */
+export interface QueuePurger {
+  /**
+   * Delete pending messages whose payload matches every entry in `match`,
+   * compared as JSON text at the given path. Returns how many went.
+   */
+  discardPending(
+    tenantId: string,
+    type: string,
+    match: readonly { path: readonly string[]; value: string }[]
+  ): Promise<Result<number, 'QUEUE_ERROR'>>;
+}
+
 /** One named queue: its producer, consumer, and dead-letter store. */
 export interface Queue {
   producer: QueueProducer;
   consumer: QueueConsumer;
   deadLetters: DeadLetterStore;
+  purger: QueuePurger;
 }

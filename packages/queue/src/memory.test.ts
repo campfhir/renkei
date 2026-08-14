@@ -236,3 +236,78 @@ describe('source fixation and fair claiming', () => {
     expect((await mustClaim(queue)).type).toBe('second');
   });
 });
+
+describe('discardPending — the other half of a rebuild', () => {
+  const ingest = (refId: string, project: string, content: string) => ({
+    tenantId: 't1',
+    source: 'knowledge',
+    type: 'ingest.object',
+    payload: { provider: 'jira', refId, content, metadata: { project } },
+  });
+
+  it('removes queued work that a rebuild has superseded', async () => {
+    // Without this, deleting the chunks achieves nothing: the backlog
+    // rewrites every one of them from content built before the upgrade.
+    const queue = new InMemoryQueue();
+    await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
+    await queue.producer.enqueue(ingest('ENG-2', 'ENG', 'old'));
+
+    const discarded = await queue.purger.discardPending('t1', 'ingest.object', [
+      { path: ['provider'], value: 'jira' },
+      { path: ['metadata', 'project'], value: 'ENG' },
+    ]);
+
+    expect(discarded.ok && discarded.val).toBe(2);
+    expect(await queue.consumer.claim()).toBeNull();
+  });
+
+  it('leaves other scopes alone', async () => {
+    const queue = new InMemoryQueue();
+    await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
+    await queue.producer.enqueue(ingest('OPS-1', 'OPS', 'old'));
+
+    await queue.purger.discardPending('t1', 'ingest.object', [
+      { path: ['provider'], value: 'jira' },
+      { path: ['metadata', 'project'], value: 'ENG' },
+    ]);
+
+    const claimed = await queue.consumer.claim();
+    expect(claimed?.payload).toMatchObject({ refId: 'OPS-1' });
+  });
+
+  it('leaves another tenant’s work alone', async () => {
+    const queue = new InMemoryQueue();
+    await queue.producer.enqueue({ ...ingest('ENG-1', 'ENG', 'old'), tenantId: 't2' });
+
+    const discarded = await queue.purger.discardPending('t1', 'ingest.object', [
+      { path: ['provider'], value: 'jira' },
+      { path: ['metadata', 'project'], value: 'ENG' },
+    ]);
+    expect(discarded.ok && discarded.val).toBe(0);
+  });
+
+  it('does not touch a message someone is already working', async () => {
+    // Pulling a claimed message out from under its consumer is a worse
+    // problem than one stale row.
+    const queue = new InMemoryQueue();
+    await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
+    const claimed = await queue.consumer.claim();
+    expect(claimed).not.toBeNull();
+
+    const discarded = await queue.purger.discardPending('t1', 'ingest.object', [
+      { path: ['provider'], value: 'jira' },
+      { path: ['metadata', 'project'], value: 'ENG' },
+    ]);
+    expect(discarded.ok && discarded.val).toBe(0);
+  });
+
+  it('refuses an empty predicate rather than matching everything', async () => {
+    const queue = new InMemoryQueue();
+    await queue.producer.enqueue(ingest('ENG-1', 'ENG', 'old'));
+
+    const discarded = await queue.purger.discardPending('t1', 'ingest.object', []);
+    expect(discarded.ok).toBe(false);
+    // And the message it refused to match is still there.
+    expect(await queue.consumer.claim()).not.toBeNull();
+  });
+});

@@ -16,7 +16,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { ok } from '@campfhir/safe-functions/helpers';
+import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { ClaimedMessage, DeadLetter, Disposition, Queue, QueueMessageInput } from './contract';
 import { failureDisposition, DEFAULT_RETRY_POLICY, type RetryPolicy } from './policy';
 
@@ -174,6 +174,45 @@ export class InMemoryQueue implements Queue {
         row.runAfter = Date.now() + disposition.delaySeconds * 1000;
       }
       return disposition;
+    },
+  };
+
+  /**
+   * The same contract as Postgres: pending only, every predicate must match.
+   * Kept in step so a test proving a rebuild discards its superseded work
+   * exercises the real semantics rather than a stub that always returns 0.
+   */
+  readonly purger = {
+    discardPending: async (
+      tenantId: string,
+      type: string,
+      match: readonly { path: readonly string[]; value: string }[]
+    ) => {
+      if (match.length === 0) {
+        return err('QUEUE_ERROR' as const, { message: 'discardPending needs a predicate' });
+      }
+      const matches = (payload: unknown, path: readonly string[]): string | null => {
+        let node: unknown = payload;
+        for (const step of path) {
+          if (typeof node !== 'object' || node === null) return null;
+          // Reflect.get rather than an indexed assertion: the repo bans `as`,
+          // and this walks untyped JSON where a wrong shape must return null
+          // rather than be asserted into existence.
+          node = Reflect.get(node, step);
+        }
+        return typeof node === 'string' ? node : null;
+      };
+
+      let removed = 0;
+      for (let i = this.rows.length - 1; i >= 0; i -= 1) {
+        const row = this.rows[i];
+        if (!row || row.tenant_id !== tenantId || row.type !== type) continue;
+        if (row.status !== 'pending') continue;
+        if (!match.every((entry) => matches(row.payload, entry.path) === entry.value)) continue;
+        this.rows.splice(i, 1);
+        removed += 1;
+      }
+      return ok(removed);
     },
   };
 

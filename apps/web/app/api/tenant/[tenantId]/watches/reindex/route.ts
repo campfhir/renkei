@@ -18,6 +18,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { deleteChunksByMetadata } from '@renkei/knowledge';
+import { embeddingJobsQueue } from '@renkei/queue';
 import { getSessionFromRequest } from '@/lib/session';
 
 /** Where each poller records the scope it pulled an item from. */
@@ -63,6 +64,29 @@ export async function POST(
     return NextResponse.json({ error: 'Could not clear the indexed content.' }, { status: 500 });
   }
 
+  // The other half of a rebuild, and the half that was missing.
+  //
+  // Deleting the chunks is not enough while messages built from the OLD
+  // content are still queued: the consumer does not know its payload went
+  // stale, so it faithfully rewrites every chunk that was just purged. On a
+  // live system with a deep backlog this made re-index look like it did
+  // nothing at all — projects were purged, re-read, and then repopulated hours
+  // later with pre-upgrade content, indistinguishable from the button being
+  // broken.
+  //
+  // Discarding costs nothing that is not reproducible: the sweep re-reads the
+  // whole scope from the provider anyway, which is the point of the rebuild.
+  const discarded = await embeddingJobsQueue().purger.discardPending(tenantId, 'ingest.object', [
+    { path: ['provider'], value: provider },
+    { path: ['metadata', metadataKey], value: scopeKey },
+  ]);
+  if (!discarded.ok) {
+    return NextResponse.json(
+      { error: 'Could not clear work already queued for this scope.' },
+      { status: 500 }
+    );
+  }
+
   // Cursor cleared last: if the purge failed above we never got here, so a
   // watch can't end up with its content gone AND its cursor still claiming
   // the content is current.
@@ -83,5 +107,9 @@ export async function POST(
     .where('id', '=', watch.id)
     .execute();
 
-  return NextResponse.json({ purged: purged.val, label: watch.scope_label ?? scopeKey });
+  return NextResponse.json({
+    purged: purged.val,
+    discarded: discarded.val,
+    label: watch.scope_label ?? scopeKey,
+  });
 }

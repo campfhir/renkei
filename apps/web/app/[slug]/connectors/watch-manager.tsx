@@ -169,9 +169,13 @@ export default function WatchManager({
         setNotice(data.error ?? 'Could not start the rebuild.');
         return;
       }
+      const discarded = Number(data.discarded ?? 0);
       setNotice(
-        `Cleared ${Number(data.purged ?? 0).toLocaleString()} indexed item(s). ` +
-          `Re-reading this ${noun} from scratch; nothing was changed in the source.`
+        `Cleared ${Number(data.purged ?? 0).toLocaleString()} indexed item(s)` +
+          (discarded > 0
+            ? `, and discarded ${discarded.toLocaleString()} queued update(s) that would have rebuilt them`
+            : '') +
+          `. Re-reading this ${noun} from scratch; nothing was changed in the source.`
       );
       await loadWatches();
     } catch {

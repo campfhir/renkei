@@ -21,6 +21,7 @@ import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type {
+  QueuePurger,
   ClaimedMessage,
   DeadLetter,
   DeadLetterStore,
@@ -300,7 +301,42 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
     },
   };
 
-  return { producer, consumer, deadLetters };
+  const purger: QueuePurger = {
+    async discardPending(tenantId, type, match) {
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return err('QUEUE_ERROR' as const, { message: 'database unavailable' });
+      if (match.length === 0) {
+        // Refused rather than treated as "match everything": a predicate that
+        // silently widened to the whole queue would be a catastrophe wearing
+        // the clothes of a no-op.
+        return err('QUEUE_ERROR' as const, { message: 'discardPending needs a predicate' });
+      }
+
+      // `#>>` walks a path and compares as text, so one form covers both a
+      // top-level key and a nested one. Values are bound, never interpolated.
+      const predicates = match.map(
+        (entry) => sql`payload #>> ${sql.val(entry.path)} = ${entry.value}`
+      );
+
+      try {
+        const result = await sql`
+          DELETE FROM ${live()}
+           WHERE tenant_id = ${tenantId}
+             AND type = ${type}
+             -- Pending only: a claimed message is being worked right now.
+             AND status = 'pending'
+             AND ${sql.join(predicates, sql` AND `)}
+        `.execute(dbResult.val);
+        return ok(Number(result.numAffectedRows ?? 0));
+      } catch (error) {
+        return err('QUEUE_ERROR' as const, {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  };
+
+  return { producer, consumer, deadLetters, purger };
 }
 
 /**
