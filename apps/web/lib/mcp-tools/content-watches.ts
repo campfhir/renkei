@@ -202,7 +202,11 @@ export async function listWatches(
     ])
     .where('tenant_id', '=', owner.tenantId)
     .where('provider', '=', provider)
-    .groupBy(sql`metadata ->> ${metadataKey}`)
+    // GROUP BY the output ALIAS, never a repeat of the expression: each
+    // `${metadataKey}` becomes its own bound parameter, so Postgres sees
+    // `->> $2` against `->> $3`, calls them different expressions, and
+    // rejects the query. Naming it once removes the possibility.
+    .groupBy(sql`scope`)
     .execute();
 
   const queued = await dbResult.val
@@ -214,7 +218,7 @@ export async function listWatches(
     .where('tenant_id', '=', owner.tenantId)
     .where('status', '=', 'pending')
     .where(sql<boolean>`payload ->> 'provider' = ${provider}`)
-    .groupBy(sql`payload -> 'metadata' ->> ${metadataKey}`)
+    .groupBy(sql`scope`)
     .execute();
 
   const indexedByScope = new Map(indexed.map((row) => [row.scope, Number(row.objects)]));
