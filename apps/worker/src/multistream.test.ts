@@ -412,7 +412,11 @@ beforeEach(() => {
   mockEnqueueImpl = async (tenantId, type, payload, orderingKey) => {
     await embedding.producer.enqueue({
       tenantId,
-      source: 'knowledge',
+      // Mirrors the real enqueueKnowledgeEvent: the provider is a fairness
+      // LANE on the source. Hardcoding 'knowledge' here would leave this
+      // whole pipeline test proving something production never writes, and a
+      // dispatch regression on laned messages would sail through it.
+      source: typeof payload.provider === 'string' ? `knowledge:${payload.provider}` : 'knowledge',
       type,
       payload,
       orderingKey,
@@ -444,216 +448,196 @@ beforeEach(() => {
 });
 
 describe('multi-stream: saturated embedding queue (Scenario A)', () => {
-  it(
-    'processes every stream to terminal state while replies stay fast and enrichment back-fills',
-    async () => {
-      mockResolveEmbeddingProvider.mockResolvedValue(slowEmbedder(100));
+  it('processes every stream to terminal state while replies stay fast and enrichment back-fills', async () => {
+    mockResolveEmbeddingProvider.mockResolvedValue(slowEmbedder(100));
 
-      // Interleaved arrival: webex, zoom, microsoft, webex, ...
-      const insertTimes = new Map<string, number>();
-      insertTimes.set('msg-1', insertWebex(events, 'msg-1'));
-      insertZoom(events, 'uuid-1');
-      insertMicrosoft(events);
-      insertTimes.set('msg-2', insertWebex(events, 'msg-2'));
-      insertZoom(events, 'uuid-2');
-      insertTimes.set('msg-3', insertWebex(events, 'msg-3'));
-      insertMicrosoft(events);
-      insertTimes.set('msg-4', insertWebex(events, 'msg-4'));
-      insertZoom(events, 'uuid-3');
-      insertTimes.set('msg-5', insertWebex(events, 'msg-5'));
+    // Interleaved arrival: webex, zoom, microsoft, webex, ...
+    const insertTimes = new Map<string, number>();
+    insertTimes.set('msg-1', insertWebex(events, 'msg-1'));
+    insertZoom(events, 'uuid-1');
+    insertMicrosoft(events);
+    insertTimes.set('msg-2', insertWebex(events, 'msg-2'));
+    insertZoom(events, 'uuid-2');
+    insertTimes.set('msg-3', insertWebex(events, 'msg-3'));
+    insertMicrosoft(events);
+    insertTimes.set('msg-4', insertWebex(events, 'msg-4'));
+    insertZoom(events, 'uuid-3');
+    insertTimes.set('msg-5', insertWebex(events, 'msg-5'));
 
-      const loops = [loopOn(events, 'worker/loop'), loopOn(embedding, 'worker/embeddings-loop')];
-      const running = loops.map((loop) => loop.run());
-      const drained = await waitUntil(
-        () => events.settled() && embedding.settled(),
-        10_000
-      ).finally(() => stopAll(loops, running));
+    const loops = [loopOn(events, 'worker/loop'), loopOn(embedding, 'worker/embeddings-loop')];
+    const running = loops.map((loop) => loop.run());
+    const drained = await waitUntil(() => events.settled() && embedding.settled(), 10_000).finally(
+      () => stopAll(loops, running)
+    );
 
-      // (1) Every message in both queues reached a terminal state, none dead.
-      expect(drained).toBe(true);
-      expect(events.deadSnapshot()).toHaveLength(0);
-      expect(embedding.deadSnapshot()).toHaveLength(0);
+    // (1) Every message in both queues reached a terminal state, none dead.
+    expect(drained).toBe(true);
+    expect(events.deadSnapshot()).toHaveLength(0);
+    expect(embedding.deadSnapshot()).toHaveLength(0);
 
-      // (2) Every WebEx reply posted fast, despite >1.5s of serial
-      // embedding-queue work queued behind the same arrivals.
-      expect(posted).toHaveLength(5);
-      for (const reply of posted) {
-        const insertedAt = insertTimes.get(String(reply.outgoing.parentId));
-        expect(insertedAt).toBeDefined();
-        expect(reply.at - (insertedAt ?? 0)).toBeLessThan(1_000);
-      }
+    // (2) Every WebEx reply posted fast, despite >1.5s of serial
+    // embedding-queue work queued behind the same arrivals.
+    expect(posted).toHaveLength(5);
+    for (const reply of posted) {
+      const insertedAt = insertTimes.get(String(reply.outgoing.parentId));
+      expect(insertedAt).toBeDefined();
+      expect(reply.at - (insertedAt ?? 0)).toBeLessThan(1_000);
+    }
 
-      // (3) Fan-out accounting: 5 webex ingests + 5 enrichments, 3 zoom
-      // ingests, 2 microsoft rounds × 2 mails — all processed.
-      const jobs = embedding.snapshot();
-      const byType = (type: string) => jobs.filter((row) => row.type === type);
-      expect(byType('ingest.object')).toHaveLength(8);
-      expect(byType('enrich.item')).toHaveLength(5);
-      expect(byType('ingest.email')).toHaveLength(4);
-      expect(jobs.every((row) => row.status === 'processed')).toBe(true);
+    // (3) Fan-out accounting: 5 webex ingests + 5 enrichments, 3 zoom
+    // ingests, 2 microsoft rounds × 2 mails — all processed.
+    const jobs = embedding.snapshot();
+    const byType = (type: string) => jobs.filter((row) => row.type === type);
+    expect(byType('ingest.object')).toHaveLength(8);
+    expect(byType('enrich.item')).toHaveLength(5);
+    expect(byType('ingest.email')).toHaveLength(4);
+    expect(jobs.every((row) => row.status === 'processed')).toBe(true);
 
-      // (4) The enrichment back-fill landed: one actionable_items update per
-      // webex capture, after the embedding queue drained.
-      const enrichWrites = dbState.updates.filter((update) => update.table === 'actionable_items');
-      expect(enrichWrites).toHaveLength(5);
-    },
-    15_000
-  );
+    // (4) The enrichment back-fill landed: one actionable_items update per
+    // webex capture, after the embedding queue drained.
+    const enrichWrites = dbState.updates.filter((update) => update.table === 'actionable_items');
+    expect(enrichWrites).toHaveLength(5);
+  }, 15_000);
 });
 
 describe('multi-stream: hung embedding queue (Scenario B)', () => {
-  it(
-    'keeps interactive events and timers flowing while an embedding job hangs, then retries it',
-    async () => {
-      const hung = hungEmbedder();
-      mockResolveEmbeddingProvider.mockResolvedValue(hung.embedder);
+  it('keeps interactive events and timers flowing while an embedding job hangs, then retries it', async () => {
+    const hung = hungEmbedder();
+    mockResolveEmbeddingProvider.mockResolvedValue(hung.embedder);
 
-      // Seed the embedding queue directly with an ingest and let it wedge.
-      await embedding.producer.enqueue({
-        tenantId: 'tenant-1',
-        source: 'knowledge',
-        type: 'ingest.object',
-        payload: { provider: 'zoom', refId: 'host@example.com/uuid-9/transcript', content: 'x' },
-        orderingKey: 'zoom/host@example.com/uuid-9/transcript',
-      });
+    // Seed the embedding queue directly with an ingest and let it wedge.
+    await embedding.producer.enqueue({
+      tenantId: 'tenant-1',
+      source: 'knowledge',
+      type: 'ingest.object',
+      payload: { provider: 'zoom', refId: 'host@example.com/uuid-9/transcript', content: 'x' },
+      orderingKey: 'zoom/host@example.com/uuid-9/transcript',
+    });
 
-      let ticks = 0;
-      const stopSweep = schedulePeriodicSweep('drift-probe', 'test/drift', 50, async () => {
-        ticks += 1;
-      });
-      const loops = [loopOn(events, 'worker/loop'), loopOn(embedding, 'worker/embeddings-loop')];
-      const running = loops.map((loop) => loop.run());
-      try {
-        const claimed = await waitUntil(
-          () => embedding.snapshot().some((row) => row.status === 'processing'),
-          2_000
-        );
-        expect(claimed).toBe(true);
+    let ticks = 0;
+    const stopSweep = schedulePeriodicSweep('drift-probe', 'test/drift', 50, async () => {
+      ticks += 1;
+    });
+    const loops = [loopOn(events, 'worker/loop'), loopOn(embedding, 'worker/embeddings-loop')];
+    const running = loops.map((loop) => loop.run());
+    try {
+      const claimed = await waitUntil(
+        () => embedding.snapshot().some((row) => row.status === 'processing'),
+        2_000
+      );
+      expect(claimed).toBe(true);
 
-        // The hang is in progress. Interactive traffic must be unaffected.
-        const ticksAtHangStart = ticks;
-        const insertTimes = new Map<string, number>();
-        for (const id of ['msg-a', 'msg-b', 'msg-c']) {
-          insertTimes.set(id, insertWebex(events, id));
-        }
-        const repliesPosted = await waitUntil(() => posted.length === 3, 2_000);
-        expect(repliesPosted).toBe(true);
-        for (const reply of posted) {
-          const insertedAt = insertTimes.get(String(reply.outgoing.parentId));
-          expect(reply.at - (insertedAt ?? 0)).toBeLessThan(1_000);
-        }
-        // ...and the wedged job is STILL processing while all that happened.
-        expect(embedding.snapshot()[0]?.status).toBe('processing');
-
-        // Timers kept their cadence during the hang: the 50ms probe keeps
-        // firing while the embedding job stays wedged — the drift the
-        // original incident showed cannot recur.
-        const ticked = await waitUntil(() => ticks >= ticksAtHangStart + 3, 2_000);
-        expect(ticked).toBe(true);
-        expect(embedding.snapshot()[0]?.status).toBe('processing');
-
-        // Release the hang as a failure: the job lands back in 'pending'
-        // with the real policy's backoff, not lost and not stuck.
-        hung.release({ ok: false, err: { type: 'EMBEDDING_FAILED' } });
-        const failed = await waitUntil(
-          () => embedding.snapshot()[0]?.status === 'pending',
-          2_000
-        );
-        expect(failed).toBe(true);
-        const row = embedding.snapshot()[0]!;
-        expect(row.attempts).toBe(1);
-        expect(row.runAfter).toBeGreaterThan(Date.now() + 20_000); // ≥30s backoff
-      } finally {
-        stopSweep();
-        await stopAll(loops, running);
+      // The hang is in progress. Interactive traffic must be unaffected.
+      const ticksAtHangStart = ticks;
+      const insertTimes = new Map<string, number>();
+      for (const id of ['msg-a', 'msg-b', 'msg-c']) {
+        insertTimes.set(id, insertWebex(events, id));
       }
-      // Nothing left mid-flight after shutdown.
-      expect(embedding.snapshot().filter((r) => r.status === 'processing')).toHaveLength(0);
-    },
-    15_000
-  );
+      const repliesPosted = await waitUntil(() => posted.length === 3, 2_000);
+      expect(repliesPosted).toBe(true);
+      for (const reply of posted) {
+        const insertedAt = insertTimes.get(String(reply.outgoing.parentId));
+        expect(reply.at - (insertedAt ?? 0)).toBeLessThan(1_000);
+      }
+      // ...and the wedged job is STILL processing while all that happened.
+      expect(embedding.snapshot()[0]?.status).toBe('processing');
+
+      // Timers kept their cadence during the hang: the 50ms probe keeps
+      // firing while the embedding job stays wedged — the drift the
+      // original incident showed cannot recur.
+      const ticked = await waitUntil(() => ticks >= ticksAtHangStart + 3, 2_000);
+      expect(ticked).toBe(true);
+      expect(embedding.snapshot()[0]?.status).toBe('processing');
+
+      // Release the hang as a failure: the job lands back in 'pending'
+      // with the real policy's backoff, not lost and not stuck.
+      hung.release({ ok: false, err: { type: 'EMBEDDING_FAILED' } });
+      const failed = await waitUntil(() => embedding.snapshot()[0]?.status === 'pending', 2_000);
+      expect(failed).toBe(true);
+      const row = embedding.snapshot()[0]!;
+      expect(row.attempts).toBe(1);
+      expect(row.runAfter).toBeGreaterThan(Date.now() + 20_000); // ≥30s backoff
+    } finally {
+      stopSweep();
+      await stopAll(loops, running);
+    }
+    // Nothing left mid-flight after shutdown.
+    expect(embedding.snapshot().filter((r) => r.status === 'processing')).toHaveLength(0);
+  }, 15_000);
 });
 
 describe('multi-stream: two embedding workers (Scenario C)', () => {
-  it(
-    'keeps keyed jobs serial and in order across instances, while distinct keys overlap',
-    async () => {
-      mockResolveEmbeddingProvider.mockResolvedValue(slowEmbedder(100));
+  it('keeps keyed jobs serial and in order across instances, while distinct keys overlap', async () => {
+    mockResolveEmbeddingProvider.mockResolvedValue(slowEmbedder(100));
 
-      // Instrument the ingest mock: track in-flight jobs per ordering key
-      // and overall, and the completion order per key.
-      const inFlightByKey = new Map<string, number>();
-      let inFlight = 0;
-      let maxInFlight = 0;
-      let sameKeyOverlap = false;
-      const completedByKey = new Map<string, string[]>();
-      mockIngestObjectChunks.mockImplementation(
-        async (
-          _tenantId: string,
-          embedder: Embedder,
-          object: { refId: string }
-        ) => {
-          const key = object.refId.split('/')[0]!;
-          const current = (inFlightByKey.get(key) ?? 0) + 1;
-          if (current > 1) sameKeyOverlap = true;
-          inFlightByKey.set(key, current);
-          inFlight += 1;
-          maxInFlight = Math.max(maxInFlight, inFlight);
-          await embedder.embed(['x']);
-          inFlightByKey.set(key, (inFlightByKey.get(key) ?? 1) - 1);
-          inFlight -= 1;
-          const done = completedByKey.get(key) ?? [];
-          done.push(object.refId);
-          completedByKey.set(key, done);
-          return { ok: true, val: { chunks: 1 } };
-        }
-      );
+    // Instrument the ingest mock: track in-flight jobs per ordering key
+    // and overall, and the completion order per key.
+    const inFlightByKey = new Map<string, number>();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let sameKeyOverlap = false;
+    const completedByKey = new Map<string, string[]>();
+    mockIngestObjectChunks.mockImplementation(
+      async (_tenantId: string, embedder: Embedder, object: { refId: string }) => {
+        const key = object.refId.split('/')[0]!;
+        const current = (inFlightByKey.get(key) ?? 0) + 1;
+        if (current > 1) sameKeyOverlap = true;
+        inFlightByKey.set(key, current);
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await embedder.embed(['x']);
+        inFlightByKey.set(key, (inFlightByKey.get(key) ?? 1) - 1);
+        inFlight -= 1;
+        const done = completedByKey.get(key) ?? [];
+        done.push(object.refId);
+        completedByKey.set(key, done);
+        return { ok: true, val: { chunks: 1 } };
+      }
+    );
 
-      // Two keyed sequences plus an unkeyed straggler.
-      for (const refId of ['alpha/1', 'alpha/2', 'alpha/3']) {
-        await embedding.producer.enqueue({
-          tenantId: 'tenant-1',
-          source: 'knowledge',
-          type: 'ingest.object',
-          payload: { provider: 'test', refId, content: refId },
-          orderingKey: 'alpha',
-        });
-      }
-      for (const refId of ['beta/1', 'beta/2', 'beta/3']) {
-        await embedding.producer.enqueue({
-          tenantId: 'tenant-1',
-          source: 'knowledge',
-          type: 'ingest.object',
-          payload: { provider: 'test', refId, content: refId },
-          orderingKey: 'beta',
-        });
-      }
+    // Two keyed sequences plus an unkeyed straggler.
+    for (const refId of ['alpha/1', 'alpha/2', 'alpha/3']) {
       await embedding.producer.enqueue({
         tenantId: 'tenant-1',
         source: 'knowledge',
         type: 'ingest.object',
-        payload: { provider: 'test', refId: 'solo/1', content: 'solo' },
-        orderingKey: null,
+        payload: { provider: 'test', refId, content: refId },
+        orderingKey: 'alpha',
       });
+    }
+    for (const refId of ['beta/1', 'beta/2', 'beta/3']) {
+      await embedding.producer.enqueue({
+        tenantId: 'tenant-1',
+        source: 'knowledge',
+        type: 'ingest.object',
+        payload: { provider: 'test', refId, content: refId },
+        orderingKey: 'beta',
+      });
+    }
+    await embedding.producer.enqueue({
+      tenantId: 'tenant-1',
+      source: 'knowledge',
+      type: 'ingest.object',
+      payload: { provider: 'test', refId: 'solo/1', content: 'solo' },
+      orderingKey: null,
+    });
 
-      // TWO embedding workers on the SAME queue — the horizontal-scale shape.
-      const loops = [
-        loopOn(embedding, 'worker/embeddings-loop-1'),
-        loopOn(embedding, 'worker/embeddings-loop-2'),
-      ];
-      const running = loops.map((loop) => loop.run());
-      const drained = await waitUntil(() => embedding.settled(), 10_000).finally(() =>
-        stopAll(loops, running)
-      );
-      expect(drained).toBe(true);
+    // TWO embedding workers on the SAME queue — the horizontal-scale shape.
+    const loops = [
+      loopOn(embedding, 'worker/embeddings-loop-1'),
+      loopOn(embedding, 'worker/embeddings-loop-2'),
+    ];
+    const running = loops.map((loop) => loop.run());
+    const drained = await waitUntil(() => embedding.settled(), 10_000).finally(() =>
+      stopAll(loops, running)
+    );
+    expect(drained).toBe(true);
 
-      // Per-key: strictly serial and in enqueue order, on both keys.
-      expect(sameKeyOverlap).toBe(false);
-      expect(completedByKey.get('alpha')).toEqual(['alpha/1', 'alpha/2', 'alpha/3']);
-      expect(completedByKey.get('beta')).toEqual(['beta/1', 'beta/2', 'beta/3']);
-      // Cross-key: the two workers genuinely ran concurrently.
-      expect(maxInFlight).toBeGreaterThanOrEqual(2);
-    },
-    15_000
-  );
+    // Per-key: strictly serial and in enqueue order, on both keys.
+    expect(sameKeyOverlap).toBe(false);
+    expect(completedByKey.get('alpha')).toEqual(['alpha/1', 'alpha/2', 'alpha/3']);
+    expect(completedByKey.get('beta')).toEqual(['beta/1', 'beta/2', 'beta/3']);
+    // Cross-key: the two workers genuinely ran concurrently.
+    expect(maxInFlight).toBeGreaterThanOrEqual(2);
+  }, 15_000);
 });
