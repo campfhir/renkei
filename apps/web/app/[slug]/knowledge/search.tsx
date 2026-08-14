@@ -1,5 +1,6 @@
 'use client';
 
+import StructuredContent from './structured-content';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { searchMyKnowledge, type KnowledgeSearchHit, type KnowledgeSearchResult } from './actions';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -253,9 +254,11 @@ function HitCard({ group, terms }: { group: DocumentGroup; terms: string[] }) {
       </div>
 
       <p className="mt-2 break-words font-medium">{titleFor(hit)}</p>
-      <p className="mt-1 whitespace-pre-wrap break-words text-sm text-gray-700 dark:text-gray-300">
-        <Highlighted text={shown} terms={terms} />
-      </p>
+      <StructuredContent
+        text={shown}
+        title={titleFor(hit)}
+        renderText={(value) => <Highlighted text={value} terms={terms} />}
+      />
 
       <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
         {needsTruncation && (
