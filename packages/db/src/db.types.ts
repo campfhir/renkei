@@ -434,6 +434,22 @@ export interface WebhookSubscriptions {
   updated_at: Generated<Timestamp>;
 }
 
+/**
+ * MCP tool invocations — usage and latency only. There is no arguments or
+ * result field here by design; see migration 032.
+ */
+export interface ToolCalls {
+  connector: string | null;
+  duration_ms: number;
+  ended_at: Timestamp;
+  id: string;
+  started_at: Timestamp;
+  status: string;
+  subject: string | null;
+  tenant_id: string;
+  tool: string;
+}
+
 export interface DB {
   actionable_items: ActionableItems;
   connector_configs: ConnectorConfigs;
@@ -468,6 +484,7 @@ export interface DB {
   tenant_jira_sites: TenantJiraSites;
   tenant_oidc: TenantOidc;
   tenant_settings: TenantSettings;
+  tool_calls: ToolCalls;
   tenants: Tenants;
   webhook_subscriptions: WebhookSubscriptions;
 }

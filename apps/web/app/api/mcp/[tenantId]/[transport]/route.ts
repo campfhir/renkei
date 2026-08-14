@@ -16,6 +16,7 @@ import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/
 import { logger } from '@/lib/logger';
 import { registerAllTools, cacheTokenMetadata, cacheUserDisplayName } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
+import { withUsageTracking } from '@/lib/mcp-tools/usage-tracking';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
 import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/outlook';
@@ -408,9 +409,15 @@ const handler = async (
 
       // Create MCP handler with tool registration
       cachedHandler = createMcpHandler(
-        async (server: McpServer) => {
+        async (rawServer: McpServer) => {
           try {
             logger.verbose('Server created', { component: 'mcp/transport', tenantId, accountId });
+
+            // Outermost wrapper, so it observes exactly the tools that
+            // actually register: the gates inside it drop the ones this user
+            // may not have, and a tool that was never registered cannot be
+            // called and so should never appear in usage.
+            const server = withUsageTracking(rawServer, { tenantId, subject });
 
             const context: MCPToolContext = {
               tenantId,
