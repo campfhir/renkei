@@ -205,7 +205,7 @@ describe('runWatchSync — confluence', () => {
     expect(result.cursor).toBe('2026-08-10T12:00:00.000Z');
   });
 
-  it('flattens ADF to text for the enqueued ingest', async () => {
+  it('renders ADF as a structured document for the enqueued ingest', async () => {
     responses = [
       {
         results: [
@@ -216,7 +216,16 @@ describe('runWatchSync — confluence', () => {
             body: {
               atlas_doc_format: {
                 value: JSON.stringify({
-                  content: [{ content: [{ text: 'restart' }, { text: 'the pod' }] }],
+                  type: 'doc',
+                  version: 1,
+                  content: [
+                    { type: 'paragraph', content: [{ type: 'text', text: 'restart the pod' }] },
+                    {
+                      type: 'heading',
+                      attrs: { level: 1 },
+                      content: [{ type: 'text', text: 'Rollback' }],
+                    },
+                  ],
                 }),
               },
             },
@@ -230,7 +239,9 @@ describe('runWatchSync — confluence', () => {
     expect(type).toBe('ingest.object');
     expect(input.provider).toBe('confluence');
     expect(input.refId).toBe('9');
-    expect(input.content).toBe('Runbook\n\nrestart the pod');
+    // The title heads the document and the page's own headings nest beneath
+    // it, rather than everything collapsing onto one line as it used to.
+    expect(input.content).toBe('# Runbook\n\nrestart the pod\n\n## Rollback');
     expect(input.sourceAt).toBe('2026-08-10T12:00:00.000Z');
   });
 });

@@ -26,6 +26,7 @@ import { atlassianFetch, listOf, rec, str } from '@renkei/connector-atlassian';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { enqueueKnowledgeEvent } from '../enqueue';
 import { jiraDocument } from './jira-document';
+import { confluenceDocument } from './confluence-document';
 import type { AtlassianAccess } from './atlassian-access';
 
 /**
@@ -207,7 +208,7 @@ async function syncConfluence(
 
       const title = str(entry.title);
       const bodyValue = str(rec(rec(rec(entry.body).atlas_doc_format)).value);
-      const content = [title, adfPlainText(bodyValue)].filter(Boolean).join('\n\n');
+      const content = confluenceDocument(title, bodyValue);
       if (!content.trim()) continue;
 
       await enqueueKnowledgeEvent(
@@ -232,32 +233,6 @@ async function syncConfluence(
   }
 
   return { items, cursor: newest };
-}
-
-/**
- * ADF JSON to plain text, shallowly — enough for embedding, which cares
- * about words rather than structure. The rich ADF→Markdown converter lives
- * in the web app and is not importable here; duplicating it for the sake of
- * formatting an embedding input would be the wrong trade.
- */
-function adfPlainText(value: string): string {
-  if (!value) return '';
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return '';
-  }
-  const parts: string[] = [];
-  const walk = (node: unknown): void => {
-    const record = rec(node);
-    const text = str(record.text);
-    if (text) parts.push(text);
-    const content = record.content;
-    if (Array.isArray(content)) for (const child of content) walk(child);
-  };
-  walk(parsed);
-  return parts.join(' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
