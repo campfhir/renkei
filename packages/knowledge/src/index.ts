@@ -53,6 +53,13 @@ export interface KnowledgeSearchResult {
   hits: KnowledgeHit[];
   /** Candidates withheld by the gate — reported, never silently dropped. */
   elided: number;
+  /**
+   * Of those, how many went unanswered before the gate's budget expired
+   * rather than being refused. Callers should say so: "withheld" and "we
+   * could not check in time" look identical in a result list, and only one of
+   * them means something is wrong.
+   */
+  unverified: number;
 }
 
 export interface SearchOptions {
@@ -269,6 +276,7 @@ export async function listRecentKnowledge(
   return ok({
     hits: kept.map(toHit),
     elided: outcome.elided,
+    unverified: outcome.unverified,
   });
 }
 
@@ -324,5 +332,9 @@ export async function searchKnowledge(
     { budgetMs: options.budgetMs ?? 3_000 }
   );
 
-  return ok({ hits: outcome.allowed.slice(0, options.k).map(toHit), elided: outcome.elided });
+  return ok({
+    hits: outcome.allowed.slice(0, options.k).map(toHit),
+    elided: outcome.elided,
+    unverified: outcome.unverified,
+  });
 }

@@ -44,6 +44,8 @@ export interface KnowledgeSearchFilters {
 export interface KnowledgeSearchResult {
   hits: KnowledgeSearchHit[];
   elided: number;
+  /** Of `elided`, how many the source failed to answer for in time. */
+  unverified?: number;
   error: string | null;
   /** The cookie named no live session — the page should send them to sign in. */
   signedOut?: boolean;
@@ -111,7 +113,13 @@ export async function searchMyKnowledge(
     if (!recent.ok) {
       return { hits: [], elided: 0, error: 'The knowledge store could not be read.' };
     }
-    return { hits: recent.val.hits, elided: recent.val.elided, error: null, browsing: true };
+    return {
+      hits: recent.val.hits,
+      elided: recent.val.elided,
+      unverified: recent.val.unverified,
+      error: null,
+      browsing: true,
+    };
   }
 
   const embedder = await resolveEmbeddingProvider(tenantId);
@@ -147,5 +155,10 @@ export async function searchMyKnowledge(
     };
   }
 
-  return { hits: searched.val.hits, elided: searched.val.elided, error: null };
+  return {
+    hits: searched.val.hits,
+    elided: searched.val.elided,
+    unverified: searched.val.unverified,
+    error: null,
+  };
 }

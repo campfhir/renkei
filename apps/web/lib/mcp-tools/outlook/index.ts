@@ -30,6 +30,7 @@ import { GRAPH_BASE_URL, objectIdOfMicrosoftRefId } from '@renkei/connector-micr
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
 import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
+import { withheldNote } from '@renkei/gates';
 import { getMicrosoftApp } from '@/lib/microsoft-app';
 import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
@@ -1613,11 +1614,13 @@ export async function registerOutlookTools(
       }
 
       const results = [...byMessage.values()].sort((a, b) => a.distance - b.distance).slice(0, max);
+      // A refusal and a timeout both withhold, but only one of them means the
+      // user lacks access; saying "no access" for a slow source would be a
+      // false statement about their permissions.
+      const withheld = withheldNote(searched.val.elided, searched.val.unverified);
       if (results.length === 0) {
         return textResult(
-          searched.val.elided > 0
-            ? `No accessible matches (${searched.val.elided} withheld: access could not be verified at the source).`
-            : 'No matches in the indexed mail.'
+          withheld ? `No accessible matches.${withheld}` : 'No matches in the indexed mail.'
         );
       }
 
@@ -1627,11 +1630,7 @@ export async function registerOutlookTools(
           (result.when ? ` — ${result.when}` : '') +
           ` — id: ${result.messageId}`
       );
-      const footer =
-        `\n\n${results.length} message(s), closest match first.` +
-        (searched.val.elided > 0
-          ? ` ${searched.val.elided} withheld: access could not be verified at the source.`
-          : '');
+      const footer = `\n\n${results.length} message(s), closest match first.${withheld}`;
       return textResult(
         withPresentationHint(
           lines.join('\n') + footer,

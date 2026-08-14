@@ -110,6 +110,7 @@ describe('registerKnowledgeTools', () => {
           },
         ],
         elided: 2,
+        unverified: 0,
       },
     });
     const { handler } = await register({ userEmail: 'sam@example.com' });
@@ -120,7 +121,7 @@ describe('registerKnowledgeTools', () => {
     const text = result.content[0]?.text ?? '';
     expect(text).toContain('[webex:room-1/msg-1]');
     expect(text).toContain('distance 0.123');
-    expect(text).toContain('2 result(s) withheld');
+    expect(text).toContain('2 withheld: you do not have access at the source.');
 
     const searchArgs = mockSearch.mock.calls[0]?.[0];
     expect(searchArgs.userEmail).toBe('sam@example.com');
@@ -130,14 +131,28 @@ describe('registerKnowledgeTools', () => {
 
   it('says "no accessible results" when the gate clears nothing', async () => {
     mockResolveEmbedder.mockResolvedValue({ embed: async () => ({ ok: true, val: [[0.1]] }) });
-    mockSearch.mockResolvedValue({ ok: true, val: { hits: [], elided: 3 } });
+    mockSearch.mockResolvedValue({ ok: true, val: { hits: [], elided: 3, unverified: 0 } });
     const { handler } = await register({ userEmail: 'outsider@example.com' });
 
     const result = await handler({ query: 'secret plans' });
 
     const text = result.content[0]?.text ?? '';
     expect(text).toContain('No accessible results');
-    expect(text).toContain('3 result(s) withheld');
+    expect(text).toContain('3 withheld: you do not have access at the source.');
+  });
+
+  it('does not call a provider timeout a permission denial', async () => {
+    // The two read identically in a result list, and only one of them is a
+    // statement about the user's access. Telling a model "you do not have
+    // access" because a source was slow is a false statement it will repeat.
+    mockResolveEmbedder.mockResolvedValue({ embed: async () => ({ ok: true, val: [[0.1]] }) });
+    mockSearch.mockResolvedValue({ ok: true, val: { hits: [], elided: 2, unverified: 2 } });
+    const { handler } = await register({ userEmail: 'sam@example.com' });
+
+    const text = (await handler({ query: 'anything' })).content[0]?.text ?? '';
+    expect(text).toContain('did not respond in time');
+    expect(text).toContain('retrying');
+    expect(text).not.toContain('do not have access');
   });
 
   it('surfaces a search failure as a tool error', async () => {

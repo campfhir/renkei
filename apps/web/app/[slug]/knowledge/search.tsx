@@ -526,10 +526,23 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
             <HitCard key={group.key} group={group} terms={terms} />
           ))}
           {result && result.elided > 0 && (
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              {result.elided} result{result.elided === 1 ? '' : 's'} withheld — your access
-              couldn&apos;t be verified at the source.
-            </p>
+            <>
+              {result.elided - (result.unverified ?? 0) > 0 && (
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  {result.elided - (result.unverified ?? 0)} result
+                  {result.elided - (result.unverified ?? 0) === 1 ? '' : 's'} withheld — you
+                  don&apos;t have access at the source.
+                </p>
+              )}
+              {/* Said separately, and in amber: this one is a failure, not a
+                  permission decision, and it is worth retrying. */}
+              {(result.unverified ?? 0) > 0 && (
+                <p className="text-sm text-amber-700 dark:text-amber-400">
+                  {result.unverified} result{result.unverified === 1 ? '' : 's'} couldn&apos;t be
+                  checked in time — the source didn&apos;t respond. Try again in a moment.
+                </p>
+              )}
+            </>
           )}
         </div>
       )}
