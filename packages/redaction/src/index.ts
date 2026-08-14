@@ -34,7 +34,7 @@ export {
   type DetectOptions,
 } from './detect';
 export { luhnValid } from './luhn';
-export { compileFormat, describeFormatProblem, MAX_FORMAT_SOURCE } from './format';
+export { compileFormat, describeFormatProblem, formatIsGeneric, MAX_FORMAT_SOURCE } from './format';
 export {
   createPseudonymizer,
   deriveRedactionKey,

@@ -158,8 +158,16 @@ function hasIssuerPrefix(digits: string): boolean {
 // Medical record numbers
 // ---------------------------------------------------------------------------
 
+/**
+ * The value must contain a digit and may be as short as two characters.
+ *
+ * The digit requirement is what lets the length come down: without it,
+ * "MRN is not recorded" captures "is". With it, a three-character record
+ * number behind an explicit label is caught — which it was not before, since
+ * a four-character minimum quietly skipped `MRN 123`.
+ */
 const MRN_LABELLED =
-  /\b(?:MRN|M\.R\.N\.|medical record(?:\s+(?:number|no\.?|#))?|chart(?:\s+(?:number|no\.?|#))|patient(?:\s+(?:id|identifier|number|no\.?|#)))\s*[:#]?\s*([A-Za-z0-9][A-Za-z0-9-]{3,19})\b/gi;
+  /\b(?:MRN|M\.R\.N\.|medical record(?:\s+(?:number|no\.?|#))?|chart(?:\s+(?:number|no\.?|#))|patient(?:\s+(?:id|identifier|number|no\.?|#)))\s*[:#]?\s*((?=[A-Za-z0-9-]*\d)[A-Za-z0-9][A-Za-z0-9-]{1,19})\b/gi;
 
 // ---------------------------------------------------------------------------
 // Dates of birth

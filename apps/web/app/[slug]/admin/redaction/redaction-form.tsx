@@ -11,6 +11,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { formatIsGeneric } from '@renkei/redaction';
 
 interface DetectorInfo {
   key: string;
@@ -136,6 +137,13 @@ export default function RedactionForm({ slug }: { slug: string }) {
 
   if (!config) return <p className="text-sm text-gray-500">Loading…</p>;
 
+  // A shape with no fixed text of its own matches anything else of that shape.
+  // Said before saving, not discovered afterwards in a mangled tool result.
+  const genericFormats = patternText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && formatIsGeneric(line));
+
   const toggle = (key: string) => {
     const next = config.detectors.includes(key)
       ? config.detectors.filter((d) => d !== key)
@@ -234,6 +242,16 @@ export default function RedactionForm({ slug }: { slug: string }) {
           onChange={(e) => setPatternText(e.target.value)}
           placeholder={'MR-#######'}
         />
+        {genericFormats.length > 0 && (
+          <p className="mt-2 text-sm text-amber-700 dark:text-amber-500">
+            {genericFormats.map((f) => `“${f}”`).join(', ')}{' '}
+            {genericFormats.length === 1 ? 'has' : 'have'} no fixed text, so{' '}
+            {genericFormats.length === 1 ? 'it' : 'they'} will also match anything else of that
+            shape — invoice numbers, part numbers, a bare year-month like 2026-08. Include the
+            literal part your record numbers carry, such as{' '}
+            <code className="rounded bg-gray-100 px-1 dark:bg-gray-900">MR-</code>, where you can.
+          </p>
+        )}
         <button
           type="button"
           className="mt-2 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"

@@ -8,7 +8,7 @@
  * that quietly stops being true.
  */
 
-import { compileFormat, describeFormatProblem } from './format';
+import { compileFormat, describeFormatProblem, formatIsGeneric } from './format';
 
 const matches = (format: string, text: string): boolean => {
   const compiled = compileFormat(format);
@@ -36,6 +36,17 @@ describe('compileFormat', () => {
   it('does not fire inside a longer token', () => {
     expect(matches('MR-#{4}', 'MR-1234')).toBe(true);
     expect(matches('MR-#{4}', 'XMR-12345678')).toBe(false);
+  });
+
+  it('does not match a fragment of a hyphenated token', () => {
+    // The one that mattered: a word boundary sits between a digit and a
+    // hyphen, so `####-##` matched `2026-08` inside `2026-08-13` and a
+    // generic format would have redacted every ISO date in every result.
+    expect(matches('####-##', '2026-08-13')).toBe(false);
+    expect(matches('####-##', 'Sprint 2026-08-01 to 2026-08-14')).toBe(false);
+    // Still matches when it IS the whole token.
+    expect(matches('####-##', 'MRN 1234-05 admitted')).toBe(true);
+    expect(matches('####-##', 'chart 1234-05.')).toBe(true);
   });
 
   it('treats regex syntax as ordinary text, not as syntax', () => {
@@ -88,5 +99,19 @@ describe('compileFormat', () => {
     const started = Date.now();
     compiled?.regex.test(haystack);
     expect(Date.now() - started).toBeLessThan(200);
+  });
+});
+
+describe('formatIsGeneric', () => {
+  it('flags a shape with no fixed text of its own', () => {
+    // `####-##` is also an invoice number and a year-month.
+    expect(formatIsGeneric('####-##')).toBe(true);
+    expect(formatIsGeneric('#{8}')).toBe(true);
+    expect(formatIsGeneric('*{6}')).toBe(true);
+  });
+
+  it('does not flag one anchored by a literal prefix', () => {
+    expect(formatIsGeneric('MR-#######')).toBe(false);
+    expect(formatIsGeneric('XY-####-##')).toBe(false);
   });
 });

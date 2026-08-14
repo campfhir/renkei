@@ -120,11 +120,32 @@ export function compileFormat(source: string): CompiledFormat | null {
   if (maxLength > MAX_MATCH_LENGTH) return null;
 
   try {
-    // Word boundaries so `MR-####` does not fire inside a longer token.
-    return { regex: new RegExp(`\\b${pattern}\\b`, 'g'), maxLength };
+    // NOT `\b`: a word boundary sits happily between a digit and a hyphen, so
+    // `####-##` matched `2026-08` INSIDE `2026-08-13` and a generic format
+    // would have redacted every ISO date in every tool result. These
+    // lookarounds refuse a match with a letter, digit or hyphen touching
+    // either end, so a pattern only fires on a whole token.
+    return {
+      regex: new RegExp(`(?<![A-Za-z0-9-])${pattern}(?![A-Za-z0-9-])`, 'g'),
+      maxLength,
+    };
   } catch {
     return null;
   }
+}
+
+/**
+ * True when a format has no fixed text of its own — `####-##` rather than
+ * `MR-######`.
+ *
+ * Not an error: plenty of sites really do write bare numbers, and only they
+ * know. But a shape with nothing literal in it matches anything else of that
+ * shape, and `####-##` also describes an invoice number and a year-month, so
+ * it is worth saying out loud before someone turns it on across every tool
+ * result.
+ */
+export function formatIsGeneric(source: string): boolean {
+  return !/[A-Za-z0-9]/.test(source.replace(/\{\d+(?:,\d+)?\}/g, '').replace(/[#@*]/g, ''));
 }
 
 /** Human explanation of why a format was rejected, for the admin form. */

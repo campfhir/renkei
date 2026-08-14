@@ -78,6 +78,21 @@ describe('medical record numbers', () => {
     expect(finding?.start).toBe('MRN: '.length);
   });
 
+  it('catches a short record number behind its label', () => {
+    // A four-character minimum silently skipped `MRN 123`. Behind an explicit
+    // label the token is the number, so length is the wrong thing to gate on.
+    expect(values('MRN 123')).toEqual(['123']);
+    expect(values('MRN: 1234-05')).toEqual(['1234-05']);
+    expect(values('MRN 12')).toEqual(['12']);
+  });
+
+  it('does not capture prose that follows the label', () => {
+    // The digit requirement is what makes the short minimum safe.
+    expect(labels('MRN is not recorded')).toEqual([]);
+    expect(labels('MRN unknown at intake')).toEqual([]);
+    expect(labels('Chart number pending')).toEqual([]);
+  });
+
   it('never guesses at a bare number', () => {
     // There is no universal MRN format. Anything else is someone's ticket.
     expect(labels('Record 4417732 updated')).toEqual([]);
