@@ -10,7 +10,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { TokenBucket } from '@renkei/rate-limit';
+import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 
 const API_BASE = 'https://api.zoom.us/v2';
 /**
@@ -23,11 +23,20 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 
 /**
- * Process-scoped, shared by every caller — see the identical comment in
- * connector-webex's client.ts. One bucket for both API calls and downloads:
- * both count against the same Zoom app's rate limit.
+ * Process-scoped, split by lane — see `LaneLimiter` in @renkei/rate-limit.
+ *
+ * Background absorbs webhook floods and sweeps; interactive keeps a reserve
+ * for work a person is waiting on, so a burst of ingestion cannot push a
+ * live ACL check past the retrieval gate's budget and turn allowed results
+ * into withheld ones.
+ *
+ * One pair for both API calls and downloads: both count against the same
+ * Zoom app's rate limit.
  */
-const requestLimiter = new TokenBucket({ capacity: 5, refillPerSecond: 5 });
+const limiter = new LaneLimiter({
+  interactive: { capacity: 20, refillPerSecond: 10 },
+  background: { capacity: 5, refillPerSecond: 5 },
+});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -60,12 +69,20 @@ export interface ZoomUser {
 }
 
 export class ZoomClient {
-  constructor(private readonly accessToken: string) {}
+  /** Set at construction, where the caller knows whether a person is waiting. */
+  private readonly lane: RequestLane;
+
+  constructor(
+    private readonly accessToken: string,
+    options?: { lane?: RequestLane }
+  ) {
+    this.lane = options?.lane ?? 'background';
+  }
 
   private async get(
     path: string
   ): Promise<Result<Record<string, unknown>, 'ZOOM_API_ERROR' | 'NOT_FOUND'>> {
-    await requestLimiter.take();
+    await limiter.take(this.lane);
     let response: Response;
     try {
       response = await fetch(`${API_BASE}${path}`, {
@@ -142,7 +159,7 @@ export class ZoomClient {
    * bare fetch at the call site.
    */
   async downloadFromUrl(url: string): Promise<Result<string, 'ZOOM_API_ERROR'>> {
-    await requestLimiter.take();
+    await limiter.take(this.lane);
     let response: Response;
     try {
       response = await fetch(url, {

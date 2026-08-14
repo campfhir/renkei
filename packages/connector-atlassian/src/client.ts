@@ -12,7 +12,7 @@
  * product segment: `api.atlassian.com/ex/{jira,confluence}/{cloudId}`.
  */
 
-import { TokenBucket } from '@renkei/rate-limit';
+import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 
 export const ATLASSIAN_GATEWAY = 'https://api.atlassian.com/ex';
 /**
@@ -24,11 +24,17 @@ export const ATLASSIAN_GATEWAY = 'https://api.atlassian.com/ex';
 const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
- * Process-scoped, shared by every caller — see the identical comment in
- * connector-webex's client.ts. Bounds bursts from the watch sweep polling
- * many projects/spaces at once.
+ * Process-scoped, split by lane — see `LaneLimiter` in @renkei/rate-limit.
+ *
+ * Background absorbs webhook floods and sweeps; interactive keeps a reserve
+ * for work a person is waiting on, so a burst of ingestion cannot push a
+ * live ACL check past the retrieval gate's budget and turn allowed results
+ * into withheld ones.
  */
-const requestLimiter = new TokenBucket({ capacity: 5, refillPerSecond: 5 });
+const limiter = new LaneLimiter({
+  interactive: { capacity: 20, refillPerSecond: 10 },
+  background: { capacity: 5, refillPerSecond: 5 },
+});
 
 export type AtlassianProduct = 'jira' | 'confluence';
 
@@ -40,6 +46,8 @@ export interface AtlassianCall {
   path: string;
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   json?: unknown;
+  /** Defaults to 'background'; verifiers and MCP tools pass 'interactive'. */
+  lane?: RequestLane;
 }
 
 /**
@@ -56,7 +64,7 @@ export async function atlassianFetch(call: AtlassianCall): Promise<AtlassianResp
   const url = `${ATLASSIAN_GATEWAY}/${call.product}/${call.cloudId}${call.path}`;
   const body = call.json === undefined ? undefined : JSON.stringify(call.json);
 
-  await requestLimiter.take();
+  await limiter.take(call.lane);
   let response: Response;
   try {
     response = await fetch(url, {

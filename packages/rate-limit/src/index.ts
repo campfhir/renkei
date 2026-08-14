@@ -77,3 +77,49 @@ export class TokenBucket {
     }, msUntilNextToken);
   }
 }
+
+/**
+ * Which kind of work a request belongs to.
+ *
+ * 'interactive' is on a person's critical path — an MCP tool call, or the ACL
+ * verification behind a knowledge search. 'background' is everything the
+ * system does to itself: webhook ingestion, delta sweeps, reconciliation.
+ */
+export type RequestLane = 'interactive' | 'background';
+
+/**
+ * Two buckets, one per lane, so background work cannot starve a waiting user.
+ *
+ * A single shared bucket per connector was the original design, and it had a
+ * failure mode that read as something else entirely: a webhook flood would
+ * drain the tokens, an interactive ACL check would queue behind it, and the
+ * retrieval gate — which drops whatever is unverified when its budget expires
+ * — would withhold results that the user was in fact allowed to see. The user
+ * saw fewer results, indistinguishable from "you do not have access".
+ *
+ * Separating the lanes fixes the direction that matters. The lanes do not
+ * share tokens: an idle interactive lane lends nothing to a busy background
+ * one, which is the point — the reserve has to be there at the moment the
+ * user arrives, not on average.
+ *
+ * Rate limits at the provider are per-app, so the two lanes together are what
+ * the third party sees; size them as a pair, not independently.
+ */
+export class LaneLimiter {
+  private readonly interactive: TokenBucket;
+  private readonly background: TokenBucket;
+
+  constructor(config: Record<RequestLane, RateLimiterOptions>) {
+    this.interactive = new TokenBucket(config.interactive);
+    this.background = new TokenBucket(config.background);
+  }
+
+  /**
+   * Defaults to 'background': a caller that has not thought about which lane
+   * it is in is, by definition, not the one holding a person up, and the
+   * conservative lane is the safe place to be wrong.
+   */
+  take(lane: RequestLane = 'background'): Promise<void> {
+    return lane === 'interactive' ? this.interactive.take() : this.background.take();
+  }
+}

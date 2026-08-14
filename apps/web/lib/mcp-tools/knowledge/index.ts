@@ -40,6 +40,7 @@ import {
 import { getMicrosoftApp } from '@/lib/microsoft-app';
 import { getDatabase } from '@renkei/db';
 import type { AccessVerifier } from '@renkei/gates';
+import { withheldNote } from '@renkei/gates';
 import type { KnowledgeHit, SourceFilter } from '@renkei/knowledge';
 import { resolveEmbeddingProvider, searchKnowledge, listRecentKnowledge } from '@renkei/knowledge';
 import type { MCPToolContext } from '../common';
@@ -68,7 +69,10 @@ export async function buildKnowledgeVerifiers(
   if (webexResult.ok && webexResult.val?.enabled && webexResult.val.secrets.botToken) {
     verifiers.set(
       WEBEX_CONNECTOR,
-      createWebexAccessVerifier(new WebexClient(webexResult.val.secrets.botToken))
+      createWebexAccessVerifier(
+        // Interactive: this client exists to answer a live search.
+        new WebexClient(webexResult.val.secrets.botToken, { lane: 'interactive' })
+      )
     );
   }
 
@@ -316,8 +320,11 @@ function titleOf(metadata: Record<string, unknown>): string {
  * `browsing` only changes the wording — ordering is by recency there, and
  * a distance of 0 would be a lie if it were labelled as a match score.
  */
-function renderHits(result: { hits: KnowledgeHit[]; elided: number }, browsing: boolean): string {
-  const { hits, elided } = result;
+function renderHits(
+  result: { hits: KnowledgeHit[]; elided: number; unverified: number },
+  browsing: boolean
+): string {
+  const { hits, elided, unverified } = result;
   const lines: string[] = [];
   if (hits.length === 0) {
     lines.push(browsing ? 'Nothing indexed yet for those filters.' : 'No accessible results.');
@@ -340,12 +347,10 @@ function renderHits(result: { hits: KnowledgeHit[]; elided: number }, browsing: 
       );
     }
   }
-  if (elided > 0) {
-    lines.push(
-      '',
-      `${elided} result(s) withheld: your access could not be verified at the source.`
-    );
-  }
+  // Refusal and timeout are different facts and are worded differently; the
+  // gate owns that phrasing so every surface says the same thing.
+  const withheld = withheldNote(elided, unverified);
+  if (withheld) lines.push('', withheld.trim());
   return lines.join('\n');
 }
 

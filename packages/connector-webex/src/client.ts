@@ -5,7 +5,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { TokenBucket } from '@renkei/rate-limit';
+import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 
 const API_BASE = 'https://webexapis.com/v1';
 /**
@@ -17,13 +17,22 @@ const API_BASE = 'https://webexapis.com/v1';
 const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
- * Process-scoped: every WebexClient instance in this process shares one
- * bucket. A webhook flood (many messages queued at once) or a sweep over
- * many tenants would otherwise fire a burst of requests at WebEx all at
- * once; this spreads them out instead. 5/sec steady state with a burst of 5
- * — generous for normal single-event traffic, a real cap under a flood.
+ * Process-scoped, split by lane: every WebexClient in this process shares
+ * these two buckets.
+ *
+ * Background covers webhook floods and sweeps over many tenants, which would
+ * otherwise fire a burst at WebEx all at once. Interactive covers the live
+ * ACL check behind a knowledge search, which is sized for one whole query
+ * without queuing: a search verifies up to one membership call per distinct
+ * room across its overfetched candidates — as many as 20 — and the gate drops
+ * whatever is still unverified after 3 seconds. Sharing one bucket meant a
+ * webhook flood could push a user's search past that deadline, and withheld
+ * results read as "you do not have access".
  */
-const requestLimiter = new TokenBucket({ capacity: 5, refillPerSecond: 5 });
+const limiter = new LaneLimiter({
+  interactive: { capacity: 20, refillPerSecond: 10 },
+  background: { capacity: 5, refillPerSecond: 5 },
+});
 
 export interface WebexMessage {
   id: string;
@@ -142,14 +151,26 @@ function readWebhook(body: Record<string, unknown>): WebexWebhook | null {
 }
 
 export class WebexClient {
-  constructor(private readonly botToken: string) {}
+  /**
+   * The lane every call from this client uses. Set it at construction, where
+   * the caller knows what it is doing: the knowledge verifier builds an
+   * interactive client, the worker a background one.
+   */
+  private readonly lane: RequestLane;
+
+  constructor(
+    private readonly botToken: string,
+    options?: { lane?: RequestLane }
+  ) {
+    this.lane = options?.lane ?? 'background';
+  }
 
   private async request(
     method: 'GET' | 'POST' | 'DELETE',
     path: string,
     body?: unknown
   ): Promise<Result<Record<string, unknown>, 'WEBEX_API_ERROR'>> {
-    await requestLimiter.take();
+    await limiter.take(this.lane);
     let response: Response;
     try {
       response = await fetch(`${API_BASE}${path}`, {

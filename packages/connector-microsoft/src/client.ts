@@ -10,7 +10,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { TokenBucket } from '@renkei/rate-limit';
+import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 
 export const GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0';
 /**
@@ -20,20 +20,34 @@ export const GRAPH_BASE_URL = 'https://graph.microsoft.com/v1.0';
 const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
- * Process-scoped, shared by every caller — see the identical comment in
- * connector-webex's client.ts. Bounds bursts from the subscription health
- * sweep (many tenants/grants) and from delta-sync paging.
+ * Process-scoped, split by lane — see `LaneLimiter` in @renkei/rate-limit.
+ *
+ * Background bounds bursts from the subscription health sweep (many
+ * tenants/grants) and from delta-sync paging. Interactive keeps a reserve for
+ * work a person is waiting on — above all the SharePoint ACL check, which
+ * runs inside the retrieval gate's 3s budget and whose $batch call must not
+ * queue behind a sweep, since anything unverified by the deadline is withheld
+ * and reads as a denial.
  */
-const requestLimiter = new TokenBucket({ capacity: 5, refillPerSecond: 5 });
+const limiter = new LaneLimiter({
+  interactive: { capacity: 20, refillPerSecond: 10 },
+  background: { capacity: 5, refillPerSecond: 5 },
+});
+
+/** Options accepted alongside a standard RequestInit. */
+export interface GraphRequestOptions {
+  /** Defaults to 'background'; verifiers and MCP tools pass 'interactive'. */
+  lane?: RequestLane;
+}
 
 export async function graphRequest(
   accessToken: string,
   pathOrUrl: string,
-  init?: RequestInit
+  init?: RequestInit & GraphRequestOptions
 ): Promise<Result<unknown, 'GRAPH_API_ERROR'>> {
   const url = pathOrUrl.startsWith('https://') ? pathOrUrl : `${GRAPH_BASE_URL}${pathOrUrl}`;
 
-  await requestLimiter.take();
+  await limiter.take(init?.lane);
   let response: Response;
   try {
     response = await fetch(url, {

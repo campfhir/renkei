@@ -252,7 +252,10 @@ export function registerDocumentTools(
       const downloaded = await graphDownload(
         access.accessToken,
         resolved.item.driveId,
-        resolved.item.itemId
+        resolved.item.itemId,
+        // Someone asked for this file and is waiting; it must not queue
+        // behind a library re-index.
+        { lane: 'interactive' }
       );
       if (!downloaded.ok) {
         return errText(

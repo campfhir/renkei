@@ -97,6 +97,9 @@ export function createJiraAccessVerifier(lookup: AtlassianCredentialLookup): Acc
           path: '/rest/api/3/search/jql',
           method: 'POST',
           json: { jql, fields: ['key'], maxResults: batch.length },
+          // A person is waiting on this: it runs inside the retrieval gate's
+          // budget, and anything unverified when that expires is withheld.
+          lane: 'interactive',
         });
         // A failed batch leaves its ids unverified, hence denied. Deliberately
         // not `return err(...)`: one broken batch must not deny the batches
@@ -136,6 +139,7 @@ export function createConfluenceAccessVerifier(lookup: AtlassianCredentialLookup
           cloudId: credential.cloudId,
           accessToken: credential.accessToken,
           path: `/wiki/api/v2/pages?${query}&limit=${batch.length}`,
+          lane: 'interactive',
         });
         if (!response.ok) continue;
         for (const page of listOf(response.body, 'results')) {

@@ -26,7 +26,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { TokenBucket } from '@renkei/rate-limit';
+import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 import { graphRequest, GRAPH_BASE_URL } from './client';
 
 /**
@@ -40,13 +40,23 @@ const CONTENT_TIMEOUT_MS = 60_000;
 export const DRIVE_CONTENT_MAX_BYTES = 25 * 1024 * 1024;
 
 /**
- * Its own bucket, not client.ts's. The CDN fetch is not a Graph API call and
- * must not spend Graph's rate budget — but a burst of documents still must
- * not open fifty sockets at once.
+ * Its own pair of buckets, not client.ts's. The CDN fetch is not a Graph API
+ * call and must not spend Graph's rate budget — but a burst of documents
+ * still must not open fifty sockets at once.
+ *
+ * Split by lane for the same reason as everywhere else, and it bites harder
+ * here: at two concurrent downloads, a worker indexing a document library
+ * would make `sharepoint_download_document` wait behind the whole backlog.
+ * A person downloading one file should not queue behind a bulk re-index.
  */
-const downloadLimiter = new TokenBucket({ capacity: 2, refillPerSecond: 2 });
+const downloadLimiter = new LaneLimiter({
+  interactive: { capacity: 4, refillPerSecond: 4 },
+  background: { capacity: 2, refillPerSecond: 2 },
+});
 
 export interface GraphDownloadOptions {
+  /** Defaults to 'background'; MCP download tools pass 'interactive'. */
+  lane?: RequestLane;
   maxBytes?: number;
   timeoutMs?: number;
 }
@@ -104,11 +114,12 @@ async function readCapped(
 async function fetchUnauthenticated(
   url: string,
   maxBytes: number,
-  timeoutMs: number
+  timeoutMs: number,
+  lane?: RequestLane
 ): Promise<
   Result<{ bytes: Uint8Array; contentType: string | null }, 'GRAPH_API_ERROR' | 'CONTENT_TOO_LARGE'>
 > {
-  await downloadLimiter.take();
+  await downloadLimiter.take(lane);
   let response: Response;
   try {
     response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
@@ -156,7 +167,8 @@ export async function graphDownload(
 
   const metadata = await graphRequest(
     accessToken,
-    `${base}?$select=id,name,size,file,cTag,eTag,lastModifiedDateTime,webUrl,@microsoft.graph.downloadUrl`
+    `${base}?$select=id,name,size,file,cTag,eTag,lastModifiedDateTime,webUrl,@microsoft.graph.downloadUrl`,
+    { lane: options?.lane }
   );
   if (!metadata.ok) return metadata;
   const item = isRecord(metadata.val) ? metadata.val : {};
@@ -171,14 +183,14 @@ export async function graphDownload(
 
   const downloadUrl = item['@microsoft.graph.downloadUrl'];
   if (typeof downloadUrl === 'string' && downloadUrl) {
-    const fetched = await fetchUnauthenticated(downloadUrl, maxBytes, timeoutMs);
+    const fetched = await fetchUnauthenticated(downloadUrl, maxBytes, timeoutMs, options?.lane);
     if (!fetched.ok) return fetched;
     return ok({ bytes: fetched.val.bytes, contentType: fetched.val.contentType, item });
   }
 
   // Fallback: /content, following the 302 by hand so the pre-authenticated
   // target never sees our bearer token.
-  await downloadLimiter.take();
+  await downloadLimiter.take(options?.lane);
   let redirect: Response;
   try {
     redirect = await fetch(`${GRAPH_BASE_URL}${base}/content`, {
@@ -192,7 +204,7 @@ export async function graphDownload(
 
   const location = redirect.headers.get('location');
   if (redirect.status >= 300 && redirect.status < 400 && location) {
-    const fetched = await fetchUnauthenticated(location, maxBytes, timeoutMs);
+    const fetched = await fetchUnauthenticated(location, maxBytes, timeoutMs, options?.lane);
     if (!fetched.ok) return fetched;
     return ok({ bytes: fetched.val.bytes, contentType: fetched.val.contentType, item });
   }

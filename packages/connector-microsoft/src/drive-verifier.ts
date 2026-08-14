@@ -111,6 +111,8 @@ export function createSharepointAccessVerifier(lookup: MicrosoftCredentialLookup
             requests: requests.map(({ _key, ...request }) => request),
           }),
           signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+          // Inside the retrieval gate's budget — must not queue behind a sweep.
+          lane: 'interactive',
         });
         // A failed batch leaves its ids unverified, hence denied. Deliberately
         // not `return err(...)`: one broken batch must not deny the batches

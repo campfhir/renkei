@@ -4,7 +4,7 @@
  * bucket refills — never all at once, never out of order.
  */
 
-import { TokenBucket } from './index';
+import { TokenBucket, LaneLimiter } from './index';
 
 beforeEach(() => {
   jest.useFakeTimers();
@@ -55,5 +55,71 @@ describe('TokenBucket', () => {
     const bucket = new TokenBucket({ capacity: 3, refillPerSecond: 100 });
     await jest.advanceTimersByTimeAsync(10_000);
     expect(bucket.available()).toBe(3);
+  });
+});
+
+describe('LaneLimiter', () => {
+  it('does not let a saturated background lane delay interactive work', async () => {
+    // The whole reason the class exists: a webhook flood used to drain the
+    // one shared bucket, an ACL check queued behind it, and the retrieval
+    // gate withheld results the user was allowed to see.
+    const limiter = new LaneLimiter({
+      interactive: { capacity: 2, refillPerSecond: 1 },
+      background: { capacity: 1, refillPerSecond: 1 },
+    });
+    const resolved: string[] = [];
+
+    // Drain background, then pile more behind it.
+    void limiter.take('background').then(() => resolved.push('bg-0'));
+    void limiter.take('background').then(() => resolved.push('bg-1'));
+    void limiter.take('background').then(() => resolved.push('bg-2'));
+    void limiter.take('interactive').then(() => resolved.push('interactive'));
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The interactive call went straight through; two background calls are
+    // still queued behind their own lane's refill.
+    expect(resolved).toContain('interactive');
+    expect(resolved).not.toContain('bg-1');
+  });
+
+  it('still throttles within a lane once its own burst is spent', async () => {
+    const limiter = new LaneLimiter({
+      interactive: { capacity: 1, refillPerSecond: 1 },
+      background: { capacity: 1, refillPerSecond: 1 },
+    });
+    const resolved: number[] = [];
+
+    void limiter.take('interactive').then(() => resolved.push(0));
+    void limiter.take('interactive').then(() => resolved.push(1));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // A separate lane is not a free pass — the burst is still capacity 1.
+    expect(resolved).toEqual([0]);
+
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(resolved).toEqual([0, 1]);
+  });
+
+  it('treats an unspecified lane as background', async () => {
+    // The conservative default: code that has not thought about lanes is not
+    // the code a person is waiting on.
+    const limiter = new LaneLimiter({
+      interactive: { capacity: 1, refillPerSecond: 1 },
+      background: { capacity: 1, refillPerSecond: 1 },
+    });
+    const resolved: string[] = [];
+
+    void limiter.take().then(() => resolved.push('default-1'));
+    void limiter.take().then(() => resolved.push('default-2'));
+    void limiter.take('interactive').then(() => resolved.push('interactive'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Both defaults competed for the background token, so the second queued
+    // while the untouched interactive lane let its call straight through.
+    expect(resolved).toEqual(['default-1', 'interactive']);
   });
 });

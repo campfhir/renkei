@@ -539,7 +539,7 @@ export async function registerZoomTools(
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
 
-      const client = new ZoomClient(access.accessToken);
+      const client = new ZoomClient(access.accessToken, { lane: 'interactive' });
       const transcript = await client.getMeetingTranscript(meetingId);
       if (!transcript.ok) {
         return errText(
@@ -597,7 +597,7 @@ export async function registerZoomTools(
         }
       }
 
-      const client = new ZoomClient(access.accessToken);
+      const client = new ZoomClient(access.accessToken, { lane: 'interactive' });
       const summary = await client.getMeetingSummary(summaryKey);
       if (!summary.ok) {
         return errText(
