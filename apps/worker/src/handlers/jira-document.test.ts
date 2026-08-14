@@ -180,3 +180,66 @@ describe('dates', () => {
     expect(document).not.toContain('08:00:00');
   });
 });
+
+describe('an author’s own headings', () => {
+  const heading = (level: number, text: string) => ({
+    type: 'heading',
+    attrs: { level },
+    content: [{ type: 'text', text }],
+  });
+  const doc = (...content: unknown[]) => ({ type: 'doc', version: 1, content });
+
+  it('nests description headings below the Description section', () => {
+    const document = jiraDocument(
+      issue({ summary: 'S', description: doc(heading(1, 'Overview'), heading(2, 'Impact')) })
+    );
+    expect(document).toContain('## Description');
+    // Level 1 and 2 in the source land at 3 and 4 — under their section, and
+    // still distinguishable from each other.
+    expect(document).toContain('### Overview');
+    expect(document).toContain('#### Impact');
+    expect(document).not.toMatch(/^# Overview$/m);
+  });
+
+  it('stops a comment heading impersonating a document section', () => {
+    // The dangerous one: "## Fields" in a comment would otherwise read as the
+    // issue's real field list.
+    const document = jiraDocument(
+      issue({
+        summary: 'S',
+        comment: {
+          comments: [
+            {
+              author: { displayName: 'Priya Raman' },
+              created: '2026-08-12T09:00:00.000+0000',
+              body: doc(heading(2, 'Fields'), {
+                type: 'paragraph',
+                content: [{ type: 'text', text: 'nope' }],
+              }),
+            },
+          ],
+        },
+      })
+    );
+    // Exactly one line is the real Fields section.
+    expect(document.split('\n').filter((line) => line === '## Fields')).toHaveLength(1);
+    expect(document).toContain('##### Fields');
+  });
+
+  it('nests headings inside a rich-text field below its own heading', () => {
+    const document = jiraDocument(
+      issue({ summary: 'S', customfield_20: doc(heading(1, 'Given')) }),
+      { customfield_20: 'Acceptance criteria' }
+    );
+    expect(document).toContain('### Acceptance criteria');
+    expect(document).toContain('#### Given');
+  });
+
+  it('leaves the document’s own headings at their levels', () => {
+    const document = jiraDocument(
+      issue({ summary: 'Login fails', description: doc(heading(1, 'Overview')) })
+    );
+    expect(document.startsWith('# Login fails')).toBe(true);
+    expect(document).toContain('## Description');
+  });
+});

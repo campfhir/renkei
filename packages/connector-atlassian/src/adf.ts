@@ -320,3 +320,42 @@ function childrenOf(node: AdfNode): AdfNode[] {
   }
   return content.filter((child): child is AdfNode => isNode(child));
 }
+
+/**
+ * Push every heading in a converted document down by `by` levels, so it can be
+ * embedded inside a larger one without fighting it.
+ *
+ * ADF authors write their own headings. Dropped verbatim into a document whose
+ * own structure is `# summary` / `## Description` / `## Fields` / `## Comments`,
+ * a description that opens `# Overview` outranks the section containing it, and
+ * a comment that happens to contain `## Fields` becomes indistinguishable from
+ * the issue's real field list — to a reader, to the page that renders headings,
+ * and to a model asked what the fields are.
+ *
+ * Fenced code is skipped. A shell snippet is full of lines starting with `#`,
+ * and they are comments in that language, not headings in this one; rewriting
+ * them would corrupt the code the author pasted.
+ *
+ * Levels clamp at 6, markdown's floor. Two headings that were different depths
+ * can land on the same one there — unavoidable, and still strictly below any
+ * container this is used for, which is what the nesting has to guarantee.
+ */
+export function demoteHeadings(markdown: string, by: number): string {
+  if (by <= 0 || !markdown) return markdown;
+
+  let inFence = false;
+  return markdown
+    .split('\n')
+    .map((line) => {
+      if (/^\s*(?:```|~~~)/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence) return line;
+      const match = /^(#{1,6})(\s)/.exec(line);
+      if (!match?.[1]) return line;
+      const level = Math.min(6, match[1].length + by);
+      return '#'.repeat(level) + line.slice(match[1].length);
+    })
+    .join('\n');
+}

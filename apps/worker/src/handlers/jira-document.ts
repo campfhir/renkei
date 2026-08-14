@@ -23,7 +23,7 @@
  * fields are called gets it, and every other custom field, for free.
  */
 
-import { adfToMarkdown, listOf, rec, str } from '@renkei/connector-atlassian';
+import { adfToMarkdown, demoteHeadings, listOf, rec, str } from '@renkei/connector-atlassian';
 
 /** Fields that are noise in a document: internal ids, avatars, and the ones
  * already rendered as headings or metadata. */
@@ -58,6 +58,20 @@ const MAX_COMMENTS = 20;
 const MAX_COMMENT_CHARS = 1_500;
 /** Whole-document ceiling, before chunking. */
 const MAX_DOCUMENT_CHARS = 40_000;
+
+/**
+ * How far to push an author's own headings down, per place they can appear.
+ *
+ * ADF authors write headings, and a description opening `# Overview` would
+ * outrank the `## Description` it sits under, while a comment containing
+ * `## Fields` would be indistinguishable from the issue's real field list.
+ * Each shift puts the embedded headings strictly below their container: a
+ * description lives under a level-2 heading, a rich-text field and a comment
+ * each under a level-3 one.
+ */
+const DEMOTE_IN_DESCRIPTION = 2;
+const DEMOTE_IN_FIELD = 3;
+const DEMOTE_IN_COMMENT = 3;
 
 /**
  * A rendered field value.
@@ -106,6 +120,8 @@ function renderValue(value: unknown): RenderedValue | null {
     // prose — acceptance criteria, steps to reproduce — so they are worth
     // rendering properly rather than skipping.
     if (str(record.type) === 'doc') {
+      // Demoted by the caller, which is the only place that knows what
+      // heading this value will end up underneath.
       const text = adfToMarkdown(record).trim();
       return text ? { text, block: true } : null;
     }
@@ -161,7 +177,10 @@ function renderComments(fields: Record<string, unknown>): string[] {
   for (const comment of kept) {
     const author = str(rec(comment.author).displayName) || 'Unknown';
     const when = shortDate(comment.created);
-    const body = truncate(adfToMarkdown(comment.body).trim(), MAX_COMMENT_CHARS);
+    const body = truncate(
+      demoteHeadings(adfToMarkdown(comment.body).trim(), DEMOTE_IN_COMMENT),
+      MAX_COMMENT_CHARS
+    );
     if (!body) continue;
     lines.push(`### ${author}${when ? ` — ${when}` : ''}`, '', body, '');
   }
@@ -186,7 +205,10 @@ export function jiraDocument(
 
   const sections: string[] = [`# ${summary || key}`, ''];
 
-  const description = adfToMarkdown(fields.description).trim();
+  const description = demoteHeadings(
+    adfToMarkdown(fields.description).trim(),
+    DEMOTE_IN_DESCRIPTION
+  );
   if (description) {
     sections.push('## Description', '', description, '');
   }
@@ -202,7 +224,10 @@ export function jiraDocument(
     if (!rendered) continue;
     const label = str(names[id]) || humanizeFieldId(id);
     if (rendered.block) {
-      blockFields.push({ label, text: truncate(rendered.text, MAX_BLOCK_FIELD_CHARS) });
+      blockFields.push({
+        label,
+        text: truncate(demoteHeadings(rendered.text, DEMOTE_IN_FIELD), MAX_BLOCK_FIELD_CHARS),
+      });
     } else {
       fieldLines.push(`${label}: ${truncate(rendered.text, MAX_FIELD_CHARS)}`);
     }
