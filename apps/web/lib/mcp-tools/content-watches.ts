@@ -47,10 +47,31 @@ export interface WatchRecord {
   enabled: boolean;
   lastSyncedAt: Date | null;
   lastRunItems: number;
+  /** Cumulative items the SWEEP has read and enqueued. Not searchability. */
   totalItems: number;
+  /**
+   * Objects actually in the index and findable right now.
+   *
+   * Distinct from `totalItems`, and the distinction is not academic: the
+   * sweep counts what it handed to the queue, so a watch can read "2,000
+   * items, idle" while none of them are searchable because the embedding
+   * backlog has not reached them. During a rebuild that gap is hours wide,
+   * and reporting only the sweep's number makes a half-built index look
+   * finished.
+   */
+  indexedObjects: number;
+  /** Objects read but not yet embedded — the remaining work. */
+  queuedObjects: number;
   syncStatus: string;
   lastError: string | null;
 }
+
+/** The metadata key each provider records its scope under. */
+const SCOPE_METADATA_KEY: Record<string, string> = {
+  jira: 'project',
+  confluence: 'spaceId',
+  sharepoint: 'scopeKey',
+};
 
 /**
  * Create or re-enable a watch. Re-watching an existing scope is a no-op on
@@ -167,6 +188,38 @@ export async function listWatches(
     .orderBy('scope_key', 'asc')
     .execute();
 
+  const metadataKey = SCOPE_METADATA_KEY[provider] ?? 'project';
+
+  // Two grouped reads for the whole list rather than two per watch. Counted
+  // by OBJECT, not by chunk row: one issue becomes several chunks, and "1,004
+  // indexed" meaning chunks would not line up with the page count an admin
+  // recognises.
+  const indexed = await dbResult.val
+    .selectFrom('knowledge_chunks')
+    .select([
+      sql<string>`metadata ->> ${metadataKey}`.as('scope'),
+      sql<string>`count(DISTINCT split_part(ref_id, '#', 1))`.as('objects'),
+    ])
+    .where('tenant_id', '=', owner.tenantId)
+    .where('provider', '=', provider)
+    .groupBy(sql`metadata ->> ${metadataKey}`)
+    .execute();
+
+  const queued = await dbResult.val
+    .selectFrom('embedding_jobs')
+    .select([
+      sql<string>`payload -> 'metadata' ->> ${metadataKey}`.as('scope'),
+      sql<string>`count(*)`.as('objects'),
+    ])
+    .where('tenant_id', '=', owner.tenantId)
+    .where('status', '=', 'pending')
+    .where(sql<boolean>`payload ->> 'provider' = ${provider}`)
+    .groupBy(sql`payload -> 'metadata' ->> ${metadataKey}`)
+    .execute();
+
+  const indexedByScope = new Map(indexed.map((row) => [row.scope, Number(row.objects)]));
+  const queuedByScope = new Map(queued.map((row) => [row.scope, Number(row.objects)]));
+
   return {
     ok: true,
     watches: rows.map((row) => ({
@@ -178,6 +231,8 @@ export async function listWatches(
       lastSyncedAt: row.last_synced_at,
       lastRunItems: row.last_run_items,
       totalItems: row.total_items,
+      indexedObjects: indexedByScope.get(row.scope_key) ?? 0,
+      queuedObjects: queuedByScope.get(row.scope_key) ?? 0,
       syncStatus: row.sync_status,
       lastError: row.last_error,
     })),

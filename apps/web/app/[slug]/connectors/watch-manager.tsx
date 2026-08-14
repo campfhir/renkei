@@ -26,7 +26,12 @@ interface Watch {
   enabled: boolean;
   lastSyncedAt: string | null;
   lastRunItems: number;
+  /** What the sweep has read from the provider. */
   totalItems: number;
+  /** What is actually in the index and findable now. */
+  indexedObjects: number;
+  /** Read but not yet embedded. */
+  queuedObjects: number;
   syncStatus: string;
   lastError: string | null;
 }
@@ -250,8 +255,32 @@ export default function WatchManager({
                 <span className="truncate text-gray-700 dark:text-gray-300">
                   {watch.scopeLabel || watch.scopeKey}
                 </span>
-                <span className="ml-auto shrink-0 tabular-nums text-gray-500 dark:text-gray-500">
-                  {watch.totalItems.toLocaleString()} indexed · {relativeTime(watch.lastSyncedAt)}
+                {/*
+                  A progress fraction, indexed over the work that exists.
+                  The denominator is indexed + queued, NOT the sweep's
+                  `totalItems`: that counter is cumulative and re-counts every
+                  item the 2-minute overlap window re-reads, so a scope that
+                  had finished would still read 1,342 / 5,800 and look stuck
+                  forever. What the sweep has read is kept in the tooltip,
+                  where it is a fact rather than a denominator.
+                */}
+                <span
+                  className="ml-auto shrink-0 tabular-nums text-gray-500 dark:text-gray-500"
+                  title={
+                    `${watch.indexedObjects.toLocaleString()} searchable now` +
+                    (watch.queuedObjects > 0
+                      ? `, ${watch.queuedObjects.toLocaleString()} still being indexed`
+                      : '') +
+                    `. ${watch.totalItems.toLocaleString()} read from the provider so far ` +
+                    `(includes re-reads).`
+                  }
+                >
+                  {watch.indexedObjects.toLocaleString()} /{' '}
+                  {(watch.indexedObjects + watch.queuedObjects).toLocaleString()} indexed
+                  {watch.queuedObjects > 0 && (
+                    <span className="text-amber-600 dark:text-amber-500"> · indexing</span>
+                  )}{' '}
+                  · {relativeTime(watch.lastSyncedAt)}
                 </span>
                 <button
                   onClick={() => reindex(watch)}
