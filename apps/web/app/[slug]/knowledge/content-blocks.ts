@@ -66,9 +66,25 @@ export function parseBlocks(text: string): Block[] {
  */
 export function withoutEchoedTitle(blocks: Block[], title: string): Block[] {
   const first = blocks[0];
-  if (!first || first.kind !== 'heading') return blocks;
+  if (!first) return blocks;
   const normalise = (value: string) => value.toLowerCase().replace(/\s+/g, ' ').trim();
-  const heading = normalise(first.text);
-  if (!heading) return blocks;
-  return normalise(title).includes(heading) ? blocks.slice(1) : blocks;
+  const wanted = normalise(title);
+  if (!wanted) return blocks;
+
+  if (first.kind === 'heading') {
+    const heading = normalise(first.text);
+    return heading && wanted.includes(heading) ? blocks.slice(1) : blocks;
+  }
+
+  // The same echo without a heading. Content indexed before connectors wrote
+  // structured documents opens with a bare copy of its own title — every Jira
+  // issue indexed by the old builder does — and those chunks stay in the index
+  // until something re-reads them. Dropping the line here fixes what is
+  // already stored, for every provider that does it.
+  const lines = first.text.split('\n');
+  const opener = normalise(lines[0] ?? '');
+  if (!opener || !wanted.includes(opener)) return blocks;
+  const rest = lines.slice(1).join('\n').replace(/^\n+/, '');
+  const remainder: Block[] = rest.trim() ? [{ ...first, text: rest }] : [];
+  return [...remainder, ...blocks.slice(1)];
 }

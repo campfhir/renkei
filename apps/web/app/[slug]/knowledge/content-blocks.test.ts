@@ -81,8 +81,41 @@ describe('withoutEchoedTitle', () => {
     expect(result).toHaveLength(3);
   });
 
-  it('leaves a body that opens with prose alone', () => {
-    const result = withoutEchoedTitle(blocks('Users cannot sign in.'), 'Users cannot sign in.');
+  it('leaves prose alone when it is not the title', () => {
+    const result = withoutEchoedTitle(blocks('Users cannot sign in.'), 'OPS-1042: Login fails');
     expect(result).toHaveLength(1);
+  });
+});
+
+describe('withoutEchoedTitle — content indexed before structured documents', () => {
+  it('drops a bare first line that repeats the title', () => {
+    // Every Jira issue indexed by the old builder opens with a copy of its
+    // own title, and those chunks stay in the index until re-read.
+    const result = withoutEchoedTitle(
+      parseBlocks('OPS-1042: Nightly export review\n\nStatus: Resolved'),
+      'OPS-1042: Nightly export review'
+    );
+    expect(result).toEqual([{ kind: 'text', level: 0, text: 'Status: Resolved' }]);
+  });
+
+  it('keeps the rest of the block it trimmed', () => {
+    const result = withoutEchoedTitle(
+      parseBlocks('A subject line\nthen the body\nand more'),
+      'A subject line'
+    );
+    expect(result[0]?.text).toBe('then the body\nand more');
+  });
+
+  it('leaves the block alone when nothing was duplicated', () => {
+    const text = 'Users cannot sign in.\n\nAffects the finance group.';
+    expect(withoutEchoedTitle(parseBlocks(text), 'OPS-1042: Login fails')).toEqual(
+      parseBlocks(text)
+    );
+  });
+
+  it('drops the block entirely when the title was all it held', () => {
+    expect(
+      withoutEchoedTitle(parseBlocks('OPS-1042: Login fails'), 'OPS-1042: Login fails')
+    ).toEqual([]);
   });
 });
