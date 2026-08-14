@@ -49,14 +49,14 @@ const SKIP_FIELDS = new Set([
   'votes',
   'progress',
   'aggregateprogress',
-  'timetracking',
   'statuscategorychangedate',
   'issuerestriction',
   'security',
   // Duplicates `status`, one level less specific.
   'statusCategory',
-  // Time accounting in seconds. `timetracking` already carries the readable
-  // form and is skipped too; a bare `Timespent: 900` helps nobody.
+  // Time accounting in raw seconds. `timetracking` carries the same numbers
+  // in the form a person reads ("45m logged"), and IS indexed; a bare
+  // `Timespent: 2700` beside it helps nobody.
   'timespent',
   'timeestimate',
   'timeoriginalestimate',
@@ -173,6 +173,14 @@ function renderValue(value: unknown): RenderedValue | null {
 
   if (typeof value === 'object') {
     const record = rec(value);
+    // Time tracking carries both a readable form and a seconds form; the
+    // seconds are skipped elsewhere and this is the half worth indexing.
+    const logged = str(record.timeSpent);
+    const remaining = str(record.remainingEstimate);
+    if (logged || remaining) {
+      const parts = [logged ? `${logged} logged` : '', remaining ? `${remaining} remaining` : ''];
+      return { text: parts.filter(Boolean).join(', '), block: false };
+    }
     // A rich-text custom field. Jira lets you have those, and they hold real
     // prose — acceptance criteria, steps to reproduce — so they are worth
     // rendering properly rather than skipping.
@@ -298,7 +306,19 @@ function renderComments(fields: Record<string, unknown>, names: Map<string, stri
  */
 export function jiraDocument(
   issue: Record<string, unknown>,
-  names: Record<string, unknown> = {}
+  names: Record<string, unknown> = {},
+  /**
+   * Custom-field ids that belong on this issue's screen, from the project and
+   * issue type's edit metadata. Undefined means "no metadata available" and
+   * every field with a value is kept — losing content quietly is worse than
+   * carrying a little noise.
+   *
+   * Only CUSTOM fields are filtered. Edit metadata describes what can be
+   * edited, so it has no status, resolution, created, updated or time
+   * tracking; filtering system fields against it would delete the spine of
+   * the document.
+   */
+  allowedCustomFields?: ReadonlySet<string>
 ): string {
   const fields = rec(issue.fields);
   const key = str(issue.key);
@@ -322,6 +342,12 @@ export function jiraDocument(
   if (key) fieldLines.push(`Key: ${key}`);
   for (const [id, value] of Object.entries(fields)) {
     if (SKIP_FIELDS.has(id)) continue;
+    // A custom field carrying a value it should not have is the common case
+    // on a project that was reconfigured: the value lingers, the field is off
+    // the screen, and indexing it puts words in the issue's mouth.
+    if (allowedCustomFields && id.startsWith('customfield_') && !allowedCustomFields.has(id)) {
+      continue;
+    }
     const rendered = renderValue(value);
     if (!rendered || looksInternal(rendered.text)) continue;
     const label = cleanLabel(str(names[id]) || humanizeFieldId(id));

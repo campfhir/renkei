@@ -125,7 +125,10 @@ describe('runWatchSync — jira', () => {
     // And the fields that carry the document: everything navigable, plus
     // comments, which are not navigable and must be named.
     expect(body.fields).toContain('*navigable');
+    // Neither of these is navigable; asking for `*navigable` alone returns
+    // no comments and no logged time.
     expect(body.fields).toContain('comment');
+    expect(body.fields).toContain('timetracking');
   });
 
   it('uses the names map Jira returns to label custom fields', async () => {

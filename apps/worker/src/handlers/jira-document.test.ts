@@ -402,3 +402,72 @@ describe('field labels', () => {
     expect(document).not.toContain('[CHART]');
   });
 });
+
+describe('fields that belong on the issue', () => {
+  const screen = new Set(['customfield_10029']);
+
+  it('drops a custom field the project no longer shows', () => {
+    // A reconfigured project leaves values behind on fields that are off the
+    // screen. Indexing them puts words in the issue's mouth — an issue whose
+    // form has no "Type of Engagement" was being indexed as having one.
+    const document = jiraDocument(
+      issue({ summary: 'S', customfield_10744: { value: 'Broadcast/Notification' } }),
+      { customfield_10744: 'Type of Engagement' },
+      screen
+    );
+    expect(document).not.toContain('Type of Engagement');
+  });
+
+  it('keeps a custom field that is on the screen', () => {
+    const document = jiraDocument(
+      issue({ summary: 'S', customfield_10029: [{ displayName: 'Alex Mercer' }] }),
+      { customfield_10029: 'Request participants' },
+      screen
+    );
+    expect(document).toContain('Request participants: Alex Mercer');
+  });
+
+  it('never filters system fields against the edit screen', () => {
+    // Edit metadata describes what can be EDITED, so it has no status,
+    // resolution or dates. Filtering system fields against it would delete
+    // the spine of the document.
+    const document = jiraDocument(
+      issue({
+        summary: 'S',
+        status: { name: 'Done' },
+        resolution: { name: 'Fixed' },
+        created: '2026-08-11T08:00:00.000+0000',
+        components: [{ name: 'Pharmacy' }],
+      }),
+      { status: 'Status', resolution: 'Resolution', created: 'Created', components: 'Components' },
+      screen
+    );
+    expect(document).toContain('Status: Done');
+    expect(document).toContain('Resolution: Fixed');
+    expect(document).toContain('Created: 2026-08-11');
+    expect(document).toContain('Components: Pharmacy');
+  });
+
+  it('keeps everything when no screen is known', () => {
+    // A failed metadata call must not silently shrink the document.
+    const document = jiraDocument(
+      issue({ summary: 'S', customfield_10744: { value: 'Broadcast' } }),
+      { customfield_10744: 'Type of Engagement' }
+    );
+    expect(document).toContain('Type of Engagement: Broadcast');
+  });
+
+  it('indexes logged time in the form a person reads', () => {
+    // The seconds counters are skipped as noise; this is the half that means
+    // something, and it was being dropped with them.
+    const document = jiraDocument(
+      issue({
+        summary: 'S',
+        timetracking: { timeSpent: '45m', remainingEstimate: '0m', timeSpentSeconds: 2700 },
+      }),
+      { timetracking: 'Time tracking' }
+    );
+    expect(document).toContain('Time tracking: 45m logged, 0m remaining');
+    expect(document).not.toContain('2700');
+  });
+});

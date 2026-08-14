@@ -32,3 +32,11 @@ export const CONFLUENCE_KNOWLEDGE_PROVIDER = 'confluence';
 
 export { adfToMarkdown, isEmptyAdf, demoteHeadings, type AdfNode } from './adf';
 export { wikiToMarkdown, looksLikeWikiMarkup } from './wiki';
+export {
+  fieldScreenFor,
+  createScreenFor,
+  fieldByReference,
+  clearFieldScreenCache,
+  type EditableField,
+  type FieldScreen,
+} from './field-screen';

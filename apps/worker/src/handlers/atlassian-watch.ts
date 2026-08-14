@@ -22,7 +22,7 @@
 
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
-import { atlassianFetch, listOf, rec, str } from '@renkei/connector-atlassian';
+import { atlassianFetch, fieldScreenFor, listOf, rec, str } from '@renkei/connector-atlassian';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { enqueueKnowledgeEvent } from '../enqueue';
 import { jiraDocument } from './jira-document';
@@ -111,7 +111,11 @@ async function syncJira(
         // custom field whose id differs per site, and so is most of what a
         // team actually fills in. Comments are named explicitly because they
         // are not navigable.
-        fields: ['*navigable', 'comment'],
+        // `comment` and `timetracking` are named explicitly because neither
+        // is navigable — asking for `*navigable` alone silently returns no
+        // logged time, which is how "45m logged" went missing from an issue
+        // that plainly had it.
+        fields: ['*navigable', 'comment', 'timetracking'],
         // A COMMA-DELIMITED STRING, not an array. This endpoint is the
         // exception and the API spec says so outright: "unlike the majority
         // of instances where `expand` is specified, `expand` is defined as a
@@ -136,7 +140,16 @@ async function syncJira(
       const key = str(issue.key);
       const updated = str(rec(issue.fields).updated);
       if (!key) continue;
-      const content = jiraDocument(issue, names);
+      // Cached per project + issue type inside the connector, so a page of
+      // 100 issues costs one lookup per combination rather than 100.
+      const screen = await fieldScreenFor({
+        cloudId: access.cloudId,
+        accessToken: access.accessToken,
+        issueKey: key,
+        projectKey: str(rec(rec(issue.fields).project).key),
+        issueTypeId: str(rec(rec(issue.fields).issuetype).id),
+      });
+      const content = jiraDocument(issue, names, screen?.customFieldIds);
       if (!content.trim()) continue;
 
       await enqueueKnowledgeEvent(
