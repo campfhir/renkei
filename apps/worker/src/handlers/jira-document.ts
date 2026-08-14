@@ -77,8 +77,10 @@ const SKIP_FIELDS = new Set([
  */
 function looksInternal(text: string): boolean {
   if (text === '{}' || text === '[]') return true;
-  // Lexorank, e.g. `1|i1dxy7:`
-  if (/^\d+\|[a-z0-9]+:?$/i.test(text)) return true;
+  // Lexorank. The trailing segment is optional and often present —
+  // `1|i1dxy7:` and `1|i1g0gc:zr` are both ranks, and anchoring at the colon
+  // let the second form through on a live board.
+  if (/^\d+\|[a-z0-9]+:[a-z0-9]*$/i.test(text)) return true;
   // Atlassian's `_*:*_` delimited property blobs.
   if (text.includes('_*:*_')) return true;
   return false;
@@ -199,6 +201,15 @@ function renderValue(value: unknown): RenderedValue | null {
  * field labelled `fixVersions` reads worse than `Fix versions`, and either
  * beats dropping the field because it had no name.
  */
+/**
+ * Jira prefixes some field names with a bracketed marker — `[CHART] Date of
+ * First Response` — to say where the field is usable. It is a note to an
+ * administrator, not part of the name, and it reads as noise in a document.
+ */
+function cleanLabel(label: string): string {
+  return label.replace(/^\[[A-Z]+\]\s*/, '').trim() || label;
+}
+
 function humanizeFieldId(id: string): string {
   const spaced = id
     .replace(/_/g, ' ')
@@ -313,7 +324,11 @@ export function jiraDocument(
     if (SKIP_FIELDS.has(id)) continue;
     const rendered = renderValue(value);
     if (!rendered || looksInternal(rendered.text)) continue;
-    const label = str(names[id]) || humanizeFieldId(id);
+    const label = cleanLabel(str(names[id]) || humanizeFieldId(id));
+    // An SLA field renders as its own name — "Issue Resolution: Issue
+    // Resolution" — because the useful part is a cycle object this does not
+    // read. A line that only restates its label carries nothing.
+    if (rendered.text.trim().toLowerCase() === label.toLowerCase()) continue;
     if (rendered.block) {
       blockFields.push({
         label,

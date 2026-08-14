@@ -9,7 +9,7 @@ import { detailRows } from './detail-rows';
 
 const hit = (metadata: Record<string, unknown>) => ({
   provider: 'jira',
-  refId: 'CAS-22925',
+  refId: 'OPS-1042',
   distance: 0,
   metadata,
 });
@@ -18,18 +18,18 @@ describe('detailRows', () => {
   it('always identifies the source and reference', () => {
     const rows = detailRows(hit({}));
     expect(rows).toContainEqual({ label: 'Source', value: 'jira' });
-    expect(rows).toContainEqual({ label: 'Reference', value: 'CAS-22925' });
+    expect(rows).toContainEqual({ label: 'Reference', value: 'OPS-1042' });
   });
 
   it('does not repeat what the card already shows', () => {
     // The title sits at the top of the same card; printing it again was the
     // most visible thing wrong with the JSON dump.
     const rows = detailRows(
-      hit({ title: 'CAS-22925: Post-load Maintenance', kind: 'issue', project: 'CAS' })
+      hit({ title: 'OPS-1042: Nightly export review', kind: 'issue', project: 'OPS' })
     );
     expect(rows.map((row) => row.label)).not.toContain('Title');
     expect(rows.map((row) => row.label)).not.toContain('Kind');
-    expect(rows).toContainEqual({ label: 'Project', value: 'CAS' });
+    expect(rows).toContainEqual({ label: 'Project', value: 'OPS' });
   });
 
   it('gives keys words instead of identifiers', () => {
@@ -41,8 +41,8 @@ describe('detailRows', () => {
   });
 
   it('humanizes a key nobody has labelled yet', () => {
-    const rows = detailRows(hit({ lastEditedBy: 'Serena Huang' }));
-    expect(rows).toContainEqual({ label: 'Last edited by', value: 'Serena Huang' });
+    const rows = detailRows(hit({ lastEditedBy: 'Alex Mercer' }));
+    expect(rows).toContainEqual({ label: 'Last edited by', value: 'Alex Mercer' });
   });
 
   it('joins a list rather than printing an array', () => {

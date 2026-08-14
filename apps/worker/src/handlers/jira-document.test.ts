@@ -261,7 +261,7 @@ describe('shapes a real instance actually returns', () => {
         comment: {
           comments: [
             {
-              author: { displayName: 'Serena Huang' },
+              author: { displayName: 'Alex Mercer' },
               created: '2026-06-02T09:00:00.000-0700',
               body: 'Looks done to me.',
             },
@@ -278,6 +278,7 @@ describe('shapes a real instance actually returns', () => {
       issue({
         summary: 'S',
         customfield_10019: '1|i1dxy7:',
+        customfield_10020: '1|i1g0gc:zr',
         customfield_10025: '10010_*:*_1_*:*_0_*|*_10126_*:*_1_*:*_21949782',
         customfield_10000: '{}',
       }),
@@ -310,10 +311,13 @@ describe('shapes a real instance actually returns', () => {
 
   it('keeps the parent issue, which is real context', () => {
     const document = jiraDocument(
-      issue({ summary: 'S', parent: { key: 'CAS-22923', fields: { summary: 'May MedLoad' } } }),
+      issue({
+        summary: 'S',
+        parent: { key: 'OPS-1040', fields: { summary: 'Quarterly rollout' } },
+      }),
       { parent: 'Parent' }
     );
-    expect(document).toContain('Parent: CAS-22923');
+    expect(document).toContain('Parent: OPS-1040');
   });
 });
 
@@ -343,11 +347,11 @@ describe('wiki markup and mentions', () => {
     const document = jiraDocument(
       issue({
         summary: 'S',
-        assignee: { accountId: 'abc123', displayName: 'Damon Garrison' },
+        assignee: { accountId: 'abc123', displayName: 'Jordan Ellis' },
         comment: {
           comments: [
             {
-              author: { accountId: 'xyz789', displayName: 'Scott Eremia-Roden' },
+              author: { accountId: 'xyz789', displayName: 'Robin Vale' },
               created: '2026-08-05T22:00:00.000-0700',
               body: '[~accountid:abc123] — completeness pass applied.',
             },
@@ -355,7 +359,7 @@ describe('wiki markup and mentions', () => {
         },
       })
     );
-    expect(document).toContain('@Damon Garrison');
+    expect(document).toContain('@Jordan Ellis');
     expect(document).not.toContain('abc123');
   });
 
@@ -376,5 +380,25 @@ describe('wiki markup and mentions', () => {
     );
     expect(document).not.toContain('never-seen-before');
     expect(document).toContain('@someone');
+  });
+});
+
+describe('field labels', () => {
+  it('drops a value that only restates its own label', () => {
+    // SLA fields render as their own name; the useful part is a cycle object
+    // this does not read, so the line carries nothing.
+    const document = jiraDocument(
+      issue({ summary: 'S', customfield_1: { name: 'Issue Resolution' } }),
+      { customfield_1: 'Issue Resolution' }
+    );
+    expect(document).not.toContain('Issue Resolution: Issue Resolution');
+  });
+
+  it('strips Jira’s bracketed administrative marker from a label', () => {
+    const document = jiraDocument(issue({ summary: 'S', customfield_2: '2026-07-15' }), {
+      customfield_2: '[CHART] Date of First Response',
+    });
+    expect(document).toContain('Date of First Response: 2026-07-15');
+    expect(document).not.toContain('[CHART]');
   });
 });
