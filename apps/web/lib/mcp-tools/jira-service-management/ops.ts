@@ -115,8 +115,6 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const parts = [
         `size=${typeof args.size === 'number' ? args.size : 20}`,
         'sort=createdAt',
@@ -151,8 +149,6 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const response = await auth.fetch(
         opsScopes('jsm_ops_get_alert', true),
         `/alerts/${encodeURIComponent(str(args.alertId))}`
@@ -189,8 +185,6 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const alertId = encodeURIComponent(str(args.alertId));
       const response = await auth.fetch(
         opsScopes('jsm_ops_acknowledge_alert', false),
@@ -221,8 +215,6 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const alertId = encodeURIComponent(str(args.alertId));
       const response = await auth.fetch(
         opsScopes('jsm_ops_close_alert', false),
@@ -255,8 +247,6 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const size = typeof args.size === 'number' ? args.size : 20;
       const response = await auth.fetch(
         opsScopes('jsm_ops_list_schedules', true),
@@ -323,8 +313,6 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const scheduleId = encodeURIComponent(str(args.scheduleId));
       const parts = ['flat=true'];
       if (str(args.date)) parts.push(`date=${encodeURIComponent(str(args.date))}`);
@@ -375,8 +363,6 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const scheduleId = encodeURIComponent(str(args.scheduleId));
       const response = await auth.fetch(
         opsScopes('jsm_ops_list_overrides', true),
@@ -437,8 +423,6 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const scheduleId = str(args.scheduleId);
       const scopes = opsScopes('jsm_ops_create_override', false);
 
@@ -543,8 +527,6 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const scheduleId = encodeURIComponent(str(args.scheduleId));
       const alias = encodeURIComponent(str(args.alias));
       const scopes = opsScopes('jsm_ops_delete_override', false);
@@ -622,8 +604,6 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const scheduleId = encodeURIComponent(str(args.scheduleId));
       const rotationId = encodeURIComponent(str(args.rotationId));
       const scopes = opsScopes('jsm_ops_update_rotation', false);
@@ -707,8 +687,6 @@ export async function registerJsmOpsTools(
       inputSchema: z.object({}),
     },
     async () => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const response = await auth.fetch(opsScopes('jsm_ops_list_teams', true), '/teams');
       if (!response.ok) return errText(await describeOpsFailure(response));
       const body: unknown = await response.json().catch(() => null);
@@ -742,8 +720,6 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const unavailable = auth.unavailableReason();
-      if (unavailable) return errText(unavailable);
       const teamId = encodeURIComponent(str(args.teamId));
       const response = await auth.fetch(
         opsScopes('jsm_ops_list_escalations', true),

@@ -44,18 +44,16 @@ type Handler = (args: Record<string, unknown>) => Promise<{
 const mockJiraFetch = jest.fn();
 
 /**
- * A stub `JsmOpsAuth`: unconditionally available, unconditionally in-scope,
- * every call routed to `mockJiraFetch` with just the relative path (no base
- * to reconstruct — these tests never cared which base ops.ts used, only
- * what it asked for). What real auth wrapping looks like — base URL choice,
- * the scope gate, `unavailableReason()` — is ops-auth.test.ts's job, in
- * isolation; this file is only about the tools' own rendering and wizard
- * logic, uninterested in how auth works.
+ * A stub `JsmOpsAuth`: unconditionally in-scope, every call routed to
+ * `mockJiraFetch` with just the relative path (no base to reconstruct —
+ * these tests never cared which base ops.ts used, only what it asked for).
+ * What real auth wrapping looks like — base URL choice, the scope gate — is
+ * ops-auth.test.ts's job, in isolation; this file is only about the tools'
+ * own rendering and wizard logic, uninterested in how auth works.
  */
 function stubAuth(): JsmOpsAuth {
   return {
     kind: 'oauth',
-    unavailableReason: () => null,
     fetch: (_requiredScopes, path, init) => mockJiraFetch(path, init),
   };
 }

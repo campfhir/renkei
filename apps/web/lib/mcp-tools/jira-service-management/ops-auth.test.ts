@@ -46,14 +46,28 @@ beforeEach(() => {
 });
 
 describe('oauthJsmOpsAuth — availability', () => {
-  it('is unavailable with no cloud id on the connection', () => {
+  it('refuses a call with no cloud id, without touching the network', async () => {
+    // A LOCAL precondition, not something Atlassian answered — it comes
+    // back as the same synthetic-Response shape as a missing scope (see
+    // ../auth-support.ts), so a handler needs only one failure path:
+    // `if (!response.ok) return errText(...)`, never a separate sync check.
     const auth = oauthJsmOpsAuth(context({ cloudId: undefined }));
-    expect(auth.unavailableReason()).toBe('No Atlassian cloud id on this connection.');
+
+    const response = await auth.fetch([], '/schedules');
+
+    expect(response.ok).toBe(false);
+    expect(mockJiraFetch).not.toHaveBeenCalled();
+    const body = (await response.json()) as { message: string };
+    expect(body.message).toBe('No Atlassian cloud id on this connection.');
   });
 
-  it('is available once a cloud id is present', () => {
+  it('proceeds once a cloud id is present', async () => {
     const auth = oauthJsmOpsAuth(context());
-    expect(auth.unavailableReason()).toBeNull();
+
+    const response = await auth.fetch([], '/schedules');
+
+    expect(response.ok).toBe(true);
+    expect(mockJiraFetch).toHaveBeenCalledTimes(1);
   });
 });
 

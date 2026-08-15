@@ -102,7 +102,6 @@ export function patJsmOpsAuth(creds: SandboxCredentials, cloudId: string): JsmOp
   const base = `https://api.atlassian.com/jsm/ops/api/${cloudId}/v1`;
   return {
     kind: 'pat',
-    unavailableReason: () => null,
     async fetch(_requiredScopes, path, init) {
       return fetch(`${base}${path}`, {
         ...init,

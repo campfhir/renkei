@@ -25,19 +25,11 @@
 
 import { jiraFetch } from '../common';
 import type { MCPToolContext } from '../common';
+import { authFailure } from '../auth-support';
 
 export interface JsmOpsAuth {
   /** For log/error context — which mechanism actually made the call. */
   readonly kind: 'oauth' | 'pat';
-  /**
-   * Null when ready to make calls; otherwise the message a handler should
-   * return via errText() without ever reaching the network. A LOCAL
-   * precondition (no cloud id on this connection) — never something
-   * Atlassian answered — so it stays a separate check rather than folding
-   * into fetch()'s Response-shaped failures, which would misdescribe it as
-   * a reply from the API.
-   */
-  unavailableReason(): string | null;
   /**
    * Perform one Ops API call, after confirming this credential carries
    * `requiredScopes`.
@@ -57,24 +49,15 @@ export interface JsmOpsAuth {
    * what differs between implementations; a handler that built the full URL
    * itself would be back to hardcoding one mechanism.
    *
-   * On a missing scope this returns a synthetic Response describing what's
-   * missing, rather than throwing — every call site's existing
+   * A missing scope, or any other LOCAL reason the call can't be made (no
+   * cloud id on this connection, an unresolved grant), comes back as a
+   * synthetic Response via authFailure() rather than a thrown error or a
+   * second failure channel — every call site's existing
    * `if (!response.ok) return errText(await describeOpsFailure(response))`
-   * handles it with no special case.
+   * handles it with no special case. Every XAuth interface in this codebase
+   * shares that shape; see ../auth-support.ts.
    */
   fetch(requiredScopes: readonly string[], path: string, init?: RequestInit): Promise<Response>;
-}
-
-function scopeDeniedResponse(missing: readonly string[]): Response {
-  return new Response(
-    JSON.stringify({
-      message:
-        `This call needs ${missing.join(', ')}, which your Atlassian grant does not carry. ` +
-        'An org admin adds the missing scope(s) to the Jira Service Management Atlassian app ' +
-        'in connector setup, then you reconnect.',
-    }),
-    { status: 403 }
-  );
 }
 
 /**
@@ -93,17 +76,18 @@ export function oauthJsmOpsAuth(context: MCPToolContext): JsmOpsAuth {
 
   return {
     kind: 'oauth',
-    unavailableReason: () => (base ? null : 'No Atlassian cloud id on this connection.'),
     async fetch(requiredScopes, path, init) {
-      if (!base) {
-        return new Response(
-          JSON.stringify({ message: 'No Atlassian cloud id on this connection.' }),
-          { status: 400 }
-        );
-      }
+      if (!base) return authFailure('No Atlassian cloud id on this connection.');
       if (granted) {
         const missing = requiredScopes.filter((scope) => !granted.has(scope));
-        if (missing.length > 0) return scopeDeniedResponse(missing);
+        if (missing.length > 0) {
+          return authFailure(
+            `This call needs ${missing.join(', ')}, which your Atlassian grant does not carry. ` +
+              'An org admin adds the missing scope(s) to the Jira Service Management Atlassian ' +
+              'app in connector setup, then you reconnect.',
+            403
+          );
+        }
       }
       return jiraFetch(`${base}${path}`, context.accessToken, init);
     },
