@@ -207,10 +207,16 @@ export async function registerRenkeiTools(
       oauthWebexAuth(context)
     );
   }
+  // Production's one path for all three Microsoft Graph connectors: the
+  // caller's own grant, one instance shared since Outlook/SharePoint/
+  // OneDrive all close over the same context. Same reasoning as WebEx/Zoom
+  // above — see graph/graph-auth.ts.
+  const graphAuth = oauthGraphAuth(context);
   if (microsoftAvailable) {
     await registerOutlookTools(
       withCapabilityGate(server, projection, OUTLOOK_MCP_CONNECTOR),
-      context
+      context,
+      graphAuth
     );
   }
 
@@ -308,10 +314,8 @@ export async function registerRenkeiTools(
     summaryProviders
   );
 
-  // Production's one path for both: the caller's own Microsoft grant, one
-  // instance shared since SharePoint and OneDrive both close over the same
-  // context. Same reasoning as WebEx/Zoom above — see graph/graph-auth.ts.
-  const graphAuth = oauthGraphAuth(context);
+  // graphAuth (declared above, shared with Outlook) covers SharePoint and
+  // OneDrive too — all three close over the same context.
   if (sharepointAvailable) {
     await registerSharePointTools(
       withCapabilityGate(server, projection, SHAREPOINT_MCP_CONNECTOR),

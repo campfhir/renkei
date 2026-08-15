@@ -34,7 +34,9 @@ jest.mock('@renkei/db', () => ({
           where: () => ({
             where: () => ({
               where: () => ({
-                executeTakeFirst: async () => ({ provider_account_id: 'acct-1' }),
+                limit: () => ({
+                  executeTakeFirst: async () => ({ provider_account_id: 'acct-1' }),
+                }),
               }),
             }),
           }),
@@ -58,6 +60,10 @@ jest.mock('@/lib/logger', () => ({
 }));
 
 import { registerOutlookTools } from './index';
+// oauthGraphAuth, not a stub: this file already mocks provider-grants/
+// crypto/db/microsoft-app to serve a fake grant, so the real resolution
+// path is exercised the same way the rest of this suite's fetch mocking is.
+import { oauthGraphAuth } from '../graph/graph-auth';
 
 type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean };
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
@@ -109,7 +115,7 @@ async function bulkSearch(args: Record<string, unknown>): Promise<ToolResult> {
     },
   } as unknown as McpServer;
 
-  await registerOutlookTools(server, {
+  const context = {
     tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'subject-1',
@@ -117,7 +123,9 @@ async function bulkSearch(args: Record<string, unknown>): Promise<ToolResult> {
     apiBaseUrl: '',
     accessToken: '',
     maxJqlResults: 100,
-  } as MCPToolContext);
+  } as MCPToolContext;
+
+  await registerOutlookTools(server, context, oauthGraphAuth(context));
 
   const handler = registered.get('outlook_bulk_search_messages');
   if (!handler) throw new Error('outlook_bulk_search_messages was not registered');

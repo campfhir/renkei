@@ -11,97 +11,28 @@
  * propose a new time). The acting tools carry readOnlyHint false, so org
  * read-only mode disables them.
  *
- * The grant is resolved from the database on every call rather than baked
- * into the handler closure: tokens rotate on refresh, handlers are cached,
- * and a stale closure was exactly the failure mode the Jira tools solved
- * with a token-cache layer. Tool volume here is low enough to read fresh.
+ * Auth is injected (see ../graph/graph-auth.ts's GraphAuth) rather than
+ * resolved inline — production passes the caller's own Microsoft grant,
+ * shared with the SharePoint/OneDrive tools since all three close over the
+ * same context (see registry.ts). auth.resolve() is called fresh on every
+ * tool invocation rather than once at registration: tokens rotate on
+ * refresh, handlers are cached, and a stale closure was exactly the failure
+ * mode the Jira tools solved with a token-cache layer. Tool volume here is
+ * low enough to resolve fresh per call.
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  getGrant,
-  refreshGrantTokens,
-  MICROSOFT,
-  MicrosoftAdapter,
-  type ProviderGrant,
-} from '@renkei/provider-grants';
 import { GRAPH_BASE_URL, objectIdOfMicrosoftRefId } from '@renkei/connector-microsoft';
-import { parseEncryptionKey } from '@renkei/crypto';
-import { getDatabase } from '@renkei/db';
 import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
 import { withheldNote } from '@renkei/gates';
-import { getMicrosoftApp } from '@/lib/microsoft-app';
 import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { buildKnowledgeVerifiers } from '../knowledge';
 import { withPresentationHint, type MCPToolContext } from '../common';
+import type { GraphAuth } from '../graph/graph-auth';
 
 export const OUTLOOK_MCP_CONNECTOR = 'microsoft';
-
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
-
-interface OutlookAccess {
-  accessToken: string;
-  upn: string | null;
-}
-
-/** The caller's live Graph token, refreshed through the adapter when stale. */
-async function resolveOutlookAccess(context: MCPToolContext): Promise<OutlookAccess | string> {
-  if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Server misconfigured (encryption key).';
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'Database unavailable.';
-
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', context.tenantId)
-    .where('provider', '=', MICROSOFT)
-    .where('subject', '=', context.subject)
-    .executeTakeFirst();
-  if (!row) {
-    return 'Microsoft is not connected. Connect it on the Connectors page, then try again.';
-  }
-
-  const grantResult = await getGrant(
-    MICROSOFT,
-    context.tenantId,
-    row.provider_account_id,
-    keyResult.val
-  );
-  if (!grantResult.ok || !grantResult.val) return 'Could not read the Microsoft grant.';
-  let grant: ProviderGrant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const app = await getMicrosoftApp(context.tenantId, context.origin ?? '');
-    if (!app) return 'Microsoft integration is no longer configured.';
-    // The grant's own tid keeps refresh pointed at the directory that
-    // minted it; the connector setting is the fallback for older grants.
-    const tid =
-      typeof grant.metadata.tid === 'string' && grant.metadata.tid
-        ? grant.metadata.tid
-        : app.directoryTenantId;
-    const refreshed = await refreshGrantTokens(
-      new MicrosoftAdapter(app.clientSecret, tid),
-      context.tenantId,
-      grant.accountId,
-      keyResult.val,
-      logger
-    );
-    if (!refreshed.ok) {
-      return refreshed.err.type === 'GRANT_REVOKED'
-        ? 'Your Microsoft authorization was revoked. Reconnect it on the Connectors page.'
-        : 'Could not refresh the Microsoft token; try again shortly.';
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-
-  const upn = typeof grant.metadata.upn === 'string' ? grant.metadata.upn : null;
-  return { accessToken: grant.accessToken, upn };
-}
 
 function describeStatus(status: number): string {
   if (status === 403) {
@@ -839,7 +770,8 @@ function groupKind(group: Record<string, unknown>): string {
 
 export async function registerOutlookTools(
   rawServer: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: GraphAuth
 ): Promise<void> {
   // A tool whose scope this user's grant does not carry is not registered at
   // all — the org may have narrowed the checkboxes, or the user narrowed
@@ -865,7 +797,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const max = typeof args.max === 'number' ? args.max : 50;
       const parentFolderId = str(args.parentFolderId);
@@ -916,7 +848,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const folder = str(args.folder) || 'inbox';
       const max = typeof args.max === 'number' ? args.max : 20;
@@ -949,7 +881,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
@@ -1014,7 +946,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
@@ -1063,7 +995,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
@@ -1162,7 +1094,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageIds = Array.isArray(args.messageIds)
         ? args.messageIds.map(String).filter(Boolean)
@@ -1233,7 +1165,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const query = str(args.query);
       if (!query) return errText('query is required');
@@ -1329,7 +1261,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const max = typeof args.max === 'number' ? args.max : 25;
@@ -1658,7 +1590,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const from = str(args.from) || new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
       const to = str(args.to) || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
@@ -1694,7 +1626,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const eventId = str(args.eventId);
       if (!eventId) return errText('eventId is required');
@@ -1728,7 +1660,7 @@ export async function registerOutlookTools(
       inputSchema: z.object({}),
     },
     async () => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const result = await graphGet(context, access.accessToken, '/me/todo/lists');
       if (!result.ok) return errText(result.error);
@@ -1755,7 +1687,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const listId = str(args.listId);
       if (!listId) return errText('listId is required');
@@ -1801,7 +1733,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const query = str(args.query).replace(/"/g, '');
       if (!query) return errText('query is required');
@@ -1838,7 +1770,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const user = str(args.user);
       if (!user) return errText('user is required');
@@ -1898,7 +1830,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const max = typeof args.max === 'number' ? args.max : 25;
       const parts = [
@@ -1945,7 +1877,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const groupId = str(args.groupId);
       if (!groupId) return errText('groupId is required');
@@ -1983,7 +1915,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const to = Array.isArray(args.to) ? args.to.map(String).filter(Boolean) : [];
       if (to.length === 0) return errText('to is required');
@@ -2033,7 +1965,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
@@ -2091,7 +2023,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
@@ -2151,7 +2083,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
@@ -2201,7 +2133,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
@@ -2235,7 +2167,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
@@ -2277,7 +2209,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
@@ -2343,7 +2275,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
@@ -2380,7 +2312,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageIds = Array.isArray(args.messageIds)
         ? args.messageIds.map(String).filter(Boolean)
@@ -2421,7 +2353,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageIds = Array.isArray(args.messageIds)
         ? args.messageIds.map(String).filter(Boolean)
@@ -2472,7 +2404,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageIds = Array.isArray(args.messageIds)
         ? args.messageIds.map(String).filter(Boolean)
@@ -2551,7 +2483,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageIds = Array.isArray(args.messageIds)
         ? args.messageIds.map(String).filter(Boolean)
@@ -2600,7 +2532,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const messageIds = Array.isArray(args.messageIds)
         ? args.messageIds.map(String).filter(Boolean)
@@ -2672,7 +2604,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const displayName = str(args.displayName);
       if (!displayName) return errText('displayName is required');
@@ -2702,7 +2634,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const folderId = str(args.folderId);
       if (!folderId) return errText('folderId is required');
@@ -2734,7 +2666,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const folderId = str(args.folderId);
       if (!folderId) return errText('folderId is required');
@@ -2785,7 +2717,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const timezone = str(args.timezone) || 'UTC';
       const requiredAttendees = Array.isArray(args.requiredAttendees)
@@ -2874,7 +2806,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const requiredAttendees = Array.isArray(args.requiredAttendees)
         ? args.requiredAttendees.map(String).filter(Boolean)
@@ -2988,7 +2920,7 @@ export async function registerOutlookTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveOutlookAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const eventId = str(args.eventId);
       if (!eventId) return errText('eventId is required');
