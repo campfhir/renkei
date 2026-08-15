@@ -59,6 +59,7 @@ import { registerSharePointTools } from './index';
 import { registerOneDriveTools } from '../onedrive';
 import { sharepointScopeFor } from './scopes';
 import { onedriveScopeFor } from '../onedrive/scopes';
+import { oauthGraphAuth, type GraphAuth } from '../graph/graph-auth';
 import type { MCPToolContext } from '../common';
 
 type Handler = (args: Record<string, unknown>) => Promise<{ content: { text: string }[] }>;
@@ -106,7 +107,7 @@ const context = (): MCPToolContext =>
   }) as unknown as MCPToolContext;
 
 async function toolsOf(
-  register: (server: McpServer, context: MCPToolContext) => Promise<void>
+  register: (server: McpServer, context: MCPToolContext, auth: GraphAuth) => Promise<void>
 ): Promise<Map<string, Handler>> {
   const registered = new Map<string, Handler>();
   const server = {
@@ -114,7 +115,12 @@ async function toolsOf(
       registered.set(name, handler);
     },
   } as unknown as McpServer;
-  await register(server, context());
+  const ctx = context();
+  // oauthGraphAuth, not a stub: this file already mocks provider-grants/
+  // crypto/db/microsoft-app to make resolveGraphAccess resolve deterministically
+  // (see the top of this file), so the real auth wrapper is exactly what those
+  // mocks were already built to exercise.
+  await register(server, ctx, oauthGraphAuth(ctx));
   return registered;
 }
 

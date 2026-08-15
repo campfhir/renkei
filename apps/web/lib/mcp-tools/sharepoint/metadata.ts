@@ -18,17 +18,9 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
+import type { GraphAuth } from '../graph/graph-auth';
 import { withPresentationHint } from '../common';
-import {
-  resolveGraphAccess,
-  graphGet,
-  graphPatch,
-  values,
-  str,
-  rec,
-  textResult,
-  errText,
-} from '../graph/client';
+import { graphGet, graphPatch, values, str, rec, textResult, errText } from '../graph/client';
 import { resolveDriveItem, type ItemSelector } from '../graph/resolve';
 
 function selectorOf(args: Record<string, unknown>): ItemSelector {
@@ -69,7 +61,11 @@ function columnType(column: Record<string, unknown>): string {
   return 'unknown';
 }
 
-export function registerMetadataTools(server: McpServer, context: MCPToolContext): void {
+export function registerMetadataTools(
+  server: McpServer,
+  context: MCPToolContext,
+  auth: GraphAuth
+): void {
   server.registerTool(
     'sharepoint_list_columns',
     {
@@ -86,7 +82,7 @@ export function registerMetadataTools(server: McpServer, context: MCPToolContext
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       let driveId = str(args.driveId);
@@ -143,7 +139,7 @@ export function registerMetadataTools(server: McpServer, context: MCPToolContext
       inputSchema: z.object(selectorFields),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const resolved = await resolveDriveItem(context, access.accessToken, selectorOf(args));
@@ -191,7 +187,7 @@ export function registerMetadataTools(server: McpServer, context: MCPToolContext
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const fields = rec(args.fields);

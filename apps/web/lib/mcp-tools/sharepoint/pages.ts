@@ -26,10 +26,10 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
+import type { GraphAuth } from '../graph/graph-auth';
 import { withPresentationHint } from '../common';
 import { htmlToDocumentText } from '@renkei/document-text';
 import {
-  resolveGraphAccess,
   graphGet,
   graphPost,
   graphPatch,
@@ -122,7 +122,11 @@ async function publishPage(
   return published.ok ? null : published.error;
 }
 
-export function registerPageTools(server: McpServer, context: MCPToolContext): void {
+export function registerPageTools(
+  server: McpServer,
+  context: MCPToolContext,
+  auth: GraphAuth
+): void {
   server.registerTool(
     'sharepoint_list_pages',
     {
@@ -135,7 +139,7 @@ export function registerPageTools(server: McpServer, context: MCPToolContext): v
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const resolved = await resolveSite(context, access.accessToken, String(args.site));
@@ -182,7 +186,7 @@ export function registerPageTools(server: McpServer, context: MCPToolContext): v
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const resolved = await resolveSite(context, access.accessToken, String(args.site));
@@ -234,7 +238,7 @@ export function registerPageTools(server: McpServer, context: MCPToolContext): v
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const resolved = await resolveSite(context, access.accessToken, String(args.site));
@@ -300,7 +304,7 @@ export function registerPageTools(server: McpServer, context: MCPToolContext): v
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       if (!str(args.title) && !str(args.contentHtml)) {
         return errText('Give a title, contentHtml, or both.');
@@ -351,7 +355,7 @@ export function registerPageTools(server: McpServer, context: MCPToolContext): v
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const resolved = await resolveSite(context, access.accessToken, String(args.site));
@@ -379,7 +383,7 @@ export function registerPageTools(server: McpServer, context: MCPToolContext): v
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const resolved = await resolveSite(context, access.accessToken, String(args.site));

@@ -12,9 +12,9 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
+import type { GraphAuth } from './graph-auth';
 import { withPresentationHint } from '../common';
 import {
-  resolveGraphAccess,
   graphGet,
   graphPost,
   graphPatch,
@@ -119,6 +119,7 @@ async function defaultDriveFor(
 export function registerDocumentTools(
   server: McpServer,
   context: MCPToolContext,
+  auth: GraphAuth,
   options: NamespaceOptions
 ): void {
   const { prefix, title } = options;
@@ -138,7 +139,7 @@ export function registerDocumentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -181,7 +182,7 @@ export function registerDocumentTools(
       inputSchema: z.object(selector),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -238,7 +239,7 @@ export function registerDocumentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -346,7 +347,7 @@ export function registerDocumentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       let driveId = str(args.driveId);
@@ -405,7 +406,7 @@ export function registerDocumentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -447,7 +448,7 @@ export function registerDocumentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -487,7 +488,7 @@ export function registerDocumentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -553,7 +554,7 @@ export function registerDocumentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -603,7 +604,7 @@ export function registerDocumentTools(
       inputSchema: z.object(selector),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -649,7 +650,7 @@ export function registerDocumentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -705,7 +706,7 @@ export function registerDocumentTools(
       inputSchema: z.object(selector),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -756,7 +757,7 @@ export function registerDocumentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -801,7 +802,7 @@ export function registerDocumentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
@@ -848,7 +849,7 @@ export function registerDocumentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 

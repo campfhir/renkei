@@ -30,6 +30,7 @@ import { oauthWebexAuth } from '@/lib/mcp-tools/webex/webex-auth';
 import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/outlook';
 import { registerSharePointTools, SHAREPOINT_MCP_CONNECTOR } from '@/lib/mcp-tools/sharepoint';
 import { registerOneDriveTools, ONEDRIVE_MCP_CONNECTOR } from '@/lib/mcp-tools/onedrive';
+import { oauthGraphAuth } from '@/lib/mcp-tools/graph/graph-auth';
 import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
 import { oauthZoomAuth } from '@/lib/mcp-tools/zoom/zoom-auth';
 import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
@@ -306,16 +307,22 @@ export async function registerRenkeiTools(
     summaryProviders
   );
 
+  // Production's one path for both: the caller's own Microsoft grant, one
+  // instance shared since SharePoint and OneDrive both close over the same
+  // context. Same reasoning as WebEx/Zoom above — see graph/graph-auth.ts.
+  const graphAuth = oauthGraphAuth(context);
   if (sharepointAvailable) {
     await registerSharePointTools(
       withCapabilityGate(server, projection, SHAREPOINT_MCP_CONNECTOR),
-      context
+      context,
+      graphAuth
     );
   }
   if (onedriveAvailable) {
     await registerOneDriveTools(
       withCapabilityGate(server, projection, ONEDRIVE_MCP_CONNECTOR),
-      context
+      context,
+      graphAuth
     );
   }
   if (zoomAvailable) {

@@ -22,19 +22,16 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
+import type { GraphAuth } from '../graph/graph-auth';
 import { withPresentationHint } from '../common';
-import {
-  resolveGraphAccess,
-  graphGet,
-  values,
-  str,
-  num,
-  textResult,
-  errText,
-} from '../graph/client';
+import { graphGet, values, str, num, textResult, errText } from '../graph/client';
 import { resolveSite } from '../graph/resolve';
 
-export function registerSiteTools(server: McpServer, context: MCPToolContext): void {
+export function registerSiteTools(
+  server: McpServer,
+  context: MCPToolContext,
+  auth: GraphAuth
+): void {
   server.registerTool(
     'sharepoint_find_sites',
     {
@@ -49,7 +46,7 @@ export function registerSiteTools(server: McpServer, context: MCPToolContext): v
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const max = num(args.max) ?? 20;
@@ -90,7 +87,7 @@ export function registerSiteTools(server: McpServer, context: MCPToolContext): v
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const resolved = await resolveSite(context, access.accessToken, String(args.site));
@@ -132,7 +129,7 @@ export function registerSiteTools(server: McpServer, context: MCPToolContext): v
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const resolved = await resolveSite(context, access.accessToken, String(args.site));

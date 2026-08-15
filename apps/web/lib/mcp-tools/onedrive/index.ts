@@ -17,17 +17,8 @@ import type { MCPToolContext } from '../common';
 import { withPresentationHint } from '../common';
 import { withScopeGate } from '../capability-gate';
 import { registerDocumentTools } from '../graph/documents';
-import {
-  resolveGraphAccess,
-  graphGet,
-  values,
-  str,
-  num,
-  rec,
-  textResult,
-  errText,
-  byteSize,
-} from '../graph/client';
+import type { GraphAuth } from '../graph/graph-auth';
+import { graphGet, values, str, num, rec, textResult, errText, byteSize } from '../graph/client';
 import { onedriveScopeFor } from './scopes';
 
 export const ONEDRIVE_MCP_CONNECTOR = 'onedrive';
@@ -44,7 +35,8 @@ function fileLine(entry: Record<string, unknown>): string {
 
 export async function registerOneDriveTools(
   rawServer: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: GraphAuth
 ): Promise<void> {
   const server = withScopeGate(rawServer, context.graphScopes, (name) => onedriveScopeFor(name));
 
@@ -61,7 +53,7 @@ export async function registerOneDriveTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const max = num(args.max) ?? 25;
@@ -92,7 +84,7 @@ export async function registerOneDriveTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
 
       const shared = await graphGet(context, access.accessToken, '/me/drive/sharedWithMe');
@@ -119,7 +111,7 @@ export async function registerOneDriveTools(
     }
   );
 
-  registerDocumentTools(server, context, {
+  registerDocumentTools(server, context, auth, {
     prefix: 'onedrive',
     title: 'OneDrive',
     // Unlike SharePoint, "the drive" is unambiguous here, so every selector

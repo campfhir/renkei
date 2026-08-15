@@ -19,14 +19,19 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { withPresentationHint } from '../common';
 import { upsertWatch, disableWatch, listWatches, watchLine } from '../content-watches';
-import { resolveGraphAccess, str, textResult, errText } from '../graph/client';
+import { str, textResult, errText } from '../graph/client';
+import type { GraphAuth } from '../graph/graph-auth';
 import { resolveLibrary, resolveSite } from '../graph/resolve';
 
 const SAFETY =
   'Indexing runs under your own access, and every result is re-checked against the reader’s ' +
   'live permissions when it is read — so watching a library never widens what anyone can see.';
 
-export function registerWatchTools(server: McpServer, context: MCPToolContext): void {
+export function registerWatchTools(
+  server: McpServer,
+  context: MCPToolContext,
+  auth: GraphAuth
+): void {
   server.registerTool(
     'sharepoint_watch_library',
     {
@@ -42,7 +47,7 @@ export function registerWatchTools(server: McpServer, context: MCPToolContext): 
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       if (!context.subject || !context.accountId) {
         return errText('No signed-in Microsoft identity on this request.');
@@ -89,7 +94,7 @@ export function registerWatchTools(server: McpServer, context: MCPToolContext): 
       }),
     },
     async (args: Record<string, unknown>) => {
-      const access = await resolveGraphAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       if (!context.subject || !context.accountId) {
         return errText('No signed-in Microsoft identity on this request.');
