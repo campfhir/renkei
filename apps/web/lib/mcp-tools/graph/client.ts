@@ -19,7 +19,22 @@ import { getGrant, refreshGrantTokens, MICROSOFT, MicrosoftAdapter } from '@renk
 import { getDatabase } from '@renkei/db';
 import { getMicrosoftApp } from '@/lib/microsoft-app';
 import { logger, secure } from '@/lib/logger';
-import type { MCPToolContext } from '../common';
+/**
+ * All these calls need of their caller.
+ *
+ * Narrower than MCPToolContext, which an MCPToolContext satisfies
+ * structurally, so the tools pass themselves unchanged — and a plain web
+ * route can call Graph without inventing an Atlassian access token, a cloud
+ * id and a JQL limit it has no use for. The connectors page manages the same
+ * watches the MCP tools do, so it needs the same client, not a second one.
+ */
+export interface GraphCallContext {
+  tenantId: string;
+  /** The caller's OIDC subject — whose grant is used. */
+  subject?: string;
+  /** Public origin, for rebuilding the Microsoft app config on refresh. */
+  origin?: string;
+}
 
 /** Refresh inside this window of expiry rather than risking a 401 mid-call. */
 const REFRESH_MARGIN_MS = 2 * 60 * 1000;
@@ -27,6 +42,13 @@ const REFRESH_MARGIN_MS = 2 * 60 * 1000;
 export interface GraphAccess {
   accessToken: string;
   upn: string | null;
+  /**
+   * The Microsoft account whose grant this token came from. A content watch
+   * records it so the worker knows which grant to poll with, and getting it
+   * from the same lookup that produced the token is what keeps the two from
+   * disagreeing.
+   */
+  accountId: string;
 }
 
 export type GraphResult =
@@ -54,7 +76,7 @@ function truncateForLog(text: string): string {
  * The calling user's Graph token. Returns a human-readable string on failure
  * so a handler can hand it straight back to the model.
  */
-export async function resolveGraphAccess(context: MCPToolContext): Promise<GraphAccess | string> {
+export async function resolveGraphAccess(context: GraphCallContext): Promise<GraphAccess | string> {
   if (!context.subject) return 'No signed-in identity on this request.';
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) return 'Token encryption is not configured on this deployment.';
@@ -112,11 +134,12 @@ export async function resolveGraphAccess(context: MCPToolContext): Promise<Graph
   return {
     accessToken: grant.accessToken,
     upn: typeof grant.metadata.upn === 'string' ? grant.metadata.upn : null,
+    accountId: row.provider_account_id,
   };
 }
 
 async function graphCall(
-  context: MCPToolContext,
+  context: GraphCallContext,
   accessToken: string,
   method: string,
   pathAndQuery: string,
@@ -175,14 +198,14 @@ async function graphCall(
 }
 
 export const graphGet = (
-  context: MCPToolContext,
+  context: GraphCallContext,
   token: string,
   path: string,
   headers?: Record<string, string>
 ): Promise<GraphResult> => graphCall(context, token, 'GET', path, undefined, headers);
 
 export const graphPost = (
-  context: MCPToolContext,
+  context: GraphCallContext,
   token: string,
   path: string,
   json: unknown,
@@ -190,28 +213,28 @@ export const graphPost = (
 ): Promise<GraphResult> => graphCall(context, token, 'POST', path, json, headers);
 
 export const graphPatch = (
-  context: MCPToolContext,
+  context: GraphCallContext,
   token: string,
   path: string,
   json: unknown
 ): Promise<GraphResult> => graphCall(context, token, 'PATCH', path, json);
 
 export const graphPut = (
-  context: MCPToolContext,
+  context: GraphCallContext,
   token: string,
   path: string,
   json: unknown
 ): Promise<GraphResult> => graphCall(context, token, 'PUT', path, json);
 
 export const graphDelete = (
-  context: MCPToolContext,
+  context: GraphCallContext,
   token: string,
   path: string
 ): Promise<GraphResult> => graphCall(context, token, 'DELETE', path);
 
 /** Upload raw bytes; Graph wants the body unwrapped, not JSON. */
 export async function graphPutContent(
-  context: MCPToolContext,
+  context: GraphCallContext,
   accessToken: string,
   pathAndQuery: string,
   bytes: Uint8Array,

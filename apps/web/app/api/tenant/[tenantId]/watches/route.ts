@@ -22,20 +22,26 @@ import {
   type AtlassianUserProvider,
 } from '@/lib/atlassian-user-access';
 import { upsertWatch, disableWatch, listWatches } from '@/lib/mcp-tools/content-watches';
+import { resolveGraphAccess, graphGet, values, str as gstr } from '@/lib/mcp-tools/graph/client';
+import { resolveSite } from '@/lib/mcp-tools/graph/resolve';
 
-type WatchProvider = 'jira' | 'confluence';
+type WatchProvider = 'jira' | 'confluence' | 'sharepoint';
+type AtlassianWatchProvider = 'jira' | 'confluence';
 
 function isWatchProvider(value: unknown): value is WatchProvider {
-  return value === 'jira' || value === 'confluence';
+  return value === 'jira' || value === 'confluence' || value === 'sharepoint';
 }
 
-function grantProviderFor(provider: WatchProvider): AtlassianUserProvider {
+function grantProviderFor(provider: AtlassianWatchProvider): AtlassianUserProvider {
   return provider === 'jira' ? ATLASSIAN : ATLASSIAN_CONFLUENCE;
 }
 
-const SCOPE_TYPE: Record<WatchProvider, 'project' | 'space'> = {
+const SCOPE_TYPE: Record<WatchProvider, 'project' | 'space' | 'drive'> = {
   jira: 'project',
   confluence: 'space',
+  // A SharePoint document library and a personal OneDrive are the same thing
+  // to Graph, and scope_key is the driveId for both.
+  sharepoint: 'drive',
 };
 
 /** GET — the caller's watches for one provider. */
@@ -49,7 +55,10 @@ export async function GET(
 
   const provider = request.nextUrl.searchParams.get('provider');
   if (!isWatchProvider(provider)) {
-    return NextResponse.json({ error: 'provider must be jira or confluence' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'provider must be jira, confluence or sharepoint' },
+      { status: 400 }
+    );
   }
 
   const result = await listWatches({ tenantId, subject: session.subject, accountId: '' }, provider);
@@ -82,6 +91,14 @@ export async function POST(
   const originResult = await getOrigin(request);
   if (!originResult.ok)
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+
+  if (provider === 'sharepoint') {
+    return watchLibrary(
+      { tenantId, subject: session.subject, origin: originResult.val },
+      str(rec(body).site).trim(),
+      scopeKey
+    );
+  }
 
   const access = await resolveAtlassianUserAccess(
     tenantId,
@@ -131,6 +148,65 @@ export async function DELETE(
 }
 
 /**
+ * Start watching a SharePoint document library.
+ *
+ * The library is named by (site, driveId) rather than by driveId alone, and
+ * the pair is checked against each other: the drive has to be one the SITE
+ * actually lists. That is what makes the call self-validating — it proves the
+ * caller can see the site, proves the drive is really one of its libraries,
+ * and yields both display names in the one round trip, so the label matches
+ * the "Site / Library" form sharepoint_watch_library writes. A bare driveId
+ * would be accepted on faith and stored with no label at all.
+ */
+async function watchLibrary(
+  owner: { tenantId: string; subject: string; origin: string },
+  site: string,
+  driveId: string
+): Promise<NextResponse> {
+  if (!site) {
+    return NextResponse.json(
+      { error: 'A site is required to watch a SharePoint library.' },
+      { status: 400 }
+    );
+  }
+
+  const context = { tenantId: owner.tenantId, subject: owner.subject, origin: owner.origin };
+  const access = await resolveGraphAccess(context);
+  if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
+
+  const resolvedSite = await resolveSite(context, access.accessToken, site);
+  if (!resolvedSite.ok) {
+    return NextResponse.json({ error: resolvedSite.error }, { status: 400 });
+  }
+
+  const drives = await graphGet(
+    context,
+    access.accessToken,
+    `/sites/${resolvedSite.siteId}/drives?$select=id,name`
+  );
+  if (!drives.ok) return NextResponse.json({ error: drives.error }, { status: 400 });
+
+  const library = values(drives.body).find((drive) => gstr(drive.id) === driveId);
+  if (!library) {
+    return NextResponse.json(
+      { error: 'That library is not one this site lists, or you cannot see it.' },
+      { status: 400 }
+    );
+  }
+
+  const label = `${resolvedSite.name} / ${gstr(library.name)}`;
+  const result = await upsertWatch(
+    { tenantId: owner.tenantId, subject: owner.subject, accountId: access.accountId },
+    'sharepoint',
+    'drive',
+    driveId,
+    label
+  );
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });
+  return NextResponse.json({ created: result.created, scopeKey: driveId, label });
+}
+
+/**
  * Confirm the caller can see this scope, and get its label.
  *
  * Jira validates through the search endpoint rather than the project
@@ -139,7 +215,7 @@ export async function DELETE(
  * the wrong one rejects projects the sync would read fine.
  */
 async function resolveScope(
-  provider: WatchProvider,
+  provider: AtlassianWatchProvider,
   access: { accessToken: string; cloudId: string },
   scopeKey: string
 ): Promise<{ ok: true; key: string; label: string } | { ok: false; error: string }> {

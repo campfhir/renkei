@@ -1,9 +1,16 @@
 /**
- * The projects and spaces a user could watch, for the picker.
+ * The projects, spaces and libraries a user could watch, for the picker.
  *
  * A free-text key field would be the smaller change, but it puts the user
  * back where the assistant was: guessing keys and reading provider errors.
  * Listing what they can actually see makes the choice self-validating.
+ *
+ * SharePoint is the one provider that cannot be listed in a single step.
+ * Graph has no "every site I can reach" call — /sites needs a search term —
+ * and a tenant's libraries are not a flat set worth enumerating even if it
+ * did. So it answers in two: sites for a query (or the ones the user
+ * follows, which is the closest thing to a useful default), then the
+ * libraries on the chosen site.
  *
  * Deliberately not cached: which projects a person can see is exactly the
  * kind of thing that changes without Renkei being told.
@@ -15,12 +22,14 @@ import { atlassianFetch, listOf, str } from '@renkei/connector-atlassian';
 import { getSessionFromRequest } from '@/lib/session';
 import { getOrigin } from '@/lib/get-origin';
 import { resolveAtlassianUserAccess } from '@/lib/atlassian-user-access';
+import { resolveGraphAccess, graphGet, values, str as gstr } from '@/lib/mcp-tools/graph/client';
+import { resolveSite } from '@/lib/mcp-tools/graph/resolve';
 
 export interface WatchOption {
-  /** What gets stored as scope_key — a project key, or a space id. */
+  /** What gets stored as scope_key — a project key, a space id, or a driveId. */
   key: string;
   label: string;
-  /** Shown beside the label: project type, or space key. */
+  /** Shown beside the label: project type, space key, or library web URL. */
   hint: string;
 }
 
@@ -33,13 +42,24 @@ export async function GET(
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const provider = request.nextUrl.searchParams.get('provider');
-  if (provider !== 'jira' && provider !== 'confluence') {
-    return NextResponse.json({ error: 'provider must be jira or confluence' }, { status: 400 });
+  if (provider !== 'jira' && provider !== 'confluence' && provider !== 'sharepoint') {
+    return NextResponse.json(
+      { error: 'provider must be jira, confluence or sharepoint' },
+      { status: 400 }
+    );
   }
 
   const originResult = await getOrigin(request);
   if (!originResult.ok)
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+
+  if (provider === 'sharepoint') {
+    return sharePointOptions(
+      { tenantId, subject: session.subject, origin: originResult.val },
+      request.nextUrl.searchParams.get('site')?.trim() ?? '',
+      request.nextUrl.searchParams.get('q')?.trim() ?? ''
+    );
+  }
 
   const access = await resolveAtlassianUserAccess(
     tenantId,
@@ -94,4 +114,58 @@ export async function GET(
     hint: str(space.key),
   }));
   return NextResponse.json({ options });
+}
+
+/**
+ * SharePoint, in two steps.
+ *
+ * With `site`, the answer is that site's document libraries, keyed by
+ * driveId — which is what a watch stores. Without it, the answer is sites:
+ * a search when the user typed something, and otherwise the sites they
+ * follow, so the picker opens with something in it rather than an empty box
+ * demanding a query.
+ *
+ * Sites come back under `sites` rather than `options` so a caller cannot
+ * mistake one for the other and POST a siteId as a scope key.
+ */
+async function sharePointOptions(
+  owner: { tenantId: string; subject: string; origin: string },
+  site: string,
+  query: string
+): Promise<NextResponse> {
+  const context = { tenantId: owner.tenantId, subject: owner.subject, origin: owner.origin };
+  const access = await resolveGraphAccess(context);
+  if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
+
+  if (site) {
+    const resolved = await resolveSite(context, access.accessToken, site);
+    if (!resolved.ok) return NextResponse.json({ error: resolved.error }, { status: 400 });
+
+    const drives = await graphGet(
+      context,
+      access.accessToken,
+      `/sites/${resolved.siteId}/drives?$select=id,name,webUrl,driveType`
+    );
+    if (!drives.ok) return NextResponse.json({ error: drives.error }, { status: 400 });
+
+    const options: WatchOption[] = values(drives.body).map((drive) => ({
+      key: gstr(drive.id),
+      label: gstr(drive.name),
+      hint: gstr(drive.webUrl),
+    }));
+    return NextResponse.json({ options, siteId: resolved.siteId, siteName: resolved.name });
+  }
+
+  const path = query
+    ? `/sites?search=${encodeURIComponent(query)}&$top=25&$select=id,displayName,webUrl`
+    : '/me/followedSites?$select=id,displayName,webUrl';
+  const found = await graphGet(context, access.accessToken, path);
+  if (!found.ok) return NextResponse.json({ error: found.error }, { status: 400 });
+
+  const sites = values(found.body).map((entry) => ({
+    id: gstr(entry.id),
+    name: gstr(entry.displayName),
+    webUrl: gstr(entry.webUrl),
+  }));
+  return NextResponse.json({ sites });
 }

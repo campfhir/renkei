@@ -2,16 +2,20 @@
  * Rebuild one watch from scratch: drop what Renkei has indexed for that
  * scope and reset the cursor so the next sweep re-reads the whole thing.
  *
- * To be unambiguous, because the word "delete" near a Jira project is
- * alarming: this deletes ROWS IN knowledge_chunks — Renkei's own indexed
- * copy. It issues no write of any kind to Jira or Confluence, and the only
- * Atlassian calls the rebuild makes afterwards are reads.
+ * To be unambiguous, because the word "delete" near a Jira project or a
+ * document library is alarming: this deletes ROWS IN knowledge_chunks —
+ * Renkei's own indexed copy. It issues no write of any kind to Jira,
+ * Confluence or SharePoint, and the only provider calls the rebuild makes
+ * afterwards are reads. No document is touched.
  *
  * The purge is what makes this a rebuild rather than a top-up. Re-reading
- * with the cursor cleared re-ingests everything currently in the project or
- * space, but issues deleted at the source, pages moved out of a watched
- * space, and content indexed under a since-changed extraction would all
- * survive untouched — the index would only ever grow.
+ * with the cursor cleared re-ingests everything currently in the project,
+ * space or library, but issues deleted at the source, pages moved out of a
+ * watched space, and content indexed under a since-changed extraction would
+ * all survive untouched — the index would only ever grow. For SharePoint
+ * that last case is the whole point right now: documents indexed while PDF
+ * extraction was broken are sitting there as filename-only entries, and only
+ * a rebuild re-reads them.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -25,6 +29,25 @@ import { getSessionFromRequest } from '@/lib/session';
 const SCOPE_METADATA_KEY: Record<string, string> = {
   jira: 'project',
   confluence: 'spaceId',
+  sharepoint: 'scopeKey',
+};
+
+/**
+ * The queued work a rebuild has to discard, per provider.
+ *
+ * Both halves of this differ for SharePoint, and getting either wrong leaves
+ * the rebuild half-done in a way that looks like success. Jira and Confluence
+ * enqueue `ingest.object` messages carrying the extracted content, with the
+ * scope under `metadata`. SharePoint enqueues `ingest.document` — an
+ * IDENTIFIER, because the bytes are re-downloaded later — and its scope key
+ * sits at the top level of the payload, not under `metadata`. Matching on
+ * ['metadata','scopeKey'] would find nothing, report zero discarded, and let
+ * the backlog quietly rebuild everything that was just purged.
+ */
+const QUEUED_WORK: Record<string, { type: string; scopePath: string[] }> = {
+  jira: { type: 'ingest.object', scopePath: ['metadata', 'project'] },
+  confluence: { type: 'ingest.object', scopePath: ['metadata', 'spaceId'] },
+  sharepoint: { type: 'ingest.document', scopePath: ['scopeKey'] },
 };
 
 export async function POST(
@@ -39,7 +62,8 @@ export async function POST(
   const provider = typeof body?.provider === 'string' ? body.provider : '';
   const scopeKey = typeof body?.scopeKey === 'string' ? body.scopeKey.trim() : '';
   const metadataKey = SCOPE_METADATA_KEY[provider];
-  if (!metadataKey || !scopeKey) {
+  const queued = QUEUED_WORK[provider];
+  if (!metadataKey || !queued || !scopeKey) {
     return NextResponse.json({ error: 'provider and scopeKey are required' }, { status: 400 });
   }
 
@@ -76,9 +100,9 @@ export async function POST(
   //
   // Discarding costs nothing that is not reproducible: the sweep re-reads the
   // whole scope from the provider anyway, which is the point of the rebuild.
-  const discarded = await embeddingJobsQueue().purger.discardPending(tenantId, 'ingest.object', [
+  const discarded = await embeddingJobsQueue().purger.discardPending(tenantId, queued.type, [
     { path: ['provider'], value: provider },
-    { path: ['metadata', metadataKey], value: scopeKey },
+    { path: queued.scopePath, value: scopeKey },
   ]);
   if (!discarded.ok) {
     return NextResponse.json(

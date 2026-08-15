@@ -18,8 +18,7 @@
  * surface as SharePoint, so both namespaces share one code path.
  */
 
-import { graphGet, str, rec, type GraphResult } from './client';
-import type { MCPToolContext } from '../common';
+import { graphGet, str, rec, type GraphResult, type GraphCallContext } from './client';
 
 export interface DriveItemRef {
   driveId: string;
@@ -69,7 +68,7 @@ function itemFrom(body: Record<string, unknown>, fallbackDriveId?: string): Driv
  * because that is what they have.
  */
 export async function resolveSite(
-  context: MCPToolContext,
+  context: GraphCallContext,
   token: string,
   site: string
 ): Promise<{ ok: true; siteId: string; name: string } | { ok: false; error: string }> {
@@ -104,7 +103,7 @@ export async function resolveSite(
 
 /** A site's document library by name, or its default library when unnamed. */
 export async function resolveLibrary(
-  context: MCPToolContext,
+  context: GraphCallContext,
   token: string,
   site: string,
   library?: string
@@ -143,7 +142,7 @@ export async function resolveLibrary(
 
 /** The caller's own OneDrive id, resolved once so both namespaces share a code path. */
 export async function resolveMyDriveId(
-  context: MCPToolContext,
+  context: GraphCallContext,
   token: string
 ): Promise<{ ok: true; driveId: string } | { ok: false; error: string }> {
   const result = await graphGet(context, token, '/me/drive?$select=id');
@@ -160,7 +159,7 @@ export async function resolveMyDriveId(
  * tools resolve /me/drive once and pass it in.
  */
 export async function resolveDriveItem(
-  context: MCPToolContext,
+  context: GraphCallContext,
   token: string,
   selector: ItemSelector,
   defaultDriveId?: string
