@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" role="img" aria-label="Enterprise directory">
+  <title>Enterprise directory</title>
+  <!--
+    Ours, not a vendor mark.
+
+    Every other file here is a third-party logo with a provenance row in the
+    README. This one is original artwork for a grouping WE named: the
+    "Enterprise directory" panel covers tenant-wide people and group lookups,
+    which is a Renkei-side bundle of Graph scopes rather than a Microsoft
+    product with a logo of its own.
+
+    Microsoft's own mark would have been the obvious pick and is the one thing
+    it cannot be — the Microsoft 365 card containing this panel already wears
+    it, so reusing it makes the panel read as a duplicate of its parent.
+
+    Drawn on the same 48-unit grid as the Atlassian marks, in the blues of the
+    Microsoft product logos it sits beside, with no background tile: these
+    render inline next to a label, and every other asset here is a bare mark.
+  -->
+  <g fill="#50B0E8">
+    <circle cx="9.5" cy="20.5" r="5" />
+    <path d="M2 39.5V36a7.5 7.5 0 0 1 15 0v3.5Z" />
+    <circle cx="38.5" cy="20.5" r="5" />
+    <path d="M31 39.5V36a7.5 7.5 0 0 1 15 0v3.5Z" />
+  </g>
+  <g fill="#0F6CBD">
+    <circle cx="24" cy="15.5" r="7" />
+    <path d="M13 39.5v-3a11 11 0 0 1 22 0v3Z" />
+  </g>
+</svg>

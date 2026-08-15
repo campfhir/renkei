@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { resolveLogoFile, GLYPH_ONLY } from '@/lib/connector-logos';
 
 /**
  * A small mark per connector, so a page of eight cards can be scanned rather
@@ -34,8 +35,17 @@ interface IconProps {
 
 const BRAND: Record<string, string> = {
   jira: '#2684FF',
-  'atlassian-confluence': '#1868DB',
-  microsoft: '#0F6CBD',
+  // Amber, not Jira's blue: the shipped mark is black-on-amber, and a
+  // fallback that changes colour is a fallback nobody recognises as the same
+  // product.
+  'jira-jsm': '#FFAB00',
+  confluence: '#1868DB',
+  atlassian: '#1868DB',
+  outlook: '#0F6CBD',
+  microsoft: '#5E5E5E',
+  // Neutral on purpose: we ship no vendor mark for the directory, so claiming
+  // a brand colour for it would be inventing one.
+  directory: '#475569',
   sharepoint: '#038387',
   onedrive: '#0364B8',
   webex: '#00CF64',
@@ -63,10 +73,16 @@ function InitialGlyph({ label, color }: { label: string; color: string }) {
   );
 }
 
-function glyphFor(capabilityKey: string, label: string) {
-  const color = BRAND[capabilityKey] ?? '#6B7280';
+/**
+ * Keyed on the LOGO name, not the capability key: this draws a stand-in for
+ * the mark that failed to load, so it has to follow whichever mark that was.
+ * Outlook and the directory both sit on the 'microsoft' capability but are
+ * different pictures.
+ */
+function glyphFor(logo: string, label: string) {
+  const color = BRAND[logo] ?? '#6B7280';
 
-  switch (capabilityKey) {
+  switch (logo) {
     // Jira: stacked chevrons, echoing its arrow-through-diamond shape.
     case 'jira':
       return (
@@ -76,8 +92,20 @@ function glyphFor(capabilityKey: string, label: string) {
           <path d="M12 12l4 4-4 3-4-3z" fill="#fff" opacity="0.55" />
         </>
       );
+    // Service Management: a ring, for the on-call/alert rotation it covers.
+    // Distinct from Jira's chevrons because the two sit side by side.
+    case 'jira-jsm':
+      // Dark ink rather than the white every other glyph uses — white on
+      // amber is barely legible, and the real mark is dark-on-amber anyway.
+      return (
+        <>
+          <rect width="24" height="24" rx="5" fill={color} />
+          <circle cx="12" cy="12" r="5" stroke="#172B4D" strokeWidth="1.8" fill="none" />
+          <circle cx="12" cy="12" r="1.6" fill="#172B4D" />
+        </>
+      );
     // Confluence: two swept planes.
-    case 'atlassian-confluence':
+    case 'confluence':
       return (
         <>
           <rect width="24" height="24" rx="5" fill={color} />
@@ -85,13 +113,27 @@ function glyphFor(capabilityKey: string, label: string) {
           <path d="M20 9C16 4 12 4 4 8v-3c8-3 12-3 16 1z" fill="#fff" opacity="0.6" />
         </>
       );
-    // Outlook: an envelope.
-    case 'microsoft':
+    // Outlook: an envelope. NOT 'microsoft' — that key now carries the
+    // company mark, which has no honest abstraction (four coloured squares
+    // IS the logo), so it falls through to the lettered tile below.
+    case 'outlook':
       return (
         <>
           <rect width="24" height="24" rx="5" fill={color} />
           <path d="M5 8h14v9H5z" fill="#fff" opacity="0.95" />
           <path d="M5 8l7 5 7-5" stroke={color} strokeWidth="1.6" fill="none" />
+        </>
+      );
+    // Directory: three people. Shipped as a glyph rather than a vendor mark
+    // so it cannot be mistaken for the Microsoft card that contains it.
+    case 'directory':
+      return (
+        <>
+          <rect width="24" height="24" rx="5" fill={color} />
+          <circle cx="12" cy="9" r="2.6" fill="#fff" opacity="0.95" />
+          <circle cx="6.6" cy="11" r="1.9" fill="#fff" opacity="0.6" />
+          <circle cx="17.4" cy="11" r="1.9" fill="#fff" opacity="0.6" />
+          <path d="M7.5 18c.6-2.4 2.4-3.6 4.5-3.6s3.9 1.2 4.5 3.6z" fill="#fff" opacity="0.95" />
         </>
       );
     // SharePoint: linked sites.
@@ -166,22 +208,28 @@ function glyphFor(capabilityKey: string, label: string) {
 export default function ConnectorIcon({
   capabilityKey,
   label,
+  logo,
   size = 24,
   maxWidth,
   className,
-}: IconProps & { capabilityKey: string; label: string }) {
+}: IconProps & { capabilityKey: string; label: string; logo?: string }) {
   // Assume the official asset is present and step down on error, rather than
   // probing first: the common deployment has the logos, and a HEAD request
   // per icon to find out would cost more than the occasional fallback.
   const [logoMissing, setLogoMissing] = useState(false);
 
-  if (!logoMissing) {
+  const file = resolveLogoFile(capabilityKey, logo);
+
+  // Marks we knowingly do not ship go straight to the glyph. Letting them
+  // take the optimistic path would 404 on every render of every card, to
+  // arrive at the answer already known here.
+  if (!logoMissing && !GLYPH_ONLY.has(file)) {
     return (
       // Plain <img>, not next/image: these are tiny static SVGs already in
       // the bundle's public dir, so the optimizer has nothing to optimize and
       // would only add a loader hop.
       <img
-        src={`/connector-logos/${capabilityKey}.svg`}
+        src={`/connector-logos/${file}.svg`}
         alt=""
         height={size}
         // Height is fixed and WIDTH FOLLOWS the mark's own proportions,
@@ -210,7 +258,7 @@ export default function ConnectorIcon({
       aria-hidden="true"
       focusable="false"
     >
-      {glyphFor(capabilityKey, label)}
+      {glyphFor(file, label)}
     </svg>
   );
 }
