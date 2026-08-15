@@ -5,9 +5,7 @@ import { getDatabase } from '@renkei/db';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
-import JiraConnector from './jira-connector';
-import JsmConnector from './jsm-connector';
-import ConfluenceConnector from './confluence-connector';
+import AtlassianConnector from './atlassian-connector';
 import WebexUserConnector from './webex-user-connector';
 import MicrosoftConnector from './microsoft-connector';
 import ZoomConnector from './zoom-connector';
@@ -167,43 +165,42 @@ export default async function ConnectorsPage({
       </p>
 
       <div className="space-y-6">
-        {enabled.has('atlassian') ? (
-          <JiraConnector
-            tenantId={tenant.id}
-            ceiling={atlassianCeiling}
-            priorScopes={atlassianGrant?.requested_scopes ?? null}
-          />
-        ) : (
-          <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
-            <h2 className="flex items-center gap-2 font-semibold">
-              <ConnectorIcon capabilityKey="jira" label="Jira" size={20} />
-              Jira
-            </h2>
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              Not enabled for this organization. An org admin can set it up under Connector setup.
-            </p>
-          </div>
-        )}
-
-        {enabled.has('atlassian-jsm') && (
-          <JsmConnector
-            tenantId={tenant.id}
-            connected={jsmGrant !== undefined && jsmGrant !== null}
-            displayName={jsmGrant?.display_name ?? null}
-            ceiling={jsmCeiling}
-            priorScopes={jsmGrant?.requested_scopes ?? null}
-          />
-        )}
-
-        {enabled.has('atlassian-confluence') && (
-          <ConfluenceConnector
-            tenantId={tenant.id}
-            connected={confluenceGrant !== undefined && confluenceGrant !== null}
-            displayName={confluenceGrant?.display_name ?? null}
-            ceiling={confluenceCeiling}
-            priorScopes={confluenceGrant?.requested_scopes ?? null}
-          />
-        )}
+        {/*
+          One Atlassian card holding all three products. Each keeps its own
+          connect/disconnect controls — they are three separate OAuth apps
+          with three separate grants, unlike Microsoft's single consent.
+        */}
+        <AtlassianConnector
+          tenantId={tenant.id}
+          jira={
+            enabled.has('atlassian')
+              ? {
+                  ceiling: atlassianCeiling,
+                  priorScopes: atlassianGrant?.requested_scopes ?? null,
+                }
+              : undefined
+          }
+          jsm={
+            enabled.has('atlassian-jsm')
+              ? {
+                  connected: jsmGrant !== undefined && jsmGrant !== null,
+                  displayName: jsmGrant?.display_name ?? null,
+                  ceiling: jsmCeiling,
+                  priorScopes: jsmGrant?.requested_scopes ?? null,
+                }
+              : undefined
+          }
+          confluence={
+            enabled.has('atlassian-confluence')
+              ? {
+                  connected: confluenceGrant !== undefined && confluenceGrant !== null,
+                  displayName: confluenceGrant?.display_name ?? null,
+                  ceiling: confluenceCeiling,
+                  priorScopes: confluenceGrant?.requested_scopes ?? null,
+                }
+              : undefined
+          }
+        />
 
         {enabled.has('webex') && (
           <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">

@@ -1,6 +1,7 @@
 'use client';
 
 import ConnectorIcon from '@/components/connector-icon';
+import { ConnectorShell, ConnectorHeading } from './connector-shell';
 import { useEffect, useState } from 'react';
 import ScopePicker from '@/components/scope-picker';
 import AuthorizedPermissions from '@/components/authorized-permissions';
@@ -27,12 +28,20 @@ export default function JiraConnector({
   tenantId,
   ceiling,
   priorScopes,
+  nested = false,
 }: {
   tenantId: string;
   /** The org's allowed scopes — the most a user can grant. */
   ceiling: string[];
   /** Scopes on the user's previous grant, seeding the picker on reconnect. */
   priorScopes: string[] | null;
+  /**
+   * Rendered inside the Atlassian suite card rather than as a card of its
+   * own. Affects presentation only: these are three separate OAuth apps with
+   * three separate grants, so the connect and disconnect controls stay here,
+   * on the product they act on.
+   */
+  nested?: boolean;
 }) {
   // Only catalog options count as choices; required scopes (offline_access,
   // kms, people_read) ride along server-side and are not offered here. An
@@ -110,12 +119,12 @@ export default function JiraConnector({
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+    <ConnectorShell nested={nested}>
       <div className="flex items-center justify-between gap-4">
-        <h2 className="flex items-center gap-2 font-semibold">
+        <ConnectorHeading nested={nested}>
           <ConnectorIcon capabilityKey="jira" label="Jira" size={20} />
           Jira
-        </h2>
+        </ConnectorHeading>
         {status === null ? (
           <span className="text-sm text-gray-500">Checking…</span>
         ) : status.connected ? (
@@ -233,6 +242,6 @@ export default function JiraConnector({
         ))}
 
       {status?.connected && <WatchManager tenantId={tenantId} provider="jira" />}
-    </div>
+    </ConnectorShell>
   );
 }

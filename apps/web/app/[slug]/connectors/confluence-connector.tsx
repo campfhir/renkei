@@ -1,6 +1,7 @@
 'use client';
 
 import ConnectorIcon from '@/components/connector-icon';
+import { ConnectorShell, ConnectorHeading } from './connector-shell';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import ScopePicker from '@/components/scope-picker';
@@ -25,6 +26,7 @@ export default function ConfluenceConnector({
   displayName,
   ceiling,
   priorScopes,
+  nested = false,
 }: {
   tenantId: string;
   connected: boolean;
@@ -33,6 +35,13 @@ export default function ConfluenceConnector({
   ceiling: string[];
   /** Scopes on the user's previous grant, seeding the picker on reconnect. */
   priorScopes: string[] | null;
+  /**
+   * Rendered inside the Atlassian suite card rather than as a card of its
+   * own. Affects presentation only: these are three separate OAuth apps with
+   * three separate grants, so the connect and disconnect controls stay here,
+   * on the product they act on.
+   */
+  nested?: boolean;
 }) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
@@ -85,12 +94,12 @@ export default function ConfluenceConnector({
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+    <ConnectorShell nested={nested}>
       <div className="flex items-center justify-between gap-4">
-        <h2 className="flex items-center gap-2 font-semibold">
+        <ConnectorHeading nested={nested}>
           <ConnectorIcon capabilityKey="atlassian-confluence" label="Confluence" size={20} />
           Confluence
-        </h2>
+        </ConnectorHeading>
         {connected ? (
           <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800 dark:bg-green-900/40 dark:text-green-300">
             Connected
@@ -203,6 +212,6 @@ export default function ConfluenceConnector({
         ))}
 
       {connected && <WatchManager tenantId={tenantId} provider="confluence" />}
-    </div>
+    </ConnectorShell>
   );
 }

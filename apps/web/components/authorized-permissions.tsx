@@ -24,14 +24,39 @@ export default function AuthorizedPermissions({
   options,
   authorized,
   connectorLabel,
+  scoped = false,
+  emptyLabel,
+  changeHint,
   children,
 }: {
-  /** The full catalog for this connector. */
+  /** The catalog this card covers — the whole connector, or one product of it. */
   options: ScopeOption[];
   /** Scopes recorded on the user's grant. */
   authorized: readonly string[] | null;
   /** Name used in the instructions, e.g. "Microsoft 365". */
   connectorLabel: string;
+  /**
+   * True when `options` is only PART of the grant's catalog — one product
+   * card over a connector-wide grant, as Microsoft's four cards are.
+   *
+   * It suppresses the unaccounted-scope count, which is otherwise actively
+   * wrong here: that count assumes anything held but unexplained is a
+   * sign-in scope, which holds only when `options` can explain everything
+   * the grant carries. On a SharePoint card it would count the user's mail
+   * and calendar scopes as "sign-in permissions used to identify you" —
+   * confidently, and in the one place a person goes to audit what they gave
+   * away.
+   */
+  scoped?: boolean;
+  /** Replaces the "sign-in only" line when nothing here was granted. */
+  emptyLabel?: string;
+  /**
+   * Replaces the instruction above the picker. Needed when the approve
+   * control is NOT inside this block — Microsoft's product panels share one
+   * button at the foot of their container, so the default "approve again",
+   * with no button in view, would send the reader looking for one.
+   */
+  changeHint?: ReactNode;
   /** The picker and re-approve control, rendered under the divider. */
   children?: ReactNode;
 }) {
@@ -44,7 +69,7 @@ export default function AuthorizedPermissions({
   // or a capability granted before the catalog changed. Counted rather than
   // listed, since the raw strings mean nothing to the reader.
   const accountedFor = new Set(granted.flatMap((option) => option.scopes));
-  const signIn = [...held].filter((scope) => !accountedFor.has(scope)).length;
+  const signIn = scoped ? 0 : [...held].filter((scope) => !accountedFor.has(scope)).length;
 
   return (
     <details className="mt-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
@@ -66,7 +91,7 @@ export default function AuthorizedPermissions({
         <ul className="mt-3 space-y-2">
           {granted.length === 0 && (
             <li className="text-sm text-gray-600 dark:text-gray-400">
-              Sign-in only — no access to your data was granted.
+              {emptyLabel ?? 'Sign-in only — no access to your data was granted.'}
             </li>
           )}
           {granted.map((option) => (
@@ -89,9 +114,13 @@ export default function AuthorizedPermissions({
       {children && (
         <div className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-800">
           <p className="mb-3 text-xs text-gray-600 dark:text-gray-400">
-            To change these, adjust the list and approve again — {connectorLabel} will ask you to
-            confirm, exactly as it did the first time. You do not need to disconnect, and nothing
-            already indexed is removed.
+            {changeHint ?? (
+              <>
+                To change these, adjust the list and approve again — {connectorLabel} will ask you
+                to confirm, exactly as it did the first time. You do not need to disconnect, and
+                nothing already indexed is removed.
+              </>
+            )}
           </p>
           {children}
         </div>
