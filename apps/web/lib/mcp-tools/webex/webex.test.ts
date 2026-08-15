@@ -1,0 +1,200 @@
+/* eslint-disable @typescript-eslint/consistent-type-assertions */
+/**
+ * WebEx tools' own rendering and wizard logic, against a stub `WebexAuth` —
+ * uninterested in how auth works, which is webex-auth.test.ts's job. Mirrors
+ * jira-service-management/ops.test.ts's split.
+ */
+
+jest.mock('@/lib/logger', () => ({
+  logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+  secure: (value: unknown) => value,
+}));
+// webex_capture_message reaches around the auth abstraction for personEmail
+// (see index.ts's comment on why) — the only reason this file needs to know
+// resolveWebexAccess exists at all.
+jest.mock('./webex-auth', () => ({
+  resolveWebexAccess: jest.fn(async () => ({
+    accessToken: 'unused',
+    personEmail: 'alice@example.com',
+  })),
+}));
+jest.mock('@renkei/db', () => ({
+  getDatabase: () => ({
+    ok: true,
+    val: {
+      insertInto: () => ({
+        values: (row: unknown) => {
+          insertedRows.push(row);
+          return { execute: async () => undefined };
+        },
+      }),
+    },
+  }),
+}));
+
+const insertedRows: unknown[] = [];
+const mockCall = jest.fn();
+
+import type { McpServer } from '@modelcontextprotocol/server';
+import { registerWebexUserTools, webexScopeFor } from './index';
+import type { WebexAuth } from './webex-auth';
+import type { MCPToolContext } from '../common';
+
+type Handler = (args: Record<string, unknown>) => Promise<{
+  content: { text: string }[];
+  isError?: boolean;
+}>;
+
+function stubAuth(): WebexAuth {
+  return {
+    kind: 'oauth',
+    fetch: (_scopes, path, init) => mockCall(path, init),
+  };
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+const context = (): MCPToolContext =>
+  ({
+    tenantId: 'tenant-1',
+    subject: 'subject-1',
+  }) as unknown as MCPToolContext;
+
+async function toolsOf(auth: WebexAuth = stubAuth()): Promise<Map<string, Handler>> {
+  const registered = new Map<string, Handler>();
+  const server = {
+    registerTool: (name: string, _config: unknown, handler: Handler) => {
+      registered.set(name, handler);
+    },
+  } as unknown as McpServer;
+  await registerWebexUserTools(server, context(), auth);
+  return registered;
+}
+
+const textOf = (result: { content: { text: string }[] }): string => result.content[0]?.text ?? '';
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  insertedRows.length = 0;
+  mockCall.mockResolvedValue(jsonResponse({ items: [] }));
+});
+
+describe('webex_list_rooms', () => {
+  it('renders rooms with their ids', async () => {
+    mockCall.mockResolvedValue(
+      jsonResponse({
+        items: [{ id: 'room-1', title: 'Engineering', type: 'group', lastActivity: '2026-08-10' }],
+      })
+    );
+    const tools = await toolsOf();
+
+    const text = textOf(await tools.get('webex_list_rooms')!({}));
+
+    expect(text).toContain('Engineering');
+    expect(text).toContain('id: room-1');
+  });
+
+  it('asks with the exact scope webexScopeFor names for this tool', async () => {
+    const tools = await toolsOf();
+    await tools.get('webex_list_rooms')!({});
+
+    expect(mockCall).toHaveBeenCalledWith(expect.stringContaining('/rooms'), undefined);
+  });
+});
+
+describe('webex_send_message', () => {
+  it('refuses when neither roomId nor toPersonEmail is given', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_send_message')!({ markdown: 'hi' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('Provide roomId or toPersonEmail');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+
+  it('refuses when both roomId and toPersonEmail are given', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_send_message')!({
+      roomId: 'room-1',
+      toPersonEmail: 'bob@example.com',
+      markdown: 'hi',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('not both');
+  });
+
+  it('sends to a room, given only roomId', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ id: 'msg-9', roomId: 'room-1' }));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_send_message')!({ roomId: 'room-1', markdown: 'hi' });
+
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('msg-9');
+    const [, init] = mockCall.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toMatchObject({ roomId: 'room-1', markdown: 'hi' });
+  });
+});
+
+describe('webex_capture_message', () => {
+  it('records the WebEx account email as capturedBy, not the OIDC subject', async () => {
+    // resolveWebexAccess is stubbed to return alice@example.com — proving
+    // capture_message actually uses it rather than falling back to
+    // context.subject, which would silently lose the real identity.
+    mockCall.mockResolvedValue(
+      jsonResponse({
+        id: 'msg-1',
+        roomId: 'room-1',
+        personEmail: 'bob@example.com',
+        text: 'Ship it',
+      })
+    );
+    const tools = await toolsOf();
+
+    await tools.get('webex_capture_message')!({ messageId: 'msg-1' });
+
+    expect(insertedRows).toHaveLength(1);
+    const evidence = JSON.parse((insertedRows[0] as { evidence: string }).evidence);
+    expect(evidence.capturedBy).toBe('alice@example.com');
+  });
+
+  it('refuses to capture a message with no text', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ id: 'msg-1', roomId: 'room-1' }));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_capture_message')!({ messageId: 'msg-1' });
+
+    expect(result.isError).toBe(true);
+    expect(insertedRows).toHaveLength(0);
+  });
+});
+
+describe('a failed call', () => {
+  it('surfaces the API detail through errText, not a raw status', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ message: 'room not found' }, 404));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_list_messages')!({ roomId: 'room-1' });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('room not found');
+  });
+});
+
+describe('webexScopeFor', () => {
+  it('gives the write tool a write scope, not the default read one', () => {
+    expect(webexScopeFor('webex_send_message')).toEqual(['spark:messages_write']);
+  });
+
+  it('defaults everything else to message read', () => {
+    expect(webexScopeFor('webex_get_message')).toEqual(['spark:messages_read']);
+  });
+});

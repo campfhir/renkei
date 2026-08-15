@@ -13,7 +13,7 @@ jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,
 }));
-jest.mock('../webex', () => ({
+jest.mock('../webex/webex-auth', () => ({
   resolveWebexAccess: jest.fn(async () => ({
     accessToken: 'token',
     personEmail: 'alice@example.com',

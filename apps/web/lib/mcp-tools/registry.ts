@@ -26,6 +26,7 @@ import { registerAllTools } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
+import { oauthWebexAuth } from '@/lib/mcp-tools/webex/webex-auth';
 import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/outlook';
 import { registerSharePointTools, SHAREPOINT_MCP_CONNECTOR } from '@/lib/mcp-tools/sharepoint';
 import { registerOneDriveTools, ONEDRIVE_MCP_CONNECTOR } from '@/lib/mcp-tools/onedrive';
@@ -194,9 +195,13 @@ export async function registerRenkeiTools(
     context
   );
   if (webexAvailable) {
+    // Production's one path: the caller's own WebEx grant. Anything else (a
+    // future sandbox credential) is injected by whoever calls
+    // registerWebexUserTools directly — see webex.no-sandbox.test.ts.
     await registerWebexUserTools(
       withCapabilityGate(server, projection, WEBEX_USER_MCP_CONNECTOR),
-      context
+      context,
+      oauthWebexAuth(context)
     );
   }
   if (microsoftAvailable) {

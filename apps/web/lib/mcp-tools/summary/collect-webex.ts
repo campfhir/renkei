@@ -22,7 +22,7 @@
  * looking after ten rooms" are very different statements.
  */
 
-import { resolveWebexAccess } from '../webex';
+import { resolveWebexAccess } from '../webex/webex-auth';
 import type { MCPToolContext } from '../common';
 import {
   clip,

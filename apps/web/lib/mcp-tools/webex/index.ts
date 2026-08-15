@@ -5,197 +5,82 @@
  * bot. The bot sees what spaces invite it to see; these tools see what the
  * connected user can see, because every call runs with that user's token.
  *
- * Read-and-capture only: list rooms, read messages, turn one into an
- * actionable item. Nothing here posts to WebEx as the user.
+ * How each call authenticates is an injected `WebexAuth` (see
+ * webex-auth.ts), not something this file resolves itself. Production
+ * always passes `oauthWebexAuth`; `webex.no-sandbox.test.ts` passes
+ * `deniedWebexAuth` instead, since no WebEx sandbox exists yet to test
+ * against for real — see that file and webex-auth.ts for why.
  *
- * The grant is resolved from the database on every call rather than baked
- * into the handler closure: tokens rotate on refresh, handlers are cached,
- * and a stale closure was exactly the failure mode the Jira tools solved
- * with a token-cache layer. Tool volume here is low enough to skip the
- * cache and read fresh.
+ * Read-and-capture only: list rooms, read messages, turn one into an
+ * actionable item. Nothing here posts to WebEx as the user except
+ * webex_send_message, on explicit request.
  */
 
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  getGrant,
-  refreshGrantTokens,
-  WEBEX_USER,
-  WebexUserAdapter,
-  type ProviderGrant,
-} from '@renkei/provider-grants';
-import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
-import { getWebexUserApp } from '@/lib/webex-app';
-import { logger, secure } from '@/lib/logger';
+import { logger } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
+import { resolveWebexAccess, type WebexAuth } from './webex-auth';
 
 export const WEBEX_USER_MCP_CONNECTOR = 'webex-user';
 
-const API = 'https://webexapis.com/v1';
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
-
-export interface WebexAccess {
-  accessToken: string;
-  personEmail: string | null;
-}
-
-/** The caller's live WebEx token, refreshed through the adapter when stale. */
-/** Exported so the summary collectors can reuse the same refresh-aware resolution. */
-export async function resolveWebexAccess(context: MCPToolContext): Promise<WebexAccess | string> {
-  if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Server misconfigured (encryption key).';
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'Database unavailable.';
-
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', context.tenantId)
-    .where('provider', '=', WEBEX_USER)
-    .where('subject', '=', context.subject)
-    .executeTakeFirst();
-  if (!row) {
-    return 'WebEx is not connected. Connect it on the Connectors page, then try again.';
-  }
-
-  const grantResult = await getGrant(
-    WEBEX_USER,
-    context.tenantId,
-    row.provider_account_id,
-    keyResult.val
-  );
-  if (!grantResult.ok || !grantResult.val) return 'Could not read the WebEx grant.';
-  let grant: ProviderGrant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const app = await getWebexUserApp(context.tenantId, context.origin ?? '');
-    if (!app) return 'WebEx user integration is no longer configured.';
-    const refreshed = await refreshGrantTokens(
-      new WebexUserAdapter(app.clientSecret),
-      context.tenantId,
-      grant.accountId,
-      keyResult.val,
-      logger
-    );
-    if (!refreshed.ok) {
-      return refreshed.err.type === 'GRANT_REVOKED'
-        ? 'Your WebEx authorization was revoked. Reconnect it on the Connectors page.'
-        : 'Could not refresh the WebEx token; try again shortly.';
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-
-  const personEmail =
-    typeof grant.metadata.personEmail === 'string' ? grant.metadata.personEmail : null;
-  return { accessToken: grant.accessToken, personEmail };
-}
-
-function describeStatus(status: number): string {
-  if (status === 403) {
-    return (
-      'WebEx refused (403) — the grant likely lacks the needed scope. The org admin must select ' +
-      'it on the Integration at developer.webex.com, then you disconnect and reconnect WebEx.'
-    );
-  }
-  return `WebEx API answered ${status}`;
-}
-
-/** Who a failed WebEx call was for — every tool passes its MCPToolContext. */
-interface WebexLogScope {
-  tenantId: string;
-  subject?: string;
-}
-
-async function webexRequest(
-  scope: WebexLogScope,
-  accessToken: string,
-  path: string,
-  init?: { method?: string; json?: unknown }
-): Promise<{ ok: true; response: Response } | { ok: false; error: string }> {
-  const body = init?.json !== undefined ? JSON.stringify(init.json) : undefined;
-  let response: Response;
+async function describeWebexFailure(response: Response): Promise<string> {
+  // Reads the body's `message` field either way: a real WebEx error carries
+  // one, and so does every synthetic Response WebexAuth.fetch() returns for
+  // a local failure (no connection, missing scope) — one interpretation
+  // path covers both, the same way describeOpsFailure does for JSM Ops.
+  const body = await response.text().catch(() => '');
+  let detail = '';
   try {
-    response = await fetch(`${API}${path}`, {
-      method: init?.method ?? 'GET',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      },
-      ...(body !== undefined ? { body } : {}),
-    });
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed === 'object' && parsed !== null) {
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      detail = str((parsed as Record<string, unknown>).message);
+    }
   } catch {
-    logger.warn('WebEx API unreachable', {
-      component: 'webex/fetch',
-      tenantId: scope.tenantId,
-      subject: scope.subject,
-      path,
-      method: init?.method ?? 'GET',
-    });
-    return { ok: false, error: 'Could not reach webexapis.com' };
+    detail = body.slice(0, 300);
   }
-  if (!response.ok) {
-    // The full exchange, scoped to tenant and OIDC user — a status alone was
-    // not enough to troubleshoot. The bearer never reaches the log.
-    const responseBody = await response.text().catch(() => '');
-    logger.warn('WebEx API non-OK response', {
-      component: 'webex/fetch',
-      tenantId: scope.tenantId,
-      subject: scope.subject,
-      path,
-      method: init?.method ?? 'GET',
-      status: response.status,
-      // secure(): bodies can carry message content — console masks them, and
-      // the Postgres adapter encrypts at rest once keys are configured.
-      requestBody: body === undefined ? undefined : secure(truncateForLog(body)),
-      responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
-    });
-    return { ok: false, error: describeStatus(response.status) };
+  let text = `WebEx API answered ${response.status}${detail ? `: ${detail}` : ''}.`;
+  if (response.status === 403) {
+    text +=
+      ' If the grant is missing a scope, the org admin selects it on the Integration at ' +
+      'developer.webex.com, then you disconnect and reconnect WebEx.';
   }
-  // Success logs too — a 2xx that did the wrong thing is invisible without
-  // the payloads. Response body from a clone; the caller consumes its own.
-  const okBody = await response
-    .clone()
-    .text()
-    .catch(() => '');
-  logger.info('WebEx API OK response', {
-    component: 'webex/fetch',
-    tenantId: scope.tenantId,
-    subject: scope.subject,
-    path,
-    method: init?.method ?? 'GET',
-    status: response.status,
-    requestBody: body === undefined ? undefined : secure(truncateForLog(body)),
-    responseBody: okBody ? secure(truncateForLog(okBody)) : undefined,
-  });
-  return { ok: true, response };
+  return text;
 }
 
-/** Cap a logged body: enough to diagnose, bounded against megabyte payloads. */
-function truncateForLog(text: string): string {
-  // 1300, not more: secure() bodies encrypt to ~1.4x base64url, and values
-  // past ~2KB fall into blob storage where the adapter does not decrypt on
-  // read — 1300 keeps the ciphertext inline, so the viewer shows plaintext.
-  return text.length > 1300 ? `${text.slice(0, 1300)}… (${text.length} chars total)` : text;
-}
-
+/** GET a path and parse its JSON body, translating a non-OK response uniformly. */
 async function webexGet(
-  scope: WebexLogScope,
-  accessToken: string,
+  auth: WebexAuth,
+  scopes: string[],
   path: string
 ): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> {
-  const result = await webexRequest(scope, accessToken, path);
-  if (!result.ok) return result;
-  const body: unknown = await result.response.json().catch(() => null);
+  const response = await auth.fetch(scopes, path);
+  if (!response.ok) return { ok: false, error: await describeWebexFailure(response) };
+  const body: unknown = await response.json().catch(() => null);
   if (typeof body !== 'object' || body === null) {
     return { ok: false, error: 'Malformed WebEx API response' };
   }
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   return { ok: true, body: body as Record<string, unknown> };
+}
+
+/** For callers that need the raw Response — a POST, or a non-JSON body like a transcript download. */
+async function webexCall(
+  auth: WebexAuth,
+  scopes: string[],
+  path: string,
+  init?: { method?: string; json?: unknown }
+): Promise<{ ok: true; response: Response } | { ok: false; error: string }> {
+  const response = await auth.fetch(scopes, path, {
+    method: init?.method ?? 'GET',
+    ...(init?.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
+  });
+  if (!response.ok) return { ok: false, error: await describeWebexFailure(response) };
+  return { ok: true, response };
 }
 
 function items(body: Record<string, unknown>): Record<string, unknown>[] {
@@ -223,8 +108,8 @@ function messageLine(message: Record<string, unknown>): string {
   return `[${str(message.created)}] ${str(message.personEmail)} (${str(message.id)}):\n  ${text.replace(/\n/g, '\n  ')}`;
 }
 
-/** Which WebEx scope each tool stands on; registration filters against the grant. */
-function webexScopeFor(toolName: string): string[] {
+/** Which WebEx scope each tool stands on; used at both registration and call time. */
+export function webexScopeFor(toolName: string): string[] {
   switch (toolName) {
     case 'webex_send_message':
       return ['spark:messages_write'];
@@ -245,7 +130,8 @@ function webexScopeFor(toolName: string): string[] {
 
 export async function registerWebexUserTools(
   rawServer: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: WebexAuth
 ): Promise<void> {
   // A tool whose scope this user's grant does not carry is not registered at
   // all — the org may have narrowed the checkboxes, or the user connected
@@ -264,12 +150,10 @@ export async function registerWebexUserTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveWebexAccess(context);
-      if (typeof access === 'string') return errText(access);
       const max = typeof args.max === 'number' ? args.max : 30;
       const result = await webexGet(
-        context,
-        access.accessToken,
+        auth,
+        webexScopeFor('webex_list_rooms'),
         `/rooms?max=${max}&sortBy=lastactivity`
       );
       if (!result.ok) return errText(result.error);
@@ -302,14 +186,12 @@ export async function registerWebexUserTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveWebexAccess(context);
-      if (typeof access === 'string') return errText(access);
       const roomId = str(args.roomId);
       if (!roomId) return errText('roomId is required');
       const max = typeof args.max === 'number' ? args.max : 20;
       const result = await webexGet(
-        context,
-        access.accessToken,
+        auth,
+        webexScopeFor('webex_list_messages'),
         `/messages?roomId=${encodeURIComponent(roomId)}&max=${max}`
       );
       if (!result.ok) return errText(result.error);
@@ -336,13 +218,11 @@ export async function registerWebexUserTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveWebexAccess(context);
-      if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
       const result = await webexGet(
-        context,
-        access.accessToken,
+        auth,
+        webexScopeFor('webex_get_message'),
         `/messages/${encodeURIComponent(messageId)}`
       );
       if (!result.ok) return errText(result.error);
@@ -367,14 +247,12 @@ export async function registerWebexUserTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveWebexAccess(context);
-      if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
 
       const result = await webexGet(
-        context,
-        access.accessToken,
+        auth,
+        webexScopeFor('webex_capture_message'),
         `/messages/${encodeURIComponent(messageId)}`
       );
       if (!result.ok) return errText(result.error);
@@ -384,6 +262,14 @@ export async function registerWebexUserTools(
 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
+
+      // Resolved separately from the auth wrapper's own call: `capturedBy`
+      // wants the WebEx account's own email, which only resolveWebexAccess
+      // exposes — WebexAuth.fetch() deliberately returns a bare Response,
+      // with no side channel for it, so as not to leak WebEx-specific
+      // metadata onto an interface every connector shares the same shape of.
+      const access = await resolveWebexAccess(context);
+      const personEmail = typeof access === 'string' ? null : access.personEmail;
 
       const title = text.length > 120 ? `${text.slice(0, 117)}…` : text;
       const note = str(args.note);
@@ -402,7 +288,7 @@ export async function registerWebexUserTools(
             personEmail: str(message.personEmail),
             created: str(message.created),
             excerpt: text.slice(0, 500),
-            capturedBy: access.personEmail ?? context.subject ?? 'unknown',
+            capturedBy: personEmail ?? context.subject ?? 'unknown',
             ...(note ? { note } : {}),
           }),
           // The same shape the ambient pipeline writes, so the card's approve
@@ -444,14 +330,12 @@ export async function registerWebexUserTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveWebexAccess(context);
-      if (typeof access === 'string') return errText(access);
       const roomId = str(args.roomId);
       const toPersonEmail = str(args.toPersonEmail);
       if (!roomId && !toPersonEmail) return errText('Provide roomId or toPersonEmail.');
       if (roomId && toPersonEmail) return errText('Provide roomId or toPersonEmail, not both.');
 
-      const result = await webexRequest(context, access.accessToken, '/messages', {
+      const result = await webexCall(auth, webexScopeFor('webex_send_message'), '/messages', {
         method: 'POST',
         json: {
           ...(roomId ? { roomId } : { toPersonEmail }),
@@ -490,13 +374,15 @@ export async function registerWebexUserTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveWebexAccess(context);
-      if (typeof access === 'string') return errText(access);
       const from = str(args.from) || new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
       const to = str(args.to) || new Date().toISOString();
       const max = typeof args.max === 'number' ? args.max : 20;
       const query = `from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&max=${max}&meetingType=meeting`;
-      const result = await webexGet(context, access.accessToken, `/meetings?${query}`);
+      const result = await webexGet(
+        auth,
+        webexScopeFor('webex_list_meetings'),
+        `/meetings?${query}`
+      );
       if (!result.ok) return errText(result.error);
       const lines = items(result.body).map(
         (meeting) =>
@@ -530,15 +416,13 @@ export async function registerWebexUserTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveWebexAccess(context);
-      if (typeof access === 'string') return errText(access);
       const parts = [`max=${typeof args.max === 'number' ? args.max : 20}`];
       if (str(args.meetingId)) parts.push(`meetingId=${encodeURIComponent(str(args.meetingId))}`);
       if (str(args.from)) parts.push(`from=${encodeURIComponent(str(args.from))}`);
       if (str(args.to)) parts.push(`to=${encodeURIComponent(str(args.to))}`);
       const result = await webexGet(
-        context,
-        access.accessToken,
+        auth,
+        webexScopeFor('webex_list_transcripts'),
         `/meetingTranscripts?${parts.join('&')}`
       );
       if (!result.ok) return errText(result.error);
@@ -570,13 +454,11 @@ export async function registerWebexUserTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveWebexAccess(context);
-      if (typeof access === 'string') return errText(access);
       const transcriptId = str(args.transcriptId);
       if (!transcriptId) return errText('transcriptId is required');
-      const result = await webexRequest(
-        context,
-        access.accessToken,
+      const result = await webexCall(
+        auth,
+        webexScopeFor('webex_get_transcript'),
         `/meetingTranscripts/${encodeURIComponent(transcriptId)}/download?format=txt`
       );
       if (!result.ok) return errText(result.error);
@@ -608,13 +490,15 @@ export async function registerWebexUserTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveWebexAccess(context);
-      if (typeof access === 'string') return errText(access);
       const parts = [`max=${typeof args.max === 'number' ? args.max : 20}`];
       if (str(args.meetingId)) parts.push(`meetingId=${encodeURIComponent(str(args.meetingId))}`);
       if (str(args.from)) parts.push(`from=${encodeURIComponent(str(args.from))}`);
       if (str(args.to)) parts.push(`to=${encodeURIComponent(str(args.to))}`);
-      const result = await webexGet(context, access.accessToken, `/recordings?${parts.join('&')}`);
+      const result = await webexGet(
+        auth,
+        webexScopeFor('webex_list_recordings'),
+        `/recordings?${parts.join('&')}`
+      );
       if (!result.ok) return errText(result.error);
       const lines = items(result.body).map(
         (recording) =>
