@@ -1,18 +1,28 @@
+/**
+ * A second jest config, for tests that hit a real Atlassian instance.
+ *
+ * Every other suite here stubs the network — same idiom document-text uses to
+ * separate its pdfjs integration test from everything else it can test
+ * cheaply. This is the same split for a different reason: not a runtime
+ * incompatibility, but credentials. `*.integration.test.ts` needs a real
+ * account and a real sandbox, which most environments running `pnpm test`
+ * (a laptop with no .env.development, CI) do not have and should not need.
+ *
+ * Kept out of the default config's glob (see jest.config.js) so `pnpm test`
+ * never depends on network access or secrets; run this one explicitly with
+ * `pnpm test:integration`, after `.env.development` carries
+ * TEST_JIRA_USER_NAME, TEST_JIRA_API_TOKEN and TEST_JIRA_SANDBOX_API_BASE_URL.
+ * Suites skip themselves — not fail — when those are absent, so a checkout
+ * without sandbox access can still run this script and see why nothing ran.
+ */
 export default {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>'],
-  testMatch: ['**/*.test.ts'],
-  // `*.integration.test.ts` hits a real Atlassian sandbox over the network
-  // and needs credentials from .env.development that this config never
-  // loads — see jest.integration.config.js. Left in the default glob, a
-  // laptop without those vars (or CI) would get real network failures
-  // indistinguishable from a broken test.
-  testPathIgnorePatterns: ['/node_modules/', '\\.integration\\.test\\.ts$'],
+  testMatch: ['**/*.integration.test.ts'],
+  setupFiles: ['<rootDir>/jest.env-integration.js'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
-    // Map to source so ts-jest transforms it; the symlinked node_modules copy
-    // would be excluded by transformIgnorePatterns.
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',
     '^@renkei/email-sanitizer$': '<rootDir>/../../packages/email-sanitizer/src/index.ts',
@@ -38,5 +48,4 @@ export default {
       },
     ],
   },
-  collectCoverageFrom: ['lib/**/*.ts', '!lib/**/*.test.ts'],
 };

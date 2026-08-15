@@ -1,10 +1,14 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * JSM Operations tools — alerts, schedules, rotations, on-call — over the
- * caller's existing Atlassian grant, through the same /ex/jira/{cloudId}
- * gateway as every other 3LO call: api.atlassian.com/ex/jira/{cloudId}/jsm/
- * ops/api/v1 (spec vendored at
- * docs/jira-service-management-ops-rest-api-open-api-spec.json).
+ * JSM Operations tools — alerts, schedules, rotations, on-call.
+ *
+ * How each call authenticates is an injected `JsmOpsAuth` (see ops-auth.ts),
+ * not something this file decides. Production always passes
+ * `oauthJsmOpsAuth`, running every call through the same /ex/jira/{cloudId}
+ * gateway as every other 3LO call in this codebase — spec vendored at
+ * docs/jira-service-management-ops-rest-api-open-api-spec.json.
+ * `ops.integration.test.ts` passes `patJsmOpsAuth` instead, against a real
+ * sandbox. This file's own code is identical either way.
  *
  * The Ops API takes GRANULAR scopes only (read:ops-alert:… etc.), which ship
  * default-off in the connector's scope checkboxes — a 401/403 here means the
@@ -16,9 +20,10 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { jiraFetch, withPresentationHint } from '../common';
+import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
+import { opsScopes, type JsmOpsAuth } from './ops-auth';
 
 function textResult(value: string) {
   return { content: [{ type: 'text' as const, text: value }] };
@@ -26,17 +31,6 @@ function textResult(value: string) {
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
-}
-
-function opsBase(context: MCPToolContext): string | null {
-  // 3LO tokens MUST go through the /ex/jira/{cloudId} gateway — the bare
-  // /jsm/ops/api/{cloudId} base serves basic auth and Forge only, and answers
-  // a 3LO bearer with 401 "scope does not match" no matter what the token
-  // carries (the vendored spec's servers entry lists only the bare base; the
-  // 3LO rewrite rule is prose in the API's About page).
-  return context.cloudId
-    ? `https://api.atlassian.com/ex/jira/${context.cloudId}/jsm/ops/api/v1`
-    : null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -102,7 +96,8 @@ function alertLine(alert: Record<string, unknown>): string {
 
 export async function registerJsmOpsTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JsmOpsAuth
 ): Promise<void> {
   server.registerTool(
     'jsm_ops_list_alerts',
@@ -120,15 +115,18 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
       const parts = [
         `size=${typeof args.size === 'number' ? args.size : 20}`,
         'sort=createdAt',
         'order=desc',
       ];
       if (str(args.query)) parts.push(`query=${encodeURIComponent(str(args.query))}`);
-      const response = await jiraFetch(`${base}/alerts?${parts.join('&')}`, context.accessToken);
+      const response = await auth.fetch(
+        opsScopes('jsm_ops_list_alerts', true),
+        `/alerts?${parts.join('&')}`
+      );
       if (!response.ok) return errText(await describeOpsFailure(response));
       const body: unknown = await response.json().catch(() => null);
       const lines = items(body).map(alertLine);
@@ -153,11 +151,11 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
-      const response = await jiraFetch(
-        `${base}/alerts/${encodeURIComponent(str(args.alertId))}`,
-        context.accessToken
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
+      const response = await auth.fetch(
+        opsScopes('jsm_ops_get_alert', true),
+        `/alerts/${encodeURIComponent(str(args.alertId))}`
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
       const body: unknown = await response.json().catch(() => null);
@@ -191,16 +189,13 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
       const alertId = encodeURIComponent(str(args.alertId));
-      const response = await jiraFetch(
-        `${base}/alerts/${alertId}/acknowledge`,
-        context.accessToken,
-        {
-          method: 'POST',
-          body: JSON.stringify({}),
-        }
+      const response = await auth.fetch(
+        opsScopes('jsm_ops_acknowledge_alert', false),
+        `/alerts/${alertId}/acknowledge`,
+        { method: 'POST', body: JSON.stringify({}) }
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
       logger.info('jsm_ops_acknowledge_alert', {
@@ -226,13 +221,14 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
       const alertId = encodeURIComponent(str(args.alertId));
-      const response = await jiraFetch(`${base}/alerts/${alertId}/close`, context.accessToken, {
-        method: 'POST',
-        body: JSON.stringify({}),
-      });
+      const response = await auth.fetch(
+        opsScopes('jsm_ops_close_alert', false),
+        `/alerts/${alertId}/close`,
+        { method: 'POST', body: JSON.stringify({}) }
+      );
       if (!response.ok) return errText(await describeOpsFailure(response));
       logger.info('jsm_ops_close_alert', {
         component: 'mcp/tool',
@@ -250,19 +246,21 @@ export async function registerJsmOpsTools(
       title: 'JSM Ops · Read — List JSM Operations on-call schedules',
       description:
         'List on-call schedules with their rotations: rotation type, length, and participants. ' +
-        'Schedule ids feed jsm_ops_whos_on_call.',
+        'Schedule ids feed jsm_ops_whos_on_call and jsm_ops_list_overrides; rotation ids feed ' +
+        'jsm_ops_update_rotation and jsm_ops_create_override. This is the ONLY tool that ' +
+        'returns rotation ids — a rotation name is not accepted anywhere one is asked for.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         size: z.number().int().min(1).max(50).describe('How many (default 20)').optional(),
       }),
     },
     async (args: Record<string, any>) => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
       const size = typeof args.size === 'number' ? args.size : 20;
-      const response = await jiraFetch(
-        `${base}/schedules?size=${size}&expand=rotation`,
-        context.accessToken
+      const response = await auth.fetch(
+        opsScopes('jsm_ops_list_schedules', true),
+        `/schedules?size=${size}&expand=rotation`
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
       const body: unknown = await response.json().catch(() => null);
@@ -279,10 +277,19 @@ export async function registerJsmOpsTools(
                 .map((p) => str(p.id) || str(p.type))
                 .filter(Boolean)
             : [];
+          // The rotation ID IS THE POINT of this line, not a detail of it.
+          // Two Act tools name this tool as where to get it —
+          // jsm_ops_update_rotation requires it, jsm_ops_create_override
+          // takes it — and it was never printed. Following that documented
+          // handoff left the caller with a rotation NAME and one plausible
+          // move: pass the name as the id, and read a 404 saying no rotation
+          // exists with id "Business%20Hours". Nothing about that failure
+          // points at the tool that omitted the field.
           return (
             `  rotation: ${str(rotation.name) || '(unnamed)'} — ${str(rotation.type)}` +
             `${typeof rotation.length === 'number' ? ` ×${rotation.length}` : ''}` +
-            (participants.length ? ` — participants: ${participants.join(', ')}` : '')
+            (participants.length ? ` — participants: ${participants.join(', ')}` : '') +
+            ` — id: ${str(rotation.id)}`
           );
         });
         return [
@@ -316,14 +323,14 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
       const scheduleId = encodeURIComponent(str(args.scheduleId));
       const parts = ['flat=true'];
       if (str(args.date)) parts.push(`date=${encodeURIComponent(str(args.date))}`);
-      const response = await jiraFetch(
-        `${base}/schedules/${scheduleId}/on-calls?${parts.join('&')}`,
-        context.accessToken
+      const response = await auth.fetch(
+        opsScopes('jsm_ops_whos_on_call', true),
+        `/schedules/${scheduleId}/on-calls?${parts.join('&')}`
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
       const body: unknown = await response.json().catch(() => null);
@@ -368,12 +375,12 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
       const scheduleId = encodeURIComponent(str(args.scheduleId));
-      const response = await jiraFetch(
-        `${base}/schedules/${scheduleId}/overrides`,
-        context.accessToken
+      const response = await auth.fetch(
+        opsScopes('jsm_ops_list_overrides', true),
+        `/schedules/${scheduleId}/overrides`
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
       const body: unknown = await response.json().catch(() => null);
@@ -430,15 +437,16 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
       const scheduleId = str(args.scheduleId);
+      const scopes = opsScopes('jsm_ops_create_override', false);
 
       // Context for the wizard: the schedule must exist, and its name and
       // timezone anchor every question the assistant asks the user.
-      const scheduleResponse = await jiraFetch(
-        `${base}/schedules/${encodeURIComponent(scheduleId)}`,
-        context.accessToken
+      const scheduleResponse = await auth.fetch(
+        scopes,
+        `/schedules/${encodeURIComponent(scheduleId)}`
       );
       if (!scheduleResponse.ok) return errText(await describeOpsFailure(scheduleResponse));
       const scheduleBody: unknown = await scheduleResponse.json().catch(() => null);
@@ -489,9 +497,9 @@ export async function registerJsmOpsTools(
         );
       }
 
-      const response = await jiraFetch(
-        `${base}/schedules/${encodeURIComponent(scheduleId)}/overrides`,
-        context.accessToken,
+      const response = await auth.fetch(
+        scopes,
+        `/schedules/${encodeURIComponent(scheduleId)}/overrides`,
         {
           method: 'POST',
           body: JSON.stringify({
@@ -535,16 +543,17 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
       const scheduleId = encodeURIComponent(str(args.scheduleId));
       const alias = encodeURIComponent(str(args.alias));
+      const scopes = opsScopes('jsm_ops_delete_override', false);
 
       // Fetch the override first — the preview must describe the real thing,
       // and a delete of a mistyped alias should fail loudly here, not there.
-      const currentResponse = await jiraFetch(
-        `${base}/schedules/${scheduleId}/overrides/${alias}`,
-        context.accessToken
+      const currentResponse = await auth.fetch(
+        scopes,
+        `/schedules/${scheduleId}/overrides/${alias}`
       );
       if (!currentResponse.ok) return errText(await describeOpsFailure(currentResponse));
       const currentBody: unknown = await currentResponse.json().catch(() => null);
@@ -566,11 +575,9 @@ export async function registerJsmOpsTools(
         );
       }
 
-      const response = await jiraFetch(
-        `${base}/schedules/${scheduleId}/overrides/${alias}`,
-        context.accessToken,
-        { method: 'DELETE' }
-      );
+      const response = await auth.fetch(scopes, `/schedules/${scheduleId}/overrides/${alias}`, {
+        method: 'DELETE',
+      });
       if (!response.ok) return errText(await describeOpsFailure(response));
       logger.info('jsm_ops_delete_override', {
         component: 'mcp/tool',
@@ -615,14 +622,15 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
       const scheduleId = encodeURIComponent(str(args.scheduleId));
       const rotationId = encodeURIComponent(str(args.rotationId));
+      const scopes = opsScopes('jsm_ops_update_rotation', false);
 
-      const currentResponse = await jiraFetch(
-        `${base}/schedules/${scheduleId}/rotations/${rotationId}`,
-        context.accessToken
+      const currentResponse = await auth.fetch(
+        scopes,
+        `/schedules/${scheduleId}/rotations/${rotationId}`
       );
       if (!currentResponse.ok) return errText(await describeOpsFailure(currentResponse));
       const currentBody: unknown = await currentResponse.json().catch(() => null);
@@ -671,9 +679,9 @@ export async function registerJsmOpsTools(
         );
       }
 
-      const response = await jiraFetch(
-        `${base}/schedules/${scheduleId}/rotations/${rotationId}`,
-        context.accessToken,
+      const response = await auth.fetch(
+        scopes,
+        `/schedules/${scheduleId}/rotations/${rotationId}`,
         { method: 'PATCH', body: JSON.stringify(patch) }
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
@@ -699,9 +707,9 @@ export async function registerJsmOpsTools(
       inputSchema: z.object({}),
     },
     async () => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
-      const response = await jiraFetch(`${base}/teams`, context.accessToken);
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
+      const response = await auth.fetch(opsScopes('jsm_ops_list_teams', true), '/teams');
       if (!response.ok) return errText(await describeOpsFailure(response));
       const body: unknown = await response.json().catch(() => null);
       const teams =
@@ -734,10 +742,13 @@ export async function registerJsmOpsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const base = opsBase(context);
-      if (!base) return errText('No Atlassian cloud id on this connection.');
+      const unavailable = auth.unavailableReason();
+      if (unavailable) return errText(unavailable);
       const teamId = encodeURIComponent(str(args.teamId));
-      const response = await jiraFetch(`${base}/teams/${teamId}/escalations`, context.accessToken);
+      const response = await auth.fetch(
+        opsScopes('jsm_ops_list_escalations', true),
+        `/teams/${teamId}/escalations`
+      );
       if (!response.ok) return errText(await describeOpsFailure(response));
       const body: unknown = await response.json().catch(() => null);
       const lines = items(body).map((escalation) => {

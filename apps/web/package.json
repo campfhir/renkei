@@ -9,6 +9,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "jest",
+    "test:integration": "jest --config jest.integration.config.js",
     "generate:log-ship-keys": "node scripts/generate-log-ship-keys.mjs"
   },
   "dependencies": {
@@ -35,6 +36,7 @@
     "kysely": "^0.29.4",
     "mcp-handler": "^2.1.0",
     "next": "16.2.12",
+    "pdfjs-dist": "catalog:",
     "pg": "^8.22.0",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
