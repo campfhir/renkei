@@ -28,6 +28,7 @@
     "@renkei/queue": "workspace:*",
     "@renkei/settings": "workspace:*",
     "kysely": "^0.29.4",
+    "pdfjs-dist": "catalog:",
     "tsx": "^4.23.5"
   },
   "devDependencies": {

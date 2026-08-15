@@ -1,6 +1,16 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+catalog:
+  # pdfjs is imported dynamically, by bare specifier, from
+  # packages/document-text/src/pdf.ts. Next.js compiles that file INTO the web
+  # bundle (transpilePackages), so at runtime Node resolves the specifier from
+  # apps/web/.next/server — which never sees packages/document-text's own
+  # node_modules. Every app that extracts document text therefore has to
+  # declare pdfjs itself, and a catalog entry is what keeps those declarations
+  # from drifting apart: one exact pin, so `pnpm audit` has a single version to
+  # talk about and no app can silently resolve a different one.
+  pdfjs-dist: 6.2.108
 allowBuilds:
   esbuild: true
   sharp: true

@@ -300,8 +300,17 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
       contentType: downloaded.val.contentType ?? str(payload.mimeType),
     });
     if (!extracted.ok) {
-      // Every one of these is deterministic: retrying cannot change a file's
-      // format, its password, or its corruption.
+      // The one extraction failure that is about the DEPLOYMENT rather than
+      // the document, and so the one worth retrying. Swallowing it the way
+      // the deterministic failures are swallowed would let a broken PDF
+      // backend eat every PDF in every watched library — permanently, since
+      // nothing re-enqueues a document whose cTag has not moved — and leave
+      // behind only a debug line saying there was no text in it.
+      if (extracted.err.type === 'PDF_BACKEND_UNAVAILABLE') {
+        throw new Error(`cannot extract ${refId}: ${extracted.err.message ?? 'no PDF backend'}`);
+      }
+      // Every one of the rest is deterministic: retrying cannot change a
+      // file's format, its password, or its corruption.
       logger.info('no text from {refId} ({reason})', {
         component: COMPONENT,
         tenantId,

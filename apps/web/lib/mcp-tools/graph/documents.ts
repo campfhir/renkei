@@ -30,6 +30,7 @@ import {
 } from './client';
 import { graphDownload } from '@renkei/connector-microsoft';
 import { extractText } from '@renkei/document-text';
+import { logger } from '@/lib/logger';
 import { resolveDriveItem, resolveMyDriveId, type ItemSelector } from './resolve';
 
 export interface NamespaceOptions {
@@ -271,8 +272,27 @@ export function registerDocumentTools(
         maxChars: num(args.maxChars) ?? 60_000,
       });
       if (!extracted.ok) {
-        // Each of these is a fact about the file, not a failure of the tool,
-        // so the model is told which one rather than "something went wrong".
+        // A broken PDF backend is the one failure here that is NOT about the
+        // file, and saying otherwise sends the reader off to fix a document
+        // that was never the problem. Blaming the deployment out loud is also
+        // the only way the person who can fix it ever hears about it.
+        if (extracted.err.type === 'PDF_BACKEND_UNAVAILABLE') {
+          logger.error('PDF extraction backend unavailable: {reason}', {
+            component: 'graph/documents',
+            tenantId: context.tenantId,
+            subject: context.subject,
+            reason: extracted.err.message,
+          });
+          return textResult(
+            `Cannot read "${resolved.item.name}" — PDF support is not working on this Renkei ` +
+              `deployment, so no PDF can be read right now. This is a server-side fault, not a ` +
+              `problem with the document; report it to whoever runs Renkei. Nothing about the ` +
+              `file needs changing.\nLink: ${resolved.item.webUrl}`
+          );
+        }
+        // Each of the rest is a fact about the file, not a failure of the
+        // tool, so the model is told which one rather than "something went
+        // wrong".
         const because: Record<string, string> = {
           UNSUPPORTED_FORMAT: 'its format cannot be read as text',
           ENCRYPTED: 'it is password protected',

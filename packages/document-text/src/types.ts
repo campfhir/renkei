@@ -17,6 +17,19 @@ export type ExtractErrorTag =
   | 'CORRUPT'
   /** Parsed cleanly but yielded nothing worth indexing. */
   | 'EMPTY'
+  /**
+   * The PDF backend could not be loaded — a fact about this DEPLOYMENT, not
+   * about the file.
+   *
+   * It has its own tag because everything else here is a permanent property
+   * of the bytes, and callers lean on that: they report the reason to a user
+   * and they skip without retrying. Folding a missing dependency into
+   * UNSUPPORTED_FORMAT told a reader their perfectly good PDF was unreadable
+   * and told the indexer never to try it again — so a deployment that lost
+   * pdfjs would quietly index no PDF at all, and say only that PDFs are not
+   * a supported format. This tag is the one that is worth retrying.
+   */
+  | 'PDF_BACKEND_UNAVAILABLE'
   | 'EXTRACTION_FAILED';
 
 export type ExtractNote =

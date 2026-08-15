@@ -17,8 +17,15 @@
  * control and beyond `pnpm overrides`.)
  *
  * The import is lazy and failure-tolerant on purpose: importing this package
- * must never drag pdfjs in, and a deployment without the optional dependency
- * degrades to "PDFs are unsupported" rather than crashing the worker.
+ * must never drag pdfjs in, and a deployment that cannot load it degrades to
+ * a reported PDF_BACKEND_UNAVAILABLE rather than crashing the worker.
+ *
+ * That import is also the reason `pdfjs-dist` is a catalog entry every
+ * consuming APP declares, not just this package. It is a bare specifier
+ * resolved at RUNTIME, and Next.js compiles this file into the web bundle, so
+ * Node resolves it from apps/web/.next/server — which cannot see this
+ * package's own node_modules. Declaring it here alone is what made every PDF
+ * in the web app report itself unreadable while the worker read them fine.
  *
  * There is NO OCR. A scanned page has no text layer, and this reports that
  * rather than pretending. Adding OCR would mean a runtime model download
@@ -48,7 +55,24 @@ const SCANNED_CHARS_PER_PAGE = 8;
 type PdfJsModule = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
 type PdfLoadingTask = ReturnType<PdfJsModule['getDocument']>;
 
-let cached: PdfJsModule | null | undefined;
+/**
+ * Only SUCCESS is cached, and that asymmetry is deliberate.
+ *
+ * Caching the failure too — the obvious symmetric version — turns one bad
+ * moment into a permanent one: the first PDF to arrive during a hiccup
+ * disables PDF extraction for the entire lifetime of the process, and nothing
+ * short of a restart brings it back. A failed dynamic import costs a
+ * resolution attempt, which is not worth buying that with.
+ */
+let cached: PdfJsModule | undefined;
+
+/**
+ * Why the last load attempt failed, carried into the error so the reason
+ * reaches a log instead of dying inside the catch. "Cannot find package
+ * 'pdfjs-dist'" and "unexpected token" are the same tag but very different
+ * mornings.
+ */
+let lastLoadError = '';
 
 async function loadPdfjs(): Promise<PdfJsModule | null> {
   if (cached !== undefined) return cached;
@@ -75,8 +99,10 @@ async function loadPdfjs(): Promise<PdfJsModule | null> {
       }
     }
     cached = module;
-  } catch {
-    cached = null;
+    lastLoadError = '';
+  } catch (error) {
+    lastLoadError = error instanceof Error ? error.message : String(error);
+    return null;
   }
   return cached;
 }
@@ -87,8 +113,10 @@ export async function extractPdfText(
 ): Promise<Result<PdfText, ExtractErrorTag>> {
   const pdfjs = await loadPdfjs();
   if (!pdfjs) {
-    return err('UNSUPPORTED_FORMAT' as const, {
-      message: 'PDF support requires the pdfjs-dist dependency',
+    return err('PDF_BACKEND_UNAVAILABLE' as const, {
+      message:
+        'pdfjs-dist could not be loaded on this deployment' +
+        (lastLoadError ? `: ${lastLoadError}` : ''),
     });
   }
 
