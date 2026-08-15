@@ -7,24 +7,39 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { getCachedDisplayName } from '../common';
 import { resolveAccountId } from '../user-resolver';
 import { logger } from '@/lib/logger';
+import { customerScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 /**
  * An accountId for a customer email: create the customer (Jira returns the
  * account whether new or, on some sites, existing), falling back to user
  * search for accounts the create endpoint refuses. Null = unresolvable, and
  * the caller reports it instead of sending an email where an accountId goes.
+ *
+ * No explicit response.ok check on either call here (unlike every other
+ * handler in this file): both already validate the SHAPE of what they parsed
+ * (`body?.accountId`, `Array.isArray(users)`), so a denied auth.fetch() —
+ * whose body is `{message}`, matching neither shape — already falls through
+ * to the next attempt, or to null, exactly as a real 403 falling into the
+ * catch block always did. Surfacing the auth denial's reason specifically
+ * would require this function to stop being "resolve or give up quietly",
+ * which its one caller relies on (it reports UNRESOLVED emails, not why).
  */
 async function resolveCustomerAccountId(
   context: MCPToolContext,
+  auth: JsmAuth,
   email: string
 ): Promise<string | null> {
   try {
-    const created = await jiraFetch(
-      `${context.apiBaseUrl}/rest/servicedeskapi/customer`,
-      context.accessToken,
+    const created = await auth.fetch(
+      customerScopes('jsm_invite_customers_to_servicedesk', false),
+      '/rest/servicedeskapi/customer',
       {
         method: 'POST',
         body: JSON.stringify({ email, displayName: email.split('@')[0] }),
@@ -37,9 +52,9 @@ async function resolveCustomerAccountId(
     // exists already, or creation refused — try the directory
   }
   try {
-    const found = await jiraFetch(
-      `${context.apiBaseUrl}/rest/api/3/user/search?query=${encodeURIComponent(email)}`,
-      context.accessToken
+    const found = await auth.fetch(
+      customerScopes('jsm_invite_customers_to_servicedesk', false),
+      `/rest/api/3/user/search?query=${encodeURIComponent(email)}`
     );
     const users = (await found.json()) as any;
     if (Array.isArray(users)) {
@@ -59,7 +74,8 @@ async function resolveCustomerAccountId(
 
 export async function registerJsmCustomerTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JsmAuth
 ): Promise<void> {
   // jsm_create_customer
   server.registerTool(
@@ -90,9 +106,9 @@ export async function registerJsmCustomerTools(
           return { content: [{ type: 'text' as const, text: 'email is required' }], isError: true };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/customer`,
-          context.accessToken,
+        const response = await auth.fetch(
+          customerScopes('jsm_create_customer', false),
+          '/rest/servicedeskapi/customer',
           {
             method: 'POST',
             body: JSON.stringify({
@@ -102,6 +118,7 @@ export async function registerJsmCustomerTools(
             headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const customer = (await response.json()) as any;
         return {
@@ -162,9 +179,9 @@ export async function registerJsmCustomerTools(
         // accountId, which Atlassian rejects.
         const accountId = await resolveAccountId(context, user);
 
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
-          context.accessToken,
+        const response = await auth.fetch(
+          customerScopes('jsm_add_customer_to_servicedesk', false),
+          `/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
           {
             method: 'POST',
             body: JSON.stringify({
@@ -173,6 +190,7 @@ export async function registerJsmCustomerTools(
             headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         return {
           content: [
@@ -226,15 +244,16 @@ export async function registerJsmCustomerTools(
         const accountId = await resolveAccountId(context, user);
 
         // Account ids go in the body; this endpoint accepts no query parameters.
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
-          context.accessToken,
+        const response = await auth.fetch(
+          customerScopes('jsm_remove_customer_from_servicedesk', false),
+          `/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
           {
             method: 'DELETE',
             body: JSON.stringify({ accountIds: [accountId] }),
             headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         return {
           content: [
@@ -293,7 +312,7 @@ export async function registerJsmCustomerTools(
         const resolved: string[] = [];
         const unresolved: string[] = [];
         for (const email of emails as string[]) {
-          const accountId = await resolveCustomerAccountId(context, email);
+          const accountId = await resolveCustomerAccountId(context, auth, email);
           if (accountId) resolved.push(accountId);
           else unresolved.push(email);
         }
@@ -308,15 +327,16 @@ export async function registerJsmCustomerTools(
             isError: true,
           };
         }
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
-          context.accessToken,
+        const response = await auth.fetch(
+          customerScopes('jsm_invite_customers_to_servicedesk', false),
+          `/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer`,
           {
             method: 'POST',
             body: JSON.stringify({ accountIds: resolved }),
             headers: { 'X-ExperimentalApi': 'opt-in' },
           }
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         return {
           content: [

@@ -7,14 +7,23 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, requestUrl, withPresentationHint } from '../common';
+import { getCachedDisplayName, requestUrl, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
+import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-export async function registerJsmTools(server: McpServer, context: MCPToolContext): Promise<void> {
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
+
+export async function registerJsmTools(
+  server: McpServer,
+  context: MCPToolContext,
+  auth: JsmAuth
+): Promise<void> {
   // jsm_list_service_desks
   server.registerTool(
     'jsm_list_service_desks',
@@ -40,10 +49,11 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
       try {
         const maxResults = Math.min(args.maxResults || 25, 100);
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk?limit=${maxResults}`,
-          context.accessToken
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_list_service_desks', true),
+          `/rest/servicedeskapi/servicedesk?limit=${maxResults}`
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const data = (await response.json()) as any;
         const desks = (data.values || []).map((desk: any) => ({
@@ -112,10 +122,11 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype`,
-          context.accessToken
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_list_request_types', true),
+          `/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype`
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const data = (await response.json()) as any;
         const types = (data.values || []).map((type: any) => ({
@@ -182,10 +193,11 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           query.append('serviceDeskId', args.serviceDeskId);
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request?${query}`,
-          context.accessToken
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_list_requests', true),
+          `/rest/servicedeskapi/request?${query}`
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const data = (await response.json()) as any;
         const requests = (data.values || []).map((req: any) => ({
@@ -256,10 +268,11 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}?expand=requestType,serviceDesk`,
-          context.accessToken
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_get_request', true),
+          `/rest/servicedeskapi/request/${issueKey}?expand=requestType,serviceDesk`
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const request = (await response.json()) as any;
 
@@ -343,14 +356,15 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           },
         };
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request`,
-          context.accessToken,
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_create_request', false),
+          '/rest/servicedeskapi/request',
           {
             method: 'POST',
             body: JSON.stringify(body),
           }
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const result = (await response.json()) as any;
         // Echo what Jira actually created, not the input.
@@ -408,9 +422,9 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           };
         }
 
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/comment`,
-          context.accessToken,
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_add_request_comment', false),
+          `/rest/servicedeskapi/request/${issueKey}/comment`,
           {
             method: 'POST',
             body: JSON.stringify({
@@ -421,6 +435,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
             }),
           }
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         return {
           content: [
@@ -470,10 +485,11 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/transition`,
-          context.accessToken
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_list_request_transitions', true),
+          `/rest/servicedeskapi/request/${issueKey}/transition`
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const data = (await response.json()) as any;
         const transitions = (data.values || []).map((t: any) => t.name);
@@ -526,10 +542,11 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }
 
         // Get available transitions
-        const transResponse = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/transition`,
-          context.accessToken
+        const transResponse = await auth.fetch(
+          serviceDeskScopes('jsm_transition_request', false),
+          `/rest/servicedeskapi/request/${issueKey}/transition`
         );
+        if (!transResponse.ok) return errText(await describeJsmAuthFailure(transResponse));
         const transData = (await transResponse.json()) as any;
 
         const transition = transData.values?.find(
@@ -549,9 +566,9 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
         }
 
         // Execute transition
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/transition`,
-          context.accessToken,
+        const execResponse = await auth.fetch(
+          serviceDeskScopes('jsm_transition_request', false),
+          `/rest/servicedeskapi/request/${issueKey}/transition`,
           {
             method: 'POST',
             // CustomerTransitionExecutionDTO is {id, additionalComment} —
@@ -560,6 +577,7 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
             body: JSON.stringify({ id: String(transition.id) }),
           }
         );
+        if (!execResponse.ok) return errText(await describeJsmAuthFailure(execResponse));
 
         return {
           content: [
@@ -607,13 +625,14 @@ export async function registerJsmTools(server: McpServer, context: MCPToolContex
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer?limit=${Math.min(maxResults, 50)}`,
-          context.accessToken,
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_list_customers', true),
+          `/rest/servicedeskapi/servicedesk/${serviceDeskId}/customer?limit=${Math.min(maxResults, 50)}`,
           // Atlassian has kept the customer endpoints "experimental" for
           // years; without the opt-in header they answer 412.
           { headers: { 'X-ExperimentalApi': 'opt-in' } }
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const data = (await response.json()) as any;
         const customers = (data.values || []).map((c: any) => ({

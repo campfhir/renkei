@@ -9,6 +9,7 @@
  */
 
 import type { JsmOpsAuth } from '../jira-service-management/ops-auth';
+import type { JsmAuth } from '../jira-service-management/jsm-auth';
 import type { ConfluenceAuth } from '../confluence/confluence-auth';
 import type { ConfluenceAccess } from '../confluence/client';
 
@@ -134,6 +135,41 @@ export function patJsmOpsAuth(creds: SandboxCredentials, cloudId: string): JsmOp
  * No scope enforcement, same reasoning as `patJsmOpsAuth`: a personal token
  * authenticates as a real user with that user's full standing.
  */
+/**
+ * `JsmAuth` for a personal token — what `jsm.integration.test.ts` injects
+ * where production injects `oauthJsmAuth` (see
+ * `jira-service-management/jsm-auth.ts`).
+ *
+ * Same gateway URL production's `oauthJsmAuth` builds
+ * (`api.atlassian.com/ex/jira/{cloudId}` — see mcp-tools/index.ts's
+ * jsmContext) — confirmed directly against the sandbox that, unlike Ops,
+ * this gateway accepts Basic auth fine (200 on both the gateway and the
+ * bare site). The one thing that has to differ from `oauthJsmAuth` is the
+ * auth scheme itself: `jiraFetch` (../common.ts) always sends `Bearer
+ * ${token}`, and a personal token does not work as a Bearer token here
+ * (401) — so this bypasses jiraFetch entirely rather than trying to make it
+ * carry a header shape it was not built for.
+ *
+ * No scope enforcement, same reasoning as `patJsmOpsAuth`/`patConfluenceAuth`.
+ */
+export function patJsmAuth(creds: SandboxCredentials, cloudId: string): JsmAuth {
+  const base = `https://api.atlassian.com/ex/jira/${cloudId}`;
+  return {
+    kind: 'pat',
+    async fetch(_requiredScopes, path, init) {
+      return fetch(`${base}${path}`, {
+        ...init,
+        headers: {
+          Authorization: authHeader(creds),
+          Accept: 'application/json',
+          ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+          ...init?.headers,
+        },
+      });
+    },
+  };
+}
+
 export function patConfluenceAuth(
   creds: SandboxCredentials,
   cloudId: string,

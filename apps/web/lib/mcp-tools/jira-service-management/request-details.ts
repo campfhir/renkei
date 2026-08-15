@@ -7,12 +7,18 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
+import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
+import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 export async function registerRequestDetailsTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JsmAuth
 ): Promise<void> {
   // jsm_get_request_type_fields
   server.registerTool(
@@ -46,10 +52,11 @@ export async function registerRequestDetailsTools(
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype/${requestTypeId}/field`,
-          context.accessToken
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_get_request_type_fields', true),
+          `/rest/servicedeskapi/servicedesk/${serviceDeskId}/requesttype/${requestTypeId}/field`
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const fields = (await response.json()) as any;
         // The payload key is requestTypeFields — .values belongs to the paged
@@ -121,10 +128,11 @@ export async function registerRequestDetailsTools(
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/approval`,
-          context.accessToken
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_list_request_approvals', true),
+          `/rest/servicedeskapi/request/${issueKey}/approval`
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const data = (await response.json()) as any;
         const approvals = (data.values || []).map((a: any) => ({
@@ -193,10 +201,11 @@ export async function registerRequestDetailsTools(
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/sla`,
-          context.accessToken
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_get_request_sla', true),
+          `/rest/servicedeskapi/request/${issueKey}/sla`
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const data = (await response.json()) as any;
         // SlaInformation has no status/breachTime at the top level: the live
@@ -276,10 +285,11 @@ export async function registerRequestDetailsTools(
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/participant`,
-          context.accessToken
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_list_request_participants', true),
+          `/rest/servicedeskapi/request/${issueKey}/participant`
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         const data = (await response.json()) as any;
         const participants = (data.values || []).map((p: any) => ({
@@ -348,9 +358,9 @@ export async function registerRequestDetailsTools(
           };
         }
 
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/participant`,
-          context.accessToken,
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_add_request_participant', false),
+          `/rest/servicedeskapi/request/${issueKey}/participant`,
           {
             method: 'POST',
             body: JSON.stringify({
@@ -358,6 +368,7 @@ export async function registerRequestDetailsTools(
             }),
           }
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         return { content: [{ type: 'text' as const, text: `Added participant to ${issueKey}` }] };
       } catch (error) {
@@ -404,14 +415,15 @@ export async function registerRequestDetailsTools(
         // The account id goes in the body, not the path: there is no
         // .../participant/{accountId} route, so the old form 404'd and the tool
         // still reported success because nothing checked the status.
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${issueKey}/participant`,
-          context.accessToken,
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_remove_request_participant', false),
+          `/rest/servicedeskapi/request/${issueKey}/participant`,
           {
             method: 'DELETE',
             body: JSON.stringify({ accountIds: [accountId] }),
           }
         );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
         return {
           content: [{ type: 'text' as const, text: `Removed participant from ${issueKey}` }],
@@ -466,10 +478,11 @@ export async function registerRequestDetailsTools(
         // temporaryAttachmentIds + public). The old code POSTed multipart
         // straight at the request — a shape this API never accepted — and
         // bypassed jiraFetch, so the failures never even reached the logs.
-        const reqResponse = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${encodeURIComponent(issueKey as string)}`,
-          context.accessToken
+        const reqResponse = await auth.fetch(
+          serviceDeskScopes('jsm_add_request_attachment', false),
+          `/rest/servicedeskapi/request/${encodeURIComponent(issueKey as string)}`
         );
+        if (!reqResponse.ok) return errText(await describeJsmAuthFailure(reqResponse));
         const reqBody = (await reqResponse.json()) as any;
         const serviceDeskId =
           typeof reqBody?.serviceDeskId === 'string' ? reqBody.serviceDeskId : '';
@@ -486,9 +499,9 @@ export async function registerRequestDetailsTools(
         const formData = new FormData();
         formData.append('file', new Blob([bytes]), filename as string);
 
-        const upload = await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/servicedesk/${serviceDeskId}/attachTemporaryFile`,
-          context.accessToken,
+        const upload = await auth.fetch(
+          serviceDeskScopes('jsm_add_request_attachment', false),
+          `/rest/servicedeskapi/servicedesk/${serviceDeskId}/attachTemporaryFile`,
           {
             method: 'POST',
             body: formData,
@@ -496,6 +509,7 @@ export async function registerRequestDetailsTools(
             headers: { 'X-Atlassian-Token': 'no-check' },
           }
         );
+        if (!upload.ok) return errText(await describeJsmAuthFailure(upload));
         const uploaded = (await upload.json()) as any;
         const temporaryAttachmentIds = Array.isArray(uploaded?.temporaryAttachments)
           ? uploaded.temporaryAttachments
@@ -513,14 +527,15 @@ export async function registerRequestDetailsTools(
           };
         }
 
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/servicedeskapi/request/${encodeURIComponent(issueKey as string)}/attachment`,
-          context.accessToken,
+        const attachResponse = await auth.fetch(
+          serviceDeskScopes('jsm_add_request_attachment', false),
+          `/rest/servicedeskapi/request/${encodeURIComponent(issueKey as string)}/attachment`,
           {
             method: 'POST',
             body: JSON.stringify({ temporaryAttachmentIds, public: true }),
           }
         );
+        if (!attachResponse.ok) return errText(await describeJsmAuthFailure(attachResponse));
 
         return {
           content: [{ type: 'text' as const, text: `Attached ${filename} to ${issueKey}` }],
