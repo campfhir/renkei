@@ -6,179 +6,47 @@
  * Renkei to be able to take: create, update, cancel a meeting. The acting
  * tools carry readOnlyHint false, so org read-only mode disables them.
  *
- * Scope nuance unique to Zoom: a classic-scope Marketplace app ignores the
- * authorize request's scope parameter and mints its full scope set, so the
- * scope gate here never trusts bare granted scopes — the transport route
- * computes context.zoomScopes as requested ∩ granted (granular apps mint
- * exactly the request, so the intersection is the request; classic apps
- * mint everything, so it still is).
- *
- * The grant is resolved from the database on every call rather than baked
- * into the handler closure: tokens rotate on refresh and handlers are
- * cached — the stale-closure lesson.
+ * How each call authenticates is an injected `ZoomAuth` (see zoom-auth.ts),
+ * not something this file resolves itself — production always passes
+ * `oauthZoomAuth`; `zoom.no-sandbox.test.ts` passes `deniedZoomAuth` instead,
+ * since no Zoom sandbox exists yet. Two tools — zoom_get_transcript and
+ * zoom_get_meeting_summary — are a documented exception: they construct a
+ * ZoomClient with no injectable transport of its own, so they resolve
+ * access via resolveZoomAccess directly rather than through ZoomAuth.fetch()
+ * — see zoom-auth.ts's header for why that isn't fixable here.
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  getGrant,
-  refreshGrantTokens,
-  ZOOM,
-  ZoomAdapter,
-  type ProviderGrant,
-} from '@renkei/provider-grants';
 import { ZoomClient, encodeZoomMeetingId, vttToText } from '@renkei/connector-zoom';
-import { parseEncryptionKey } from '@renkei/crypto';
-import { getDatabase } from '@renkei/db';
-import { getZoomApp } from '@/lib/zoom-app';
-import { logger, secure } from '@/lib/logger';
+import { logger } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
+import { resolveZoomAccess, ZOOM_API_BASE, type ZoomAuth } from './zoom-auth';
 
 export const ZOOM_MCP_CONNECTOR = 'zoom';
 
-const API = 'https://api.zoom.us/v2';
-/** Refresh when the token is inside this window of expiry. */
-const REFRESH_MARGIN_MS = 2 * 60 * 1000;
-
-export interface ZoomAccess {
-  accessToken: string;
-  email: string | null;
-}
-
-/** The caller's live Zoom token, refreshed through the adapter when stale. */
-/** Exported so the summary collectors can reuse the same refresh-aware resolution. */
-export async function resolveZoomAccess(context: MCPToolContext): Promise<ZoomAccess | string> {
-  if (!context.subject) return 'No signed-in subject on this MCP session.';
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return 'Server misconfigured (encryption key).';
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'Database unavailable.';
-
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('tenant_id', '=', context.tenantId)
-    .where('provider', '=', ZOOM)
-    .where('subject', '=', context.subject)
-    .executeTakeFirst();
-  if (!row) {
-    return 'Zoom is not connected. Connect it on the Connectors page, then try again.';
-  }
-
-  const grantResult = await getGrant(
-    ZOOM,
-    context.tenantId,
-    row.provider_account_id,
-    keyResult.val
-  );
-  if (!grantResult.ok || !grantResult.val) return 'Could not read the Zoom grant.';
-  let grant: ProviderGrant = grantResult.val;
-
-  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
-    const app = await getZoomApp(context.tenantId, context.origin ?? '');
-    if (!app) return 'Zoom integration is no longer configured.';
-    const refreshed = await refreshGrantTokens(
-      new ZoomAdapter(app.clientSecret),
-      context.tenantId,
-      grant.accountId,
-      keyResult.val,
-      logger
-    );
-    if (!refreshed.ok) {
-      return refreshed.err.type === 'GRANT_REVOKED'
-        ? 'Your Zoom authorization was revoked. Reconnect it on the Connectors page.'
-        : 'Could not refresh the Zoom token; try again shortly.';
-    }
-    grant = { ...grant, accessToken: refreshed.val.accessToken };
-  }
-
-  const email = typeof grant.metadata.email === 'string' ? grant.metadata.email : null;
-  return { accessToken: grant.accessToken, email };
-}
-
-function describeStatus(status: number): string {
+function describeZoomFailure(status: number, detail: string): string {
+  let base: string;
   if (status === 403) {
-    return (
+    base =
       'Zoom refused (403) — the grant likely lacks the scope, or the Marketplace app is missing ' +
-      'it. The org admin adds it to the app; then disconnect and reconnect Zoom.'
-    );
+      'it. The org admin adds it to the app; then disconnect and reconnect Zoom.';
+  } else if (status === 429) {
+    base = 'Zoom is rate limiting (429); try again shortly.';
+  } else {
+    base = `Zoom API answered ${status}`;
   }
-  if (status === 429) return 'Zoom is rate limiting (429); try again shortly.';
-  return `Zoom API answered ${status}`;
+  return detail ? `${base} Zoom said: "${detail}".` : base;
 }
 
-/** Cap a logged body: enough to diagnose, bounded against megabyte payloads. */
-function truncateForLog(text: string): string {
-  return text.length > 1300 ? `${text.slice(0, 1300)}… (${text.length} chars total)` : text;
-}
-
-async function zoomRequest(
-  context: MCPToolContext,
-  accessToken: string,
-  path: string,
-  init?: { method?: string; json?: unknown }
-): Promise<{ ok: true; response: Response } | { ok: false; error: string }> {
-  const body = init?.json !== undefined ? JSON.stringify(init.json) : undefined;
-  let response: Response;
-  try {
-    response = await fetch(`${API}${path}`, {
-      method: init?.method ?? 'GET',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      },
-      ...(body !== undefined ? { body } : {}),
-    });
-  } catch {
-    logger.warn('Zoom API unreachable', {
-      component: 'zoom/fetch',
-      tenantId: context.tenantId,
-      subject: context.subject,
-      url: `${API}${path}`,
-      method: init?.method ?? 'GET',
-    });
-    return { ok: false, error: 'Could not reach api.zoom.us' };
-  }
-  if (!response.ok) {
-    const responseBody = await response.text().catch(() => '');
-    logger.warn('Zoom API non-OK response', {
-      component: 'zoom/fetch',
-      tenantId: context.tenantId,
-      subject: context.subject,
-      url: `${API}${path}`,
-      method: init?.method ?? 'GET',
-      status: response.status,
-      requestBody: body === undefined ? undefined : secure(truncateForLog(body)),
-      responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
-    });
-    // Zoom's own {code, message} names the cause far better than a bare
-    // status — an MCP caller cannot read our logs, so it rides the error.
-    let zoomDetail = '';
-    try {
-      const parsed: unknown = JSON.parse(responseBody);
-      if (typeof parsed === 'object' && parsed !== null) {
-        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-        const record = parsed as Record<string, unknown>;
-        const message = typeof record.message === 'string' ? record.message : '';
-        const code = typeof record.code === 'number' ? record.code : null;
-        if (message)
-          zoomDetail = ` Zoom said: "${message}"${code !== null ? ` (code ${code})` : ''}.`;
-      }
-    } catch {
-      // non-JSON body — the status text will have to do
-    }
-    return { ok: false, error: `${describeStatus(response.status)}${zoomDetail}` };
-  }
-  return { ok: true, response };
-}
-
+/** GET a path and parse its JSON body, translating a non-OK response uniformly. */
 async function zoomGet(
-  context: MCPToolContext,
-  accessToken: string,
+  auth: ZoomAuth,
+  scopes: string[],
   path: string
 ): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false; error: string }> {
-  const result = await zoomRequest(context, accessToken, path);
+  const result = await zoomCall(auth, scopes, path);
   if (!result.ok) return result;
   const body: unknown = await result.response.json().catch(() => null);
   if (typeof body !== 'object' || body === null) {
@@ -186,6 +54,67 @@ async function zoomGet(
   }
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
   return { ok: true, body: body as Record<string, unknown> };
+}
+
+/** For callers that need the raw Response — a POST, or one whose caller reads the status itself. */
+async function zoomCall(
+  auth: ZoomAuth,
+  scopes: string[],
+  path: string,
+  init?: { method?: string; json?: unknown }
+): Promise<{ ok: true; response: Response } | { ok: false; error: string }> {
+  const response = await auth.fetch(scopes, path, {
+    method: init?.method ?? 'GET',
+    ...(init?.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
+  });
+  if (response.ok) return { ok: true, response };
+
+  // Zoom's own {code, message} names the cause far better than a bare
+  // status — an MCP caller cannot read our logs, so it rides the error. The
+  // same body shape covers a synthetic auth-denial Response too (authFailure
+  // puts its text in `message`), so one read handles both.
+  const responseBody = await response.text().catch(() => '');
+  let detail = '';
+  try {
+    const parsed: unknown = JSON.parse(responseBody);
+    if (typeof parsed === 'object' && parsed !== null) {
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      detail = str((parsed as Record<string, unknown>).message);
+    }
+  } catch {
+    // non-JSON body — the status text will have to do
+  }
+  return { ok: false, error: describeZoomFailure(response.status, detail) };
+}
+
+/**
+ * Best-effort: resolves a numeric meeting id to its latest UUID for
+ * zoom_get_meeting_summary, which the summary endpoint requires. Failures
+ * are silently ignored by the caller (the raw id is tried instead and
+ * Zoom's own error names itself), so this needs no logging or detailed
+ * error interpretation of its own — a small direct fetch rather than
+ * routing a low-stakes, already-best-effort lookup through the full
+ * ZoomAuth/zoomGet machinery.
+ */
+async function tryResolveMeetingUuid(
+  accessToken: string,
+  meetingId: string
+): Promise<string | null> {
+  try {
+    const response = await fetch(`${ZOOM_API_BASE}/meetings/${meetingId}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!response.ok) return null;
+    const body: unknown = await response.json().catch(() => null);
+    const uuid =
+      typeof body === 'object' && body !== null
+        ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+          (body as Record<string, unknown>).uuid
+        : undefined;
+    return typeof uuid === 'string' && uuid ? uuid : null;
+  } catch {
+    return null;
+  }
 }
 
 function textResult(value: string) {
@@ -231,8 +160,8 @@ function meetingLine(meeting: Record<string, unknown>): string {
   );
 }
 
-/** Which Zoom scope each tool stands on; registration filters against the grant. */
-function zoomScopeFor(toolName: string): string[] {
+/** Which Zoom scope each tool stands on; used at both registration and call time. */
+export function zoomScopeFor(toolName: string): string[] {
   switch (toolName) {
     case 'zoom_list_meetings':
       return ['meeting:read:list_meetings'];
@@ -269,7 +198,8 @@ function zoomScopeFor(toolName: string): string[] {
 
 export async function registerZoomTools(
   rawServer: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: ZoomAuth
 ): Promise<void> {
   // A tool whose scope the user's (possibly narrowed) selection lacks is
   // never registered — Renkei-enforced narrowing, see the header comment.
@@ -292,13 +222,11 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
       const which = str(args.which) || 'upcoming';
       const max = typeof args.max === 'number' ? args.max : 20;
       const result = await zoomGet(
-        context,
-        access.accessToken,
+        auth,
+        zoomScopeFor('zoom_list_meetings'),
         `/users/me/meetings?type=${encodeURIComponent(which)}&page_size=${max}`
       );
       if (!result.ok) return errText(result.error);
@@ -325,13 +253,11 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
       const result = await zoomGet(
-        context,
-        access.accessToken,
+        auth,
+        zoomScopeFor('zoom_get_meeting'),
         `/meetings/${encodeZoomMeetingId(meetingId)}`
       );
       if (!result.ok) return errText(result.error);
@@ -368,19 +294,22 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
-      const result = await zoomRequest(context, access.accessToken, '/users/me/meetings', {
-        method: 'POST',
-        json: {
-          topic: str(args.topic),
-          type: 2, // scheduled
-          start_time: str(args.startTime),
-          duration: args.durationMinutes,
-          ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
-          ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
-        },
-      });
+      const result = await zoomCall(
+        auth,
+        zoomScopeFor('zoom_create_meeting'),
+        '/users/me/meetings',
+        {
+          method: 'POST',
+          json: {
+            topic: str(args.topic),
+            type: 2, // scheduled
+            start_time: str(args.startTime),
+            duration: args.durationMinutes,
+            ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
+            ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
+          },
+        }
+      );
       if (!result.ok) return errText(result.error);
       const body = rec(await result.response.json().catch(() => null));
       logger.info('zoom_create_meeting created', {
@@ -413,8 +342,6 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
       const patch: Record<string, unknown> = {};
@@ -425,9 +352,9 @@ export async function registerZoomTools(
       if (str(args.agenda)) patch.agenda = str(args.agenda);
       if (Object.keys(patch).length === 0) return errText('Nothing to update.');
 
-      const result = await zoomRequest(
-        context,
-        access.accessToken,
+      const result = await zoomCall(
+        auth,
+        zoomScopeFor('zoom_update_meeting'),
         `/meetings/${encodeZoomMeetingId(meetingId)}`,
         { method: 'PATCH', json: patch }
       );
@@ -456,14 +383,12 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
       const notify = args.notifyRegistrants === true ? '?cancel_meeting_reminder=true' : '';
-      const result = await zoomRequest(
-        context,
-        access.accessToken,
+      const result = await zoomCall(
+        auth,
+        zoomScopeFor('zoom_delete_meeting'),
         `/meetings/${encodeZoomMeetingId(meetingId)}${notify}`,
         { method: 'DELETE' }
       );
@@ -492,15 +417,13 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
       const from =
         str(args.from) || new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
       const to = str(args.to) || new Date().toISOString().slice(0, 10);
       const max = typeof args.max === 'number' ? args.max : 20;
       const result = await zoomGet(
-        context,
-        access.accessToken,
+        auth,
+        zoomScopeFor('zoom_list_recordings'),
         `/users/me/recordings?from=${from}&to=${to}&page_size=${max}`
       );
       if (!result.ok) return errText(result.error);
@@ -534,10 +457,11 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
+      // ZoomClient has no injectable transport — see this file's header.
+      const access = await resolveZoomAccess(context);
+      if (typeof access === 'string') return errText(access);
 
       const client = new ZoomClient(access.accessToken, { lane: 'interactive' });
       const transcript = await client.getMeetingTranscript(meetingId);
@@ -580,21 +504,20 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
+      // ZoomClient has no injectable transport — see this file's header.
+      const access = await resolveZoomAccess(context);
+      if (typeof access === 'string') return errText(access);
 
       // The summary endpoint 400s on numeric ids ("Invalid meeting id") —
-      // it wants the occurrence UUID. Resolve numeric ids through the
-      // meeting lookup; if that lookup is refused (scope narrowed away),
-      // fall through with the raw id and let Zoom's error name itself.
+      // it wants the occurrence UUID. Best-effort resolution; a failed
+      // lookup falls through with the raw id and lets Zoom's error name
+      // itself.
       let summaryKey = meetingId;
       if (/^\d+$/.test(meetingId)) {
-        const lookup = await zoomGet(context, access.accessToken, `/meetings/${meetingId}`);
-        if (lookup.ok && str(lookup.body.uuid)) {
-          summaryKey = str(lookup.body.uuid);
-        }
+        const uuid = await tryResolveMeetingUuid(access.accessToken, meetingId);
+        if (uuid) summaryKey = uuid;
       }
 
       const client = new ZoomClient(access.accessToken, { lane: 'interactive' });
@@ -660,12 +583,9 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
-
       // The cross-meeting listing lives in the Canvas Search API — the
       // My Notes API itself can only list per meeting.
-      const result = await zoomRequest(context, access.accessToken, '/docs/file_search', {
+      const result = await zoomCall(auth, zoomScopeFor('zoom_search_notes'), '/docs/file_search', {
         method: 'POST',
         json: {
           file_types: ['note'],
@@ -722,13 +642,11 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
       const meetingId = str(args.meetingId);
       if (!meetingId) return errText('meetingId is required');
       const result = await zoomGet(
-        context,
-        access.accessToken,
+        auth,
+        zoomScopeFor('zoom_list_notes'),
         `/my_notes/notes?meeting_id=${encodeURIComponent(meetingId)}`
       );
       if (!result.ok) return errText(result.error);
@@ -766,14 +684,12 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
       const noteId = str(args.noteId);
       if (!noteId) return errText('noteId is required');
       const include = args.includeTranscript === true ? '?include=transcript' : '';
       const result = await zoomGet(
-        context,
-        access.accessToken,
+        auth,
+        zoomScopeFor('zoom_get_note'),
         `/my_notes/notes/${encodeURIComponent(noteId)}/content${include}`
       );
       if (!result.ok) return errText(result.error);
@@ -836,13 +752,11 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
       const fileId = str(args.fileId);
       if (!fileId) return errText('fileId is required');
       const result = await zoomGet(
-        context,
-        access.accessToken,
+        auth,
+        zoomScopeFor('zoom_get_doc'),
         `/docs/files/${encodeURIComponent(fileId)}/content`
       );
       if (!result.ok) return errText(result.error);
@@ -871,9 +785,7 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
-      const result = await zoomRequest(context, access.accessToken, '/docs/import_content', {
+      const result = await zoomCall(auth, zoomScopeFor('zoom_create_doc'), '/docs/import_content', {
         method: 'POST',
         json: { file_name: str(args.name), content: str(args.markdown) },
       });
@@ -909,8 +821,6 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveZoomAccess(context);
-      if (typeof access === 'string') return errText(access);
       const fileId = str(args.fileId);
       if (!fileId) return errText('fileId is required');
       const text = str(args.text);
@@ -928,9 +838,9 @@ export async function registerZoomTools(
         .map((paragraph) => `<text>${escapeXml(paragraph)}</text>`)
         .join('');
 
-      const result = await zoomRequest(
-        context,
-        access.accessToken,
+      const result = await zoomCall(
+        auth,
+        zoomScopeFor('zoom_append_to_doc'),
         `/docs/files/${encodeURIComponent(fileId)}/blocks`,
         { method: 'POST', json: { blocks } }
       );

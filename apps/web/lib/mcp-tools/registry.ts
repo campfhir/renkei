@@ -31,6 +31,7 @@ import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/out
 import { registerSharePointTools, SHAREPOINT_MCP_CONNECTOR } from '@/lib/mcp-tools/sharepoint';
 import { registerOneDriveTools, ONEDRIVE_MCP_CONNECTOR } from '@/lib/mcp-tools/onedrive';
 import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
+import { oauthZoomAuth } from '@/lib/mcp-tools/zoom/zoom-auth';
 import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
 import { registerSummaryTools, type SummaryProvider } from '@/lib/mcp-tools/summary';
 import { collectCalendar, collectUnreadMail } from '@/lib/mcp-tools/summary/collect-outlook';
@@ -318,7 +319,13 @@ export async function registerRenkeiTools(
     );
   }
   if (zoomAvailable) {
-    await registerZoomTools(withCapabilityGate(server, projection, ZOOM_MCP_CONNECTOR), context);
+    // Production's one path: the caller's own Zoom grant. See webex's
+    // identical comment above — the same reasoning applies here.
+    await registerZoomTools(
+      withCapabilityGate(server, projection, ZOOM_MCP_CONNECTOR),
+      context,
+      oauthZoomAuth(context)
+    );
   }
   if (confluenceAvailable) {
     await registerConfluenceTools(

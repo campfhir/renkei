@@ -18,7 +18,7 @@
  * signal the transcript does not contain.
  */
 
-import { resolveZoomAccess } from '../zoom';
+import { resolveZoomAccess } from '../zoom/zoom-auth';
 import type { MCPToolContext } from '../common';
 import {
   clip,
