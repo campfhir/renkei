@@ -7,12 +7,18 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { getCachedDisplayName } from '../common';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 export async function registerComponentTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JiraAuth
 ): Promise<void> {
   // jira_list_components (already exists in project.ts, but we can add more functionality)
   // jira_get_component
@@ -44,10 +50,11 @@ export async function registerComponentTools(
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/component/${componentId}`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_get_component', true),
+          `/rest/api/3/component/${componentId}`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const component = (await response.json()) as any;
 
@@ -117,14 +124,15 @@ export async function registerComponentTools(
         if (description) body.description = description as string;
         if (leadUserKey) body.leadUserKey = leadUserKey as string;
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/project/${projectKey}/component`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_create_component', false),
+          `/rest/api/3/project/${projectKey}/component`,
           {
             method: 'POST',
             body: JSON.stringify(body),
           }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const component = (await response.json()) as any;
 
@@ -176,12 +184,17 @@ export async function registerComponentTools(
           };
         }
 
-        let url = `${context.apiBaseUrl}/rest/api/3/component/${componentId}`;
+        let path = `/rest/api/3/component/${componentId}`;
         if (moveIssuesTo) {
-          url += `?moveIssuesTo=${encodeURIComponent(moveIssuesTo as string)}`;
+          path += `?moveIssuesTo=${encodeURIComponent(moveIssuesTo as string)}`;
         }
 
-        await jiraFetch(url, context.accessToken, { method: 'DELETE' });
+        const response = await auth.fetch(
+          granularJiraScopes('jira_delete_component', false),
+          path,
+          { method: 'DELETE' }
+        );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         return {
           content: [{ type: 'text' as const, text: `Component ${componentId} deleted` }],

@@ -4,16 +4,26 @@ import type { MCPToolContext } from '../common';
 
 const jiraFetchMock = jest.fn();
 jest.mock('../common', () => ({
-  jiraFetch: (...args: unknown[]) => jiraFetchMock(...args),
   sprintUrl: (siteUrl: string, boardId: string) => `${siteUrl}/board/${boardId}`,
   getCachedDisplayName: () => 'Tester',
 }));
 
 import { clearFieldSchemaCache } from './field-schema';
 import { registerSprintTools } from './sprints';
+import type { JiraAuth } from './jira-auth';
 
 type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean };
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
+
+const apiBaseUrl = 'https://api.atlassian.com/ex/jira/cloud-1';
+
+/** A stub JiraAuth reconstructing the full URL, so assertions can stay unchanged. */
+function stubAuth(): JiraAuth {
+  return {
+    kind: 'oauth',
+    fetch: (_requiredScopes, path, init) => jiraFetchMock(`${apiBaseUrl}${path}`, init),
+  };
+}
 
 interface Call {
   url: string;
@@ -33,7 +43,7 @@ function serve(options: ServeOptions = {}): void {
   calls = [];
   jiraFetchMock.mockReset();
   jiraFetchMock.mockImplementation(
-    async (url: string, _token: string, request?: { method?: string; body?: string }) => {
+    async (url: string, request?: { method?: string; body?: string }) => {
       calls.push({
         url,
         method: request?.method ?? 'GET',
@@ -66,14 +76,18 @@ async function sprintTools(): Promise<Map<string, ToolHandler>> {
     },
   } as unknown as McpServer;
 
-  await registerSprintTools(server, {
-    tenantId: 'tenant-1',
-    accountId: 'acct-1',
-    siteUrl: 'https://example.atlassian.net',
-    apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
-    accessToken: 'token-1',
-    maxJqlResults: 100,
-  } as MCPToolContext);
+  await registerSprintTools(
+    server,
+    {
+      tenantId: 'tenant-1',
+      accountId: 'acct-1',
+      siteUrl: 'https://example.atlassian.net',
+      apiBaseUrl,
+      accessToken: 'token-1',
+      maxJqlResults: 100,
+    } as MCPToolContext,
+    stubAuth()
+  );
 
   return registered;
 }
@@ -175,7 +189,7 @@ describe('jira_remove_issue_from_sprint', () => {
     calls = [];
     jiraFetchMock.mockReset();
     jiraFetchMock.mockImplementation(
-      async (url: string, _token: string, request?: { method?: string; body?: string }) => {
+      async (url: string, request?: { method?: string; body?: string }) => {
         calls.push({
           url,
           method: request?.method ?? 'GET',
@@ -216,14 +230,12 @@ describe('jira_remove_issue_from_sprint', () => {
     // Neither source answered. Absence of evidence is not "no sprint", so the
     // request goes ahead and Jira decides.
     serve({ agileIssue: null });
-    jiraFetchMock.mockImplementation(
-      async (url: string, _t: string, request?: { method?: string }) => {
-        calls.push({ url, method: request?.method ?? 'GET', body: null });
-        if (url.includes('/rest/agile/1.0/issue/')) throw new Error('nope');
-        if (url.endsWith('/field')) throw new Error('nope');
-        return { ok: true, status: 204, json: async () => ({}) };
-      }
-    );
+    jiraFetchMock.mockImplementation(async (url: string, request?: { method?: string }) => {
+      calls.push({ url, method: request?.method ?? 'GET', body: null });
+      if (url.includes('/rest/agile/1.0/issue/')) throw new Error('nope');
+      if (url.endsWith('/field')) throw new Error('nope');
+      return { ok: true, status: 204, json: async () => ({}) };
+    });
 
     const remove = (await sprintTools()).get('jira_remove_issue_from_sprint')!;
     const result = await remove({ issueKey: 'SCRUM-3' });

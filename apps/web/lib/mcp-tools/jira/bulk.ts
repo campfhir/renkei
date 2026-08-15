@@ -7,13 +7,22 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { getCachedDisplayName } from '../common';
 import { logger } from '@/lib/logger';
 import { buildFieldUpdates } from './field-schema';
 import { writeWithFieldFallback, type FieldWritePlan } from './field-write';
 import { recordUnwritten } from './write';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
-export async function registerBulkTools(server: McpServer, context: MCPToolContext): Promise<void> {
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
+
+export async function registerBulkTools(
+  server: McpServer,
+  context: MCPToolContext,
+  auth: JiraAuth
+): Promise<void> {
   // jira_bulk_update_issues (not in renkei_tools.json but keeping for now)
   server.registerTool(
     'jira_bulk_update_issues',
@@ -45,9 +54,9 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
         }
 
         // First search for issues matching the JQL
-        const searchResponse = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/search/jql`,
-          context.accessToken,
+        const searchResponse = await auth.fetch(
+          granularJiraScopes('jira_bulk_update_issues', true),
+          '/rest/api/3/search/jql',
           {
             method: 'POST',
             body: JSON.stringify({
@@ -57,6 +66,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
             }),
           }
         );
+        if (!searchResponse.ok) return errText(await describeJiraAuthFailure(searchResponse));
 
         const searchData = (await searchResponse.json()) as any;
         const issueKeys = (searchData.issues || []).map((i: any) => i.key);
@@ -72,7 +82,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
         // editmeta — a JQL selection is near-always homogeneous enough for
         // its option sets to hold across the batch, and a mismatch only
         // costs that issue its field via the fallback below.
-        const updates = await buildFieldUpdates(context, fields, { issueKey: issueKeys[0] });
+        const updates = await buildFieldUpdates(context, auth, fields, { issueKey: issueKeys[0] });
         if (Object.keys(updates.fields).length === 0) {
           return {
             content: [
@@ -108,11 +118,14 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
         for (const key of issueKeys) {
           try {
             const outcome = await writeWithFieldFallback(plan, async (fieldsToSend) => {
-              await jiraFetch(
-                `${context.apiBaseUrl}/rest/api/3/issue/${key}`,
-                context.accessToken,
+              const response = await auth.fetch(
+                granularJiraScopes('jira_bulk_update_issues', false),
+                `/rest/api/3/issue/${key}`,
                 { method: 'PUT', body: JSON.stringify({ fields: fieldsToSend }) }
               );
+              if (!response.ok) {
+                throw new Error(await describeJiraAuthFailure(response));
+              }
             });
 
             if (!outcome.sent) {
@@ -126,7 +139,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
 
             updated++;
             if (outcome.dropped.length > 0) {
-              const commented = await recordUnwritten(context, key, outcome.dropped);
+              const commented = await recordUnwritten(context, auth, key, outcome.dropped);
               degraded.push(
                 `${key}: not set — ${outcome.dropped
                   .map((field) => `${field.label} (${field.reason})`)
@@ -199,9 +212,9 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
         }
 
         // Search for issues
-        const searchResponse = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/search/jql`,
-          context.accessToken,
+        const searchResponse = await auth.fetch(
+          granularJiraScopes('jira_bulk_transition_issues', true),
+          '/rest/api/3/search/jql',
           {
             method: 'POST',
             body: JSON.stringify({
@@ -211,6 +224,7 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
             }),
           }
         );
+        if (!searchResponse.ok) return errText(await describeJiraAuthFailure(searchResponse));
 
         const searchData = (await searchResponse.json()) as any;
         const issueKeys = (searchData.issues || []).map((i: any) => i.key);
@@ -225,10 +239,14 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
         for (const key of issueKeys) {
           try {
             // Get available transitions
-            const transResponse = await jiraFetch(
-              `${context.apiBaseUrl}/rest/api/3/issue/${key}/transitions`,
-              context.accessToken
+            const transResponse = await auth.fetch(
+              granularJiraScopes('jira_bulk_transition_issues', true),
+              `/rest/api/3/issue/${key}/transitions`
             );
+            if (!transResponse.ok) {
+              failures.push(`${key}: ${await describeJiraAuthFailure(transResponse)}`);
+              continue;
+            }
             const transData = (await transResponse.json()) as any;
 
             const transition = transData.transitions?.find(
@@ -236,9 +254,9 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
             );
 
             if (transition) {
-              await jiraFetch(
-                `${context.apiBaseUrl}/rest/api/3/issue/${key}/transitions`,
-                context.accessToken,
+              const execResponse = await auth.fetch(
+                granularJiraScopes('jira_bulk_transition_issues', false),
+                `/rest/api/3/issue/${key}/transitions`,
                 {
                   method: 'POST',
                   body: JSON.stringify({
@@ -246,6 +264,10 @@ export async function registerBulkTools(server: McpServer, context: MCPToolConte
                   }),
                 }
               );
+              if (!execResponse.ok) {
+                failures.push(`${key}: ${await describeJiraAuthFailure(execResponse)}`);
+                continue;
+              }
               transitioned++;
             } else {
               const names = Array.isArray(transData.transitions)

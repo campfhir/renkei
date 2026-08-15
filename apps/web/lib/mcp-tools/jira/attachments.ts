@@ -7,15 +7,17 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName, jiraFetch } from '../common';
+import { getCachedDisplayName } from '../common';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
 /** Fallback when no limit is on the context; matches the org-settings default. */
 const DEFAULT_MAX_ATTACHMENT_BYTES = 20_971_520; // 20MB
 
 export async function registerAttachmentTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JiraAuth
 ): Promise<void> {
   // jira_add_attachment
   server.registerTool(
@@ -69,18 +71,24 @@ export async function registerAttachmentTools(
         const formData = new FormData();
         formData.append('file', new Blob([buffer]), filename);
 
-        // Through jiraFetch, not bare fetch: an expired token gets refreshed
+        // Through auth.fetch, not bare fetch: an expired token gets refreshed
         // and retried instead of failing the upload, and a refusal surfaces
         // Jira's actual reason rather than a bare status text.
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/attachments`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_add_attachment', false),
+          `/rest/api/3/issue/${issueKey}/attachments`,
           {
             method: 'POST',
             headers: { 'X-Atlassian-Token': 'no-check' },
             body: formData,
           }
         );
+        if (!response.ok) {
+          return {
+            content: [{ type: 'text' as const, text: await describeJiraAuthFailure(response) }],
+            isError: true,
+          };
+        }
 
         return {
           content: [{ type: 'text' as const, text: `Attached ${filename} to ${issueKey}` }],

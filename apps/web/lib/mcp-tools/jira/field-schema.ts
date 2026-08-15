@@ -16,12 +16,15 @@
  * exactly the case where the cache is the thing that is stale.
  */
 
-import { jiraFetch } from '../common';
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
 import { adfToMarkdown } from './adf';
 import { normalizeFieldId, renderFieldValue } from './fields';
 import { markdownToAdf } from './markdown';
+import { granularJiraScopes, type JiraAuth } from './jira-auth';
+
+/** Field/metadata reads that back every write — same scope regardless of caller. */
+const FIELD_SCHEMA_SCOPES = granularJiraScopes('jira_list_fields', true);
 
 export interface JiraField {
   /** `summary`, `customfield_10016`. What the REST payload is keyed by. */
@@ -109,6 +112,7 @@ function parseField(raw: unknown): JiraField | null {
 
 export async function loadFieldSchema(
   context: MCPToolContext,
+  auth: JiraAuth,
   options: { refresh?: boolean } = {}
 ): Promise<JiraField[]> {
   const key = context.apiBaseUrl;
@@ -122,7 +126,12 @@ export async function loadFieldSchema(
   if (pending && !options.refresh) return pending;
 
   const fetching = (async () => {
-    const response = await jiraFetch(`${context.apiBaseUrl}/rest/api/3/field`, context.accessToken);
+    const response = await auth.fetch(FIELD_SCHEMA_SCOPES, '/rest/api/3/field');
+    if (!response.ok) {
+      throw new Error(
+        `Could not load the Jira field schema: HTTP ${response.status} ${await response.text().catch(() => '')}`
+      );
+    }
     const payload = await response.json();
     const fields = Array.isArray(payload)
       ? payload.map(parseField).filter((field): field is JiraField => field !== null)
@@ -551,13 +560,14 @@ export interface EnrichmentSource {
  */
 export async function buildFieldUpdates(
   context: MCPToolContext,
+  auth: JiraAuth,
   requested: Record<string, unknown>,
   options: EnrichmentSource = {}
 ): Promise<FieldUpdates> {
   const entries = Object.entries(requested);
   if (entries.length === 0) return { fields: {}, applied: [], problems: [], optionHints: {} };
 
-  let schema = await loadFieldSchema(context);
+  let schema = await loadFieldSchema(context, auth);
 
   // A name that does not resolve is the one case where the cache is the likely
   // culprit, so it earns a single refetch before being reported as unknown.
@@ -565,7 +575,7 @@ export async function buildFieldUpdates(
   if (unresolved.length > 0) {
     const entry = schemaCacheAge(context);
     if (entry === null || entry > REFRESH_GRACE_MS) {
-      schema = await loadFieldSchema(context, { refresh: true });
+      schema = await loadFieldSchema(context, auth, { refresh: true });
     }
   }
 
@@ -577,7 +587,7 @@ export async function buildFieldUpdates(
     return lookup.ok && isOptionBearing(lookup.field);
   });
   if (needsAllowedValues) {
-    schema = await enrichFieldsWithAllowedValues(context, schema, options);
+    schema = await enrichFieldsWithAllowedValues(context, auth, schema, options);
 
     // Request Type is often absent from create/edit meta (it is JSM's, not
     // the platform's) — the service-desk API is the fallback option source.
@@ -586,7 +596,7 @@ export async function buildFieldUpdates(
       return lookup.ok && isRequestTypeField(lookup.field) && !lookup.field.allowedValues?.length;
     });
     if (requestTypeUncovered) {
-      const requestTypes = await loadRequestTypeOptions(context);
+      const requestTypes = await loadRequestTypeOptions(context, auth);
       if (requestTypes.length > 0) {
         schema = schema.map((field) =>
           isRequestTypeField(field) && !field.allowedValues?.length
@@ -689,6 +699,7 @@ function collectAllowedValues(
  */
 export async function enrichFieldsWithAllowedValues(
   context: MCPToolContext,
+  auth: JiraAuth,
   fields: JiraField[],
   source: EnrichmentSource = {}
 ): Promise<JiraField[]> {
@@ -705,10 +716,11 @@ export async function enrichFieldsWithAllowedValues(
     const allowedValuesByFieldId: Record<string, FieldOption[]> = {};
 
     if (source.issueKey) {
-      const response = await jiraFetch(
-        `${context.apiBaseUrl}/rest/api/3/issue/${encodeURIComponent(source.issueKey)}/editmeta`,
-        context.accessToken
+      const response = await auth.fetch(
+        FIELD_SCHEMA_SCOPES,
+        `/rest/api/3/issue/${encodeURIComponent(source.issueKey)}/editmeta`
       );
+      if (!response.ok) throw new Error(`Could not load editmeta: HTTP ${response.status}`);
       const metadata = await response.json();
       if (isRecord(metadata) && isRecord(metadata.fields)) {
         collectAllowedValues(allowedValuesByFieldId, metadata.fields);
@@ -717,10 +729,11 @@ export async function enrichFieldsWithAllowedValues(
       const params: string[] = [];
       if (source.projectKey) params.push(`projectKeys=${encodeURIComponent(source.projectKey)}`);
       params.push('expand=projects.issuetypes.fields');
-      const response = await jiraFetch(
-        `${context.apiBaseUrl}/rest/api/3/issue/createmeta?${params.join('&')}`,
-        context.accessToken
+      const response = await auth.fetch(
+        FIELD_SCHEMA_SCOPES,
+        `/rest/api/3/issue/createmeta?${params.join('&')}`
       );
+      if (!response.ok) throw new Error(`Could not load createmeta: HTTP ${response.status}`);
       const metadata = await response.json();
 
       const wanted = source.issueType?.trim().toLowerCase();
@@ -765,7 +778,10 @@ function mergeAllowedValues(
 /** Request types straight from JSM, when create/edit meta had none. */
 const requestTypeCache = new Map<string, { options: FieldOption[]; fetchedAt: number }>();
 
-async function loadRequestTypeOptions(context: MCPToolContext): Promise<FieldOption[]> {
+async function loadRequestTypeOptions(
+  context: MCPToolContext,
+  auth: JiraAuth
+): Promise<FieldOption[]> {
   const cached = requestTypeCache.get(context.apiBaseUrl);
   if (cached && Date.now() - cached.fetchedAt < ENRICHMENT_TTL_MS) return cached.options;
 
@@ -773,10 +789,8 @@ async function loadRequestTypeOptions(context: MCPToolContext): Promise<FieldOpt
     // The cross-service-desk listing, so no serviceDeskId is needed here.
     // Requires JSM scopes on the grant; without them this lands in the catch
     // and the value passes through for Jira to name the problem.
-    const response = await jiraFetch(
-      `${context.apiBaseUrl}/rest/servicedeskapi/requesttype`,
-      context.accessToken
-    );
+    const response = await auth.fetch(FIELD_SCHEMA_SCOPES, '/rest/servicedeskapi/requesttype');
+    if (!response.ok) throw new Error(`Could not list request types: HTTP ${response.status}`);
     const payload = await response.json();
     const values = isRecord(payload) && Array.isArray(payload.values) ? payload.values : [];
     const options = values

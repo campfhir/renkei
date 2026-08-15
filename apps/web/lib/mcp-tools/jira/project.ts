@@ -7,12 +7,18 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
+import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 export async function registerProjectTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JiraAuth
 ): Promise<void> {
   // jira_list_projects
   server.registerTool(
@@ -46,10 +52,11 @@ export async function registerProjectTools(
         const query = typeof args.query === 'string' ? args.query.trim() : '';
         const params = [`maxResults=${max}`, 'orderBy=key'];
         if (query) params.push(`query=${encodeURIComponent(query)}`);
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/project/search?${params.join('&')}`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_list_projects', true),
+          `/rest/api/3/project/search?${params.join('&')}`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
         const data = (await response.json()) as any;
         const projects = Array.isArray(data?.values) ? data.values : [];
         if (projects.length === 0) {
@@ -118,10 +125,11 @@ export async function registerProjectTools(
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/project/${projectKey}/components`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_list_components', true),
+          `/rest/api/3/project/${projectKey}/components`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = (await response.json()) as any;
         const components = Array.isArray(data) ? data : data.values || [];
@@ -180,10 +188,11 @@ export async function registerProjectTools(
         displayName,
       });
       try {
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/field`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_list_fields', true),
+          '/rest/api/3/field'
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const fields = (await response.json()) as any[];
 
@@ -266,10 +275,11 @@ export async function registerProjectTools(
           return { content: [{ type: 'text' as const, text: 'query is required' }], isError: true };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/user/search?query=${encodeURIComponent(query as string)}&maxResults=${Math.min(maxResults as number, 50)}`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_search_users', true),
+          `/rest/api/3/user/search?query=${encodeURIComponent(query as string)}&maxResults=${Math.min(maxResults as number, 50)}`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const users = (await response.json()) as any[];
 
@@ -332,10 +342,11 @@ export async function registerProjectTools(
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/transitions`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_list_transitions', true),
+          `/rest/api/3/issue/${issueKey}/transitions`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = (await response.json()) as any;
         const transitions = data.transitions || [];

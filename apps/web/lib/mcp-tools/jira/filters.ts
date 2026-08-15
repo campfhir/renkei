@@ -7,12 +7,18 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
+import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 export async function registerFilterTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JiraAuth
 ): Promise<void> {
   // jira_list_filters
   server.registerTool(
@@ -38,12 +44,13 @@ export async function registerFilterTools(
 
         // owner (and jql) only appear when expanded — without this every
         // filter showed Owner: Unknown.
-        let url = `${context.apiBaseUrl}/rest/api/3/filter/search?maxResults=50&expand=owner,jql`;
+        let path = `/rest/api/3/filter/search?maxResults=50&expand=owner,jql`;
         if (expand) {
-          url += `&expand=${encodeURIComponent(expand as string)}`;
+          path += `&expand=${encodeURIComponent(expand as string)}`;
         }
 
-        const response = await jiraFetch(url, context.accessToken);
+        const response = await auth.fetch(granularJiraScopes('jira_list_filters', true), path);
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
         const data = (await response.json()) as any;
         const filters = data.values || [];
 
@@ -109,10 +116,11 @@ export async function registerFilterTools(
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/filter/${filterId}?expand=owner,jql`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_get_filter', true),
+          `/rest/api/3/filter/${filterId}?expand=owner,jql`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const filter = (await response.json()) as any;
 
@@ -182,14 +190,15 @@ export async function registerFilterTools(
         if (description) body.description = description as string;
         if (favourite) body.favourite = favourite as boolean;
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/filter`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_create_filter', false),
+          '/rest/api/3/filter',
           {
             method: 'POST',
             body: JSON.stringify(body),
           }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const filter = (await response.json()) as any;
 
@@ -236,11 +245,12 @@ export async function registerFilterTools(
           };
         }
 
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/filter/${filterId}?expand=owner,jql`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_delete_filter', false),
+          `/rest/api/3/filter/${filterId}?expand=owner,jql`,
           { method: 'DELETE' }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         return {
           content: [{ type: 'text' as const, text: `Filter ${filterId} deleted` }],

@@ -7,13 +7,19 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
+import { getCachedDisplayName, withPresentationHint } from '../common';
 import { adfToMarkdown } from './adf';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 export async function registerCommentTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JiraAuth
 ): Promise<void> {
   // jira_list_comments
   server.registerTool(
@@ -44,10 +50,11 @@ export async function registerCommentTools(
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/comment`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_list_comments', true),
+          `/rest/api/3/issue/${issueKey}/comment`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = (await response.json()) as any;
         const comments = data.comments || [];
@@ -128,14 +135,15 @@ export async function registerCommentTools(
           ids: (commentIds as string[]).map((id) => parseInt(id, 10)),
         };
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/comment/list`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_bulk_get_comments', true),
+          '/rest/api/3/comment/list',
           {
             method: 'POST',
             body: JSON.stringify(body),
           }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = (await response.json()) as any;
         const comments = data.values || [];

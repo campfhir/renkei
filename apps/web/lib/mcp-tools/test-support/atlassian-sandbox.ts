@@ -10,6 +10,7 @@
 
 import type { JsmOpsAuth } from '../jira-service-management/ops-auth';
 import type { JsmAuth } from '../jira-service-management/jsm-auth';
+import type { JiraAuth } from '../jira/jira-auth';
 import type { ConfluenceAuth } from '../confluence/confluence-auth';
 import type { ConfluenceAccess } from '../confluence/client';
 
@@ -153,6 +154,37 @@ export function patJsmOpsAuth(creds: SandboxCredentials, cloudId: string): JsmOp
  * No scope enforcement, same reasoning as `patJsmOpsAuth`/`patConfluenceAuth`.
  */
 export function patJsmAuth(creds: SandboxCredentials, cloudId: string): JsmAuth {
+  const base = `https://api.atlassian.com/ex/jira/${cloudId}`;
+  return {
+    kind: 'pat',
+    async fetch(_requiredScopes, path, init) {
+      return fetch(`${base}${path}`, {
+        ...init,
+        headers: {
+          Authorization: authHeader(creds),
+          Accept: 'application/json',
+          ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+          ...init?.headers,
+        },
+      });
+    },
+  };
+}
+
+/**
+ * `JiraAuth` for a personal token — what `jira.integration.test.ts` injects
+ * where production injects `oauthJiraAuth` (see `jira/jira-auth.ts`).
+ *
+ * Same gateway URL production's `oauthJiraAuth` builds, and the same Basic
+ * auth this file already confirmed for `patJsmAuth` (`api.atlassian.com/ex/
+ * jira/{cloudId}` accepts Basic fine, unlike Ops's gateway) — plain Jira and
+ * classic JSM sit behind the identical gateway, so nothing new to confirm.
+ *
+ * No scope enforcement, same reasoning as the other pat*Auth functions here:
+ * a personal token authenticates as a real user with that user's full
+ * standing, not a delegated OAuth grant.
+ */
+export function patJiraAuth(creds: SandboxCredentials, cloudId: string): JiraAuth {
   const base = `https://api.atlassian.com/ex/jira/${cloudId}`;
   return {
     kind: 'pat',

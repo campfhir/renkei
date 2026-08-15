@@ -7,10 +7,19 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
+import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
-export async function registerUserTools(server: McpServer, context: MCPToolContext): Promise<void> {
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
+
+export async function registerUserTools(
+  server: McpServer,
+  context: MCPToolContext,
+  auth: JiraAuth
+): Promise<void> {
   // jira_list_users
   server.registerTool(
     'jira_list_users',
@@ -38,11 +47,12 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
         // /users/search is get-ALL-users and silently ignores `query` — it
         // returned page 1 of the directory for every search, which looked
         // plausible and was always wrong. Filtering lives on /user/search.
-        const url = query
-          ? `${context.apiBaseUrl}/rest/api/3/user/search?maxResults=${limit}&query=${encodeURIComponent(query as string)}`
-          : `${context.apiBaseUrl}/rest/api/3/users/search?maxResults=${limit}`;
+        const path = query
+          ? `/rest/api/3/user/search?maxResults=${limit}&query=${encodeURIComponent(query as string)}`
+          : `/rest/api/3/users/search?maxResults=${limit}`;
 
-        const response = await jiraFetch(url, context.accessToken);
+        const response = await auth.fetch(granularJiraScopes('jira_list_users', true), path);
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
         const users = (await response.json()) as any[];
 
         const lines = [
@@ -106,10 +116,11 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/user?accountId=${encodeURIComponent(accountId as string)}`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_get_user', true),
+          `/rest/api/3/user?accountId=${encodeURIComponent(accountId as string)}`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const user = (await response.json()) as any;
 
@@ -167,12 +178,13 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
       try {
         const { query, maxResults = 10 } = args;
 
-        let url = `${context.apiBaseUrl}/rest/api/3/groups/picker?maxResults=${Math.min(maxResults as number, 50)}`;
+        let path = `/rest/api/3/groups/picker?maxResults=${Math.min(maxResults as number, 50)}`;
         if (query) {
-          url += `&query=${encodeURIComponent(query as string)}`;
+          path += `&query=${encodeURIComponent(query as string)}`;
         }
 
-        const response = await jiraFetch(url, context.accessToken);
+        const response = await auth.fetch(granularJiraScopes('jira_list_groups', true), path);
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
         const data = (await response.json()) as any;
         const groups = data.groups || [];
 
@@ -233,10 +245,11 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/group/member?groupname=${encodeURIComponent(groupName as string)}&maxResults=${Math.min(maxResults as number, 50)}`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_list_group_members', true),
+          `/rest/api/3/group/member?groupname=${encodeURIComponent(groupName as string)}&maxResults=${Math.min(maxResults as number, 50)}`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = (await response.json()) as any;
         const members = data.values || [];
@@ -300,10 +313,11 @@ export async function registerUserTools(server: McpServer, context: MCPToolConte
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/user/groups?accountId=${encodeURIComponent(accountId as string)}`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_get_user_groups', true),
+          `/rest/api/3/user/groups?accountId=${encodeURIComponent(accountId as string)}`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = (await response.json()) as any;
         // /user/groups returns a plain ARRAY — `.values` on an array is the

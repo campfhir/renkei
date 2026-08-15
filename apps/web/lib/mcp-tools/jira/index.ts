@@ -7,6 +7,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
+import type { JiraAuth } from './jira-auth';
 import { registerReadTools } from './read';
 import { registerWriteTools } from './write';
 import { registerBulkTools } from './bulk';
@@ -23,23 +24,28 @@ import { registerFilterTools } from './filters';
 import { registerCommentTools } from './comments';
 import { registerWatchTools } from './watches';
 
-export async function registerJiraTools(server: McpServer, context: MCPToolContext): Promise<void> {
+export async function registerJiraTools(
+  server: McpServer,
+  context: MCPToolContext,
+  auth: JiraAuth
+): Promise<void> {
   // Read-Only Tools
-  await registerReadTools(server, context);
-  await registerProjectTools(server, context);
-  await registerSprintTools(server, context);
-  await registerUserTools(server, context);
-  await registerIssueLinkTools(server, context);
-  await registerVersionTools(server, context);
-  await registerComponentTools(server, context);
-  await registerFilterTools(server, context);
-  await registerCommentTools(server, context);
-  await registerWatchTools(server, context);
+  await registerReadTools(server, context, auth);
+  await registerProjectTools(server, context, auth);
+  await registerSprintTools(server, context, auth);
+  await registerUserTools(server, context, auth);
+  await registerIssueLinkTools(server, context, auth);
+  await registerVersionTools(server, context, auth);
+  await registerComponentTools(server, context, auth);
+  await registerFilterTools(server, context, auth);
+  await registerCommentTools(server, context, auth);
+  await registerWatchTools(server, context, auth);
 
   // Mutating Operations
-  await registerWriteTools(server, context);
-  await registerBulkTools(server, context);
-  await registerAttachmentTools(server, context);
+  await registerWriteTools(server, context, auth);
+  await registerBulkTools(server, context, auth);
+  await registerAttachmentTools(server, context, auth);
+  // No auth param: analyze_transcript makes no Jira API calls at all.
   await registerUtilityTools(server, context);
-  await registerWorklogTools(server, context);
+  await registerWorklogTools(server, context, auth);
 }

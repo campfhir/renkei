@@ -18,6 +18,13 @@ import {
   type JiraField,
 } from './field-schema';
 import { adfToMarkdown } from './adf';
+import type { JiraAuth } from './jira-auth';
+
+/** A stub JiraAuth routing every call to jiraFetchMock with just the relative path. */
+const auth: JiraAuth = {
+  kind: 'oauth',
+  fetch: (_requiredScopes, path, init) => jiraFetchMock(path, init),
+};
 
 const field = (over: Partial<JiraField> & Pick<JiraField, 'id' | 'name'>): JiraField => ({
   custom: over.id.startsWith('customfield_'),
@@ -334,7 +341,7 @@ describe('isJiraDuration', () => {
 describe('loadFieldSchema', () => {
   it('parses the endpoint and skips entries without an id and name', async () => {
     serveSchema(RAW);
-    const fields = await loadFieldSchema(context);
+    const fields = await loadFieldSchema(context, auth);
 
     expect(fields).toHaveLength(2);
     expect(fields.map((f) => f.id)).toEqual(['summary', 'customfield_10016']);
@@ -343,9 +350,9 @@ describe('loadFieldSchema', () => {
 
   it('serves later calls from the cache', async () => {
     serveSchema(RAW);
-    await loadFieldSchema(context);
-    await loadFieldSchema(context);
-    await loadFieldSchema(context);
+    await loadFieldSchema(context, auth);
+    await loadFieldSchema(context, auth);
+    await loadFieldSchema(context, auth);
 
     expect(jiraFetchMock).toHaveBeenCalledTimes(1);
   });
@@ -353,9 +360,9 @@ describe('loadFieldSchema', () => {
   it('makes one request for concurrent callers', async () => {
     serveSchema(RAW);
     await Promise.all([
-      loadFieldSchema(context),
-      loadFieldSchema(context),
-      loadFieldSchema(context),
+      loadFieldSchema(context, auth),
+      loadFieldSchema(context, auth),
+      loadFieldSchema(context, auth),
     ]);
 
     expect(jiraFetchMock).toHaveBeenCalledTimes(1);
@@ -363,30 +370,36 @@ describe('loadFieldSchema', () => {
 
   it('refetches when asked', async () => {
     serveSchema(RAW);
-    await loadFieldSchema(context);
-    await loadFieldSchema(context, { refresh: true });
+    await loadFieldSchema(context, auth);
+    await loadFieldSchema(context, auth, { refresh: true });
 
     expect(jiraFetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('caches per site, not globally', async () => {
     serveSchema(RAW);
-    await loadFieldSchema(context);
-    await loadFieldSchema({ ...context, apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-2' });
+    await loadFieldSchema(context, auth);
+    await loadFieldSchema(
+      { ...context, apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-2' },
+      auth
+    );
 
     expect(jiraFetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('survives an endpoint that does not return a list', async () => {
     serveSchema({ errorMessages: ['nope'] });
-    await expect(loadFieldSchema(context)).resolves.toEqual([]);
+    await expect(loadFieldSchema(context, auth)).resolves.toEqual([]);
   });
 });
 
 describe('buildFieldUpdates', () => {
   it('resolves names to ids and shapes the values', async () => {
     serveSchema(RAW);
-    const updates = await buildFieldUpdates(context, { 'Story Points': 5, Summary: 'New title' });
+    const updates = await buildFieldUpdates(context, auth, {
+      'Story Points': 5,
+      Summary: 'New title',
+    });
 
     expect(updates.fields).toEqual({ customfield_10016: 5, summary: 'New title' });
     expect(updates.problems).toEqual([]);
@@ -395,7 +408,7 @@ describe('buildFieldUpdates', () => {
 
   it('makes no request when there is nothing to resolve', async () => {
     serveSchema(RAW);
-    const updates = await buildFieldUpdates(context, {});
+    const updates = await buildFieldUpdates(context, auth, {});
 
     expect(updates).toEqual({ fields: {}, applied: [], problems: [], optionHints: {} });
     expect(jiraFetchMock).not.toHaveBeenCalled();
@@ -403,7 +416,7 @@ describe('buildFieldUpdates', () => {
 
   it('reports the fields it could not resolve, and omits them', async () => {
     serveSchema(RAW);
-    const updates = await buildFieldUpdates(context, { 'Story Points': 5, Nonexistent: 'x' });
+    const updates = await buildFieldUpdates(context, auth, { 'Story Points': 5, Nonexistent: 'x' });
 
     expect(updates.fields).toEqual({ customfield_10016: 5 });
     expect(updates.problems).toHaveLength(1);
@@ -412,10 +425,10 @@ describe('buildFieldUpdates', () => {
 
   it('refetches once for an unknown name, in case the field is new', async () => {
     serveSchema(RAW);
-    await loadFieldSchema(context);
+    await loadFieldSchema(context, auth);
     jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 5 * 60 * 1000);
 
-    const updates = await buildFieldUpdates(context, { 'Brand New Field': 'x' });
+    const updates = await buildFieldUpdates(context, auth, { 'Brand New Field': 'x' });
 
     // Once for the initial load, once because the name was unknown.
     expect(jiraFetchMock).toHaveBeenCalledTimes(2);
@@ -425,8 +438,8 @@ describe('buildFieldUpdates', () => {
 
   it('does not refetch for an unknown name against a schema just loaded', async () => {
     serveSchema(RAW);
-    await loadFieldSchema(context);
-    await buildFieldUpdates(context, { 'Brand New Field': 'x' });
+    await loadFieldSchema(context, auth);
+    await buildFieldUpdates(context, auth, { 'Brand New Field': 'x' });
 
     expect(jiraFetchMock).toHaveBeenCalledTimes(1);
   });
@@ -479,6 +492,7 @@ describe('buildFieldUpdates option enrichment', () => {
 
     const updates = await buildFieldUpdates(
       context,
+      auth,
       { 'Request Type': 'General Request or Inquiry' },
       { issueKey: 'ENG-707' }
     );
@@ -499,6 +513,7 @@ describe('buildFieldUpdates option enrichment', () => {
 
     const updates = await buildFieldUpdates(
       context,
+      auth,
       { 'Request Type': 'General Request or Inquiry' },
       { issueKey: 'ENG-707' }
     );
@@ -520,6 +535,7 @@ describe('buildFieldUpdates option enrichment', () => {
 
     const updates = await buildFieldUpdates(
       context,
+      auth,
       { 'Request Type': 'Password Reset' },
       { issueKey: 'ENG-707' }
     );
@@ -562,6 +578,7 @@ describe('buildFieldUpdates option enrichment', () => {
 
     const updates = await buildFieldUpdates(
       context,
+      auth,
       { 'Request Type': 'General Request or Inquiry' },
       { projectKey: 'ENG', issueType: 'Task' }
     );

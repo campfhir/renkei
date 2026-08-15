@@ -16,8 +16,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch } from '../common';
 import { upsertWatch, disableWatch, listWatches, watchLine } from '../content-watches';
+import { granularJiraScopes, type JiraAuth } from './jira-auth';
 
 // common.ts's ok()/toolError() build a content ITEM, not a result — the
 // Jira tools each wrap them inline. These are the same two lines, named.
@@ -40,16 +40,16 @@ function toolError(text: string) {
  * this succeeds, polling will too, by construction.
  */
 async function projectIsVisible(
-  context: MCPToolContext,
+  auth: JiraAuth,
   projectKey: string
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
     // maxResults 1, not 0: this only asks "does this JQL resolve", but Jira
     // rejects 0 outright ("has to be between 1 and 5,000"). An empty project
     // is still a valid thing to watch — zero issues back is a pass.
-    const response = await jiraFetch(
-      `${context.apiBaseUrl}/rest/api/3/search/jql`,
-      context.accessToken,
+    const response = await auth.fetch(
+      granularJiraScopes('jira_watch_project', true),
+      '/rest/api/3/search/jql',
       {
         method: 'POST',
         body: JSON.stringify({
@@ -72,12 +72,13 @@ async function projectIsVisible(
  * this is the read:project:jira call, and a missing label is cosmetic —
  * failing the whole watch over it would be the bug described above.
  */
-async function projectName(context: MCPToolContext, projectKey: string): Promise<string | null> {
+async function projectName(auth: JiraAuth, projectKey: string): Promise<string | null> {
   try {
-    const response = await jiraFetch(
-      `${context.apiBaseUrl}/rest/api/3/project/${encodeURIComponent(projectKey)}`,
-      context.accessToken
+    const response = await auth.fetch(
+      granularJiraScopes('jira_watch_project', true),
+      `/rest/api/3/project/${encodeURIComponent(projectKey)}`
     );
+    if (!response.ok) return null;
     const body: any = await response.json().catch(() => null);
     return body && typeof body.name === 'string' ? body.name : null;
   } catch {
@@ -87,7 +88,8 @@ async function projectName(context: MCPToolContext, projectKey: string): Promise
 
 export async function registerWatchTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JiraAuth
 ): Promise<void> {
   server.registerTool(
     'jira_watch_project',
@@ -109,7 +111,7 @@ export async function registerWatchTools(
 
       // Validate against Jira before storing: a typo'd key would otherwise
       // become a watch that fails silently in the background forever.
-      const visible = await projectIsVisible(context, projectKey);
+      const visible = await projectIsVisible(auth, projectKey);
       if (!visible.ok) {
         // The reconnect advice is conditional on purpose: appending it to
         // every failure sent a caller chasing a scope problem when the real
@@ -123,7 +125,7 @@ export async function registerWatchTools(
               : '\nCheck the key with jira_list_projects.')
         );
       }
-      const name = (await projectName(context, projectKey)) ?? projectKey;
+      const name = (await projectName(auth, projectKey)) ?? projectKey;
 
       const result = await upsertWatch(
         { tenantId: context.tenantId, subject: context.subject, accountId: context.accountId },

@@ -7,12 +7,18 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, withPresentationHint } from '../common';
+import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 export async function registerVersionTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JiraAuth
 ): Promise<void> {
   // jira_list_versions
   server.registerTool(
@@ -48,12 +54,13 @@ export async function registerVersionTools(
           };
         }
 
-        let url = `${context.apiBaseUrl}/rest/api/3/project/${projectKey}/versions?orderBy=${orderBy}`;
+        let path = `/rest/api/3/project/${projectKey}/versions?orderBy=${orderBy}`;
         if (expand) {
-          url += `&expand=${encodeURIComponent(expand as string)}`;
+          path += `&expand=${encodeURIComponent(expand as string)}`;
         }
 
-        const response = await jiraFetch(url, context.accessToken);
+        const response = await auth.fetch(granularJiraScopes('jira_list_versions', true), path);
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
         const data = (await response.json()) as any;
         // /project/{key}/versions returns a plain ARRAY — and on an array,
         // `.values` resolves to Array.prototype.values (a function), which
@@ -147,14 +154,15 @@ export async function registerVersionTools(
         if (releaseDate) body.releaseDate = releaseDate as string;
         if (released !== undefined) body.released = released as boolean;
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/project/${projectKey}/version`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_create_version', false),
+          `/rest/api/3/project/${projectKey}/version`,
           {
             method: 'POST',
             body: JSON.stringify(body),
           }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const version = (await response.json()) as any;
 
@@ -206,10 +214,11 @@ export async function registerVersionTools(
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/version/${versionId}`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_get_version', true),
+          `/rest/api/3/version/${versionId}`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const version = (await response.json()) as any;
 

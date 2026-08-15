@@ -9,29 +9,33 @@
 jest.mock('@/lib/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
-// requireActual('../common') below loads the real module, whose import chain
-// (tenant-operations → db) cannot load in a unit test environment.
-jest.mock('@/lib/tenant-operations', () => ({
-  refreshAtlassianTokenDirect: jest.fn(),
+// getCachedDisplayName is the only runtime import attachments.ts still has from
+// ../common (auth moved to the injected JiraAuth — see jira-auth.ts) — but
+// merely importing ../common transitively pulls in @renkei/db, whose kysely
+// import is ESM-only and untransformed here.
+jest.mock('../common', () => ({
+  getCachedDisplayName: () => 'Tester',
 }));
-
-const jiraFetchMock = jest.fn();
-jest.mock('../common', () => {
-  const actual = jest.requireActual<typeof import('../common')>('../common');
-  return {
-    ...actual,
-    jiraFetch: (...args: unknown[]) => jiraFetchMock(...args),
-  };
-});
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { registerAttachmentTools } from './attachments';
+import type { JiraAuth } from './jira-auth';
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text?: string }>;
   isError?: boolean;
 }>;
+
+const jiraFetchMock = jest.fn();
+
+/** A stub JiraAuth routing every call to jiraFetchMock with just the relative path. */
+function stubAuth(): JiraAuth {
+  return {
+    kind: 'oauth',
+    fetch: (_requiredScopes, path, init) => jiraFetchMock(path, init),
+  };
+}
 
 async function addAttachmentHandler(maxBytes?: number): Promise<ToolHandler> {
   const handlers = new Map<string, ToolHandler>();
@@ -51,7 +55,7 @@ async function addAttachmentHandler(maxBytes?: number): Promise<ToolHandler> {
     maxAttachmentBytes: maxBytes,
   };
 
-  await registerAttachmentTools(server, context);
+  await registerAttachmentTools(server, context, stubAuth());
   const handler = handlers.get('jira_add_attachment');
   if (!handler) throw new Error('jira_add_attachment was not registered');
   return handler;
@@ -75,7 +79,7 @@ describe('jira_add_attachment', () => {
     expect(jiraFetchMock).not.toHaveBeenCalled();
   });
 
-  it('uploads through jiraFetch with a FormData body', async () => {
+  it('uploads through auth.fetch with a FormData body', async () => {
     jiraFetchMock.mockResolvedValue(new Response('[]', { status: 200 }));
 
     const handler = await addAttachmentHandler(1024);
@@ -87,20 +91,16 @@ describe('jira_add_attachment', () => {
 
     expect(result.isError).toBeUndefined();
     expect(jiraFetchMock).toHaveBeenCalledTimes(1);
-    const [url, token, options] = jiraFetchMock.mock.calls[0] as [
-      string,
+    const [path, options] = jiraFetchMock.mock.calls[0] as [
       string,
       { method: string; body: unknown },
     ];
-    expect(url).toBe(
-      'https://api.atlassian.com/ex/jira/cloud-1/rest/api/3/issue/PROJ-1/attachments'
-    );
-    expect(token).toBe('token');
+    expect(path).toBe('/rest/api/3/issue/PROJ-1/attachments');
     expect(options.method).toBe('POST');
     expect(options.body).toBeInstanceOf(FormData);
   });
 
-  it('surfaces jiraFetch failures as tool errors', async () => {
+  it('surfaces auth.fetch failures as tool errors', async () => {
     jiraFetchMock.mockRejectedValue(new Error('Jira API 403: attachments are disabled'));
 
     const handler = await addAttachmentHandler(1024);

@@ -7,14 +7,20 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName, issueUrl, withPresentationHint } from '../common';
+import { getCachedDisplayName, issueUrl, withPresentationHint } from '../common';
 import { adfToMarkdown } from './adf';
 import { markdownToAdf } from './markdown';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 export async function registerWorklogTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JiraAuth
 ): Promise<void> {
   // jira_list_worklogs
   server.registerTool(
@@ -45,10 +51,11 @@ export async function registerWorklogTools(
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/worklog`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_list_worklogs', true),
+          `/rest/api/3/issue/${issueKey}/worklog`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = (await response.json()) as any;
         const worklogs = data.worklogs || [];
@@ -144,14 +151,15 @@ export async function registerWorklogTools(
           body.started = started as string;
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/worklog`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_create_worklog', false),
+          `/rest/api/3/issue/${issueKey}/worklog`,
           {
             method: 'POST',
             body: JSON.stringify(body),
           }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const worklog = (await response.json()) as any;
 
@@ -209,11 +217,12 @@ export async function registerWorklogTools(
           };
         }
 
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/worklog/${worklogId}`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_delete_worklog', false),
+          `/rest/api/3/issue/${issueKey}/worklog/${worklogId}`,
           { method: 'DELETE' }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         return {
           content: [

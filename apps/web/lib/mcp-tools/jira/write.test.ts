@@ -4,13 +4,23 @@ import type { MCPToolContext } from '../common';
 
 const jiraFetchMock = jest.fn();
 jest.mock('../common', () => ({
-  jiraFetch: (...args: unknown[]) => jiraFetchMock(...args),
   issueUrl: (siteUrl: string, issueKey: string) => `${siteUrl}/browse/${issueKey}`,
   getCachedDisplayName: () => 'Tester',
 }));
 
 import { clearFieldSchemaCache } from './field-schema';
 import { registerWriteTools } from './write';
+import type { JiraAuth } from './jira-auth';
+
+const apiBaseUrl = 'https://api.atlassian.com/ex/jira/cloud-1';
+
+/** A stub JiraAuth reconstructing the full URL, so assertions can stay unchanged. */
+function stubAuth(): JiraAuth {
+  return {
+    kind: 'oauth',
+    fetch: (_requiredScopes, path, init) => jiraFetchMock(`${apiBaseUrl}${path}`, init),
+  };
+}
 
 type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean };
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
@@ -77,7 +87,7 @@ function serve(schema: unknown[], serveOptions: ServeOptions = {}): void {
   options = serveOptions;
   jiraFetchMock.mockReset();
   jiraFetchMock.mockImplementation(
-    async (url: string, _token: string, request?: { method?: string; body?: string }) => {
+    async (url: string, request?: { method?: string; body?: string }) => {
       const method = request?.method ?? 'GET';
       const body = request?.body ? JSON.parse(request.body) : null;
       calls.push({ url, method, body });
@@ -129,14 +139,18 @@ async function tools(): Promise<Map<string, ToolHandler>> {
     },
   } as unknown as McpServer;
 
-  await registerWriteTools(server, {
-    tenantId: 'tenant-1',
-    accountId: 'acct-1',
-    siteUrl: 'https://example.atlassian.net',
-    apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
-    accessToken: 'token-1',
-    maxJqlResults: 100,
-  } as MCPToolContext);
+  await registerWriteTools(
+    server,
+    {
+      tenantId: 'tenant-1',
+      accountId: 'acct-1',
+      siteUrl: 'https://example.atlassian.net',
+      apiBaseUrl,
+      accessToken: 'token-1',
+      maxJqlResults: 100,
+    } as MCPToolContext,
+    stubAuth()
+  );
 
   return registered;
 }

@@ -7,7 +7,6 @@ import type { MCPToolContext } from '../common';
 // what these tests are checking.
 const jiraFetchMock = jest.fn();
 jest.mock('../common', () => ({
-  jiraFetch: (...args: unknown[]) => jiraFetchMock(...args),
   issueUrl: (siteUrl: string, issueKey: string) => `${siteUrl}/browse/${issueKey}`,
   cacheUserDisplayName: () => undefined,
   getCachedDisplayName: () => 'Tester',
@@ -16,9 +15,20 @@ jest.mock('../common', () => ({
 }));
 
 import { registerReadTools } from './read';
+import type { JiraAuth } from './jira-auth';
 
 type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean };
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
+
+const apiBaseUrl = 'https://api.atlassian.com/ex/jira/cloud-1';
+
+/** A stub JiraAuth reconstructing the full URL, so assertions can stay unchanged. */
+function stubAuth(): JiraAuth {
+  return {
+    kind: 'oauth',
+    fetch: (_requiredScopes, path, init) => jiraFetchMock(`${apiBaseUrl}${path}`, init),
+  };
+}
 
 /** Collect the handlers `registerReadTools` registers, so they can be called directly. */
 async function registerTools(): Promise<Map<string, ToolHandler>> {
@@ -33,12 +43,12 @@ async function registerTools(): Promise<Map<string, ToolHandler>> {
     tenantId: 'tenant-1',
     accountId: 'acct-1',
     siteUrl: 'https://example.atlassian.net',
-    apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
+    apiBaseUrl,
     accessToken: 'token-1',
     maxJqlResults: 100,
   } as MCPToolContext;
 
-  await registerReadTools(server, context);
+  await registerReadTools(server, context, stubAuth());
   return tools;
 }
 
@@ -49,13 +59,11 @@ function respondWith(payload: unknown): void {
   requestedUrls = [];
   requestBodies = [];
   jiraFetchMock.mockReset();
-  jiraFetchMock.mockImplementation(
-    async (url: unknown, _token: unknown, request?: { body?: string }) => {
-      requestedUrls.push(String(url));
-      requestBodies.push(request?.body ? JSON.parse(request.body) : null);
-      return { ok: true, status: 200, json: async () => payload } as unknown as Response;
-    }
-  );
+  jiraFetchMock.mockImplementation(async (url: unknown, request?: { body?: string }) => {
+    requestedUrls.push(String(url));
+    requestBodies.push(request?.body ? JSON.parse(request.body) : null);
+    return { ok: true, status: 200, json: async () => payload } as unknown as Response;
+  });
 }
 
 let requestBodies: (Record<string, unknown> | null)[] = [];

@@ -7,12 +7,18 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, getCachedDisplayName } from '../common';
+import { getCachedDisplayName } from '../common';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 export async function registerIssueLinkTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JiraAuth
 ): Promise<void> {
   // jira_list_link_types
   server.registerTool(
@@ -32,10 +38,11 @@ export async function registerIssueLinkTools(
         displayName,
       });
       try {
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issueLinkType`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_list_link_types', true),
+          '/rest/api/3/issueLinkType'
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = (await response.json()) as any;
         const linkTypes = data.issueLinkTypes || [];
@@ -103,10 +110,11 @@ export async function registerIssueLinkTools(
         // ("A blocks B" ⇒ A is outwardIssue), so from = outward. The previous
         // mapping had it inverted and created every link backwards. Matching
         // on the inward phrase ("is blocked by") flips the pair.
-        const typesResponse = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issueLinkType`,
-          context.accessToken
+        const typesResponse = await auth.fetch(
+          granularJiraScopes('jira_create_issue_link', false),
+          '/rest/api/3/issueLinkType'
         );
+        if (!typesResponse.ok) return errText(await describeJiraAuthFailure(typesResponse));
         const typesBody = (await typesResponse.json()) as any;
         const types: any[] = Array.isArray(typesBody?.issueLinkTypes)
           ? typesBody.issueLinkTypes
@@ -140,9 +148,9 @@ export async function registerIssueLinkTools(
           inwardIssue: { key: inwardKey },
         };
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issueLink`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_create_issue_link', false),
+          '/rest/api/3/issueLink',
           {
             method: 'POST',
             body: JSON.stringify(body),
@@ -150,9 +158,7 @@ export async function registerIssueLinkTools(
         );
 
         // The API returns 201 Created with no body, so don't try to parse JSON
-        if (!response.ok) {
-          throw new Error(`Failed to create link: ${response.statusText}`);
-        }
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         // State the link the way Jira will render it, not the raw input —
         // the direction semantics are exactly what callers get wrong.
@@ -202,11 +208,12 @@ export async function registerIssueLinkTools(
           };
         }
 
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issueLink/${linkId}`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_delete_issue_link', false),
+          `/rest/api/3/issueLink/${linkId}`,
           { method: 'DELETE' }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         return {
           content: [{ type: 'text' as const, text: `Link ${linkId} deleted` }],

@@ -7,7 +7,6 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import {
-  jiraFetch,
   issueUrl,
   cacheUserDisplayName,
   getCachedDisplayName,
@@ -15,6 +14,11 @@ import {
 } from '../common';
 import { STANDARD_ISSUE_FIELDS, normalizeFieldId, renderFieldValue } from './fields';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 // Type guard functions
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -80,7 +84,11 @@ function renderExtraFields(
   });
 }
 
-export async function registerReadTools(server: McpServer, context: MCPToolContext): Promise<void> {
+export async function registerReadTools(
+  server: McpServer,
+  context: MCPToolContext,
+  auth: JiraAuth
+): Promise<void> {
   // whoami
   server.registerTool(
     'whoami',
@@ -104,15 +112,13 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           component: 'mcp/tool',
           url: `${context.apiBaseUrl}/rest/api/3/myself`,
         });
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/myself`,
-          context.accessToken
-        );
+        const response = await auth.fetch(granularJiraScopes('whoami', true), '/rest/api/3/myself');
         logger.debug('whoami fetch status', {
           component: 'mcp/tool',
           status: response.status,
           statusText: response.statusText,
         });
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
         const me = await response.json();
         logger.debug('whoami response', { component: 'mcp/tool', data: me });
         if (!isRecord(me)) {
@@ -198,9 +204,9 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         // /rest/api/3/search was removed by Atlassian (CHANGE-2046). Its
         // replacement pages by cursor rather than offset and, critically,
         // returns only issue ids unless `fields` is given explicitly.
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/search/jql`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_search_issues', true),
+          '/rest/api/3/search/jql',
           {
             method: 'POST',
             body: JSON.stringify({
@@ -218,6 +224,7 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
             }),
           }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = await response.json();
         if (!isRecord(data)) {
@@ -330,11 +337,12 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         // The endpoint that replaced the removed /search's `total` (CHANGE-2046).
         // Its answer is an estimate by design — Jira does not count exactly on a
         // large result set — so it is reported as one rather than as a fact.
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/search/approximate-count`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_count_issues', true),
+          '/rest/api/3/search/approximate-count',
           { method: 'POST', body: JSON.stringify({ jql }) }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = await response.json();
         if (!isRecord(data) || !isNumber(data.count)) {
@@ -423,11 +431,12 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
         if (requestedFields.length > 0) query.set('expand', 'names');
 
         const queryString = query.toString();
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${encodeURIComponent(String(issueKey))}` +
-            (queryString ? `?${queryString}` : ''),
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_get_issue', true),
+          `/rest/api/3/issue/${encodeURIComponent(String(issueKey))}` +
+            (queryString ? `?${queryString}` : '')
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const issue = await response.json();
         if (!isRecord(issue)) {
@@ -527,10 +536,11 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
       try {
         const maxResults = Math.min((isNumber(args.maxResults) ? args.maxResults : 25) || 25, 100);
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/agile/1.0/board?maxResults=${maxResults}`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_list_boards', true),
+          `/rest/agile/1.0/board?maxResults=${maxResults}`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = await response.json();
         if (!isRecord(data)) {
@@ -619,10 +629,11 @@ export async function registerReadTools(server: McpServer, context: MCPToolConte
           };
         }
 
-        const response = await jiraFetch(
-          `${context.apiBaseUrl}/rest/agile/1.0/board/${boardId}/sprint`,
-          context.accessToken
+        const response = await auth.fetch(
+          granularJiraScopes('jira_list_sprints', true),
+          `/rest/agile/1.0/board/${boardId}/sprint`
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const data = await response.json();
         if (!isRecord(data)) {

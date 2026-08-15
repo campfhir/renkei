@@ -6,9 +6,14 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, sprintUrl, getCachedDisplayName } from '../common';
+import { sprintUrl, getCachedDisplayName } from '../common';
 import { loadFieldSchema, lookupField } from './field-schema';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -35,13 +40,17 @@ export interface SprintMembership {
  */
 export async function sprintMembership(
   context: MCPToolContext,
+  auth: JiraAuth,
   issueKey: string
 ): Promise<SprintMembership> {
   try {
-    const response = await jiraFetch(
-      `${context.apiBaseUrl}/rest/agile/1.0/issue/${encodeURIComponent(issueKey)}`,
-      context.accessToken
+    const response = await auth.fetch(
+      granularJiraScopes('jira_list_sprints', true),
+      `/rest/agile/1.0/issue/${encodeURIComponent(issueKey)}`
     );
+    if (!response.ok) {
+      throw new Error(await describeJiraAuthFailure(response));
+    }
     const issue = await response.json();
     const fields = isRecord(issue) && isRecord(issue.fields) ? issue.fields : {};
 
@@ -63,13 +72,14 @@ export async function sprintMembership(
   // It mixes active and closed sprints in one array, so everything found is
   // reported as active — a removal attempt is then the thing that decides.
   try {
-    const field = lookupField(await loadFieldSchema(context), 'Sprint');
+    const field = lookupField(await loadFieldSchema(context, auth), 'Sprint');
     if (!field.ok) return { resolved: false, active: [], closed: [] };
 
-    const response = await jiraFetch(
-      `${context.apiBaseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=${field.field.id}`,
-      context.accessToken
+    const response = await auth.fetch(
+      granularJiraScopes('jira_list_fields', true),
+      `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=${field.field.id}`
     );
+    if (!response.ok) return { resolved: false, active: [], closed: [] };
     const issue = await response.json();
     const value =
       isRecord(issue) && isRecord(issue.fields) ? issue.fields[field.field.id] : undefined;
@@ -89,15 +99,16 @@ export async function sprintMembership(
  * means either no boards or no answer, and the caller says so rather than
  * asserting the project has none.
  */
-export async function projectBoards(context: MCPToolContext, issueKey: string): Promise<string[]> {
+export async function projectBoards(auth: JiraAuth, issueKey: string): Promise<string[]> {
   const projectKey = issueKey.split('-')[0];
   if (!projectKey) return [];
 
   try {
-    const response = await jiraFetch(
-      `${context.apiBaseUrl}/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(projectKey)}`,
-      context.accessToken
+    const response = await auth.fetch(
+      granularJiraScopes('jira_list_boards', true),
+      `/rest/agile/1.0/board?projectKeyOrId=${encodeURIComponent(projectKey)}`
     );
+    if (!response.ok) return [];
     const payload = await response.json();
     const values = isRecord(payload) && Array.isArray(payload.values) ? payload.values : [];
 
@@ -112,7 +123,8 @@ export async function projectBoards(context: MCPToolContext, issueKey: string): 
 
 export async function registerSprintTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JiraAuth
 ): Promise<void> {
   // jira_create_sprint
   server.registerTool(
@@ -152,10 +164,15 @@ export async function registerSprintTools(
         if (endDate) body.endDate = endDate;
         if (goal) body.goal = goal;
 
-        await jiraFetch(`${context.apiBaseUrl}/rest/agile/1.0/sprint`, context.accessToken, {
-          method: 'POST',
-          body: JSON.stringify(body),
-        });
+        const response = await auth.fetch(
+          granularJiraScopes('jira_create_sprint', false),
+          '/rest/agile/1.0/sprint',
+          {
+            method: 'POST',
+            body: JSON.stringify(body),
+          }
+        );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const text = `Created sprint "${name}"\n\n[Open in Jira](${sprintUrl(context.siteUrl, String(boardId))})`;
         return { content: [{ type: 'text' as const, text }] };
@@ -207,11 +224,12 @@ export async function registerSprintTools(
         // is not a field id — it is a per-instance customfield — so Jira answered
         // "Field 'sprint' cannot be set. It is not on the appropriate screen, or
         // unknown" on every project, and the real reason was unguessable from it.
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/agile/1.0/sprint/${encodeURIComponent(String(sprintId))}/issue`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_move_issue_to_sprint', false),
+          `/rest/agile/1.0/sprint/${encodeURIComponent(String(sprintId))}/issue`,
           { method: 'POST', body: JSON.stringify({ issues: [String(issueKey)] }) }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         return {
           content: [{ type: 'text' as const, text: `Moved ${issueKey} to sprint ${sprintId}` }],
@@ -261,10 +279,10 @@ export async function registerSprintTools(
         // Which sprint, if any, before changing anything. "It is not in a sprint"
         // is the answer to this request as often as a removal is, and attempting
         // the move first turned that answer into a confusing rejection.
-        const membership = await sprintMembership(context, String(issueKey));
+        const membership = await sprintMembership(context, auth, String(issueKey));
 
         if (membership.resolved && membership.active.length === 0) {
-          const boards = await projectBoards(context, String(issueKey));
+          const boards = await projectBoards(auth, String(issueKey));
           const lines = [`${issueKey} is not in a sprint, so there is nothing to remove it from.`];
 
           if (membership.closed.length > 0) {
@@ -284,10 +302,15 @@ export async function registerSprintTools(
         // Moving to the backlog is how the Agile API removes sprint membership.
         // The old PUT of `fields: { sprint: null }` named a field that does not
         // exist and failed everywhere.
-        await jiraFetch(`${context.apiBaseUrl}/rest/agile/1.0/backlog/issue`, context.accessToken, {
-          method: 'POST',
-          body: JSON.stringify({ issues: [String(issueKey)] }),
-        });
+        const response = await auth.fetch(
+          granularJiraScopes('jira_remove_issue_from_sprint', false),
+          '/rest/agile/1.0/backlog/issue',
+          {
+            method: 'POST',
+            body: JSON.stringify({ issues: [String(issueKey)] }),
+          }
+        );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const left =
           membership.active.length > 0 ? ` (was in ${membership.active.join(', ')})` : '';
@@ -335,14 +358,15 @@ export async function registerSprintTools(
           };
         }
 
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/agile/1.0/sprint/${sprintId}`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_complete_sprint', false),
+          `/rest/agile/1.0/sprint/${sprintId}`,
           {
             method: 'POST',
             body: JSON.stringify({ state: 'closed' }),
           }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         return { content: [{ type: 'text' as const, text: `Completed sprint ${sprintId}` }] };
       } catch (error) {

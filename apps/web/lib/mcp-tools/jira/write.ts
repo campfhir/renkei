@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { jiraFetch, issueUrl, getCachedDisplayName } from '../common';
+import { issueUrl, getCachedDisplayName } from '../common';
 import { markdownToAdf } from './markdown';
 import {
   buildFieldUpdates,
@@ -22,6 +22,11 @@ import {
   type UnwrittenField,
 } from './field-write';
 import { logger } from '@/lib/logger';
+import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+
+function errText(value: string) {
+  return { content: [{ type: 'text' as const, text: value }], isError: true };
+}
 
 // Type guard functions
 /**
@@ -33,17 +38,17 @@ import { logger } from '@/lib/logger';
  * miss becomes an unwritten value, reported, never a silent no-op.
  */
 async function resolveAssigneeId(
-  context: MCPToolContext,
+  auth: JiraAuth,
   value: string
 ): Promise<{ ok: true; id: string } | { ok: false; reason: string }> {
   if (!value.includes('@') && /^[0-9a-zA-Z:-]{16,128}$/.test(value)) {
     return { ok: true, id: value };
   }
-  const response = await jiraFetch(
-    `${context.apiBaseUrl}/rest/api/3/user/search?query=${encodeURIComponent(value)}`,
-    context.accessToken
+  const response = await auth.fetch(
+    granularJiraScopes('jira_search_users', true),
+    `/rest/api/3/user/search?query=${encodeURIComponent(value)}`
   );
-  const users: unknown = await response.json().catch(() => null);
+  const users: unknown = response.ok ? await response.json().catch(() => null) : null;
   const candidates = Array.isArray(users)
     ? users.filter(isRecord).filter((u) => isString(u.accountId))
     : [];
@@ -119,6 +124,7 @@ interface ExtraFields {
  */
 async function collectExtraFields(
   context: MCPToolContext,
+  auth: JiraAuth,
   args: Record<string, unknown>,
   options: { projectKey?: string; issueType?: string; issueKey?: string } = {}
 ): Promise<ExtraFields> {
@@ -130,7 +136,7 @@ async function collectExtraFields(
   if (isNumber(args.storyPoints)) {
     const label = `Story points → ${args.storyPoints}`;
     // The id differs per site, so it is looked up by name rather than assumed.
-    const lookup = findStoryPointsField(await loadFieldSchema(context));
+    const lookup = findStoryPointsField(await loadFieldSchema(context, auth));
     if (lookup.ok) {
       fields[lookup.field.id] = args.storyPoints;
       labels[lookup.field.id] = `${lookup.field.name} → ${args.storyPoints}`;
@@ -155,7 +161,7 @@ async function collectExtraFields(
   }
 
   if (isRecord(args.fields)) {
-    const updates = await buildFieldUpdates(context, args.fields, options);
+    const updates = await buildFieldUpdates(context, auth, args.fields, options);
     Object.assign(fields, updates.fields);
     Object.assign(hints, updates.optionHints);
     for (const [id, value] of Object.entries(updates.fields)) {
@@ -182,18 +188,22 @@ async function collectExtraFields(
  */
 export async function recordUnwritten(
   context: MCPToolContext,
+  auth: JiraAuth,
   issueKey: string,
   unwritten: readonly UnwrittenField[]
 ): Promise<boolean> {
   try {
-    await jiraFetch(
-      `${context.apiBaseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`,
-      context.accessToken,
+    const response = await auth.fetch(
+      granularJiraScopes('jira_add_comment', false),
+      `/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`,
       {
         method: 'POST',
         body: JSON.stringify({ body: markdownToAdf(unwrittenFieldsComment(unwritten)) }),
       }
     );
+    if (!response.ok) {
+      throw new Error(await describeJiraAuthFailure(response));
+    }
     return true;
   } catch (error) {
     logger.warn('could not record unwritten fields', {
@@ -250,7 +260,8 @@ function describeOutcome(
 
 export async function registerWriteTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: JiraAuth
 ): Promise<void> {
   // jira_create_issue
   server.registerTool(
@@ -301,7 +312,7 @@ export async function registerWriteTools(
         const issueTypeStr = isString(issueType) ? issueType : String(issueType);
         const summaryStr = isString(summary) ? summary : String(summary);
 
-        const extra = await collectExtraFields(context, args, {
+        const extra = await collectExtraFields(context, auth, args, {
           projectKey: projectKeyStr,
           issueType: issueTypeStr,
         });
@@ -330,7 +341,7 @@ export async function registerWriteTools(
           plan.labels.priority = `Priority → ${priority}`;
         }
         if (assignee && isString(assignee)) {
-          const resolved = await resolveAssigneeId(context, assignee);
+          const resolved = await resolveAssigneeId(auth, assignee);
           if (resolved.ok) {
             plan.optional.assignee = { id: resolved.id };
             plan.labels.assignee = `Assignee → ${assignee}`;
@@ -344,11 +355,14 @@ export async function registerWriteTools(
         }
 
         const outcome = await writeWithFieldFallback(plan, async (fields) => {
-          const response = await jiraFetch(
-            `${context.apiBaseUrl}/rest/api/3/issue`,
-            context.accessToken,
+          const response = await auth.fetch(
+            granularJiraScopes('jira_create_issue', false),
+            '/rest/api/3/issue',
             { method: 'POST', body: JSON.stringify({ fields }) }
           );
+          if (!response.ok) {
+            throw new Error(await describeJiraAuthFailure(response));
+          }
           return response.json();
         });
 
@@ -366,7 +380,7 @@ export async function registerWriteTools(
 
         const unwritten = [...extra.unwritten, ...outcome.dropped];
         const commented =
-          unwritten.length > 0 ? await recordUnwritten(context, resultKey, unwritten) : false;
+          unwritten.length > 0 ? await recordUnwritten(context, auth, resultKey, unwritten) : false;
 
         const applied = Object.keys(plan.labels)
           .filter((id) => !outcome.dropped.some((field) => plan.labels[id] === field.label))
@@ -429,7 +443,7 @@ export async function registerWriteTools(
 
         // An update knows its issue, so allowed values come from editmeta —
         // the answer for this exact issue, no issue type needed.
-        const extra = await collectExtraFields(context, args, { issueKey });
+        const extra = await collectExtraFields(context, auth, args, { issueKey });
 
         // Nothing is mandatory on an update: every field is droppable, so a
         // refused custom field costs that field rather than the summary next to it.
@@ -453,7 +467,7 @@ export async function registerWriteTools(
           plan.labels.priority = `Priority → ${priority}`;
         }
         if (assignee && isString(assignee)) {
-          const resolved = await resolveAssigneeId(context, assignee);
+          const resolved = await resolveAssigneeId(auth, assignee);
           if (resolved.ok) {
             plan.optional.assignee = { id: resolved.id };
             plan.labels.assignee = `Assignee → ${assignee}`;
@@ -476,7 +490,7 @@ export async function registerWriteTools(
             };
           }
 
-          const noted = await recordUnwritten(context, issueKey, extra.unwritten);
+          const noted = await recordUnwritten(context, auth, issueKey, extra.unwritten);
           return {
             content: [
               {
@@ -492,16 +506,19 @@ export async function registerWriteTools(
         }
 
         const outcome = await writeWithFieldFallback(plan, async (fields) => {
-          await jiraFetch(
-            `${context.apiBaseUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}`,
-            context.accessToken,
+          const response = await auth.fetch(
+            granularJiraScopes('jira_update_issue', false),
+            `/rest/api/3/issue/${encodeURIComponent(issueKey)}`,
             { method: 'PUT', body: JSON.stringify({ fields }) }
           );
+          if (!response.ok) {
+            throw new Error(await describeJiraAuthFailure(response));
+          }
         });
 
         const unwritten = [...extra.unwritten, ...outcome.dropped];
         const commented =
-          unwritten.length > 0 ? await recordUnwritten(context, issueKey, unwritten) : false;
+          unwritten.length > 0 ? await recordUnwritten(context, auth, issueKey, unwritten) : false;
 
         const applied = Object.keys(plan.labels)
           .filter((id) => !outcome.dropped.some((field) => plan.labels[id] === field.label))
@@ -560,9 +577,9 @@ export async function registerWriteTools(
         }
 
         const commentStr = comment;
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/comment`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_add_comment', false),
+          `/rest/api/3/issue/${issueKey}/comment`,
           {
             method: 'POST',
             body: JSON.stringify({
@@ -570,6 +587,7 @@ export async function registerWriteTools(
             }),
           }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const text = `Comment added to ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
         return { content: [{ type: 'text' as const, text }] };
@@ -618,10 +636,11 @@ export async function registerWriteTools(
         }
 
         // First, get available transitions
-        const transResponse = await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/transitions`,
-          context.accessToken
+        const transResponse = await auth.fetch(
+          granularJiraScopes('jira_transition_issue', true),
+          `/rest/api/3/issue/${issueKey}/transitions`
         );
+        if (!transResponse.ok) return errText(await describeJiraAuthFailure(transResponse));
         const transData = await transResponse.json();
         if (!isRecord(transData)) {
           return {
@@ -679,14 +698,15 @@ export async function registerWriteTools(
           };
         }
 
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/transitions`,
-          context.accessToken,
+        const execResponse = await auth.fetch(
+          granularJiraScopes('jira_transition_issue', false),
+          `/rest/api/3/issue/${issueKey}/transitions`,
           {
             method: 'POST',
             body: JSON.stringify(body),
           }
         );
+        if (!execResponse.ok) return errText(await describeJiraAuthFailure(execResponse));
 
         const text = `Transitioned ${issueKey} to ${transitionName}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
         return { content: [{ type: 'text' as const, text }] };
@@ -741,14 +761,15 @@ export async function registerWriteTools(
           body.comment = markdownToAdf(comment);
         }
 
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/worklog`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_log_work', false),
+          `/rest/api/3/issue/${issueKey}/worklog`,
           {
             method: 'POST',
             body: JSON.stringify(body),
           }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const text = `Logged ${timeSpent} on ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
         return { content: [{ type: 'text' as const, text }] };
@@ -799,14 +820,15 @@ export async function registerWriteTools(
           };
         }
 
-        let url = `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}`;
+        let path = `/rest/api/3/issue/${issueKey}`;
         if (deleteSubtasks === true) {
-          url += '?deleteSubtasks=true';
+          path += '?deleteSubtasks=true';
         }
 
-        await jiraFetch(url, context.accessToken, {
+        const response = await auth.fetch(granularJiraScopes('jira_delete_issue', false), path, {
           method: 'DELETE',
         });
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const text = `Issue ${issueKey} has been deleted.`;
         return { content: [{ type: 'text' as const, text }] };
@@ -851,13 +873,14 @@ export async function registerWriteTools(
           };
         }
 
-        await jiraFetch(
-          `${context.apiBaseUrl}/rest/api/3/issue/${issueKey}/comment/${commentId}`,
-          context.accessToken,
+        const response = await auth.fetch(
+          granularJiraScopes('jira_delete_comment', false),
+          `/rest/api/3/issue/${issueKey}/comment/${commentId}`,
           {
             method: 'DELETE',
           }
         );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const text = `Comment ${commentId} has been deleted from ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
         return { content: [{ type: 'text' as const, text }] };
