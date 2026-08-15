@@ -9,6 +9,8 @@
  */
 
 import type { JsmOpsAuth } from '../jira-service-management/ops-auth';
+import type { ConfluenceAuth } from '../confluence/confluence-auth';
+import type { ConfluenceAccess } from '../confluence/client';
 
 export interface SandboxCredentials {
   email: string;
@@ -113,5 +115,38 @@ export function patJsmOpsAuth(creds: SandboxCredentials, cloudId: string): JsmOp
         },
       });
     },
+  };
+}
+
+/**
+ * `ConfluenceAuth` for a personal token — what `confluence.integration.test.ts`
+ * injects where production injects `oauthConfluenceAuth` (see
+ * `confluence/confluence-auth.ts`).
+ *
+ * Unlike Ops, Confluence's Basic auth works against BOTH the bare
+ * `/wiki/api/v2/...` path and the `/ex/confluence/{cloudId}/wiki/...`
+ * gateway (confirmed directly against the sandbox) — so client.ts's
+ * existing gateway URL needs no swapping, only the auth header does.
+ * Confirmed separately that a personal token does NOT work as a Bearer
+ * token (404 on both paths) — hence ConfluenceAccess carrying a full
+ * `authHeader` rather than client.ts hardcoding `Bearer ${accessToken}`.
+ *
+ * No scope enforcement, same reasoning as `patJsmOpsAuth`: a personal token
+ * authenticates as a real user with that user's full standing.
+ */
+export function patConfluenceAuth(
+  creds: SandboxCredentials,
+  cloudId: string,
+  accountId: string
+): ConfluenceAuth {
+  const access: ConfluenceAccess = {
+    accessToken: creds.apiToken,
+    cloudId,
+    accountId,
+    authHeader: authHeader(creds),
+  };
+  return {
+    kind: 'pat',
+    resolve: async () => access,
   };
 }

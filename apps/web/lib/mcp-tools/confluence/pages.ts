@@ -6,7 +6,6 @@ import {
   confluencePost,
   confluencePut,
   confluenceDelete,
-  resolveConfluenceAccess,
   values,
   textResult,
   errText,
@@ -18,6 +17,7 @@ import {
 import { markdownToConfluenceBody, confluenceBodyToMarkdown, isBlankMarkdown } from './markdown';
 import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
+import type { ConfluenceAuth } from './confluence-auth';
 
 function pageLine(page: Record<string, unknown>): string {
   const version = rec(page.version);
@@ -70,7 +70,11 @@ async function fetchPageForUpdate(
   };
 }
 
-export async function registerPageTools(server: McpServer, context: MCPToolContext): Promise<void> {
+export async function registerPageTools(
+  server: McpServer,
+  context: MCPToolContext,
+  auth: ConfluenceAuth
+): Promise<void> {
   server.registerTool(
     'confluence_list_pages',
     {
@@ -91,7 +95,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const max = typeof args.max === 'number' ? args.max : 25;
       const parts = [`limit=${max}`, `status=${str(args.status) || 'current'}`];
@@ -123,7 +127,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const pageId = str(args.pageId);
       if (!pageId) return errText('pageId is required');
@@ -169,7 +173,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const spaceId = str(args.spaceId);
       if (!spaceId) return errText('spaceId is required');
@@ -213,7 +217,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const pageId = str(args.pageId);
       if (!pageId) return errText('pageId is required');
@@ -258,7 +262,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const pageId = str(args.pageId);
       if (!pageId) return errText('pageId is required');
@@ -301,7 +305,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const pageId = str(args.pageId);
       if (!pageId) return errText('pageId is required');
@@ -345,7 +349,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const pageId = str(args.pageId);
       if (!pageId) return errText('pageId is required');
@@ -376,7 +380,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const pageId = str(args.pageId);
       if (!pageId) return errText('pageId is required');
@@ -416,7 +420,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const pageId = str(args.pageId);
       if (!pageId) return errText('pageId is required');
@@ -457,7 +461,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const max = typeof args.max === 'number' ? args.max : 25;
       const parts = [`status=draft`, `limit=${max}`];
@@ -491,7 +495,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const pageId = str(args.pageId);
       if (!pageId) return errText('pageId is required');
@@ -523,7 +527,7 @@ export async function registerPageTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const pageId = str(args.pageId);
       if (!pageId) return errText('pageId is required');

@@ -8,12 +8,14 @@
  */
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { confluenceGet, resolveConfluenceAccess, textResult, errText, str } from './client';
+import { confluenceGet, textResult, errText, str } from './client';
 import type { MCPToolContext } from '../common';
+import type { ConfluenceAuth } from './confluence-auth';
 
 export async function registerAnalyticsTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: ConfluenceAuth
 ): Promise<void> {
   server.registerTool(
     'confluence_get_page_analytics',
@@ -30,7 +32,7 @@ export async function registerAnalyticsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const contentId = str(args.contentId);
       if (!contentId) return errText('contentId is required');

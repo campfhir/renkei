@@ -1,17 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  confluenceGet,
-  resolveConfluenceAccess,
-  values,
-  textResult,
-  errText,
-  str,
-  rec,
-} from './client';
+import { confluenceGet, values, textResult, errText, str, rec } from './client';
 import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
+import type { ConfluenceAuth } from './confluence-auth';
 
 function spaceLine(space: Record<string, unknown>): string {
   return (
@@ -23,7 +16,8 @@ function spaceLine(space: Record<string, unknown>): string {
 
 export async function registerSpaceTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: ConfluenceAuth
 ): Promise<void> {
   server.registerTool(
     'confluence_list_spaces',
@@ -41,7 +35,7 @@ export async function registerSpaceTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const max = typeof args.max === 'number' ? args.max : 25;
       const parts = [`limit=${max}`, `status=${str(args.status) || 'current'}`];
@@ -70,7 +64,7 @@ export async function registerSpaceTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const spaceId = str(args.spaceId);
       if (!spaceId) return errText('spaceId is required');

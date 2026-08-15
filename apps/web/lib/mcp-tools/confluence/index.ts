@@ -14,6 +14,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { withScopeGate } from '../capability-gate';
 import type { MCPToolContext } from '../common';
 import { confluenceScopeFor } from './scopes';
+import type { ConfluenceAuth } from './confluence-auth';
 import { registerSpaceTools } from './spaces';
 import { registerSearchTools } from './search';
 import { registerPageTools } from './pages';
@@ -31,22 +32,23 @@ export const CONFLUENCE_MCP_CONNECTOR = 'atlassian-confluence';
 
 export async function registerConfluenceTools(
   rawServer: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: ConfluenceAuth
 ): Promise<void> {
   const server = withScopeGate(rawServer, context.confluenceScopes, (name) =>
     confluenceScopeFor(name)
   );
 
-  await registerSpaceTools(server, context);
-  await registerSearchTools(server, context);
-  await registerPageTools(server, context);
-  await registerBlogpostTools(server, context);
-  await registerLabelTools(server, context);
-  await registerCommentTools(server, context);
-  await registerTaskTools(server, context);
-  await registerAttachmentTools(server, context);
-  await registerDatabaseTools(server, context);
-  await registerWhiteboardTools(server, context);
-  await registerAnalyticsTools(server, context);
-  await registerWatchTools(server, context);
+  await registerSpaceTools(server, context, auth);
+  await registerSearchTools(server, context, auth);
+  await registerPageTools(server, context, auth);
+  await registerBlogpostTools(server, context, auth);
+  await registerLabelTools(server, context, auth);
+  await registerCommentTools(server, context, auth);
+  await registerTaskTools(server, context, auth);
+  await registerAttachmentTools(server, context, auth);
+  await registerDatabaseTools(server, context, auth);
+  await registerWhiteboardTools(server, context, auth);
+  await registerAnalyticsTools(server, context, auth);
+  await registerWatchTools(server, context, auth);
 }

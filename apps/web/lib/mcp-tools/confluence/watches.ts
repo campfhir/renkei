@@ -17,7 +17,8 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { confluenceGet, resolveConfluenceAccess, values, textResult, errText, str } from './client';
+import type { ConfluenceAuth } from './confluence-auth';
+import { confluenceGet, values, textResult, errText, str } from './client';
 import { upsertWatch, disableWatch, listWatches, watchLine } from '../content-watches';
 import type { ConfluenceAccess } from './client';
 
@@ -47,7 +48,8 @@ async function resolveSpace(
 
 export async function registerWatchTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: ConfluenceAuth
 ): Promise<void> {
   server.registerTool(
     'confluence_watch_space',
@@ -64,7 +66,7 @@ export async function registerWatchTools(
     },
     async (args: Record<string, any>) => {
       if (!context.subject) return errText('No signed-in subject on this MCP session.');
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const input = String(args.space ?? '').trim();
       if (!input) return errText('space is required');
@@ -110,7 +112,7 @@ export async function registerWatchTools(
     },
     async (args: Record<string, any>) => {
       if (!context.subject) return errText('No signed-in subject on this MCP session.');
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const input = String(args.space ?? '').trim();
       if (!input) return errText('space is required');

@@ -11,16 +11,17 @@ import {
   confluenceGet,
   confluencePost,
   confluenceDelete,
-  resolveConfluenceAccess,
   textResult,
   errText,
   str,
 } from './client';
 import type { MCPToolContext } from '../common';
+import type { ConfluenceAuth } from './confluence-auth';
 
 export async function registerDatabaseTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: ConfluenceAuth
 ): Promise<void> {
   server.registerTool(
     'confluence_create_database',
@@ -38,7 +39,7 @@ export async function registerDatabaseTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const spaceId = str(args.spaceId);
       if (!spaceId) return errText('spaceId is required');
@@ -69,7 +70,7 @@ export async function registerDatabaseTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const databaseId = str(args.databaseId);
       if (!databaseId) return errText('databaseId is required');
@@ -99,7 +100,7 @@ export async function registerDatabaseTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const databaseId = str(args.databaseId);
       if (!databaseId) return errText('databaseId is required');

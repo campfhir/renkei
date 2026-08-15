@@ -34,6 +34,7 @@ import { oauthGraphAuth } from '@/lib/mcp-tools/graph/graph-auth';
 import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
 import { oauthZoomAuth } from '@/lib/mcp-tools/zoom/zoom-auth';
 import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
+import { oauthConfluenceAuth } from '@/lib/mcp-tools/confluence/confluence-auth';
 import { registerSummaryTools, type SummaryProvider } from '@/lib/mcp-tools/summary';
 import { collectCalendar, collectUnreadMail } from '@/lib/mcp-tools/summary/collect-outlook';
 import { collectSprint, collectWorkItems } from '@/lib/mcp-tools/summary/collect-jira';
@@ -337,7 +338,8 @@ export async function registerRenkeiTools(
   if (confluenceAvailable) {
     await registerConfluenceTools(
       withCapabilityGate(server, projection, CONFLUENCE_MCP_CONNECTOR),
-      context
+      context,
+      oauthConfluenceAuth(context)
     );
   }
 }

@@ -7,17 +7,10 @@
  */
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  confluenceGet,
-  resolveConfluenceAccess,
-  values,
-  textResult,
-  errText,
-  str,
-  rec,
-} from './client';
+import { confluenceGet, values, textResult, errText, str, rec } from './client';
 import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
+import type { ConfluenceAuth } from './confluence-auth';
 
 /** Wraps a bare word/phrase in CQL text-search syntax; passes a caller-supplied CQL clause through untouched. */
 function cqlOf(query: string, looksLikeCql: boolean): string {
@@ -37,7 +30,8 @@ function searchResultLine(entry: Record<string, unknown>): string {
 
 export async function registerSearchTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: ConfluenceAuth
 ): Promise<void> {
   server.registerTool(
     'confluence_search',
@@ -55,7 +49,7 @@ export async function registerSearchTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const query = str(args.query);
       if (!query) return errText('query is required');
@@ -93,7 +87,7 @@ export async function registerSearchTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const query = str(args.query).replace(/"/g, '\\"');
       if (!query) return errText('query is required');

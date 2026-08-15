@@ -12,13 +12,13 @@ import {
   confluenceGet,
   confluencePost,
   confluenceDelete,
-  resolveConfluenceAccess,
   values,
   textResult,
   errText,
   str,
 } from './client';
 import type { MCPToolContext } from '../common';
+import type { ConfluenceAuth } from './confluence-auth';
 
 const CONTENT_TYPE_PATH: Record<string, string> = {
   page: 'pages',
@@ -28,7 +28,8 @@ const CONTENT_TYPE_PATH: Record<string, string> = {
 
 export async function registerLabelTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: ConfluenceAuth
 ): Promise<void> {
   server.registerTool(
     'confluence_list_labels',
@@ -42,7 +43,7 @@ export async function registerLabelTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const contentId = str(args.contentId);
       if (!contentId) return errText('contentId is required');
@@ -73,7 +74,7 @@ export async function registerLabelTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const contentId = str(args.contentId);
       if (!contentId) return errText('contentId is required');
@@ -102,7 +103,7 @@ export async function registerLabelTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const contentId = str(args.contentId);
       if (!contentId) return errText('contentId is required');

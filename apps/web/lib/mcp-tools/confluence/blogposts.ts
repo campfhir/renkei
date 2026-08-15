@@ -6,7 +6,6 @@ import {
   confluencePost,
   confluencePut,
   confluenceDelete,
-  resolveConfluenceAccess,
   values,
   textResult,
   errText,
@@ -18,6 +17,7 @@ import {
 import { markdownToConfluenceBody, confluenceBodyToMarkdown, isBlankMarkdown } from './markdown';
 import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
+import type { ConfluenceAuth } from './confluence-auth';
 
 function blogpostLine(post: Record<string, unknown>): string {
   const version = rec(post.version);
@@ -66,7 +66,8 @@ async function fetchBlogpostForUpdate(
 
 export async function registerBlogpostTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: ConfluenceAuth
 ): Promise<void> {
   server.registerTool(
     'confluence_list_blogposts',
@@ -81,7 +82,7 @@ export async function registerBlogpostTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const max = typeof args.max === 'number' ? args.max : 25;
       const parts = [`limit=${max}`, `status=${str(args.status) || 'current'}`];
@@ -110,7 +111,7 @@ export async function registerBlogpostTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const blogpostId = str(args.blogpostId);
       if (!blogpostId) return errText('blogpostId is required');
@@ -149,7 +150,7 @@ export async function registerBlogpostTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const spaceId = str(args.spaceId);
       if (!spaceId) return errText('spaceId is required');
@@ -183,7 +184,7 @@ export async function registerBlogpostTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const blogpostId = str(args.blogpostId);
       if (!blogpostId) return errText('blogpostId is required');
@@ -227,7 +228,7 @@ export async function registerBlogpostTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const blogpostId = str(args.blogpostId);
       if (!blogpostId) return errText('blogpostId is required');

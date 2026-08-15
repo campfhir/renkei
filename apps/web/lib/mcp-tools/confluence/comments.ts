@@ -6,7 +6,6 @@ import {
   confluencePost,
   confluencePut,
   confluenceDelete,
-  resolveConfluenceAccess,
   values,
   textResult,
   errText,
@@ -15,6 +14,7 @@ import {
 } from './client';
 import { markdownToConfluenceBody, confluenceBodyToMarkdown } from './markdown';
 import type { MCPToolContext } from '../common';
+import type { ConfluenceAuth } from './confluence-auth';
 
 const CONTENT_TYPE_KEY: Record<string, string> = { page: 'pageId', blogpost: 'blogPostId' };
 const KIND_PATH: Record<string, string> = {
@@ -34,7 +34,8 @@ function commentLine(comment: Record<string, unknown>): string {
 
 export async function registerCommentTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: ConfluenceAuth
 ): Promise<void> {
   server.registerTool(
     'confluence_list_comments',
@@ -52,7 +53,7 @@ export async function registerCommentTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const contentId = str(args.contentId);
       if (!contentId) return errText('contentId is required');
@@ -94,7 +95,7 @@ export async function registerCommentTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const contentId = str(args.contentId);
       if (!contentId) return errText('contentId is required');
@@ -138,7 +139,7 @@ export async function registerCommentTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const commentId = str(args.commentId);
       if (!commentId) return errText('commentId is required');
@@ -181,7 +182,7 @@ export async function registerCommentTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const commentId = str(args.commentId);
       if (!commentId) return errText('commentId is required');

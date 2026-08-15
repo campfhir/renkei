@@ -1,17 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import {
-  confluenceGet,
-  confluencePut,
-  resolveConfluenceAccess,
-  values,
-  textResult,
-  errText,
-  str,
-} from './client';
+import { confluenceGet, confluencePut, values, textResult, errText, str } from './client';
 import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
+import type { ConfluenceAuth } from './confluence-auth';
 
 function taskLine(task: Record<string, unknown>): string {
   return (
@@ -23,7 +16,11 @@ function taskLine(task: Record<string, unknown>): string {
   );
 }
 
-export async function registerTaskTools(server: McpServer, context: MCPToolContext): Promise<void> {
+export async function registerTaskTools(
+  server: McpServer,
+  context: MCPToolContext,
+  auth: ConfluenceAuth
+): Promise<void> {
   server.registerTool(
     'confluence_list_tasks',
     {
@@ -45,7 +42,7 @@ export async function registerTaskTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const max = typeof args.max === 'number' ? args.max : 25;
       const parts = [`limit=${max}`];
@@ -81,7 +78,7 @@ export async function registerTaskTools(server: McpServer, context: MCPToolConte
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const taskId = str(args.taskId);
       if (!taskId) return errText('taskId is required');

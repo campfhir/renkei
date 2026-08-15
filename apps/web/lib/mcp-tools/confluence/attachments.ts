@@ -11,7 +11,6 @@ import {
   confluenceGet,
   confluenceUpload,
   confluenceDelete,
-  resolveConfluenceAccess,
   values,
   textResult,
   errText,
@@ -20,6 +19,7 @@ import {
 } from './client';
 import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
+import type { ConfluenceAuth } from './confluence-auth';
 
 /** Fallback when no limit is on the context; matches the org-settings default. */
 const DEFAULT_MAX_ATTACHMENT_BYTES = 20_971_520; // 20MB
@@ -36,7 +36,8 @@ function attachmentLine(attachment: Record<string, unknown>): string {
 
 export async function registerAttachmentTools(
   server: McpServer,
-  context: MCPToolContext
+  context: MCPToolContext,
+  auth: ConfluenceAuth
 ): Promise<void> {
   server.registerTool(
     'confluence_list_attachments',
@@ -51,7 +52,7 @@ export async function registerAttachmentTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const contentId = str(args.contentId);
       if (!contentId) return errText('contentId is required');
@@ -89,7 +90,7 @@ export async function registerAttachmentTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const contentId = str(args.contentId);
       if (!contentId) return errText('contentId is required');
@@ -133,7 +134,7 @@ export async function registerAttachmentTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await resolveConfluenceAccess(context);
+      const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
       const attachmentId = str(args.attachmentId);
       if (!attachmentId) return errText('attachmentId is required');

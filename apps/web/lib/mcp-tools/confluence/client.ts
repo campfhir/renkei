@@ -37,6 +37,18 @@ export interface ConfluenceAccess {
   accessToken: string;
   cloudId: string;
   accountId: string;
+  /**
+   * The full `Authorization` header value to send. Production's delegated
+   * grant is a Bearer token; a personal API token (see
+   * ../test-support/atlassian-sandbox.ts's `patConfluenceAuth`) authenticates
+   * with Basic auth instead — confirmed directly against the sandbox that a
+   * personal token does NOT work as a Bearer token (404 on both the bare
+   * `/wiki/...` path and the `/ex/confluence/{cloudId}/wiki/...` gateway).
+   * Carrying the finished header here, rather than building `Bearer
+   * ${accessToken}` inline in confluenceRequest, is what makes that
+   * swappable without ConfluenceAuth needing a fetch() of its own.
+   */
+  authHeader: string;
 }
 
 /** The caller's live Confluence token + cloud id, refreshed when stale. */
@@ -91,7 +103,12 @@ export async function resolveConfluenceAccess(
   if (!site.cloudId)
     return 'Confluence grant is missing its site id; reconnect on the Connectors page.';
 
-  return { accessToken: grant.accessToken, cloudId: site.cloudId, accountId: grant.accountId };
+  return {
+    accessToken: grant.accessToken,
+    cloudId: site.cloudId,
+    accountId: grant.accountId,
+    authHeader: `Bearer ${grant.accessToken}`,
+  };
 }
 
 function describeStatus(status: number): string {
@@ -131,7 +148,7 @@ async function confluenceRequest(
       {
         method: init?.method ?? 'GET',
         headers: {
-          Authorization: `Bearer ${access.accessToken}`,
+          Authorization: access.authHeader,
           Accept: 'application/json',
           ...(jsonBody !== undefined ? { 'Content-Type': 'application/json' } : {}),
           ...init?.extraHeaders,
