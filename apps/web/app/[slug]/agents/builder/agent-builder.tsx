@@ -107,8 +107,10 @@ export function AgentBuilder({
   // on the SAVED version, refreshable on demand.
   const [checkNotes, setCheckNotes] = useState<ReviewNote[]>(notesOf(existing));
   const [checking, setChecking] = useState(false);
-  // Create mode's "start from a description" box.
+  // The "start from a description" box — open by default on create, behind
+  // a link on edit (there it REPLACES the current steps, a bigger act).
   const [prose, setProse] = useState('');
+  const [proseOpen, setProseOpen] = useState(!existing);
   const [drafting, setDrafting] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [drafted, setDrafted] = useState(false);
@@ -149,6 +151,19 @@ export function AgentBuilder({
 
   const draftFromProse = async () => {
     if (drafting || prose.trim().length < 10) return;
+    // Redrafting over real work needs a deliberate yes; a fresh page's
+    // single empty step is not worth interrupting for.
+    const hasRealSteps = steps.some(
+      (step) => step.instruction.length > 0 || step.tool !== null || step.name.trim()
+    );
+    if (
+      hasRealSteps &&
+      !window.confirm(
+        `Replace the current ${steps.length} step${steps.length === 1 ? '' : 's'} with a fresh draft from this description?`
+      )
+    ) {
+      return;
+    }
     setDrafting(true);
     setDraftError(null);
     const result = await sendJsonFull<{ name: string; steps: AgentStep[] }>(
@@ -324,12 +339,39 @@ export function AgentBuilder({
 
   return (
     <div className="space-y-6 pb-24">
-      {!existing ? (
+      {!proseOpen && existing ? (
+        <p>
+          <button
+            type="button"
+            onClick={() => setProseOpen(true)}
+            className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            ✨ Redraft from a description…
+          </button>
+        </p>
+      ) : null}
+
+      {proseOpen ? (
         <section className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
-          <h2 className="text-sm font-semibold">Start from a description</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold">
+              {existing ? 'Redraft from a description' : 'Start from a description'}
+            </h2>
+            {existing ? (
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setProseOpen(false)}
+                className="rounded p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+              >
+                ✕
+              </button>
+            ) : null}
+          </div>
           <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
             Describe the whole thing in your own words — we&apos;ll draft the steps and pick the
             skills; you review and adjust everything below before saving.
+            {existing ? ' Drafting replaces the steps currently below.' : ''}
           </p>
           <textarea
             value={prose}
