@@ -40,7 +40,12 @@ interface ModelRow {
   provider: string;
   model: string;
   baseUrl: string | null;
-  settings: { maxOutputTokens?: number; temperature?: number; apiVersion?: string } | null;
+  settings: {
+    maxOutputTokens?: number;
+    temperature?: number;
+    apiVersion?: string;
+    reasoningEffort?: string;
+  } | null;
   enabled: boolean;
   isDefault: boolean;
   hasApiKey: boolean;
@@ -54,6 +59,7 @@ interface ModelDraft {
   maxOutputTokens: string;
   temperature: string;
   apiVersion: string;
+  reasoningEffort: string;
   apiKey: string;
   enabled: boolean;
   isDefault: boolean;
@@ -67,6 +73,7 @@ const emptyDraft: ModelDraft = {
   maxOutputTokens: '',
   temperature: '',
   apiVersion: '',
+  reasoningEffort: '',
   apiKey: '',
   enabled: true,
   isDefault: false,
@@ -83,6 +90,8 @@ function draftOf(row: ModelRow): ModelDraft {
     temperature:
       typeof row.settings?.temperature === 'number' ? String(row.settings.temperature) : '',
     apiVersion: typeof row.settings?.apiVersion === 'string' ? row.settings.apiVersion : '',
+    reasoningEffort:
+      typeof row.settings?.reasoningEffort === 'string' ? row.settings.reasoningEffort : '',
     apiKey: '',
     enabled: row.enabled,
     isDefault: row.isDefault,
@@ -133,6 +142,7 @@ export default function ModelForms({ slug }: { slug: string }) {
       ...(draft.maxOutputTokens ? { maxOutputTokens: Number(draft.maxOutputTokens) } : {}),
       ...(draft.temperature ? { temperature: Number(draft.temperature) } : {}),
       ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
+      ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
       ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
       enabled: draft.enabled,
       isDefault: draft.isDefault,
@@ -374,6 +384,30 @@ export default function ModelForms({ slug }: { slug: string }) {
               />
             </div>
           </div>
+
+          {draft.provider === 'openai' ? (
+            <div>
+              <label className={labelClass} htmlFor="model-reasoning-effort">
+                Reasoning effort <span className="font-normal text-gray-500">(optional)</span>
+              </label>
+              <select
+                id="model-reasoning-effort"
+                className={inputClass}
+                value={draft.reasoningEffort}
+                onChange={(event) => setDraft({ ...draft, reasoningEffort: event.target.value })}
+              >
+                <option value="">Model default</option>
+                <option value="minimal">Minimal</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+              <p className={hintClass}>
+                Reasoning models only (GPT-5 family). Leave temperature blank for these — they
+                reject it.
+              </p>
+            </div>
+          ) : null}
 
           <div>
             <label className={labelClass} htmlFor="model-api-version">

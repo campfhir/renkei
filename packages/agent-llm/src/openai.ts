@@ -38,6 +38,8 @@ export interface OpenAiConfig {
   baseUrl?: string | null;
   /** Azure surfaces version routes with ?api-version=; null = omit. */
   apiVersion?: string | null;
+  /** Reasoning models' effort dial (minimal/low/medium/high); null = omit. */
+  reasoningEffort?: string | null;
 }
 
 type WireMessage = Record<string, unknown>;
@@ -140,6 +142,7 @@ export class OpenAiProvider implements LlmProvider {
       model: this.config.model,
       max_completion_tokens: request.maxTokens,
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+      ...(this.config.reasoningEffort ? { reasoning_effort: this.config.reasoningEffort } : {}),
       messages: [
         { role: 'system', content: request.system },
         ...request.messages.flatMap(toWireMessages),

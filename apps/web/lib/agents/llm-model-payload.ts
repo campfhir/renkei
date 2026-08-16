@@ -11,7 +11,12 @@ export interface ModelPayload {
   provider: string;
   model: string;
   baseUrl: string | null;
-  settings: { maxOutputTokens?: number; temperature?: number; apiVersion?: string };
+  settings: {
+    maxOutputTokens?: number;
+    temperature?: number;
+    apiVersion?: string;
+    reasoningEffort?: string;
+  };
   apiKey: string | null;
   enabled: boolean;
   isDefault: boolean;
@@ -27,6 +32,7 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
     maxOutputTokens?: unknown;
     temperature?: unknown;
     apiVersion?: unknown;
+    reasoningEffort?: unknown;
     apiKey?: unknown;
     enabled?: unknown;
     isDefault?: unknown;
@@ -56,6 +62,10 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
       ...(typeof payload.temperature === 'number' ? { temperature: payload.temperature } : {}),
       ...(typeof payload.apiVersion === 'string' && payload.apiVersion.trim()
         ? { apiVersion: payload.apiVersion.trim() }
+        : {}),
+      ...(typeof payload.reasoningEffort === 'string' &&
+      ['minimal', 'low', 'medium', 'high'].includes(payload.reasoningEffort)
+        ? { reasoningEffort: payload.reasoningEffort }
         : {}),
     },
     apiKey: typeof payload.apiKey === 'string' && payload.apiKey ? payload.apiKey : null,

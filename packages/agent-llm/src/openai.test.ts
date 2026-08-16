@@ -83,6 +83,18 @@ describe('OpenAiProvider.complete', () => {
     expect(JSON.parse(String(init.body)).model).toBe('my-gpt5-deployment');
   });
 
+  it('sends reasoning_effort when configured', async () => {
+    const reasoning = new OpenAiProvider({
+      apiKey: 'sk-test',
+      model: 'gpt-5.4',
+      reasoningEffort: 'medium',
+    });
+    fetchSpy.mockResolvedValue(jsonResponse(200, okBody));
+    await reasoning.complete(request);
+    const body = JSON.parse(String((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(body.reasoning_effort).toBe('medium');
+  });
+
   it('appends api-version when configured — the Azure route-versioning shape', async () => {
     const versioned = new OpenAiProvider({
       apiKey: 'azure-key',

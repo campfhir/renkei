@@ -77,15 +77,14 @@ function settingsOf(row: ModelRow): { maxOutputTokens: number; temperature?: num
   };
 }
 
-/** Azure surfaces version their routes with a query param; blank = none. */
-function apiVersionOf(row: ModelRow): string | null {
-  const settings: { apiVersion?: unknown } =
+/** The optional string knobs stored in settings jsonb; blank = absent. */
+function settingString(row: ModelRow, key: 'apiVersion' | 'reasoningEffort'): string | null {
+  const settings: { apiVersion?: unknown; reasoningEffort?: unknown } =
     typeof row.settings === 'object' && row.settings !== null && !Array.isArray(row.settings)
       ? row.settings
       : {};
-  return typeof settings.apiVersion === 'string' && settings.apiVersion.trim()
-    ? settings.apiVersion.trim()
-    : null;
+  const value = settings[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 function buildProvider(row: ModelRow, apiKey: string): Result<LlmProvider, ResolveLlmError> {
@@ -93,7 +92,8 @@ function buildProvider(row: ModelRow, apiKey: string): Result<LlmProvider, Resol
     apiKey,
     model: row.model,
     baseUrl: row.base_url,
-    apiVersion: apiVersionOf(row),
+    apiVersion: settingString(row, 'apiVersion'),
+    reasoningEffort: settingString(row, 'reasoningEffort'),
   };
   switch (row.provider) {
     case 'anthropic':
