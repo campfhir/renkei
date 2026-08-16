@@ -77,14 +77,31 @@ function settingsOf(row: ModelRow): { maxOutputTokens: number; temperature?: num
   };
 }
 
+/** Azure surfaces version their routes with a query param; blank = none. */
+function apiVersionOf(row: ModelRow): string | null {
+  const settings: { apiVersion?: unknown } =
+    typeof row.settings === 'object' && row.settings !== null && !Array.isArray(row.settings)
+      ? row.settings
+      : {};
+  return typeof settings.apiVersion === 'string' && settings.apiVersion.trim()
+    ? settings.apiVersion.trim()
+    : null;
+}
+
 function buildProvider(row: ModelRow, apiKey: string): Result<LlmProvider, ResolveLlmError> {
+  const shared = {
+    apiKey,
+    model: row.model,
+    baseUrl: row.base_url,
+    apiVersion: apiVersionOf(row),
+  };
   switch (row.provider) {
     case 'anthropic':
-      return ok(new AnthropicProvider({ apiKey, model: row.model, baseUrl: row.base_url }));
+      return ok(new AnthropicProvider(shared));
     // The OpenAI-spec dialect covers OpenAI, Azure AI Foundry's v1 surface,
     // and self-hosted gateways — one adapter, distinguished by base_url.
     case 'openai':
-      return ok(new OpenAiProvider({ apiKey, model: row.model, baseUrl: row.base_url }));
+      return ok(new OpenAiProvider(shared));
     // 'gemini' slots in here.
     default:
       return err('UNSUPPORTED_PROVIDER' as const, {

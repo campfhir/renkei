@@ -138,6 +138,22 @@ describe('AnthropicProvider.complete', () => {
     expect(refused.err.type).toBe('network');
   });
 
+  it('appends api-version when configured — Azure Foundry Claude surfaces', async () => {
+    const foundry = new AnthropicProvider({
+      apiKey: 'azure-key',
+      model: 'claude-sonnet-5',
+      baseUrl: 'https://myresource.services.ai.azure.com/anthropic',
+      apiVersion: '2023-05-01',
+    });
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, { content: [], stop_reason: 'end_turn', usage: {} })
+    );
+    await foundry.complete(request);
+    expect((fetchSpy.mock.calls[0] as [string])[0]).toBe(
+      'https://myresource.services.ai.azure.com/anthropic/v1/messages?api-version=2023-05-01'
+    );
+  });
+
   it('honours a base URL override', async () => {
     const proxied = new AnthropicProvider({
       apiKey: 'sk-test',

@@ -36,6 +36,8 @@ export interface OpenAiConfig {
   /** Model id — for Azure AI Foundry, the deployment name. */
   model: string;
   baseUrl?: string | null;
+  /** Azure surfaces version routes with ?api-version=; null = omit. */
+  apiVersion?: string | null;
 }
 
 type WireMessage = Record<string, unknown>;
@@ -159,7 +161,10 @@ export class OpenAiProvider implements LlmProvider {
 
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/chat/completions`, {
+      const version = this.config.apiVersion
+        ? `?api-version=${encodeURIComponent(this.config.apiVersion)}`
+        : '';
+      response = await fetch(`${baseUrl}/chat/completions${version}`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

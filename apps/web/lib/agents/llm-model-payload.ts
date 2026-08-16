@@ -11,7 +11,7 @@ export interface ModelPayload {
   provider: string;
   model: string;
   baseUrl: string | null;
-  settings: { maxOutputTokens?: number; temperature?: number };
+  settings: { maxOutputTokens?: number; temperature?: number; apiVersion?: string };
   apiKey: string | null;
   enabled: boolean;
   isDefault: boolean;
@@ -26,6 +26,7 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
     baseUrl?: unknown;
     maxOutputTokens?: unknown;
     temperature?: unknown;
+    apiVersion?: unknown;
     apiKey?: unknown;
     enabled?: unknown;
     isDefault?: unknown;
@@ -53,6 +54,9 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
         ? { maxOutputTokens: Math.floor(payload.maxOutputTokens) }
         : {}),
       ...(typeof payload.temperature === 'number' ? { temperature: payload.temperature } : {}),
+      ...(typeof payload.apiVersion === 'string' && payload.apiVersion.trim()
+        ? { apiVersion: payload.apiVersion.trim() }
+        : {}),
     },
     apiKey: typeof payload.apiKey === 'string' && payload.apiKey ? payload.apiKey : null,
     enabled: payload.enabled !== false,

@@ -83,6 +83,20 @@ describe('OpenAiProvider.complete', () => {
     expect(JSON.parse(String(init.body)).model).toBe('my-gpt5-deployment');
   });
 
+  it('appends api-version when configured — the Azure route-versioning shape', async () => {
+    const versioned = new OpenAiProvider({
+      apiKey: 'azure-key',
+      model: 'my-deployment',
+      baseUrl: 'https://myresource.services.ai.azure.com/models',
+      apiVersion: '2024-05-01-preview',
+    });
+    fetchSpy.mockResolvedValue(jsonResponse(200, okBody));
+    await versioned.complete(request);
+    expect((fetchSpy.mock.calls[0] as [string])[0]).toBe(
+      'https://myresource.services.ai.azure.com/models/chat/completions?api-version=2024-05-01-preview'
+    );
+  });
+
   it('translates assistant tool_use and user tool_result onto the wire', async () => {
     fetchSpy.mockResolvedValue(jsonResponse(200, okBody));
     await provider.complete({

@@ -40,7 +40,7 @@ interface ModelRow {
   provider: string;
   model: string;
   baseUrl: string | null;
-  settings: { maxOutputTokens?: number; temperature?: number } | null;
+  settings: { maxOutputTokens?: number; temperature?: number; apiVersion?: string } | null;
   enabled: boolean;
   isDefault: boolean;
   hasApiKey: boolean;
@@ -53,6 +53,7 @@ interface ModelDraft {
   baseUrl: string;
   maxOutputTokens: string;
   temperature: string;
+  apiVersion: string;
   apiKey: string;
   enabled: boolean;
   isDefault: boolean;
@@ -65,6 +66,7 @@ const emptyDraft: ModelDraft = {
   baseUrl: '',
   maxOutputTokens: '',
   temperature: '',
+  apiVersion: '',
   apiKey: '',
   enabled: true,
   isDefault: false,
@@ -80,6 +82,7 @@ function draftOf(row: ModelRow): ModelDraft {
       typeof row.settings?.maxOutputTokens === 'number' ? String(row.settings.maxOutputTokens) : '',
     temperature:
       typeof row.settings?.temperature === 'number' ? String(row.settings.temperature) : '',
+    apiVersion: typeof row.settings?.apiVersion === 'string' ? row.settings.apiVersion : '',
     apiKey: '',
     enabled: row.enabled,
     isDefault: row.isDefault,
@@ -129,6 +132,7 @@ export default function ModelForms({ slug }: { slug: string }) {
       baseUrl: draft.baseUrl || null,
       ...(draft.maxOutputTokens ? { maxOutputTokens: Number(draft.maxOutputTokens) } : {}),
       ...(draft.temperature ? { temperature: Number(draft.temperature) } : {}),
+      ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
       ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
       enabled: draft.enabled,
       isDefault: draft.isDefault,
@@ -369,6 +373,24 @@ export default function ModelForms({ slug }: { slug: string }) {
                 onChange={(event) => setDraft({ ...draft, temperature: event.target.value })}
               />
             </div>
+          </div>
+
+          <div>
+            <label className={labelClass} htmlFor="model-api-version">
+              API version <span className="font-normal text-gray-500">(optional, Azure)</span>
+            </label>
+            <input
+              id="model-api-version"
+              className={inputClass}
+              value={draft.apiVersion}
+              placeholder="e.g. 2024-05-01-preview"
+              onChange={(event) => setDraft({ ...draft, apiVersion: event.target.value })}
+            />
+            <p className={hintClass}>
+              Appended as ?api-version=… — only when the Azure surface demands it (a &quot;Missing
+              required query parameter: api-version&quot; error). Leave blank for Anthropic, OpenAI,
+              and Azure&apos;s /openai/v1 surface.
+            </p>
           </div>
 
           <div className="flex flex-wrap gap-4 text-sm">

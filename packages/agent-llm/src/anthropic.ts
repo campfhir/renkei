@@ -25,6 +25,8 @@ export interface AnthropicConfig {
   apiKey: string;
   model: string;
   baseUrl?: string | null;
+  /** Azure surfaces version routes with ?api-version=; null = omit. */
+  apiVersion?: string | null;
 }
 
 function toWire(block: LlmContentBlock): Record<string, unknown> {
@@ -100,7 +102,10 @@ export class AnthropicProvider implements LlmProvider {
 
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/v1/messages`, {
+      const version = this.config.apiVersion
+        ? `?api-version=${encodeURIComponent(this.config.apiVersion)}`
+        : '';
+      response = await fetch(`${baseUrl}/v1/messages${version}`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
