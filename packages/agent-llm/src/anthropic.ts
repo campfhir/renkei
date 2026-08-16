@@ -109,21 +109,25 @@ export class AnthropicProvider implements LlmProvider {
       const version = this.config.apiVersion
         ? `?api-version=${encodeURIComponent(this.config.apiVersion)}`
         : '';
+      // Azure AI Foundry's gateway validates whichever credential headers it
+      // sees, and a pile of them makes it fail ("credential validation
+      // failed") even when one is right — so Azure hosts get EXACTLY the
+      // headers Foundry's own sample curl sends: Bearer alone. Anthropic
+      // direct keeps its own x-api-key alone; other gateways get both.
+      const isAzure = /\.azure\.com$/i.test(new URL(baseUrl).hostname);
+      const authHeaders: Record<string, string> = isAzure
+        ? { authorization: `Bearer ${this.config.apiKey}` }
+        : this.config.baseUrl
+          ? {
+              'x-api-key': this.config.apiKey,
+              authorization: `Bearer ${this.config.apiKey}`,
+            }
+          : { 'x-api-key': this.config.apiKey };
       response = await fetch(`${baseUrl}/v1/messages${version}`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          // x-api-key is Anthropic's own header. A custom base URL (Azure AI
-          // Foundry's /anthropic surface, gateways) additionally gets the key
-          // as Bearer and api-key — Foundry's sample curl authenticates with
-          // Bearer — while Anthropic-direct stays exactly as it always was.
-          'x-api-key': this.config.apiKey,
-          ...(this.config.baseUrl
-            ? {
-                authorization: `Bearer ${this.config.apiKey}`,
-                'api-key': this.config.apiKey,
-              }
-            : {}),
+          ...authHeaders,
           'anthropic-version': ANTHROPIC_VERSION,
         },
         body: JSON.stringify(body),

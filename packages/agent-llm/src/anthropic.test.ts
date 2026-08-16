@@ -154,13 +154,31 @@ describe('AnthropicProvider.complete', () => {
     expect(url).toBe(
       'https://myresource.services.ai.azure.com/anthropic/v1/messages?api-version=2023-05-01'
     );
-    // A custom base URL gets the key in every dialect Foundry's docs use:
-    // Bearer (their sample curl), api-key, and Anthropic's own x-api-key.
+    // Azure hosts get EXACTLY Foundry's curl headers — Bearer alone. Extra
+    // credential headers make its gateway fail validation.
     const headers = init.headers as Record<string, string>;
     expect(headers.authorization).toBe('Bearer azure-key');
-    expect(headers['api-key']).toBe('azure-key');
-    expect(headers['x-api-key']).toBe('azure-key');
+    expect(headers['api-key']).toBeUndefined();
+    expect(headers['x-api-key']).toBeUndefined();
     expect(headers['anthropic-version']).toBe('2023-06-01');
+  });
+
+  it('sends x-api-key plus Bearer to non-Azure gateways', async () => {
+    const gateway = new AnthropicProvider({
+      apiKey: 'gw-key',
+      model: 'claude-sonnet-5',
+      baseUrl: 'https://llm-gateway.example.com',
+    });
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, { content: [], stop_reason: 'end_turn', usage: {} })
+    );
+    await gateway.complete(request);
+    const headers = (fetchSpy.mock.calls[0] as [string, RequestInit])[1].headers as Record<
+      string,
+      string
+    >;
+    expect(headers['x-api-key']).toBe('gw-key');
+    expect(headers.authorization).toBe('Bearer gw-key');
   });
 
   it('tolerates a pasted full endpoint as the base URL', async () => {
