@@ -520,7 +520,9 @@ export async function saveDescription(
   db: Kysely<DB>,
   tenantId: string,
   agentId: string,
-  outcome: { status: 'ok'; description: string; reviewNotes: string[] } | { status: 'failed' }
+  outcome:
+    | { status: 'ok'; description: string; reviewNotes: { issue: string; fix?: string }[] }
+    | { status: 'failed' }
 ): Promise<void> {
   if (outcome.status === 'ok') {
     await db

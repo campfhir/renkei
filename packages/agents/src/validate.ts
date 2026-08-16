@@ -156,7 +156,7 @@ function validateStep(
   if (step.saveAs !== undefined && !VARIABLE_NAME_PATTERN.test(step.saveAs)) {
     issues.push({
       path: at('saveAs'),
-      message: 'Result names start with a letter and use letters, numbers, - or _.',
+      message: 'Result names start with a letter and use letters, numbers, spaces, - or _.',
     });
   }
 
@@ -186,6 +186,9 @@ export function normalizeAgentDraft(draft: AgentDraft): AgentDraft {
       steps: draft.steps.steps.map((step) => ({
         ...step,
         name: step.name.trim(),
+        // Spaces are legal INSIDE a result name; the edges are trimmed so
+        // the pattern (and every later lookup) never meets stray whitespace.
+        ...(step.saveAs !== undefined ? { saveAs: step.saveAs.trim() || undefined } : {}),
         maxAttempts: Math.min(
           MAX_STEP_ATTEMPTS,
           Math.max(1, Math.round(Number.isFinite(step.maxAttempts) ? step.maxAttempts : 1))

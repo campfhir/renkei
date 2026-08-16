@@ -170,9 +170,11 @@ export function StepCard({
               id={`step-saveas-${step.id}`}
               className={inputClass}
               value={step.saveAs ?? ''}
-              placeholder="e.g. theTicket"
+              placeholder={`e.g. ${step.name.trim() || `Step ${index + 1}`} result`}
               onChange={(event) => {
-                const saveAs = event.target.value.trim();
+                // Not trimmed here — trimming on keystroke makes spaces
+                // untypable mid-name; the normalizer trims the edges on save.
+                const saveAs = event.target.value;
                 onChange(saveAs ? { ...step, saveAs } : { ...step, saveAs: undefined });
               }}
             />

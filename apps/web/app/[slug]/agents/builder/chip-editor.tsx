@@ -71,10 +71,15 @@ export function ChipEditor({
   const lastEmitted = useRef<InstructionSegment[] | null>(null);
   const composing = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  /** True when the menu was opened by the button and owns a search box. */
+  const [searchMode, setSearchMode] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   /** Length of the `/query` text to replace when a pick lands. */
   const slashLength = useRef<number | null>(null);
+  /** The caret at menu-open time — the search box steals focus, so the
+   *  insertion point must be remembered and restored. */
+  const savedRange = useRef<Range | null>(null);
   const [selectedChip, setSelectedChip] = useState<HTMLElement | null>(null);
   const listboxId = useId().replace(/[^a-zA-Z0-9-]/g, '');
 
@@ -168,9 +173,11 @@ export function ChipEditor({
 
   const closeMenu = useCallback(() => {
     setMenuOpen(false);
+    setSearchMode(false);
     setQuery('');
     setActiveIndex(0);
     slashLength.current = null;
+    savedRange.current = null;
   }, []);
 
   const toolCount = value.filter((segment) => segment.t === 'tool').length;
@@ -188,7 +195,17 @@ export function ChipEditor({
       if (!root) return;
       root.focus();
       const selection = window.getSelection();
-      if (!selection || selection.rangeCount === 0) return;
+      if (!selection) return;
+      // The search box (or a click) may have taken the selection out of
+      // the editor — the caret from menu-open time is the insertion point.
+      if (
+        savedRange.current &&
+        (selection.rangeCount === 0 || !root.contains(selection.anchorNode))
+      ) {
+        selection.removeAllRanges();
+        selection.addRange(savedRange.current);
+      }
+      if (selection.rangeCount === 0) return;
       const range = selection.getRangeAt(0);
       range.collapse(true);
 
@@ -427,8 +444,13 @@ export function ChipEditor({
               selection.removeAllRanges();
               selection.addRange(range);
             }
+            // The search box is about to take focus; remember where the
+            // chip should land.
+            savedRange.current =
+              selection && selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
             slashLength.current = null;
             setMenuOpen(true);
+            setSearchMode(true);
             setQuery('');
             setActiveIndex(0);
           }}
@@ -440,12 +462,28 @@ export function ChipEditor({
       {menuOpen ? (
         <InsertMenu
           query={query}
+          onQueryChange={(next) => {
+            setQuery(next);
+            setActiveIndex(0);
+          }}
+          withSearchBox={searchMode}
           tools={tools}
           variables={variables}
           toolsBlockedHint={blockedHint}
           activeIndex={activeIndex}
           onHover={setActiveIndex}
           onSelect={insertOption}
+          onNavigate={(delta) => {
+            if (options.length > 0) {
+              setActiveIndex((current) => (current + delta + options.length) % options.length);
+            }
+          }}
+          onCommit={() => {
+            const option = options[activeIndex];
+            if (option) insertOption(option);
+            else closeMenu();
+          }}
+          onClose={closeMenu}
           listboxId={listboxId}
         />
       ) : null}

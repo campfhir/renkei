@@ -61,8 +61,13 @@ export const MAX_STEP_ATTEMPTS = 5;
 export const MAX_STEPS = 20;
 export const MAX_INSTRUCTION_CHARS = 4_000;
 
-/** `saveAs` names and API-trigger input names share this shape. */
-export const VARIABLE_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+/**
+ * `saveAs` names and API-trigger input names share this shape. Spaces are
+ * allowed mid-name ("the ticket", "Find the ticket result") — these are
+ * labels people read, not identifiers — but not at either end, which the
+ * normalizer's trim guarantees before validation sees them.
+ */
+export const VARIABLE_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9 _.-]{0,63}$/;
 
 export function isInstructionSegment(value: unknown): value is InstructionSegment {
   if (typeof value !== 'object' || value === null) return false;

@@ -15,6 +15,7 @@ import { instructionPreview, type AgentStepsDoc, type TriggerDraft } from '@renk
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import { logger } from '@/lib/logger';
 import { saveDescription } from '@/lib/agents/store';
+import { parseReviewNotes, type ReviewNote } from '@/lib/agents/notes';
 
 const GENERATION_TIMEOUT_MS = 20_000;
 const MAX_OUTPUT_TOKENS = 1_024;
@@ -69,13 +70,13 @@ function promptOf(name: string, steps: AgentStepsDoc, triggers: TriggerDraft[]):
     '- A failure handled with "stop", an unhandled failure, or exhausted retries STOPS the whole automation immediately — later steps never run, so they can safely assume earlier steps succeeded. Missing "fallbacks" for exhausted retries are not a flaw.',
     "- The runner checks each step's tool is available before running, and verifies tool errors against the declared success.",
     '',
-    'Reply with JSON only, no code fences: {"summary": "...", "concerns": ["..."]}.',
+    'Reply with JSON only, no code fences: {"summary": "...", "concerns": [{"issue": "...", "fix": "..."}]}.',
     'summary: 2-3 plain sentences telling the OWNER what this agent does, no technical terms, no tool identifiers.',
-    'concerns: 0-5 short strings naming REAL logic problems a reviewer should check: an instruction promising work no step or tool performs, a step needing information nothing provides, contradictory failure handling, a saved result nothing uses. Empty array if none.',
+    'concerns: 0-5 REAL logic problems a reviewer should check: an instruction promising work no step or tool performs, a step needing information nothing provides, contradictory failure handling, a saved result nothing uses. Each carries "issue" (what is wrong, one sentence) and "fix" (the concrete edit the owner should make, one sentence, e.g. which step to add or how to reword an instruction). Empty array if none.',
   ].join('\n');
 }
 
-function parseReply(text: string): { summary: string; concerns: string[] } | null {
+function parseReply(text: string): { summary: string; concerns: ReviewNote[] } | null {
   // Models fence JSON despite instructions; strip fences before parsing.
   const cleaned = text.replace(/```(?:json)?/g, '').trim();
   const start = cleaned.indexOf('{');
@@ -86,10 +87,7 @@ function parseReply(text: string): { summary: string; concerns: string[] } | nul
       cleaned.slice(start, end + 1)
     );
     if (typeof parsed.summary !== 'string' || !parsed.summary.trim()) return null;
-    const concerns = Array.isArray(parsed.concerns)
-      ? parsed.concerns.filter((entry): entry is string => typeof entry === 'string')
-      : [];
-    return { summary: parsed.summary.trim(), concerns };
+    return { summary: parsed.summary.trim(), concerns: parseReviewNotes(parsed.concerns) };
   } catch {
     return null;
   }
@@ -109,7 +107,7 @@ export async function generateAgentDescription(
     triggers: TriggerDraft[];
     llmModelId: string | null;
   }
-): Promise<{ description: string | null; reviewNotes: string[] }> {
+): Promise<{ description: string | null; reviewNotes: ReviewNote[] }> {
   const failed = async (reason: string) => {
     logger.info('agent description generation skipped: {reason}', {
       component: 'agents/describe',

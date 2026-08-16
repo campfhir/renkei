@@ -7,6 +7,7 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getAgent } from '@/lib/agents/store';
+import { parseReviewNotes } from '@/lib/agents/notes';
 
 /**
  * The readable overview of one agent: the generated description (the
@@ -33,9 +34,7 @@ export default async function AgentOverviewPage({
   const agent = await getAgent(dbResult.val, tenant.id, session.subject, agentId);
   if (!agent) notFound();
 
-  const reviewNotes = Array.isArray(agent.reviewNotes)
-    ? agent.reviewNotes.filter((note): note is string => typeof note === 'string')
-    : [];
+  const reviewNotes = parseReviewNotes(agent.reviewNotes);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -79,9 +78,16 @@ export default async function AgentOverviewPage({
           <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
             Worth checking
           </p>
-          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-amber-900 dark:text-amber-200">
+          <ul className="mt-1 list-disc space-y-2 pl-5 text-sm text-amber-900 dark:text-amber-200">
             {reviewNotes.map((note) => (
-              <li key={note}>{note}</li>
+              <li key={note.issue}>
+                {note.issue}
+                {note.fix ? (
+                  <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/70">
+                    Suggestion: {note.fix}
+                  </p>
+                ) : null}
+              </li>
             ))}
           </ul>
         </div>

@@ -25,6 +25,7 @@ import {
 } from '@renkei/agents';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import type { MintedApiKey, StoredAgent } from '@/lib/agents/store';
+import { parseReviewNotes, type ReviewNote } from '@/lib/agents/notes';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { toToolOptions, toVariableOptions, type VariableOption } from './options';
 import { StepCard } from './step-card';
@@ -54,10 +55,8 @@ interface SaveResponse {
   issues?: ValidationIssue[];
 }
 
-function notesOf(agent: StoredAgent | undefined | null): string[] {
-  return Array.isArray(agent?.reviewNotes)
-    ? agent.reviewNotes.filter((note): note is string => typeof note === 'string')
-    : [];
+function notesOf(agent: StoredAgent | undefined | null): ReviewNote[] {
+  return parseReviewNotes(agent?.reviewNotes);
 }
 
 function newStep(): AgentStep {
@@ -100,14 +99,19 @@ export function AgentBuilder({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [review, setReview] = useState<{
     description: string | null;
-    reviewNotes: string[];
+    reviewNotes: ReviewNote[];
     apiKeys: MintedApiKey[];
     pending: boolean;
   } | null>(null);
   // The edit page's standing "worth checking" panel — the checker's notes
   // on the SAVED version, refreshable on demand.
-  const [checkNotes, setCheckNotes] = useState<string[]>(notesOf(existing));
+  const [checkNotes, setCheckNotes] = useState<ReviewNote[]>(notesOf(existing));
   const [checking, setChecking] = useState(false);
+  // Create mode's "start from a description" box.
+  const [prose, setProse] = useState('');
+  const [drafting, setDrafting] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [drafted, setDrafted] = useState(false);
 
   // The summary is written server-side AFTER the save response; poll the
   // agent until its status resolves so the panel can stop showing the
@@ -142,6 +146,26 @@ export function AgentBuilder({
     }, 2_000);
     return () => clearInterval(timer);
   }, [review?.pending, agentId, tenantId]);
+
+  const draftFromProse = async () => {
+    if (drafting || prose.trim().length < 10) return;
+    setDrafting(true);
+    setDraftError(null);
+    const result = await sendJsonFull<{ name: string; steps: AgentStep[] }>(
+      `/api/tenant/${tenantId}/agents/draft`,
+      'POST',
+      { text: prose }
+    );
+    setDrafting(false);
+    if (result.error || !result.data) {
+      setDraftError(result.error ?? 'Drafting failed — try again.');
+      return;
+    }
+    setSteps(result.data.steps);
+    if (!name.trim() && result.data.name) setName(result.data.name);
+    setDrafted(true);
+    setServerIssues([]);
+  };
 
   const recheck = async () => {
     if (!agentId || checking) return;
@@ -300,6 +324,54 @@ export function AgentBuilder({
 
   return (
     <div className="space-y-6 pb-24">
+      {!existing ? (
+        <section className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+          <h2 className="text-sm font-semibold">Start from a description</h2>
+          <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
+            Describe the whole thing in your own words — we&apos;ll draft the steps and pick the
+            skills; you review and adjust everything below before saving.
+          </p>
+          <textarea
+            value={prose}
+            onChange={(event) => setProse(event.target.value)}
+            rows={3}
+            maxLength={4000}
+            placeholder="e.g. When someone messages me about a ticket, look it up in Jira, add their message as a comment, and reply in the thread with what changed."
+            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+          />
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              disabled={drafting || prose.trim().length < 10}
+              onClick={() => void draftFromProse()}
+              className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {drafting ? (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-300 border-t-white"
+                  />
+                  Drafting…
+                </>
+              ) : drafted ? (
+                'Draft again'
+              ) : (
+                'Draft the steps for me'
+              )}
+            </button>
+            {drafted && !drafting ? (
+              <span className="text-xs text-green-700 dark:text-green-400">
+                Drafted below — review every step before saving.
+              </span>
+            ) : null}
+            {draftError ? (
+              <span className="text-xs text-red-600 dark:text-red-400">{draftError}</span>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       <section>
         <label className="mb-1 block text-sm font-medium" htmlFor="agent-name">
           Name it
@@ -345,9 +417,16 @@ export function AgentBuilder({
             </button>
           </div>
           {checkNotes.length > 0 ? (
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-900 dark:text-amber-200">
+            <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-amber-900 dark:text-amber-200">
               {checkNotes.map((note) => (
-                <li key={note}>{note}</li>
+                <li key={note.issue}>
+                  {note.issue}
+                  {note.fix ? (
+                    <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/70">
+                      Suggestion: {note.fix}
+                    </p>
+                  ) : null}
+                </li>
               ))}
             </ul>
           ) : (

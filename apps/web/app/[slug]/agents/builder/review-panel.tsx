@@ -11,10 +11,11 @@
  */
 
 import type { MintedApiKey } from '@/lib/agents/store';
+import type { ReviewNote } from '@/lib/agents/notes';
 
 export interface ReviewPanelProps {
   description: string | null;
-  reviewNotes: string[];
+  reviewNotes: ReviewNote[];
   /** True while the save-time summary is still being written server-side. */
   descriptionPending: boolean;
   apiKeys: MintedApiKey[];
@@ -64,9 +65,16 @@ export function ReviewPanel({
             <p className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">
               Worth checking
             </p>
-            <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-gray-700 dark:text-gray-300">
+            <ul className="mt-1 list-disc space-y-2 pl-5 text-sm text-gray-700 dark:text-gray-300">
               {reviewNotes.map((note) => (
-                <li key={note}>{note}</li>
+                <li key={note.issue}>
+                  {note.issue}
+                  {note.fix ? (
+                    <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      Suggestion: {note.fix}
+                    </p>
+                  ) : null}
+                </li>
               ))}
             </ul>
           </div>
