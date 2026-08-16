@@ -137,6 +137,37 @@ ENV NODE_ENV=production \
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["pnpm", "--filter", "@renkei/worker", "start"]
 
+# The agents worker — its own image so it scales by adding containers
+# independently of the interactive worker (RENKEI.md Decision #21 context).
+# Same shape as the worker stage: tsx runs TypeScript source directly.
+FROM node:24-alpine AS worker-agents
+ARG PNPM_VERSION
+
+WORKDIR /app
+
+RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY --parents apps/*/package.json packages/*/package.json ./
+RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/worker-agents... && \
+    rm -rf /root/.pnpm-store /root/.npm
+
+COPY --parents packages/*/src ./
+COPY apps/worker-agents/src ./apps/worker-agents/src
+COPY apps/worker-agents/tsconfig.json ./apps/worker-agents/
+
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S worker -u 1001 && \
+    chown -R worker:nodejs /app
+USER worker
+
+ARG GIT_COMMIT
+ENV NODE_ENV=production \
+    GIT_COMMIT=${GIT_COMMIT}
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["pnpm", "--filter", "@renkei/worker-agents", "start"]
+
 # Migration stage - runs migrations only
 FROM node:24-alpine AS migrate
 ARG PNPM_VERSION

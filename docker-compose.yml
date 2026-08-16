@@ -84,6 +84,29 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # The agents worker (user-drafted agent runs — LLM loops with tool calls
+  # against the app's own MCP endpoint). Its own image and process so a slow
+  # model can never sit in front of a webhook reply or an embedding job.
+  # Deliberately no container_name: scale with
+  # `docker compose up -d --scale worker-agents=N` — claims are row-locked,
+  # ordering key agent:{agentId} keeps one agent's runs serial across
+  # replicas, and every sweep it hosts is optimistic/idempotent.
+  worker-agents:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: worker-agents
+    image: renkei-worker-agents:latest
+    environment:
+      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      RENKEI_WEB_INTERNAL_URL: http://app:3000
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   migrate:
     build:
       context: .

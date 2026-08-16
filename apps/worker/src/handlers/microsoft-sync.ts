@@ -30,6 +30,7 @@ import { MICROSOFT } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import type { RawEmail } from '@renkei/email-sanitizer';
 import { enqueueKnowledgeEvent } from '../enqueue';
+import { fanOutMailReceived, isRecentMail } from './agent-triggers';
 import { logger } from '../logger';
 import type { MicrosoftAccess } from './microsoft-access';
 
@@ -411,6 +412,23 @@ export async function runSubscriptionSync(
         orderingKey
       );
       changed += 1;
+
+      // Agent event triggers: only genuinely NEW mail. A full rebuild
+      // replays the whole mailbox and a delta round replays updated items
+      // (a read-status flip on old mail); the rebuild skip plus the
+      // recency window keep "an email arrives" meaning arrives.
+      const receivedAt = str(entry.receivedDateTime);
+      if (!fullRebuild && isRecentMail(receivedAt)) {
+        await fanOutMailReceived({
+          tenantId,
+          accountId: access.accountId,
+          messageId: objectId,
+          subject: str(entry.subject),
+          bodyPreview: str(entry.bodyPreview),
+          from: str(rec(rec(entry.from).emailAddress).address),
+          receivedDateTime: receivedAt,
+        });
+      }
       continue;
     }
 

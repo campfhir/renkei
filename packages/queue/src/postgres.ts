@@ -368,3 +368,20 @@ export function embeddingJobsQueue(): Queue {
     fairAcrossSources: true,
   });
 }
+
+export function agentJobsQueue(): Queue {
+  return createPostgresQueue({
+    table: 'agent_jobs',
+    deadLetterTable: 'agent_jobs_dead_letters',
+    // A legitimate agent run — an LLM loop with tool calls — can hold its
+    // claim far past the default 10 minutes. The engine checkpoints every
+    // attempt in agent_runs/agent_run_steps, so a reclaim after a real
+    // crash RESUMES rather than re-executes; the longer lease just keeps
+    // reclaims from racing runs that are merely slow.
+    staleClaimMinutes: 30,
+    // Queue-level retries mean "the engine died", not "a step failed" —
+    // step retries are the engine's own, counted in agent_run_steps against
+    // the user's attempt budget. Three redeliveries is plenty for crashes.
+    policy: { maxAttempts: 3, baseDelaySeconds: 60, maxDelaySeconds: 3600 },
+  });
+}

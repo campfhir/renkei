@@ -13,6 +13,9 @@ export default {
     '^@/(.*)$': '<rootDir>/$1',
     // Map to source so ts-jest transforms it; the symlinked node_modules copy
     // would be excluded by transformIgnorePatterns.
+    '^@renkei/agents$': '<rootDir>/../../packages/agents/src/index.ts',
+    '^@renkei/agents/runs$': '<rootDir>/../../packages/agents/src/runs.ts',
+    '^@renkei/agent-llm$': '<rootDir>/../../packages/agent-llm/src/index.ts',
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',
     '^@renkei/email-sanitizer$': '<rootDir>/../../packages/email-sanitizer/src/index.ts',

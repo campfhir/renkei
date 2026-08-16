@@ -19,7 +19,7 @@ import ConnectorIcon from '@/components/connector-icon';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getUsageReport, type UsageReport, type ToolUsageRow } from './actions';
-import { friendlyToolName } from './tool-name';
+import { friendlyToolName } from '@/lib/tool-name';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 
 const PERIODS = [

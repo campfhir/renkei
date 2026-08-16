@@ -15,11 +15,11 @@ async function generateTypes() {
   const cli = new Cli();
   await cli.generate({
     dialect: 'postgres',
-    outFile: './lib/db.types.ts',
+    outFile: './src/db.types.ts',
     url: DATABASE_URL,
   });
 
-  console.log('✓ Generated database types at lib/db.types.ts');
+  console.log('✓ Generated database types at src/db.types.ts');
 }
 
 generateTypes().catch(console.error);

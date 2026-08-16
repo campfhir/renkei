@@ -18,6 +18,8 @@ const nextConfig: NextConfig = {
   // Workspace packages ship TypeScript source; Next compiles them in-place.
   transpilePackages: [
     '@renkei/db',
+    '@renkei/agents',
+    '@renkei/agent-llm',
     '@renkei/crypto',
     '@renkei/provider-grants',
     '@renkei/capability-registry',

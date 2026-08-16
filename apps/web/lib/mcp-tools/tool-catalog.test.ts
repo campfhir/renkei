@@ -118,11 +118,17 @@ beforeEach(() => {
 const namesOf = (tools: { name: string }[]) => tools.map((tool) => tool.name);
 
 describe('listAvailableTools', () => {
-  it('returns nothing when Jira is not connected', async () => {
-    // That caller is served a lone jira_connect stub over MCP, so promising a
-    // tool list on the page would be a promise their client would not keep.
-    grants = {};
-    expect(await listAvailableTools('tenant-1', 'subject-1')).toEqual([]);
+  it('omits Jira tools — but not other connectors — when Jira is not connected', async () => {
+    // The scope gate registers no Jira/JSM tools for an empty scope set, and
+    // Outlook's availability is its own question. The old behavior returned
+    // [] outright, which would leave the agent builder claiming a Microsoft-
+    // only caller has no tools at all.
+    grants = {
+      microsoft: { requested_scopes: ['Mail.Read', 'Mail.Send'], granted_scopes: null },
+    };
+    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools.some((name) => name.startsWith('jira_'))).toBe(false);
+    expect(tools.some((name) => name.startsWith('outlook_'))).toBe(true);
   });
 
   it('lists the Jira tools for a connected caller', async () => {
@@ -204,6 +210,24 @@ describe('listAvailableTools', () => {
     expect(disabled).not.toContain('outlook_mail_summary');
     // The orchestrator itself is Jira-gated and stays.
     expect(disabled).toContain('daily_summary');
+  });
+
+  it('carries an outcome set on every tool, catch-all included', async () => {
+    const tools = await listAvailableTools('tenant-1', 'subject-1');
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      expect(tool.outcomes.success.label.length).toBeGreaterThan(0);
+      expect(tool.outcomes.failures.some((f) => f.code === 'other')).toBe(true);
+    }
+  });
+
+  it('serves curated outcomes for the tools that have them', async () => {
+    const tools = await listAvailableTools('tenant-1', 'subject-1');
+    const createIssue = tools.find((tool) => tool.name === 'jira_create_issue');
+    expect(createIssue?.outcomes.failures.map((f) => f.code)).toContain('project-not-found');
+    // A tool with no curated entry still enumerates the generic conditions.
+    const listComments = tools.find((tool) => tool.name === 'jira_list_comments');
+    expect(listComments?.outcomes.failures.map((f) => f.code)).toContain('not-found');
   });
 
   it('labels each tool with a catalog connector key, not a name prefix', async () => {

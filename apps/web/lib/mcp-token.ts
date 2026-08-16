@@ -8,9 +8,10 @@
  * SHA-256 digest so a database leak does not yield usable bearer credentials.
  */
 
-import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { timingSafeEqual } from 'crypto';
 import type { NextRequest } from 'next/server';
 import { getDatabase } from '@renkei/db';
+import { sha256Hex, generateSecret } from '@renkei/crypto';
 import { logger } from '@/lib/logger';
 
 /**
@@ -20,10 +21,11 @@ import { logger } from '@/lib/logger';
  * the server issues the value once and thereafter only checks a presented one
  * against it — so storing a digest costs nothing and means a read of these
  * tables yields no usable credential. Migration 011 covers the reasoning for
- * preferring this over encryption.
+ * preferring this over encryption. The primitive lives in @renkei/crypto so
+ * the agents worker mints tokens with the identical digest.
  */
 export function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+  return sha256Hex(token);
 }
 
 /**
@@ -54,11 +56,10 @@ export function digestsMatch(a: unknown, b: unknown): boolean {
  * outputs. Since dynamic client registration is open, an attacker could obtain
  * one legitimate token, recover the state, and predict other users' bearer
  * tokens — full use of a victim's Jira grant without ever seeing the Atlassian
- * token, defeating the digest-only storage below.
+ * token, defeating the digest-only storage below. Re-exported from
+ * @renkei/crypto, where the agents worker shares it.
  */
-export function generateSecret(byteLength = 32): string {
-  return randomBytes(byteLength).toString('hex');
-}
+export { generateSecret };
 
 /** Extract the credential from an `Authorization: Bearer <token>` header. */
 export function getBearerToken(request: NextRequest): string | null {
@@ -73,11 +74,18 @@ export function getBearerToken(request: NextRequest): string | null {
 }
 
 /**
- * Product surface a token authorizes. Only Jira exists today; validation is
- * explicit about it so adding Confluence later cannot silently widen an
- * existing token's reach.
+ * Product surface a token authorizes. Validation is explicit about it so a
+ * new class of token cannot silently widen an existing token's reach.
+ *
+ * 'jira' is the MCP-client class, issued through the OAuth authorization
+ * server flow. 'agent' is the agent-runner class: minted server-side by the
+ * agents worker for the lifetime of one run, never issued through the OAuth
+ * AS, never refreshable, and revoked at run end (TTL as backstop). The two
+ * are deliberately distinct values so each verification site names which
+ * classes it accepts — see RENKEI.md's decision log entry on agent-runner
+ * tokens.
  */
-export type Application = 'jira';
+export type Application = 'jira' | 'agent';
 
 export interface AccessTokenRecord {
   subject: string;

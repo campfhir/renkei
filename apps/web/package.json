@@ -16,6 +16,8 @@
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",
     "@modelcontextprotocol/server": "^2.0.0",
+    "@renkei/agents": "workspace:*",
+    "@renkei/agent-llm": "workspace:*",
     "@renkei/capability-registry": "workspace:*",
     "@renkei/connector-atlassian": "workspace:*",
     "@renkei/connector-config": "workspace:*",

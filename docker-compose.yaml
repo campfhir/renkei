@@ -95,6 +95,21 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # The agents worker (user-drafted agent runs). No container_name on
+  # purpose: scale with `--scale worker-agents=N` — row-locked claims,
+  # per-agent ordering keys, and optimistic sweeps make replicas safe.
+  worker-agents:
+    image: scotteremiaroden/renkei-worker-agents:latest
+    env_file:
+      - .env
+    environment:
+      <<: *database-urls
+      RENKEI_WEB_INTERNAL_URL: http://renkei-app:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   renkei:
     image: scotteremiaroden/renkei:latest
     container_name: renkei-app

@@ -27,6 +27,7 @@ import { ATLASSIAN } from '@renkei/provider-grants';
 import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import { connectorKeyForTool } from '@/lib/mcp-tools/tool-connector';
+import { resolveOutcomes, type ToolOutcomes } from '@/lib/mcp-tools/outcomes';
 import {
   resolveConnectorAvailability,
   provisionedConnectorsFor,
@@ -47,6 +48,12 @@ export interface ToolDescriptor {
    * part of the model-facing surface.
    */
   appOnly: boolean;
+  /**
+   * The enumerated ways this tool can succeed or fail — what the agent
+   * builder offers failure handling for. Always present; resolution falls
+   * back through registration-declared → curated → generic (see outcomes.ts).
+   */
+  outcomes: ToolOutcomes;
 }
 
 /** The registration surface we need — the rest of McpServer is never touched. */
@@ -54,7 +61,7 @@ interface RegisteredConfig {
   title?: unknown;
   description?: unknown;
   annotations?: { readOnlyHint?: unknown };
-  _meta?: { ui?: { visibility?: unknown } };
+  _meta?: { ui?: { visibility?: unknown }; outcomes?: unknown };
 }
 
 /**
@@ -67,16 +74,18 @@ function collectingServer(): { server: McpServer; tools: ToolDescriptor[] } {
   const tools: ToolDescriptor[] = [];
   const collector = {
     registerTool: (name: string, config: RegisteredConfig) => {
+      // Same rule the capability gate applies: an absent hint means mutating.
+      const kind = config?.annotations?.readOnlyHint === true ? 'read' : 'act';
       tools.push({
         name,
         connector: connectorKeyForTool(name),
-        // Same rule the capability gate applies: an absent hint means mutating.
-        kind: config?.annotations?.readOnlyHint === true ? 'read' : 'act',
+        kind,
         title: typeof config?.title === 'string' ? config.title : null,
         description: typeof config?.description === 'string' ? config.description : null,
         appOnly:
           Array.isArray(config?._meta?.ui?.visibility) &&
           !config._meta.ui.visibility.includes('model'),
+        outcomes: resolveOutcomes(name, kind, config?._meta),
       });
     },
   };
@@ -113,9 +122,11 @@ async function jiraScopesFor(
 /**
  * Every tool this caller would be offered over MCP right now.
  *
- * Empty when they have not connected Jira — the MCP route serves that caller a
- * lone `jira_connect` stub, and claiming a full tool list on the page would be
- * a promise their client would not honour.
+ * A caller who has not connected Jira still gets their real list: the scope
+ * gate registers no Jira/JSM tools for an empty scope set, and every other
+ * connector's availability is its own question. (This used to return [] to
+ * mirror the MCP route's jira_connect stub; the agent builder needs the
+ * honest per-connector answer instead, and the gates already give it.)
  */
 export async function listAvailableTools(
   tenantId: string,
@@ -126,7 +137,6 @@ export async function listAvailableTools(
   const db = dbResult.val;
 
   const jira = await jiraScopesFor(db, tenantId, subject);
-  if (!jira.connected) return [];
 
   const settingsResult = await getOrgSettings(tenantId);
   if (!settingsResult.ok) return [];

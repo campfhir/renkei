@@ -20,6 +20,9 @@
     ],
     "paths": {
       "@/*": ["./*"],
+      "@renkei/agents": ["../../packages/agents/src/index.ts"],
+      "@renkei/agents/runs": ["../../packages/agents/src/runs.ts"],
+      "@renkei/agent-llm": ["../../packages/agent-llm/src/index.ts"],
       "@renkei/db": ["../../packages/db/src/index.ts"],
       "@renkei/crypto": ["../../packages/crypto/src/index.ts"],
       "@renkei/email-sanitizer": ["../../packages/email-sanitizer/src/index.ts"],

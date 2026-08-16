@@ -36,6 +36,7 @@ import {
   hasLinkedIdentity as hasLinkedIdentityDefault,
   resolveLinkedWebexUserAccess as resolveLinkedWebexUserAccessDefault,
 } from './webex-linked-user';
+import { fanOutWebexMessage } from './agent-triggers';
 import { logger } from '../logger';
 import { resolveWebexContext, type WebexTenantContext } from './webex-context';
 
@@ -148,6 +149,19 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
         });
       }
       return;
+    }
+
+    // Agent event triggers: a linked sender's own agents may run on their
+    // message. Best-effort and BEFORE capture, so a capture failure never
+    // silences a trigger (and vice versa — fan-out swallows its own).
+    if (linked === true && message.personEmail && message.text) {
+      await fanOutWebexMessage({
+        tenantId: event.tenant_id,
+        senderEmail: message.personEmail,
+        messageId: message.id,
+        roomId: message.roomId,
+        text: message.text,
+      });
     }
 
     // Best-effort: a forwarded/pasted message usually did not originate in

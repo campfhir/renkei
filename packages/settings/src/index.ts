@@ -57,6 +57,22 @@ export interface OrgSettings {
    * is no universal MRN format, so a site has to say what its own look like.
    */
   redactionMrnFormats: string[];
+  /**
+   * How long agent run records (agent_runs + their step attempts) are kept
+   * before the retention sweep prunes them. Run detail includes content —
+   * tool call previews, resolved instructions — so retention is an org
+   * policy, not a platform constant.
+   */
+  agentRunRetentionDays: number;
+  /**
+   * How deep an agent-triggers-agent chain may go. The queue's attempt
+   * budget bounds retries, not fan-out; this is the fan-out bound.
+   */
+  agentMaxChainDepth: number;
+  /** Wall-clock budget for a single agent run, checked between attempts. */
+  agentRunTimeoutMinutes: number;
+  /** Per-tenant ceiling on runs started per day — the runaway-trigger brake. */
+  agentMaxRunsPerDay: number;
 }
 
 /** The defaults formerly hardcoded in the environment schema. */
@@ -73,6 +89,10 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   redactionEnabled: true,
   redactionDetectors: ['ssn', 'card', 'mrn', 'dob'],
   redactionMrnFormats: [],
+  agentRunRetentionDays: 30,
+  agentMaxChainDepth: 3,
+  agentRunTimeoutMinutes: 15,
+  agentMaxRunsPerDay: 200,
 };
 
 const CACHE_TTL_MS = 60_000;
@@ -147,6 +167,14 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
       stored.get('redaction_mrn_formats'),
       d.redactionMrnFormats
     ),
+    agentRunRetentionDays: Number(
+      coerce(stored.get('agent_run_retention_days'), d.agentRunRetentionDays)
+    ),
+    agentMaxChainDepth: Number(coerce(stored.get('agent_max_chain_depth'), d.agentMaxChainDepth)),
+    agentRunTimeoutMinutes: Number(
+      coerce(stored.get('agent_run_timeout_minutes'), d.agentRunTimeoutMinutes)
+    ),
+    agentMaxRunsPerDay: Number(coerce(stored.get('agent_max_runs_per_day'), d.agentMaxRunsPerDay)),
   };
 
   orgCache.set(tenantId, { value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -175,6 +203,10 @@ export async function setOrgSettings(
     ['redaction_enabled', updates.redactionEnabled],
     ['redaction_detectors', updates.redactionDetectors],
     ['redaction_mrn_formats', updates.redactionMrnFormats],
+    ['agent_run_retention_days', updates.agentRunRetentionDays],
+    ['agent_max_chain_depth', updates.agentMaxChainDepth],
+    ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
+    ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
   ];
 
   for (const [key, value] of pairs) {

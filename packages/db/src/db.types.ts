@@ -44,6 +44,109 @@ export interface ActionableItems {
   updated_at: Generated<Timestamp>;
 }
 
+export interface AgentJobs {
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  id: string;
+  last_error: string | null;
+  locked_at: Timestamp | null;
+  ordering_key: string | null;
+  payload: Json;
+  run_after: Generated<Timestamp>;
+  source: string;
+  status: Generated<string>;
+  tenant_id: string;
+  type: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface AgentJobsDeadLetters {
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  dead_at: Generated<Timestamp>;
+  id: string;
+  last_error: string | null;
+  ordering_key: string | null;
+  payload: Json;
+  source: string;
+  tenant_id: string;
+  type: string;
+}
+
+export interface AgentRuns {
+  agent_id: string;
+  created_at: Generated<Timestamp>;
+  current_step_id: string | null;
+  depth: Generated<number>;
+  error: string | null;
+  error_kind: string | null;
+  finished_at: Timestamp | null;
+  id: string;
+  initial_state: Json | null;
+  lineage: Generated<Json>;
+  llm_model_id: string | null;
+  owner_subject: string;
+  parent_run_id: string | null;
+  started_at: Timestamp | null;
+  status: Generated<string>;
+  steps_snapshot: Json;
+  tenant_id: string;
+  trigger_id: string | null;
+  trigger_kind: string;
+  triggered_by_subject: string | null;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface AgentRunSteps {
+  attempt: number;
+  created_at: Generated<Timestamp>;
+  detail: Json | null;
+  finished_at: Timestamp | null;
+  id: string;
+  outcome: string | null;
+  outcome_code: string | null;
+  run_id: string;
+  started_at: Timestamp | null;
+  status: string;
+  step_id: string;
+  step_index: number;
+  tenant_id: string;
+  tool_call_count: Generated<number>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface Agents {
+  created_at: Generated<Timestamp>;
+  description: string | null;
+  description_status: Generated<string>;
+  enabled: Generated<boolean>;
+  id: string;
+  llm_model_id: string | null;
+  name: string;
+  owner_subject: string;
+  review_notes: Json | null;
+  steps: Json;
+  steps_version: Generated<number>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface AgentTriggers {
+  agent_id: string;
+  config: Generated<Json>;
+  created_at: Generated<Timestamp>;
+  enabled: Generated<boolean>;
+  event_source: string | null;
+  event_type: string | null;
+  id: string;
+  kind: string;
+  last_error: string | null;
+  last_fired_at: Timestamp | null;
+  next_run_at: Timestamp | null;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ConnectorConfigs {
   connector: string;
   created_at: Generated<Timestamp>;
@@ -133,22 +236,6 @@ export interface EmailExtractionTemplates {
   version: number;
 }
 
-export interface Events {
-  attempts: Generated<number>;
-  created_at: Generated<Timestamp>;
-  id: string;
-  last_error: string | null;
-  locked_at: Timestamp | null;
-  ordering_key: string | null;
-  payload: Json;
-  run_after: Generated<Timestamp>;
-  source: string;
-  status: Generated<string>;
-  tenant_id: string;
-  type: string;
-  updated_at: Generated<Timestamp>;
-}
-
 export interface EmbeddingJobs {
   attempts: Generated<number>;
   created_at: Generated<Timestamp>;
@@ -165,7 +252,7 @@ export interface EmbeddingJobs {
   updated_at: Generated<Timestamp>;
 }
 
-export interface EventsDeadLetters {
+export interface EmbeddingJobsDeadLetters {
   attempts: Generated<number>;
   created_at: Generated<Timestamp>;
   dead_at: Generated<Timestamp>;
@@ -178,7 +265,23 @@ export interface EventsDeadLetters {
   type: string;
 }
 
-export interface EmbeddingJobsDeadLetters {
+export interface Events {
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  id: string;
+  last_error: string | null;
+  locked_at: Timestamp | null;
+  ordering_key: string | null;
+  payload: Json;
+  run_after: Generated<Timestamp>;
+  source: string;
+  status: Generated<string>;
+  tenant_id: string;
+  type: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface EventsDeadLetters {
   attempts: Generated<number>;
   created_at: Generated<Timestamp>;
   dead_at: Generated<Timestamp>;
@@ -220,6 +323,21 @@ export interface KnowledgeChunks {
   ref_id: string;
   source_at: Timestamp | null;
   tenant_id: string;
+}
+
+export interface LlmModelConfigs {
+  base_url: string | null;
+  created_at: Generated<Timestamp>;
+  enabled: Generated<boolean>;
+  encrypted_secrets: string;
+  id: string;
+  is_default: Generated<boolean>;
+  label: string;
+  model: string;
+  provider: string;
+  settings: Generated<Json>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
 }
 
 export interface LogAttr {
@@ -415,6 +533,22 @@ export interface TenantSettings {
   value: Json;
 }
 
+/**
+ * MCP tool invocations — usage and latency only. There is no arguments or
+ * result field here by design; see migration 032.
+ */
+export interface ToolCalls {
+  connector: string | null;
+  duration_ms: number;
+  ended_at: Timestamp;
+  id: string;
+  started_at: Timestamp;
+  status: string;
+  subject: string | null;
+  tenant_id: string;
+  tool: string;
+}
+
 export interface WebhookSubscriptions {
   account_id: string;
   client_state: string;
@@ -434,24 +568,14 @@ export interface WebhookSubscriptions {
   updated_at: Generated<Timestamp>;
 }
 
-/**
- * MCP tool invocations — usage and latency only. There is no arguments or
- * result field here by design; see migration 032.
- */
-export interface ToolCalls {
-  connector: string | null;
-  duration_ms: number;
-  ended_at: Timestamp;
-  id: string;
-  started_at: Timestamp;
-  status: string;
-  subject: string | null;
-  tenant_id: string;
-  tool: string;
-}
-
 export interface DB {
   actionable_items: ActionableItems;
+  agent_jobs: AgentJobs;
+  agent_jobs_dead_letters: AgentJobsDeadLetters;
+  agent_run_steps: AgentRunSteps;
+  agent_runs: AgentRuns;
+  agent_triggers: AgentTriggers;
+  agents: Agents;
   connector_configs: ConnectorConfigs;
   content_watches: ContentWatches;
   email_banner_patterns: EmailBannerPatterns;
@@ -465,6 +589,7 @@ export interface DB {
   identities: Identities;
   jira_sessions: JiraSessions;
   knowledge_chunks: KnowledgeChunks;
+  llm_model_configs: LlmModelConfigs;
   log_attr: LogAttr;
   log_attr_blob: LogAttrBlob;
   logs: Logs;
@@ -484,7 +609,7 @@ export interface DB {
   tenant_jira_sites: TenantJiraSites;
   tenant_oidc: TenantOidc;
   tenant_settings: TenantSettings;
-  tool_calls: ToolCalls;
   tenants: Tenants;
+  tool_calls: ToolCalls;
   webhook_subscriptions: WebhookSubscriptions;
 }

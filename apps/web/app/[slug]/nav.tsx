@@ -94,6 +94,7 @@ export default function AppNav({
         { href: `/${slug}`, label: 'Home' },
         { href: `/${slug}/connectors`, label: 'Connectors' },
         { href: `/${slug}/knowledge`, label: 'Knowledge' },
+        { href: `/${slug}/agents`, label: 'Agents' },
         { href: `/${slug}/usage`, label: 'Tools' },
         { href: `/${slug}/mail-review`, label: 'Mail review' },
         { href: `/${slug}/logs`, label: 'Activity' },
@@ -105,6 +106,7 @@ export default function AppNav({
             label: 'Organization',
             items: [
               { href: `/${slug}/admin/connectors`, label: 'Connector setup' },
+              { href: `/${slug}/admin/agents`, label: 'Agent oversight' },
               { href: `/${slug}/admin/email-sanitizer`, label: 'Email sanitizer' },
               { href: `/${slug}/admin/redaction`, label: 'Sensitive data' },
               { href: `/${slug}/admin/grants`, label: 'Grants' },

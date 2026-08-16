@@ -63,6 +63,10 @@ export const EXPECTED_MIGRATIONS = [
   '030-embedding-queue',
   '031-knowledge-ref-prefix-index',
   '032-tool-calls',
+  '033-llm-model-configs',
+  '034-agents',
+  '035-agent-runs',
+  '036-agent-jobs-queue',
 ];
 
 export interface MigrationStatus {

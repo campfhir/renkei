@@ -554,3 +554,78 @@ body {
 main:has([data-wide-page]) {
   max-width: min(100%, 120rem);
 }
+
+/* ------------------------------------------------------------------------- */
+/* Agent builder chip editor (app/[slug]/agents).                            */
+/*                                                                           */
+/* Visually a sibling of the bored-logs filter chips above, but              */
+/* self-contained: those styles read --bl-* variables scoped to the log      */
+/* pages, and the builder must not depend on another feature's skin. Two     */
+/* chip species are deliberately distinct at a glance — tools (sky, with a   */
+/* logo) do things, variables (violet) name things.                          */
+/* ------------------------------------------------------------------------- */
+.chip-editor {
+  min-height: 2.5rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chip-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+  pointer-events: none;
+}
+.chip-editor [data-chip] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0 0.125rem;
+  border-radius: 9999px;
+  padding: 0.0625rem 0.5rem;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+  vertical-align: baseline;
+  user-select: none;
+  cursor: default;
+}
+.chip-editor [data-chip][data-chip-kind='tool'] {
+  border: 1px solid color-mix(in oklab, var(--color-sky-500) 45%, transparent);
+  background: color-mix(in oklab, var(--color-sky-500) 14%, transparent);
+  color: var(--color-sky-700);
+}
+.chip-editor [data-chip][data-chip-kind='var'] {
+  border: 1px solid color-mix(in oklab, var(--color-violet-500) 45%, transparent);
+  background: color-mix(in oklab, var(--color-violet-500) 14%, transparent);
+  color: var(--color-violet-700);
+}
+.chip-editor [data-chip][data-chip-invalid] {
+  border-color: color-mix(in oklab, var(--color-red-500) 55%, transparent);
+  background: color-mix(in oklab, var(--color-red-500) 12%, transparent);
+  color: var(--color-red-700);
+}
+@media (prefers-color-scheme: dark) {
+  .chip-editor [data-chip][data-chip-kind='tool'] {
+    color: var(--color-sky-300);
+  }
+  .chip-editor [data-chip][data-chip-kind='var'] {
+    color: var(--color-violet-300);
+  }
+  .chip-editor [data-chip][data-chip-invalid] {
+    color: var(--color-red-300);
+  }
+}
+.chip-editor [data-chip] button {
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  padding: 0 0.125rem;
+  font: inherit;
+  color: inherit;
+  border-radius: 9999px;
+  line-height: 1;
+}
+.chip-editor [data-chip] button:hover {
+  background: color-mix(in oklab, currentColor 18%, transparent);
+}
+.chip-editor [data-chip].chip-selected {
+  outline: 2px solid color-mix(in oklab, currentColor 55%, transparent);
+}

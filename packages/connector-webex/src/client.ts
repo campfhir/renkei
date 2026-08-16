@@ -78,7 +78,10 @@ export interface WebexAttachmentAction {
 }
 
 export interface OutgoingMessage {
-  roomId: string;
+  /** Post into a space. One of roomId / toPersonEmail is required. */
+  roomId?: string;
+  /** Direct-message a person instead of posting into a space. */
+  toPersonEmail?: string;
   /** Thread root to reply under; omitted = new top-level message. */
   parentId?: string;
   markdown?: string;

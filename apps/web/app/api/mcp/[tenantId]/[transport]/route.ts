@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
-import { getJiraGrant } from '@/lib/tenant-operations';
+import { getJiraGrant, type JiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { getBearerToken, resolveAccessToken, unauthorizedResponse } from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
@@ -168,7 +168,15 @@ const handler = async (
       return unauthorizedResponse(tenantId, origin, 'Authorization required');
     }
 
-    const tokenRecord = await resolveAccessToken(bearer, tenantId);
+    // Two token classes reach this endpoint: MCP-client tokens ('jira',
+    // issued via the OAuth AS) and agent-runner tokens ('agent', minted by
+    // the agents worker for one run under the owner's subject). Each class
+    // is looked up explicitly — resolveAccessToken never matches across
+    // applications — so accepting the second is a deliberate widening here,
+    // not a loosening of the token store.
+    const tokenRecord =
+      (await resolveAccessToken(bearer, tenantId)) ??
+      (await resolveAccessToken(bearer, tenantId, 'agent'));
     if (!tokenRecord) {
       logger.warn('Request with unknown or expired bearer token', {
         component: 'mcp/transport',
@@ -191,8 +199,20 @@ const handler = async (
       .limit(1)
       .execute();
 
-    if (grants.length === 0) {
-      // No grant found - register only the jira_connect tool
+    // Which connectors this caller has, resolved BEFORE the Jira decision:
+    // a caller with no Jira but a Microsoft grant gets their real (Jira-less)
+    // tool set below, same relaxation the tool catalog applies. Shared with
+    // the tools page so the list it shows is the list this route registers.
+    const availability = await resolveConnectorAvailability(db, tenantId, subject);
+    const anyOtherConnector =
+      availability.knowledgeAvailable ||
+      availability.webexAvailable ||
+      availability.microsoftAvailable ||
+      availability.zoomAvailable ||
+      availability.confluenceAvailable;
+
+    if (grants.length === 0 && !anyOtherConnector) {
+      // Nothing connected at all — serve only the jira_connect pointer.
       const mcpHandler = createMcpHandler(
         async (server: McpServer) => {
           server.registerTool(
@@ -228,27 +248,30 @@ const handler = async (
       return await mcpHandler(request);
     }
 
-    const accountId = grants[0].account_id;
-    const grantResult = await getJiraGrant(tenantId, accountId);
-    if (!grantResult.ok) {
-      return new Response(JSON.stringify({ error: 'Failed to retrieve Jira grant' }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      });
+    let grant: JiraGrant | null = null;
+    if (grants.length > 0) {
+      const grantResult = await getJiraGrant(tenantId, grants[0].account_id);
+      if (!grantResult.ok) {
+        return new Response(JSON.stringify({ error: 'Failed to retrieve Jira grant' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      grant = grantResult.val;
+      if (!grant) {
+        // Grant was deleted during refresh (GRANT_REVOKED) - direct user to re-authenticate.
+        // Link to the origin, not the Jira authorize endpoint: the user has to sign in to
+        // the MCP first, otherwise the Atlassian grant would be bound without authentication.
+        return new Response(
+          JSON.stringify({
+            error: 'Jira grant revoked',
+            message: `Your Jira authentication has expired or was revoked. Please re-authenticate: [Connect Jira](${origin})`,
+          }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
     }
-    const grant = grantResult.val;
-    if (!grant) {
-      // Grant was deleted during refresh (GRANT_REVOKED) - direct user to re-authenticate.
-      // Link to the origin, not the Jira authorize endpoint: the user has to sign in to
-      // the MCP first, otherwise the Atlassian grant would be bound without authentication.
-      return new Response(
-        JSON.stringify({
-          error: 'Jira grant revoked',
-          message: `Your Jira authentication has expired or was revoked. Please re-authenticate: [Connect Jira](${origin})`,
-        }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    const accountId = grant ? grants[0].account_id : '';
 
     // Org policy (read-only mode, limits) comes from the database per tenant.
     const settingsResult = await getOrgSettings(tenantId);
@@ -257,19 +280,21 @@ const handler = async (
     }
     const settings = settingsResult.val;
 
-    // Record the grant's token on every request, not just at handler creation:
-    // the cached handler's closure holds whatever token existed when it was
-    // built, and jiraFetch resolves the current one through this cache. This
-    // also picks up tokens rotated by another process, since the grant above
-    // is read fresh from the database each request.
-    cacheTokenMetadata(grant.accessToken, tenantId, accountId, subject);
+    if (grant) {
+      // Record the grant's token on every request, not just at handler creation:
+      // the cached handler's closure holds whatever token existed when it was
+      // built, and jiraFetch resolves the current one through this cache. This
+      // also picks up tokens rotated by another process, since the grant above
+      // is read fresh from the database each request.
+      cacheTokenMetadata(grant.accessToken, tenantId, accountId, subject);
 
-    // Seed the display-name cache from the grant's durable record. The cache
-    // is in-memory, so a restarted container logged every tool call with
-    // displayName: null until the user happened to reconnect or ask who they
-    // are — while provider_grants.display_name held the answer all along.
-    if (grant.displayName) {
-      cacheUserDisplayName(accountId, grant.displayName);
+      // Seed the display-name cache from the grant's durable record. The cache
+      // is in-memory, so a restarted container logged every tool call with
+      // displayName: null until the user happened to reconnect or ask who they
+      // are — while provider_grants.display_name held the answer all along.
+      if (grant.displayName) {
+        cacheUserDisplayName(accountId, grant.displayName);
+      }
     }
 
     // The caller's recorded email (identity spine): what the knowledge gate
@@ -277,9 +302,6 @@ const handler = async (
     const emailResult = await getIdentityEmail(tenantId, subject);
     const userEmail = emailResult.ok ? emailResult.val : null;
 
-    // Which connectors this caller has, and on what scopes. Shared with the
-    // tools page so the list it shows is the list this route registers.
-    const availability = await resolveConnectorAvailability(db, tenantId, subject);
     const {
       knowledgeAvailable,
       webexAvailable,
@@ -293,7 +315,10 @@ const handler = async (
       confluenceAvailable,
       confluenceScopes,
     } = availability;
-    const jiraScopes = grant.grantedScopes ?? grant.requestedScopes;
+    // No Jira grant → an empty scope list, which the scope gate reads as
+    // "register no Jira/JSM tools" (never undefined — that means a legacy
+    // grant with no provenance and passes everything).
+    const jiraScopes = grant ? (grant.grantedScopes ?? grant.requestedScopes) : [];
 
     // The second Atlassian app's grant ("Renkei JSM": JSM + Ops scopes) —
     // JSM/Ops tools run on this token when it exists; absent, they fall back
@@ -379,10 +404,10 @@ const handler = async (
             const context: MCPToolContext = {
               tenantId,
               accountId,
-              siteUrl: grant.siteUrl,
-              apiBaseUrl: `https://api.atlassian.com/ex/jira/${grant.cloudId}`,
-              cloudId: grant.cloudId,
-              accessToken: grant.accessToken,
+              siteUrl: grant?.siteUrl ?? '',
+              apiBaseUrl: grant ? `https://api.atlassian.com/ex/jira/${grant.cloudId}` : '',
+              cloudId: grant?.cloudId,
+              accessToken: grant?.accessToken ?? '',
               maxJqlResults: settings.maxJqlResults,
               maxAttachmentBytes: settings.maxAttachmentBytes,
               origin,
@@ -400,10 +425,10 @@ const handler = async (
             // Register all tools, filtered through the per-user capability
             // projection (RENKEI.md Decision #12). Org policy first: READ_ONLY
             // is the org-wide read-only capability flag, so mutating tools are
-            // simply never registered under it. This caller reached here with
-            // their own Jira grant, so the jira connector is provisioned;
-            // per-capability user expose/hide choices arrive with the
-            // preferences UI.
+            // simply never registered under it. A caller without a Jira grant
+            // still reaches here on their other connectors; the empty Jira
+            // scope list keeps that namespace unregistered. Per-capability
+            // user expose/hide choices arrive with the preferences UI.
             const projection = createProjection(
               {
                 readOnly: settings.readOnly,
@@ -420,6 +445,28 @@ const handler = async (
               }
             );
             await registerRenkeiTools(server, context, availability, projection);
+
+            // A caller with other connectors but no Jira still gets the
+            // pointer to connect it — as a normal tool, so it shows up in
+            // their list without hijacking the whole server.
+            if (!grant) {
+              server.registerTool(
+                'jira_connect',
+                {
+                  title: 'Jira · Read — Connect Jira',
+                  annotations: { readOnlyHint: true },
+                  description: `Jira is not connected. Click this link to authenticate: [Connect Jira](${origin})`,
+                },
+                async () => ({
+                  content: [
+                    {
+                      type: 'text' as const,
+                      text: `Jira is not connected. Please authenticate: [Connect Jira](${origin})`,
+                    },
+                  ],
+                })
+              );
+            }
 
             // The MCP Apps widget templates (ui:// resources) go on the raw
             // server: the gate proxies only intercept registerTool, and a

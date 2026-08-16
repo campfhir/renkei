@@ -23,6 +23,7 @@ export {
   createPostgresQueue,
   webhookEventsQueue,
   embeddingJobsQueue,
+  agentJobsQueue,
   type PostgresQueueConfig,
 } from './postgres';
 export { InMemoryQueue, type MemoryMessage, type InMemoryQueueOptions } from './memory';

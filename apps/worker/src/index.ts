@@ -27,6 +27,7 @@ import {
   createMicrosoftMessageOverrideHandler,
 } from './handlers/microsoft-events';
 import { createZoomTranscriptHandler, createZoomSummaryHandler } from './handlers/zoom-events';
+import { createAgentRunFailedHandler } from './handlers/agent-run-failed';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
 import {
@@ -50,6 +51,9 @@ function registerConnectorHandlers(): void {
   registerHandler('microsoft', 'message-override', createMicrosoftMessageOverrideHandler());
   registerHandler('zoom', 'recording.transcript_completed', createZoomTranscriptHandler());
   registerHandler('zoom', 'meeting.summary_completed', createZoomSummaryHandler());
+  // Emitted by worker-agents when a run fails; delivery of the owner's
+  // notification belongs here, where the connector paths live.
+  registerHandler('agents', 'run.failed', createAgentRunFailedHandler());
   logger.info('webex, microsoft and zoom handlers registered', { component: 'worker/loop' });
 }
 

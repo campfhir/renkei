@@ -53,6 +53,12 @@ importers:
       '@modelcontextprotocol/server':
         specifier: ^2.0.0
         version: 2.0.0
+      '@renkei/agent-llm':
+        specifier: workspace:*
+        version: link:../../packages/agent-llm
+      '@renkei/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@renkei/capability-registry':
         specifier: workspace:*
         version: link:../../packages/capability-registry
@@ -192,6 +198,9 @@ importers:
       '@campfhir/bored-logs':
         specifier: ^0.7.1
         version: 0.7.1(kysely@0.29.4)(pg@8.22.0)(react@19.2.4)
+      '@renkei/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@renkei/connector-atlassian':
         specifier: workspace:*
         version: link:../../packages/connector-atlassian
@@ -234,6 +243,9 @@ importers:
       '@renkei/settings':
         specifier: workspace:*
         version: link:../../packages/settings
+      '@renkei/worker-loop':
+        specifier: workspace:*
+        version: link:../../packages/worker-loop
       kysely:
         specifier: ^0.29.4
         version: 0.29.4
@@ -243,6 +255,123 @@ importers:
       tsx:
         specifier: ^4.23.5
         version: 4.23.5
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  apps/worker-agents:
+    dependencies:
+      '@campfhir/bored-logs':
+        specifier: ^0.7.1
+        version: 0.7.1(kysely@0.29.4)(pg@8.22.0)(react@19.2.4)
+      '@campfhir/safe-functions':
+        specifier: ^0.1.3
+        version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/agent-llm':
+        specifier: workspace:*
+        version: link:../../packages/agent-llm
+      '@renkei/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
+      '@renkei/crypto':
+        specifier: workspace:*
+        version: link:../../packages/crypto
+      '@renkei/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@renkei/queue':
+        specifier: workspace:*
+        version: link:../../packages/queue
+      '@renkei/settings':
+        specifier: workspace:*
+        version: link:../../packages/settings
+      '@renkei/worker-loop':
+        specifier: workspace:*
+        version: link:../../packages/worker-loop
+      kysely:
+        specifier: ^0.29.4
+        version: 0.29.4
+      tsx:
+        specifier: ^4.23.5
+        version: 4.23.5
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  packages/agent-llm:
+    dependencies:
+      '@campfhir/safe-functions':
+        specifier: ^0.1.3
+        version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/crypto':
+        specifier: workspace:*
+        version: link:../crypto
+      '@renkei/db':
+        specifier: workspace:*
+        version: link:../db
+      kysely:
+        specifier: ^0.29.4
+        version: 0.29.4
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  packages/agents:
+    dependencies:
+      '@campfhir/safe-functions':
+        specifier: ^0.1.3
+        version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/db':
+        specifier: workspace:*
+        version: link:../db
+      '@renkei/queue':
+        specifier: workspace:*
+        version: link:../queue
+      '@renkei/settings':
+        specifier: workspace:*
+        version: link:../settings
+      kysely:
+        specifier: ^0.29.4
+        version: 0.29.4
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0
@@ -705,6 +834,24 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../db
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  packages/worker-loop:
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0

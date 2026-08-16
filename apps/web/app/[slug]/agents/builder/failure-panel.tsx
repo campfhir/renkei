@@ -1,0 +1,158 @@
+'use client';
+
+/**
+ * "If something goes wrong" — one row per condition the step's tool
+ * enumerates (the outcome metadata served with the tool catalog), each a
+ * choice between stopping the agent and retrying with extra guidance.
+ *
+ * The default is stop: an absent handling entry means exit, so a user who
+ * configures nothing gets the safe behavior. Retry reveals a guidance
+ * editor (chips allowed, tools allowed — several, deliberately laxer than
+ * the step body, because fixing a failure may take extra lookups) and the
+ * step-level attempts selector caps everything at the platform's 5.
+ */
+
+import type { FailureHandling } from '@renkei/agents';
+import type { ToolOutcomes } from '@/lib/mcp-tools/outcomes';
+import { ChipEditor } from './chip-editor';
+import type { ToolOption, VariableOption } from './options';
+
+const CORRECTIVE_TOOL_LIMIT = 10;
+
+export interface FailurePanelProps {
+  outcomes: ToolOutcomes;
+  handling: FailureHandling[];
+  onChange: (handling: FailureHandling[]) => void;
+  maxAttempts: number;
+  onMaxAttemptsChange: (attempts: number) => void;
+  tools: ToolOption[];
+  variables: VariableOption[];
+  invalidVars?: ReadonlySet<string>;
+}
+
+export function FailurePanel({
+  outcomes,
+  handling,
+  onChange,
+  maxAttempts,
+  onMaxAttemptsChange,
+  tools,
+  variables,
+  invalidVars,
+}: FailurePanelProps) {
+  const byCode = new Map(handling.map((entry) => [entry.outcome, entry]));
+
+  const setEntry = (code: string, entry: FailureHandling | null) => {
+    const next = handling.filter((existing) => existing.outcome !== code);
+    if (entry) next.push(entry);
+    onChange(next);
+  };
+
+  const anyRetry = handling.some((entry) => entry.action === 'retry');
+
+  return (
+    <div className="mt-3 rounded-md border border-gray-200 p-3 dark:border-gray-800">
+      <p className="text-sm text-gray-700 dark:text-gray-300">
+        <span className="mr-1 text-green-600 dark:text-green-400">✓</span>
+        When this works — <span className="font-medium">{outcomes.success.label}</span> — the agent
+        continues to the next step.
+      </p>
+
+      <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
+        If something goes wrong
+      </p>
+      <ul className="mt-2 space-y-3">
+        {outcomes.failures.map((failure) => {
+          const entry = byCode.get(failure.code);
+          const action = entry?.action ?? 'exit';
+          return (
+            <li key={failure.code}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <span className="text-sm font-medium">{failure.label}</span>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">{failure.description}</p>
+                </div>
+                <div className="flex overflow-hidden rounded-md border border-gray-300 text-xs dark:border-gray-700">
+                  <button
+                    type="button"
+                    onClick={() => setEntry(failure.code, null)}
+                    className={`px-2.5 py-1 ${
+                      action === 'exit'
+                        ? 'bg-gray-700 text-white dark:bg-gray-300 dark:text-gray-900'
+                        : 'text-gray-600 dark:text-gray-400'
+                    }`}
+                  >
+                    Stop the agent
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!failure.retriable}
+                    title={failure.retriable ? undefined : "Retrying won't help here."}
+                    onClick={() =>
+                      setEntry(failure.code, {
+                        outcome: failure.code,
+                        action: 'retry',
+                        guidance: entry?.guidance ?? [],
+                      })
+                    }
+                    className={`px-2.5 py-1 ${
+                      action === 'retry'
+                        ? 'bg-blue-600 text-white'
+                        : failure.retriable
+                          ? 'text-gray-600 dark:text-gray-400'
+                          : 'cursor-not-allowed text-gray-300 dark:text-gray-600'
+                    }`}
+                  >
+                    Try again with extra guidance
+                  </button>
+                </div>
+              </div>
+              {action === 'retry' ? (
+                <div className="mt-2 pl-3">
+                  <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                    What should it do differently? (This runs only when retrying.)
+                  </label>
+                  <ChipEditor
+                    value={entry?.guidance ?? []}
+                    onChange={(guidance) =>
+                      setEntry(failure.code, { outcome: failure.code, action: 'retry', guidance })
+                    }
+                    tools={tools}
+                    variables={variables}
+                    maxTools={CORRECTIVE_TOOL_LIMIT}
+                    placeholder="e.g. Search by the summary text instead of the exact key"
+                    ariaLabel={`Guidance when ${failure.label.toLowerCase()}`}
+                    invalidVars={invalidVars}
+                  />
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+
+      {anyRetry ? (
+        <div className="mt-3 flex items-center gap-2 border-t border-gray-100 pt-3 dark:border-gray-800">
+          <label className="text-sm text-gray-700 dark:text-gray-300" htmlFor="attempts">
+            Give up after
+          </label>
+          <select
+            id="attempts"
+            value={maxAttempts}
+            onChange={(event) => onMaxAttemptsChange(Number(event.target.value))}
+            className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
+          >
+            {[1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={n}>
+                {n === 1 ? '1 try' : `${n} tries`}
+              </option>
+            ))}
+          </select>
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            counting the first one — 5 is the most an agent may try
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
+}

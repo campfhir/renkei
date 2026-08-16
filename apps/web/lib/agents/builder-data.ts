@@ -1,0 +1,47 @@
+/**
+ * The server-side fetches both builder pages (new and edit) share: the
+ * caller's tool projection (the SAME list the MCP route serves — no new
+ * endpoint, the usage-page pattern), their other agents for chained
+ * triggers, and the org's enabled model roster for the per-agent override.
+ */
+
+import type { Kysely } from 'kysely';
+import type { DB } from '@renkei/db';
+import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
+import { listAgents } from '@/lib/agents/store';
+
+export interface BuilderData {
+  tools: ToolDescriptor[];
+  otherAgents: { id: string; name: string }[];
+  models: { id: string; label: string; isDefault: boolean }[];
+}
+
+export async function loadBuilderData(
+  db: Kysely<DB>,
+  tenantId: string,
+  subject: string,
+  excludeAgentId?: string
+): Promise<BuilderData> {
+  const [tools, agents, modelRows] = await Promise.all([
+    listAvailableTools(tenantId, subject),
+    listAgents(db, tenantId, subject),
+    db
+      .selectFrom('llm_model_configs')
+      .select(['id', 'label', 'is_default'])
+      .where('tenant_id', '=', tenantId)
+      .where('enabled', '=', true)
+      .orderBy('label')
+      .execute(),
+  ]);
+  return {
+    tools,
+    otherAgents: agents
+      .filter((agent) => agent.id !== excludeAgentId)
+      .map((agent) => ({ id: agent.id, name: agent.name })),
+    models: modelRows.map((model) => ({
+      id: model.id,
+      label: model.label,
+      isDefault: model.is_default,
+    })),
+  };
+}

@@ -1,0 +1,272 @@
+/**
+ * Run history reads, with the visibility rule applied AT THE QUERY SEAM.
+ *
+ * Two audiences, one schema: status/outcome/timing columns are content-free
+ * and safe for any org operator; the `detail` jsonb is CONTENT. The owner
+ * gets it always; an admin gets it only for FAILED attempts — enough to
+ * troubleshoot a broken agent, nothing of a working one's inner life. The
+ * projection happens here, in the functions pages call, so no page can
+ * forget to redact: the admin functions never even SELECT what they must
+ * not show.
+ */
+
+import type { Kysely } from 'kysely';
+import type { DB, Json } from '@renkei/db';
+
+export interface RunSummary {
+  id: string;
+  status: string;
+  triggerKind: string;
+  errorKind: string | null;
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  /** Milliseconds, when both ends exist. */
+  durationMs: number | null;
+}
+
+export interface AttemptView {
+  stepId: string;
+  stepIndex: number;
+  attempt: number;
+  status: string;
+  outcome: string | null;
+  outcomeCode: string | null;
+  toolCallCount: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  /** Absent = redacted (admin viewing a non-failed attempt). */
+  detail?: Json;
+  redacted: boolean;
+}
+
+export interface RunDetail extends RunSummary {
+  stepsSnapshot: Json;
+  attempts: AttemptView[];
+}
+
+function iso(value: Date | null): string | null {
+  return value ? value.toISOString() : null;
+}
+
+interface RunRow {
+  id: string;
+  status: string;
+  trigger_kind: string;
+  error_kind: string | null;
+  error: string | null;
+  created_at: Date;
+  started_at: Date | null;
+  finished_at: Date | null;
+}
+
+function summaryOf(row: RunRow): RunSummary {
+  return {
+    id: row.id,
+    status: row.status,
+    triggerKind: row.trigger_kind,
+    errorKind: row.error_kind,
+    error: row.error,
+    createdAt: row.created_at.toISOString(),
+    startedAt: iso(row.started_at),
+    finishedAt: iso(row.finished_at),
+    durationMs:
+      row.started_at && row.finished_at
+        ? row.finished_at.getTime() - row.started_at.getTime()
+        : null,
+  };
+}
+
+const RUN_COLUMNS = [
+  'id',
+  'status',
+  'trigger_kind',
+  'error_kind',
+  'error',
+  'created_at',
+  'started_at',
+  'finished_at',
+] as const;
+
+export async function listRunsForOwner(
+  db: Kysely<DB>,
+  tenantId: string,
+  ownerSubject: string,
+  agentId: string,
+  options: { status?: 'succeeded' | 'failed'; limit?: number } = {}
+): Promise<RunSummary[]> {
+  let query = db
+    .selectFrom('agent_runs')
+    .select(RUN_COLUMNS)
+    .where('tenant_id', '=', tenantId)
+    .where('owner_subject', '=', ownerSubject)
+    .where('agent_id', '=', agentId);
+  if (options.status) query = query.where('status', '=', options.status);
+  const rows = await query
+    .orderBy('created_at', 'desc')
+    .limit(options.limit ?? 50)
+    .execute();
+  return rows.map(summaryOf);
+}
+
+async function runDetail(
+  db: Kysely<DB>,
+  runRow: RunRow & { steps_snapshot: Json },
+  audience: 'owner' | 'admin'
+): Promise<RunDetail> {
+  const attemptRows = await db
+    .selectFrom('agent_run_steps')
+    .select([
+      'step_id',
+      'step_index',
+      'attempt',
+      'status',
+      'outcome',
+      'outcome_code',
+      'tool_call_count',
+      'detail',
+      'started_at',
+      'finished_at',
+    ])
+    .where('run_id', '=', runRow.id)
+    .orderBy('step_index')
+    .orderBy('attempt')
+    .execute();
+
+  return {
+    ...summaryOf(runRow),
+    stepsSnapshot: runRow.steps_snapshot,
+    attempts: attemptRows.map((row) => {
+      // THE visibility rule: content for the owner always; for an admin
+      // only when the attempt failed (troubleshooting is their job,
+      // reading a working agent's content is not).
+      const contentVisible = audience === 'owner' || row.status === 'failed';
+      return {
+        stepId: row.step_id,
+        stepIndex: row.step_index,
+        attempt: row.attempt,
+        status: row.status,
+        outcome: row.outcome,
+        outcomeCode: row.outcome_code,
+        toolCallCount: row.tool_call_count,
+        startedAt: iso(row.started_at),
+        finishedAt: iso(row.finished_at),
+        ...(contentVisible && row.detail !== null ? { detail: row.detail } : {}),
+        redacted: !contentVisible,
+      };
+    }),
+  };
+}
+
+export async function getRunForOwner(
+  db: Kysely<DB>,
+  tenantId: string,
+  ownerSubject: string,
+  agentId: string,
+  runId: string
+): Promise<RunDetail | null> {
+  const row = await db
+    .selectFrom('agent_runs')
+    .select([...RUN_COLUMNS, 'steps_snapshot'])
+    .where('tenant_id', '=', tenantId)
+    .where('owner_subject', '=', ownerSubject)
+    .where('agent_id', '=', agentId)
+    .where('id', '=', runId)
+    .executeTakeFirst();
+  if (!row) return null;
+  return runDetail(db, row, 'owner');
+}
+
+/** Admin oversight: any agent's runs, statuses always, content on failures. */
+export async function listRunsForAdmin(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string,
+  options: { limit?: number } = {}
+): Promise<RunSummary[]> {
+  const rows = await db
+    .selectFrom('agent_runs')
+    .select(RUN_COLUMNS)
+    .where('tenant_id', '=', tenantId)
+    .where('agent_id', '=', agentId)
+    .orderBy('created_at', 'desc')
+    .limit(options.limit ?? 50)
+    .execute();
+  return rows.map(summaryOf);
+}
+
+export async function getRunForAdmin(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string,
+  runId: string
+): Promise<RunDetail | null> {
+  const row = await db
+    .selectFrom('agent_runs')
+    .select([...RUN_COLUMNS, 'steps_snapshot'])
+    .where('tenant_id', '=', tenantId)
+    .where('agent_id', '=', agentId)
+    .where('id', '=', runId)
+    .executeTakeFirst();
+  if (!row) return null;
+  return runDetail(db, row, 'admin');
+}
+
+export interface AdminAgentRow {
+  id: string;
+  name: string;
+  ownerSubject: string;
+  ownerEmail: string | null;
+  enabled: boolean;
+  descriptionStatus: string;
+  recentFailures: number;
+  lastRunAt: string | null;
+}
+
+/** Every agent in the org, with the week's failure count — the oversight list. */
+export async function listAgentsForAdmin(
+  db: Kysely<DB>,
+  tenantId: string
+): Promise<AdminAgentRow[]> {
+  const agents = await db
+    .selectFrom('agents as a')
+    .leftJoin('identities as i', (join) =>
+      join.onRef('i.tenant_id', '=', 'a.tenant_id').onRef('i.subject', '=', 'a.owner_subject')
+    )
+    .select(['a.id', 'a.name', 'a.owner_subject', 'a.enabled', 'a.description_status', 'i.email'])
+    .where('a.tenant_id', '=', tenantId)
+    .orderBy('a.name')
+    .execute();
+
+  const rows: AdminAgentRow[] = [];
+  for (const agent of agents) {
+    const [failures, lastRun] = await Promise.all([
+      db
+        .selectFrom('agent_runs')
+        .select(({ fn }) => fn.countAll<string>().as('count'))
+        .where('agent_id', '=', agent.id)
+        .where('status', '=', 'failed')
+        .where('created_at', '>', new Date(Date.now() - 7 * 24 * 60 * 60_000))
+        .executeTakeFirst(),
+      db
+        .selectFrom('agent_runs')
+        .select('created_at')
+        .where('agent_id', '=', agent.id)
+        .orderBy('created_at', 'desc')
+        .limit(1)
+        .executeTakeFirst(),
+    ]);
+    rows.push({
+      id: agent.id,
+      name: agent.name,
+      ownerSubject: agent.owner_subject,
+      ownerEmail: agent.email,
+      enabled: agent.enabled,
+      descriptionStatus: agent.description_status,
+      recentFailures: Number(failures?.count ?? 0),
+      lastRunAt: lastRun ? lastRun.created_at.toISOString() : null,
+    });
+  }
+  return rows;
+}
