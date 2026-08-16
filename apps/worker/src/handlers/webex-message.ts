@@ -154,8 +154,9 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
     // Agent event triggers: a linked sender's own agents may run on their
     // message. Best-effort and BEFORE capture, so a capture failure never
     // silences a trigger (and vice versa — fan-out swallows its own).
+    let agentRunsStarted = 0;
     if (linked === true && message.personEmail && message.text) {
-      await fanOutWebexMessage({
+      agentRunsStarted = await fanOutWebexMessage({
         tenantId: event.tenant_id,
         senderEmail: message.personEmail,
         messageId: message.id,
@@ -234,6 +235,15 @@ export function createWebexMessageHandler(deps: WebexHandlerDeps = {}): EventHan
           roomId: message.roomId,
         });
       }
+    } else if (outcome === 'skipped' && agentRunsStarted > 0) {
+      // An agent took the message; its own thread reply is the response.
+      // Asking "want me to capture this?" beside it would be the bot
+      // talking over itself.
+      logger.debug('{count} agent run(s) handling {messageId} — push card withheld', {
+        component: 'webex/ingest',
+        messageId: message.id,
+        count: agentRunsStarted,
+      });
     } else if (outcome === 'skipped') {
       // Not issue-shaped — offer the deliberate push instead of guessing.
       const posted = await context.client.postMessage({

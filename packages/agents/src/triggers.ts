@@ -25,6 +25,13 @@ export type TriggerDraft =
       /** TRIGGER_EVENT_CATALOG id, e.g. 'microsoft/mail.received'. */
       eventId: string;
       match?: { fromDomain?: string; subjectContains?: string };
+      /**
+       * WebEx events only: when the run finishes, the org bot posts the
+       * outcome into the triggering thread — a step's result saved as
+       * `reply` becomes the message. Default true; false keeps the agent
+       * silent in the room.
+       */
+      replyInThread?: boolean;
     }
   | { kind: 'schedule'; recurrence: Recurrence; timezone: string }
   | { kind: 'agent'; callerAgentId: string }

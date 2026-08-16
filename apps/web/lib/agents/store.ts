@@ -91,6 +91,7 @@ function iso(value: Date | null): string | null {
 function draftOfRow(row: TriggerRow): { draft: TriggerDraft; keyHint: string | null } | null {
   const config: {
     match?: { fromDomain?: string; subjectContains?: string };
+    replyInThread?: unknown;
     recurrence?: unknown;
     timezone?: unknown;
     callerAgentId?: unknown;
@@ -105,7 +106,12 @@ function draftOfRow(row: TriggerRow): { draft: TriggerDraft; keyHint: string | n
       const eventId = `${row.event_source}/${row.event_type}`;
       if (!triggerEventById(eventId)) return null;
       return {
-        draft: { kind: 'event', eventId, match: config.match },
+        draft: {
+          kind: 'event',
+          eventId,
+          match: config.match,
+          replyInThread: config.replyInThread !== false,
+        },
         keyHint: null,
       };
     }
@@ -286,7 +292,10 @@ function rowFieldsOf(
       return {
         event_source: event?.source ?? null,
         event_type: event?.type ?? null,
-        config: JSON.stringify({ match: draft.match ?? {} }),
+        config: JSON.stringify({
+          match: draft.match ?? {},
+          replyInThread: draft.replyInThread !== false,
+        }),
         next_run_at: null,
         mintedKey: null,
       };

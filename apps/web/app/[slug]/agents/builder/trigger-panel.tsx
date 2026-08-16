@@ -150,6 +150,30 @@ export function TriggerPanel({ triggers, onChange, otherAgents, issues }: Trigge
                 </button>
               </div>
 
+              {(() => {
+                // Bound to a const so the narrowing survives into onChange.
+                const draft = trigger.draft;
+                if (draft.kind !== 'event' || !draft.eventId.startsWith('webex/')) return null;
+                return (
+                  <label className="mt-2 flex items-start gap-2 text-xs text-gray-600 dark:text-gray-400">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={draft.replyInThread !== false}
+                      onChange={(event) =>
+                        update(index, { ...draft, replyInThread: event.target.checked })
+                      }
+                    />
+                    <span>
+                      Reply in the thread as the bot when the agent finishes.{' '}
+                      <span className="text-gray-400 dark:text-gray-500">
+                        Have a step “Save the result as” <code>reply</code> to control what it says.
+                      </span>
+                    </span>
+                  </label>
+                );
+              })()}
+
               {trigger.draft.kind === 'schedule' ? (
                 <div className="mt-2">
                   <SchedulePicker

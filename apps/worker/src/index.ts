@@ -28,6 +28,7 @@ import {
 } from './handlers/microsoft-events';
 import { createZoomTranscriptHandler, createZoomSummaryHandler } from './handlers/zoom-events';
 import { createAgentRunFailedHandler } from './handlers/agent-run-failed';
+import { createAgentRunReplyHandler } from './handlers/agent-run-reply';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
 import {
@@ -54,6 +55,7 @@ function registerConnectorHandlers(): void {
   // Emitted by worker-agents when a run fails; delivery of the owner's
   // notification belongs here, where the connector paths live.
   registerHandler('agents', 'run.failed', createAgentRunFailedHandler());
+  registerHandler('agents', 'run.reply', createAgentRunReplyHandler());
   logger.info('webex, microsoft and zoom handlers registered', { component: 'worker/loop' });
 }
 

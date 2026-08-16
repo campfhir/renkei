@@ -85,25 +85,30 @@ export async function fanOutMailReceived(params: {
   }
 }
 
-/** webex/message.received — a message from a linked sender. */
+/**
+ * webex/message.received — a message from a linked sender. Returns how many
+ * agent runs started: the ambient handler uses it to hold its own tongue (a
+ * "want me to capture this?" card next to an agent already on the job reads
+ * as the bot not knowing what it is doing).
+ */
 export async function fanOutWebexMessage(params: {
   tenantId: string;
   senderEmail: string;
   messageId: string;
   roomId: string;
   text: string;
-}): Promise<void> {
+}): Promise<number> {
   try {
     const dbResult = getDatabase();
-    if (!dbResult.ok) return;
+    if (!dbResult.ok) return 0;
     const identity = await dbResult.val
       .selectFrom('identities')
       .select('subject')
       .where('tenant_id', '=', params.tenantId)
       .where('email', '=', params.senderEmail.toLowerCase())
       .executeTakeFirst();
-    if (!identity) return;
-    await fanOutAgentEvents(dbResult.val, queue.producer, {
+    if (!identity) return 0;
+    const started = await fanOutAgentEvents(dbResult.val, queue.producer, {
       tenantId: params.tenantId,
       source: 'webex',
       type: 'message.received',
@@ -115,11 +120,13 @@ export async function fanOutWebexMessage(params: {
         messageId: params.messageId,
       },
     });
+    return started.length;
   } catch (error) {
     logger.warn('webex message agent fan-out failed: {error}', {
       component: 'worker/agent-triggers',
       tenantId: params.tenantId,
       error: error instanceof Error ? error.message : String(error),
     });
+    return 0;
   }
 }

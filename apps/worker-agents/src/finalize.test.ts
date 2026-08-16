@@ -108,6 +108,44 @@ maybe('finalize hook', () => {
     return runId;
   }
 
+  /** A run started by a WebEx event trigger, thread coordinates in state. */
+  async function seedWebexRun(
+    agentId: string,
+    options: { replyInThread?: boolean } = {}
+  ): Promise<string> {
+    const triggerId = randomUUID();
+    await db
+      .insertInto('agent_triggers')
+      .values({
+        id: triggerId,
+        tenant_id: tenantId,
+        agent_id: agentId,
+        kind: 'event',
+        event_source: 'webex',
+        event_type: 'message.received',
+        config: JSON.stringify({ match: {}, replyInThread: options.replyInThread !== false }),
+        enabled: true,
+      })
+      .execute();
+    const runId = randomUUID();
+    await db
+      .insertInto('agent_runs')
+      .values({
+        id: runId,
+        tenant_id: tenantId,
+        agent_id: agentId,
+        owner_subject: owner,
+        trigger_id: triggerId,
+        trigger_kind: 'event',
+        steps_snapshot: JSON.stringify(steps),
+        lineage: JSON.stringify([]),
+        initial_state: JSON.stringify({ roomId: 'room-1', messageId: 'msg-1', text: 'hello' }),
+        status: 'succeeded',
+      })
+      .execute();
+    return runId;
+  }
+
   const finalized = (
     runId: string,
     agentId: string,
@@ -119,6 +157,7 @@ maybe('finalize hook', () => {
     ownerSubject: owner,
     status,
     errorKind: status === 'failed' ? 'step_failed' : null,
+    error: status === 'failed' ? 'Step "Do the thing" stopped the agent.' : null,
     vars: { theTicket: 'PROJ-42' },
   });
 
@@ -183,6 +222,68 @@ maybe('finalize hook', () => {
       .where('id', '=', backTrigger)
       .executeTakeFirstOrThrow();
     expect(trigger.last_error).toContain('already ran');
+  });
+
+  it('replies in the WebEx thread with the reply var on success', async () => {
+    const agentId = await seedAgent('reply-a');
+    const runId = await seedWebexRun(agentId);
+    const agentQueue = new InMemoryQueue();
+    const eventsQueue = new InMemoryQueue();
+    await createFinalizeHook(
+      db,
+      agentQueue.producer,
+      eventsQueue.producer
+    )({
+      ...finalized(runId, agentId, 'succeeded'),
+      vars: { reply: 'ENG-701 is already approved — deploying tonight.' },
+    });
+
+    const event = await eventsQueue.consumer.claim();
+    expect(event?.type).toBe('run.reply');
+    const payload: { roomId?: unknown; parentId?: unknown; markdown?: unknown } =
+      typeof event?.payload === 'object' && event.payload !== null && !Array.isArray(event.payload)
+        ? event.payload
+        : {};
+    expect(payload.roomId).toBe('room-1');
+    expect(payload.parentId).toBe('msg-1');
+    expect(payload.markdown).toBe('ENG-701 is already approved — deploying tonight.');
+  });
+
+  it('stays silent in the thread when replyInThread is off', async () => {
+    const agentId = await seedAgent('silent-a');
+    const runId = await seedWebexRun(agentId, { replyInThread: false });
+    const agentQueue = new InMemoryQueue();
+    const eventsQueue = new InMemoryQueue();
+    await createFinalizeHook(
+      db,
+      agentQueue.producer,
+      eventsQueue.producer
+    )(finalized(runId, agentId, 'succeeded'));
+    expect(await eventsQueue.consumer.claim()).toBeNull();
+  });
+
+  it('replies with the failure line when a webex-triggered run fails', async () => {
+    const agentId = await seedAgent('replyfail-a');
+    const runId = await seedWebexRun(agentId);
+    const agentQueue = new InMemoryQueue();
+    const eventsQueue = new InMemoryQueue();
+    await createFinalizeHook(
+      db,
+      agentQueue.producer,
+      eventsQueue.producer
+    )(finalized(runId, agentId, 'failed'));
+
+    // Two events: the thread reply and the owner notification.
+    const first = await eventsQueue.consumer.claim();
+    const second = await eventsQueue.consumer.claim();
+    const types = [first?.type, second?.type].sort();
+    expect(types).toEqual(['run.failed', 'run.reply']);
+    const reply = first?.type === 'run.reply' ? first : second;
+    const payload: { markdown?: unknown } =
+      typeof reply?.payload === 'object' && reply.payload !== null && !Array.isArray(reply.payload)
+        ? reply.payload
+        : {};
+    expect(String(payload.markdown)).toContain("couldn't finish");
   });
 
   it('emits run.failed (and no chain) when the run failed', async () => {

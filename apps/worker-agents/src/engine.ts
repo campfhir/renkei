@@ -60,6 +60,7 @@ export interface FinalizedRun {
   ownerSubject: string;
   status: 'succeeded' | 'failed';
   errorKind: string | null;
+  error: string | null;
   /** saveAs bindings accumulated over the run, for chained agents. */
   vars: Record<string, string>;
 }
@@ -879,6 +880,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           ownerSubject: run.owner_subject,
           status,
           errorKind,
+          error,
           vars,
         });
       } catch (hookError) {
