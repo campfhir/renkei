@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { normalizeAgentDraft, validateAgentDraft } from '@renkei/agents';
 import { getSessionFromRequest } from '@/lib/session';
@@ -52,11 +53,30 @@ export async function PUT(
   const issues = validateAgentDraft(normalized, tools);
   if (issues.length > 0) return NextResponse.json({ issues }, { status: 422 });
 
-  const result = await updateAgent(dbResult.val, tenantId, session.subject, agentId, {
-    ...parsed.input,
-    name: normalized.name,
-    steps: normalized.steps,
-  });
+  // A save that changed nothing the summary describes — an on/off toggle —
+  // keeps the description it has instead of going stale and paying for a
+  // model call it cannot improve.
+  const existing = await getAgent(dbResult.val, tenantId, session.subject, agentId);
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const describedChanged =
+    existing.name !== normalized.name ||
+    JSON.stringify(existing.steps) !== JSON.stringify(normalized.steps) ||
+    JSON.stringify(existing.triggers.map((trigger) => trigger.draft)) !==
+      JSON.stringify(normalized.triggers);
+  const needsDescription = describedChanged || existing.descriptionStatus !== 'ok';
+
+  const result = await updateAgent(
+    dbResult.val,
+    tenantId,
+    session.subject,
+    agentId,
+    {
+      ...parsed.input,
+      name: normalized.name,
+      steps: normalized.steps,
+    },
+    { markDescriptionStale: needsDescription }
+  );
   if (result === 'NOT_FOUND') return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (result === 'NAME_TAKEN') {
     return NextResponse.json(
@@ -65,16 +85,25 @@ export async function PUT(
     );
   }
 
-  await generateAgentDescription(dbResult.val, tenantId, {
-    id: agentId,
-    name: normalized.name,
-    steps: normalized.steps,
-    triggers: normalized.triggers,
-    llmModelId: parsed.input.llmModelId,
-  });
+  if (needsDescription) {
+    // Written AFTER the response; the builder polls and shows an indicator.
+    after(() =>
+      generateAgentDescription(dbResult.val, tenantId, {
+        id: agentId,
+        name: normalized.name,
+        steps: normalized.steps,
+        triggers: normalized.triggers,
+        llmModelId: parsed.input.llmModelId,
+      })
+    );
+  }
 
   const agent = await getAgent(dbResult.val, tenantId, session.subject, agentId);
-  return NextResponse.json({ agent, apiKeys: result.apiKeys });
+  return NextResponse.json({
+    agent,
+    apiKeys: result.apiKeys,
+    descriptionPending: needsDescription,
+  });
 }
 
 export async function DELETE(

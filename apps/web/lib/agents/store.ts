@@ -462,7 +462,15 @@ export async function updateAgent(
   tenantId: string,
   ownerSubject: string,
   agentId: string,
-  input: SaveAgentInput
+  input: SaveAgentInput,
+  options: {
+    /**
+     * False when the save changed nothing the summary describes (an on/off
+     * toggle): the description stays as it is instead of going stale and
+     * costing a model call.
+     */
+    markDescriptionStale?: boolean;
+  } = {}
 ): Promise<{ apiKeys: MintedApiKey[] } | 'NOT_FOUND' | 'NAME_TAKEN'> {
   try {
     const updated = await db
@@ -473,7 +481,7 @@ export async function updateAgent(
         steps_version: sql`steps_version + 1`,
         llm_model_id: input.llmModelId,
         enabled: input.enabled,
-        description_status: 'stale',
+        ...(options.markDescriptionStale === false ? {} : { description_status: 'stale' }),
         updated_at: sql`NOW()`,
       })
       .where('tenant_id', '=', tenantId)

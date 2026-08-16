@@ -15,6 +15,8 @@ import type { MintedApiKey } from '@/lib/agents/store';
 export interface ReviewPanelProps {
   description: string | null;
   reviewNotes: string[];
+  /** True while the save-time summary is still being written server-side. */
+  descriptionPending: boolean;
   apiKeys: MintedApiKey[];
   enabled: boolean;
   enabling: boolean;
@@ -26,6 +28,7 @@ export interface ReviewPanelProps {
 export function ReviewPanel({
   description,
   reviewNotes,
+  descriptionPending,
   apiKeys,
   enabled,
   enabling,
@@ -38,7 +41,15 @@ export function ReviewPanel({
       <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-700 dark:bg-gray-950">
         <h2 className="text-lg font-semibold">Saved. Here’s what this agent does</h2>
 
-        {description ? (
+        {descriptionPending ? (
+          <p className="mt-3 flex items-center gap-2 rounded-md bg-gray-50 p-3 text-sm text-gray-500 dark:bg-gray-900 dark:text-gray-400">
+            <span
+              aria-hidden="true"
+              className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 dark:border-gray-700"
+            />
+            Writing a summary of what this agent does…
+          </p>
+        ) : description ? (
           <p className="mt-3 rounded-md bg-gray-50 p-3 text-sm text-gray-800 dark:bg-gray-900 dark:text-gray-200">
             {description}
           </p>

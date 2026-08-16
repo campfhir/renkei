@@ -12,7 +12,7 @@
  * history with it.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { StoredAgent } from '@/lib/agents/store';
@@ -137,6 +137,21 @@ export function AgentsList({
   const [error, setError] = useState<string | null>(null);
   const [ranNow, setRanNow] = useState<string | null>(null);
 
+  // Summaries are written after the save response; while any card is still
+  // waiting on one, refresh the server-rendered list a few times so the
+  // spinner resolves without a manual reload. Bounded — a generation that
+  // died mid-flight must not turn this page into a refresh loop.
+  const staleRefreshes = useRef(0);
+  const anyStale = agents.some((agent) => agent.descriptionStatus === 'stale');
+  useEffect(() => {
+    if (!anyStale || staleRefreshes.current >= 20) return;
+    const timer = setTimeout(() => {
+      staleRefreshes.current += 1;
+      router.refresh();
+    }, 3_000);
+    return () => clearTimeout(timer);
+  }, [anyStale, agents, router]);
+
   const savePayloadOf = (agent: StoredAgent, enabled: boolean) => ({
     name: agent.name,
     steps: agent.steps,
@@ -224,10 +239,21 @@ export function AgentsList({
             </div>
 
             <p className="mt-1.5 text-sm text-gray-600 dark:text-gray-400">
-              {agent.description ?? (
-                <span className="italic text-gray-400 dark:text-gray-500">
-                  No summary yet — it&apos;s written when the agent is saved.
+              {agent.descriptionStatus === 'stale' ? (
+                <span className="flex items-center gap-2 italic text-gray-400 dark:text-gray-500">
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 dark:border-gray-700"
+                  />
+                  Writing a summary…
                 </span>
+              ) : (
+                (agent.description ?? (
+                  <span className="italic text-gray-400 dark:text-gray-500">
+                    We couldn&apos;t write a summary — check the organization&apos;s agent models,
+                    then save again.
+                  </span>
+                ))
               )}
             </p>
 

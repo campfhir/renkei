@@ -12,6 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { normalizeAgentDraft, validateAgentDraft } from '@renkei/agents';
 import { getSessionFromRequest } from '@/lib/session';
@@ -67,21 +68,21 @@ export async function POST(
     );
   }
 
-  const described = await generateAgentDescription(dbResult.val, tenantId, {
-    id: result.agentId,
-    name: normalized.name,
-    steps: normalized.steps,
-    triggers: normalized.triggers,
-    llmModelId: parsed.input.llmModelId,
-  });
+  // The summary is written AFTER the response: authoring must never wait
+  // on a model. The builder polls the agent until description_status
+  // resolves and shows a writing indicator meanwhile.
+  after(() =>
+    generateAgentDescription(dbResult.val, tenantId, {
+      id: result.agentId,
+      name: normalized.name,
+      steps: normalized.steps,
+      triggers: normalized.triggers,
+      llmModelId: parsed.input.llmModelId,
+    })
+  );
 
   return NextResponse.json(
-    {
-      agentId: result.agentId,
-      apiKeys: result.apiKeys,
-      description: described.description,
-      reviewNotes: described.reviewNotes,
-    },
+    { agentId: result.agentId, apiKeys: result.apiKeys, descriptionPending: true },
     { status: 201 }
   );
 }

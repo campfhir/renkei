@@ -12,7 +12,7 @@
  * description; enabling is its own deliberate act.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { randomUUID } from '@/lib/agents/uuid';
 import {
@@ -25,7 +25,7 @@ import {
 } from '@renkei/agents';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import type { MintedApiKey, StoredAgent } from '@/lib/agents/store';
-import { sendJsonFull } from '@/lib/fetch-json';
+import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { toToolOptions, toVariableOptions, type VariableOption } from './options';
 import { StepCard } from './step-card';
 import { TriggerPanel, type AgentChoice, type BuilderTrigger } from './trigger-panel';
@@ -49,10 +49,15 @@ export interface AgentBuilderProps {
 interface SaveResponse {
   agentId?: string;
   apiKeys?: MintedApiKey[];
-  description?: string | null;
-  reviewNotes?: string[];
+  descriptionPending?: boolean;
   agent?: StoredAgent;
   issues?: ValidationIssue[];
+}
+
+function notesOf(agent: StoredAgent | undefined | null): string[] {
+  return Array.isArray(agent?.reviewNotes)
+    ? agent.reviewNotes.filter((note): note is string => typeof note === 'string')
+    : [];
 }
 
 function newStep(): AgentStep {
@@ -97,7 +102,41 @@ export function AgentBuilder({
     description: string | null;
     reviewNotes: string[];
     apiKeys: MintedApiKey[];
+    pending: boolean;
   } | null>(null);
+
+  // The summary is written server-side AFTER the save response; poll the
+  // agent until its status resolves so the panel can stop showing the
+  // writing indicator. Bounded: after ~45s the panel falls back to its
+  // "couldn't write yet" wording.
+  useEffect(() => {
+    if (!review?.pending || !agentId) return;
+    let polls = 0;
+    const timer = setInterval(async () => {
+      polls += 1;
+      const result = await getJson<{ agent: StoredAgent }>(
+        `/api/tenant/${tenantId}/agents/${agentId}`
+      );
+      const agent = result.data?.agent;
+      if (agent && agent.descriptionStatus !== 'stale') {
+        clearInterval(timer);
+        setReview((current) =>
+          current
+            ? {
+                ...current,
+                pending: false,
+                description: agent.description,
+                reviewNotes: notesOf(agent),
+              }
+            : current
+        );
+      } else if (polls >= 22) {
+        clearInterval(timer);
+        setReview((current) => (current ? { ...current, pending: false } : current));
+      }
+    }, 2_000);
+    return () => clearInterval(timer);
+  }, [review?.pending, agentId, tenantId]);
 
   const toolOptions = useMemo(() => toToolOptions(tools), [tools]);
   const toolDescriptors = useMemo(() => new Map(tools.map((tool) => [tool.name, tool])), [tools]);
@@ -202,9 +241,10 @@ export function AgentBuilder({
         );
       }
       setReview({
-        description: saved.description ?? saved.agent?.description ?? null,
-        reviewNotes: saved.reviewNotes ?? [],
+        description: saved.agent?.description ?? null,
+        reviewNotes: notesOf(saved.agent),
         apiKeys: saved.apiKeys ?? [],
+        pending: saved.descriptionPending === true,
       });
     } finally {
       setSaving(false);
@@ -367,6 +407,7 @@ export function AgentBuilder({
         <ReviewPanel
           description={review.description}
           reviewNotes={review.reviewNotes}
+          descriptionPending={review.pending}
           apiKeys={review.apiKeys}
           enabled={enabled}
           enabling={enabling}
