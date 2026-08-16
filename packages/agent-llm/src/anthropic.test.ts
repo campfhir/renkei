@@ -55,8 +55,9 @@ describe('AnthropicProvider.complete', () => {
     expect(url).toBe('https://api.anthropic.com/v1/messages');
     const headers = init.headers as Record<string, string>;
     expect(headers['x-api-key']).toBe('sk-test');
-    // Azure AI Foundry's Claude surface reads api-key; Anthropic ignores it.
-    expect(headers['api-key']).toBe('sk-test');
+    // Anthropic-direct gets ONLY its own auth header — no Bearer, no api-key.
+    expect(headers.authorization).toBeUndefined();
+    expect(headers['api-key']).toBeUndefined();
     expect(headers['anthropic-version']).toBeDefined();
     const body = JSON.parse(String(init.body));
     expect(body.model).toBe('claude-sonnet-5');
@@ -149,9 +150,17 @@ describe('AnthropicProvider.complete', () => {
       jsonResponse(200, { content: [], stop_reason: 'end_turn', usage: {} })
     );
     await foundry.complete(request);
-    expect((fetchSpy.mock.calls[0] as [string])[0]).toBe(
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(
       'https://myresource.services.ai.azure.com/anthropic/v1/messages?api-version=2023-05-01'
     );
+    // A custom base URL gets the key in every dialect Foundry's docs use:
+    // Bearer (their sample curl), api-key, and Anthropic's own x-api-key.
+    const headers = init.headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer azure-key');
+    expect(headers['api-key']).toBe('azure-key');
+    expect(headers['x-api-key']).toBe('azure-key');
+    expect(headers['anthropic-version']).toBe('2023-06-01');
   });
 
   it('honours a base URL override', async () => {

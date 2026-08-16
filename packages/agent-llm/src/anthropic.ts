@@ -109,11 +109,17 @@ export class AnthropicProvider implements LlmProvider {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          // x-api-key for Anthropic; api-key for Azure AI Foundry's Claude
-          // surface (base URL https://{resource}.services.ai.azure.com/anthropic,
-          // model = the deployment name). Each side ignores the other's.
+          // x-api-key is Anthropic's own header. A custom base URL (Azure AI
+          // Foundry's /anthropic surface, gateways) additionally gets the key
+          // as Bearer and api-key — Foundry's sample curl authenticates with
+          // Bearer — while Anthropic-direct stays exactly as it always was.
           'x-api-key': this.config.apiKey,
-          'api-key': this.config.apiKey,
+          ...(this.config.baseUrl
+            ? {
+                authorization: `Bearer ${this.config.apiKey}`,
+                'api-key': this.config.apiKey,
+              }
+            : {}),
           'anthropic-version': ANTHROPIC_VERSION,
         },
         body: JSON.stringify(body),
