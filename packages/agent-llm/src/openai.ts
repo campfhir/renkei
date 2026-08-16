@@ -134,13 +134,23 @@ function fromWireToolCall(call: WireToolCall): LlmContentBlock | null {
 }
 
 export class OpenAiProvider implements LlmProvider {
+  /**
+   * Which token-limit parameter this endpoint accepts. OpenAI's newer
+   * models REQUIRE max_completion_tokens (and reject requests carrying
+   * both), while many OpenAI-compatible servers — Foundry's open-weights
+   * deployments like Kimi, older gateways — only know max_tokens. Sending
+   * both is not an option (OpenAI 400s on the pair), so the adapter starts
+   * with the modern name and falls back once on a 400 that names it,
+   * remembering the answer for the instance's lifetime.
+   */
+  private legacyMaxTokens = false;
+
   constructor(private readonly config: OpenAiConfig) {}
 
   async complete(request: LlmRequest): Promise<Result<LlmResponse, LlmErrorKind>> {
     const baseUrl = (this.config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
-    const body = {
+    const baseBody = {
       model: this.config.model,
-      max_completion_tokens: request.maxTokens,
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
       ...(this.config.reasoningEffort ? { reasoning_effort: this.config.reasoningEffort } : {}),
       messages: [
@@ -163,31 +173,48 @@ export class OpenAiProvider implements LlmProvider {
     };
 
     let response: Response;
-    try {
-      const version = this.config.apiVersion
-        ? `?api-version=${encodeURIComponent(this.config.apiVersion)}`
-        : '';
-      response = await fetch(`${baseUrl}/chat/completions${version}`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${this.config.apiKey}`,
-          'api-key': this.config.apiKey,
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-    } catch (error) {
-      const kind: LlmErrorKind =
-        error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'network';
-      return err(kind, { message: error instanceof Error ? error.message : String(error) });
-    }
+    for (;;) {
+      const body = {
+        ...baseBody,
+        ...(this.legacyMaxTokens
+          ? { max_tokens: request.maxTokens }
+          : { max_completion_tokens: request.maxTokens }),
+      };
+      try {
+        const version = this.config.apiVersion
+          ? `?api-version=${encodeURIComponent(this.config.apiVersion)}`
+          : '';
+        response = await fetch(`${baseUrl}/chat/completions${version}`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${this.config.apiKey}`,
+            'api-key': this.config.apiKey,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+      } catch (error) {
+        const kind: LlmErrorKind =
+          error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'network';
+        return err(kind, { message: error instanceof Error ? error.message : String(error) });
+      }
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      return err(errorKindOf(response.status), {
-        message: `OpenAI-compatible endpoint ${response.status}: ${text.slice(0, 500)}`,
-      });
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        if (
+          response.status === 400 &&
+          !this.legacyMaxTokens &&
+          /max_completion_tokens/.test(text)
+        ) {
+          this.legacyMaxTokens = true;
+          continue;
+        }
+        return err(errorKindOf(response.status), {
+          message: `OpenAI-compatible endpoint ${response.status}: ${text.slice(0, 500)}`,
+        });
+      }
+      break;
     }
 
     const raw: unknown = await response.json().catch(() => ({}));

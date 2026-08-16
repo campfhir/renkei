@@ -83,6 +83,47 @@ describe('OpenAiProvider.complete', () => {
     expect(JSON.parse(String(init.body)).model).toBe('my-gpt5-deployment');
   });
 
+  it('falls back to max_tokens when the endpoint rejects max_completion_tokens', async () => {
+    // Foundry's open-weights deployments (Kimi et al.) only know the older
+    // parameter name; the endpoint's 400 names the rejected field.
+    const kimi = new OpenAiProvider({
+      apiKey: 'azure-key',
+      model: 'Kimi-K2.6',
+      baseUrl: 'https://myresource.openai.azure.com/openai/v1',
+    });
+    fetchSpy
+      .mockResolvedValueOnce(
+        jsonResponse(400, {
+          error: { message: "Unsupported parameter: 'max_completion_tokens'" },
+        })
+      )
+      .mockResolvedValue(jsonResponse(200, okBody));
+
+    const result = await kimi.complete(request);
+    if (!result.ok) throw new Error('expected ok after fallback');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const first = JSON.parse(String((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body));
+    const second = JSON.parse(String((fetchSpy.mock.calls[1] as [string, RequestInit])[1].body));
+    expect(first.max_completion_tokens).toBe(1024);
+    expect(first.max_tokens).toBeUndefined();
+    expect(second.max_tokens).toBe(1024);
+    expect(second.max_completion_tokens).toBeUndefined();
+
+    // The lesson sticks: the next call goes straight to max_tokens.
+    await kimi.complete(request);
+    const third = JSON.parse(String((fetchSpy.mock.calls[2] as [string, RequestInit])[1].body));
+    expect(third.max_tokens).toBe(1024);
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a 400 that is not about the token parameter', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(400, { error: { message: 'bad schema' } }));
+    const result = await provider.complete(request);
+    if (result.ok) throw new Error('expected error');
+    expect(result.err.type).toBe('invalid_request');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   it('sends reasoning_effort when configured', async () => {
     const reasoning = new OpenAiProvider({
       apiKey: 'sk-test',
