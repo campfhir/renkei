@@ -151,15 +151,17 @@ export function AgentBuilder({
 
   const draftFromProse = async () => {
     if (drafting || prose.trim().length < 10) return;
-    // Redrafting over real work needs a deliberate yes; a fresh page's
-    // single empty step is not worth interrupting for.
+    // With real steps present this is a REVISION: the current steps go
+    // along as context, the model applies the described change, and
+    // untouched steps keep their retry settings. Still confirmed — it
+    // rewrites what's on screen.
     const hasRealSteps = steps.some(
       (step) => step.instruction.length > 0 || step.tool !== null || step.name.trim()
     );
     if (
       hasRealSteps &&
       !window.confirm(
-        `Replace the current ${steps.length} step${steps.length === 1 ? '' : 's'} with a fresh draft from this description?`
+        'Revise the current steps based on this description? Steps the change doesn’t touch keep their settings.'
       )
     ) {
       return;
@@ -169,7 +171,11 @@ export function AgentBuilder({
     const result = await sendJsonFull<{ name: string; steps: AgentStep[] }>(
       `/api/tenant/${tenantId}/agents/draft`,
       'POST',
-      { text: prose }
+      {
+        text: prose,
+        ...(hasRealSteps ? { steps: stepsDoc } : {}),
+        triggerVars: triggerVariableNames(triggers.map((trigger) => trigger.draft)),
+      }
     );
     setDrafting(false);
     if (result.error || !result.data) {
@@ -369,9 +375,9 @@ export function AgentBuilder({
             ) : null}
           </div>
           <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
-            Describe the whole thing in your own words — we&apos;ll draft the steps and pick the
-            skills; you review and adjust everything below before saving.
-            {existing ? ' Drafting replaces the steps currently below.' : ''}
+            {existing
+              ? 'Describe the change in your own words — add a step, remove one, tweak an instruction, or redo the whole thing. Steps the change doesn’t touch keep their retry settings.'
+              : 'Describe the whole thing in your own words — we’ll draft the steps and pick the skills; you review and adjust everything below before saving.'}
           </p>
           <textarea
             value={prose}
