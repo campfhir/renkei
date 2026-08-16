@@ -14,6 +14,8 @@ export default [
       'packages/db/scripts/build-migrations.js',
       'apps/web/scripts/fix-async-warnings.ts',
       'apps/web/scripts/generate-log-ship-keys.mjs',
+      // Standalone widget-bundle build script, same category.
+      'apps/web/lib/mcp-widgets/build.mjs',
       // Plain Node CJS jest setupFiles entry — no tsconfig project covers it,
       // same category as the standalone scripts above.
       'apps/web/jest.env-integration.js',

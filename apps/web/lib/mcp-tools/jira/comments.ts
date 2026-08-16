@@ -7,8 +7,9 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName, withPresentationHint } from '../common';
+import { getCachedDisplayName, issueUrl, withPresentationHint } from '../common';
 import { adfToMarkdown } from './adf';
+import { previewToolMeta, RESULTS_LIST_URI } from '../widgets';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
@@ -98,6 +99,74 @@ export async function registerCommentTools(
           ],
           isError: true,
         };
+      }
+    }
+  );
+
+  // ——— Interactive results (MCP Apps) ————————————————————————————————
+  // The same comment list, rendered as a thread card instead of flat text —
+  // author and timestamp per row, portal/internal visibility in the meta
+  // line, and the issue itself one click away.
+  server.registerTool(
+    'jira_list_comments_preview',
+    {
+      title: 'Jira · Read — List comments, rendered as a thread',
+      description:
+        'List the comments on an issue and render them as an interactive thread card with an ' +
+        '"Open in Jira" link. Prefer this over jira_list_comments when the user wants to READ ' +
+        'the discussion; use jira_list_comments when you need the comment bodies to reason ' +
+        'over. After calling, do not repeat the comments in your reply.',
+      annotations: { readOnlyHint: true },
+      _meta: previewToolMeta(RESULTS_LIST_URI),
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        const issueKey = typeof args.issueKey === 'string' ? args.issueKey : '';
+        if (!issueKey) return errText('issueKey is required');
+
+        const response = await auth.fetch(
+          granularJiraScopes('jira_list_comments', true),
+          `/rest/api/3/issue/${encodeURIComponent(issueKey)}/comment`
+        );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
+
+        const data = (await response.json()) as any;
+        const comments: any[] = Array.isArray(data.comments) ? data.comments : [];
+        const rows = comments.map((c: any) => {
+          const visibility =
+            c.jsdPublic === false ? 'internal' : c.jsdPublic === true ? 'visible on portal' : '';
+          const body = c.body ? adfToMarkdown(c.body) : '';
+          const avatarUrl =
+            typeof c.author?.avatarUrls?.['24x24'] === 'string' ? c.author.avatarUrls['24x24'] : '';
+          return {
+            title: c.author?.displayName || 'Unknown',
+            ...(avatarUrl ? { avatarUrl } : {}),
+            meta: new Date(c.created).toLocaleString() + (visibility ? ` · ${visibility}` : ''),
+            body: body.length > 600 ? `${body.slice(0, 600)}…` : body,
+          };
+        });
+
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                `${comments.length} comment${comments.length === 1 ? '' : 's'} on ${issueKey} ` +
+                `rendered on the thread card. Do not repeat them; the user reads them there.`,
+            },
+          ],
+          structuredContent: {
+            kind: 'results',
+            title: `Comments on ${issueKey}`,
+            links: [{ label: 'Open in Jira', url: issueUrl(context.siteUrl, issueKey) }],
+            rows,
+          },
+        };
+      } catch (error) {
+        return errText(error instanceof Error ? error.message : String(error));
       }
     }
   );

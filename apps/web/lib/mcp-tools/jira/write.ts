@@ -22,6 +22,7 @@ import {
   type UnwrittenField,
 } from './field-write';
 import { logger } from '@/lib/logger';
+import { APP_ONLY_META, ISSUE_PREVIEW_URI, confirmGuard, previewToolMeta } from '../widgets';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
 function errText(value: string) {
@@ -263,7 +264,130 @@ export async function registerWriteTools(
   context: MCPToolContext,
   auth: JiraAuth
 ): Promise<void> {
-  // jira_create_issue
+  // jira_create_issue — schema and handler shared with the card-invoked
+  // jira_create_issue_confirm below, so the confirm path IS the create path.
+  const createIssueSchema = z.object({
+    projectKey: z.string().describe('Project key, e.g. SCRUM'),
+    issueType: z.string().describe('Issue type: Task, Bug, Story, Subtask, Epic, etc.'),
+    summary: z.string().describe('Issue title (max 255 characters)'),
+    description: z.string().describe('Issue description (markdown format)').optional(),
+    priority: z.string().describe('Priority: Highest, High, Medium, Low, Lowest').optional(),
+    assignee: z.string().describe('Email address or account ID to assign to').optional(),
+    labels: z.array(z.string()).describe('Labels to apply').optional(),
+    ...extraFieldSchema,
+  });
+  const createIssueHandler = async (args: Record<string, unknown>) => {
+    const displayName = getCachedDisplayName(context.accountId);
+    logger.info('jira_create_issue invoked', {
+      component: 'mcp/tool',
+      tenantId: context.tenantId,
+      accountId: context.accountId,
+      displayName,
+    });
+    try {
+      const { projectKey, issueType, summary, description, priority, assignee, labels } = args;
+
+      if (!projectKey || !issueType || !summary) {
+        return {
+          content: [
+            { type: 'text' as const, text: 'projectKey, issueType, and summary are required' },
+          ],
+          isError: true,
+        };
+      }
+
+      const projectKeyStr = isString(projectKey) ? projectKey : String(projectKey);
+      const issueTypeStr = isString(issueType) ? issueType : String(issueType);
+      const summaryStr = isString(summary) ? summary : String(summary);
+
+      const extra = await collectExtraFields(context, auth, args, {
+        projectKey: projectKeyStr,
+        issueType: issueTypeStr,
+      });
+
+      // The issue's identity is what cannot be given up. Everything else,
+      // including the built-in optional fields, is droppable if the project
+      // refuses it — a create that fails because priority is off the screen
+      // has lost the whole issue for nothing.
+      const plan: FieldWritePlan = {
+        required: {
+          project: { key: projectKeyStr },
+          issuetype: { name: issueTypeStr },
+          summary: summaryStr.substring(0, 255),
+        },
+        optional: { ...extra.fields },
+        labels: { ...extra.labels },
+        hints: { ...extra.hints },
+      };
+
+      if (description && isString(description)) {
+        plan.optional.description = markdownToAdf(description);
+        plan.labels.description = 'Description';
+      }
+      if (priority && isString(priority)) {
+        plan.optional.priority = { name: priority };
+        plan.labels.priority = `Priority → ${priority}`;
+      }
+      if (assignee && isString(assignee)) {
+        const resolved = await resolveAssigneeId(auth, assignee);
+        if (resolved.ok) {
+          plan.optional.assignee = { id: resolved.id };
+          plan.labels.assignee = `Assignee → ${assignee}`;
+        } else {
+          extra.unwritten.push({ label: `Assignee → ${assignee}`, reason: resolved.reason });
+        }
+      }
+      if (labels && isArray(labels)) {
+        plan.optional.labels = labels;
+        plan.labels.labels = `Labels → ${labels.join(', ')}`;
+      }
+
+      const outcome = await writeWithFieldFallback(plan, async (fields) => {
+        const response = await auth.fetch(
+          granularJiraScopes('jira_create_issue', false),
+          '/rest/api/3/issue',
+          { method: 'POST', body: JSON.stringify({ fields }) }
+        );
+        if (!response.ok) {
+          throw new Error(await describeJiraAuthFailure(response));
+        }
+        return response.json();
+      });
+
+      // `sent` is always true here: the mandatory fields are never droppable,
+      // so the loop cannot empty the payload out.
+      if (!isRecord(outcome.result)) {
+        return {
+          content: [{ type: 'text' as const, text: 'Invalid response from API' }],
+          isError: true,
+        };
+      }
+      const resultKey = isString(outcome.result.key)
+        ? outcome.result.key
+        : String(outcome.result.key);
+
+      const unwritten = [...extra.unwritten, ...outcome.dropped];
+      const commented =
+        unwritten.length > 0 ? await recordUnwritten(context, auth, resultKey, unwritten) : false;
+
+      const applied = Object.keys(plan.labels)
+        .filter((id) => !outcome.dropped.some((field) => plan.labels[id] === field.label))
+        .map((id) => plan.labels[id] ?? id);
+
+      const text =
+        `Created issue ${resultKey}` +
+        describeOutcome(applied, unwritten, commented) +
+        `\n\n[Open in Jira](${issueUrl(context.siteUrl, resultKey)})`;
+      return { content: [{ type: 'text' as const, text }] };
+    } catch (error) {
+      return {
+        content: [
+          { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+        ],
+        isError: true,
+      };
+    }
+  };
   server.registerTool(
     'jira_create_issue',
     {
@@ -277,132 +401,142 @@ export async function registerWriteTools(
         'first and check the project key against it — a service desk project has customer-facing ' +
         'request types and SLAs that this tool bypasses entirely; prefer jsm_create_request for those.',
       annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        projectKey: z.string().describe('Project key, e.g. SCRUM'),
-        issueType: z.string().describe('Issue type: Task, Bug, Story, Subtask, Epic, etc.'),
-        summary: z.string().describe('Issue title (max 255 characters)'),
-        description: z.string().describe('Issue description (markdown format)').optional(),
-        priority: z.string().describe('Priority: Highest, High, Medium, Low, Lowest').optional(),
-        assignee: z.string().describe('Email address or account ID to assign to').optional(),
-        labels: z.array(z.string()).describe('Labels to apply').optional(),
-        ...extraFieldSchema,
-      }),
+      inputSchema: createIssueSchema,
     },
-    async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_create_issue invoked', {
-        component: 'mcp/tool',
-        tenantId: context.tenantId,
-        accountId: context.accountId,
-        displayName,
-      });
-      try {
-        const { projectKey, issueType, summary, description, priority, assignee, labels } = args;
+    createIssueHandler
+  );
 
-        if (!projectKey || !issueType || !summary) {
-          return {
-            content: [
-              { type: 'text' as const, text: 'projectKey, issueType, and summary are required' },
-            ],
-            isError: true,
-          };
-        }
+  // jira_update_issue — same sharing as create above.
+  const updateIssueSchema = z.object({
+    issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+    summary: z.string().describe('New title (optional)').optional(),
+    description: z.string().describe('New description in markdown (optional)').optional(),
+    priority: z.string().describe('New priority (optional)').optional(),
+    assignee: z.string().describe('New assignee email or account ID (optional)').optional(),
+    labels: z.array(z.string()).describe('New labels (optional, replaces existing)').optional(),
+    ...extraFieldSchema,
+  });
+  const updateIssueHandler = async (args: Record<string, unknown>) => {
+    const displayName = getCachedDisplayName(context.accountId);
+    logger.info('jira_update_issue invoked', {
+      component: 'mcp/tool',
+      tenantId: context.tenantId,
+      accountId: context.accountId,
+      displayName,
+    });
+    try {
+      const { issueKey, summary, description, priority, assignee, labels } = args;
 
-        const projectKeyStr = isString(projectKey) ? projectKey : String(projectKey);
-        const issueTypeStr = isString(issueType) ? issueType : String(issueType);
-        const summaryStr = isString(summary) ? summary : String(summary);
-
-        const extra = await collectExtraFields(context, auth, args, {
-          projectKey: projectKeyStr,
-          issueType: issueTypeStr,
-        });
-
-        // The issue's identity is what cannot be given up. Everything else,
-        // including the built-in optional fields, is droppable if the project
-        // refuses it — a create that fails because priority is off the screen
-        // has lost the whole issue for nothing.
-        const plan: FieldWritePlan = {
-          required: {
-            project: { key: projectKeyStr },
-            issuetype: { name: issueTypeStr },
-            summary: summaryStr.substring(0, 255),
-          },
-          optional: { ...extra.fields },
-          labels: { ...extra.labels },
-          hints: { ...extra.hints },
+      if (!isString(issueKey)) {
+        return {
+          content: [{ type: 'text' as const, text: 'issueKey is required' }],
+          isError: true,
         };
+      }
 
-        if (description && isString(description)) {
-          plan.optional.description = markdownToAdf(description);
-          plan.labels.description = 'Description';
-        }
-        if (priority && isString(priority)) {
-          plan.optional.priority = { name: priority };
-          plan.labels.priority = `Priority → ${priority}`;
-        }
-        if (assignee && isString(assignee)) {
-          const resolved = await resolveAssigneeId(auth, assignee);
-          if (resolved.ok) {
-            plan.optional.assignee = { id: resolved.id };
-            plan.labels.assignee = `Assignee → ${assignee}`;
-          } else {
-            extra.unwritten.push({ label: `Assignee → ${assignee}`, reason: resolved.reason });
-          }
-        }
-        if (labels && isArray(labels)) {
-          plan.optional.labels = labels;
-          plan.labels.labels = `Labels → ${labels.join(', ')}`;
-        }
+      // An update knows its issue, so allowed values come from editmeta —
+      // the answer for this exact issue, no issue type needed.
+      const extra = await collectExtraFields(context, auth, args, { issueKey });
 
-        const outcome = await writeWithFieldFallback(plan, async (fields) => {
-          const response = await auth.fetch(
-            granularJiraScopes('jira_create_issue', false),
-            '/rest/api/3/issue',
-            { method: 'POST', body: JSON.stringify({ fields }) }
-          );
-          if (!response.ok) {
-            throw new Error(await describeJiraAuthFailure(response));
-          }
-          return response.json();
-        });
+      // Nothing is mandatory on an update: every field is droppable, so a
+      // refused custom field costs that field rather than the summary next to it.
+      const plan: FieldWritePlan = {
+        required: {},
+        optional: { ...extra.fields },
+        labels: { ...extra.labels },
+        hints: { ...extra.hints },
+      };
 
-        // `sent` is always true here: the mandatory fields are never droppable,
-        // so the loop cannot empty the payload out.
-        if (!isRecord(outcome.result)) {
+      if (summary && isString(summary)) {
+        plan.optional.summary = summary.substring(0, 255);
+        plan.labels.summary = `Summary → ${summary.substring(0, 60)}`;
+      }
+      if (description && isString(description)) {
+        plan.optional.description = markdownToAdf(description);
+        plan.labels.description = 'Description';
+      }
+      if (priority && isString(priority)) {
+        plan.optional.priority = { name: priority };
+        plan.labels.priority = `Priority → ${priority}`;
+      }
+      if (assignee && isString(assignee)) {
+        const resolved = await resolveAssigneeId(auth, assignee);
+        if (resolved.ok) {
+          plan.optional.assignee = { id: resolved.id };
+          plan.labels.assignee = `Assignee → ${assignee}`;
+        } else {
+          extra.unwritten.push({ label: `Assignee → ${assignee}`, reason: resolved.reason });
+        }
+      }
+      if (labels && isArray(labels)) {
+        plan.optional.labels = labels;
+        plan.labels.labels = `Labels → ${labels.join(', ')}`;
+      }
+
+      // Everything the caller asked for turned out to be unwritable, so there
+      // is no request to make. The comment is then the whole point of the call.
+      if (Object.keys(plan.optional).length === 0) {
+        if (extra.unwritten.length === 0) {
           return {
-            content: [{ type: 'text' as const, text: 'Invalid response from API' }],
+            content: [{ type: 'text' as const, text: `Nothing to update on ${issueKey}` }],
             isError: true,
           };
         }
-        const resultKey = isString(outcome.result.key)
-          ? outcome.result.key
-          : String(outcome.result.key);
 
-        const unwritten = [...extra.unwritten, ...outcome.dropped];
-        const commented =
-          unwritten.length > 0 ? await recordUnwritten(context, auth, resultKey, unwritten) : false;
-
-        const applied = Object.keys(plan.labels)
-          .filter((id) => !outcome.dropped.some((field) => plan.labels[id] === field.label))
-          .map((id) => plan.labels[id] ?? id);
-
-        const text =
-          `Created issue ${resultKey}` +
-          describeOutcome(applied, unwritten, commented) +
-          `\n\n[Open in Jira](${issueUrl(context.siteUrl, resultKey)})`;
-        return { content: [{ type: 'text' as const, text }] };
-      } catch (error) {
+        const noted = await recordUnwritten(context, auth, issueKey, extra.unwritten);
         return {
           content: [
-            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+            {
+              type: 'text' as const,
+              text:
+                `Nothing could be written to ${issueKey}` +
+                describeOutcome([], extra.unwritten, noted) +
+                `\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`,
+            },
           ],
           isError: true,
         };
       }
-    }
-  );
 
-  // jira_update_issue
+      const outcome = await writeWithFieldFallback(plan, async (fields) => {
+        const response = await auth.fetch(
+          granularJiraScopes('jira_update_issue', false),
+          `/rest/api/3/issue/${encodeURIComponent(issueKey)}`,
+          { method: 'PUT', body: JSON.stringify({ fields }) }
+        );
+        if (!response.ok) {
+          throw new Error(await describeJiraAuthFailure(response));
+        }
+      });
+
+      const unwritten = [...extra.unwritten, ...outcome.dropped];
+      const commented =
+        unwritten.length > 0 ? await recordUnwritten(context, auth, issueKey, unwritten) : false;
+
+      const applied = Object.keys(plan.labels)
+        .filter((id) => !outcome.dropped.some((field) => plan.labels[id] === field.label))
+        .map((id) => plan.labels[id] ?? id);
+
+      const headline = outcome.sent
+        ? `Updated ${issueKey}`
+        : `Nothing could be written to ${issueKey}`;
+      const text =
+        headline +
+        describeOutcome(applied, unwritten, commented) +
+        `\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+      return {
+        content: [{ type: 'text' as const, text }],
+        ...(outcome.sent ? {} : { isError: true }),
+      };
+    } catch (error) {
+      return {
+        content: [
+          { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+        ],
+        isError: true,
+      };
+    }
+  };
   server.registerTool(
     'jira_update_issue',
     {
@@ -413,137 +547,186 @@ export async function registerWriteTools(
         'customfield id needs to be known in advance. A field this project will not accept is ' +
         'dropped and recorded as a comment rather than failing the whole update.',
       annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
-        summary: z.string().describe('New title (optional)').optional(),
-        description: z.string().describe('New description in markdown (optional)').optional(),
-        priority: z.string().describe('New priority (optional)').optional(),
-        assignee: z.string().describe('New assignee email or account ID (optional)').optional(),
-        labels: z.array(z.string()).describe('New labels (optional, replaces existing)').optional(),
-        ...extraFieldSchema,
-      }),
+      inputSchema: updateIssueSchema,
     },
-    async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_update_issue invoked', {
-        component: 'mcp/tool',
-        tenantId: context.tenantId,
-        accountId: context.accountId,
-        displayName,
-      });
-      try {
-        const { issueKey, summary, description, priority, assignee, labels } = args;
+    updateIssueHandler
+  );
 
-        if (!isString(issueKey)) {
-          return {
-            content: [{ type: 'text' as const, text: 'issueKey is required' }],
-            isError: true,
-          };
-        }
+  // ——— Interactive previews (MCP Apps) ————————————————————————————————
+  // Like the WebEx/Zoom previews and unlike Outlook's, nothing is created at
+  // preview time — Jira has no draft concept worth simulating when the
+  // create/update handlers already degrade gracefully field by field. The
+  // card holds the request; its confirm button runs the SAME handler the
+  // direct tools run, via the app-only *_confirm twins above each pair.
 
-        // An update knows its issue, so allowed values come from editmeta —
-        // the answer for this exact issue, no issue type needed.
-        const extra = await collectExtraFields(context, auth, args, { issueKey });
-
-        // Nothing is mandatory on an update: every field is droppable, so a
-        // refused custom field costs that field rather than the summary next to it.
-        const plan: FieldWritePlan = {
-          required: {},
-          optional: { ...extra.fields },
-          labels: { ...extra.labels },
-          hints: { ...extra.hints },
-        };
-
-        if (summary && isString(summary)) {
-          plan.optional.summary = summary.substring(0, 255);
-          plan.labels.summary = `Summary → ${summary.substring(0, 60)}`;
-        }
-        if (description && isString(description)) {
-          plan.optional.description = markdownToAdf(description);
-          plan.labels.description = 'Description';
-        }
-        if (priority && isString(priority)) {
-          plan.optional.priority = { name: priority };
-          plan.labels.priority = `Priority → ${priority}`;
-        }
-        if (assignee && isString(assignee)) {
-          const resolved = await resolveAssigneeId(auth, assignee);
-          if (resolved.ok) {
-            plan.optional.assignee = { id: resolved.id };
-            plan.labels.assignee = `Assignee → ${assignee}`;
-          } else {
-            extra.unwritten.push({ label: `Assignee → ${assignee}`, reason: resolved.reason });
-          }
-        }
-        if (labels && isArray(labels)) {
-          plan.optional.labels = labels;
-          plan.labels.labels = `Labels → ${labels.join(', ')}`;
-        }
-
-        // Everything the caller asked for turned out to be unwritable, so there
-        // is no request to make. The comment is then the whole point of the call.
-        if (Object.keys(plan.optional).length === 0) {
-          if (extra.unwritten.length === 0) {
-            return {
-              content: [{ type: 'text' as const, text: `Nothing to update on ${issueKey}` }],
-              isError: true,
-            };
-          }
-
-          const noted = await recordUnwritten(context, auth, issueKey, extra.unwritten);
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text:
-                  `Nothing could be written to ${issueKey}` +
-                  describeOutcome([], extra.unwritten, noted) +
-                  `\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`,
-              },
-            ],
-            isError: true,
-          };
-        }
-
-        const outcome = await writeWithFieldFallback(plan, async (fields) => {
-          const response = await auth.fetch(
-            granularJiraScopes('jira_update_issue', false),
-            `/rest/api/3/issue/${encodeURIComponent(issueKey)}`,
-            { method: 'PUT', body: JSON.stringify({ fields }) }
-          );
-          if (!response.ok) {
-            throw new Error(await describeJiraAuthFailure(response));
-          }
+  /** Display rows for the card out of the create/update arguments. */
+  const argFieldRows = (args: Record<string, unknown>): { label: string; value: string }[] => {
+    const rows: { label: string; value: string }[] = [];
+    if (isString(args.priority) && args.priority) {
+      rows.push({ label: 'Priority', value: args.priority });
+    }
+    if (isString(args.assignee) && args.assignee) {
+      rows.push({ label: 'Assignee', value: args.assignee });
+    }
+    if (isArray(args.labels) && args.labels.length > 0) {
+      rows.push({ label: 'Labels', value: args.labels.map(String).join(', ') });
+    }
+    if (isNumber(args.storyPoints)) {
+      rows.push({ label: 'Story points', value: String(args.storyPoints) });
+    }
+    if (isString(args.originalEstimate) && args.originalEstimate) {
+      rows.push({ label: 'Original estimate', value: args.originalEstimate });
+    }
+    if (isRecord(args.fields)) {
+      for (const [name, value] of Object.entries(args.fields)) {
+        rows.push({
+          label: name,
+          value: typeof value === 'string' ? value : JSON.stringify(value),
         });
-
-        const unwritten = [...extra.unwritten, ...outcome.dropped];
-        const commented =
-          unwritten.length > 0 ? await recordUnwritten(context, auth, issueKey, unwritten) : false;
-
-        const applied = Object.keys(plan.labels)
-          .filter((id) => !outcome.dropped.some((field) => plan.labels[id] === field.label))
-          .map((id) => plan.labels[id] ?? id);
-
-        const headline = outcome.sent
-          ? `Updated ${issueKey}`
-          : `Nothing could be written to ${issueKey}`;
-        const text =
-          headline +
-          describeOutcome(applied, unwritten, commented) +
-          `\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
-        return {
-          content: [{ type: 'text' as const, text }],
-          ...(outcome.sent ? {} : { isError: true }),
-        };
-      } catch (error) {
-        return {
-          content: [
-            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
-          ],
-          isError: true,
-        };
       }
     }
+    return rows;
+  };
+
+  const previewGuidance = (what: string) =>
+    `${what} is awaiting the user's decision on the preview card. Do not write it another ` +
+    `way and do not repeat its contents in your reply; the user confirms or cancels from ` +
+    `the card. If no card appeared in this client, ask the user how to proceed.`;
+
+  server.registerTool(
+    'jira_create_issue_preview',
+    {
+      title: 'Jira · Act — Preview an issue before creating it',
+      description:
+        'Show the user an interactive preview card of a new Jira issue to create or cancel. ' +
+        'Prefer this over jira_create_issue whenever the user should review first — the card ' +
+        'does the creating. Same fields and field resolution as jira_create_issue.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      inputSchema: createIssueSchema,
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectKey, issueType, summary } = args;
+      if (!projectKey || !issueType || !summary) {
+        return errText('projectKey, issueType, and summary are required');
+      }
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: previewGuidance(`The new ${String(issueType)} in ${String(projectKey)}`),
+          },
+        ],
+        structuredContent: {
+          kind: 'issue',
+          title: 'Create Jira issue',
+          subtitle: `${String(projectKey)} · ${String(issueType)}`,
+          confirmTool: 'jira_create_issue_confirm',
+          confirmLabel: 'Create',
+          confirmArgs: args,
+          editable: { summaryKey: 'summary', descriptionKey: 'description' },
+          fields: argFieldRows(args),
+        },
+      };
+    }
+  );
+
+  server.registerTool(
+    'jira_create_issue_confirm',
+    {
+      title: 'Jira · Act — Create a previewed issue (card only)',
+      description:
+        'Create a Jira issue the user approved on a preview card.' +
+        confirmGuard('jira_create_issue_preview'),
+      annotations: { readOnlyHint: false },
+      _meta: APP_ONLY_META,
+      inputSchema: createIssueSchema,
+    },
+    createIssueHandler
+  );
+
+  server.registerTool(
+    'jira_update_issue_preview',
+    {
+      title: 'Jira · Act — Preview an issue update before applying it',
+      description:
+        'Show the user an interactive preview card of changes to a Jira issue, with current ' +
+        'values alongside for comparison, to apply or cancel. Prefer this over ' +
+        'jira_update_issue whenever the user should review first — the card does the updating.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      inputSchema: updateIssueSchema,
+    },
+    async (args: Record<string, unknown>) => {
+      const { issueKey } = args;
+      if (!isString(issueKey) || !issueKey) return errText('issueKey is required');
+      const changed = ['summary', 'description', 'priority', 'assignee', 'labels'].some(
+        (key) => args[key] !== undefined
+      );
+      if (!changed && !isRecord(args.fields) && !isNumber(args.storyPoints)) {
+        return errText(`Nothing to update on ${issueKey}`);
+      }
+
+      // Best-effort current values, so the card can show what changes rather
+      // than only the end state. A failed read costs the "was:" lines, not
+      // the preview.
+      let current: Record<string, unknown> = {};
+      try {
+        const response = await auth.fetch(
+          granularJiraScopes('jira_get_issue', true),
+          `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=summary,priority,assignee,labels`
+        );
+        const body: unknown = response.ok ? await response.json().catch(() => null) : null;
+        if (isRecord(body) && isRecord(body.fields)) current = body.fields;
+      } catch {
+        // preview renders without old values
+      }
+      const priorityOld = isRecord(current.priority) ? current.priority.name : undefined;
+      const assigneeOld = isRecord(current.assignee) ? current.assignee.displayName : undefined;
+      const labelsOld = isArray(current.labels) ? current.labels.map(String).join(', ') : '';
+
+      const fields = argFieldRows(args).map((row) => {
+        if (row.label === 'Priority' && isString(priorityOld)) {
+          return { ...row, oldValue: priorityOld };
+        }
+        if (row.label === 'Assignee' && isString(assigneeOld)) {
+          return { ...row, oldValue: assigneeOld };
+        }
+        if (row.label === 'Labels' && labelsOld) return { ...row, oldValue: labelsOld };
+        return row;
+      });
+
+      return {
+        content: [{ type: 'text' as const, text: previewGuidance(`The update to ${issueKey}`) }],
+        structuredContent: {
+          kind: 'issue',
+          title: `Update ${issueKey}`,
+          ...(isString(current.summary) ? { subtitle: current.summary } : {}),
+          confirmTool: 'jira_update_issue_confirm',
+          confirmLabel: 'Update',
+          confirmArgs: args,
+          editable: {
+            ...(isString(args.summary) ? { summaryKey: 'summary' } : {}),
+            ...(isString(args.description) ? { descriptionKey: 'description' } : {}),
+          },
+          fields,
+        },
+      };
+    }
+  );
+
+  server.registerTool(
+    'jira_update_issue_confirm',
+    {
+      title: 'Jira · Act — Apply a previewed update (card only)',
+      description:
+        'Apply an issue update the user approved on a preview card.' +
+        confirmGuard('jira_update_issue_preview'),
+      annotations: { readOnlyHint: false },
+      _meta: APP_ONLY_META,
+      inputSchema: updateIssueSchema,
+    },
+    updateIssueHandler
   );
 
   // jira_add_comment

@@ -22,6 +22,7 @@ import { ZoomClient, encodeZoomMeetingId, vttToText } from '@renkei/connector-zo
 import { logger } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
+import { APP_ONLY_META, MEETING_PREVIEW_URI, confirmGuard, previewToolMeta } from '../widgets';
 import { resolveZoomAccess, ZOOM_API_BASE, type ZoomAuth } from './zoom-auth';
 
 export const ZOOM_MCP_CONNECTOR = 'zoom';
@@ -167,7 +168,10 @@ export function zoomScopeFor(toolName: string): string[] {
       return ['meeting:read:list_meetings'];
     case 'zoom_get_meeting':
       return ['meeting:read:meeting'];
+    // The preview/confirm pair stands on the same scope as the create it gates.
     case 'zoom_create_meeting':
+    case 'zoom_create_meeting_preview':
+    case 'zoom_create_meeting_confirm':
       return ['meeting:write:meeting'];
     case 'zoom_update_meeting':
       return ['meeting:update:meeting'];
@@ -313,6 +317,107 @@ export async function registerZoomTools(
       if (!result.ok) return errText(result.error);
       const body = rec(await result.response.json().catch(() => null));
       logger.info('zoom_create_meeting created', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        meetingId: String(body.id ?? ''),
+      });
+      return textResult(
+        `Scheduled "${str(body.topic)}" at ${str(body.start_time)} (id ${String(body.id ?? 'unknown')}).` +
+          (str(body.join_url) ? `\nJoin: ${str(body.join_url)}` : '')
+      );
+    }
+  );
+
+  // ——— Interactive preview (MCP Apps) ————————————————————————————————
+  // Zoom-side nothing is created at preview time; the card holds the
+  // normalized request and its Create button runs the confirm tool below.
+
+  server.registerTool(
+    'zoom_create_meeting_preview',
+    {
+      title: 'Zoom · Act — Preview a meeting before scheduling',
+      description:
+        'Show the user an interactive preview card of a Zoom meeting to create or cancel. ' +
+        'Prefer this over zoom_create_meeting whenever the user should review first — the ' +
+        'card does the creating; after calling this do not schedule the meeting another way. ' +
+        'Acts as the user.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(MEETING_PREVIEW_URI),
+      inputSchema: z.object({
+        topic: z.string().min(1).describe('Meeting topic/title'),
+        startTime: z
+          .string()
+          .min(1)
+          .describe('Start, ISO-8601 (e.g. 2026-08-12T15:00:00Z or local with timezone below)'),
+        durationMinutes: z.number().int().min(1).max(1440).describe('Length in minutes'),
+        timezone: z
+          .string()
+          .describe('IANA timezone for startTime (e.g. America/Chicago)')
+          .optional(),
+        agenda: z.string().describe('Agenda text shown on the invite').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const topic = str(args.topic);
+      const startTime = str(args.startTime);
+      if (!topic) return errText('topic is required');
+      if (!startTime) return errText('startTime is required');
+      return {
+        ...textResult(
+          `The meeting "${topic}" (${startTime}) is awaiting the user's decision on the ` +
+            `preview card. Do not schedule it another way; the user creates or cancels from ` +
+            `the card. If no card appeared in this client, ask the user whether to schedule ` +
+            `it with zoom_create_meeting instead.`
+        ),
+        structuredContent: {
+          kind: 'zoom',
+          topic,
+          startTime,
+          durationMinutes: args.durationMinutes,
+          ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
+          ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
+        },
+      };
+    }
+  );
+
+  server.registerTool(
+    'zoom_create_meeting_confirm',
+    {
+      title: 'Zoom · Act — Schedule a previewed meeting (card only)',
+      description:
+        'Create a Zoom meeting the user approved on a preview card.' +
+        confirmGuard('zoom_create_meeting_preview'),
+      annotations: { readOnlyHint: false },
+      _meta: APP_ONLY_META,
+      inputSchema: z.object({
+        topic: z.string().min(1).describe('Meeting topic/title'),
+        startTime: z.string().min(1).describe('Start, ISO-8601'),
+        durationMinutes: z.number().int().min(1).max(1440).describe('Length in minutes'),
+        timezone: z.string().describe('IANA timezone for startTime').optional(),
+        agenda: z.string().describe('Agenda text shown on the invite').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const result = await zoomCall(
+        auth,
+        zoomScopeFor('zoom_create_meeting'),
+        '/users/me/meetings',
+        {
+          method: 'POST',
+          json: {
+            topic: str(args.topic),
+            type: 2, // scheduled
+            start_time: str(args.startTime),
+            duration: args.durationMinutes,
+            ...(str(args.timezone) ? { timezone: str(args.timezone) } : {}),
+            ...(str(args.agenda) ? { agenda: str(args.agenda) } : {}),
+          },
+        }
+      );
+      if (!result.ok) return errText(result.error);
+      const body = rec(await result.response.json().catch(() => null));
+      logger.info('zoom_create_meeting_confirm created', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         meetingId: String(body.id ?? ''),

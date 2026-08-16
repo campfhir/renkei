@@ -30,6 +30,7 @@ import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { buildKnowledgeVerifiers } from '../knowledge';
 import { withPresentationHint, type MCPToolContext } from '../common';
+import { APP_ONLY_META, EMAIL_COMPOSE_URI, confirmGuard, previewToolMeta } from '../widgets';
 import type { GraphAuth } from '../graph/graph-auth';
 
 export const OUTLOOK_MCP_CONNECTOR = 'microsoft';
@@ -611,7 +612,19 @@ function withCategoryChanges(
  * reply, sender + all recipients for reply-all, nothing for forward — so
  * "union with nothing" is exactly "use what was given").
  */
-async function sendDraftAction(
+/** What a created (not yet sent) draft looks like to a caller or a preview card. */
+interface DraftInfo {
+  ok: true;
+  draftId: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  /** Graph's plain-text bodyPreview — the comment atop the quoted thread. */
+  bodyPreview: string;
+}
+
+async function createDraftAction(
   context: MCPToolContext,
   accessToken: string,
   messageId: string,
@@ -622,7 +635,7 @@ async function sendDraftAction(
     cc: readonly string[];
     bcc: readonly string[];
   }
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<DraftInfo | { ok: false; error: string }> {
   const created = await graphPost(
     context,
     accessToken,
@@ -634,12 +647,12 @@ async function sendDraftAction(
   const draftId = str(draft.id);
   if (!draftId) return { ok: false, error: 'Graph did not return a draft id' };
 
+  const toRecipients = unionAddresses(addressesOf(draft.toRecipients), options.additionalTo);
+  const ccRecipients = unionAddresses(addressesOf(draft.ccRecipients), options.cc);
+  const bccRecipients = unionAddresses(addressesOf(draft.bccRecipients), options.bcc);
   const needsPatch =
     options.additionalTo.length > 0 || options.cc.length > 0 || options.bcc.length > 0;
   if (needsPatch) {
-    const toRecipients = unionAddresses(addressesOf(draft.toRecipients), options.additionalTo);
-    const ccRecipients = unionAddresses(addressesOf(draft.ccRecipients), options.cc);
-    const bccRecipients = unionAddresses(addressesOf(draft.bccRecipients), options.bcc);
     if (toRecipients.length === 0) {
       // Forward auto-populates nothing, so this only fires for a forward
       // whose caller-supplied "to" turned out empty — reply/reply-all always
@@ -663,17 +676,51 @@ async function sendDraftAction(
     }
   }
 
+  return {
+    ok: true,
+    draftId,
+    to: toRecipients,
+    cc: ccRecipients,
+    bcc: bccRecipients,
+    subject: str(draft.subject),
+    bodyPreview: str(draft.bodyPreview),
+  };
+}
+
+/** Send an existing draft. `keepOnFailure` leaves it in Drafts for a retry. */
+async function sendDraft(
+  context: MCPToolContext,
+  accessToken: string,
+  draftId: string,
+  keepOnFailure = false
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const sent = await graphPost(
     context,
     accessToken,
     `/me/messages/${encodeURIComponent(draftId)}/send`,
     {}
   );
-  if (!sent.ok) {
+  if (!sent.ok && !keepOnFailure) {
     await graphDelete(context, accessToken, `/me/messages/${encodeURIComponent(draftId)}`);
-    return sent;
   }
-  return { ok: true };
+  return sent.ok ? { ok: true } : sent;
+}
+
+async function sendDraftAction(
+  context: MCPToolContext,
+  accessToken: string,
+  messageId: string,
+  action: 'createReply' | 'createReplyAll' | 'createForward',
+  options: {
+    comment?: string;
+    additionalTo: readonly string[];
+    cc: readonly string[];
+    bcc: readonly string[];
+  }
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const created = await createDraftAction(context, accessToken, messageId, action, options);
+  if (!created.ok) return created;
+  return sendDraft(context, accessToken, created.draftId);
 }
 
 function eventLine(event: Record<string, unknown>): string {
@@ -698,10 +745,18 @@ function outlookScopeFor(toolName: string): string[] {
     case 'outlook_list_task_lists':
     case 'outlook_list_tasks':
       return ['Tasks.Read'];
+    // The preview/confirm pairs stand on the same scope as the sends they
+    // gate: a grant that may send may also preview, and vice versa.
     case 'outlook_send_mail':
     case 'outlook_reply_message':
     case 'outlook_reply_all_message':
     case 'outlook_forward_message':
+    case 'outlook_send_mail_preview':
+    case 'outlook_reply_preview':
+    case 'outlook_reply_all_preview':
+    case 'outlook_forward_preview':
+    case 'outlook_send_draft_confirm':
+    case 'outlook_discard_draft_confirm':
       return ['Mail.Send'];
     case 'outlook_mark_message':
     case 'outlook_flag_message':
@@ -2115,6 +2170,315 @@ export async function registerOutlookTools(
           (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
           (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
       );
+    }
+  );
+
+  // ——— Interactive previews (MCP Apps) ————————————————————————————————
+  // Each preview tool creates a REAL Graph draft and binds its result to the
+  // email card (ui://widget/email-compose.html): the user sees exactly what
+  // Graph will send and the card's buttons run the app-only confirm tools
+  // below. On a host without MCP Apps support the draft still exists — the
+  // text result says so, and the user can send it from Outlook's Drafts.
+
+  const previewResultText = (draft: DraftInfo, what: string) =>
+    `${what} is drafted and awaiting the user's decision on the preview card — ` +
+    `to: ${draft.to.join(', ') || '(auto-populated)'}; subject: ${draft.subject || '(none)'}. ` +
+    `Do not send it another way and do not repeat the draft contents in your reply; the user ` +
+    `sends or discards from the card. If no card appeared in this client, tell the user the ` +
+    `draft is in their Outlook Drafts folder.`;
+
+  const draftStructured = (kind: string, draft: DraftInfo, body: string) => ({
+    kind,
+    draftId: draft.draftId,
+    to: draft.to,
+    cc: draft.cc,
+    bcc: draft.bcc,
+    subject: draft.subject,
+    body,
+  });
+
+  server.registerTool(
+    'outlook_send_mail_preview',
+    {
+      title: 'Outlook · Act — Preview an email before sending',
+      description:
+        'Draft an email and show the user an interactive preview card to send or discard. ' +
+        'Prefer this over outlook_send_mail whenever the user should review before it goes ' +
+        'out — the card does the sending. Plain text body. This speaks AS the user.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(EMAIL_COMPOSE_URI),
+      inputSchema: z.object({
+        to: z.array(z.string().min(1)).min(1).describe('Recipient email addresses'),
+        cc: z.array(z.string().min(1)).describe('CC email addresses').optional(),
+        bcc: z.array(z.string().min(1)).describe('BCC email addresses').optional(),
+        subject: z.string().min(1).describe('Subject line'),
+        body: z.string().min(1).describe('Body, plain text'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const to = Array.isArray(args.to) ? args.to.map(String).filter(Boolean) : [];
+      if (to.length === 0) return errText('to is required');
+      const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
+      const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
+      const subject = str(args.subject);
+      const body = str(args.body);
+
+      const created = await graphPost(context, access.accessToken, '/me/messages', {
+        subject,
+        body: { contentType: 'Text', content: body },
+        toRecipients: to.map(recipientOf),
+        ...(cc.length > 0 ? { ccRecipients: cc.map(recipientOf) } : {}),
+        ...(bcc.length > 0 ? { bccRecipients: bcc.map(recipientOf) } : {}),
+      });
+      if (!created.ok) return errText(created.error);
+      const draftId = str((created.body ?? {}).id);
+      if (!draftId) return errText('Graph did not return a draft id');
+
+      logger.info('outlook_send_mail_preview drafted', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        recipients: to.length + cc.length + bcc.length,
+      });
+      const draft: DraftInfo = { ok: true, draftId, to, cc, bcc, subject, bodyPreview: body };
+      return {
+        ...textResult(previewResultText(draft, 'The email')),
+        structuredContent: draftStructured('compose', draft, body),
+      };
+    }
+  );
+
+  // The three reply-family previews share their shape with the direct tools
+  // above — same inputs, same draft pipeline — but stop before the send.
+  const replyPreviews = [
+    {
+      name: 'outlook_reply_preview',
+      kind: 'reply',
+      action: 'createReply' as const,
+      title: 'Outlook · Act — Preview a reply before sending',
+      what: 'The reply',
+      description:
+        'Draft a reply to a message and show the user an interactive preview card to send or ' +
+        'discard. Prefer this over outlook_reply_message whenever the user should review ' +
+        'first. Graph auto-populates the sender as recipient and handles threading/quoting.',
+    },
+    {
+      name: 'outlook_reply_all_preview',
+      kind: 'replyAll',
+      action: 'createReplyAll' as const,
+      title: 'Outlook · Act — Preview a reply-all before sending',
+      what: 'The reply-all',
+      description:
+        'Draft a reply to everyone on a message and show the user an interactive preview card ' +
+        'to send or discard. Prefer this over outlook_reply_all_message whenever the user ' +
+        'should review first.',
+    },
+  ];
+  for (const preview of replyPreviews) {
+    server.registerTool(
+      preview.name,
+      {
+        title: preview.title,
+        description: preview.description,
+        annotations: { readOnlyHint: false },
+        _meta: previewToolMeta(EMAIL_COMPOSE_URI),
+        inputSchema: z.object({
+          messageId: z
+            .string()
+            .min(1)
+            .describe('Message id from outlook_list_messages/outlook_get_message'),
+          comment: z.string().min(1).describe('Reply body, plain text'),
+          additionalTo: z
+            .array(z.string().min(1))
+            .describe('Extra "to" addresses beyond the auto-populated recipients')
+            .optional(),
+          cc: z.array(z.string().min(1)).describe('CC addresses to add').optional(),
+          bcc: z.array(z.string().min(1)).describe('BCC addresses to add').optional(),
+        }),
+      },
+      async (args: Record<string, any>) => {
+        const access = await auth.resolve();
+        if (typeof access === 'string') return errText(access);
+        const messageId = str(args.messageId);
+        if (!messageId) return errText('messageId is required');
+        const comment = str(args.comment);
+        if (!comment) return errText('comment is required');
+
+        const created = await createDraftAction(
+          context,
+          access.accessToken,
+          messageId,
+          preview.action,
+          {
+            comment,
+            additionalTo: Array.isArray(args.additionalTo)
+              ? args.additionalTo.map(String).filter(Boolean)
+              : [],
+            cc: Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [],
+            bcc: Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [],
+          }
+        );
+        if (!created.ok) return errText(created.error);
+        logger.info(`${preview.name} drafted`, {
+          component: 'mcp/tool',
+          tenantId: context.tenantId,
+          messageId,
+        });
+        return {
+          ...textResult(previewResultText(created, preview.what)),
+          structuredContent: draftStructured(preview.kind, created, created.bodyPreview),
+        };
+      }
+    );
+  }
+
+  server.registerTool(
+    'outlook_forward_preview',
+    {
+      title: 'Outlook · Act — Preview a forward before sending',
+      description:
+        'Draft a forward of a message and show the user an interactive preview card to send ' +
+        'or discard. Prefer this over outlook_forward_message whenever the user should ' +
+        'review first. Unlike reply, "to" is required — Graph auto-populates no recipients.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(EMAIL_COMPOSE_URI),
+      inputSchema: z.object({
+        messageId: z
+          .string()
+          .min(1)
+          .describe('Message id from outlook_list_messages/outlook_get_message'),
+        to: z.array(z.string().min(1)).min(1).describe('Recipient email addresses'),
+        comment: z.string().describe('Note prepended above the forwarded message').optional(),
+        cc: z.array(z.string().min(1)).describe('CC addresses').optional(),
+        bcc: z.array(z.string().min(1)).describe('BCC addresses').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const messageId = str(args.messageId);
+      if (!messageId) return errText('messageId is required');
+      const to = Array.isArray(args.to) ? args.to.map(String).filter(Boolean) : [];
+      if (to.length === 0) return errText('to is required');
+
+      const created = await createDraftAction(
+        context,
+        access.accessToken,
+        messageId,
+        'createForward',
+        {
+          comment: str(args.comment) || undefined,
+          additionalTo: to,
+          cc: Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [],
+          bcc: Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [],
+        }
+      );
+      if (!created.ok) return errText(created.error);
+      logger.info('outlook_forward_preview drafted', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        messageId,
+      });
+      return {
+        ...textResult(previewResultText(created, 'The forward')),
+        structuredContent: draftStructured('forward', created, created.bodyPreview),
+      };
+    }
+  );
+
+  server.registerTool(
+    'outlook_send_draft_confirm',
+    {
+      title: 'Outlook · Act — Send a previewed draft (card only)',
+      description:
+        'Send an email draft created by an outlook preview tool.' +
+        confirmGuard('outlook_send_mail_preview (or a reply/forward preview)'),
+      annotations: { readOnlyHint: false },
+      _meta: APP_ONLY_META,
+      inputSchema: z.object({
+        draftId: z.string().min(1).describe('Draft id from a preview tool'),
+        overrides: z
+          .object({
+            to: z.array(z.string().min(1)).optional(),
+            cc: z.array(z.string().min(1)).optional(),
+            subject: z.string().optional(),
+            body: z.string().describe('Body, plain text').optional(),
+          })
+          .describe('Edits the user made on the card, PATCHed onto the draft before sending')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const draftId = str(args.draftId);
+      if (!draftId) return errText('draftId is required');
+
+      const overrides = rec(args.overrides);
+      const to = Array.isArray(overrides.to) ? overrides.to.map(String).filter(Boolean) : null;
+      const cc = Array.isArray(overrides.cc) ? overrides.cc.map(String).filter(Boolean) : null;
+      if (to !== null && to.length === 0) return errText('No recipient to send to');
+      const patch: Record<string, unknown> = {
+        ...(to !== null ? { toRecipients: to.map(recipientOf) } : {}),
+        ...(cc !== null ? { ccRecipients: cc.map(recipientOf) } : {}),
+        ...(str(overrides.subject) ? { subject: str(overrides.subject) } : {}),
+        ...(str(overrides.body)
+          ? { body: { contentType: 'Text', content: str(overrides.body) } }
+          : {}),
+      };
+      if (Object.keys(patch).length > 0) {
+        const patched = await graphPatch(
+          context,
+          access.accessToken,
+          `/me/messages/${encodeURIComponent(draftId)}`,
+          patch
+        );
+        // Keep the draft: the card shows the error and the user can retry.
+        if (!patched.ok) return errText(patched.error);
+      }
+
+      const sent = await sendDraft(context, access.accessToken, draftId, true);
+      if (!sent.ok) return errText(sent.error);
+      logger.info('outlook_send_draft_confirm sent', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        draftId,
+      });
+      return textResult('Sent.');
+    }
+  );
+
+  server.registerTool(
+    'outlook_discard_draft_confirm',
+    {
+      title: 'Outlook · Act — Discard a previewed draft (card only)',
+      description:
+        'Delete an email draft created by an outlook preview tool without sending it.' +
+        confirmGuard('outlook_send_mail_preview (or a reply/forward preview)'),
+      annotations: { readOnlyHint: false },
+      _meta: APP_ONLY_META,
+      inputSchema: z.object({
+        draftId: z.string().min(1).describe('Draft id from a preview tool'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const draftId = str(args.draftId);
+      if (!draftId) return errText('draftId is required');
+      const deleted = await graphDeleteChecked(
+        context,
+        access.accessToken,
+        `/me/messages/${encodeURIComponent(draftId)}`
+      );
+      if (!deleted.ok) return errText(deleted.error);
+      logger.info('outlook_discard_draft_confirm discarded', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        draftId,
+      });
+      return textResult('Draft discarded; nothing was sent.');
     }
   );
 

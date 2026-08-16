@@ -54,6 +54,14 @@ const CALLS: { tool: string; args: Record<string, unknown> }[] = [
     tool: 'zoom_create_meeting',
     args: { topic: 'Standup', startTime: '2026-08-20T15:00:00Z', durationMinutes: 15 },
   },
+  // The preview makes no Zoom call at all (the card's confirm does), so a
+  // denied credential cannot make it fail — empty args exercise its
+  // validation path instead.
+  { tool: 'zoom_create_meeting_preview', args: {} },
+  {
+    tool: 'zoom_create_meeting_confirm',
+    args: { topic: 'Standup', startTime: '2026-08-20T15:00:00Z', durationMinutes: 15 },
+  },
   { tool: 'zoom_update_meeting', args: { meetingId: '123', topic: 'Renamed' } },
   { tool: 'zoom_delete_meeting', args: { meetingId: '123' } },
   { tool: 'zoom_list_recordings', args: {} },

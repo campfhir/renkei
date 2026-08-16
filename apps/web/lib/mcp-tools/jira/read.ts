@@ -13,6 +13,7 @@ import {
   withPresentationHint,
 } from '../common';
 import { STANDARD_ISSUE_FIELDS, normalizeFieldId, renderFieldValue } from './fields';
+import { previewToolMeta, RESULTS_LIST_URI } from '../widgets';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
@@ -217,6 +218,7 @@ export async function registerReadTools(
                 'status',
                 'priority',
                 'assignee',
+                'reporter',
                 'created',
                 'updated',
                 'issuetype',
@@ -255,6 +257,7 @@ export async function registerReadTools(
               priority: (isRecord(fields.priority) ? fields.priority.name : null) || 'No Priority',
               assignee:
                 (isRecord(fields.assignee) ? fields.assignee.displayName : null) || 'Unassigned',
+              reporter: (isRecord(fields.reporter) ? fields.reporter.displayName : null) || null,
               updated: fields.updated,
             };
           })
@@ -269,7 +272,8 @@ export async function registerReadTools(
             ':',
           ...issues.map(
             (i: Record<string, unknown>) =>
-              `• ${i.key}: ${i.summary} [${i.status}] (${i.priority}) assigned to ${i.assignee}`
+              `• ${i.key}: ${i.summary} [${i.status}] (${i.priority}) assigned to ${i.assignee}` +
+              (i.reporter ? `, reported by ${i.reporter}` : '')
           ),
         ];
 
@@ -295,6 +299,181 @@ export async function registerReadTools(
           ],
           isError: true,
         };
+      }
+    }
+  );
+
+  // ——— Interactive results (MCP Apps) ————————————————————————————————
+  // The read-side card: same search as jira_search_issues, rendered as a
+  // clickable list instead of flat text the model has to re-format. The text
+  // result carries only keys, so the model can chain into other tools
+  // without the full rows entering its context.
+  server.registerTool(
+    'jira_search_issues_preview',
+    {
+      title: 'Jira · Read — Search issues, rendered as a card',
+      description:
+        'Run a JQL query and render the matching issues as an interactive card with ' +
+        '"Open in Jira" links. Prefer this over jira_search_issues when the user wants to SEE ' +
+        'the results ("show me", "list my issues"); use jira_search_issues when you need the ' +
+        'full rows to reason over. After calling, do not repeat the rows in your reply — ' +
+        'reference issue keys only.',
+      annotations: { readOnlyHint: true },
+      _meta: previewToolMeta(RESULTS_LIST_URI),
+      inputSchema: z.object({
+        jql: z
+          .string()
+          .describe('JQL query, e.g. "project = SCRUM AND status != Done ORDER BY updated DESC"'),
+        maxResults: z.number().describe('Maximum results (1-100, default 50)').optional(),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        const { jql } = args;
+        if (!jql) return errText('JQL query is required');
+        const maxResults = Math.min(
+          (isNumber(args.maxResults) ? args.maxResults : 50) || 50,
+          context.maxJqlResults
+        );
+
+        const response = await auth.fetch(
+          granularJiraScopes('jira_search_issues', true),
+          '/rest/api/3/search/jql',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              jql,
+              maxResults,
+              fields: [
+                'summary',
+                'status',
+                'priority',
+                'assignee',
+                'reporter',
+                'updated',
+                'issuetype',
+              ],
+            }),
+          }
+        );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
+        const data = await response.json();
+        if (!isRecord(data) || !isArray(data.issues)) return errText('Invalid API response');
+
+        // Jira's own board semantics ride along: chips take their tone from
+        // the status CATEGORY (To Do / In Progress / Done render right in
+        // both themes without hardcoding per-status colors), groups follow
+        // board order, and priority gets its own chip on the row.
+        const categoryTone = (key: string) =>
+          key === 'new'
+            ? 'todo'
+            : key === 'indeterminate'
+              ? 'progress'
+              : key === 'done'
+                ? 'done'
+                : 'neutral';
+        const categoryOrder = (key: string) =>
+          key === 'new' ? 0 : key === 'indeterminate' ? 1 : key === 'done' ? 2 : 3;
+        const priorityTone = (name: string) =>
+          /^(highest|high)$/i.test(name) ? 'urgent' : /^medium$/i.test(name) ? 'warn' : 'neutral';
+        const avatarOf = (user: unknown) => {
+          const avatars = isRecord(user) && isRecord(user.avatarUrls) ? user.avatarUrls : {};
+          const url = avatars['24x24'] ?? avatars['32x32'] ?? avatars['48x48'];
+          return typeof url === 'string' ? url : '';
+        };
+
+        interface CardRow {
+          key: string;
+          title: string;
+          meta: string;
+          chips: { label: string; tone: string }[];
+          people: { name: string; avatarUrl?: string; role: string }[];
+          links: { label: string; url: string }[];
+        }
+        const grouped = new Map<string, { order: number; tone: string; rows: CardRow[] }>();
+        for (const issue of data.issues.filter(isRecord)) {
+          const fields = isRecord(issue.fields) ? issue.fields : {};
+          const key = String(issue.key ?? '');
+          const status = isRecord(fields.status) ? fields.status : {};
+          const statusName = String(status.name ?? 'Unknown');
+          const category = isRecord(status.statusCategory)
+            ? String(status.statusCategory.key ?? '')
+            : '';
+          const type = (isRecord(fields.issuetype) ? fields.issuetype.name : null) || '';
+          const priority = (isRecord(fields.priority) ? fields.priority.name : null) || '';
+          const assignee = isRecord(fields.assignee) ? fields.assignee : null;
+          const reporter = isRecord(fields.reporter) ? fields.reporter : null;
+
+          const row: CardRow = {
+            key,
+            title: `${key} — ${String(fields.summary ?? '')}`,
+            meta: String(type),
+            chips: priority
+              ? [{ label: String(priority), tone: priorityTone(String(priority)) }]
+              : [],
+            people: [
+              {
+                name: String(assignee?.displayName ?? 'Unassigned'),
+                ...(assignee ? { avatarUrl: avatarOf(assignee) } : {}),
+                role: 'assignee',
+              },
+              ...(reporter
+                ? [
+                    {
+                      name: String(reporter.displayName ?? ''),
+                      avatarUrl: avatarOf(reporter),
+                      role: 'reporter',
+                    },
+                  ]
+                : []),
+            ],
+            links: [{ label: 'Open in Jira', url: issueUrl(context.siteUrl, key) }],
+          };
+          const group = grouped.get(statusName) ?? {
+            order: categoryOrder(category),
+            tone: categoryTone(category),
+            rows: [],
+          };
+          group.rows.push(row);
+          grouped.set(statusName, group);
+        }
+        const groups = [...grouped.entries()]
+          .sort((a, b) => a[1].order - b[1].order)
+          .map(([label, group]) => ({
+            label,
+            chip: { label, tone: group.tone },
+            rows: group.rows.map(({ key: _key, ...row }) => row),
+          }));
+
+        const more = typeof data.nextPageToken === 'string' && data.nextPageToken.length > 0;
+        const keys = [...grouped.values()].flatMap((group) => group.rows.map((row) => row.key));
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                `${keys.length} issue${keys.length === 1 ? '' : 's'} rendered on the card, grouped by status` +
+                (more ? ' (more match — jira_count_issues gives the total)' : '') +
+                (keys.length > 0 ? `: ${keys.join(', ')}` : '.') +
+                ' Do not repeat the rows; the user sees them on the card.',
+            },
+          ],
+          structuredContent: {
+            kind: 'results',
+            title: 'Jira issues',
+            subtitle: String(jql),
+            groups,
+            // Duplicates the group rows flat, deliberately: hosts cache
+            // templates aggressively (a whole conversation can hold the
+            // previous bundle), and a template that predates `groups` falls
+            // back to this and still shows the data — ungrouped beats an
+            // empty card lying "No results."
+            rows: groups.flatMap((group) => group.rows),
+            ...(more ? { footer: 'More issues match this query than shown here.' } : {}),
+          },
+        };
+      } catch (error) {
+        return errText(error instanceof Error ? error.message : String(error));
       }
     }
   );

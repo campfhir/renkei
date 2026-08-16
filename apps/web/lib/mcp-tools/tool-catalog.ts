@@ -41,6 +41,12 @@ export interface ToolDescriptor {
   kind: 'read' | 'act';
   title: string | null;
   description: string | null;
+  /**
+   * Invoked only by a preview card's buttons (`_meta.ui.visibility: ['app']`)
+   * — the model never sees it, so the tools page should not present it as
+   * part of the model-facing surface.
+   */
+  appOnly: boolean;
 }
 
 /** The registration surface we need — the rest of McpServer is never touched. */
@@ -48,6 +54,7 @@ interface RegisteredConfig {
   title?: unknown;
   description?: unknown;
   annotations?: { readOnlyHint?: unknown };
+  _meta?: { ui?: { visibility?: unknown } };
 }
 
 /**
@@ -67,6 +74,9 @@ function collectingServer(): { server: McpServer; tools: ToolDescriptor[] } {
         kind: config?.annotations?.readOnlyHint === true ? 'read' : 'act',
         title: typeof config?.title === 'string' ? config.title : null,
         description: typeof config?.description === 'string' ? config.description : null,
+        appOnly:
+          Array.isArray(config?._meta?.ui?.visibility) &&
+          !config._meta.ui.visibility.includes('model'),
       });
     },
   };

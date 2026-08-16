@@ -23,6 +23,7 @@ import { getDatabase } from '@renkei/db';
 import { logger } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
+import { APP_ONLY_META, CHAT_MESSAGE_URI, confirmGuard, previewToolMeta } from '../widgets';
 import { resolveWebexAccess, type WebexAuth } from './webex-auth';
 
 export const WEBEX_USER_MCP_CONNECTOR = 'webex-user';
@@ -111,7 +112,10 @@ function messageLine(message: Record<string, unknown>): string {
 /** Which WebEx scope each tool stands on; used at both registration and call time. */
 export function webexScopeFor(toolName: string): string[] {
   switch (toolName) {
+    // The preview/confirm pair stands on the same scope as the send it gates.
     case 'webex_send_message':
+    case 'webex_send_message_preview':
+    case 'webex_send_message_confirm':
       return ['spark:messages_write'];
     case 'webex_list_meetings':
       return ['meeting:schedules_read'];
@@ -351,6 +355,118 @@ export async function registerWebexUserTools(
             (body as Record<string, unknown>)
           : {};
       logger.info('webex_send_message sent', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        roomId: str(sent.roomId),
+      });
+      return textResult(`Sent (message id ${str(sent.id) || 'unknown'}).`);
+    }
+  );
+
+  // ——— Interactive preview (MCP Apps) ————————————————————————————————
+  // WebEx has no draft concept, so unlike the Outlook previews nothing is
+  // created server-side: the preview resolves the destination to something a
+  // human recognizes (a room title rather than an opaque id) and the card
+  // holds the message until its Send button runs the confirm tool below.
+
+  server.registerTool(
+    'webex_send_message_preview',
+    {
+      title: 'WebEx · Act — Preview a message before sending',
+      description:
+        'Show the user an interactive preview card of a WebEx message to send or cancel. ' +
+        'Prefer this over webex_send_message whenever the user should review first — the ' +
+        'card does the sending; after calling this do not send the message another way and ' +
+        'do not repeat its contents in your reply. This speaks AS the user.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(CHAT_MESSAGE_URI),
+      inputSchema: z.object({
+        roomId: z.string().describe('Destination room id (from webex_list_rooms)').optional(),
+        toPersonEmail: z
+          .string()
+          .describe('Recipient email for a 1:1 message instead of a room')
+          .optional(),
+        markdown: z.string().min(1).describe('Message body, WebEx markdown'),
+        parentId: z.string().describe('Message id to reply to, threading under it').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const roomId = str(args.roomId);
+      const toPersonEmail = str(args.toPersonEmail);
+      if (!roomId && !toPersonEmail) return errText('Provide roomId or toPersonEmail.');
+      if (roomId && toPersonEmail) return errText('Provide roomId or toPersonEmail, not both.');
+      const markdown = str(args.markdown);
+      if (!markdown) return errText('markdown is required');
+
+      // Best-effort: the card should say "Renkei team" rather than a base64
+      // room id. A grant without rooms_read (or a stale id) falls back to
+      // the id — the preview still works, it just reads worse.
+      let roomTitle = '';
+      if (roomId) {
+        const room = await webexGet(
+          auth,
+          webexScopeFor('webex_list_rooms'),
+          `/rooms/${encodeURIComponent(roomId)}`
+        );
+        if (room.ok) roomTitle = str(room.body.title);
+      }
+
+      const destination = roomId ? roomTitle || `room ${roomId}` : toPersonEmail;
+      return {
+        ...textResult(
+          `The message to ${destination} is awaiting the user's decision on the preview card. ` +
+            `Do not send it another way and do not repeat its contents in your reply; the user ` +
+            `sends or cancels from the card. If no card appeared in this client, ask the user ` +
+            `whether to send it with webex_send_message instead.`
+        ),
+        structuredContent: {
+          kind: 'webex',
+          ...(roomId ? { roomId, ...(roomTitle ? { roomTitle } : {}) } : { toPersonEmail }),
+          markdown,
+          ...(str(args.parentId) ? { parentId: str(args.parentId) } : {}),
+        },
+      };
+    }
+  );
+
+  server.registerTool(
+    'webex_send_message_confirm',
+    {
+      title: 'WebEx · Act — Send a previewed message (card only)',
+      description:
+        'Post a WebEx message the user approved on a preview card.' +
+        confirmGuard('webex_send_message_preview'),
+      annotations: { readOnlyHint: false },
+      _meta: APP_ONLY_META,
+      inputSchema: z.object({
+        roomId: z.string().describe('Destination room id').optional(),
+        toPersonEmail: z.string().describe('Recipient email for a 1:1 message').optional(),
+        markdown: z.string().min(1).describe('Message body, WebEx markdown'),
+        parentId: z.string().describe('Message id to reply to, threading under it').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const roomId = str(args.roomId);
+      const toPersonEmail = str(args.toPersonEmail);
+      if (!roomId && !toPersonEmail) return errText('Provide roomId or toPersonEmail.');
+      if (roomId && toPersonEmail) return errText('Provide roomId or toPersonEmail, not both.');
+
+      const result = await webexCall(auth, webexScopeFor('webex_send_message'), '/messages', {
+        method: 'POST',
+        json: {
+          ...(roomId ? { roomId } : { toPersonEmail }),
+          markdown: str(args.markdown),
+          ...(str(args.parentId) ? { parentId: str(args.parentId) } : {}),
+        },
+      });
+      if (!result.ok) return errText(result.error);
+      const body: unknown = await result.response.json().catch(() => null);
+      const sent =
+        typeof body === 'object' && body !== null
+          ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+            (body as Record<string, unknown>)
+          : {};
+      logger.info('webex_send_message_confirm sent', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         roomId: str(sent.roomId),

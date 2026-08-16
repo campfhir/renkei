@@ -7,8 +7,15 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName, requestUrl, withPresentationHint } from '../common';
+import { getCachedDisplayName, issueUrl, requestUrl, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
+import {
+  APP_ONLY_META,
+  ISSUE_PREVIEW_URI,
+  RESULTS_LIST_URI,
+  confirmGuard,
+  previewToolMeta,
+} from '../widgets';
 import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
 
 function str(value: unknown): string {
@@ -205,11 +212,16 @@ export async function registerJsmTools(
           summary: req.summary,
           // The field is currentStatus.status — .name does not exist on this DTO.
           status: req.currentStatus?.status || 'Unknown',
+          reporter: req.reporter?.displayName || '',
         }));
 
         const lines = [
           `Found ${data.size ?? 0} requests (showing ${requests.length}):`,
-          ...requests.map((r: any) => `• ${r.key}: ${r.summary} [${r.status}]`),
+          ...requests.map(
+            (r: any) =>
+              `• ${r.key}: ${r.summary} [${r.status}]` +
+              (r.reporter ? ` reported by ${r.reporter}` : '')
+          ),
         ];
         const text = lines.join('\n');
 
@@ -235,6 +247,98 @@ export async function registerJsmTools(
           ],
           isError: true,
         };
+      }
+    }
+  );
+
+  // ——— Interactive results (MCP Apps) ————————————————————————————————
+  // The queue as a card. Each request carries BOTH of its lives: the agent
+  // view (the Jira issue) and the customer portal view — different URLs,
+  // different audiences, one click each.
+  server.registerTool(
+    'jsm_list_requests_preview',
+    {
+      title: 'JSM · Read — List requests, rendered as a card',
+      description:
+        'List customer requests and render them as an interactive card where each request has ' +
+        'an "Agent view" link (the Jira issue) and a "Customer portal" link. Prefer this over ' +
+        'jsm_list_requests when the user wants to SEE the queue; use jsm_list_requests when ' +
+        'you need the rows to reason over. After calling, do not repeat the rows in your ' +
+        'reply — reference request keys only.',
+      annotations: { readOnlyHint: true },
+      _meta: previewToolMeta(RESULTS_LIST_URI),
+      inputSchema: z.object({
+        serviceDeskId: z.string().describe('Service desk ID (optional)').optional(),
+        maxResults: z.number().describe('Maximum results (1-100, default 25)').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      try {
+        const maxResults = Math.min(args.maxResults || 25, 100);
+        const query = new URLSearchParams({ limit: String(maxResults) });
+        if (args.serviceDeskId) query.append('serviceDeskId', args.serviceDeskId);
+
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_list_requests', true),
+          `/rest/servicedeskapi/request?${query}`
+        );
+        if (!response.ok) return errText(await describeJsmAuthFailure(response));
+
+        const data = (await response.json()) as any;
+        const requests: any[] = Array.isArray(data.values) ? data.values : [];
+        // Grouped by status like the Jira card. The servicedeskapi DTO
+        // carries no status category, so group chips stay neutral-toned.
+        const grouped = new Map<string, any[]>();
+        for (const req of requests) {
+          const key = str(req.issueKey);
+          const status = str(req.currentStatus?.status) || 'Unknown';
+          const reporterName = str(req.reporter?.displayName);
+          const avatarUrl = str(
+            req.reporter?.avatarUrls?.['24x24'] ?? req.reporter?.avatarUrls?.['48x48']
+          );
+          const row = {
+            key,
+            title: `${key} — ${str(req.summary)}`,
+            meta: str(req.requestType?.name),
+            people: reporterName
+              ? [{ name: reporterName, ...(avatarUrl ? { avatarUrl } : {}), role: 'reporter' }]
+              : [],
+            links: [
+              { label: 'Agent view', url: issueUrl(context.siteUrl, key) },
+              { label: 'Customer portal', url: requestUrl(context.siteUrl, key) },
+            ],
+          };
+          grouped.set(status, [...(grouped.get(status) ?? []), row]);
+        }
+        const groups = [...grouped.entries()].map(([label, rows]) => ({
+          label,
+          chip: { label, tone: 'neutral' },
+          rows: rows.map(({ key: _key, ...row }) => row),
+        }));
+
+        const keys = requests.map((req: any) => str(req.issueKey));
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                `${keys.length} request${keys.length === 1 ? '' : 's'} rendered on the card, ` +
+                `grouped by status` +
+                (keys.length > 0 ? `: ${keys.join(', ')}` : '.') +
+                ' Do not repeat the rows; the user sees them on the card.',
+            },
+          ],
+          structuredContent: {
+            kind: 'results',
+            title: 'Service desk requests',
+            groups,
+            // Flat duplicate for hosts still holding a pre-`groups`
+            // template — see the identical note in jira_search_issues_preview.
+            rows: groups.flatMap((group) => group.rows),
+          },
+        };
+      } catch (error) {
+        return errText(error instanceof Error ? error.message : String(error));
       }
     }
   );
@@ -302,7 +406,81 @@ export async function registerJsmTools(
     }
   );
 
-  // jsm_create_request
+  // jsm_create_request — schema and handler shared with the card-invoked
+  // jsm_create_request_confirm below, so the confirm path IS the create path.
+  const createRequestSchema = z.object({
+    serviceDeskId: z.string().describe('Service desk ID'),
+    requestTypeId: z.string().describe('Request type ID'),
+    summary: z.string().describe('Request summary/title'),
+    description: z.string().describe('Request description (optional)').optional(),
+  });
+  const createRequestHandler = async (args: Record<string, any>) => {
+    const displayName = getCachedDisplayName(context.accountId);
+    logger.info('jsm_create_request invoked', {
+      component: 'mcp/tool',
+      tenantId: context.tenantId,
+      accountId: context.accountId,
+      displayName,
+    });
+    try {
+      const { serviceDeskId, requestTypeId, summary, description } = args;
+
+      if (!serviceDeskId || !requestTypeId || !summary) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'serviceDeskId, requestTypeId, and summary are required',
+            },
+          ],
+          isError: true,
+        };
+      }
+
+      // The servicedeskapi wants issue fields nested under
+      // requestFieldValues — top-level summary (platform-API style) is
+      // "Invalid request payload". The 401 scope gate used to fire before
+      // payload validation, which is why this never surfaced until the
+      // JSM app's scopes landed.
+      const body: any = {
+        serviceDeskId: String(serviceDeskId),
+        requestTypeId: String(requestTypeId),
+        requestFieldValues: {
+          summary,
+          ...(description ? { description } : {}),
+        },
+      };
+
+      const response = await auth.fetch(
+        serviceDeskScopes('jsm_create_request', false),
+        '/rest/servicedeskapi/request',
+        {
+          method: 'POST',
+          body: JSON.stringify(body),
+        }
+      );
+      if (!response.ok) return errText(await describeJsmAuthFailure(response));
+
+      const result = (await response.json()) as any;
+      // Echo what Jira actually created, not the input.
+      const key = str(result.issueKey) || '(no key in response)';
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Created request ${key}\n\n[Open in portal](${requestUrl(context.siteUrl, key)})`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+        ],
+        isError: true,
+      };
+    }
+  };
   server.registerTool(
     'jsm_create_request',
     {
@@ -312,80 +490,104 @@ export async function registerJsmTools(
         'whenever the target project is a service desk (see jsm_list_service_desks) — a plain ' +
         'issue in a service desk project skips its request types and SLAs.',
       annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        serviceDeskId: z.string().describe('Service desk ID'),
-        requestTypeId: z.string().describe('Request type ID'),
-        summary: z.string().describe('Request summary/title'),
-        description: z.string().describe('Request description (optional)').optional(),
-      }),
+      inputSchema: createRequestSchema,
+    },
+    createRequestHandler
+  );
+
+  // ——— Interactive preview (MCP Apps) ————————————————————————————————
+  // Same shape as the Jira issue previews: nothing is created at preview
+  // time, the card holds the request, and its Create button runs the
+  // app-only confirm twin — which IS jsm_create_request's handler.
+
+  server.registerTool(
+    'jsm_create_request_preview',
+    {
+      title: 'JSM · Act — Preview a request before creating it',
+      description:
+        'Show the user an interactive preview card of a new service desk request to create or ' +
+        'cancel. Prefer this over jsm_create_request whenever the user should review first — ' +
+        'the card does the creating.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      inputSchema: createRequestSchema,
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_create_request invoked', {
-        component: 'mcp/tool',
-        tenantId: context.tenantId,
-        accountId: context.accountId,
-        displayName,
-      });
-      try {
-        const { serviceDeskId, requestTypeId, summary, description } = args;
-
-        if (!serviceDeskId || !requestTypeId || !summary) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: 'serviceDeskId, requestTypeId, and summary are required',
-              },
-            ],
-            isError: true,
-          };
-        }
-
-        // The servicedeskapi wants issue fields nested under
-        // requestFieldValues — top-level summary (platform-API style) is
-        // "Invalid request payload". The 401 scope gate used to fire before
-        // payload validation, which is why this never surfaced until the
-        // JSM app's scopes landed.
-        const body: any = {
-          serviceDeskId: String(serviceDeskId),
-          requestTypeId: String(requestTypeId),
-          requestFieldValues: {
-            summary,
-            ...(description ? { description } : {}),
-          },
-        };
-
-        const response = await auth.fetch(
-          serviceDeskScopes('jsm_create_request', false),
-          '/rest/servicedeskapi/request',
-          {
-            method: 'POST',
-            body: JSON.stringify(body),
-          }
-        );
-        if (!response.ok) return errText(await describeJsmAuthFailure(response));
-
-        const result = (await response.json()) as any;
-        // Echo what Jira actually created, not the input.
-        const key = str(result.issueKey) || '(no key in response)';
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Created request ${key}\n\n[Open in portal](${requestUrl(context.siteUrl, key)})`,
-            },
-          ],
-        };
-      } catch (error) {
-        return {
-          content: [
-            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
-          ],
-          isError: true,
-        };
+      const serviceDeskId = str(args.serviceDeskId);
+      const requestTypeId = str(args.requestTypeId);
+      const summary = str(args.summary);
+      if (!serviceDeskId || !requestTypeId || !summary) {
+        return errText('serviceDeskId, requestTypeId, and summary are required');
       }
+
+      // Best-effort: name the desk and request type like the portal would
+      // rather than showing bare ids. A failed read costs the labels only.
+      let deskName = '';
+      let typeName = '';
+      try {
+        const [deskResponse, typeResponse] = await Promise.all([
+          auth.fetch(
+            serviceDeskScopes('jsm_list_service_desks', true),
+            `/rest/servicedeskapi/servicedesk/${encodeURIComponent(serviceDeskId)}`
+          ),
+          auth.fetch(
+            serviceDeskScopes('jsm_list_request_types', true),
+            `/rest/servicedeskapi/servicedesk/${encodeURIComponent(serviceDeskId)}` +
+              `/requesttype/${encodeURIComponent(requestTypeId)}`
+          ),
+        ]);
+        if (deskResponse.ok) {
+          const desk = (await deskResponse.json().catch(() => null)) as any;
+          deskName = str(desk?.projectName);
+        }
+        if (typeResponse.ok) {
+          const requestType = (await typeResponse.json().catch(() => null)) as any;
+          typeName = str(requestType?.name);
+        }
+      } catch {
+        // preview renders with ids
+      }
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              `The request "${summary}" is awaiting the user's decision on the preview card. ` +
+              `Do not create it another way and do not repeat its contents in your reply; the ` +
+              `user confirms or cancels from the card. If no card appeared in this client, ask ` +
+              `the user how to proceed.`,
+          },
+        ],
+        structuredContent: {
+          kind: 'issue',
+          title: 'Create service desk request',
+          subtitle: `${deskName || `desk ${serviceDeskId}`} · ${typeName || `type ${requestTypeId}`}`,
+          confirmTool: 'jsm_create_request_confirm',
+          confirmLabel: 'Create request',
+          confirmArgs: args,
+          editable: { summaryKey: 'summary', descriptionKey: 'description' },
+          fields: [
+            { label: 'Service desk', value: deskName || serviceDeskId },
+            { label: 'Request type', value: typeName || requestTypeId },
+          ],
+        },
+      };
     }
+  );
+
+  server.registerTool(
+    'jsm_create_request_confirm',
+    {
+      title: 'JSM · Act — Create a previewed request (card only)',
+      description:
+        'Create a service desk request the user approved on a preview card.' +
+        confirmGuard('jsm_create_request_preview'),
+      annotations: { readOnlyHint: false },
+      _meta: APP_ONLY_META,
+      inputSchema: createRequestSchema,
+    },
+    createRequestHandler
   );
 
   // jsm_add_request_comment

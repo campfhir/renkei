@@ -62,6 +62,12 @@ const CALLS: { tool: string; args: Record<string, unknown> }[] = [
   { tool: 'webex_get_message', args: { messageId: 'msg-1' } },
   { tool: 'webex_capture_message', args: { messageId: 'msg-1' } },
   { tool: 'webex_send_message', args: { roomId: 'room-1', markdown: 'hi' } },
+  // The preview never has to reach auth (its room-title lookup is
+  // best-effort and a lookup failure still previews), so a denied credential
+  // cannot make it fail — empty args exercise its validation path instead,
+  // the same way outlook_semantic_search_messages is handled over there.
+  { tool: 'webex_send_message_preview', args: {} },
+  { tool: 'webex_send_message_confirm', args: { roomId: 'room-1', markdown: 'hi' } },
   { tool: 'webex_list_meetings', args: {} },
   { tool: 'webex_list_transcripts', args: {} },
   { tool: 'webex_get_transcript', args: { transcriptId: 'tr-1' } },

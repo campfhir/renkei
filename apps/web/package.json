@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "test:integration": "jest --config jest.integration.config.js",
-    "generate:log-ship-keys": "node scripts/generate-log-ship-keys.mjs"
+    "generate:log-ship-keys": "node scripts/generate-log-ship-keys.mjs",
+    "build:widgets": "node lib/mcp-widgets/build.mjs"
   },
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",

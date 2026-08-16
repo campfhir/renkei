@@ -21,6 +21,7 @@ import {
   registerRenkeiTools,
 } from '@/lib/mcp-tools/registry';
 import { withUsageTracking } from '@/lib/mcp-tools/usage-tracking';
+import { registerWidgetResources } from '@/lib/mcp-tools/widgets';
 import { withRedaction } from '@/lib/mcp-tools/redaction-gate';
 import {
   createPseudonymizer,
@@ -420,6 +421,13 @@ const handler = async (
             );
             await registerRenkeiTools(server, context, availability, projection);
 
+            // The MCP Apps widget templates (ui:// resources) go on the raw
+            // server: the gate proxies only intercept registerTool, and a
+            // template is inert until a preview tool that survived the gates
+            // binds to it via _meta.ui.resourceUri — so per-user filtering
+            // happens where it always has, on the tools.
+            registerWidgetResources(rawServer);
+
             logger.verbose('All tools registered', {
               component: 'mcp/transport',
               tenantId,
@@ -452,7 +460,9 @@ const handler = async (
             'Zoom (zoom_*), plus search_knowledge (org knowledge, access-verified per user), ' +
             'analyze_transcript (meeting transcript to suggested Jira actions) and whoami. ' +
             'Read tools are safe anywhere; Act tools change systems and are disabled in org ' +
-            'read-only mode.',
+            'read-only mode. Some Act tools have *_preview variants that render an ' +
+            'interactive card for the user to confirm or cancel — prefer those whenever the ' +
+            'user should review before something is sent or scheduled on their behalf.',
           verboseLogs: false,
         }
       );
