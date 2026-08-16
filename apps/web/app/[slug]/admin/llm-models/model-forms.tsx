@@ -15,13 +15,23 @@ const inputClass =
 const labelClass = 'block text-sm font-medium mb-1';
 const hintClass = 'mt-1 text-xs text-gray-500 dark:text-gray-400';
 
-/** Common Anthropic model ids, offered as suggestions — any id is accepted. */
-const MODEL_SUGGESTIONS = [
-  'claude-fable-5',
-  'claude-opus-5',
-  'claude-sonnet-5',
-  'claude-haiku-4-5-20251001',
-];
+/** Common model ids per provider, offered as suggestions — any id is accepted. */
+const MODEL_SUGGESTIONS: Record<string, string[]> = {
+  anthropic: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
+  openai: ['gpt-5', 'gpt-5-mini', 'gpt-4.1', 'gpt-4o'],
+};
+
+const PROVIDER_HINTS: Record<string, { model: string; baseUrl: string }> = {
+  anthropic: {
+    model: "Anthropic's model identifier.",
+    baseUrl: 'Only for a gateway or proxy in front of Anthropic.',
+  },
+  openai: {
+    model: 'The model id — or, on Azure AI Foundry, your DEPLOYMENT name.',
+    baseUrl:
+      'Blank = api.openai.com. For Azure AI Foundry use the resource’s OpenAI-compatible surface: https://{resource}.openai.azure.com/openai/v1',
+  },
+};
 
 interface ModelRow {
   id: string;
@@ -37,6 +47,7 @@ interface ModelRow {
 
 interface ModelDraft {
   label: string;
+  provider: string;
   model: string;
   baseUrl: string;
   maxOutputTokens: string;
@@ -48,6 +59,7 @@ interface ModelDraft {
 
 const emptyDraft: ModelDraft = {
   label: '',
+  provider: 'anthropic',
   model: '',
   baseUrl: '',
   maxOutputTokens: '',
@@ -60,6 +72,7 @@ const emptyDraft: ModelDraft = {
 function draftOf(row: ModelRow): ModelDraft {
   return {
     label: row.label,
+    provider: row.provider,
     model: row.model,
     baseUrl: row.baseUrl ?? '',
     maxOutputTokens:
@@ -110,7 +123,7 @@ export default function ModelForms({ slug }: { slug: string }) {
     setFormError(null);
     const payload = {
       label: draft.label,
-      provider: 'anthropic',
+      provider: draft.provider,
       model: draft.model,
       baseUrl: draft.baseUrl || null,
       ...(draft.maxOutputTokens ? { maxOutputTokens: Number(draft.maxOutputTokens) } : {}),
@@ -239,6 +252,21 @@ export default function ModelForms({ slug }: { slug: string }) {
           </div>
 
           <div>
+            <label className={labelClass} htmlFor="model-provider">
+              Provider
+            </label>
+            <select
+              id="model-provider"
+              className={inputClass}
+              value={draft.provider}
+              onChange={(event) => setDraft({ ...draft, provider: event.target.value })}
+            >
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="openai">OpenAI-compatible (OpenAI, Azure AI Foundry)</option>
+            </select>
+          </div>
+
+          <div>
             <label className={labelClass} htmlFor="model-id">
               Model id
             </label>
@@ -248,15 +276,21 @@ export default function ModelForms({ slug }: { slug: string }) {
               value={draft.model}
               required
               list="model-suggestions"
-              placeholder="e.g. claude-sonnet-5"
+              placeholder={
+                draft.provider === 'openai'
+                  ? 'e.g. gpt-5 or your deployment name'
+                  : 'e.g. claude-sonnet-5'
+              }
               onChange={(event) => setDraft({ ...draft, model: event.target.value })}
             />
             <datalist id="model-suggestions">
-              {MODEL_SUGGESTIONS.map((suggestion) => (
+              {(MODEL_SUGGESTIONS[draft.provider] ?? []).map((suggestion) => (
                 <option key={suggestion} value={suggestion} />
               ))}
             </datalist>
-            <p className={hintClass}>The provider&apos;s model identifier (Anthropic).</p>
+            <p className={hintClass}>
+              {PROVIDER_HINTS[draft.provider]?.model ?? 'The provider’s model identifier.'}
+            </p>
           </div>
 
           <div>
@@ -269,7 +303,13 @@ export default function ModelForms({ slug }: { slug: string }) {
               type="password"
               value={draft.apiKey}
               required={editingId === 'new'}
-              placeholder={editingId === 'new' ? 'sk-ant-…' : 'Leave blank to keep the stored key'}
+              placeholder={
+                editingId === 'new'
+                  ? draft.provider === 'openai'
+                    ? 'sk-… or an Azure API key'
+                    : 'sk-ant-…'
+                  : 'Leave blank to keep the stored key'
+              }
               autoComplete="off"
               onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
             />
@@ -284,10 +324,17 @@ export default function ModelForms({ slug }: { slug: string }) {
               id="model-base-url"
               className={inputClass}
               value={draft.baseUrl}
-              placeholder="https://api.anthropic.com"
+              placeholder={
+                draft.provider === 'openai'
+                  ? 'https://{resource}.openai.azure.com/openai/v1'
+                  : 'https://api.anthropic.com'
+              }
               onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })}
             />
-            <p className={hintClass}>Only for a gateway or proxy in front of the provider.</p>
+            <p className={hintClass}>
+              {PROVIDER_HINTS[draft.provider]?.baseUrl ??
+                'Only for a gateway or proxy in front of the provider.'}
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">

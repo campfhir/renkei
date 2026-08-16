@@ -4,7 +4,7 @@
  * shapes what came in.
  */
 
-export const SUPPORTED_PROVIDERS = ['anthropic'] as const;
+export const SUPPORTED_PROVIDERS = ['anthropic', 'openai'] as const;
 
 export interface ModelPayload {
   label: string;

@@ -19,6 +19,7 @@ import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmProvider } from './contract';
 import { AnthropicProvider } from './anthropic';
+import { OpenAiProvider } from './openai';
 
 export interface ResolvedLlm {
   provider: LlmProvider;
@@ -80,7 +81,11 @@ function buildProvider(row: ModelRow, apiKey: string): Result<LlmProvider, Resol
   switch (row.provider) {
     case 'anthropic':
       return ok(new AnthropicProvider({ apiKey, model: row.model, baseUrl: row.base_url }));
-    // 'openai' / 'gemini' adapters slot in here.
+    // The OpenAI-spec dialect covers OpenAI, Azure AI Foundry's v1 surface,
+    // and self-hosted gateways — one adapter, distinguished by base_url.
+    case 'openai':
+      return ok(new OpenAiProvider({ apiKey, model: row.model, baseUrl: row.base_url }));
+    // 'gemini' slots in here.
     default:
       return err('UNSUPPORTED_PROVIDER' as const, {
         message: `No adapter for provider "${row.provider}"`,

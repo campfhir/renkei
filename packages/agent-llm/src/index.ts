@@ -19,6 +19,7 @@ export type {
   LlmUsage,
 } from './contract';
 export { AnthropicProvider, type AnthropicConfig } from './anthropic';
+export { OpenAiProvider, type OpenAiConfig } from './openai';
 export {
   invalidateLlmCache,
   resolveAgentLlm,
