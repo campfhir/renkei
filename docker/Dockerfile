@@ -106,7 +106,12 @@ ENTRYPOINT ["dumb-init", "--"]
 # Start the application
 CMD ["pnpm", "--filter", "renkei", "start"]
 
-# Worker stage - the long-running queue consumer
+# Worker stage - every long-running queue consumer, one image. The three
+# worker processes (interactive events, embeddings, agent runs) are compose
+# services over this single image with different commands — the embeddings
+# precedent, extended when apps/worker-agents arrived. That is why BOTH
+# worker apps are installed and copied here: the agents worker is a separate
+# app (its own deps and entry point), not a second script in apps/worker.
 FROM node:24-alpine AS worker
 ARG PNPM_VERSION
 
@@ -116,43 +121,15 @@ RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY --parents apps/*/package.json packages/*/package.json ./
-RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/worker... && \
+RUN pnpm install --frozen-lockfile --prod --no-optional \
+      --filter @renkei/worker... --filter @renkei/worker-agents... && \
     rm -rf /root/.pnpm-store /root/.npm
 
-# The worker runs TypeScript directly through tsx, so it ships source — its own
-# and that of every workspace package it imports.
+# The workers run TypeScript directly through tsx, so they ship source —
+# their own and that of every workspace package they import.
 COPY --parents packages/*/src ./
 COPY apps/worker/src ./apps/worker/src
 COPY apps/worker/tsconfig.json ./apps/worker/
-
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S worker -u 1001 && \
-    chown -R worker:nodejs /app
-USER worker
-
-ARG GIT_COMMIT
-ENV NODE_ENV=production \
-    GIT_COMMIT=${GIT_COMMIT}
-
-ENTRYPOINT ["dumb-init", "--"]
-CMD ["pnpm", "--filter", "@renkei/worker", "start"]
-
-# The agents worker — its own image so it scales by adding containers
-# independently of the interactive worker (RENKEI.md Decision #21 context).
-# Same shape as the worker stage: tsx runs TypeScript source directly.
-FROM node:24-alpine AS worker-agents
-ARG PNPM_VERSION
-
-WORKDIR /app
-
-RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
-
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY --parents apps/*/package.json packages/*/package.json ./
-RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/worker-agents... && \
-    rm -rf /root/.pnpm-store /root/.npm
-
-COPY --parents packages/*/src ./
 COPY apps/worker-agents/src ./apps/worker-agents/src
 COPY apps/worker-agents/tsconfig.json ./apps/worker-agents/
 
@@ -166,7 +143,7 @@ ENV NODE_ENV=production \
     GIT_COMMIT=${GIT_COMMIT}
 
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["pnpm", "--filter", "@renkei/worker-agents", "start"]
+CMD ["pnpm", "--filter", "@renkei/worker", "start"]
 
 # Migration stage - runs migrations only
 FROM node:24-alpine AS migrate
