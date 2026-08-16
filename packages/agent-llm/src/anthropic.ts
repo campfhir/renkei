@@ -78,7 +78,11 @@ export class AnthropicProvider implements LlmProvider {
   constructor(private readonly config: AnthropicConfig) {}
 
   async complete(request: LlmRequest): Promise<Result<LlmResponse, LlmErrorKind>> {
-    const baseUrl = (this.config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    // Tolerate a pasted FULL endpoint: the adapter appends /v1/messages
+    // itself, so a base URL already ending in it would double the path.
+    const baseUrl = (this.config.baseUrl || DEFAULT_BASE_URL)
+      .replace(/\/+$/, '')
+      .replace(/\/v1\/messages$/, '');
     const body = {
       model: this.config.model,
       max_tokens: request.maxTokens,

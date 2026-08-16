@@ -70,6 +70,19 @@ describe('OpenAiProvider.complete', () => {
     expect(body.tool_choice).toBe('required');
   });
 
+  it('tolerates a pasted full endpoint as the base URL', async () => {
+    const pasted = new OpenAiProvider({
+      apiKey: 'azure-key',
+      model: 'Kimi-K2.6',
+      baseUrl: 'https://myresource.openai.azure.com/openai/v1/chat/completions',
+    });
+    fetchSpy.mockResolvedValue(jsonResponse(200, okBody));
+    await pasted.complete(request);
+    expect((fetchSpy.mock.calls[0] as [string])[0]).toBe(
+      'https://myresource.openai.azure.com/openai/v1/chat/completions'
+    );
+  });
+
   it('targets an Azure AI Foundry base URL with the deployment as model', async () => {
     const azure = new OpenAiProvider({
       apiKey: 'azure-key',

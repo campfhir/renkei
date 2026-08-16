@@ -163,6 +163,21 @@ describe('AnthropicProvider.complete', () => {
     expect(headers['anthropic-version']).toBe('2023-06-01');
   });
 
+  it('tolerates a pasted full endpoint as the base URL', async () => {
+    const pasted = new AnthropicProvider({
+      apiKey: 'azure-key',
+      model: 'claude-sonnet-5',
+      baseUrl: 'https://myresource.services.ai.azure.com/anthropic/v1/messages',
+    });
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, { content: [], stop_reason: 'end_turn', usage: {} })
+    );
+    await pasted.complete(request);
+    expect((fetchSpy.mock.calls[0] as [string])[0]).toBe(
+      'https://myresource.services.ai.azure.com/anthropic/v1/messages'
+    );
+  });
+
   it('honours a base URL override', async () => {
     const proxied = new AnthropicProvider({
       apiKey: 'sk-test',

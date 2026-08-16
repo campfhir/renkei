@@ -148,7 +148,11 @@ export class OpenAiProvider implements LlmProvider {
   constructor(private readonly config: OpenAiConfig) {}
 
   async complete(request: LlmRequest): Promise<Result<LlmResponse, LlmErrorKind>> {
-    const baseUrl = (this.config.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    // Tolerate a pasted FULL endpoint: the adapter appends /chat/completions
+    // itself, so a base URL already ending in it would double the path.
+    const baseUrl = (this.config.baseUrl || DEFAULT_BASE_URL)
+      .replace(/\/+$/, '')
+      .replace(/\/chat\/completions$/, '');
     const baseBody = {
       model: this.config.model,
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
