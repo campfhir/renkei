@@ -55,6 +55,8 @@ describe('AnthropicProvider.complete', () => {
     expect(url).toBe('https://api.anthropic.com/v1/messages');
     const headers = init.headers as Record<string, string>;
     expect(headers['x-api-key']).toBe('sk-test');
+    // Azure AI Foundry's Claude surface reads api-key; Anthropic ignores it.
+    expect(headers['api-key']).toBe('sk-test');
     expect(headers['anthropic-version']).toBeDefined();
     const body = JSON.parse(String(init.body));
     expect(body.model).toBe('claude-sonnet-5');

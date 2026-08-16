@@ -104,7 +104,11 @@ export class AnthropicProvider implements LlmProvider {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          // x-api-key for Anthropic; api-key for Azure AI Foundry's Claude
+          // surface (base URL https://{resource}.services.ai.azure.com/anthropic,
+          // model = the deployment name). Each side ignores the other's.
           'x-api-key': this.config.apiKey,
+          'api-key': this.config.apiKey,
           'anthropic-version': ANTHROPIC_VERSION,
         },
         body: JSON.stringify(body),

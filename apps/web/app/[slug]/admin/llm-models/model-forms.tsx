@@ -23,8 +23,9 @@ const MODEL_SUGGESTIONS: Record<string, string[]> = {
 
 const PROVIDER_HINTS: Record<string, { model: string; baseUrl: string }> = {
   anthropic: {
-    model: "Anthropic's model identifier.",
-    baseUrl: 'Only for a gateway or proxy in front of Anthropic.',
+    model: "Anthropic's model identifier — or, on Azure AI Foundry, your Claude DEPLOYMENT name.",
+    baseUrl:
+      'Blank = api.anthropic.com. For a Claude deployment on Azure AI Foundry use https://{resource}.services.ai.azure.com/anthropic',
   },
   openai: {
     model: 'The model id — or, on Azure AI Foundry, your DEPLOYMENT name.',
