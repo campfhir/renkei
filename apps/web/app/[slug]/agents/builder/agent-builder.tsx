@@ -104,6 +104,10 @@ export function AgentBuilder({
     apiKeys: MintedApiKey[];
     pending: boolean;
   } | null>(null);
+  // The edit page's standing "worth checking" panel — the checker's notes
+  // on the SAVED version, refreshable on demand.
+  const [checkNotes, setCheckNotes] = useState<string[]>(notesOf(existing));
+  const [checking, setChecking] = useState(false);
 
   // The summary is written server-side AFTER the save response; poll the
   // agent until its status resolves so the panel can stop showing the
@@ -120,6 +124,7 @@ export function AgentBuilder({
       const agent = result.data?.agent;
       if (agent && agent.descriptionStatus !== 'stale') {
         clearInterval(timer);
+        setCheckNotes(notesOf(agent));
         setReview((current) =>
           current
             ? {
@@ -137,6 +142,32 @@ export function AgentBuilder({
     }, 2_000);
     return () => clearInterval(timer);
   }, [review?.pending, agentId, tenantId]);
+
+  const recheck = async () => {
+    if (!agentId || checking) return;
+    setChecking(true);
+    const started = await sendJsonFull(
+      `/api/tenant/${tenantId}/agents/${agentId}/describe`,
+      'POST'
+    );
+    if (started.error) {
+      setSaveError(started.error);
+      setChecking(false);
+      return;
+    }
+    for (let polls = 0; polls < 22; polls += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      const result = await getJson<{ agent: StoredAgent }>(
+        `/api/tenant/${tenantId}/agents/${agentId}`
+      );
+      const agent = result.data?.agent;
+      if (agent && agent.descriptionStatus !== 'stale') {
+        setCheckNotes(notesOf(agent));
+        break;
+      }
+    }
+    setChecking(false);
+  };
 
   const toolOptions = useMemo(() => toToolOptions(tools), [tools]);
   const toolDescriptors = useMemo(() => new Map(tools.map((tool) => [tool.name, tool])), [tools]);
@@ -287,6 +318,48 @@ export function AgentBuilder({
           </p>
         ))}
       </section>
+
+      {agentId ? (
+        <section className="rounded-md border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+              Worth checking
+            </h2>
+            <button
+              type="button"
+              disabled={checking}
+              onClick={() => void recheck()}
+              className="flex items-center gap-1.5 text-xs font-medium text-amber-700 hover:underline disabled:opacity-50 dark:text-amber-300"
+            >
+              {checking ? (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700 dark:border-amber-800 dark:border-t-amber-300"
+                  />
+                  Checking…
+                </>
+              ) : (
+                'Re-check'
+              )}
+            </button>
+          </div>
+          {checkNotes.length > 0 ? (
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-900 dark:text-amber-200">
+              {checkNotes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm text-amber-800/70 dark:text-amber-200/60">
+              Nothing flagged on the last check.
+            </p>
+          )}
+          <p className="mt-2 text-xs text-amber-700/60 dark:text-amber-300/50">
+            These look at the last saved version — save your edits, then re-check.
+          </p>
+        </section>
+      ) : null}
 
       <section>
         <h2 className="mb-2 text-sm font-semibold">When should it run?</h2>

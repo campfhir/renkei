@@ -64,9 +64,14 @@ function promptOf(name: string, steps: AgentStepsDoc, triggers: TriggerDraft[]):
     'Steps (variables appear as [name], tools as [tool_name]):',
     stepLines,
     '',
+    'How the engine behaves — take this as given, and never raise a concern the engine already prevents:',
+    '- Steps run strictly in order; a later step runs ONLY if every earlier step succeeded.',
+    '- A failure handled with "stop", an unhandled failure, or exhausted retries STOPS the whole automation immediately — later steps never run, so they can safely assume earlier steps succeeded. Missing "fallbacks" for exhausted retries are not a flaw.',
+    "- The runner checks each step's tool is available before running, and verifies tool errors against the declared success.",
+    '',
     'Reply with JSON only, no code fences: {"summary": "...", "concerns": ["..."]}.',
     'summary: 2-3 plain sentences telling the OWNER what this agent does, no technical terms, no tool identifiers.',
-    'concerns: 0-5 short strings naming logic problems a reviewer should check (steps that can never run, contradictory handling, missing information a step would need). Empty array if none.',
+    'concerns: 0-5 short strings naming REAL logic problems a reviewer should check: an instruction promising work no step or tool performs, a step needing information nothing provides, contradictory failure handling, a saved result nothing uses. Empty array if none.',
   ].join('\n');
 }
 
