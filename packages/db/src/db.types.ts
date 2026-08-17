@@ -30,14 +30,18 @@ export interface ActionableItems {
   archived_at: Timestamp | null;
   archived_by: string | null;
   created_at: Generated<Timestamp>;
+  created_by: string | null;
+  created_by_agent_id: string | null;
   decided_at: Timestamp | null;
   decided_by: string | null;
   evidence: Json;
   id: string;
+  kind: Generated<string>;
+  owner_subject: string | null;
   result: Json | null;
   source: string;
   status: Generated<string>;
-  suggested_action: Json;
+  suggested_action: Json | null;
   summary: string;
   tenant_id: string;
   title: string;
@@ -71,6 +75,17 @@ export interface AgentJobsDeadLetters {
   source: string;
   tenant_id: string;
   type: string;
+}
+
+export interface AgentMemories {
+  agent_id: string;
+  content: string;
+  created_at: Generated<Timestamp>;
+  id: string;
+  kind: Generated<string>;
+  run_id: string | null;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
 }
 
 export interface AgentRuns {
@@ -125,6 +140,7 @@ export interface Agents {
   name: string;
   owner_subject: string;
   review_notes: Json | null;
+  share_token: string | null;
   steps: Json;
   steps_version: Generated<number>;
   tenant_id: string;
@@ -389,6 +405,7 @@ export interface Logs {
 }
 
 export interface OauthAccessTokens {
+  agent_id: string | null;
   application: Generated<string>;
   client_id: string;
   created_at: Generated<Timestamp>;
@@ -504,6 +521,15 @@ export interface ProviderRefreshLocks {
   tenant_id: string;
 }
 
+export interface ScheduleCalendars {
+  created_at: Generated<Timestamp>;
+  dates: Generated<Json>;
+  id: string;
+  name: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface Sessions {
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
@@ -555,11 +581,6 @@ export interface TenantSettings {
   value: Json;
 }
 
-/**
- * MCP tool invocations — usage and latency. No arguments or result field by
- * design (migration 032); error_summary holds a brief failure message shown
- * only to the caller themselves (migration 037), never on successes.
- */
 export interface ToolCalls {
   connector: string | null;
   duration_ms: number;
@@ -596,6 +617,7 @@ export interface DB {
   actionable_items: ActionableItems;
   agent_jobs: AgentJobs;
   agent_jobs_dead_letters: AgentJobsDeadLetters;
+  agent_memories: AgentMemories;
   agent_run_steps: AgentRunSteps;
   agent_runs: AgentRuns;
   agent_triggers: AgentTriggers;
@@ -630,6 +652,7 @@ export interface DB {
   platform_settings: PlatformSettings;
   provider_grants: ProviderGrants;
   provider_refresh_locks: ProviderRefreshLocks;
+  schedule_calendars: ScheduleCalendars;
   sessions: Sessions;
   tenant_domains: TenantDomains;
   tenant_jira_sites: TenantJiraSites;

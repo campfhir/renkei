@@ -70,6 +70,12 @@ export const EXPECTED_MIGRATIONS = [
   '037-tool-call-error-summary',
   '038-audit-events',
   '039-email-cleaner-scripts',
+  '040-agent-token-provenance',
+  '041-actionable-items-owner-kind',
+  '042-schedule-multi-rule',
+  '043-schedule-calendars',
+  '044-agent-memories',
+  '045-agent-share-token',
 ];
 
 export interface MigrationStatus {
