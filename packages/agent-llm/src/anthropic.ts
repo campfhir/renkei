@@ -131,7 +131,7 @@ export class AnthropicProvider implements LlmProvider {
           'anthropic-version': ANTHROPIC_VERSION,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(request.timeoutMs ?? REQUEST_TIMEOUT_MS),
       });
     } catch (error) {
       const kind: LlmErrorKind =

@@ -23,7 +23,7 @@ import { logger } from '@/lib/logger';
 // Generous on purpose: reasoning models (Foundry deployments especially)
 // routinely take over a minute on a long description, and cutting them off
 // wastes the whole spend. The builder shows staged progress meanwhile.
-const DRAFT_TIMEOUT_MS = 150_000;
+const DRAFT_TIMEOUT_MS = 300_000;
 const MAX_OUTPUT_TOKENS = 4_096;
 const MAX_PROSE_CHARS = 4_000;
 
@@ -196,6 +196,8 @@ export async function draftAgentFromProse(
       ],
       tools: [],
       maxTokens: MAX_OUTPUT_TOKENS,
+      // Just under the outer race so the HTTP call, not the race, decides.
+      timeoutMs: DRAFT_TIMEOUT_MS - 5_000,
     }),
     new Promise<'timeout'>((resolve) => {
       timer = setTimeout(() => resolve('timeout'), DRAFT_TIMEOUT_MS);
@@ -204,7 +206,7 @@ export async function draftAgentFromProse(
   if (completion === 'timeout')
     return {
       error:
-        'The model took over two minutes and was cut off — try again, or try a shorter description.',
+        'The model took over five minutes and was cut off — try again, or try a shorter description.',
     };
   if (!completion.ok) {
     logger.warn('prose draft failed: {kind}', {

@@ -196,7 +196,7 @@ export class OpenAiProvider implements LlmProvider {
             'api-key': this.config.apiKey,
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          signal: AbortSignal.timeout(request.timeoutMs ?? REQUEST_TIMEOUT_MS),
         });
       } catch (error) {
         const kind: LlmErrorKind =

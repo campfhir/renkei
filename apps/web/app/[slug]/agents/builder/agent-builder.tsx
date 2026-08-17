@@ -173,7 +173,7 @@ export function AgentBuilder({
         : 'Splitting it into steps and picking the skills…';
     if (draftSeconds < 60)
       return `Still thinking (${draftSeconds}s) — matching skills and details…`;
-    return `Still working (${draftSeconds}s) — bigger models can take a couple of minutes. Hang tight.`;
+    return `Still working (${draftSeconds}s) — bigger models can take a few minutes (up to five). Hang tight.`;
   })();
 
   const draftFromProse = async () => {

@@ -39,6 +39,14 @@ export interface LlmRequest {
   toolChoice?: 'auto' | 'any' | { name: string };
   maxTokens: number;
   temperature?: number;
+  /**
+   * Per-request wall-clock cap on the HTTP call, overriding the adapter's
+   * 120s default. Callers that can afford a long think (the builder's
+   * draft-from-description allows five minutes) raise it; the agents
+   * engine deliberately stays on the default — a step's LLM call is
+   * bounded tighter than an interactive drafting session.
+   */
+  timeoutMs?: number;
 }
 
 export interface LlmUsage {
