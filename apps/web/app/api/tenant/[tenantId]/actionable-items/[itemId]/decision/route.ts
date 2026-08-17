@@ -42,7 +42,7 @@ export async function POST(
 
   const item = await db
     .selectFrom('actionable_items')
-    .select(['id', 'status', 'suggested_action'])
+    .select(['id', 'kind', 'status', 'suggested_action'])
     .where('id', '=', itemId)
     .where('tenant_id', '=', tenantId)
     .executeTakeFirst();
@@ -51,6 +51,14 @@ export async function POST(
   }
   if (item.status !== 'suggested') {
     return NextResponse.json({ error: `Item is already ${item.status}` }, { status: 409 });
+  }
+  if (item.kind === 'info' && body.decision === 'approve') {
+    // Named early rather than falling through to "carries no executable
+    // action": an info card is WORKING as designed, not missing data.
+    return NextResponse.json(
+      { error: 'This is an informational card — dismiss is its only action' },
+      { status: 422 }
+    );
   }
 
   if (body.decision === 'dismiss') {

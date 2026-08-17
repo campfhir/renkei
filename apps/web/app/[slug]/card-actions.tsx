@@ -7,13 +7,19 @@ import { useRouter } from 'next/navigation';
  * Approve/dismiss controls for one suggested card. Approval needs a Jira
  * project key — the classifier cannot know which project an issue belongs
  * in, so that choice stays with the human.
+ *
+ * `dismissOnly` is the informational-card shape: nothing to execute, so
+ * the project-key input and approve button never render and dismissing is
+ * the acknowledgment.
  */
 export default function CardActions({
   tenantId,
   itemId,
+  dismissOnly = false,
 }: {
   tenantId: string;
   itemId: string;
+  dismissOnly?: boolean;
 }): React.ReactNode {
   const router = useRouter();
   const [projectKey, setProjectKey] = useState('');
@@ -51,19 +57,23 @@ export default function CardActions({
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <input
-        value={projectKey}
-        onChange={(e) => setProjectKey(e.target.value)}
-        placeholder="Project key (e.g. SCRUM)"
-        className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
-      />
-      <button
-        onClick={() => void decide('approve')}
-        disabled={busy || projectKey.trim().length === 0}
-        className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-      >
-        Approve → create issue
-      </button>
+      {!dismissOnly && (
+        <>
+          <input
+            value={projectKey}
+            onChange={(e) => setProjectKey(e.target.value)}
+            placeholder="Project key (e.g. SCRUM)"
+            className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
+          />
+          <button
+            onClick={() => void decide('approve')}
+            disabled={busy || projectKey.trim().length === 0}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            Approve → create issue
+          </button>
+        </>
+      )}
       <button
         onClick={() => void decide('dismiss')}
         disabled={busy}

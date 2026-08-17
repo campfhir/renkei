@@ -46,7 +46,7 @@ export default async function HomePage({
           ? 'The full history, archived cards included.'
           : 'Suggestions from your connected tools. Approving executes the action as you.'}
       </p>
-      <ActionableCards tenantId={tenant.id} showArchived={showArchived} />
+      <ActionableCards tenantId={tenant.id} subject={session.subject} showArchived={showArchived} />
     </div>
   );
 }

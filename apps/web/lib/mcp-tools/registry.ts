@@ -25,6 +25,7 @@ import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { registerAllTools } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
+import { registerCardTools, CARDS_CONNECTOR } from '@/lib/mcp-tools/cards';
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
 import { oauthWebexAuth } from '@/lib/mcp-tools/webex/webex-auth';
 import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/outlook';
@@ -160,6 +161,9 @@ export async function resolveConnectorAvailability(
 export function provisionedConnectorsFor(availability: ConnectorAvailability): string[] {
   return [
     JIRA_CONNECTOR,
+    // Cards live entirely in Renkei's own store — no external grant or
+    // config to wait for, so every caller is provisioned for them.
+    CARDS_CONNECTOR,
     ...(availability.knowledgeAvailable ? [KNOWLEDGE_CONNECTOR] : []),
     ...(availability.webexAvailable ? [WEBEX_USER_MCP_CONNECTOR] : []),
     ...(availability.microsoftAvailable ? [OUTLOOK_MCP_CONNECTOR] : []),
@@ -197,6 +201,7 @@ export async function registerRenkeiTools(
     withCapabilityGate(server, projection, KNOWLEDGE_CONNECTOR),
     context
   );
+  registerCardTools(withCapabilityGate(server, projection, CARDS_CONNECTOR), context);
   if (webexAvailable) {
     // Production's one path: the caller's own WebEx grant. Anything else (a
     // future sandbox credential) is injected by whoever calls

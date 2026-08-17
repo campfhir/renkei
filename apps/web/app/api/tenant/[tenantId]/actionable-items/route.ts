@@ -22,11 +22,15 @@ export async function GET(
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
 
-  const items = await dbResult.val
+  // Same visibility rule as the home-page feed: tenant-wide cards (no
+  // owner) plus the caller's own; `?archived=1` widens to the history.
+  const showArchived = request.nextUrl.searchParams.get('archived') === '1';
+  let query = dbResult.val
     .selectFrom('actionable_items')
     .select([
       'id',
       'source',
+      'kind',
       'status',
       'title',
       'summary',
@@ -35,11 +39,18 @@ export async function GET(
       'result',
       'created_at',
       'decided_at',
+      'archived_at',
     ])
     .where('tenant_id', '=', tenantId)
+    .where((eb) =>
+      eb.or([eb('owner_subject', 'is', null), eb('owner_subject', '=', session.subject)])
+    )
     .orderBy('created_at', 'desc')
-    .limit(50)
-    .execute();
+    .limit(50);
+  if (!showArchived) {
+    query = query.where('archived_at', 'is', null);
+  }
+  const items = await query.execute();
 
   return NextResponse.json({ items });
 }
