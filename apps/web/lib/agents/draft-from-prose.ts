@@ -12,10 +12,16 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { BUILTIN_VARIABLES, type AgentStep, type InstructionSegment } from '@renkei/agents';
-import { resolveAgentLlm } from '@renkei/agent-llm';
+import {
+  BUILTIN_VARIABLES,
+  type AgentStep,
+  type FailureHandling,
+  type InstructionSegment,
+} from '@renkei/agents';
+import { resolveAgentLlm, type LlmMessage } from '@renkei/agent-llm';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { friendlyToolName } from '@/lib/tool-name';
 import { logger } from '@/lib/logger';
@@ -53,7 +59,8 @@ function promptOf(
     .filter((tool) => !tool.appOnly)
     .map(
       (tool) =>
-        `- ${tool.name} (${friendlyToolName(tool.name, tool.title)}): ${(tool.description ?? '').slice(0, 100)}`
+        `- ${tool.name} (${friendlyToolName(tool.name, tool.title)}): ${(tool.description ?? '').slice(0, 100)}` +
+        ` | failure codes: ${tool.outcomes.failures.map((failure) => failure.code).join(', ')}`
     )
     .join('\n');
   const varLines = [
@@ -88,7 +95,15 @@ function promptOf(
       'branches or jump-to-step logic.',
     '- Carry the user\'s guardrails into the step that acts (e.g. "if this thread was already ' +
       'handled, do not update the same ticket again — stop instead").',
-    '- A step that FAILS stops the automation on its own, so no cleanup steps for failures.',
+    '- A step that FAILS stops the automation by default. To handle a specific failure of a ' +
+      'tool step differently, add it to that step\'s "failures" array using one of the tool\'s ' +
+      'listed failure codes: {"outcome": code, "action": "stop"} stops deliberately, ' +
+      '{"outcome": code, "action": "retry", "guidance": "corrective instruction"} retries with ' +
+      'that guidance. Guidance may use {{var:...}} and {{tool:...}} chips — guidance tools ' +
+      'become available to the step ONLY on retries (the corrective set). Unlisted codes stop.',
+    '- When the user\'s description implies retrying (e.g. "search again with different ' +
+      'keywords"), express it as a "retry" failure handling with that guidance, and set "tries" ' +
+      'to how many total attempts make sense (1-10, default 5).',
     ...(revising
       ? [
           '- Every returned step carries "from": the sN id of the existing step it is based on (kept or tweaked), or null for a brand-new step. Unchanged and tweaked steps MUST carry their id — it preserves the owner\'s retry settings.',
@@ -109,8 +124,34 @@ function promptOf(
     text,
     '"""',
     '',
-    'Reply with JSON only, no code fences:',
-    `{"name": "short agent name", "steps": [{"name": "short step name", "instruction": "plain words with {{tool:...}} and {{var:...}} tokens", "tool": "tool_name or null", "saveAs": "name or null"${revising ? ', "from": "sN or null"' : ''}}]}`,
+    'Reply with ONLY a JSON object — no code fences, no commentary before or after — in',
+    'exactly this structure:',
+    '{',
+    '  "name": string — a short agent name, at most 60 characters,',
+    '  "steps": array of 1 to 20 objects, in execution order, each:',
+    '  {',
+    '    "name": string — a short step label, at most 80 characters, never empty,',
+    '    "instruction": string — the plain-words instruction with {{tool:...}} and',
+    '      {{var:...}} tokens inline; never empty,',
+    '    "tool": string or null — EXACTLY the tool_name inside the instruction\'s',
+    '      {{tool:...}} token, or null for a reasoning step with no tool,',
+    '    "saveAs": string or null — a short result name when later steps reference it',
+    '      (starts with a letter; letters, numbers, spaces, - or _), otherwise null,',
+    '    "tries": integer 1-10 or omitted — total attempts for this step (default 5),',
+    '    "failures": array or omitted — only meaningful on tool steps; each entry:',
+    '      { "outcome": one of the tool\'s failure codes,',
+    '        "action": "stop" or "retry",',
+    '        "guidance": string (required when action is "retry"; plain words, may use',
+    '          {{tool:...}} and {{var:...}} tokens) or null }' + (revising ? ',' : ''),
+    ...(revising
+      ? [
+          '    "from": string or null — the sN id of the existing step this one is based',
+          '      on, or null for a brand-new step',
+        ]
+      : []),
+    '  }',
+    '}',
+    'Every field must be present on every step. Do not add fields not listed here.',
   ].join('\n');
 }
 
@@ -120,7 +161,10 @@ const TOKEN_PATTERN = /\{\{(tool|var):([^}]{1,128})\}\}/g;
 function segmentsOf(
   instruction: string,
   validTools: Set<string>,
-  knownVars: Set<string>
+  knownVars: Set<string>,
+  // Guidance is the deliberately laxer corrective set — several tool chips
+  // are legal there, where a step instruction takes at most one.
+  allowMultipleTools = false
 ): InstructionSegment[] {
   const segments: InstructionSegment[] = [];
   const pushText = (value: string) => {
@@ -137,7 +181,7 @@ function segmentsOf(
     cursor = (match.index ?? 0) + match[0].length;
     const [, kind, rawName] = match;
     const name = rawName.trim();
-    if (kind === 'tool' && validTools.has(name) && !toolPlaced) {
+    if (kind === 'tool' && validTools.has(name) && (allowMultipleTools || !toolPlaced)) {
       segments.push({ t: 'tool', name });
       toolPlaced = true;
     } else if (kind === 'var' && (knownVars.has(name) || name.startsWith('trigger.'))) {
@@ -156,6 +200,224 @@ function segmentsOf(
 export interface DraftedAgent {
   name: string;
   steps: AgentStep[];
+}
+
+/**
+ * The reply's structural contract, as zod schemas — the same shapes the
+ * prompt describes in words. Validated in two layers so one malformed step
+ * does not void nine good ones: the envelope must hold, then each step is
+ * checked individually and broken ones become per-step feedback.
+ */
+const REPLY_ENVELOPE = z.object({
+  name: z.string().optional(),
+  steps: z.array(z.unknown()).min(1, 'must contain at least one step').max(20),
+});
+
+const STEP_SHAPE = z.object({
+  name: z.string().optional(),
+  instruction: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  tool: z.string().nullable().optional(),
+  saveAs: z.string().nullable().optional(),
+  from: z.string().nullable().optional(),
+  tries: z.number().int().min(1).max(10).optional(),
+  failures: z
+    .array(
+      z.object({
+        outcome: z.string().min(1, 'must be a failure code'),
+        action: z.enum(['stop', 'retry']),
+        guidance: z.string().nullable().optional(),
+      })
+    )
+    .optional(),
+});
+
+/** zod issues → the quotable one-liners the retry feedback is built from. */
+function zodProblems(prefix: string, error: z.ZodError): string[] {
+  return error.issues.map(
+    (issue) =>
+      `${prefix}${issue.path.length > 0 ? `"${issue.path.join('.')}" ` : ''}${issue.message}`
+  );
+}
+
+/**
+ * Parse one model reply into steps, DIAGNOSING instead of shrugging: every
+ * way the reply can be unusable produces a concrete, quotable problem
+ * ("steps[3] "instruction" is required…", "step 2 uses {{tool:x}} which is
+ * not in the list") — because those strings go back to the model verbatim
+ * as the retry feedback, and "unusable answer" teaches it nothing.
+ */
+function parseDraftReply(
+  raw: string,
+  currentSteps: AgentStep[],
+  validTools: Set<string>,
+  outcomesByTool: Map<string, Set<string>>,
+  seedVars: Set<string>
+): { ok: true; draft: DraftedAgent; softProblems: string[] } | { ok: false; problems: string[] } {
+  const cleaned = raw.replace(/```(?:json)?/g, '');
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start < 0 || end <= start) {
+    return { ok: false, problems: ['The reply contained no JSON object at all.'] };
+  }
+
+  let json: unknown;
+  try {
+    json = JSON.parse(cleaned.slice(start, end + 1));
+  } catch (error) {
+    return {
+      ok: false,
+      problems: [
+        `The JSON could not be parsed: ${error instanceof Error ? error.message : 'syntax error'}.`,
+      ],
+    };
+  }
+
+  const envelope = REPLY_ENVELOPE.safeParse(json);
+  if (!envelope.success) {
+    return { ok: false, problems: zodProblems('The reply object: ', envelope.error) };
+  }
+  const parsed = envelope.data;
+
+  const problems: string[] = [];
+  const softProblems: string[] = [];
+  const knownVars = new Set(seedVars);
+  const steps: AgentStep[] = [];
+
+  for (const [index, entry] of parsed.steps.entries()) {
+    const label = `Step ${index + 1}`;
+    const checked = STEP_SHAPE.safeParse(entry);
+    if (!checked.success) {
+      problems.push(...zodProblems(`${label}: `, checked.error));
+      continue;
+    }
+    const step = checked.data;
+
+    // Unknown chips degrade to plain text, but they are also the retry
+    // feedback that matters most: an invented tool name means the step
+    // loses its skill entirely.
+    for (const match of step.instruction.matchAll(TOKEN_PATTERN)) {
+      const [, kind, rawName] = match;
+      const name = rawName.trim();
+      if (kind === 'tool' && !validTools.has(name)) {
+        softProblems.push(
+          `${label} uses {{tool:${name}}}, which is not in the available tools list — pick a tool from the list or make it a reasoning step.`
+        );
+      } else if (kind === 'var' && !knownVars.has(name) && !name.startsWith('trigger.')) {
+        softProblems.push(
+          `${label} references {{var:${name}}}, which no earlier step saves and no trigger provides.`
+        );
+      }
+    }
+    if (
+      typeof step.tool === 'string' &&
+      step.tool &&
+      !step.instruction.includes(`{{tool:${step.tool}}}`)
+    ) {
+      softProblems.push(
+        `${label} sets "tool": "${step.tool}" but its instruction has no matching {{tool:${step.tool}}} token.`
+      );
+    }
+
+    const segments = segmentsOf(step.instruction, validTools, knownVars);
+    const tool = segments.find(
+      (segment): segment is Extract<InstructionSegment, { t: 'tool' }> => segment.t === 'tool'
+    );
+
+    // "from": sN → the existing step this one is based on. Its identity,
+    // attempt budget, and — when the tool didn't change — failure handling
+    // survive the revision; the model only authors words and chips.
+    const fromMatch = typeof step.from === 'string' ? /^s(\d+)$/.exec(step.from.trim()) : null;
+    const origin = fromMatch ? currentSteps[Number(fromMatch[1]) - 1] : undefined;
+    const sameTool = origin !== undefined && origin.tool === (tool?.name ?? null);
+
+    const saveAs =
+      typeof step.saveAs === 'string' && step.saveAs.trim() ? step.saveAs.trim() : origin?.saveAs;
+    if (saveAs) knownVars.add(saveAs); // later steps may reference it
+
+    // Model-authored failure handling, checked against the tool's REAL
+    // outcome codes so the validator never bounces what drafting produced.
+    const authoredHandling: FailureHandling[] = [];
+    if (step.failures && step.failures.length > 0) {
+      if (!tool) {
+        softProblems.push(
+          `${label} has "failures" but no tool — failure handling belongs to tool steps.`
+        );
+      } else {
+        const validCodes = outcomesByTool.get(tool.name) ?? new Set(['other']);
+        const seenCodes = new Set<string>();
+        for (const failure of step.failures) {
+          if (seenCodes.has(failure.outcome)) continue;
+          if (!validCodes.has(failure.outcome)) {
+            softProblems.push(
+              `${label} handles "${failure.outcome}", which is not a failure code of ` +
+                `${tool.name} — its codes are: ${[...validCodes].join(', ')}.`
+            );
+            continue;
+          }
+          seenCodes.add(failure.outcome);
+          const guidanceText = typeof failure.guidance === 'string' ? failure.guidance.trim() : '';
+          if (failure.action === 'retry' && !guidanceText) {
+            softProblems.push(
+              `${label} retries on "${failure.outcome}" without guidance — guidance is ` +
+                'required for retry, so it was changed to stop.'
+            );
+            authoredHandling.push({ outcome: failure.outcome, action: 'exit' });
+            continue;
+          }
+          authoredHandling.push(
+            failure.action === 'retry'
+              ? {
+                  outcome: failure.outcome,
+                  action: 'retry',
+                  guidance: segmentsOf(guidanceText, validTools, knownVars, true),
+                }
+              : { outcome: failure.outcome, action: 'exit' }
+          );
+        }
+      }
+    }
+
+    steps.push({
+      id: origin?.id ?? randomUUID(),
+      name: typeof step.name === 'string' ? step.name.slice(0, 80) : (origin?.name ?? ''),
+      instruction: segments,
+      tool: tool?.name ?? null,
+      maxAttempts: step.tries ?? origin?.maxAttempts ?? 5,
+      // The model's explicit handling wins; absent that, a revision keeps
+      // the origin's (failure conditions belong to a tool — a changed tool
+      // starts clean).
+      failureHandling:
+        step.failures !== undefined ? authoredHandling : sameTool ? origin.failureHandling : [],
+      ...(saveAs ? { saveAs } : {}),
+    });
+  }
+
+  if (steps.length === 0) {
+    return {
+      ok: false,
+      problems: problems.length > 0 ? problems : ['No step had a usable instruction.'],
+    };
+  }
+  // Some steps parsed, some did not: usable, but the broken ones are worth
+  // a corrective round trip.
+  softProblems.push(...problems);
+
+  // A model that echoes the same origin twice would duplicate ids; keep the
+  // first claim, regenerate the rest.
+  const seenIds = new Set<string>();
+  for (const step of steps) {
+    if (seenIds.has(step.id)) step.id = randomUUID();
+    seenIds.add(step.id);
+  }
+
+  return {
+    ok: true,
+    draft: {
+      name: typeof parsed.name === 'string' ? parsed.name.slice(0, 200) : '',
+      steps,
+    },
+    softProblems,
+  };
 }
 
 export async function draftAgentFromProse(
@@ -178,65 +440,14 @@ export async function draftAgentFromProse(
   }
   const llm = llmResult.val;
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const completion = await Promise.race([
-    llm.provider.complete({
-      system:
-        'You turn plain-language automation descriptions into structured steps. You reply with strict JSON.',
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: promptOf(text.slice(0, MAX_PROSE_CHARS), tools, currentSteps, triggerVars),
-            },
-          ],
-        },
-      ],
-      tools: [],
-      maxTokens: MAX_OUTPUT_TOKENS,
-      // Just under the outer race so the HTTP call, not the race, decides.
-      timeoutMs: DRAFT_TIMEOUT_MS - 5_000,
-    }),
-    new Promise<'timeout'>((resolve) => {
-      timer = setTimeout(() => resolve('timeout'), DRAFT_TIMEOUT_MS);
-    }),
-  ]).finally(() => clearTimeout(timer));
-  if (completion === 'timeout')
-    return {
-      error:
-        'The model took over five minutes and was cut off — try again, or try a shorter description.',
-    };
-  if (!completion.ok) {
-    logger.warn('prose draft failed: {kind}', {
-      component: 'agents/draft',
-      tenantId,
-      kind: completion.err.type,
-    });
-    return { error: 'The model could not draft steps — try again or write them by hand.' };
-  }
-
-  const raw = completion.val.content
-    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
-    .join('\n')
-    .replace(/```(?:json)?/g, '');
-  const start = raw.indexOf('{');
-  const end = raw.lastIndexOf('}');
-  if (start < 0 || end <= start) return { error: 'The model gave an unusable answer — try again.' };
-
-  let parsed: { name?: unknown; steps?: unknown };
-  try {
-    parsed = JSON.parse(raw.slice(start, end + 1));
-  } catch {
-    return { error: 'The model gave an unusable answer — try again.' };
-  }
-  if (!Array.isArray(parsed.steps) || parsed.steps.length === 0) {
-    return { error: 'The model found no steps in that description — add more detail.' };
-  }
-
   const validTools = new Set(tools.filter((tool) => !tool.appOnly).map((tool) => tool.name));
-  const knownVars = new Set([
+  const outcomesByTool = new Map(
+    tools.map((tool) => [
+      tool.name,
+      new Set([...tool.outcomes.failures.map((failure) => failure.code), 'other']),
+    ])
+  );
+  const seedVars = new Set([
     ...BUILTIN_VARIABLES.map((variable) => variable.name),
     ...triggerVars,
     // Existing saveAs names stay referenceable even before their step is
@@ -244,52 +455,113 @@ export async function draftAgentFromProse(
     ...currentSteps.flatMap((step) => (step.saveAs ? [step.saveAs] : [])),
   ]);
 
-  const steps: AgentStep[] = [];
-  for (const entry of parsed.steps.slice(0, 20)) {
-    if (typeof entry !== 'object' || entry === null) continue;
-    const step: { name?: unknown; instruction?: unknown; saveAs?: unknown; from?: unknown } = entry;
-    if (typeof step.instruction !== 'string' || !step.instruction.trim()) continue;
+  // One corrective round trip: a failed parse (or a draft with invented
+  // chips) goes back to the model WITH the concrete problems, because
+  // "unusable answer — try again" teaches the human nothing and the model
+  // less. The five-minute budget is shared across both calls.
+  const deadline = Date.now() + DRAFT_TIMEOUT_MS;
+  const messages: LlmMessage[] = [
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: promptOf(text.slice(0, MAX_PROSE_CHARS), tools, currentSteps, triggerVars),
+        },
+      ],
+    },
+  ];
+  let lastProblems: string[] = [];
+  // A first draft that parsed but had soft problems is kept: if the
+  // corrective attempt REGRESSES (hard-fails or times out of budget), the
+  // degraded-but-usable version beats an error.
+  let usable: DraftedAgent | null = null;
 
-    const segments = segmentsOf(step.instruction, validTools, knownVars);
-    const tool = segments.find(
-      (segment): segment is Extract<InstructionSegment, { t: 'tool' }> => segment.t === 'tool'
-    );
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining < 15_000) break; // not enough budget for a useful call
 
-    // "from": sN → the existing step this one is based on. Its identity,
-    // attempt budget, and — when the tool didn't change — failure handling
-    // survive the revision; the model only authors words and chips.
-    const fromMatch = typeof step.from === 'string' ? /^s(\d+)$/.exec(step.from.trim()) : null;
-    const origin = fromMatch ? currentSteps[Number(fromMatch[1]) - 1] : undefined;
-    const sameTool = origin !== undefined && origin.tool === (tool?.name ?? null);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const completion = await Promise.race([
+      llm.provider.complete({
+        system:
+          'You turn plain-language automation descriptions into structured steps. You reply with strict JSON.',
+        messages,
+        tools: [],
+        maxTokens: MAX_OUTPUT_TOKENS,
+        // Just under the outer race so the HTTP call, not the race, decides.
+        timeoutMs: Math.max(10_000, remaining - 5_000),
+      }),
+      new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), remaining);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (completion === 'timeout')
+      return {
+        error:
+          'The model took over five minutes and was cut off — try again, or try a shorter description.',
+      };
+    if (!completion.ok) {
+      logger.warn('prose draft failed: {kind}', {
+        component: 'agents/draft',
+        tenantId,
+        kind: completion.err.type,
+      });
+      return { error: 'The model could not draft steps — try again or write them by hand.' };
+    }
 
-    const saveAs =
-      typeof step.saveAs === 'string' && step.saveAs.trim() ? step.saveAs.trim() : origin?.saveAs;
-    if (saveAs) knownVars.add(saveAs); // later steps may reference it
+    const raw = completion.val.content
+      .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+      .join('\n');
+    const parsed = parseDraftReply(raw, currentSteps, validTools, outcomesByTool, seedVars);
 
-    steps.push({
-      id: origin?.id ?? randomUUID(),
-      name: typeof step.name === 'string' ? step.name.slice(0, 80) : (origin?.name ?? ''),
-      instruction: segments,
-      tool: tool?.name ?? null,
-      maxAttempts: origin?.maxAttempts ?? 5,
-      // Failure conditions belong to a tool; a changed tool starts clean.
-      failureHandling: sameTool ? origin.failureHandling : [],
-      ...(saveAs ? { saveAs } : {}),
+    if (parsed.ok) {
+      usable = parsed.draft;
+      if (parsed.softProblems.length === 0 || attempt === 2) {
+        // Good — or as good as one correction gets; chips that still don't
+        // verify degrade to text for the user to re-chip deliberately.
+        return parsed.draft;
+      }
+    }
+
+    const problems = parsed.ok ? parsed.softProblems : parsed.problems;
+    lastProblems = problems;
+    logger.info('prose draft retry: {count} problem(s)', {
+      component: 'agents/draft',
+      tenantId,
+      count: problems.length,
     });
-  }
-  // A model that echoes the same origin twice would duplicate ids; keep the
-  // first claim, regenerate the rest.
-  const seenIds = new Set<string>();
-  for (const step of steps) {
-    if (seenIds.has(step.id)) step.id = randomUUID();
-    seenIds.add(step.id);
-  }
-  if (steps.length === 0) {
-    return { error: 'The model found no usable steps — add more detail.' };
+    messages.push(
+      { role: 'assistant', content: [{ type: 'text', text: raw.slice(0, 8_000) }] },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: [
+              'Your reply could not be used as-is. Problems:',
+              ...problems.slice(0, 12).map((problem) => `- ${problem}`),
+              '',
+              'Reply again with ONLY the corrected JSON object, in exactly the structure ' +
+                'described before. Fix every problem listed; keep everything that was already correct.',
+            ].join('\n'),
+          },
+        ],
+      }
+    );
   }
 
+  if (usable) return usable;
+
+  logger.warn('prose draft unusable after retry: {problems}', {
+    component: 'agents/draft',
+    tenantId,
+    problems: lastProblems.slice(0, 5).join(' | '),
+  });
   return {
-    name: typeof parsed.name === 'string' ? parsed.name.slice(0, 200) : '',
-    steps,
+    error:
+      lastProblems.length > 0
+        ? `The model could not produce usable steps (${lastProblems[0]}) — try again or rephrase.`
+        : 'The model gave an unusable answer — try again.',
   };
 }
