@@ -27,6 +27,9 @@ export interface FailurePanelProps {
   onChange: (handling: FailureHandling[]) => void;
   maxAttempts: number;
   onMaxAttemptsChange: (attempts: number) => void;
+  /** What success leads to — explicit, like every failure row. */
+  onSuccess: 'continue' | 'stop' | 'stop-quiet';
+  onOnSuccessChange: (next: 'continue' | 'stop' | 'stop-quiet') => void;
   tools: ToolOption[];
   variables: VariableOption[];
   invalidVars?: ReadonlySet<string>;
@@ -39,6 +42,8 @@ export function FailurePanel({
   onChange,
   maxAttempts,
   onMaxAttemptsChange,
+  onSuccess,
+  onOnSuccessChange,
   tools,
   variables,
   invalidVars,
@@ -55,11 +60,49 @@ export function FailurePanel({
 
   return (
     <div className="mt-3 rounded-md border border-gray-200 p-3 dark:border-gray-800">
-      <p className="text-sm text-gray-700 dark:text-gray-300">
-        <span className="mr-1 text-green-600 dark:text-green-400">✓</span>
-        When this works — <span className="font-medium">{outcomes.success.label}</span> — the agent
-        continues to the next step.
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-gray-700 dark:text-gray-300">
+          <span className="mr-1 text-green-600 dark:text-green-400">✓</span>
+          When this works — <span className="font-medium">{outcomes.success.label}</span> —
+        </p>
+        <div className="flex overflow-hidden rounded-md border border-gray-300 text-xs dark:border-gray-700">
+          <button
+            type="button"
+            onClick={() => onOnSuccessChange('continue')}
+            className={`px-2.5 py-1 ${
+              onSuccess === 'continue'
+                ? 'bg-green-700 text-white'
+                : 'text-gray-600 dark:text-gray-400'
+            }`}
+          >
+            Continue to the next step
+          </button>
+          <button
+            type="button"
+            title="The automation finishes successfully here; later steps never run. Replies and follow-up automations still happen."
+            onClick={() => onOnSuccessChange('stop')}
+            className={`px-2.5 py-1 ${
+              onSuccess === 'stop'
+                ? 'bg-gray-700 text-white dark:bg-gray-300 dark:text-gray-900'
+                : 'text-gray-600 dark:text-gray-400'
+            }`}
+          >
+            Stop — done
+          </button>
+          <button
+            type="button"
+            title="Ends silently: no reply, no notification, no chained agents — only run history records it."
+            onClick={() => onOnSuccessChange('stop-quiet')}
+            className={`px-2.5 py-1 ${
+              onSuccess === 'stop-quiet'
+                ? 'bg-gray-700 text-white dark:bg-gray-300 dark:text-gray-900'
+                : 'text-gray-600 dark:text-gray-400'
+            }`}
+          >
+            Stop silently
+          </button>
+        </div>
+      </div>
 
       <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
         If something goes wrong

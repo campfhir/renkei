@@ -372,6 +372,97 @@ maybe('agent run engine', () => {
     expect(attempts[0].tool_call_count).toBe(3);
   });
 
+  it('ends the run early — and quietly — when finish_step declares stop', async () => {
+    const twoSteps: AgentStepsDoc = {
+      version: 1,
+      steps: [
+        {
+          id: randomUUID(),
+          name: 'Check relevance',
+          instruction: [{ t: 'text', v: 'If irrelevant, stop silently.' }],
+          tool: null,
+          maxAttempts: 1,
+          failureHandling: [],
+        },
+        {
+          id: randomUUID(),
+          name: 'Never reached',
+          instruction: [{ t: 'text', v: 'Do the work.' }],
+          tool: null,
+          maxAttempts: 1,
+          failureHandling: [],
+        },
+      ],
+    };
+    const { runId } = await seedRun(twoSteps);
+    const finalized: unknown[] = [];
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () => stubMcp([], () => okToolResult),
+      resolveLlm: async () => ok(stubLlm(() => finish('success', { stop: true, quiet: true }))),
+      mintToken: async () => 'stub-token',
+      revokeToken: async () => undefined,
+      onFinalized: async (run) => {
+        finalized.push(run);
+      },
+    });
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+
+    // Step 2 never ran — the declared stop ended the run.
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select('step_id')
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toHaveLength(1);
+    // The finalize hook was told this stop wants silence.
+    expect(finalized[0]).toMatchObject({ status: 'succeeded', quiet: true });
+  });
+
+  it('stops after a step whose onSuccess is configured to stop', async () => {
+    const doc = singleStep({ onSuccess: 'stop' });
+    doc.steps.push({
+      id: randomUUID(),
+      name: 'Never reached',
+      instruction: [{ t: 'text', v: 'Extra work.' }],
+      tool: null,
+      maxAttempts: 1,
+      failureHandling: [],
+    });
+    const { runId } = await seedRun(doc);
+    const llm = stubLlm((_request, call) =>
+      call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', { saveValue: 'PROJ-42' })
+    );
+    const handler = handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select('step_id')
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toHaveLength(1);
+  });
+
   it('stops immediately on a failure handled as exit', async () => {
     const { runId } = await seedRun(
       singleStep({

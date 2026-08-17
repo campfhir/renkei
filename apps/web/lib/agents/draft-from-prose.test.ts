@@ -188,6 +188,58 @@ describe('draftAgentFromProse retry loop', () => {
     expect(feedback).toContain('not-found');
   });
 
+  it('carries onSuccess through and renames duplicate result names', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'x',
+        steps: [
+          {
+            name: 'Search',
+            instruction: 'Search with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+            saveAs: 'the result',
+          },
+          {
+            name: 'Reply and stop',
+            instruction: 'Reply and stop silently if nothing matched.',
+            tool: null,
+            saveAs: 'the result',
+            onSuccess: 'stop-quiet',
+          },
+        ],
+      }),
+      // The duplicate name is a soft problem → one corrective round trip;
+      // the second reply repeats it, and the parser's rename keeps the
+      // draft usable anyway.
+      JSON.stringify({
+        name: 'x',
+        steps: [
+          {
+            name: 'Search',
+            instruction: 'Search with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+            saveAs: 'the result',
+          },
+          {
+            name: 'Reply and stop',
+            instruction: 'Reply and stop silently if nothing matched.',
+            tool: null,
+            saveAs: 'the result',
+            onSuccess: 'stop-quiet',
+          },
+        ],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    expect(result.steps[1].onSuccess).toBe('stop-quiet');
+    expect(result.steps[0].saveAs).toBe('the result');
+    expect(result.steps[1].saveAs).toBe('the result 2');
+    // The feedback named the duplicate.
+    expect(JSON.stringify(requests[1].messages)).toContain('reuses the result name');
+  });
+
   it('returns the concrete reason when both attempts are unusable', async () => {
     replies = ['no json here', 'still no json'];
     const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);

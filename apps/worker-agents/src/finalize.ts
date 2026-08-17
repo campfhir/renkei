@@ -86,6 +86,17 @@ export function createFinalizeHook(
   eventsProducer: QueueProducer
 ) {
   return async function onFinalized(run: FinalizedRun): Promise<void> {
+    // A quiet stop is the run ASKING for invisibility: no thread reply, no
+    // notification, no chained agents. History still has it; nothing else.
+    if (run.quiet) {
+      logger.info('run {runId} stopped quietly', {
+        component: 'worker-agents/finalize',
+        runId: run.runId,
+        tenantId: run.tenantId,
+      });
+      return;
+    }
+
     // Success or failure, a WebEx-triggered run answers in its thread —
     // silence in the room is the confusing outcome, not the failure.
     await enqueueThreadReply(db, eventsProducer, run);

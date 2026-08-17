@@ -62,6 +62,12 @@ export interface FinalizedRun {
   error: string | null;
   /** saveAs bindings accumulated over the run, for chained agents. */
   vars: Record<string, string>;
+  /**
+   * A deliberate silent stop: the run succeeded but asked for NO reply, no
+   * notification, no chaining — "not relevant, do nothing" ends invisibly
+   * everywhere except run history.
+   */
+  quiet: boolean;
 }
 
 export interface EngineDeps {
@@ -106,6 +112,8 @@ interface ToolCallRecord {
 
 interface AttemptOutcome {
   succeeded: boolean;
+  /** Set when a successful finish_step declared the whole run over. */
+  stopRun?: 'done' | 'quiet';
   outcome: 'tool_ok' | 'llm_declared' | 'tool_error' | 'llm_error' | 'guard';
   outcomeCode: string | null;
   summary: string;
@@ -173,15 +181,26 @@ function finishArgsOf(input: unknown): {
   code: string | null;
   summary: string;
   saveValue: string | null;
+  stop: boolean;
+  quiet: boolean;
 } | null {
   if (typeof input !== 'object' || input === null) return null;
-  const args: { outcome?: unknown; code?: unknown; summary?: unknown; saveValue?: unknown } = input;
+  const args: {
+    outcome?: unknown;
+    code?: unknown;
+    summary?: unknown;
+    saveValue?: unknown;
+    stop?: unknown;
+    quiet?: unknown;
+  } = input;
   if (args.outcome !== 'success' && args.outcome !== 'failure') return null;
   return {
     outcome: args.outcome,
     code: typeof args.code === 'string' ? args.code : null,
     summary: typeof args.summary === 'string' ? args.summary : '',
     saveValue: typeof args.saveValue === 'string' ? args.saveValue : null,
+    stop: args.stop === true,
+    quiet: args.quiet === true,
   };
 }
 
@@ -358,6 +377,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
           stepIndex += 1;
           continue;
         }
+        if (result.kind === 'finish') {
+          // A deliberate early success — configured on the step or declared
+          // by the instruction's own "…and stop here".
+          await finalizeRun(run, 'succeeded', null, null, vars, result.quiet);
+          return;
+        }
         await finalizeRun(run, 'failed', result.errorKind, result.error, vars);
         return;
       }
@@ -427,7 +452,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
     vars: Record<string, string>,
     deadline: number,
     orgAttemptCap: number
-  ): Promise<{ kind: 'advance' } | { kind: 'fail'; errorKind: string; error: string }> {
+  ): Promise<
+    | { kind: 'advance' }
+    | { kind: 'finish'; quiet: boolean }
+    | { kind: 'fail'; errorKind: string; error: string }
+  > {
     // Pre-flight: the step's tool must exist in the OWNER's live projection.
     // No LLM spend on a run that cannot work.
     if (step.tool && !toolsByName.has(step.tool)) {
@@ -576,6 +605,17 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       if (outcome.succeeded) {
         if (step.saveAs && outcome.saveValue !== null) vars[step.saveAs] = outcome.saveValue;
+        // A stop can be declared at runtime (the instruction's own "…and
+        // stop here", via finish_step) or configured statically on the
+        // step; the runtime declaration wins because it saw the condition.
+        const staticStop =
+          step.onSuccess === 'stop'
+            ? 'done'
+            : step.onSuccess === 'stop-quiet'
+              ? 'quiet'
+              : undefined;
+        const stop = outcome.stopRun ?? staticStop;
+        if (stop) return { kind: 'finish', quiet: stop === 'quiet' };
         return { kind: 'advance' };
       }
 
@@ -816,6 +856,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
       code: string | null;
       summary: string;
       saveValue: string | null;
+      stop: boolean;
+      quiet: boolean;
     },
     primaryResults: McpToolResult[],
     base: Pick<AttemptOutcome, 'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction'>
@@ -840,6 +882,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       return {
         ...base,
         succeeded: true,
+        ...(finish.stop ? { stopRun: finish.quiet ? 'quiet' : 'done' } : {}),
         outcome: primaryResults.length > 0 ? 'tool_ok' : 'llm_declared',
         outcomeCode: null,
         summary: finish.summary,
@@ -878,7 +921,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     status: 'succeeded' | 'failed',
     errorKind: string | null,
     error: string | null,
-    vars: Record<string, string>
+    vars: Record<string, string>,
+    quiet = false
   ): Promise<void> {
     await db
       .updateTable('agent_runs')
@@ -910,6 +954,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           errorKind,
           error,
           vars,
+          quiet,
         });
       } catch (hookError) {
         // Fan-out and notification failures must not un-finish the run.

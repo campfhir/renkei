@@ -85,6 +85,8 @@ function promptOf(
     '- Each step does ONE thing and may use AT MOST ONE tool from the list below (a step may also be pure reasoning with no tool).',
     '- Mark the tool in the instruction as {{tool:tool_name}} and reference known variables as {{var:name}}. Use ONLY tools and variables from the lists.',
     '- When a later step needs an earlier step\'s result, give the earlier step a short "saveAs" name (spaces allowed, e.g. "the ticket") and reference it as {{var:the ticket}}.',
+    '- Every "saveAs" name must be UNIQUE — never reuse a name across steps. Later references use the exact earlier name.',
+    '- When the description says the flow ENDS at a step on success, set that step\'s "onSuccess" to "stop"; when it should end silently doing nothing (no reply, no follow-up — e.g. "if it\'s not relevant, ignore it"), use "stop-quiet". For CONDITIONAL endings keep the condition in the instruction words ("If …, … and stop here" / "…stop silently") — the runner honors those at runtime.',
     '- Steps run strictly in order — but people rarely DESCRIBE them in order ("before all that ' +
       'you might need to…", "first look up…"). Reorder into the true execution sequence: gather ' +
       'context first, look things up, then act on what was found.',
@@ -138,6 +140,8 @@ function promptOf(
     '    "saveAs": string or null — a short result name when later steps reference it',
     '      (starts with a letter; letters, numbers, spaces, - or _), otherwise null,',
     '    "tries": integer 1-10 or omitted — total attempts for this step (default 5),',
+    '    "onSuccess": "continue" (default), "stop" (the automation ends here successfully),',
+    '      or "stop-quiet" (ends silently: no reply, no follow-up automations),',
     '    "failures": array or omitted — only meaningful on tool steps; each entry:',
     '      { "outcome": one of the tool\'s failure codes,',
     '        "action": "stop" or "retry",',
@@ -220,6 +224,7 @@ const STEP_SHAPE = z.object({
   saveAs: z.string().nullable().optional(),
   from: z.string().nullable().optional(),
   tries: z.number().int().min(1).max(10).optional(),
+  onSuccess: z.enum(['continue', 'stop', 'stop-quiet']).optional(),
   failures: z
     .array(
       z.object({
@@ -281,6 +286,7 @@ function parseDraftReply(
   const problems: string[] = [];
   const softProblems: string[] = [];
   const knownVars = new Set(seedVars);
+  const usedSaveAs = new Set<string>();
   const steps: AgentStep[] = [];
 
   for (const [index, entry] of parsed.steps.entries()) {
@@ -330,9 +336,27 @@ function parseDraftReply(
     const origin = fromMatch ? currentSteps[Number(fromMatch[1]) - 1] : undefined;
     const sameTool = origin !== undefined && origin.tool === (tool?.name ?? null);
 
-    const saveAs =
+    let saveAs =
       typeof step.saveAs === 'string' && step.saveAs.trim() ? step.saveAs.trim() : origin?.saveAs;
-    if (saveAs) knownVars.add(saveAs); // later steps may reference it
+    if (saveAs) {
+      // Result names must be unique across steps (the validator enforces
+      // it at save); a duplicate is renamed so the draft stays usable and
+      // the model is told what it did wrong.
+      if (usedSaveAs.has(saveAs.toLowerCase())) {
+        softProblems.push(
+          `${label} reuses the result name "${saveAs}" — every saveAs must be unique across steps.`
+        );
+        let suffix = 2;
+        let candidate = `${saveAs} ${suffix}`;
+        while (usedSaveAs.has(candidate.toLowerCase())) {
+          suffix += 1;
+          candidate = `${saveAs} ${suffix}`;
+        }
+        saveAs = candidate.slice(0, 64);
+      }
+      usedSaveAs.add(saveAs.toLowerCase());
+      knownVars.add(saveAs); // later steps may reference it
+    }
 
     // Model-authored failure handling, checked against the tool's REAL
     // outcome codes so the validator never bounces what drafting produced.
@@ -389,6 +413,11 @@ function parseDraftReply(
       failureHandling:
         step.failures !== undefined ? authoredHandling : sameTool ? origin.failureHandling : [],
       ...(saveAs ? { saveAs } : {}),
+      ...(step.onSuccess && step.onSuccess !== 'continue'
+        ? { onSuccess: step.onSuccess }
+        : step.onSuccess === undefined && origin?.onSuccess
+          ? { onSuccess: origin.onSuccess }
+          : {}),
     });
   }
 

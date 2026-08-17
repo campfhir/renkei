@@ -48,6 +48,17 @@ export interface AgentStep {
   /** Names this step's result; later steps reference it as a var chip. */
   saveAs?: string;
   failureHandling: FailureHandling[];
+  /**
+   * What success leads to. Absent/'continue' = the next step (the default
+   * linear flow); 'stop' = the whole automation finishes successfully here
+   * (thread reply / chaining still happen); 'stop-quiet' = it finishes
+   * silently — no reply, no notification, no chained agents, history only.
+   * Conditional early stops stay in the instruction's own words — the
+   * runner honors "…and stop here" (and "stop silently") at runtime; this
+   * switch is the STATIC version, explicit in the UI instead of implied by
+   * prose.
+   */
+  onSuccess?: 'continue' | 'stop' | 'stop-quiet';
 }
 
 export interface AgentStepsDoc {
@@ -105,6 +116,7 @@ function isAgentStep(value: unknown): value is AgentStep {
     maxAttempts?: unknown;
     saveAs?: unknown;
     failureHandling?: unknown;
+    onSuccess?: unknown;
   } = value;
   if (typeof step.id !== 'string' || step.id.length === 0) return false;
   if (typeof step.name !== 'string') return false;
@@ -115,6 +127,14 @@ function isAgentStep(value: unknown): value is AgentStep {
   if (typeof step.maxAttempts !== 'number') return false;
   if (step.saveAs !== undefined && typeof step.saveAs !== 'string') return false;
   if (!Array.isArray(step.failureHandling) || !step.failureHandling.every(isFailureHandling)) {
+    return false;
+  }
+  if (
+    step.onSuccess !== undefined &&
+    step.onSuccess !== 'continue' &&
+    step.onSuccess !== 'stop' &&
+    step.onSuccess !== 'stop-quiet'
+  ) {
     return false;
   }
   return true;

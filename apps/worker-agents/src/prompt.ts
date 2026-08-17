@@ -35,6 +35,18 @@ export const FINISH_STEP_DEF: LlmToolDef = {
         description:
           'If this step was asked to save its result, the value to save (an ID, a key, a short text). Omit otherwise.',
       },
+      stop: {
+        type: 'boolean',
+        description:
+          'On success only: true when the instruction says the WHOLE automation should end here ' +
+          '("…and stop here") — later steps will not run. Omit otherwise.',
+      },
+      quiet: {
+        type: 'boolean',
+        description:
+          'With stop: true when the instruction says to end silently / do nothing — no reply, ' +
+          'no notification, no follow-up automations. Omit otherwise.',
+      },
     },
     required: ['outcome', 'summary'],
   },
@@ -45,6 +57,7 @@ export const SYSTEM_PROMPT = [
   'Do only what this step says. You do not know the other steps, and you must not invent work beyond this one.',
   'You may call only the tools provided. When the step’s work is done, or it is clear it cannot be done, call finish_step exactly once with the outcome.',
   'Aim to finish: when what you have satisfies the step’s intent, declare success rather than double-checking with more calls.',
+  'When the instruction says the whole automation should end at this step ("…and stop here"), set stop: true on finish_step; when it says to end silently or do nothing, also set quiet: true.',
   'Declare failure honestly: a tool error you could not work around, or a result that clearly does not match the step’s intent, is a failure, not a success.',
 ].join(' ');
 

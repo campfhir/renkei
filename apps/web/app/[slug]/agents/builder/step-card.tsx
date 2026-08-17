@@ -191,6 +191,17 @@ export function StepCard({
               maxAttempts={step.maxAttempts}
               attemptsCap={attemptsCap}
               onMaxAttemptsChange={(maxAttempts) => onChange({ ...step, maxAttempts })}
+              onSuccess={step.onSuccess ?? 'continue'}
+              onOnSuccessChange={(onSuccess) =>
+                onChange(
+                  onSuccess === 'stop'
+                    ? { ...step, onSuccess }
+                    : (() => {
+                        const { onSuccess: _dropped, ...rest } = step;
+                        return rest;
+                      })()
+                )
+              }
               tools={tools}
               variables={variables}
               invalidVars={invalidVars}

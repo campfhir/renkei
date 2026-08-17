@@ -156,6 +156,7 @@ maybe('finalize hook', () => {
     agentId,
     ownerSubject: owner,
     status,
+    quiet: false,
     errorKind: status === 'failed' ? 'step_failed' : null,
     error: status === 'failed' ? 'Step "Do the thing" stopped the agent.' : null,
     vars: { theTicket: 'PROJ-42' },
