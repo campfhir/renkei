@@ -109,10 +109,7 @@ maybe('finalize hook', () => {
   }
 
   /** A run started by a WebEx event trigger, thread coordinates in state. */
-  async function seedWebexRun(
-    agentId: string,
-    options: { replyInThread?: boolean } = {}
-  ): Promise<string> {
+  async function seedWebexRun(agentId: string): Promise<string> {
     const triggerId = randomUUID();
     await db
       .insertInto('agent_triggers')
@@ -123,7 +120,7 @@ maybe('finalize hook', () => {
         kind: 'event',
         event_source: 'webex',
         event_type: 'message.received',
-        config: JSON.stringify({ match: {}, replyInThread: options.replyInThread !== false }),
+        config: JSON.stringify({ match: {} }),
         enabled: true,
       })
       .execute();
@@ -225,8 +222,8 @@ maybe('finalize hook', () => {
     expect(trigger.last_error).toContain('already ran');
   });
 
-  it('replies in the WebEx thread with the reply var on success', async () => {
-    const agentId = await seedAgent('reply-a');
+  it('never posts an automatic thread reply — answering the room is a STEP', async () => {
+    const agentId = await seedAgent('no-auto-reply');
     const runId = await seedWebexRun(agentId);
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
@@ -236,35 +233,13 @@ maybe('finalize hook', () => {
       eventsQueue.producer
     )({
       ...finalized(runId, agentId, 'succeeded'),
-      vars: { reply: 'ENG-701 is already approved — deploying tonight.' },
+      vars: { reply: 'a saved reply var must not leak into the room' },
     });
-
-    const event = await eventsQueue.consumer.claim();
-    expect(event?.type).toBe('run.reply');
-    const payload: { roomId?: unknown; parentId?: unknown; markdown?: unknown } =
-      typeof event?.payload === 'object' && event.payload !== null && !Array.isArray(event.payload)
-        ? event.payload
-        : {};
-    expect(payload.roomId).toBe('room-1');
-    expect(payload.parentId).toBe('msg-1');
-    expect(payload.markdown).toBe('ENG-701 is already approved — deploying tonight.');
-  });
-
-  it('stays silent in the thread when replyInThread is off', async () => {
-    const agentId = await seedAgent('silent-a');
-    const runId = await seedWebexRun(agentId, { replyInThread: false });
-    const agentQueue = new InMemoryQueue();
-    const eventsQueue = new InMemoryQueue();
-    await createFinalizeHook(
-      db,
-      agentQueue.producer,
-      eventsQueue.producer
-    )(finalized(runId, agentId, 'succeeded'));
     expect(await eventsQueue.consumer.claim()).toBeNull();
   });
 
-  it('replies with the failure line when a webex-triggered run fails', async () => {
-    const agentId = await seedAgent('replyfail-a');
+  it('a failed webex-triggered run emits only the owner notification', async () => {
+    const agentId = await seedAgent('failnotify-a');
     const runId = await seedWebexRun(agentId);
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
@@ -274,17 +249,9 @@ maybe('finalize hook', () => {
       eventsQueue.producer
     )(finalized(runId, agentId, 'failed'));
 
-    // Two events: the thread reply and the owner notification.
     const first = await eventsQueue.consumer.claim();
-    const second = await eventsQueue.consumer.claim();
-    const types = [first?.type, second?.type].sort();
-    expect(types).toEqual(['run.failed', 'run.reply']);
-    const reply = first?.type === 'run.reply' ? first : second;
-    const payload: { markdown?: unknown } =
-      typeof reply?.payload === 'object' && reply.payload !== null && !Array.isArray(reply.payload)
-        ? reply.payload
-        : {};
-    expect(String(payload.markdown)).toContain("couldn't finish");
+    expect(first?.type).toBe('run.failed');
+    expect(await eventsQueue.consumer.claim()).toBeNull();
   });
 
   it('emits run.failed (and no chain) when the run failed', async () => {

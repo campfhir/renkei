@@ -12,6 +12,11 @@
  * Failures become an ordinary `agents/run.failed` event on the interactive
  * queue: notification delivery (owner's Outlook mail, WebEx DM) belongs to
  * the interactive worker, which owns those connector paths.
+ *
+ * There is deliberately NO automatic thread reply here: an agent that
+ * should answer in the triggering room says so as a STEP (webex_send_message
+ * with trigger.roomId/messageId), where the owner controls whether and
+ * what it says — an engine-side courtesy reply was the bot era's shape.
  */
 
 import { sql, type Kysely } from 'kysely';
@@ -22,79 +27,14 @@ import { createAgentRun } from '@renkei/agents/runs';
 import type { FinalizedRun } from './engine';
 import { logger } from './logger';
 
-/**
- * The bot's thread reply for a WebEx-triggered run. The room and thread
- * come from the run's own initial state; the wording is the owner's when a
- * step saved its result as `reply`, a plain outcome line otherwise.
- */
-async function enqueueThreadReply(
-  db: Kysely<DB>,
-  eventsProducer: QueueProducer,
-  run: FinalizedRun
-): Promise<void> {
-  const row = await db
-    .selectFrom('agent_runs as r')
-    .leftJoin('agent_triggers as t', 't.id', 'r.trigger_id')
-    .select(['r.initial_state', 't.kind', 't.event_source', 't.config'])
-    .where('r.id', '=', run.runId)
-    .executeTakeFirst();
-  if (!row || row.kind !== 'event' || row.event_source !== 'webex') return;
-
-  const config: { replyInThread?: unknown } =
-    typeof row.config === 'object' && row.config !== null && !Array.isArray(row.config)
-      ? row.config
-      : {};
-  if (config.replyInThread === false) return;
-
-  const state: { roomId?: unknown; messageId?: unknown } =
-    typeof row.initial_state === 'object' &&
-    row.initial_state !== null &&
-    !Array.isArray(row.initial_state)
-      ? row.initial_state
-      : {};
-  if (typeof state.roomId !== 'string' || typeof state.messageId !== 'string') return;
-
-  const agent = await db
-    .selectFrom('agents')
-    .select('name')
-    .where('id', '=', run.agentId)
-    .executeTakeFirst();
-  const name = agent?.name ?? 'Your agent';
-
-  const markdown =
-    run.status === 'succeeded'
-      ? (run.vars.reply ?? `✅ **${name}** finished.`)
-      : `⚠️ **${name}** couldn't finish${run.error ? `: ${run.error}` : '.'}`;
-
-  const enqueued = await eventsProducer.enqueue({
-    tenantId: run.tenantId,
-    source: 'agents',
-    type: 'run.reply',
-    // ownerSubject: the reply posts with the run OWNER's own WebEx grant —
-    // there is no bot; the agent speaks as the person it belongs to.
-    payload: {
-      roomId: state.roomId,
-      parentId: state.messageId,
-      markdown,
-      ownerSubject: run.ownerSubject,
-    },
-  });
-  if (!enqueued.ok) {
-    logger.warn('could not enqueue thread reply for run {runId}', {
-      component: 'worker-agents/finalize',
-      runId: run.runId,
-    });
-  }
-}
-
 export function createFinalizeHook(
   db: Kysely<DB>,
   agentProducer: QueueProducer,
   eventsProducer: QueueProducer
 ) {
   return async function onFinalized(run: FinalizedRun): Promise<void> {
-    // A quiet stop is the run ASKING for invisibility: no thread reply, no
-    // notification, no chained agents. History still has it; nothing else.
+    // A quiet stop is the run ASKING for invisibility: no notification,
+    // no chained agents. History still has it; nothing else.
     if (run.quiet) {
       logger.info('run {runId} stopped quietly', {
         component: 'worker-agents/finalize',
@@ -103,10 +43,6 @@ export function createFinalizeHook(
       });
       return;
     }
-
-    // Success or failure, a WebEx-triggered run answers in its thread —
-    // silence in the room is the confusing outcome, not the failure.
-    await enqueueThreadReply(db, eventsProducer, run);
 
     if (run.status === 'failed') {
       const enqueued = await eventsProducer.enqueue({
