@@ -534,13 +534,15 @@ export interface TenantSettings {
 }
 
 /**
- * MCP tool invocations — usage and latency only. There is no arguments or
- * result field here by design; see migration 032.
+ * MCP tool invocations — usage and latency. No arguments or result field by
+ * design (migration 032); error_summary holds a brief failure message shown
+ * only to the caller themselves (migration 037), never on successes.
  */
 export interface ToolCalls {
   connector: string | null;
   duration_ms: number;
   ended_at: Timestamp;
+  error_summary: string | null;
   id: string;
   started_at: Timestamp;
   status: string;

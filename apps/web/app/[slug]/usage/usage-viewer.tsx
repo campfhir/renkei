@@ -349,23 +349,30 @@ function ToolDetailDialog({
               </p>
             ) : (
               <>
-                <ul className="max-h-56 divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-200 text-sm dark:divide-gray-900 dark:border-gray-800">
+                <ul className="max-h-72 divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-200 text-sm dark:divide-gray-900 dark:border-gray-800">
                   {detail.failures.map((failure) => (
-                    <li
-                      key={failure.at + (failure.by ?? '')}
-                      className="flex items-baseline justify-between gap-3 px-3 py-1.5"
-                    >
-                      <span className="tabular-nums">{new Date(failure.at).toLocaleString()}</span>
-                      <span className="flex items-baseline gap-3 text-gray-500">
-                        {failure.by && <span className="truncate">{failure.by}</span>}
-                        <span className="tabular-nums">{formatMs(failure.durationMs)}</span>
-                      </span>
+                    <li key={failure.at + (failure.by ?? '')} className="px-3 py-1.5">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="tabular-nums">
+                          {new Date(failure.at).toLocaleString()}
+                        </span>
+                        <span className="flex items-baseline gap-3 text-gray-500">
+                          {failure.by && <span className="truncate">{failure.by}</span>}
+                          <span className="tabular-nums">{formatMs(failure.durationMs)}</span>
+                        </span>
+                      </div>
+                      {failure.summary && (
+                        <p className="mt-0.5 break-words text-xs text-red-700 dark:text-red-400">
+                          {failure.summary}
+                        </p>
+                      )}
                     </li>
                   ))}
                 </ul>
                 <p className="mt-2 text-xs text-gray-500">
-                  Times and durations only — arguments and error text are never recorded here. The
-                  error message went back to whoever made the call.
+                  {detail.scope === 'tenant'
+                    ? 'Error messages appear only on your own calls — each person sees theirs, to quote when asking for help. Arguments are never recorded.'
+                    : 'Quote the error message when reporting a problem. Only you can see it; arguments are never recorded.'}
                 </p>
               </>
             )}

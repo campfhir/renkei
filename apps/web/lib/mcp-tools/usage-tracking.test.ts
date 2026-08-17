@@ -113,6 +113,40 @@ describe('withUsageTracking', () => {
     expect(inserted[0]).toMatchObject({ status: 'error', connector: 'microsoft' });
   });
 
+  it('keeps a brief error summary on failures, and never on successes', async () => {
+    // The caller-facing troubleshooting line: a failure carries the message
+    // errText built (collapsed to one line), a success carries NOTHING —
+    // successful results are content and stay unrecorded.
+    const { server, registered } = harness();
+    server.registerTool('sharepoint_read_document', {}, async () => ({
+      content: [{ type: 'text', text: 'Could not download\n  "plan.docx".' }],
+      isError: true,
+    }));
+    server.registerTool('sharepoint_get_document', {}, async () => ({
+      content: [{ type: 'text', text: 'SECRET CONTENT' }],
+    }));
+
+    await registered.get('sharepoint_read_document')!({});
+    await registered.get('sharepoint_get_document')!({});
+    await flush();
+
+    expect(inserted[0]!.error_summary).toBe('Could not download "plan.docx".');
+    expect(inserted[1]!.error_summary).toBeNull();
+  });
+
+  it('caps the error summary at the schema limit', async () => {
+    const { server, registered } = harness();
+    server.registerTool('jira_get_issue', {}, async () => ({
+      content: [{ type: 'text', text: 'x'.repeat(2000) }],
+      isError: true,
+    }));
+
+    await registered.get('jira_get_issue')!({});
+    await flush();
+
+    expect(String(inserted[0]!.error_summary)).toHaveLength(500);
+  });
+
   it('records a throw and lets it propagate untouched', async () => {
     const { server, registered } = harness();
     server.registerTool('zoom_get_transcript', {}, async () => {
@@ -123,7 +157,13 @@ describe('withUsageTracking', () => {
     await flush();
 
     // A failure that took ten seconds is the interesting kind.
-    expect(inserted[0]).toMatchObject({ status: 'error', tool: 'zoom_get_transcript' });
+    expect(inserted[0]).toMatchObject({
+      status: 'error',
+      tool: 'zoom_get_transcript',
+      // The thrown message is the only trace a crash leaves; without it the
+      // row says "failed" and nothing else.
+      error_summary: 'boom',
+    });
   });
 
   it('returns the handler’s own result unchanged', async () => {

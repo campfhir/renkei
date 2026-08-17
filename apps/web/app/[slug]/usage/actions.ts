@@ -229,6 +229,13 @@ export interface ToolFailureRow {
   durationMs: number;
   /** Who made it — only in the tenant-wide view; null in the self view. */
   by: string | null;
+  /**
+   * Brief error text, ONLY for the requester's own calls — error messages
+   * can quote inputs, so an operator browsing tenant-wide sees who/when/how
+   * long but never another person's message. The caller quotes this at the
+   * helpdesk; the helpdesk does not read it off the failing user's rows.
+   */
+  summary: string | null;
 }
 
 export interface ToolDetail {
@@ -248,12 +255,12 @@ export interface ToolDetail {
 /**
  * One tool, up close — what the card cannot say in two lines.
  *
- * The usage table is content-free by design (migration 032), so "details on
- * a failure" means when it happened, how long it ran, and — for an operator
- * looking tenant-wide — whose call it was. Never what the call contained,
- * and never an error message, because the table has nowhere to hold one.
- * Scope is resolved from the session exactly as in getUsageReport: a
- * non-operator is pinned to their own calls before any query runs.
+ * "Details on a failure" means when it happened, how long it ran, for an
+ * operator looking tenant-wide whose call it was, and — for the requester's
+ * own calls only — the brief error summary (migration 037). Arguments and
+ * successful results are never recorded at all (migration 032). Scope is
+ * resolved from the session exactly as in getUsageReport: a non-operator is
+ * pinned to their own calls before any query runs.
  */
 export async function getToolDetail(
   tenantId: string,
@@ -338,6 +345,7 @@ export async function getToolDetail(
         'tool_calls.started_at as started_at',
         'tool_calls.duration_ms as duration_ms',
         'tool_calls.subject as subject',
+        'tool_calls.error_summary as error_summary',
         'identities.display_name as display_name',
         'identities.email as email',
       ])
@@ -373,6 +381,9 @@ export async function getToolDetail(
         at: row.started_at instanceof Date ? row.started_at.toISOString() : String(row.started_at),
         durationMs: Number(row.duration_ms),
         by: tenantWide ? row.display_name || row.email || row.subject || 'unknown' : null,
+        // The requester's OWN failures carry the message in either scope;
+        // anyone else's never do, however privileged the viewer.
+        summary: row.subject === ownSubject ? (row.error_summary ?? null) : null,
       })),
     };
   } catch (error) {

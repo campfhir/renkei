@@ -8,12 +8,16 @@
  * from the one that matters. Wrapping registration means a tool cannot be
  * added without being measured.
  *
- * WHAT IS RECORDED: which tool, who, when, how long, and whether it reported
- * failure. WHAT IS NOT: arguments or results. Every argument this server
- * takes is content — the JQL someone searched, the person they mailed, the
- * document they opened — and usage telemetry has no business holding it. The
- * schema has nowhere to put it, which is the durable version of this comment
- * (migration 032).
+ * WHAT IS RECORDED: which tool, who, when, how long, whether it reported
+ * failure — and, ONLY on failure, a brief summary of the error text
+ * (migration 037), so the caller has something to quote at a helpdesk
+ * instead of "it keeps failing". WHAT IS NOT: arguments, or anything a
+ * SUCCESSFUL call returned. Every argument this server takes is content —
+ * the JQL someone searched, the person they mailed, the document they
+ * opened — and usage telemetry has no business holding it; the schema has
+ * nowhere to put it (migration 032). The error summary is projected only to
+ * the caller themselves on the usage API — error text can quote inputs, and
+ * content stays with its owner.
  *
  * Recording never blocks the caller and never breaks a call. The insert is
  * fired without awaiting, because the measurement exists to find latency
@@ -42,6 +46,33 @@ function statusOf(result: unknown): 'ok' | 'error' {
   return 'ok';
 }
 
+const ERROR_SUMMARY_MAX = 500;
+
+/** Collapse to one schema-capped line; error text is prose, not a payload. */
+function briefly(text: string): string | null {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat ? flat.slice(0, ERROR_SUMMARY_MAX) : null;
+}
+
+/**
+ * The first text block of a FAILED result — the message errText built for
+ * the model. Reads nothing unless isError is true, so a successful result
+ * cannot reach the summary column even if this function is miswired: the
+ * status check lives inside the extractor, not only at its call site.
+ */
+function errorSummaryOf(result: unknown): string | null {
+  if (statusOf(result) !== 'error') return null;
+  if (typeof result !== 'object' || result === null) return null;
+  const { content }: { content?: unknown } = result;
+  if (!Array.isArray(content)) return null;
+  for (const block of content) {
+    if (typeof block !== 'object' || block === null) continue;
+    const { type, text }: { type?: unknown; text?: unknown } = block;
+    if (type === 'text' && typeof text === 'string') return briefly(text);
+  }
+  return null;
+}
+
 export interface UsageContext {
   tenantId: string;
   /** OIDC subject; usage is attributed deliberately (see migration 032). */
@@ -53,7 +84,8 @@ function record(
   tool: string,
   status: 'ok' | 'error',
   startedAt: Date,
-  endedAt: Date
+  endedAt: Date,
+  errorSummary: string | null
 ): void {
   const dbResult = getDatabase();
   if (!dbResult.ok) return;
@@ -70,6 +102,9 @@ function record(
       started_at: startedAt,
       ended_at: endedAt,
       duration_ms: Math.max(0, endedAt.getTime() - startedAt.getTime()),
+      // Belt and braces with errorSummaryOf's own guard: a success row
+      // writes NULL here no matter what the extractor returned.
+      error_summary: status === 'error' ? errorSummary : null,
     })
     .execute()
     .catch((error: unknown) => {
@@ -103,12 +138,26 @@ export function withUsageTracking(server: McpServer, context: UsageContext): Mcp
             const forwarded = handlerArgs as Parameters<typeof handler>;
             try {
               const result: unknown = await handler(...forwarded);
-              record(context, name, statusOf(result), startedAt, new Date());
+              record(
+                context,
+                name,
+                statusOf(result),
+                startedAt,
+                new Date(),
+                errorSummaryOf(result)
+              );
               return result;
             } catch (error) {
               // A throw is a failure that still happened, and its latency is
               // the interesting kind. Record, then let it propagate untouched.
-              record(context, name, 'error', startedAt, new Date());
+              record(
+                context,
+                name,
+                'error',
+                startedAt,
+                new Date(),
+                briefly(error instanceof Error ? error.message : String(error))
+              );
               throw error;
             }
           };
