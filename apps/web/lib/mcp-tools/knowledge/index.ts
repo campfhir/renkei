@@ -45,8 +45,15 @@ import { getDatabase } from '@renkei/db';
 import type { AccessVerifier } from '@renkei/gates';
 import { withheldNote } from '@renkei/gates';
 import type { KnowledgeHit, SourceFilter } from '@renkei/knowledge';
-import { resolveEmbeddingProvider, searchKnowledge, listRecentKnowledge } from '@renkei/knowledge';
+import {
+  resolveEmbeddingProvider,
+  searchKnowledge,
+  listRecentKnowledge,
+  NOTE_KNOWLEDGE_PROVIDER,
+  createNoteAccessVerifier,
+} from '@renkei/knowledge';
 import type { MCPToolContext } from '../common';
+import { registerKnowledgeNoteTools } from './notes';
 import { logger } from '@/lib/logger';
 
 /** The connector key knowledge capabilities register under. */
@@ -88,6 +95,10 @@ export async function buildKnowledgeVerifiers(
   // without them every microsoft/zoom chunk would be default-denied.
   verifiers.set(MICROSOFT_CONNECTOR, createMicrosoftAccessVerifier());
   verifiers.set(ZOOM_CONNECTOR, createZoomAccessVerifier());
+  // Authored notes are the same shape: the author's email IS the ref
+  // prefix, so verification is a pure ownership check — only the author
+  // (and, acting as them, their agents) ever reads a note.
+  verifiers.set(NOTE_KNOWLEDGE_PROVIDER, createNoteAccessVerifier());
 
   // Atlassian content has no owner encoded in its ref — a page is visible to
   // whoever the site says it is — so these verifiers ask Atlassian live,
@@ -274,6 +285,8 @@ const SOURCE_FILTERS: Record<string, { provider: string; kind?: string }> = {
   // verifier and these need the live one, not mail's ownership check. No
   // `kind` pin: 'doc' is the only kind stored there.
   sharepoint: { provider: 'sharepoint' },
+  // Authored notes (knowledge_create_note) — private to their author.
+  notes: { provider: 'note' },
 };
 
 export const KNOWLEDGE_SOURCE_NAMES = Object.keys(SOURCE_FILTERS);
@@ -371,7 +384,7 @@ export async function registerKnowledgeTools(
       description:
         'Semantic search over what Renkei has indexed from connected tools — ' +
         'Outlook mail/calendar/tasks, Confluence, Jira, Zoom and WebEx, as far as ' +
-        'each has been indexed. Results are ' +
+        'each has been indexed — plus your own notes (knowledge_create_note). Results are ' +
         'verified against the source system for YOUR access before disclosure — ' +
         'anything you cannot open at the source is withheld and reported as a count.',
       annotations: { readOnlyHint: true },
@@ -402,6 +415,7 @@ export async function registerKnowledgeTools(
               'confluence',
               'jira',
               'sharepoint',
+              'notes',
             ])
           )
           .optional()
@@ -507,4 +521,6 @@ export async function registerKnowledgeTools(
       return { content: [{ type: 'text' as const, text: renderHits(searched.val, false) }] };
     }
   );
+
+  registerKnowledgeNoteTools(server, context);
 }

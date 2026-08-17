@@ -21,6 +21,11 @@ jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
 jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: jest.fn(),
   searchKnowledge: jest.fn(),
+  NOTE_KNOWLEDGE_PROVIDER: 'note',
+  createNoteAccessVerifier: () => ({ provider: 'note' }),
+  noteRefId: (owner: string, id: string) => `${owner.toLowerCase()}/${id}`,
+  ingestObjectChunks: jest.fn(),
+  deleteObjectChunks: jest.fn(),
 }));
 jest.mock('@renkei/connector-config', () => ({
   readConnectorConfigCached: jest.fn(async () => ({ ok: true, val: null })),
@@ -47,10 +52,12 @@ interface Registered {
 }
 
 async function register(context: Partial<MCPToolContext>): Promise<Registered> {
+  // registerKnowledgeTools now registers the note tools too; this suite is
+  // about search_knowledge, so capture by name.
   let registered: Registered | null = null;
   const server = {
-    registerTool: (_name: string, config: Registered['config'], handler: Registered['handler']) => {
-      registered = { config, handler };
+    registerTool: (name: string, config: Registered['config'], handler: Registered['handler']) => {
+      if (name === 'search_knowledge') registered = { config, handler };
     },
   };
   // The stub covers exactly the slice of McpServer the module uses.

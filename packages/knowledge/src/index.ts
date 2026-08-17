@@ -38,6 +38,15 @@ export {
 
 export { ingestChunk, type KnowledgeChunkInput } from './ingest';
 
+export {
+  NOTE_KNOWLEDGE_PROVIDER,
+  AUTHORED_PROVIDERS,
+  NOTE_CHUNKING,
+  noteRefId,
+  ownerOfNoteRefId,
+  createNoteAccessVerifier,
+} from './note';
+
 export interface KnowledgeHit {
   provider: string;
   refId: string;

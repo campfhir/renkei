@@ -38,6 +38,8 @@ const PREFIXES: [string, string][] = [
   ['onedrive_', 'onedrive'],
   ['webex_', 'webex'],
   ['zoom_', 'zoom'],
+  ['knowledge_', 'knowledge'],
+  ['card_', 'cards'],
 ];
 
 /**

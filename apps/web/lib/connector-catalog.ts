@@ -88,11 +88,21 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     toolPrefix: 'zoom_*',
   },
   {
+    capabilityKey: 'cards',
+    // No connector_configs row: cards are Renkei's own feed and need no
+    // credentials — the key exists so the identifier stays consistent.
+    configKey: 'cards',
+    label: 'Renkei cards',
+    summary: 'Informational cards users and agents put on the Renkei feed.',
+    toolPrefix: 'card_*',
+  },
+  {
     capabilityKey: 'knowledge',
     configKey: 'embeddings',
-    label: 'Knowledge search',
-    summary: 'Semantic search over everything indexed, access-checked per reader.',
-    toolPrefix: 'search_knowledge',
+    label: 'Knowledge',
+    summary:
+      'Semantic search over everything indexed, access-checked per reader — plus personal notes.',
+    toolPrefix: 'search_knowledge, knowledge_*',
   },
 ];
 

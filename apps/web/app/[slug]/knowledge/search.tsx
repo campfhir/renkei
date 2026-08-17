@@ -22,6 +22,7 @@ const SOURCE_OPTIONS: { id: string; label: string }[] = [
   { id: 'jira', label: 'Jira' },
   { id: 'zoom', label: 'Zoom' },
   { id: 'webex', label: 'WebEx' },
+  { id: 'notes', label: 'My notes' },
 ];
 
 const DATE_PRESETS: { id: string; label: string; days: number | null }[] = [
