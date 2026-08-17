@@ -307,7 +307,10 @@ export function AgentBuilder({
   const issuesAt = (prefix: string) =>
     issues.filter((issue) => issue.path.startsWith(prefix)).map((issue) => issue.message);
 
-  const persist = async (withEnabled: boolean): Promise<SaveResponse | null> => {
+  const persist = async (
+    withEnabled: boolean,
+    options: { refreshDescription?: boolean } = {}
+  ): Promise<SaveResponse | null> => {
     setSaveError(null);
     const payload = {
       name,
@@ -315,6 +318,9 @@ export function AgentBuilder({
       triggers,
       enabled: withEnabled,
       llmModelId,
+      // Save says "rewrite the summary, I'm about to review it"; the review
+      // panel's confirm deliberately does not — see the PUT route.
+      ...(options.refreshDescription ? { refreshDescription: true } : {}),
     };
     const url = agentId
       ? `/api/tenant/${tenantId}/agents/${agentId}`
@@ -335,7 +341,7 @@ export function AgentBuilder({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const saved = await persist(enabled);
+      const saved = await persist(enabled, { refreshDescription: true });
       if (!saved) return;
       const savedId = saved.agentId ?? saved.agent?.id ?? agentId;
       if (savedId) setAgentId(savedId);

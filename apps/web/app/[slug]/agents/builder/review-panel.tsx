@@ -44,9 +44,11 @@ export function ReviewPanel({
 
         {descriptionPending ? (
           <p className="mt-3 flex items-center gap-2 rounded-md bg-gray-50 p-3 text-sm text-gray-500 dark:bg-gray-900 dark:text-gray-400">
+            {/* dark:border-gray-700 is a SHORTHAND — it resets all four edges,
+                so the top must be re-asserted or the ring spins invisibly. */}
             <span
               aria-hidden="true"
-              className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 dark:border-gray-700"
+              className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400"
             />
             Writing a summary of what this agent does…
           </p>
@@ -104,11 +106,17 @@ export function ReviewPanel({
           >
             Keep editing
           </button>
+          {/* Confirming is REVIEWING: while the summary is still being
+              written there is nothing to have looked at, so the confirm
+              buttons wait for it. The builder's poll bounds the wait (~45s)
+              by flipping pending off, which unlocks these either way. */}
           {enabled ? (
             <button
               type="button"
               onClick={onDone}
-              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white"
+              disabled={descriptionPending}
+              title={descriptionPending ? 'Waiting for the summary…' : undefined}
+              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
             >
               Done
             </button>
@@ -116,7 +124,8 @@ export function ReviewPanel({
             <button
               type="button"
               onClick={onEnable}
-              disabled={enabling}
+              disabled={enabling || descriptionPending}
+              title={descriptionPending ? 'Waiting for the summary…' : undefined}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
             >
               {enabling ? 'Turning on…' : 'Looks right — turn it on'}

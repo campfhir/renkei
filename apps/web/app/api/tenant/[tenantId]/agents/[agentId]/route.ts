@@ -58,9 +58,6 @@ export async function PUT(
   const issues = validateAgentDraft(normalized, tools);
   if (issues.length > 0) return NextResponse.json({ issues }, { status: 422 });
 
-  // A save that changed nothing the summary describes — an on/off toggle —
-  // keeps the description it has instead of going stale and paying for a
-  // model call it cannot improve.
   const existing = await getAgent(dbResult.val, tenantId, session.subject, agentId);
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const describedChanged =
@@ -68,7 +65,14 @@ export async function PUT(
     JSON.stringify(existing.steps) !== JSON.stringify(normalized.steps) ||
     JSON.stringify(existing.triggers.map((trigger) => trigger.draft)) !==
       JSON.stringify(normalized.triggers);
-  const needsDescription = describedChanged || existing.descriptionStatus !== 'ok';
+  // An explicit Save (refreshDescription — the builder's Save button)
+  // rewrites the summary unconditionally: the review panel is about to
+  // show it, so it must reflect THIS save, not a cached earlier one. The
+  // panel's confirm and the list's on/off toggle omit the flag, so they
+  // only regenerate when the content actually changed (or a summary is
+  // still missing) — confirming must never re-stale what was just read.
+  const needsDescription =
+    parsed.refreshDescription || describedChanged || existing.descriptionStatus !== 'ok';
 
   const result = await updateAgent(
     dbResult.val,

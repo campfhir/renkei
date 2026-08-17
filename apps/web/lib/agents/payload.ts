@@ -10,7 +10,7 @@ import type { SaveAgentInput, TriggerPayload } from '@/lib/agents/store';
 
 export function parseAgentPayload(
   body: unknown
-): { input: SaveAgentInput; draft: AgentDraft } | { error: string } {
+): { input: SaveAgentInput; draft: AgentDraft; refreshDescription: boolean } | { error: string } {
   if (typeof body !== 'object' || body === null) return { error: 'A JSON body is required' };
   const payload: {
     name?: unknown;
@@ -18,6 +18,7 @@ export function parseAgentPayload(
     triggers?: unknown;
     enabled?: unknown;
     llmModelId?: unknown;
+    refreshDescription?: unknown;
   } = body;
 
   if (typeof payload.name !== 'string') return { error: 'name is required' };
@@ -48,5 +49,10 @@ export function parseAgentPayload(
       enabled,
       llmModelId,
     },
+    // The builder's Save sets this: an explicit save rewrites the summary
+    // unconditionally, because the person is about to be shown it for
+    // review. The review panel's confirm omits it, so confirming never
+    // re-stales the summary that was just read.
+    refreshDescription: payload.refreshDescription === true,
   };
 }

@@ -243,7 +243,7 @@ export function AgentsList({
                 <span className="flex items-center gap-2 italic text-gray-400 dark:text-gray-500">
                   <span
                     aria-hidden="true"
-                    className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 dark:border-gray-700"
+                    className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400"
                   />
                   Writing a summary…
                 </span>
