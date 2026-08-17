@@ -22,6 +22,11 @@ export type { ClaimedMessage as ClaimedEvent, Disposition } from '@renkei/queue'
  * source — claims are already fair across sources either way; fixation is
  * for dedicating whole instances (e.g. one container that only serves chat
  * while another drains the rest).
+ *
+ * Each listed source implies its `domain:{source}` lane too: a provider
+ * handler ends by publishing a domain event (domain-events.ts), and an
+ * instance fixated on the provider must also dispatch what it publishes —
+ * otherwise its events would pile up waiting for an unfixated sibling.
  */
 function eventSourcesFromEnv(): readonly string[] | undefined {
   const raw = process.env.WORKER_EVENT_SOURCES;
@@ -30,7 +35,7 @@ function eventSourcesFromEnv(): readonly string[] | undefined {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  return sources.length > 0 ? sources : undefined;
+  return sources.length > 0 ? sources.flatMap((s) => [s, `domain:${s}`]) : undefined;
 }
 
 export const eventsQueue: Queue = webhookEventsQueue({ sources: eventSourcesFromEnv() });

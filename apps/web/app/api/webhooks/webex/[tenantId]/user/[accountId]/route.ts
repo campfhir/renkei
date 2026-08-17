@@ -3,7 +3,8 @@
  * the user's OWN token (there is no bot). Deliberately thin (RENKEI.md
  * Decision #17): verify the signature over the raw bytes against the
  * grant's own per-user secret, validate shape, enqueue; the worker fetches
- * the message with the same user's token and fans into their agents.
+ * the message with the same user's token and publishes it as a domain
+ * event for dispatch to its subscribers.
  */
 
 import { NextRequest, NextResponse } from 'next/server';

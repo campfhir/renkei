@@ -2,7 +2,7 @@
  * Periodic webhook health for the all-spaces registrations: the worker
  * half of "connectors silently rot" (RENKEI.md). WebEx deletes webhooks
  * out from under us and flips persistently-failing ones to inactive —
- * after which a user's agents just stop firing, with nothing to notice.
+ * after which deliveries silently stop, with nothing to notice.
  * This sweep notices: every interval it reconciles each OPTED-IN grant's
  * registration (made with that user's own token — there is no bot) toward
  * the required single webhook, and logs loudly on every repair, because a

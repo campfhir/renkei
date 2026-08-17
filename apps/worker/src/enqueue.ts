@@ -55,12 +55,19 @@ export type KnowledgeEventType =
  * cards). The index self-heals on the next capture or sweep of the same
  * object — the same trade the old inline path made by logging and
  * continuing on embed failure.
+ *
+ * `strict: true` inverts that: the enqueue failure throws. For call sites
+ * where nothing irreversible has happened yet (the dispatch handler
+ * enqueues knowledge BEFORE agent fan-out) and no later sweep would
+ * re-capture the object, retrying the event is strictly better than
+ * silently losing it from the index.
  */
 export async function enqueueKnowledgeEvent(
   tenantId: string,
   type: KnowledgeEventType,
   payload: Record<string, unknown>,
-  orderingKey: string | null = null
+  orderingKey: string | null = null,
+  options: { strict?: boolean } = {}
 ): Promise<void> {
   // The provider becomes a fairness LANE on the source. Every knowledge event
   // used to be `knowledge`, which made the queue's round-robin useless here:
@@ -76,6 +83,9 @@ export async function enqueueKnowledgeEvent(
     orderingKey,
   });
   if (!enqueued.ok) {
+    if (options.strict) {
+      throw new Error(`knowledge job ${type} not enqueued: ${enqueued.err.message ?? 'unknown'}`);
+    }
     logger.error('knowledge job {type} not enqueued: {error}', {
       component: 'worker/enqueue',
       type,

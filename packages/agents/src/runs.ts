@@ -117,7 +117,11 @@ export async function createAgentRun(
 
   const enqueueResult = await producer.enqueue({
     tenantId: input.tenantId,
-    source: 'agents',
+    // The agent id is a fairness LANE on the source (like `knowledge:jira`
+    // on the embedding queue): the ordering key below serializes THIS
+    // agent's runs, and the lane keeps its backlog from delaying claims for
+    // every other agent.
+    source: `agents:${input.agentId}`,
     type: 'run',
     payload: { runId },
     orderingKey: `agent:${input.agentId}`,

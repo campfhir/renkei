@@ -26,8 +26,8 @@ import {
   createMicrosoftMessageOverrideHandler,
 } from './handlers/microsoft-events';
 import { createZoomTranscriptHandler, createZoomSummaryHandler } from './handlers/zoom-events';
+import { createDomainDispatchHandler } from './handlers/domain-dispatch';
 import { createAgentRunFailedHandler } from './handlers/agent-run-failed';
-import { createAgentRunReplyHandler } from './handlers/agent-run-reply';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
 import {
@@ -51,10 +51,18 @@ function registerConnectorHandlers(): void {
   registerHandler('zoom', 'recording.transcript_completed', createZoomTranscriptHandler());
   registerHandler('zoom', 'meeting.summary_completed', createZoomSummaryHandler());
   // Emitted by worker-agents when a run fails; delivery of the owner's
-  // notification belongs here, where the connector paths live.
+  // notification belongs here, where the connector paths live. (run.reply
+  // is gone: agents that answer in a room do it as a STEP now.)
   registerHandler('agents', 'run.failed', createAgentRunFailedHandler());
-  registerHandler('agents', 'run.reply', createAgentRunReplyHandler());
-  logger.info('webex, microsoft and zoom handlers registered', { component: 'worker/loop' });
+  // Domain events published by the provider handlers above arrive on
+  // `domain:{provider}` lanes; the colon-lane fallback in handlerFor
+  // resolves them to the one dispatch handler, registered per type.
+  const dispatch = createDomainDispatchHandler();
+  registerHandler('domain', 'message.received', dispatch);
+  registerHandler('domain', 'mail.received', dispatch);
+  logger.info('webex, microsoft, zoom and dispatch handlers registered', {
+    component: 'worker/loop',
+  });
 }
 
 const loop = createEventLoop({

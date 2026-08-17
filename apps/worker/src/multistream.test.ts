@@ -145,6 +145,18 @@ jest.mock('./enqueue', () => ({
 // The worker's queue module reaches for Postgres; these suites bind the
 // loops to in-memory queues directly, so neuter the construction.
 jest.mock('./queue', () => ({ eventsQueue: null, embeddingQueue: null }));
+// Domain-event publishing rides the events queue (null here). These suites
+// probe queue latency, not dispatch — record publishes and move on; the
+// dispatch handler has its own suite (handlers/domain-dispatch.test.ts).
+jest.mock('./domain-events', () => ({
+  BODY_PREVIEW_CHARS: 1_024,
+  isRecentMail: (receivedDateTime: string) => {
+    const received = Date.parse(receivedDateTime);
+    return Number.isFinite(received) && Date.now() - received < 24 * 60 * 60_000;
+  },
+  subjectForMicrosoftAccount: jest.fn(async () => 'owner-1'),
+  publishDomainEvent: jest.fn(async () => undefined),
+}));
 
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';

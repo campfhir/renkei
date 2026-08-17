@@ -143,19 +143,20 @@ export default function WebexUserConnector({
         <div className="mt-3 rounded-md border border-gray-200 p-3 dark:border-gray-800">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0 max-w-md">
-              <p className="text-sm font-medium">Trigger my agents from all my spaces</p>
+              <p className="text-sm font-medium">Watch all my spaces</p>
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 Registers a webhook on your own WebEx account covering every space you&apos;re in —
-                including ones you join later. Messages feed only your own agents&apos; triggers;
-                nothing is stored or indexed, and your own messages never trigger your agents (that
-                would loop). Agent replies post as you.
+                including ones you join later. Renkei reacts to new messages in real time (for
+                example, agents you&apos;ve given a message trigger) and indexes them into org
+                knowledge, where a message is only ever readable by people who are currently members
+                of its space. Your own messages are never reacted to (that would loop).
               </p>
             </div>
             <button
               type="button"
               role="switch"
               aria-checked={allSpaces}
-              aria-label="Trigger my agents from all my spaces"
+              aria-label="Watch all my spaces"
               disabled={spacesBusy}
               onClick={() => void toggleAllSpaces(!allSpaces)}
               className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${

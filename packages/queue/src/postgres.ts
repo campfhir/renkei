@@ -383,5 +383,10 @@ export function agentJobsQueue(): Queue {
     // step retries are the engine's own, counted in agent_run_steps against
     // the user's attempt budget. Three redeliveries is plenty for crashes.
     policy: { maxAttempts: 3, baseDelaySeconds: 60, maxDelaySeconds: 3600 },
+    // Producers tag the source with the agent (`agents:{agentId}`), making
+    // each agent its own fairness lane: ordering keys already keep ONE
+    // agent's runs serial, but without lane fairness a 50-run backlog on one
+    // agent put every other agent's next run 50 places down the line.
+    fairAcrossSources: true,
   });
 }

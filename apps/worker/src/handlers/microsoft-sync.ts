@@ -30,7 +30,12 @@ import { MICROSOFT } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import type { RawEmail } from '@renkei/email-sanitizer';
 import { enqueueKnowledgeEvent } from '../enqueue';
-import { fanOutMailReceived, isRecentMail } from './agent-triggers';
+import {
+  publishDomainEvent,
+  subjectForMicrosoftAccount,
+  isRecentMail,
+  BODY_PREVIEW_CHARS,
+} from '../domain-events';
 import { logger } from '../logger';
 import type { MicrosoftAccess } from './microsoft-access';
 
@@ -413,21 +418,30 @@ export async function runSubscriptionSync(
       );
       changed += 1;
 
-      // Agent event triggers: only genuinely NEW mail. A full rebuild
-      // replays the whole mailbox and a delta round replays updated items
-      // (a read-status flip on old mail); the rebuild skip plus the
-      // recency window keep "an email arrives" meaning arrives.
+      // Domain event: only genuinely NEW mail. A full rebuild replays the
+      // whole mailbox and a delta round replays updated items (a
+      // read-status flip on old mail); the rebuild skip plus the recency
+      // window keep "an email arrives" meaning arrives. Subscribers
+      // (agent triggers) are resolved by the dispatch handler.
       const receivedAt = str(entry.receivedDateTime);
       if (!fullRebuild && isRecentMail(receivedAt)) {
-        await fanOutMailReceived({
-          tenantId,
-          accountId: access.accountId,
-          messageId: objectId,
-          subject: str(entry.subject),
-          bodyPreview: str(entry.bodyPreview),
-          from: str(rec(rec(entry.from).emailAddress).address),
-          receivedDateTime: receivedAt,
-        });
+        const ownerSubject = await subjectForMicrosoftAccount(tenantId, access.accountId);
+        if (ownerSubject) {
+          await publishDomainEvent({
+            tenantId,
+            provider: 'microsoft',
+            type: 'mail.received',
+            ownerSubject,
+            data: {
+              subject: str(entry.subject),
+              body: str(entry.bodyPreview).slice(0, BODY_PREVIEW_CHARS),
+              from: str(rec(rec(entry.from).emailAddress).address),
+              messageId: objectId,
+            },
+            occurredAt: receivedAt,
+            orderingKey: `microsoft/${tenantId}/${access.accountId}`,
+          });
+        }
       }
       continue;
     }
