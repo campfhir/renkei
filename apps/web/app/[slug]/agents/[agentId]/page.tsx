@@ -6,8 +6,11 @@ import { instructionPreview } from '@renkei/agents';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
-import { getAgent } from '@/lib/agents/store';
+import { getAgent, readShareToken } from '@/lib/agents/store';
 import { parseReviewNotes } from '@/lib/agents/notes';
+import MemoryPanel from './memory-panel';
+import KnowledgePanel from './knowledge-panel';
+import ShareAgent from './share-agent';
 
 /**
  * The readable overview of one agent: the generated description (the
@@ -34,6 +37,7 @@ export default async function AgentOverviewPage({
   const agent = await getAgent(dbResult.val, tenant.id, session.subject, agentId);
   if (!agent) notFound();
 
+  const shareToken = await readShareToken(dbResult.val, tenant.id, session.subject, agentId);
   const reviewNotes = parseReviewNotes(agent.reviewNotes);
 
   return (
@@ -92,6 +96,17 @@ export default async function AgentOverviewPage({
           </ul>
         </div>
       ) : null}
+
+      <KnowledgePanel tenantId={tenant.id} agentId={agentId} />
+
+      <MemoryPanel tenantId={tenant.id} agentId={agentId} />
+
+      <ShareAgent
+        slug={slug}
+        tenantId={tenant.id}
+        agentId={agentId}
+        initialToken={shareToken === 'NOT_FOUND' ? null : shareToken}
+      />
 
       <h2 className="mb-2 text-sm font-semibold">Steps</h2>
       <ol className="space-y-2">

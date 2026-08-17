@@ -28,6 +28,9 @@ export type AuditAction =
   | 'agent.enabled'
   | 'agent.disabled'
   | 'agent.deleted'
+  | 'agent.shared'
+  | 'agent.unshared'
+  | 'agent.copied'
   | 'settings.updated'
   | 'sanitizer.script_saved'
   | 'sanitizer.script_deleted';
