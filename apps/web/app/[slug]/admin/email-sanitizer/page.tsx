@@ -53,7 +53,7 @@ export default async function AdminEmailSanitizerPage({
       </p>
       {hasOrgModel && <SuggestRulesPanel slug={slug} />}
       <RuleForms slug={slug} />
-      <CleanerScripts slug={slug} />
+      <CleanerScripts slug={slug} canSuggest={hasOrgModel} />
     </div>
   );
 }

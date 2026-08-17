@@ -24,7 +24,13 @@ const PLACEHOLDER = `(email) => email.text
  * unchanged and the error shows here. The test box runs the script in the
  * exact production sandbox before anything is saved or enabled.
  */
-export default function CleanerScripts({ slug }: { slug: string }) {
+export default function CleanerScripts({
+  slug,
+  canSuggest,
+}: {
+  slug: string;
+  canSuggest: boolean;
+}) {
   const url = `/api/admin/${slug}/email-sanitizer/scripts`;
   const [scripts, setScripts] = useState<CleanerScript[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +51,12 @@ export default function CleanerScripts({ slug }: { slug: string }) {
   const [testOutput, setTestOutput] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
+
+  // Model drafting: sample (shared with the test box) + optional intent in,
+  // a pre-flown script out — landed in the editor, never auto-saved.
+  const [instructions, setInstructions] = useState('');
+  const [drafting, setDrafting] = useState(false);
+  const [draftRationale, setDraftRationale] = useState<string | null>(null);
 
   async function load() {
     const result = await getJson<{ scripts: CleanerScript[] }>(url);
@@ -98,6 +110,33 @@ export default function CleanerScripts({ slug }: { slug: string }) {
     const result = await sendJsonFull(`${url}/${script.id}`, 'DELETE');
     if (result.error) setError(result.error);
     await load();
+  }
+
+  async function draft() {
+    setDrafting(true);
+    setError(null);
+    setDraftRationale(null);
+    setTestOutput(null);
+    setTestError(null);
+    const result = await sendJsonFull<{
+      name: string;
+      script: string;
+      rationale: string;
+      sampleOutput: string;
+    }>(`${url}/suggest`, 'POST', {
+      text: sample,
+      ...(instructions.trim() ? { instructions } : {}),
+    });
+    setDrafting(false);
+    if (result.error || !result.data) {
+      setError(result.error ?? 'Drafting failed');
+      return;
+    }
+    if (!name.trim()) setName(result.data.name);
+    setSource(result.data.script);
+    setDraftRationale(result.data.rationale);
+    // The server already ran it on the sample — show the before/after now.
+    setTestOutput(result.data.sampleOutput);
   }
 
   async function test() {
@@ -222,6 +261,32 @@ export default function CleanerScripts({ slug }: { slug: string }) {
             />
           ))}
         </div>
+        {canSuggest && (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={instructions}
+              onChange={(event) => setInstructions(event.target.value)}
+              placeholder="Optional: what should the script do? (e.g. drop the signature block)"
+              className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
+            />
+            <button
+              type="button"
+              disabled={drafting || sample.trim().length < 40}
+              onClick={() => void draft()}
+              title="Uses the pasted sample above; the draft lands in the editor for review"
+              className="rounded-md border border-blue-600 px-3 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-50 disabled:opacity-50 dark:hover:bg-blue-900/20"
+            >
+              {drafting ? 'Drafting…' : '✨ Draft with your org model'}
+            </button>
+          </div>
+        )}
+        {draftRationale && (
+          <p className="text-xs text-gray-600 dark:text-gray-400">
+            <span className="font-semibold">Draft:</span> {draftRationale} — already run on your
+            sample (output below). Review the code, then save to enable.
+          </p>
+        )}
+
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
