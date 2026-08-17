@@ -30,6 +30,8 @@ export interface StepCardProps {
   step: AgentStep;
   index: number;
   count: number;
+  /** The org's per-step attempt ceiling — the tries select offers no more. */
+  attemptsCap: number;
   onChange: (step: AgentStep) => void;
   onMove: (direction: -1 | 1) => void;
   onDelete: () => void;
@@ -44,6 +46,7 @@ export function StepCard({
   step,
   index,
   count,
+  attemptsCap,
   onChange,
   onMove,
   onDelete,
@@ -186,6 +189,7 @@ export function StepCard({
               handling={step.failureHandling}
               onChange={(failureHandling) => onChange({ ...step, failureHandling })}
               maxAttempts={step.maxAttempts}
+              attemptsCap={attemptsCap}
               onMaxAttemptsChange={(maxAttempts) => onChange({ ...step, maxAttempts })}
               tools={tools}
               variables={variables}

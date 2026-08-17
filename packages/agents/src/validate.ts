@@ -6,7 +6,7 @@
  * existed only in the UI would be a rule that did not exist.
  *
  * It CLAMPS rather than rejects where the platform has a ceiling: a draft
- * asking for 9 attempts persists with 5, because the cap is the platform's
+ * asking for 99 attempts persists with 10, because the cap is the platform's
  * decision, not a negotiation with the client. `normalizeAgentDraft` is
  * therefore part of the contract: routes persist the normalized draft, not
  * the submitted one.
@@ -173,11 +173,17 @@ function validateStep(
 }
 
 /**
- * Clamp platform ceilings into the draft. Routes persist THIS, never the
- * raw submission — which is what makes the 5-attempt cap server-enforced
- * no matter what a client sends.
+ * Clamp ceilings into the draft. Routes persist THIS, never the raw
+ * submission — which is what makes the attempt cap server-enforced no
+ * matter what a client sends. The cap itself is the ORG's
+ * `agentMaxStepAttempts` setting (routes pass it in); MAX_STEP_ATTEMPTS is
+ * only the default for callers with no settings in hand.
  */
-export function normalizeAgentDraft(draft: AgentDraft): AgentDraft {
+export function normalizeAgentDraft(
+  draft: AgentDraft,
+  options: { attemptsCap?: number } = {}
+): AgentDraft {
+  const cap = Math.max(1, options.attemptsCap ?? MAX_STEP_ATTEMPTS);
   return {
     ...draft,
     name: draft.name.trim(),
@@ -190,7 +196,7 @@ export function normalizeAgentDraft(draft: AgentDraft): AgentDraft {
         // the pattern (and every later lookup) never meets stray whitespace.
         ...(step.saveAs !== undefined ? { saveAs: step.saveAs.trim() || undefined } : {}),
         maxAttempts: Math.min(
-          MAX_STEP_ATTEMPTS,
+          cap,
           Math.max(1, Math.round(Number.isFinite(step.maxAttempts) ? step.maxAttempts : 1))
         ),
       })),

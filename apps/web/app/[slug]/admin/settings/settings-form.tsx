@@ -14,6 +14,7 @@ export interface EditableSettings {
   refreshTokenTtlDays: number;
   agentMaxChainDepth: number;
   agentRunTimeoutMinutes: number;
+  agentMaxStepAttempts: number;
   agentMaxRunsPerDay: number;
 }
 
@@ -161,6 +162,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
         </Row>
         <Row label="Run timeout (minutes)" hint="Wall-clock budget for a single agent run.">
           {numberInput('agentRunTimeoutMinutes', '1–120')}
+        </Row>
+        <Row
+          label="Max tries per step"
+          hint="Ceiling on a step's 'give up after N tries' (default 10). Enforced at run time, so lowering it applies to existing agents immediately."
+        >
+          {numberInput('agentMaxStepAttempts', '1–100')}
         </Row>
         <Row
           label="Max chain depth"

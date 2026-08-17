@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { normalizeAgentDraft, validateAgentDraft } from '@renkei/agents';
+import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromRequest } from '@/lib/session';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { parseAgentPayload } from '@/lib/agents/payload';
@@ -52,7 +53,10 @@ export async function POST(
   const parsed = parseAgentPayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const normalized = normalizeAgentDraft(parsed.draft);
+  const settings = await getOrgSettings(tenantId);
+  const normalized = normalizeAgentDraft(parsed.draft, {
+    attemptsCap: settings.ok ? settings.val.agentMaxStepAttempts : undefined,
+  });
   const tools = await listAvailableTools(tenantId, session.subject);
   const issues = validateAgentDraft(normalized, tools);
   if (issues.length > 0) return NextResponse.json({ issues }, { status: 422 });

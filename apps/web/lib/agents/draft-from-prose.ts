@@ -249,7 +249,7 @@ export async function draftAgentFromProse(
       name: typeof step.name === 'string' ? step.name.slice(0, 80) : (origin?.name ?? ''),
       instruction: segments,
       tool: tool?.name ?? null,
-      maxAttempts: origin?.maxAttempts ?? 3,
+      maxAttempts: origin?.maxAttempts ?? 5,
       // Failure conditions belong to a tool; a changed tool starts clean.
       failureHandling: sameTool ? origin.failureHandling : [],
       ...(saveAs ? { saveAs } : {}),

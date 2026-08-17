@@ -71,6 +71,14 @@ export interface OrgSettings {
   agentMaxChainDepth: number;
   /** Wall-clock budget for a single agent run, checked between attempts. */
   agentRunTimeoutMinutes: number;
+  /**
+   * Org ceiling on a step's total attempts ("give up after N tries").
+   * Default 10 — a deliberate limit, not a hard one: an org may raise it
+   * (the admin API bounds it at 100 so a typo cannot mint a thousand-try
+   * loop) or lower it. Enforced by the engine at runtime, so a change takes
+   * effect on existing agents without re-saving them.
+   */
+  agentMaxStepAttempts: number;
   /** Per-tenant ceiling on runs started per day — the runaway-trigger brake. */
   agentMaxRunsPerDay: number;
 }
@@ -92,6 +100,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentRunRetentionDays: 30,
   agentMaxChainDepth: 3,
   agentRunTimeoutMinutes: 15,
+  agentMaxStepAttempts: 10,
   agentMaxRunsPerDay: 200,
 };
 
@@ -174,6 +183,9 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     agentRunTimeoutMinutes: Number(
       coerce(stored.get('agent_run_timeout_minutes'), d.agentRunTimeoutMinutes)
     ),
+    agentMaxStepAttempts: Number(
+      coerce(stored.get('agent_max_step_attempts'), d.agentMaxStepAttempts)
+    ),
     agentMaxRunsPerDay: Number(coerce(stored.get('agent_max_runs_per_day'), d.agentMaxRunsPerDay)),
   };
 
@@ -206,6 +218,7 @@ export async function setOrgSettings(
     ['agent_run_retention_days', updates.agentRunRetentionDays],
     ['agent_max_chain_depth', updates.agentMaxChainDepth],
     ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
+    ['agent_max_step_attempts', updates.agentMaxStepAttempts],
     ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
   ];
 

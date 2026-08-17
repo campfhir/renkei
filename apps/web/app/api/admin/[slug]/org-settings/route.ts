@@ -25,6 +25,8 @@ const NUMERIC_BOUNDS = {
   refreshTokenTtlDays: [1, 365],
   agentMaxChainDepth: [1, 10],
   agentRunTimeoutMinutes: [1, 120],
+  // Above the 10 default is allowed on purpose; 100 is the typo guard.
+  agentMaxStepAttempts: [1, 100],
   agentMaxRunsPerDay: [1, 10_000],
 } as const;
 
@@ -37,6 +39,7 @@ const NUMERIC_KEYS = [
   'refreshTokenTtlDays',
   'agentMaxChainDepth',
   'agentRunTimeoutMinutes',
+  'agentMaxStepAttempts',
   'agentMaxRunsPerDay',
 ] as const;
 
@@ -56,6 +59,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     refreshTokenTtlDays: settings.refreshTokenTtlDays,
     agentMaxChainDepth: settings.agentMaxChainDepth,
     agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
+    agentMaxStepAttempts: settings.agentMaxStepAttempts,
     agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
   };
 }

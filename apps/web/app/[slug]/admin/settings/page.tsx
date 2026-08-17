@@ -66,6 +66,7 @@ export default async function SettingsPage({
     refreshTokenTtlDays: settings.refreshTokenTtlDays,
     agentMaxChainDepth: settings.agentMaxChainDepth,
     agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
+    agentMaxStepAttempts: settings.agentMaxStepAttempts,
     agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
   };
 

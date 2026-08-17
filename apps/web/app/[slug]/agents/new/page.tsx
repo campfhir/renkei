@@ -38,6 +38,7 @@ export default async function NewAgentPage({
         tools={data.tools}
         otherAgents={data.otherAgents}
         models={data.models}
+        attemptsCap={data.attemptsCap}
       />
     </div>
   );

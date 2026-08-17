@@ -74,7 +74,7 @@ describe('normalizeAgentDraft', () => {
     const normalized = normalizeAgentDraft(
       draft({ steps: { version: 1, steps: [step({ maxAttempts: 99 })] } })
     );
-    expect(normalized.steps.steps[0]?.maxAttempts).toBe(5);
+    expect(normalized.steps.steps[0]?.maxAttempts).toBe(10);
   });
 
   it('floors attempts at one and rounds fractions', () => {

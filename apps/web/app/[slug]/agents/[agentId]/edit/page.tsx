@@ -42,6 +42,7 @@ export default async function EditAgentPage({
         tools={data.tools}
         otherAgents={data.otherAgents}
         models={data.models}
+        attemptsCap={data.attemptsCap}
         existing={agent}
       />
     </div>

@@ -20,6 +20,8 @@ import type { ToolOption, VariableOption } from './options';
 const CORRECTIVE_TOOL_LIMIT = 10;
 
 export interface FailurePanelProps {
+  /** The org's ceiling on tries — the select offers exactly this many. */
+  attemptsCap: number;
   outcomes: ToolOutcomes;
   handling: FailureHandling[];
   onChange: (handling: FailureHandling[]) => void;
@@ -31,6 +33,7 @@ export interface FailurePanelProps {
 }
 
 export function FailurePanel({
+  attemptsCap,
   outcomes,
   handling,
   onChange,
@@ -142,14 +145,14 @@ export function FailurePanel({
             onChange={(event) => onMaxAttemptsChange(Number(event.target.value))}
             className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
           >
-            {[1, 2, 3, 4, 5].map((n) => (
+            {Array.from({ length: Math.max(1, attemptsCap) }, (_, i) => i + 1).map((n) => (
               <option key={n} value={n}>
                 {n === 1 ? '1 try' : `${n} tries`}
               </option>
             ))}
           </select>
           <span className="text-xs text-gray-500 dark:text-gray-400">
-            counting the first one — 5 is the most an agent may try
+            counting the first one — {attemptsCap} is the most your organization allows
           </span>
         </div>
       ) : null}

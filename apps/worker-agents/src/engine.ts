@@ -30,7 +30,6 @@ import {
   toolSegments,
   type AgentStep,
   type FailureHandling,
-  MAX_STEP_ATTEMPTS,
 } from '@renkei/agents';
 import {
   resolveAgentLlm,
@@ -345,7 +344,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
           .where('id', '=', runId)
           .execute();
 
-        const result = await executeStep(run, step, toolsByName, llm, mcp, vars, deadline);
+        const result = await executeStep(
+          run,
+          step,
+          toolsByName,
+          llm,
+          mcp,
+          vars,
+          deadline,
+          settings.agentMaxStepAttempts
+        );
         if (result.kind === 'advance') {
           stepIndex += 1;
           continue;
@@ -417,7 +425,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     llm: ResolvedLlm,
     mcp: McpClient,
     vars: Record<string, string>,
-    deadline: number
+    deadline: number,
+    orgAttemptCap: number
   ): Promise<{ kind: 'advance' } | { kind: 'fail'; errorKind: string; error: string }> {
     // Pre-flight: the step's tool must exist in the OWNER's live projection.
     // No LLM spend on a run that cannot work.
@@ -429,7 +438,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
       };
     }
 
-    const budget = Math.min(step.maxAttempts, MAX_STEP_ATTEMPTS);
+    // Two ceilings, lower wins: the step's own setting and the ORG's cap —
+    // a live setting, so lowering it bites existing agents without a
+    // re-save. The org cap may exceed MAX_STEP_ATTEMPTS (that constant is
+    // the default, not an absolute), which is why it is not min'd in here.
+    const budget = Math.min(step.maxAttempts, Math.max(1, orgAttemptCap));
     let lastFailureSummary: string | undefined;
     let lastFailureCode: string | null = null;
 

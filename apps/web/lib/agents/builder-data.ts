@@ -7,6 +7,8 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
+import { MAX_STEP_ATTEMPTS } from '@renkei/agents';
+import { getOrgSettings } from '@renkei/settings';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { listAgents } from '@/lib/agents/store';
 
@@ -14,6 +16,8 @@ export interface BuilderData {
   tools: ToolDescriptor[];
   otherAgents: { id: string; name: string }[];
   models: { id: string; label: string; isDefault: boolean }[];
+  /** The org's per-step attempt ceiling — the builder offers no more. */
+  attemptsCap: number;
 }
 
 export async function loadBuilderData(
@@ -22,7 +26,7 @@ export async function loadBuilderData(
   subject: string,
   excludeAgentId?: string
 ): Promise<BuilderData> {
-  const [tools, agents, modelRows] = await Promise.all([
+  const [tools, agents, modelRows, settings] = await Promise.all([
     listAvailableTools(tenantId, subject),
     listAgents(db, tenantId, subject),
     db
@@ -32,6 +36,7 @@ export async function loadBuilderData(
       .where('enabled', '=', true)
       .orderBy('label')
       .execute(),
+    getOrgSettings(tenantId),
   ]);
   return {
     tools,
@@ -43,5 +48,7 @@ export async function loadBuilderData(
       label: model.label,
       isDefault: model.is_default,
     })),
+    // The org cap may exceed the 10 default — it is the real ceiling.
+    attemptsCap: Math.max(1, settings.ok ? settings.val.agentMaxStepAttempts : MAX_STEP_ATTEMPTS),
   };
 }

@@ -43,6 +43,8 @@ export interface AgentBuilderProps {
   otherAgents: AgentChoice[];
   /** Org models the agent may pin (label + id); empty hides the picker. */
   models: { id: string; label: string; isDefault: boolean }[];
+  /** The org's per-step attempt ceiling (org settings; default 10). */
+  attemptsCap: number;
   /** Present in edit mode. */
   existing?: StoredAgent;
 }
@@ -59,13 +61,14 @@ function notesOf(agent: StoredAgent | undefined | null): ReviewNote[] {
   return parseReviewNotes(agent?.reviewNotes);
 }
 
-function newStep(): AgentStep {
+function newStep(attemptsCap: number): AgentStep {
   return {
     id: randomUUID(),
     name: '',
     instruction: [],
     tool: null,
-    maxAttempts: 3,
+    // 5 tries by default; a stricter org cap wins.
+    maxAttempts: Math.min(5, attemptsCap),
     failureHandling: [],
   };
 }
@@ -76,12 +79,13 @@ export function AgentBuilder({
   tools,
   otherAgents,
   models,
+  attemptsCap,
   existing,
 }: AgentBuilderProps) {
   const router = useRouter();
   const [agentId, setAgentId] = useState<string | null>(existing?.id ?? null);
   const [name, setName] = useState(existing?.name ?? '');
-  const [steps, setSteps] = useState<AgentStep[]>(existing?.steps.steps ?? [newStep()]);
+  const [steps, setSteps] = useState<AgentStep[]>(existing?.steps.steps ?? [newStep(attemptsCap)]);
   const [triggers, setTriggers] = useState<BuilderTrigger[]>(
     existing?.triggers.map((trigger) => ({
       id: trigger.id,
@@ -510,6 +514,7 @@ export function AgentBuilder({
               step={step}
               index={index}
               count={steps.length}
+              attemptsCap={attemptsCap}
               onChange={(next) => updateStep(index, next)}
               onMove={(direction) => {
                 setSteps((current) => {
@@ -531,7 +536,7 @@ export function AgentBuilder({
         </div>
         <button
           type="button"
-          onClick={() => setSteps((current) => [...current, newStep()])}
+          onClick={() => setSteps((current) => [...current, newStep(attemptsCap)])}
           className="mt-3 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
         >
           + Add a step

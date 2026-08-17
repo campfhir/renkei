@@ -40,6 +40,14 @@ export default async function AgentRunsPage({
 
   return (
     <div className="mx-auto max-w-3xl">
+      <p className="mb-2 text-sm">
+        <Link
+          href={`/${slug}/agents/${agentId}`}
+          className="text-blue-600 hover:underline dark:text-blue-400"
+        >
+          ← “{agent.name}”
+        </Link>
+      </p>
       <h1 className="mb-1 text-xl font-bold">Runs of “{agent.name}”</h1>
       <div className="mb-4 flex gap-2 text-sm">
         {[

@@ -286,7 +286,9 @@ maybe('agent run engine', () => {
       .select('attempt')
       .where('run_id', '=', runId)
       .execute();
-    expect(attempts).toHaveLength(5);
+    // The org's agentMaxStepAttempts (default 10) is the binding ceiling —
+    // the snapshot's 99 is a lie past it, however it got stored.
+    expect(attempts).toHaveLength(10);
   });
 
   it('forces a finish_step verdict when the tool budget runs out, and a declared success stands', async () => {

@@ -56,8 +56,12 @@ export interface AgentStepsDoc {
   steps: AgentStep[];
 }
 
-/** The platform ceiling on a step's total attempts. */
-export const MAX_STEP_ATTEMPTS = 5;
+/**
+ * The DEFAULT ceiling on a step's total attempts. The real ceiling is the
+ * org's `agentMaxStepAttempts` setting, which may exceed this; this value
+ * binds only where no settings are in hand.
+ */
+export const MAX_STEP_ATTEMPTS = 10;
 export const MAX_STEPS = 20;
 export const MAX_INSTRUCTION_CHARS = 4_000;
 
