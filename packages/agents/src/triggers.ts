@@ -9,7 +9,15 @@
  * draft → row; nothing here touches the database.
  */
 
-import { isRecurrence, isValidTimezone, type Recurrence } from './recurrence';
+import {
+  isBlackoutEntry,
+  isRecurrence,
+  isValidDateString,
+  isValidTimezone,
+  MAX_SCHEDULE_BLACKOUTS,
+  MAX_SCHEDULE_RULES,
+  type ScheduleConfig,
+} from './recurrence';
 import { triggerEventById } from './trigger-catalog';
 import { VARIABLE_NAME_PATTERN } from './steps';
 
@@ -25,15 +33,8 @@ export type TriggerDraft =
       /** TRIGGER_EVENT_CATALOG id, e.g. 'microsoft/mail.received'. */
       eventId: string;
       match?: { fromDomain?: string; subjectContains?: string };
-      /**
-       * WebEx events only: when the run finishes, the org bot posts the
-       * outcome into the triggering thread — a step's result saved as
-       * `reply` becomes the message. Default true; false keeps the agent
-       * silent in the room.
-       */
-      replyInThread?: boolean;
     }
-  | { kind: 'schedule'; recurrence: Recurrence; timezone: string }
+  | ({ kind: 'schedule' } & ScheduleConfig)
   | { kind: 'agent'; callerAgentId: string }
   | { kind: 'api'; inputs: ApiTriggerInput[] };
 
@@ -59,11 +60,47 @@ function validateOne(draft: TriggerDraft, index: number): TriggerIssue[] {
       break;
     }
     case 'schedule': {
-      if (!isRecurrence(draft.recurrence)) {
-        issues.push({ index, message: 'The schedule is incomplete.' });
+      if (!Array.isArray(draft.recurrences) || draft.recurrences.length === 0) {
+        issues.push({ index, message: 'A schedule needs at least one rule.' });
+      } else if (draft.recurrences.length > MAX_SCHEDULE_RULES) {
+        issues.push({
+          index,
+          message: `A schedule can have at most ${MAX_SCHEDULE_RULES} rules.`,
+        });
+      } else {
+        draft.recurrences.forEach((rule, at) => {
+          if (!isRecurrence(rule)) {
+            issues.push({ index, message: `Schedule rule ${at + 1} is incomplete.` });
+          }
+        });
       }
       if (!isValidTimezone(draft.timezone)) {
         issues.push({ index, message: 'The timezone is not recognized.' });
+      }
+      if (draft.startAt !== undefined && !isValidDateString(draft.startAt)) {
+        issues.push({ index, message: 'The start date is not a valid date.' });
+      }
+      if (draft.calendarId !== undefined && draft.calendarId.length === 0) {
+        issues.push({ index, message: 'Choose a holiday calendar, or none.' });
+      }
+      if (draft.blackouts !== undefined) {
+        if (draft.blackouts.length > MAX_SCHEDULE_BLACKOUTS) {
+          issues.push({
+            index,
+            message: `A schedule can carry at most ${MAX_SCHEDULE_BLACKOUTS} blackout entries.`,
+          });
+        } else if (!draft.blackouts.every(isBlackoutEntry)) {
+          issues.push({
+            index,
+            message: 'A blackout entry is not a valid date, range, or annual date.',
+          });
+        }
+      }
+      if (
+        draft.blackoutPolicy !== undefined &&
+        !['skip', 'before', 'after'].includes(draft.blackoutPolicy)
+      ) {
+        issues.push({ index, message: 'The blackout policy must be skip, before, or after.' });
       }
       break;
     }
@@ -105,7 +142,7 @@ export function isTriggerDraft(value: unknown): value is TriggerDraft {
     kind?: unknown;
     eventId?: unknown;
     match?: unknown;
-    recurrence?: unknown;
+    recurrences?: unknown;
     timezone?: unknown;
     callerAgentId?: unknown;
     inputs?: unknown;
@@ -114,7 +151,13 @@ export function isTriggerDraft(value: unknown): value is TriggerDraft {
     case 'event':
       return typeof draft.eventId === 'string';
     case 'schedule':
-      return isRecurrence(draft.recurrence) && typeof draft.timezone === 'string';
+      // Shape only (payload boundary); validateOne carries the field-level
+      // messages. Optional members are checked there too.
+      return (
+        Array.isArray(draft.recurrences) &&
+        draft.recurrences.every(isRecurrence) &&
+        typeof draft.timezone === 'string'
+      );
     case 'agent':
       return typeof draft.callerAgentId === 'string';
     case 'api':

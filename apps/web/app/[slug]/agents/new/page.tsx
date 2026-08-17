@@ -37,6 +37,7 @@ export default async function NewAgentPage({
         tenantId={tenant.id}
         tools={data.tools}
         otherAgents={data.otherAgents}
+        calendars={data.calendars}
         models={data.models}
         attemptsCap={data.attemptsCap}
       />

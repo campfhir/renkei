@@ -108,6 +108,7 @@ export default function AppNav({
               { href: `/${slug}/admin/connectors`, label: 'Connector setup' },
               { href: `/${slug}/admin/agents`, label: 'Agent oversight' },
               { href: `/${slug}/admin/llm-models`, label: 'Agent models' },
+              { href: `/${slug}/admin/calendars`, label: 'Holiday calendars' },
               { href: `/${slug}/admin/email-sanitizer`, label: 'Email sanitizer' },
               { href: `/${slug}/admin/redaction`, label: 'Sensitive data' },
               { href: `/${slug}/admin/people`, label: 'People' },

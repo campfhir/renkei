@@ -12,13 +12,13 @@
 
 import { useState } from 'react';
 import {
+  describeSchedule,
   TRIGGER_EVENT_CATALOG,
   triggerEventById,
-  type Recurrence,
   type TriggerDraft,
 } from '@renkei/agents';
 import type { TriggerPayload } from '@/lib/agents/store';
-import { SchedulePicker } from './schedule-picker';
+import { ScheduleEditor, type CalendarOption } from './schedule-picker';
 
 const inputClass =
   'rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -39,6 +39,8 @@ export interface TriggerPanelProps {
   onChange: (triggers: BuilderTrigger[]) => void;
   /** The caller's other agents, for "after another agent". */
   otherAgents: AgentChoice[];
+  /** The org's holiday calendars, for schedule blackouts. */
+  calendars: CalendarOption[];
   issues: string[];
 }
 
@@ -67,16 +69,9 @@ function summaryOf(draft: TriggerDraft, otherAgents: AgentChoice[]): string {
   switch (draft.kind) {
     case 'event':
       return triggerEventById(draft.eventId)?.label ?? draft.eventId;
-    case 'schedule': {
-      const rec: Recurrence = draft.recurrence;
-      if (rec.every === 'hour') return 'Every hour';
-      if (rec.every === 'day') return `Every day at ${rec.at}`;
-      if (rec.every === 'week') {
-        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-        return `Every ${days[rec.weekday]} at ${rec.at}`;
-      }
-      return `Monthly on day ${rec.day} at ${rec.at}`;
-    }
+    case 'schedule':
+      // The shared humanizer — the same prose the LLM description uses.
+      return describeSchedule(draft);
     case 'agent': {
       const name = otherAgents.find((agent) => agent.id === draft.callerAgentId)?.name;
       return `After “${name ?? 'another agent'}” finishes successfully`;
@@ -86,7 +81,13 @@ function summaryOf(draft: TriggerDraft, otherAgents: AgentChoice[]): string {
   }
 }
 
-export function TriggerPanel({ triggers, onChange, otherAgents, issues }: TriggerPanelProps) {
+export function TriggerPanel({
+  triggers,
+  onChange,
+  otherAgents,
+  calendars,
+  issues,
+}: TriggerPanelProps) {
   const [choosing, setChoosing] = useState(false);
 
   const add = (draft: TriggerDraft) => {
@@ -150,44 +151,12 @@ export function TriggerPanel({ triggers, onChange, otherAgents, issues }: Trigge
                 </button>
               </div>
 
-              {(() => {
-                // Bound to a const so the narrowing survives into onChange.
-                const draft = trigger.draft;
-                if (draft.kind !== 'event' || !draft.eventId.startsWith('webex/')) return null;
-                return (
-                  <label className="mt-2 flex items-start gap-2 text-xs text-gray-600 dark:text-gray-400">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={draft.replyInThread !== false}
-                      onChange={(event) =>
-                        update(index, { ...draft, replyInThread: event.target.checked })
-                      }
-                    />
-                    <span>
-                      Reply in the thread as the bot when the agent finishes.{' '}
-                      <span className="text-gray-400 dark:text-gray-500">
-                        Have a step “Save the result as” <code>reply</code> to control what it says.
-                      </span>
-                    </span>
-                  </label>
-                );
-              })()}
-
               {trigger.draft.kind === 'schedule' ? (
                 <div className="mt-2">
-                  <SchedulePicker
-                    value={trigger.draft.recurrence}
-                    onChange={(recurrence) =>
-                      update(index, {
-                        kind: 'schedule',
-                        recurrence,
-                        timezone:
-                          trigger.draft.kind === 'schedule'
-                            ? trigger.draft.timezone
-                            : defaultTimezone(),
-                      })
-                    }
+                  <ScheduleEditor
+                    value={trigger.draft}
+                    onChange={(config) => update(index, { kind: 'schedule', ...config })}
+                    calendars={calendars}
                   />
                 </div>
               ) : null}
@@ -230,7 +199,7 @@ export function TriggerPanel({ triggers, onChange, otherAgents, issues }: Trigge
               onClick={() =>
                 add({
                   kind: 'schedule',
-                  recurrence: { every: 'day', at: '09:00' },
+                  recurrences: [{ every: 'day', at: '09:00' }],
                   timezone: defaultTimezone(),
                 })
               }

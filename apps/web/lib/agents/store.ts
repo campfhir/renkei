@@ -20,11 +20,15 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { DB, Json } from '@renkei/db';
 import {
-  computeNextRun,
+  blackoutPredicate,
+  computeNextRunForSchedule,
   isAgentStepsDoc,
-  isRecurrence,
+  isBlackoutEntry,
+  parseScheduleConfig,
+  serializeScheduleConfig,
   triggerEventById,
   type AgentStepsDoc,
+  type BlackoutEntry,
   type TriggerDraft,
 } from '@renkei/agents';
 import { hashToken, generateSecret } from '@/lib/mcp-token';
@@ -91,9 +95,6 @@ function iso(value: Date | null): string | null {
 function draftOfRow(row: TriggerRow): { draft: TriggerDraft; keyHint: string | null } | null {
   const config: {
     match?: { fromDomain?: string; subjectContains?: string };
-    replyInThread?: unknown;
-    recurrence?: unknown;
-    timezone?: unknown;
     callerAgentId?: unknown;
     inputs?: unknown;
     keyHint?: unknown;
@@ -110,20 +111,17 @@ function draftOfRow(row: TriggerRow): { draft: TriggerDraft; keyHint: string | n
           kind: 'event',
           eventId,
           match: config.match,
-          replyInThread: config.replyInThread !== false,
         },
         keyHint: null,
       };
     }
     case 'schedule': {
       // Re-validated on the way out: jsonb strips the type, and a malformed
-      // row is dropped rather than thrown on.
-      const recurrence = config.recurrence;
-      const timezone = config.timezone;
-      if (typeof timezone !== 'string' || !isRecurrence(recurrence)) {
-        return null;
-      }
-      return { draft: { kind: 'schedule', recurrence, timezone }, keyHint: null };
+      // row is dropped rather than thrown on. parseScheduleConfig also
+      // upgrades the pre-042 single-recurrence shape in place.
+      const parsed = parseScheduleConfig(row.config);
+      if (!parsed) return null;
+      return { draft: { kind: 'schedule', ...parsed }, keyHint: null };
     }
     case 'agent': {
       if (typeof config.callerAgentId !== 'string') return null;
@@ -275,10 +273,22 @@ export async function getAgent(
   return row ? toStored(db, tenantId, row) : null;
 }
 
+/**
+ * Extract the ScheduleConfig half of a schedule draft — the draft IS a
+ * config plus the kind tag, but serializeScheduleConfig must never see the
+ * tag or stray fields.
+ */
+function scheduleConfigOf(draft: Extract<TriggerDraft, { kind: 'schedule' }>) {
+  const { kind: _kind, ...config } = draft;
+  return config;
+}
+
 /** Draft → the row columns the trigger kind needs. */
 function rowFieldsOf(
   draft: TriggerDraft,
-  existing?: { keyHash?: string; keyHint?: string }
+  existing?: { keyHash?: string; keyHint?: string },
+  /** Resolved org calendars, for schedule next_run_at computation. */
+  calendars?: ReadonlyMap<string, BlackoutEntry[]>
 ): {
   event_source: string | null;
   event_type: string | null;
@@ -292,22 +302,32 @@ function rowFieldsOf(
       return {
         event_source: event?.source ?? null,
         event_type: event?.type ?? null,
-        config: JSON.stringify({
-          match: draft.match ?? {},
-          replyInThread: draft.replyInThread !== false,
-        }),
+        config: JSON.stringify({ match: draft.match ?? {} }),
         next_run_at: null,
         mintedKey: null,
       };
     }
-    case 'schedule':
+    case 'schedule': {
+      let config = scheduleConfigOf(draft);
+      // A calendarId the tenant does not own resolves to nothing — drop it
+      // rather than store a dangling (possibly cross-tenant) reference.
+      if (config.calendarId && !calendars?.has(config.calendarId)) {
+        const { calendarId: _dropped, ...rest } = config;
+        config = rest;
+      }
+      const calendarDates = config.calendarId ? (calendars?.get(config.calendarId) ?? []) : [];
       return {
         event_source: null,
         event_type: null,
-        config: JSON.stringify({ recurrence: draft.recurrence, timezone: draft.timezone }),
-        next_run_at: computeNextRun(draft.recurrence, draft.timezone, new Date()),
+        config: serializeScheduleConfig(config),
+        next_run_at: computeNextRunForSchedule(
+          config,
+          new Date(),
+          blackoutPredicate(calendarDates)
+        ),
         mintedKey: null,
       };
+    }
     case 'agent':
       return {
         event_source: null,
@@ -335,6 +355,12 @@ function rowFieldsOf(
 /**
  * Reconcile the agent's trigger rows against the payload: update rows the
  * payload names, insert rows it does not, delete rows it no longer lists.
+ *
+ * Schedules get the keyHash treatment's sibling: when the schedule config
+ * is UNCHANGED by the save (compared canonically) and the stored
+ * next_run_at is still in the future, the stored value is preserved.
+ * Recomputing on every save pushed a daily schedule's next fire to
+ * tomorrow every time the agent was merely renamed.
  */
 async function reconcileTriggers(
   db: Kysely<DB>,
@@ -344,13 +370,29 @@ async function reconcileTriggers(
 ): Promise<MintedApiKey[]> {
   const existingRows = await db
     .selectFrom('agent_triggers')
-    .select(['id', 'kind', 'config'])
+    .select(['id', 'kind', 'config', 'next_run_at'])
     .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .execute();
   const existingById = new Map(existingRows.map((row) => [row.id, row]));
   const keptIds = new Set<string>();
   const minted: MintedApiKey[] = [];
+
+  // Resolve the org's calendars once for the whole reconcile: schedule
+  // rows both verify their calendarId against this tenant's set (ownership
+  // by construction — a foreign id silently resolves to no calendar) and
+  // fold the dates into next_run_at.
+  const calendars = new Map<string, BlackoutEntry[]>();
+  if (payloads.some((payload) => payload.draft.kind === 'schedule')) {
+    const rows = await db
+      .selectFrom('schedule_calendars')
+      .select(['id', 'dates'])
+      .where('tenant_id', '=', tenantId)
+      .execute();
+    for (const row of rows) {
+      calendars.set(row.id, Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : []);
+    }
+  }
 
   for (const payload of payloads) {
     const existing = payload.id ? existingById.get(payload.id) : undefined;
@@ -365,13 +407,30 @@ async function reconcileTriggers(
       !Array.isArray(match.config)
         ? match.config
         : {};
-    const fields = rowFieldsOf(payload.draft, {
-      keyHash: typeof existingConfig.keyHash === 'string' ? existingConfig.keyHash : undefined,
-      keyHint: typeof existingConfig.keyHint === 'string' ? existingConfig.keyHint : undefined,
-    });
+    const fields = rowFieldsOf(
+      payload.draft,
+      {
+        keyHash: typeof existingConfig.keyHash === 'string' ? existingConfig.keyHash : undefined,
+        keyHint: typeof existingConfig.keyHint === 'string' ? existingConfig.keyHint : undefined,
+      },
+      calendars
+    );
 
     if (match) {
       keptIds.add(match.id);
+      // The unchanged-schedule check compares what WOULD be stored against
+      // what IS stored, both in canonical form.
+      let nextRunAt = fields.next_run_at;
+      if (payload.draft.kind === 'schedule' && match.next_run_at) {
+        const stored = parseScheduleConfig(match.config);
+        if (
+          stored &&
+          serializeScheduleConfig(stored) === fields.config &&
+          match.next_run_at.getTime() > Date.now()
+        ) {
+          nextRunAt = match.next_run_at;
+        }
+      }
       await db
         .updateTable('agent_triggers')
         .set({
@@ -379,7 +438,7 @@ async function reconcileTriggers(
           event_type: fields.event_type,
           config: fields.config,
           enabled: payload.enabled,
-          next_run_at: fields.next_run_at,
+          next_run_at: nextRunAt,
           updated_at: sql`NOW()`,
         })
         .where('id', '=', match.id)
@@ -497,6 +556,62 @@ export async function updateAgent(
   }
   const apiKeys = await reconcileTriggers(db, tenantId, agentId, input.triggers);
   return { apiKeys };
+}
+
+/**
+ * Shared-view lookup: the ONE read that is not keyed by owner. Holding
+ * the link (plus a session in the tenant — the routes enforce that) IS
+ * the authorization to read this agent's configuration for copying.
+ */
+export async function getAgentByShareToken(
+  db: Kysely<DB>,
+  tenantId: string,
+  token: string
+): Promise<StoredAgent | null> {
+  if (!token) return null;
+  const row = await db
+    .selectFrom('agents')
+    .select(AGENT_COLUMNS)
+    .where('tenant_id', '=', tenantId)
+    .where('share_token', '=', token)
+    .executeTakeFirst();
+  return row ? toStored(db, tenantId, row) : null;
+}
+
+/** The agent's current share token — owner only; 'NOT_FOUND' keeps the 404 rule. */
+export async function readShareToken(
+  db: Kysely<DB>,
+  tenantId: string,
+  ownerSubject: string,
+  agentId: string
+): Promise<string | null | 'NOT_FOUND'> {
+  const row = await db
+    .selectFrom('agents')
+    .select('share_token')
+    .where('tenant_id', '=', tenantId)
+    .where('owner_subject', '=', ownerSubject)
+    .where('id', '=', agentId)
+    .executeTakeFirst();
+  if (!row) return 'NOT_FOUND';
+  return row.share_token;
+}
+
+/** Set (mint/regenerate) or clear (null) the share token — owner only. */
+export async function setShareToken(
+  db: Kysely<DB>,
+  tenantId: string,
+  ownerSubject: string,
+  agentId: string,
+  token: string | null
+): Promise<boolean> {
+  const updated = await db
+    .updateTable('agents')
+    .set({ share_token: token, updated_at: sql`NOW()` })
+    .where('tenant_id', '=', tenantId)
+    .where('owner_subject', '=', ownerSubject)
+    .where('id', '=', agentId)
+    .executeTakeFirst();
+  return Number(updated.numUpdatedRows ?? 0) > 0;
 }
 
 export async function deleteAgent(

@@ -11,7 +11,12 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { instructionPreview, type AgentStepsDoc, type TriggerDraft } from '@renkei/agents';
+import {
+  describeSchedule,
+  instructionPreview,
+  type AgentStepsDoc,
+  type TriggerDraft,
+} from '@renkei/agents';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import { logger } from '@/lib/logger';
 import { saveDescription } from '@/lib/agents/store';
@@ -25,7 +30,10 @@ function describeTrigger(draft: TriggerDraft): string {
     case 'event':
       return `when the event "${draft.eventId}" happens`;
     case 'schedule':
-      return `on a schedule (${JSON.stringify(draft.recurrence)})`;
+      // Prose, not JSON: the description is read by the owner (and the
+      // reviewing model), and the shared humanizer keeps every surface's
+      // wording identical.
+      return `on a schedule (${describeSchedule(draft)})`;
     case 'agent':
       return 'after another agent finishes';
     case 'api':

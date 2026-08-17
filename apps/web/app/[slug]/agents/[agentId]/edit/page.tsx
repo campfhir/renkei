@@ -41,6 +41,7 @@ export default async function EditAgentPage({
         tenantId={tenant.id}
         tools={data.tools}
         otherAgents={data.otherAgents}
+        calendars={data.calendars}
         models={data.models}
         attemptsCap={data.attemptsCap}
         existing={agent}

@@ -54,7 +54,11 @@ maybe('schedule sweep', () => {
     await closeDatabase();
   });
 
-  async function seedSchedule(): Promise<{ agentId: string; triggerId: string }> {
+  async function seedSchedule(
+    // The default seeds the LEGACY single-recurrence shape on purpose: the
+    // sweep must keep firing pre-042 rows during a rolling deploy.
+    config: Record<string, unknown> = { recurrence: { every: 'hour' }, timezone: 'UTC' }
+  ): Promise<{ agentId: string; triggerId: string }> {
     const agentId = randomUUID();
     await db
       .insertInto('agents')
@@ -75,7 +79,7 @@ maybe('schedule sweep', () => {
         tenant_id: tenantId,
         agent_id: agentId,
         kind: 'schedule',
-        config: JSON.stringify({ recurrence: { every: 'hour' }, timezone: 'UTC' }),
+        config: JSON.stringify(config),
         enabled: true,
         next_run_at: new Date(Date.now() - 60_000),
       })
@@ -122,6 +126,45 @@ maybe('schedule sweep', () => {
       .where('agent_id', '=', agentId)
       .execute();
     expect(runs).toHaveLength(1);
+  });
+
+  it('fires a multi-rule schedule with an org calendar and advances to the union min', async () => {
+    const calendarId = randomUUID();
+    await db
+      .insertInto('schedule_calendars')
+      .values({
+        id: calendarId,
+        tenant_id: tenantId,
+        name: `holidays-${calendarId.slice(0, 8)}`,
+        dates: JSON.stringify([{ annual: '12-25', label: 'Christmas' }]),
+      })
+      .execute();
+    const { agentId, triggerId } = await seedSchedule({
+      recurrences: [{ every: 'hour' }, { every: 'day', at: '09:00' }],
+      timezone: 'UTC',
+      calendarId,
+      blackoutPolicy: 'after',
+    });
+    const queue = new InMemoryQueue();
+    await createScheduleSweep(db, queue.producer)();
+
+    const runs = await db
+      .selectFrom('agent_runs')
+      .select('id')
+      .where('agent_id', '=', agentId)
+      .execute();
+    expect(runs).toHaveLength(1);
+
+    const trigger = await db
+      .selectFrom('agent_triggers')
+      .select(['next_run_at', 'enabled'])
+      .where('id', '=', triggerId)
+      .executeTakeFirstOrThrow();
+    expect(trigger.enabled).toBe(true);
+    const next = trigger.next_run_at?.getTime() ?? 0;
+    expect(next).toBeGreaterThan(Date.now());
+    // The hourly rule wins the union: at most an hour out.
+    expect(next).toBeLessThanOrEqual(Date.now() + 61 * 60_000);
   });
 
   it('turns off a malformed schedule instead of erroring forever', async () => {

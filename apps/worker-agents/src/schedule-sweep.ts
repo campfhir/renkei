@@ -16,11 +16,46 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
-import { computeNextRun, isAgentStepsDoc, isRecurrence } from '@renkei/agents';
+import {
+  blackoutPredicate,
+  computeNextRunForSchedule,
+  isAgentStepsDoc,
+  isBlackoutEntry,
+  parseScheduleConfig,
+  type BlackoutEntry,
+} from '@renkei/agents';
 import { createAgentRun } from '@renkei/agents/runs';
 import { logger } from './logger';
 
 const MAX_PER_PASS = 25;
+
+/**
+ * The org calendar a schedule opted into, as a blackout predicate. A
+ * calendar that no longer exists resolves to "no blackouts" (with a warn)
+ * rather than disabling the trigger: the schedule itself is intact, only
+ * its holiday overlay is gone.
+ */
+async function calendarDatesOf(
+  db: Kysely<DB>,
+  tenantId: string,
+  calendarId: string
+): Promise<BlackoutEntry[]> {
+  const row = await db
+    .selectFrom('schedule_calendars')
+    .select(['dates'])
+    .where('tenant_id', '=', tenantId)
+    .where('id', '=', calendarId)
+    .executeTakeFirst();
+  if (!row) {
+    logger.warn('schedule calendar {calendarId} not found; firing without blackouts', {
+      component: 'worker-agents/schedule',
+      calendarId,
+      tenantId,
+    });
+    return [];
+  }
+  return Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : [];
+}
 
 export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
   return async function sweep(): Promise<void> {
@@ -47,11 +82,10 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
       .execute();
 
     for (const row of due) {
-      const config: { recurrence?: unknown; timezone?: unknown } =
-        typeof row.config === 'object' && row.config !== null && !Array.isArray(row.config)
-          ? row.config
-          : {};
-      if (!isRecurrence(config.recurrence) || typeof config.timezone !== 'string') {
+      // parseScheduleConfig also reads the pre-042 single-recurrence shape,
+      // so a not-yet-migrated row still fires during a rolling deploy.
+      const config = parseScheduleConfig(row.config);
+      if (!config) {
         await db
           .updateTable('agent_triggers')
           .set({
@@ -67,7 +101,26 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
       const observed = row.next_run_at;
       if (!observed) continue;
       const scheduledFor = observed.toISOString();
-      const next = computeNextRun(config.recurrence, config.timezone, new Date());
+      const calendarDates = config.calendarId
+        ? await calendarDatesOf(db, row.tenant_id, config.calendarId)
+        : [];
+      let next: Date;
+      try {
+        next = computeNextRunForSchedule(config, new Date(), blackoutPredicate(calendarDates));
+      } catch {
+        // Every rule came up dry (e.g. blackouts smother the walk): turn
+        // the trigger off with the reason instead of re-firing every sweep.
+        await db
+          .updateTable('agent_triggers')
+          .set({
+            enabled: false,
+            last_error: 'No next occurrence could be found (check blackout dates); turned off.',
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', row.trigger_id)
+          .execute();
+        continue;
+      }
 
       // The optimistic lock: one replica advances the row, the rest lose.
       const advanced = await db
@@ -112,6 +165,7 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
         agentId: row.agent_id,
         runId: result.val.runId,
         tenantId: row.tenant_id,
+        subject: row.owner_subject,
       });
     }
   };

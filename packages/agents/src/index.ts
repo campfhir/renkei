@@ -40,7 +40,26 @@ export {
   type ValidationIssue,
 } from './validate';
 export { instructionPreview, renderInstruction, type RenderResult } from './render';
-export { computeNextRun, isRecurrence, isValidTimezone, type Recurrence } from './recurrence';
+export {
+  computeNextRun,
+  computeNextRunForSchedule,
+  parseScheduleConfig,
+  serializeScheduleConfig,
+  blackoutPredicate,
+  describeRecurrence,
+  describeSchedule,
+  isRecurrence,
+  isBlackoutEntry,
+  isValidDateString,
+  isValidTimezone,
+  MAX_SCHEDULE_RULES,
+  MAX_SCHEDULE_BLACKOUTS,
+  type Recurrence,
+  type ScheduleConfig,
+  type BlackoutEntry,
+  type BlackoutPolicy,
+  type Weekday,
+} from './recurrence';
 export { BUILTIN_VARIABLES, type VariableDescriptor } from './variables';
 export {
   TRIGGER_EVENT_CATALOG,

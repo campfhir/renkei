@@ -7,7 +7,7 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { MAX_STEP_ATTEMPTS } from '@renkei/agents';
+import { isBlackoutEntry, MAX_STEP_ATTEMPTS, type BlackoutEntry } from '@renkei/agents';
 import { getOrgSettings } from '@renkei/settings';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { listAgents } from '@/lib/agents/store';
@@ -18,6 +18,12 @@ export interface BuilderData {
   models: { id: string; label: string; isDefault: boolean }[];
   /** The org's per-step attempt ceiling — the builder offers no more. */
   attemptsCap: number;
+  /**
+   * The org's holiday calendars, DATES INCLUDED: the schedule editor's
+   * live next-run preview computes client-side with the same function the
+   * server uses, so it needs the real blackout dates, not just names.
+   */
+  calendars: { id: string; name: string; dates: BlackoutEntry[] }[];
 }
 
 export async function loadBuilderData(
@@ -26,7 +32,7 @@ export async function loadBuilderData(
   subject: string,
   excludeAgentId?: string
 ): Promise<BuilderData> {
-  const [tools, agents, modelRows, settings] = await Promise.all([
+  const [tools, agents, modelRows, settings, calendarRows] = await Promise.all([
     listAvailableTools(tenantId, subject),
     listAgents(db, tenantId, subject),
     db
@@ -37,6 +43,12 @@ export async function loadBuilderData(
       .orderBy('label')
       .execute(),
     getOrgSettings(tenantId),
+    db
+      .selectFrom('schedule_calendars')
+      .select(['id', 'name', 'dates'])
+      .where('tenant_id', '=', tenantId)
+      .orderBy('name')
+      .execute(),
   ]);
   return {
     tools,
@@ -50,5 +62,10 @@ export async function loadBuilderData(
     })),
     // The org cap may exceed the 10 default — it is the real ceiling.
     attemptsCap: Math.max(1, settings.ok ? settings.val.agentMaxStepAttempts : MAX_STEP_ATTEMPTS),
+    calendars: calendarRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      dates: Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : [],
+    })),
   };
 }

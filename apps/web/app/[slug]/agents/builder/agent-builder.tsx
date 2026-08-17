@@ -30,6 +30,7 @@ import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { toToolOptions, toVariableOptions, type VariableOption } from './options';
 import { StepCard } from './step-card';
 import { TriggerPanel, type AgentChoice, type BuilderTrigger } from './trigger-panel';
+import type { CalendarOption } from './schedule-picker';
 import { ReviewPanel } from './review-panel';
 
 const inputClass =
@@ -41,6 +42,8 @@ export interface AgentBuilderProps {
   tools: ToolDescriptor[];
   /** The caller's other agents (for agent-finished triggers). */
   otherAgents: AgentChoice[];
+  /** The org's holiday calendars (for schedule blackouts). */
+  calendars: CalendarOption[];
   /** Org models the agent may pin (label + id); empty hides the picker. */
   models: { id: string; label: string; isDefault: boolean }[];
   /** The org's per-step attempt ceiling (org settings; default 10). */
@@ -78,6 +81,7 @@ export function AgentBuilder({
   tenantId,
   tools,
   otherAgents,
+  calendars,
   models,
   attemptsCap,
   existing,
@@ -547,6 +551,7 @@ export function AgentBuilder({
             setServerIssues([]);
           }}
           otherAgents={otherAgents}
+          calendars={calendars}
           issues={issuesAt('triggers')}
         />
       </section>
