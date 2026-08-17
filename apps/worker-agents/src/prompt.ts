@@ -47,6 +47,13 @@ export const FINISH_STEP_DEF: LlmToolDef = {
           'With stop: true when the instruction says to end silently / do nothing — no reply, ' +
           'no notification, no follow-up automations. Omit otherwise.',
       },
+      remember: {
+        type: 'string',
+        description:
+          'A short note (one sentence, include identifiers like message ids) worth carrying ' +
+          'into FUTURE runs of this agent — e.g. "replied to message 123 about the outage". ' +
+          'Future runs see it under "What you remember". Omit when nothing is worth keeping.',
+      },
     },
     required: ['outcome', 'summary'],
   },
@@ -59,6 +66,7 @@ export const SYSTEM_PROMPT = [
   'Aim to finish: when what you have satisfies the step’s intent, declare success rather than double-checking with more calls.',
   'When the instruction says the whole automation should end at this step ("…and stop here"), set stop: true on finish_step; when it says to end silently or do nothing, also set quiet: true.',
   'Declare failure honestly: a tool error you could not work around, or a result that clearly does not match the step’s intent, is a failure, not a success.',
+  'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled — and record anything future runs must know via finish_step’s remember field.',
 ].join(' ');
 
 export interface AttemptPromptInput {
@@ -76,6 +84,10 @@ export interface AttemptPromptInput {
   guidanceText?: string;
   /** One-paragraph summary of the previous attempt's failure. */
   previousFailure?: string;
+  /** Rendered agent memory (summary + recent entries), already bounded. */
+  memoryText?: string;
+  /** Rendered agent knowledge notes, already bounded. */
+  knowledgeText?: string;
 }
 
 export function buildAttemptMessages(input: AttemptPromptInput): {
@@ -100,6 +112,15 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
         ]
       : []),
     ...(variableLines ? [`Known information:\n${variableLines}`] : []),
+    ...(input.memoryText
+      ? [
+          'What you remember (notes from this agent’s earlier runs, oldest first — check it ' +
+            `before acting on something an earlier run may already have handled):\n${input.memoryText}`,
+        ]
+      : []),
+    ...(input.knowledgeText
+      ? [`Your knowledge notes (reference material this agent keeps):\n${input.knowledgeText}`]
+      : []),
     ...(input.attempt > 1
       ? [
           `This is attempt ${input.attempt} of ${input.step.maxAttempts}.`,

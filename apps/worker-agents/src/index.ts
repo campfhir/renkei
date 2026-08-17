@@ -22,6 +22,7 @@ import { createAgentRunHandler } from './engine';
 import { createFinalizeHook } from './finalize';
 import { createScheduleSweep } from './schedule-sweep';
 import { createRetentionSweep, createStuckRunJanitor } from './maintenance';
+import { createMemoryCompactionSweep, MEMORY_COMPACTION_SWEEP_MS } from './memory-compaction';
 import { logger, attachPersistentLogging } from './logger';
 
 const SCHEDULE_SWEEP_MS = 60_000;
@@ -79,14 +80,28 @@ async function main(): Promise<void> {
       JANITOR_SWEEP_MS,
       createStuckRunJanitor(db)
     ),
+    // Replica-safe by construction (equivalent summaries, idempotent
+    // deletes) — see memory-compaction.ts.
+    schedulePeriodicSweep(
+      logger,
+      'memory compaction',
+      'worker-agents/memory-compaction',
+      MEMORY_COMPACTION_SWEEP_MS,
+      createMemoryCompactionSweep(db)
+    ),
   ];
 
   const loop = createEventLoop({
     claim: () => queue.consumer.claim(),
     complete: (event) => queue.consumer.complete(event),
     fail: (event, error) => queue.consumer.fail(event, error),
+    // Runs enqueue under a per-agent fairness lane (`agents:{agentId}`);
+    // the bare `agents` form still matches so rows enqueued before lanes
+    // existed drain normally.
     handlerFor: (event) =>
-      event.source === 'agents' && event.type === 'run' ? handleRun : undefined,
+      (event.source === 'agents' || event.source.startsWith('agents:')) && event.type === 'run'
+        ? handleRun
+        : undefined,
     logger,
     label: 'worker-agents/loop',
   });

@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./runs": "./src/runs.ts",
-    "./event-fanout": "./src/event-fanout.ts"
+    "./event-fanout": "./src/event-fanout.ts",
+    "./memory": "./src/memory.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

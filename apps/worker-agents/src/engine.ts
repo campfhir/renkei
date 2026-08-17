@@ -42,6 +42,12 @@ import { getOrgSettings } from '@renkei/settings';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { AgentMcpClient } from './mcp-client';
 import { mintRunToken, revokeRunToken } from './token';
+import {
+  appendAgentMemory,
+  readAgentMemory,
+  renderAgentMemory,
+  renderAgentKnowledgeNotes,
+} from '@renkei/agents/memory';
 import { buildAttemptMessages, FINISH_STEP_DEF, FINISH_STEP_TOOL, SYSTEM_PROMPT } from './prompt';
 import { logger } from './logger';
 
@@ -118,10 +124,18 @@ interface AttemptOutcome {
   outcomeCode: string | null;
   summary: string;
   saveValue: string | null;
+  /** A note finish_step asked to carry into future runs (agent memory). */
+  remember: string | null;
   toolCalls: ToolCallRecord[];
   usage: { inputTokens: number; outputTokens: number };
   unbound: string[];
   resolvedInstruction: string;
+}
+
+/** The run-scoped context blocks every attempt's prompt carries. */
+interface RunContextText {
+  memoryText: string;
+  knowledgeText: string;
 }
 
 /** A run-level abort that retrying attempts cannot fix. */
@@ -183,6 +197,7 @@ function finishArgsOf(input: unknown): {
   saveValue: string | null;
   stop: boolean;
   quiet: boolean;
+  remember: string | null;
 } | null {
   if (typeof input !== 'object' || input === null) return null;
   const args: {
@@ -192,6 +207,7 @@ function finishArgsOf(input: unknown): {
     saveValue?: unknown;
     stop?: unknown;
     quiet?: unknown;
+    remember?: unknown;
   } = input;
   if (args.outcome !== 'success' && args.outcome !== 'failure') return null;
   return {
@@ -201,6 +217,8 @@ function finishArgsOf(input: unknown): {
     saveValue: typeof args.saveValue === 'string' ? args.saveValue : null,
     stop: args.stop === true,
     quiet: args.quiet === true,
+    remember:
+      typeof args.remember === 'string' && args.remember.trim() ? args.remember.trim() : null,
   };
 }
 
@@ -328,6 +346,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const token = await mint(db, {
       tenantId,
       subject: run.owner_subject,
+      agentId: run.agent_id,
       ttlSeconds: settings.agentRunTimeoutMinutes * 60 + TOKEN_SLACK_SECONDS,
     });
 
@@ -347,6 +366,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .execute();
       const vars = await baseVariables(run);
       recoverSavedVars(steps, priorAttempts, vars);
+
+      // The agent's carried context: memory (earlier runs' breadcrumbs)
+      // and its own knowledge notes, both bounded at render time — the
+      // read-side budget is what keeps prompts safe however large either
+      // store grows. Best-effort: an unreadable memory degrades the run to
+      // amnesiac, it never fails it.
+      const context = await loadRunContext(run);
 
       let stepIndex = run.current_step_id
         ? Math.max(
@@ -370,6 +396,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           llm,
           mcp,
           vars,
+          context,
           deadline,
           settings.agentMaxStepAttempts
         );
@@ -391,6 +418,31 @@ export function createAgentRunHandler(deps: EngineDeps) {
     } finally {
       await revoke(db, token);
     }
+  }
+
+  /** Memory + knowledge notes, rendered and bounded; '' halves on failure. */
+  async function loadRunContext(run: RunRow): Promise<RunContextText> {
+    let memoryText = '';
+    let knowledgeText = '';
+    try {
+      memoryText = renderAgentMemory(await readAgentMemory(db, run.tenant_id, run.agent_id));
+    } catch (error) {
+      logger.warn('agent memory unreadable for run {runId}: {error}', {
+        component: 'worker-agents/engine',
+        runId: run.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    try {
+      knowledgeText = await renderAgentKnowledgeNotes(db, run.tenant_id, run.agent_id);
+    } catch (error) {
+      logger.warn('agent knowledge notes unreadable for run {runId}: {error}', {
+        component: 'worker-agents/engine',
+        runId: run.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return { memoryText, knowledgeText };
   }
 
   /** Builtins + trigger.* from initial_state. */
@@ -450,6 +502,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     llm: ResolvedLlm,
     mcp: McpClient,
     vars: Record<string, string>,
+    context: RunContextText,
     deadline: number,
     orgAttemptCap: number
   ): Promise<
@@ -558,7 +611,17 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       let outcome: AttemptOutcome;
       try {
-        outcome = await runAttempt(run, step, attempt, guidance, toolsByName, llm, mcp, vars);
+        outcome = await runAttempt(
+          run,
+          step,
+          attempt,
+          guidance,
+          toolsByName,
+          llm,
+          mcp,
+          vars,
+          context
+        );
       } catch (error) {
         if (error instanceof TransientFailure) {
           // No tool ran; void the attempt row so the user-visible budget is
@@ -603,6 +666,26 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .where('id', '=', rowId)
         .execute();
 
+      if (outcome.remember) {
+        // The step asked future runs to know something. Best-effort: a
+        // memory write must never change this attempt's outcome.
+        try {
+          await appendAgentMemory(db, {
+            tenantId: run.tenant_id,
+            agentId: run.agent_id,
+            content: outcome.remember,
+            runId: run.id,
+          });
+        } catch (error) {
+          logger.warn('memory append failed for run {runId}: {error}', {
+            component: 'worker-agents/engine',
+            runId: run.id,
+            subject: run.owner_subject,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
       if (outcome.succeeded) {
         if (step.saveAs && outcome.saveValue !== null) vars[step.saveAs] = outcome.saveValue;
         // A stop can be declared at runtime (the instruction's own "…and
@@ -642,7 +725,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     toolsByName: Map<string, McpToolInfo>,
     llm: ResolvedLlm,
     mcp: McpClient,
-    vars: Record<string, string>
+    vars: Record<string, string>,
+    context: RunContextText
   ): Promise<AttemptOutcome> {
     const guidanceText = guidance ? renderInstruction(guidance, vars).text : undefined;
     const previousFailure = attempt > 1 ? await lastFailureText(run.id, step.id) : undefined;
@@ -654,6 +738,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
       toolBudget: toolCap,
       guidanceText,
       previousFailure,
+      ...(context.memoryText ? { memoryText: context.memoryText } : {}),
+      ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
     });
 
     // The step's one tool, plus (on corrective attempts) the guidance's
@@ -690,6 +776,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
       usage,
       unbound: built.unbound,
       resolvedInstruction,
+      // Only a finish_step call can ask to remember; error paths carry null.
+      remember: null,
     };
 
     for (let turn = 0; turn < MAX_LLM_TURNS; turn += 1) {
@@ -858,9 +946,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
       saveValue: string | null;
       stop: boolean;
       quiet: boolean;
+      remember: string | null;
     },
     primaryResults: McpToolResult[],
-    base: Pick<AttemptOutcome, 'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction'>
+    base: Pick<
+      AttemptOutcome,
+      'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'remember'
+    >
   ): AttemptOutcome {
     if (finish.outcome === 'success') {
       // Reality check: a declared success over a primary tool that only ever
@@ -877,6 +969,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcomeCode: classifyFailure(primaryResults, finish.code),
           summary: finish.summary || 'The tool reported errors on every call.',
           saveValue: null,
+          remember: finish.remember,
         };
       }
       return {
@@ -887,6 +980,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         outcomeCode: null,
         summary: finish.summary,
         saveValue: finish.saveValue,
+        remember: finish.remember,
       };
     }
     return {
@@ -896,6 +990,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
       outcomeCode: classifyFailure(primaryResults, finish.code),
       summary: finish.summary,
       saveValue: null,
+      // A declared failure may still be worth remembering ("ticket X is
+      // locked, skip it") — the model asked, keep it.
+      remember: finish.remember,
     };
   }
 
@@ -940,9 +1037,42 @@ export function createAgentRunHandler(deps: EngineDeps) {
       runId: run.id,
       tenantId: run.tenant_id,
       agentId: run.agent_id,
+      // The agent's OWNER — agent activity in the logs attributes to the
+      // person whose authority the run borrowed.
+      subject: run.owner_subject,
       status,
       errorKind: errorKind ?? undefined,
     });
+    // The automatic breadcrumb — what makes "did I already handle this?"
+    // answerable even when no step remembered anything explicitly. Carries
+    // the trigger's identifying vars (messageId etc.), never bodies.
+    try {
+      const idsOfInterest = [
+        'trigger.messageId',
+        'trigger.roomId',
+        'trigger.from',
+        'trigger.sender',
+        'trigger.subject',
+        'trigger.scheduledFor',
+      ];
+      const idText = idsOfInterest
+        .filter((key) => vars[key])
+        .map((key) => `${key.slice('trigger.'.length)}=${clip(vars[key], 120)}`)
+        .join(', ');
+      await appendAgentMemory(db, {
+        tenantId: run.tenant_id,
+        agentId: run.agent_id,
+        content: `Run ${status}${idText ? ` (${idText})` : ''}${error ? ` — ${clip(error, 160)}` : ''}`,
+        runId: run.id,
+      });
+    } catch (memoryError) {
+      logger.warn('finalize memory append failed for run {runId}: {error}', {
+        component: 'worker-agents/engine',
+        runId: run.id,
+        subject: run.owner_subject,
+        error: memoryError instanceof Error ? memoryError.message : String(memoryError),
+      });
+    }
     if (deps.onFinalized) {
       try {
         await deps.onFinalized({
