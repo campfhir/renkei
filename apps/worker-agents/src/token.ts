@@ -40,7 +40,7 @@ export async function ensureAgentRunnerClient(db: Kysely<DB>, tenantId: string):
 
 export async function mintRunToken(
   db: Kysely<DB>,
-  params: { tenantId: string; subject: string; ttlSeconds: number }
+  params: { tenantId: string; subject: string; agentId: string; ttlSeconds: number }
 ): Promise<string> {
   const clientId = await ensureAgentRunnerClient(db, params.tenantId);
   const token = generateSecret(32);
@@ -52,6 +52,10 @@ export async function mintRunToken(
       client_id: clientId,
       subject: params.subject,
       application: 'agent',
+      // The acting agent (migration 040): the subject says WHOSE authority
+      // the run borrows; agent_id says WHO is borrowing it, so tools can
+      // stamp agent provenance without weakening the owner-scoped gates.
+      agent_id: params.agentId,
       scope: null,
       expires_at: new Date(Date.now() + params.ttlSeconds * 1000),
     })

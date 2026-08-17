@@ -92,6 +92,8 @@ export interface AccessTokenRecord {
   clientId: string;
   scope: string | null;
   application: string;
+  /** The acting agent for 'agent' tokens (migration 040); null otherwise. */
+  agentId: string | null;
 }
 
 export async function storeAccessToken(params: {
@@ -145,6 +147,7 @@ export async function resolveAccessToken(
       'expires_at',
       'tenant_id',
       'application',
+      'agent_id',
     ])
     .where('token_hash', '=', tokenHash)
     .where('tenant_id', '=', tenantId)
@@ -168,6 +171,7 @@ export async function resolveAccessToken(
     clientId: row.client_id,
     scope: row.scope,
     application: row.application,
+    agentId: row.agent_id,
   };
 }
 

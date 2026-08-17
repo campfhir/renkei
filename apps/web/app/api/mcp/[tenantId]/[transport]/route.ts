@@ -186,6 +186,10 @@ const handler = async (
     }
 
     const subject = tokenRecord.subject;
+    // The acting agent, when this is an agent-runner token. Everything else
+    // about the call is the OWNER's (subject, email, grants, gates) — this
+    // only lets tools stamp agent provenance on what they write.
+    const agentId = tokenRecord.application === 'agent' ? tokenRecord.agentId : null;
 
     // This caller's own Jira grant. A grant with a NULL subject predates per-user
     // ownership and is deliberately not matched: we cannot prove it belongs to
@@ -364,7 +368,12 @@ const handler = async (
         userEmail,
         settings.disabledConnectors,
         redactionFingerprint
-      ) + `:${scopeFingerprint}`;
+      ) +
+      `:${scopeFingerprint}` +
+      // The agent identity is captured by tool closures (provenance
+      // stamping), so a cached user handler must never serve an agent call
+      // of the same subject, nor one agent's handler another's.
+      `:agent:${agentId ?? 'none'}`;
     let cachedHandler = handlerCache.get(cacheKey);
 
     if (!cachedHandler) {
@@ -419,6 +428,7 @@ const handler = async (
               zoomScopes: zoomAvailable ? zoomScopes : undefined,
               confluenceScopes: confluenceAvailable ? confluenceScopes : undefined,
               jsmGrant: jsmGrant ?? undefined,
+              agent: agentId ? { agentId } : undefined,
               db,
             };
 

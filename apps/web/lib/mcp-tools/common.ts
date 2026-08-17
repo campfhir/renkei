@@ -87,6 +87,14 @@ export interface MCPToolContext {
    * scopes are needed on the context, for the registration-time gate.
    */
   confluenceScopes?: string[];
+  /**
+   * Present when the caller is an agent run (an agent-runner token,
+   * migration 040). `subject`/`userEmail` still name the run OWNER — every
+   * gate applies as if the owner called — this only says an agent is doing
+   * the calling, so tools can stamp provenance (authoredBy, created_by)
+   * without loosening any owner-scoped check.
+   */
+  agent?: { agentId: string };
   db?: Kysely<DB>;
 }
 
