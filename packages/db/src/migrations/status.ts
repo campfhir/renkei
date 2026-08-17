@@ -69,6 +69,7 @@ export const EXPECTED_MIGRATIONS = [
   '036-agent-jobs-queue',
   '037-tool-call-error-summary',
   '038-audit-events',
+  '039-email-cleaner-scripts',
 ];
 
 export interface MigrationStatus {

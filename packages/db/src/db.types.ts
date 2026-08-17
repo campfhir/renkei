@@ -234,6 +234,17 @@ export interface EmailClassifierRules {
   updated_at: Generated<Timestamp>;
 }
 
+export interface EmailCleanerScripts {
+  created_at: Generated<Timestamp>;
+  enabled: Generated<boolean>;
+  id: string;
+  last_error: string | null;
+  name: string;
+  script: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface EmailExtractionTemplates {
   created_at: Generated<Timestamp>;
   derived_by_upn: string;
@@ -595,6 +606,7 @@ export interface DB {
   email_banner_patterns: EmailBannerPatterns;
   email_classification_log: EmailClassificationLog;
   email_classifier_rules: EmailClassifierRules;
+  email_cleaner_scripts: EmailCleanerScripts;
   email_extraction_templates: EmailExtractionTemplates;
   embedding_jobs: EmbeddingJobs;
   embedding_jobs_dead_letters: EmbeddingJobsDeadLetters;

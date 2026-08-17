@@ -32,6 +32,9 @@ const nextConfig: NextConfig = {
     '@renkei/document-text',
     '@renkei/knowledge',
   ],
+  // The cleaner-script sandbox: left external so its .wasm file resolves
+  // from node_modules at runtime instead of being lost in the bundle.
+  serverExternalPackages: ['quickjs-emscripten'],
   async rewrites() {
     return [
       // RFC 8414 path-insert form for the per-tenant authorization server.

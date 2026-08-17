@@ -15,6 +15,8 @@ import { listActiveTemplates } from './persistence/templates';
 import { listActiveBannerPatterns } from './persistence/banners';
 import { hasRecentDuplicate, recordClassification } from './persistence/log';
 import { hasNearDuplicateChunk } from './persistence/similarity';
+import { listActiveCleanerScripts, recordCleanerScriptError } from './persistence/scripts';
+import { runCleanerScript } from './scripts/run';
 import { SEED_BANNERS } from './registry/seed';
 import type { MessageOverride, RawEmail, SanitizeResult } from './types';
 
@@ -57,6 +59,46 @@ export interface SanitizeForTenantOptions {
    * dedup only; a failed embed call degrades to that same behavior.
    */
   embedder?: EmbeddingProvider;
+}
+
+/**
+ * Run the tenant's enabled cleaner scripts over an index-bound content
+ * string. The header (Subject/From/Received, the first paragraph) is held
+ * back — scripts transform the message body, not the metadata the index
+ * relies on. Script failures are recorded on the script's own row and the
+ * text passes through unchanged; a broken script is a visible no-op, never
+ * a lost message.
+ */
+async function applyCleanerScripts(
+  options: SanitizeForTenantOptions,
+  content: string
+): Promise<string> {
+  const scriptsResult = await listActiveCleanerScripts(options.tenantId);
+  if (!scriptsResult.ok || scriptsResult.val.length === 0) return content;
+
+  const separator = content.indexOf('\n\n');
+  const header = separator >= 0 ? content.slice(0, separator) : '';
+  let body = separator >= 0 ? content.slice(separator + 2) : content;
+
+  for (const script of scriptsResult.val) {
+    const run = await runCleanerScript(script.script, {
+      text: body,
+      subject: options.raw.subject,
+      fromAddress: options.raw.fromAddress,
+      fromName: options.raw.fromName,
+    });
+    if (run.ok) {
+      body = run.val;
+      if (script.lastError) await recordCleanerScriptError(options.tenantId, script.id, null);
+    } else {
+      await recordCleanerScriptError(
+        options.tenantId,
+        script.id,
+        `${run.err.type}: ${run.detail ?? ''}`.trim()
+      );
+    }
+  }
+  return header ? `${header}\n\n${body}` : body;
 }
 
 /**
@@ -111,6 +153,13 @@ export async function sanitizeEmailForTenant(
     override: options.override,
     bannerPatterns,
   });
+
+  // Tenant cleaner scripts run over the cleaned BODY (never the header),
+  // BEFORE hashing — dedup must see the content that will be indexed. Every
+  // failure is a recorded no-op: a broken script never eats a message.
+  if (result.action === 'index') {
+    result = { ...result, content: await applyCleanerScripts(options, result.content) };
+  }
 
   let contentHash: string | null = null;
   if (result.action === 'index') {

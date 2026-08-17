@@ -19,6 +19,10 @@ jest.mock('./persistence/log', () => ({
   recordClassification: jest.fn(),
 }));
 jest.mock('./persistence/similarity', () => ({ hasNearDuplicateChunk: jest.fn() }));
+jest.mock('./persistence/scripts', () => ({
+  listActiveCleanerScripts: jest.fn(),
+  recordCleanerScriptError: jest.fn(),
+}));
 
 import { ok } from '@campfhir/safe-functions/helpers';
 import { sanitizeEmailForTenant } from './service';
@@ -42,6 +46,9 @@ const {
 const { hasNearDuplicateChunk: mockHasNearDuplicateChunk } = jest.requireMock<{
   hasNearDuplicateChunk: jest.Mock;
 }>('./persistence/similarity');
+const { listActiveCleanerScripts: mockListActiveCleanerScripts } = jest.requireMock<{
+  listActiveCleanerScripts: jest.Mock;
+}>('./persistence/scripts');
 
 function humanEmail(): RawEmail {
   return {
@@ -58,6 +65,7 @@ beforeEach(() => {
   mockListClassifierRules.mockResolvedValue(ok([]));
   mockListActiveTemplates.mockResolvedValue(ok(new Map()));
   mockListActiveBannerPatterns.mockResolvedValue(ok([]));
+  mockListActiveCleanerScripts.mockResolvedValue(ok([]));
   mockRecordClassification.mockResolvedValue(ok());
 });
 
@@ -93,6 +101,71 @@ describe('sanitizeEmailForTenant — dedup', () => {
       // colleague's, and not calendar or task chunks from the same tenant.
       refIdPrefix: 'bob@example.com/msg/',
     });
+  });
+
+  it('runs cleaner scripts over the body, never the header', async () => {
+    mockHasRecentDuplicate.mockResolvedValue(ok(false));
+    mockListActiveCleanerScripts.mockResolvedValue(
+      ok([
+        {
+          id: 'script-1',
+          name: 'shout',
+          script: '(email) => email.text.toUpperCase()',
+          enabled: true,
+          lastError: null,
+        },
+      ])
+    );
+
+    const result = await sanitizeEmailForTenant({
+      tenantId: 'tenant-1',
+      provider: 'microsoft',
+      refId: 'bob@example.com/msg/1',
+      ownerUpn: 'bob@example.com',
+      raw: humanEmail(),
+    });
+
+    expect(result.action).toBe('index');
+    if (result.action === 'index') {
+      // Body transformed by the real sandbox; the metadata header intact.
+      expect(result.content).toContain('JUST CHECKING IN.');
+      expect(result.content).toContain('Subject: Hello');
+      expect(result.content).not.toContain('SUBJECT: HELLO');
+    }
+  });
+
+  it('passes text through unchanged when a script fails, recording the error', async () => {
+    mockHasRecentDuplicate.mockResolvedValue(ok(false));
+    mockListActiveCleanerScripts.mockResolvedValue(
+      ok([
+        {
+          id: 'script-1',
+          name: 'broken',
+          script: "() => { throw new Error('boom'); }",
+          enabled: true,
+          lastError: null,
+        },
+      ])
+    );
+    const { recordCleanerScriptError: mockRecordError } = jest.requireMock<{
+      recordCleanerScriptError: jest.Mock;
+    }>('./persistence/scripts');
+
+    const result = await sanitizeEmailForTenant({
+      tenantId: 'tenant-1',
+      provider: 'microsoft',
+      refId: 'bob@example.com/msg/1',
+      ownerUpn: 'bob@example.com',
+      raw: humanEmail(),
+    });
+
+    expect(result.action).toBe('index');
+    if (result.action === 'index') expect(result.content).toContain('Just checking in.');
+    expect(mockRecordError).toHaveBeenCalledWith(
+      'tenant-1',
+      'script-1',
+      expect.stringContaining('boom')
+    );
   });
 
   it('indexes normally when nothing is a duplicate', async () => {

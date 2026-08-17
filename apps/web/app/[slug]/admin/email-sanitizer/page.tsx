@@ -5,6 +5,7 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getDatabase } from '@renkei/db';
 import RuleForms from './rule-forms';
 import SuggestRulesPanel from './suggest-rules-panel';
+import CleanerScripts from './cleaner-scripts';
 
 /**
  * Org-admin configuration for the email sanitizer (see
@@ -52,6 +53,7 @@ export default async function AdminEmailSanitizerPage({
       </p>
       {hasOrgModel && <SuggestRulesPanel slug={slug} />}
       <RuleForms slug={slug} />
+      <CleanerScripts slug={slug} />
     </div>
   );
 }

@@ -84,3 +84,18 @@ export {
   type SetOverrideInput,
 } from './persistence/log';
 export { hasNearDuplicateChunk, NEAR_DUPLICATE_MAX_DISTANCE } from './persistence/similarity';
+export {
+  listCleanerScripts,
+  listActiveCleanerScripts,
+  upsertCleanerScript,
+  deleteCleanerScript,
+  type CleanerScript,
+  type CleanerScriptInput,
+} from './persistence/scripts';
+export {
+  runCleanerScript,
+  validateCleanerScriptSource,
+  MAX_SCRIPT_CHARS,
+  type CleanerScriptInput as CleanerScriptRunInput,
+  type CleanerScriptLimits,
+} from './scripts/run';

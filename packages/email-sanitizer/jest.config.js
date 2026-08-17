@@ -10,12 +10,18 @@ export default {
     '^@renkei/gates$': '<rootDir>/../../packages/gates/src/index.ts',
     '^@renkei/knowledge$': '<rootDir>/../../packages/knowledge/src/index.ts',
   },
+  // quickjs-emscripten's CJS build keeps a dynamic import() for its wasm
+  // variant, which jest's CJS vm cannot service — transforming the package
+  // (allowJs + module commonjs) rewrites it to require, the kysely pattern.
+  transformIgnorePatterns: ['/node_modules/(?!.*quickjs)'],
   transform: {
-    '^.+\\.tsx?$': [
+    '^.+\\.(t|j)sx?$': [
       'ts-jest',
       {
         tsconfig: {
           esModuleInterop: true,
+          allowJs: true,
+          module: 'commonjs',
         },
       },
     ],

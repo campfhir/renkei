@@ -42,6 +42,10 @@ function describe(event: AuditEventRow): string {
       return byAdmin ? `turned off agent “${agent}” (admin action)` : `turned off agent “${agent}”`;
     case 'agent.deleted':
       return `deleted agent “${agent}”`;
+    case 'sanitizer.script_saved':
+      return `saved sanitizer script “${event.targetLabel ?? 'unnamed'}”`;
+    case 'sanitizer.script_deleted':
+      return `deleted sanitizer script “${event.targetLabel ?? 'unnamed'}”`;
     case 'settings.updated': {
       const changed =
         typeof details.changed === 'object' && details.changed !== null
