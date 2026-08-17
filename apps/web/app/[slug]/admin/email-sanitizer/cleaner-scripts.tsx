@@ -35,8 +35,13 @@ export default function CleanerScripts({ slug }: { slug: string }) {
   const [source, setSource] = useState('');
   const [saving, setSaving] = useState(false);
 
-  // Test harness state.
+  // Test harness state. Header fields are settable so scripts keyed on
+  // them (reply-to domains, message-id tags) can be exercised too.
   const [sample, setSample] = useState('');
+  const [testSubject, setTestSubject] = useState('');
+  const [testFrom, setTestFrom] = useState('');
+  const [testReplyTo, setTestReplyTo] = useState('');
+  const [testMessageId, setTestMessageId] = useState('');
   const [testOutput, setTestOutput] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
@@ -102,6 +107,10 @@ export default function CleanerScripts({ slug }: { slug: string }) {
     const result = await sendJsonFull<{ output: string }>(`${url}/test`, 'POST', {
       script: source,
       text: sample,
+      ...(testSubject.trim() ? { subject: testSubject } : {}),
+      ...(testFrom.trim() ? { fromAddress: testFrom } : {}),
+      ...(testReplyTo.trim() ? { replyToAddress: testReplyTo } : {}),
+      ...(testMessageId.trim() ? { messageId: testMessageId } : {}),
     });
     setTesting(false);
     if (result.error || !result.data) setTestError(result.error ?? 'Test failed');
@@ -182,7 +191,9 @@ export default function CleanerScripts({ slug }: { slug: string }) {
         />
         <p className="text-xs text-gray-500 dark:text-gray-400">
           <code>email</code> carries <code>text</code>, <code>subject</code>,{' '}
-          <code>fromAddress</code>, <code>fromName</code>. Return the new text.
+          <code>fromAddress</code>, <code>fromName</code> — and the header fields{' '}
+          <code>senderAddress</code>, <code>replyToAddress</code>, <code>messageId</code>,{' '}
+          <code>receivedAt</code> (null when the connector reported none). Return the new text.
         </p>
 
         <textarea
@@ -192,6 +203,25 @@ export default function CleanerScripts({ slug }: { slug: string }) {
           placeholder="Paste a sample body to test against…"
           className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs dark:border-gray-700 dark:bg-gray-900"
         />
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {(
+            [
+              ['Subject', testSubject, setTestSubject],
+              ['From address', testFrom, setTestFrom],
+              ['Reply-To', testReplyTo, setTestReplyTo],
+              ['Message-ID', testMessageId, setTestMessageId],
+            ] as const
+          ).map(([label, value, set]) => (
+            <input
+              key={label}
+              value={value}
+              onChange={(event) => set(event.target.value)}
+              placeholder={label}
+              aria-label={`Test ${label}`}
+              className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
+            />
+          ))}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"

@@ -86,6 +86,10 @@ async function applyCleanerScripts(
       subject: options.raw.subject,
       fromAddress: options.raw.fromAddress,
       fromName: options.raw.fromName,
+      senderAddress: options.raw.senderAddress ?? null,
+      replyToAddress: options.raw.replyToAddress ?? null,
+      messageId: options.raw.messageId ?? null,
+      receivedAt: options.raw.receivedAt,
     });
     if (run.ok) {
       body = run.val;

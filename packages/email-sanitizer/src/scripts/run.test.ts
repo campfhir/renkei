@@ -26,6 +26,16 @@ describe('runCleanerScript', () => {
     if (result.ok) expect(result.val).toBe('Hello team.\nBye.');
   });
 
+  it('hands the script the header fields, null when absent', async () => {
+    const result = await runCleanerScript(
+      `(email) => [email.subject, email.replyToAddress, String(email.messageId)].join('|')`,
+      { ...input, replyToAddress: 'no-reply@relay.example' }
+    );
+    expect(result.ok).toBe(true);
+    // messageId was not supplied → null, so a script can branch on absence.
+    if (result.ok) expect(result.val).toBe('Deploy done|no-reply@relay.example|null');
+  });
+
   it('gives the guest no host surface at all', async () => {
     const result = await runCleanerScript(
       `() => [

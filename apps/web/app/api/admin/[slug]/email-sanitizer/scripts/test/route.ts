@@ -22,8 +22,16 @@ export async function POST(
   }
 
   const body: unknown = await request.json().catch(() => null);
-  const payload: { script?: unknown; text?: unknown } =
-    typeof body === 'object' && body !== null ? body : {};
+  const payload: {
+    script?: unknown;
+    text?: unknown;
+    subject?: unknown;
+    fromAddress?: unknown;
+    fromName?: unknown;
+    senderAddress?: unknown;
+    replyToAddress?: unknown;
+    messageId?: unknown;
+  } = typeof body === 'object' && body !== null ? body : {};
   const script = typeof payload.script === 'string' ? payload.script : '';
   const text = typeof payload.text === 'string' ? payload.text : '';
   if (!script.trim() || !text.trim()) {
@@ -33,11 +41,22 @@ export async function POST(
     return NextResponse.json({ error: 'Script too large.' }, { status: 400 });
   }
 
+  // Header fields are settable so a script keyed on them (a reply-to
+  // domain, an @odspnotify message id) can be exercised before enabling.
+  const field = (value: unknown, fallback: string): string =>
+    typeof value === 'string' && value.trim() ? value.trim().slice(0, 300) : fallback;
+  const optionalField = (value: unknown): string | null =>
+    typeof value === 'string' && value.trim() ? value.trim().slice(0, 300) : null;
+
   const result = await runCleanerScript(script, {
     text: text.slice(0, 100_000),
-    subject: '(test)',
-    fromAddress: 'test@example.com',
-    fromName: 'Test',
+    subject: field(payload.subject, '(test)'),
+    fromAddress: field(payload.fromAddress, 'test@example.com'),
+    fromName: field(payload.fromName, 'Test'),
+    senderAddress: optionalField(payload.senderAddress),
+    replyToAddress: optionalField(payload.replyToAddress),
+    messageId: optionalField(payload.messageId),
+    receivedAt: '2026-01-01T00:00:00Z',
   });
   if (!result.ok) {
     return NextResponse.json(

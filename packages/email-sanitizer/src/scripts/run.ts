@@ -37,6 +37,16 @@ export interface CleanerScriptInput {
   subject: string;
   fromAddress: string;
   fromName: string;
+  /**
+   * The header-level fields the connectors capture — the system-relay
+   * tells (see types.ts on each): the authenticated Sender when it differs
+   * from From, the Reply-To, the Message-ID, and the received timestamp.
+   * Null when the connector reported none.
+   */
+  senderAddress?: string | null;
+  replyToAddress?: string | null;
+  messageId?: string | null;
+  receivedAt?: string | null;
 }
 
 export interface CleanerScriptLimits {
@@ -135,6 +145,10 @@ export async function runCleanerScript(
         subject: input.subject,
         fromAddress: input.fromAddress,
         fromName: input.fromName,
+        senderAddress: input.senderAddress ?? null,
+        replyToAddress: input.replyToAddress ?? null,
+        messageId: input.messageId ?? null,
+        receivedAt: input.receivedAt ?? null,
       })};\n` +
       // Parenthesised so arrow and function expressions both evaluate;
       // the signature check is what makes "must be (email) => string" a
