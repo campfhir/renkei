@@ -29,6 +29,7 @@ export {
   stripExternalSenderBanner,
   stripLegalFooter,
   defluffUrls,
+  LEGAL_FOOTER_ANCHORS,
 } from './clean/generic';
 export { deriveTemplate, matchTemplate, type MarkedField } from './registry/template';
 export {

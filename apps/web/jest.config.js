@@ -30,13 +30,18 @@ export default {
     '^@renkei/knowledge$': '<rootDir>/../../packages/knowledge/src/index.ts',
     '^@renkei/queue$': '<rootDir>/../../packages/queue/src/index.ts',
   },
+  // kysely's published build is ESM-only; suites that import a package
+  // barrel reaching it (email-sanitizer's persistence layer) need it
+  // transformed to CJS rather than ignored — the worker-agents pattern.
+  transformIgnorePatterns: ['/node_modules/(?!.*kysely)'],
   transform: {
-    '^.+\\.tsx?$': [
+    '^.+\\.(t|j)sx?$': [
       'ts-jest',
       {
         tsconfig: {
           jsx: 'preserve',
           esModuleInterop: true,
+          allowJs: true,
         },
       },
     ],

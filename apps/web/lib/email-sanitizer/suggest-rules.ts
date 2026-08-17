@@ -132,6 +132,9 @@ export async function suggestSanitizerRules(
     existing.map((rule) => `${rule.match_type}:${rule.match_value.toLowerCase()}`)
   );
 
+  // The timer is cleared after the race — left running it would hold the
+  // process (and jest) open for the full timeout after a fast answer.
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const completion = await Promise.race([
     llm.provider.complete({
       system: 'You configure email-classification rules from evidence. You reply with strict JSON.',
@@ -156,8 +159,10 @@ export async function suggestSanitizerRules(
       tools: [],
       maxTokens: MAX_OUTPUT_TOKENS,
     }),
-    new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), SUGGEST_TIMEOUT_MS)),
-  ]);
+    new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), SUGGEST_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
   if (completion === 'timeout') return { error: 'The model took too long — try again.' };
   if (!completion.ok) {
     logger.warn('rule suggestion failed: {kind}', {

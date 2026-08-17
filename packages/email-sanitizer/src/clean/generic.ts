@@ -89,7 +89,7 @@ export function truncateSignatureDelimiter(text: string): string {
  * Deliberately a short, precise list rather than broad keyword scoring —
  * a false match here would truncate real correspondence.
  */
-const LEGAL_FOOTER_ANCHORS = [
+export const LEGAL_FOOTER_ANCHORS = [
   'this message and any attachments',
   'this e-mail and any attachments',
   'this email and any attachments',
