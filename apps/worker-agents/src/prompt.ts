@@ -44,13 +44,21 @@ export const SYSTEM_PROMPT = [
   'You are executing one step of an automated workflow that a person drafted.',
   'Do only what this step says. You do not know the other steps, and you must not invent work beyond this one.',
   'You may call only the tools provided. When the step’s work is done, or it is clear it cannot be done, call finish_step exactly once with the outcome.',
-  'Declare failure honestly: a tool error you could not work around is a failure, not a success.',
+  'Aim to finish: when what you have satisfies the step’s intent, declare success rather than double-checking with more calls.',
+  'Declare failure honestly: a tool error you could not work around, or a result that clearly does not match the step’s intent, is a failure, not a success.',
 ].join(' ');
 
 export interface AttemptPromptInput {
   step: AgentStep;
   attempt: number;
   variables: Record<string, string>;
+  /**
+   * How many tool calls this attempt may spend (finish_step is free). Stated
+   * to the model so it can ration — a budget it cannot see is a trapdoor,
+   * not a guard: the model explores as if calls were free and the attempt
+   * dies mid-thought.
+   */
+  toolBudget: number;
   /** Resolved corrective guidance, present on attempts >= 2 with a retry match. */
   guidanceText?: string;
   /** One-paragraph summary of the previous attempt's failure. */
@@ -70,6 +78,9 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
   const parts = [
     `Step: ${input.step.name}`,
     `Instruction: ${rendered.text}`,
+    `Tool budget: at most ${input.toolBudget} tool call(s) this attempt (finish_step is free). ` +
+      'Spend them deliberately — one well-chosen call beats several exploratory ones. When the ' +
+      'budget runs out you will be asked to declare the outcome from what you have already seen.',
     ...(input.step.saveAs
       ? [
           `When you succeed, include saveValue in finish_step — it becomes "${input.step.saveAs}" for later use.`,

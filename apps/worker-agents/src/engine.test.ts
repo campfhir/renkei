@@ -289,6 +289,87 @@ maybe('agent run engine', () => {
     expect(attempts).toHaveLength(5);
   });
 
+  it('forces a finish_step verdict when the tool budget runs out, and a declared success stands', async () => {
+    const { runId } = await seedRun(singleStep());
+    const requests: LlmRequest[] = [];
+    // Three searches spend the budget; the fourth is refused; then declare.
+    const llm = stubLlm((request, call) => {
+      requests.push(request);
+      return call < 4
+        ? useTool('jira_get_issue', { issueKey: `PROJ-${call}` })
+        : finish('success', { saveValue: 'PROJ-42' });
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    // The model was told its budget up front...
+    const firstText = requests[0].messages[0]?.content.find((block) => block.type === 'text');
+    expect(firstText && 'text' in firstText ? firstText.text : '').toContain(
+      'Tool budget: at most 3'
+    );
+    // ...and after spending it, the conversation narrowed to finish_step only.
+    const forced = requests[4];
+    expect(forced.tools.map((tool) => tool.name)).toEqual(['finish_step']);
+    expect(forced.toolChoice).toEqual({ name: 'finish_step' });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['status', 'outcome', 'tool_call_count'])
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].status).toBe('succeeded');
+    // Only the three in-budget calls ran; the refused fourth was never made.
+    expect(attempts[0].tool_call_count).toBe(3);
+  });
+
+  it('routes a budget-exhausted declared failure through failure handling, not guard', async () => {
+    const { runId } = await seedRun(
+      singleStep({ failureHandling: [{ outcome: 'not-found', action: 'exit' }] })
+    );
+    const llm = stubLlm((_request, call) =>
+      call < 4
+        ? useTool('jira_get_issue', { issueKey: `PROJ-${call}` })
+        : finish('failure', { code: 'not-found' })
+    );
+    const handler = handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('failed');
+    // The routable outcome the owner configured — not an unroutable guard.
+    expect(run.error_kind).toBe('step_failed');
+    expect(run.error).toContain('not-found');
+    expect(run.error).not.toContain('tool-call limit');
+
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['outcome', 'outcome_code', 'tool_call_count'])
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].outcome).toBe('llm_declared');
+    expect(attempts[0].outcome_code).toBe('not-found');
+    expect(attempts[0].tool_call_count).toBe(3);
+  });
+
   it('stops immediately on a failure handled as exit', async () => {
     const { runId } = await seedRun(
       singleStep({

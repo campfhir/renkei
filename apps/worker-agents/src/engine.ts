@@ -593,10 +593,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
   ): Promise<AttemptOutcome> {
     const guidanceText = guidance ? renderInstruction(guidance, vars).text : undefined;
     const previousFailure = attempt > 1 ? await lastFailureText(run.id, step.id) : undefined;
+    const toolCap = attempt > 1 ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
     const built = buildAttemptMessages({
       step,
       attempt,
       variables: vars,
+      toolBudget: toolCap,
       guidanceText,
       previousFailure,
     });
@@ -619,9 +621,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
     if (primaryTool) offer(primaryTool);
     if (attempt > 1 && guidance) for (const name of toolSegments(guidance)) offer(name);
 
-    const toolCap = attempt > 1 ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
     const messages: LlmMessage[] = [...built.messages];
     const toolCalls: ToolCallRecord[] = [];
+    // Once the budget is spent the conversation narrows to finish_step only:
+    // the model generally holds enough to answer, and "declare from what you
+    // have seen" turns exhaustion into an honest outcome the step's failure
+    // handling can route, where insta-failing produced an unroutable 'other'.
+    let budgetExhausted = false;
     const primaryResults: McpToolResult[] = [];
     const usage = { inputTokens: 0, outputTokens: 0 };
     const resolvedInstruction = renderInstruction(step.instruction, vars).text;
@@ -637,8 +643,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const completion = await llm.provider.complete({
         system: SYSTEM_PROMPT,
         messages,
-        tools: offered,
-        toolChoice: 'any',
+        tools: budgetExhausted ? [FINISH_STEP_DEF] : offered,
+        toolChoice: budgetExhausted ? { name: FINISH_STEP_TOOL } : 'any',
         maxTokens: llm.maxOutputTokens,
         ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
       });
@@ -721,14 +727,23 @@ export function createAgentRunHandler(deps: EngineDeps) {
           continue;
         }
         if (toolCalls.length >= toolCap) {
-          return {
-            ...base,
-            succeeded: false,
-            outcome: 'guard',
-            outcomeCode: 'other',
-            summary: `The step exceeded its ${toolCap} tool-call limit.`,
-            saveValue: null,
-          };
+          // Out of budget — but the model has context worth a verdict.
+          // Refuse the call and force finish_step on the next turn instead
+          // of failing the attempt outright: exhaustion should end in a
+          // declared outcome ('success' when the intent is met, a coded
+          // failure when it clearly is not), which the step's failure
+          // handling can route — where a guard failure routed nowhere.
+          budgetExhausted = true;
+          results.push({
+            type: 'tool_result',
+            toolUseId: use.id,
+            content:
+              `Tool budget spent (${toolCap} calls this attempt) — this call was not made. ` +
+              'Call finish_step now: declare success if what you already found satisfies the ' +
+              'step, or failure with the best-matching code if it clearly does not.',
+            isError: true,
+          });
+          continue;
         }
 
         const args =

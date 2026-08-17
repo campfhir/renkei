@@ -67,8 +67,13 @@ export function getPool(): Result<Pool, 'DB_INIT_ERROR'> {
 
 export async function closeDatabase(): Promise<void> {
   if (state.db) {
+    // Kysely's destroy ends the pool it wraps — the same pool state.pool
+    // holds — and pg-pool throws on a second end() rather than ignoring it.
+    // So a built db means destroy alone closes everything.
     await state.db.destroy();
     state.db = null;
+    state.pool = null;
+    return;
   }
   if (state.pool) {
     await state.pool.end();
