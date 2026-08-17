@@ -117,6 +117,9 @@ export function AgentBuilder({
   const [proseOpen, setProseOpen] = useState(!existing);
   const [drafting, setDrafting] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
+  // The adapter's redacted request summary on provider rejections — shown
+  // to the person who clicked Draft (their own request), never logs-only.
+  const [draftDetail, setDraftDetail] = useState<string | null>(null);
   // Elapsed-time feedback for the long synchronous draft call: the wait is
   // real model time (the server allows up to 150s), and a bare spinner past
   // ten seconds reads as "hung" — staged messages read as "working".
@@ -196,7 +199,8 @@ export function AgentBuilder({
     setDraftMode(hasRealSteps ? 'revise' : 'create');
     setDrafting(true);
     setDraftError(null);
-    const result = await sendJsonFull<{ name: string; steps: AgentStep[] }>(
+    setDraftDetail(null);
+    const result = await sendJsonFull<{ name: string; steps: AgentStep[]; detail?: string }>(
       `/api/tenant/${tenantId}/agents/draft`,
       'POST',
       {
@@ -206,8 +210,9 @@ export function AgentBuilder({
       }
     );
     setDrafting(false);
-    if (result.error || !result.data) {
+    if (result.error || !result.data?.steps) {
       setDraftError(result.error ?? 'Drafting failed — try again.');
+      if (typeof result.data?.detail === 'string') setDraftDetail(result.data.detail);
       return;
     }
     setSteps(result.data.steps);
@@ -451,6 +456,16 @@ export function AgentBuilder({
             <p aria-live="polite" className="mt-2 text-xs text-gray-600 dark:text-gray-400">
               {draftStatus}
             </p>
+          ) : null}
+          {draftDetail && !drafting ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                What was sent (content redacted)
+              </summary>
+              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-white p-2 font-mono text-[11px] dark:border-gray-800 dark:bg-gray-950">
+                {draftDetail}
+              </pre>
+            </details>
           ) : null}
         </section>
       ) : null}

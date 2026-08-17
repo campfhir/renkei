@@ -47,7 +47,12 @@ export async function POST(
     currentSteps,
     triggerVars,
   });
-  if ('error' in drafted) return NextResponse.json({ error: drafted.error }, { status: 422 });
+  if ('error' in drafted) {
+    return NextResponse.json(
+      { error: drafted.error, ...(drafted.detail ? { detail: drafted.detail } : {}) },
+      { status: 422 }
+    );
+  }
 
   return NextResponse.json(drafted);
 }

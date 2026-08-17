@@ -431,7 +431,7 @@ export async function draftAgentFromProse(
     /** trigger.* names the attached triggers provide, so those chips verify. */
     triggerVars?: string[];
   } = {}
-): Promise<DraftedAgent | { error: string }> {
+): Promise<DraftedAgent | { error: string; detail?: string }> {
   const currentSteps = options.currentSteps ?? [];
   const triggerVars = options.triggerVars ?? [];
   const llmResult = await resolveAgentLlm(db, tenantId, null);
@@ -515,6 +515,10 @@ export async function draftAgentFromProse(
       // "could not draft steps" hides whether to retry, wait, or go fix
       // the model configuration.
       const kind = completion.err.type;
+      // The adapter's redacted request summary (field names and sizes,
+      // never content) — shown to the person who clicked Draft, so "wrong
+      // payload" is diagnosable from the builder itself.
+      const detail = typeof completion.err.cause === 'string' ? completion.err.cause : undefined;
       if (kind === 'auth') {
         return {
           error:
@@ -531,11 +535,13 @@ export async function draftAgentFromProse(
       }
       if (kind === 'invalid_request') {
         return {
-          error: `The model rejected the request${completion.err.message ? `: ${completion.err.message.slice(0, 200)}` : ''} — an admin can check the model configuration under Agent models.`,
+          error: `The model rejected the request${completion.err.message ? `: ${completion.err.message.slice(0, 500)}` : ''} — an admin can check the model configuration under Agent models.`,
+          ...(detail ? { detail } : {}),
         };
       }
       return {
         error: `The model failed (${kind}) — try again or write the steps by hand.`,
+        ...(detail ? { detail } : {}),
       };
     }
 

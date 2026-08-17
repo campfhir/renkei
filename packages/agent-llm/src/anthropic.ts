@@ -8,6 +8,7 @@
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
+import { summarizeWireRequest } from './wire-summary';
 import type { Result } from '@campfhir/safe-functions/types';
 import type {
   LlmContentBlock,
@@ -143,6 +144,9 @@ export class AnthropicProvider implements LlmProvider {
       const text = await response.text().catch(() => '');
       return err(errorKindOf(response.status), {
         message: `Anthropic ${response.status}: ${text.slice(0, 500)}`,
+        // The redacted request shape, for "what did we actually send"
+        // troubleshooting — content replaced by lengths.
+        cause: summarizeWireRequest(`${baseUrl}/v1/messages`, body),
       });
     }
 

@@ -18,6 +18,7 @@
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
+import { summarizeWireRequest } from './wire-summary';
 import type { Result } from '@campfhir/safe-functions/types';
 import type {
   LlmContentBlock,
@@ -216,6 +217,9 @@ export class OpenAiProvider implements LlmProvider {
         }
         return err(errorKindOf(response.status), {
           message: `OpenAI-compatible endpoint ${response.status}: ${text.slice(0, 500)}`,
+          // The redacted request shape, for "what did we actually send"
+          // troubleshooting — content replaced by lengths.
+          cause: summarizeWireRequest(`${baseUrl}/chat/completions`, body),
         });
       }
       break;
