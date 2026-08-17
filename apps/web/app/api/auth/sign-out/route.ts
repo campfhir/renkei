@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { destroySession, sessionCookieName } from '@/lib/session';
+import { destroySession, getSessionFromRequest, sessionCookieName } from '@/lib/session';
+import { recordAuditEvent } from '@/lib/audit-events';
 
 /**
  * End the caller's session for the tenant the body names: the session row is
@@ -19,7 +20,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (typeof tenantId === 'string' && tenantId) {
     const cookieName = sessionCookieName(tenantId);
     const sessionId = request.cookies.get(cookieName)?.value;
-    if (sessionId) await destroySession(sessionId);
+    if (sessionId) {
+      // Resolve who this was BEFORE the session dies — afterwards the id
+      // resolves to nobody and the sign-out would be unattributable.
+      const session = await getSessionFromRequest(request, tenantId);
+      await destroySession(sessionId);
+      if (session) {
+        recordAuditEvent({ tenantId, actorSubject: session.subject, action: 'user.signed_out' });
+      }
+    }
     response.cookies.delete(cookieName);
   }
   return response;

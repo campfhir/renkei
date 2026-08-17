@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { deleteGrant, ATLASSIAN_JSM } from '@renkei/provider-grants';
 
 export async function DELETE(
@@ -39,5 +40,12 @@ export async function DELETE(
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
+  recordAuditEvent({
+    tenantId,
+    actorSubject: session.subject,
+    action: 'connector.disconnected',
+    targetKind: 'connector',
+    targetLabel: ATLASSIAN_JSM,
+  });
   return NextResponse.json({ message: 'Service Management disconnected' });
 }

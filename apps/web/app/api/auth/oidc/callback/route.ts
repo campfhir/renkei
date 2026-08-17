@@ -5,6 +5,7 @@ import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { createSession, sessionCookieName, sessionCookieOptions } from '@/lib/session';
 import { identityClaimsFromIdToken, upsertIdentity } from '@/lib/identity';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 
 interface OIDCTokenResponse {
@@ -242,6 +243,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!sessionResult.ok) {
       return NextResponse.json({ error: 'Failed to establish session' }, { status: 500 });
     }
+    recordAuditEvent({ tenantId, actorSubject: subject, action: 'user.signed_in' });
 
     const response = NextResponse.redirect(new URL(redirect, origin));
     response.cookies.set(

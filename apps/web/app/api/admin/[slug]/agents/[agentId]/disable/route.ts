@@ -11,6 +11,7 @@ import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
+import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function POST(
   _request: NextRequest,
@@ -26,6 +27,13 @@ export async function POST(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
+  const agent = await db
+    .selectFrom('agents')
+    .select(['name'])
+    .where('tenant_id', '=', tenant.id)
+    .where('id', '=', agentId)
+    .executeTakeFirst();
+
   const updated = await db
     .updateTable('agents')
     .set({ enabled: false, updated_at: sql`NOW()` })
@@ -36,6 +44,8 @@ export async function POST(
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
+  // Twice on purpose: the deployment-scoped log is the installation's
+  // record; the tenant trail is what the org's own audit page reads.
   await db
     .insertInto('platform_audit_log')
     .values({
@@ -46,6 +56,14 @@ export async function POST(
       details: JSON.stringify({ tenantId: tenant.id }),
     })
     .execute();
+  recordAuditEvent({
+    tenantId: tenant.id,
+    actorSubject: access.subject,
+    action: 'agent.disabled',
+    targetKind: 'agent',
+    targetLabel: agent?.name ?? agentId,
+    details: { byAdmin: true },
+  });
 
   return NextResponse.json({ disabled: true });
 }

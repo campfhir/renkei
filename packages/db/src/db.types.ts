@@ -147,6 +147,17 @@ export interface AgentTriggers {
   updated_at: Generated<Timestamp>;
 }
 
+export interface AuditEvents {
+  action: string;
+  actor_subject: string | null;
+  created_at: Generated<Timestamp>;
+  details: Json | null;
+  id: string;
+  target_kind: string | null;
+  target_label: string | null;
+  tenant_id: string;
+}
+
 export interface ConnectorConfigs {
   connector: string;
   created_at: Generated<Timestamp>;
@@ -578,6 +589,7 @@ export interface DB {
   agent_runs: AgentRuns;
   agent_triggers: AgentTriggers;
   agents: Agents;
+  audit_events: AuditEvents;
   connector_configs: ConnectorConfigs;
   content_watches: ContentWatches;
   email_banner_patterns: EmailBannerPatterns;

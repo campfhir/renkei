@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { deleteGrant, getGrant, MICROSOFT } from '@renkei/provider-grants';
 import { deleteGraphSubscription } from '@renkei/connector-microsoft';
 import { deleteObjectChunks } from '@renkei/knowledge';
@@ -103,5 +104,12 @@ export async function DELETE(
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
+  recordAuditEvent({
+    tenantId,
+    actorSubject: session.subject,
+    action: 'connector.disconnected',
+    targetKind: 'connector',
+    targetLabel: MICROSOFT,
+  });
   return NextResponse.json({ message: 'Microsoft disconnected' });
 }

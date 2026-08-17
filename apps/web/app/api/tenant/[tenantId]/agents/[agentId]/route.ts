@@ -16,6 +16,7 @@ import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { parseAgentPayload } from '@/lib/agents/payload';
 import { deleteAgent, getAgent, updateAgent } from '@/lib/agents/store';
 import { generateAgentDescription } from '@/lib/agents/describe';
+import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
   request: NextRequest,
@@ -85,6 +86,28 @@ export async function PUT(
     );
   }
 
+  // A toggle and an edit are different stories in the audit trail: "turned
+  // it on" is a decision to let it act, "changed it" is a change to what it
+  // does. A save that flips enabled AND rewrites steps records both.
+  if (existing.enabled !== normalized.enabled) {
+    recordAuditEvent({
+      tenantId,
+      actorSubject: session.subject,
+      action: normalized.enabled ? 'agent.enabled' : 'agent.disabled',
+      targetKind: 'agent',
+      targetLabel: normalized.name,
+    });
+  }
+  if (describedChanged) {
+    recordAuditEvent({
+      tenantId,
+      actorSubject: session.subject,
+      action: 'agent.updated',
+      targetKind: 'agent',
+      targetLabel: normalized.name,
+    });
+  }
+
   if (needsDescription) {
     // Written AFTER the response; the builder polls and shows an indicator.
     after(() =>
@@ -117,7 +140,17 @@ export async function DELETE(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
+  // Fetched first: after the cascade there is no row left to name in the
+  // audit trail, and "deleted agent <uuid>" tells an operator nothing.
+  const existing = await getAgent(dbResult.val, tenantId, session.subject, agentId);
   const deleted = await deleteAgent(dbResult.val, tenantId, session.subject, agentId);
   if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  recordAuditEvent({
+    tenantId,
+    actorSubject: session.subject,
+    action: 'agent.deleted',
+    targetKind: 'agent',
+    targetLabel: existing?.name ?? agentId,
+  });
   return NextResponse.json({ deleted: true });
 }

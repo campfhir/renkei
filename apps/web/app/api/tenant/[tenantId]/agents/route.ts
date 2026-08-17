@@ -19,6 +19,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { parseAgentPayload } from '@/lib/agents/payload';
 import { createAgent, listAgents } from '@/lib/agents/store';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { generateAgentDescription } from '@/lib/agents/describe';
 
 export async function GET(
@@ -67,6 +68,14 @@ export async function POST(
       { status: 422 }
     );
   }
+
+  recordAuditEvent({
+    tenantId,
+    actorSubject: session.subject,
+    action: 'agent.created',
+    targetKind: 'agent',
+    targetLabel: normalized.name,
+  });
 
   // The summary is written AFTER the response: authoring must never wait
   // on a model. The builder polls the agent until description_status

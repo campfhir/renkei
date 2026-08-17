@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { recordAuditEvent } from '@/lib/audit-events';
 
 /**
  * Disconnect the caller's own Jira account.
@@ -79,6 +80,13 @@ export async function DELETE(
       tenantId,
       subject: session.subject,
       accountId: grant.provider_account_id,
+    });
+    recordAuditEvent({
+      tenantId,
+      actorSubject: session.subject,
+      action: 'connector.disconnected',
+      targetKind: 'connector',
+      targetLabel: 'atlassian',
     });
 
     return NextResponse.json({

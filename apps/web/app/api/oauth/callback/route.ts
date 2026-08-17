@@ -22,6 +22,7 @@ import { parseEncryptionKey } from '@renkei/crypto';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
 import { cacheUserDisplayName } from '@/lib/mcp-tools/common';
+import { recordAuditEvent } from '@/lib/audit-events';
 
 interface JiraTokenResponse {
   access_token: string;
@@ -455,6 +456,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
 
     logger.info('Jira grant stored successfully', { component: 'auth/oauth', tenantId: tenant.id });
+    recordAuditEvent({
+      tenantId: tenant.id,
+      actorSubject: pendingSignIn.subject,
+      action: 'connector.connected',
+      targetKind: 'connector',
+      targetLabel: 'atlassian',
+    });
     // Back to the connectors page, which shows the fresh connection status.
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
@@ -615,6 +623,13 @@ async function handleWebexUserCallback(
   }
 
   logger.info('WebEx user grant stored', { component: 'auth/oauth', tenantId: tenant.id, subject });
+  recordAuditEvent({
+    tenantId: tenant.id,
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: WEBEX_USER,
+  });
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
 
@@ -786,6 +801,13 @@ async function handleMicrosoftCallback(
     component: 'auth/oauth',
     tenantId: tenant.id,
     subject,
+  });
+  recordAuditEvent({
+    tenantId: tenant.id,
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: MICROSOFT,
   });
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
@@ -964,6 +986,13 @@ async function handleZoomCallback(
   }
 
   logger.info('Zoom grant stored', { component: 'auth/oauth', tenantId: tenant.id, subject });
+  recordAuditEvent({
+    tenantId: tenant.id,
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: ZOOM,
+  });
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
 
@@ -1111,6 +1140,13 @@ async function handleAtlassianJsmCallback(
     component: 'auth/oauth',
     tenantId: tenant.id,
     subject,
+  });
+  recordAuditEvent({
+    tenantId: tenant.id,
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: ATLASSIAN_JSM,
   });
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
@@ -1268,6 +1304,13 @@ async function handleAtlassianConfluenceCallback(
     component: 'auth/oauth',
     tenantId: tenant.id,
     subject,
+  });
+  recordAuditEvent({
+    tenantId: tenant.id,
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: ATLASSIAN_CONFLUENCE,
   });
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }

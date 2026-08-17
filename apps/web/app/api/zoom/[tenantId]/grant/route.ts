@@ -12,6 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { deleteGrant, getGrant, ZOOM } from '@renkei/provider-grants';
 import { deleteObjectChunks } from '@renkei/knowledge';
 import { getZoomApp } from '@/lib/zoom-app';
@@ -98,5 +99,12 @@ export async function DELETE(
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
+  recordAuditEvent({
+    tenantId,
+    actorSubject: session.subject,
+    action: 'connector.disconnected',
+    targetKind: 'connector',
+    targetLabel: ZOOM,
+  });
   return NextResponse.json({ message: 'Zoom disconnected' });
 }
