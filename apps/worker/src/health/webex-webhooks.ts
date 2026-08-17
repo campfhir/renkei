@@ -1,58 +1,52 @@
 /**
- * Periodic webhook health: the worker half of "connectors silently rot"
- * (RENKEI.md). Webhooks get deleted out from under us, and WebEx flips
- * persistently-failing ones to inactive — after which events just stop,
- * with nothing in Renkei to notice. This sweep notices: every interval it
- * reconciles each enabled tenant's registrations toward the required set,
- * and logs loudly whenever it had to repair something, because a repair
- * means events were being lost until now.
+ * Periodic webhook health for the all-spaces registrations: the worker
+ * half of "connectors silently rot" (RENKEI.md). WebEx deletes webhooks
+ * out from under us and flips persistently-failing ones to inactive —
+ * after which a user's agents just stop firing, with nothing to notice.
+ * This sweep notices: every interval it reconciles each OPTED-IN grant's
+ * registration (made with that user's own token — there is no bot) toward
+ * the required single webhook, and logs loudly on every repair, because a
+ * repair means events were being lost until now.
  *
  * The sweep needs the stored public base URL — the worker serves no
  * requests, so there is no origin to fall back on. Until an operator sets
- * it, the sweep skips with a warning rather than registering webhooks that
- * point somewhere wrong.
+ * it, the sweep skips with a warning rather than registering webhooks
+ * that point somewhere wrong.
  */
 
+import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
-import { readConnectorConfigCached } from '@renkei/connector-config';
 import { getPublicBaseUrl } from '@renkei/settings';
 import { logger } from '../logger';
 import {
-  WEBEX_CONNECTOR,
   WebexClient,
-  webexWebhookTargetUrl,
+  webexUserWebhookTargetUrl,
   ensureWebexWebhooks,
 } from '@renkei/connector-webex';
 import type { WebexWebhooksClient } from '@renkei/connector-webex';
+import { resolveWebexUserAccessByAccount } from '../handlers/webex-linked-user';
 
-/** How often the worker re-checks every tenant's webhooks. */
+/** How often the worker re-checks every opted-in grant's webhook. */
 export const WEBHOOK_HEALTH_INTERVAL_MS = 15 * 60_000;
 
 export interface WebhookSweepDeps {
-  /** Test hook: build the WebEx client for a tenant's bot token. */
-  makeClient?: (botToken: string) => WebexWebhooksClient;
+  /** Test hook: build the WebEx client for a user's access token. */
+  makeClient?: (accessToken: string) => WebexWebhooksClient;
+  resolveAccess?: typeof resolveWebexUserAccessByAccount;
 }
 
 /**
- * One reconciliation pass over every tenant with an enabled WebEx
- * connector. Per-tenant failures are logged and skipped — one tenant's
- * broken bot token must not stop the sweep for the rest.
+ * One reconciliation pass over every opted-in all-spaces grant. Per-grant
+ * failures are logged and skipped — one user's dead token must not stop
+ * the sweep for everyone else.
  */
 export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<void> {
-  const makeClient = deps.makeClient ?? ((botToken: string) => new WebexClient(botToken));
+  const makeClient = deps.makeClient ?? ((token: string) => new WebexClient(token));
+  const resolveAccess = deps.resolveAccess ?? resolveWebexUserAccessByAccount;
 
   const baseUrl = getPublicBaseUrl();
   if (!baseUrl) {
     logger.warn('PUBLIC_BASE_URL not set; skipping sweep', { component: 'webex/webhook-health' });
-    return;
-  }
-
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'webex/webhook-health',
-    });
     return;
   }
 
@@ -62,43 +56,47 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     return;
   }
 
-  let tenantRows: Array<{ tenant_id: string }>;
+  let grantRows: Array<{ tenant_id: string; provider_account_id: string; metadata: unknown }>;
   try {
-    tenantRows = await dbResult.val
-      .selectFrom('connector_configs')
-      .select('tenant_id')
-      .where('connector', '=', WEBEX_CONNECTOR)
-      .where('enabled', '=', true)
+    grantRows = await dbResult.val
+      .selectFrom('provider_grants')
+      .select(['tenant_id', 'provider_account_id', 'metadata'])
+      .where('provider', '=', 'webex')
+      .where(sql<boolean>`metadata->>'allSpaces' = 'true'`)
       .execute();
   } catch (error) {
-    logger.error('could not enumerate tenants: {error}', {
+    logger.error('could not enumerate opted-in grants: {error}', {
       component: 'webex/webhook-health',
       error: error instanceof Error ? error.message : String(error),
     });
     return;
   }
 
-  for (const { tenant_id: tenantId } of tenantRows) {
-    const configResult = await readConnectorConfigCached(tenantId, WEBEX_CONNECTOR, keyResult.val);
-    if (!configResult.ok || !configResult.val?.enabled) continue;
-    const botToken = configResult.val.secrets.botToken;
-    const secret = configResult.val.secrets.webhookSecret;
-    if (!botToken || !secret) {
-      logger.warn('tenant is missing bot token or webhook secret', {
+  for (const row of grantRows) {
+    const metadata: { allSpacesSecret?: unknown } =
+      typeof row.metadata === 'object' && row.metadata !== null && !Array.isArray(row.metadata)
+        ? row.metadata
+        : {};
+    const secret = typeof metadata.allSpacesSecret === 'string' ? metadata.allSpacesSecret : null;
+    if (!secret) continue;
+
+    const access = await resolveAccess(row.tenant_id, row.provider_account_id);
+    if (!access) {
+      logger.warn('opted-in grant has no usable token; webhook may rot', {
         component: 'webex/webhook-health',
-        tenantId,
+        tenantId: row.tenant_id,
       });
       continue;
     }
 
-    const reconciled = await ensureWebexWebhooks(makeClient(botToken), {
-      targetUrl: webexWebhookTargetUrl(baseUrl, tenantId),
+    const reconciled = await ensureWebexWebhooks(makeClient(access.accessToken), {
+      targetUrl: webexUserWebhookTargetUrl(baseUrl, row.tenant_id, row.provider_account_id),
       secret,
     });
     if (!reconciled.ok) {
       logger.error('WebEx API error; will retry next sweep', {
         component: 'webex/webhook-health',
-        tenantId,
+        tenantId: row.tenant_id,
       });
       continue;
     }
@@ -109,10 +107,9 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
           (registration) => `${registration.resource}/${registration.event} ${registration.action}`
         )
         .join(', ');
-      // Loud on purpose: a repair means deliveries were being lost until now.
-      logger.warn('repaired webhooks: {repairs}', {
+      logger.warn('repaired all-spaces webhook: {repairs} — events were being lost', {
         component: 'webex/webhook-health',
-        tenantId,
+        tenantId: row.tenant_id,
         repairs,
       });
     }

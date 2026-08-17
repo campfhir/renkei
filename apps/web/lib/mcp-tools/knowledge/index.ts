@@ -13,8 +13,11 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { parseEncryptionKey } from '@renkei/crypto';
-import { readConnectorConfigCached } from '@renkei/connector-config';
-import { WEBEX_CONNECTOR, WebexClient, createWebexAccessVerifier } from '@renkei/connector-webex';
+import {
+  WEBEX_CONNECTOR,
+  WebexClient,
+  createWebexUserAccessVerifier,
+} from '@renkei/connector-webex';
 import {
   MICROSOFT_CONNECTOR,
   createMicrosoftAccessVerifier,
@@ -65,16 +68,19 @@ export async function buildKnowledgeVerifiers(
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) return verifiers;
 
-  const webexResult = await readConnectorConfigCached(tenantId, WEBEX_CONNECTOR, keyResult.val);
-  if (webexResult.ok && webexResult.val?.enabled && webexResult.val.secrets.botToken) {
-    verifiers.set(
-      WEBEX_CONNECTOR,
-      createWebexAccessVerifier(
-        // Interactive: this client exists to answer a live search.
-        new WebexClient(webexResult.val.secrets.botToken, { lane: 'interactive' })
-      )
-    );
-  }
+  // WebEx verifies with the CALLING user's own grant — there is no bot.
+  // No grant on file → webex chunks stay default-denied, the gate's
+  // contract; the resolver is imported lazily to keep this module's load
+  // graph unchanged for callers that never search webex content.
+  verifiers.set(
+    WEBEX_CONNECTOR,
+    createWebexUserAccessVerifier(async (userEmail) => {
+      const { resolveWebexUserAccessByEmail } = await import('@/lib/webex-user-access');
+      const access = await resolveWebexUserAccessByEmail(tenantId, userEmail);
+      // Interactive: this client exists to answer a live search.
+      return access ? new WebexClient(access.accessToken, { lane: 'interactive' }) : null;
+    })
+  );
 
   // Microsoft and Zoom chunks embed their owner in the refId, so their
   // verifiers are pure ownership checks — no client, no config needed. They

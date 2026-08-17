@@ -131,9 +131,6 @@ jest.mock('./handlers/zoom-access', () => ({
     hostEmail: 'host@example.com',
   })),
 }));
-jest.mock('./handlers/webex-context', () => ({
-  resolveWebexContext: jest.fn(async () => ({ client: {}, botPersonId: 'bot-1' })),
-}));
 // Worker-originated knowledge jobs flow into the embedding queue exactly as
 // the real enqueue produces them — ordering key included.
 jest.mock('./enqueue', () => ({
@@ -151,12 +148,12 @@ jest.mock('./queue', () => ({ eventsQueue: null, embeddingQueue: null }));
 
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import type { WebexMessage, OutgoingMessage } from '@renkei/connector-webex';
+import type { WebexMessage } from '@renkei/connector-webex';
 import { InMemoryQueue } from '@renkei/queue';
 import { createEventLoop, schedulePeriodicSweep } from './loop';
 import type { EventLoop } from './loop';
 import { registerHandler, handlerFor } from './handlers';
-import { createWebexMessageHandler } from './handlers/webex-message';
+import { createWebexUserMessageHandler } from './handlers/webex-user-message';
 import { createZoomTranscriptHandler } from './handlers/zoom-events';
 import { runSubscriptionSync } from './handlers/microsoft-sync';
 import {
@@ -264,12 +261,13 @@ function stubDb(state: {
   });
 }
 
-interface Posted {
+interface Handled {
   at: number;
-  outgoing: OutgoingMessage;
+  messageId: string;
 }
 
-function webexClientStub(posted: Posted[]) {
+/** The all-spaces watcher's client: fetch-only, message authored by SOMEONE ELSE. */
+function webexClientStub() {
   return {
     getMessage: async (id: string) =>
       ok<WebexMessage>({
@@ -282,17 +280,6 @@ function webexClientStub(posted: Posted[]) {
         parentId: null,
         created: '2026-08-13T12:00:00Z',
       }),
-    isRoomMember: async () => ok(true),
-    postMessage: async (outgoing: OutgoingMessage) => {
-      posted.push({ at: Date.now(), outgoing });
-      return ok({ id: `reply-${posted.length}` });
-    },
-    getAttachmentAction: async () => {
-      throw new Error('not used');
-    },
-    getPerson: async () => {
-      throw new Error('not used');
-    },
   };
 }
 
@@ -305,16 +292,22 @@ function microsoftAccess(): MicrosoftAccess {
   };
 }
 
-function registerAllHandlers(posted: Posted[]): void {
-  registerHandler(
-    'webex',
-    'messages.created',
-    createWebexMessageHandler({
-      resolveContext: async () => ({ client: webexClientStub(posted), botPersonId: 'bot-1' }),
-      hasLinkedIdentity: async () => true,
-      resolveLinkedWebexUserAccess: async () => null,
-    })
-  );
+function registerAllHandlers(handled: Handled[]): void {
+  // The webex leg is the suite's LATENCY PROBE: handled timestamps stand in
+  // for the old bot replies — what matters is that interactive webex events
+  // finish fast while the embedding queue is saturated or wedged.
+  const webexHandler = createWebexUserMessageHandler({
+    resolveAccess: async () => ({ accessToken: 'user-token', subject: 'watcher-1' }),
+    makeClient: () => webexClientStub(),
+  });
+  registerHandler('webex', 'user-message.created', async (event) => {
+    await webexHandler(event);
+    const payload: { id?: unknown } =
+      typeof event.payload === 'object' && event.payload !== null && !Array.isArray(event.payload)
+        ? event.payload
+        : {};
+    handled.push({ at: Date.now(), messageId: typeof payload.id === 'string' ? payload.id : '' });
+  });
   registerHandler('zoom', 'recording.transcript_completed', createZoomTranscriptHandler());
   // The real change-notification handler resolves its subscription row from
   // the database before calling runSubscriptionSync; the row lookup is not
@@ -368,9 +361,9 @@ function insertWebex(events: InMemoryQueue, messageId: string): number {
   void events.producer.enqueue({
     tenantId: 'tenant-1',
     source: 'webex',
-    type: 'messages.created',
-    payload: { id: messageId, roomId: 'room-1' },
-    orderingKey: `webex/tenant-1/room-1`,
+    type: 'user-message.created',
+    payload: { id: messageId, roomId: 'room-1', accountId: 'acct-w' },
+    orderingKey: `webex/tenant-1/acct-w/room-1`,
   });
   return at;
 }
@@ -397,18 +390,18 @@ function insertMicrosoft(events: InMemoryQueue): void {
 }
 
 let dbState: { inserted: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>> };
-let posted: Posted[];
+let handled: Handled[];
 let events: InMemoryQueue;
 let embedding: InMemoryQueue;
 
 beforeEach(() => {
   jest.clearAllMocks();
   dbState = { inserted: [], updates: [] };
-  posted = [];
+  handled = [];
   events = new InMemoryQueue();
   embedding = new InMemoryQueue();
   stubDb(dbState);
-  registerAllHandlers(posted);
+  registerAllHandlers(handled);
   mockEnqueueImpl = async (tenantId, type, payload, orderingKey) => {
     await embedding.producer.enqueue({
       tenantId,
@@ -475,28 +468,24 @@ describe('multi-stream: saturated embedding queue (Scenario A)', () => {
     expect(events.deadSnapshot()).toHaveLength(0);
     expect(embedding.deadSnapshot()).toHaveLength(0);
 
-    // (2) Every WebEx reply posted fast, despite >1.5s of serial
-    // embedding-queue work queued behind the same arrivals.
-    expect(posted).toHaveLength(5);
-    for (const reply of posted) {
-      const insertedAt = insertTimes.get(String(reply.outgoing.parentId));
+    // (2) Every WebEx event finished fast, despite >0.9s of serial
+    // embedding-queue work queued behind the same arrivals. (The all-spaces
+    // handler only fetches and fans out — no capture side effects.)
+    expect(handled).toHaveLength(5);
+    for (const done of handled) {
+      const insertedAt = insertTimes.get(done.messageId);
       expect(insertedAt).toBeDefined();
-      expect(reply.at - (insertedAt ?? 0)).toBeLessThan(1_000);
+      expect(done.at - (insertedAt ?? 0)).toBeLessThan(1_000);
     }
 
-    // (3) Fan-out accounting: 5 webex ingests + 5 enrichments, 3 zoom
-    // ingests, 2 microsoft rounds × 2 mails — all processed.
+    // (3) Fan-out accounting: 3 zoom ingests, 2 microsoft rounds × 2 mails
+    // — all processed. (WebEx no longer feeds the embedding queue: the bot
+    // capture pipeline is gone; webex_capture_message is a deliberate tool.)
     const jobs = embedding.snapshot();
     const byType = (type: string) => jobs.filter((row) => row.type === type);
-    expect(byType('ingest.object')).toHaveLength(8);
-    expect(byType('enrich.item')).toHaveLength(5);
+    expect(byType('ingest.object')).toHaveLength(3);
     expect(byType('ingest.email')).toHaveLength(4);
     expect(jobs.every((row) => row.status === 'processed')).toBe(true);
-
-    // (4) The enrichment back-fill landed: one actionable_items update per
-    // webex capture, after the embedding queue drained.
-    const enrichWrites = dbState.updates.filter((update) => update.table === 'actionable_items');
-    expect(enrichWrites).toHaveLength(5);
   }, 15_000);
 });
 
@@ -533,11 +522,11 @@ describe('multi-stream: hung embedding queue (Scenario B)', () => {
       for (const id of ['msg-a', 'msg-b', 'msg-c']) {
         insertTimes.set(id, insertWebex(events, id));
       }
-      const repliesPosted = await waitUntil(() => posted.length === 3, 2_000);
-      expect(repliesPosted).toBe(true);
-      for (const reply of posted) {
-        const insertedAt = insertTimes.get(String(reply.outgoing.parentId));
-        expect(reply.at - (insertedAt ?? 0)).toBeLessThan(1_000);
+      const webexHandled = await waitUntil(() => handled.length === 3, 2_000);
+      expect(webexHandled).toBe(true);
+      for (const done of handled) {
+        const insertedAt = insertTimes.get(done.messageId);
+        expect(done.at - (insertedAt ?? 0)).toBeLessThan(1_000);
       }
       // ...and the wedged job is STILL processing while all that happened.
       expect(embedding.snapshot()[0]?.status).toBe('processing');

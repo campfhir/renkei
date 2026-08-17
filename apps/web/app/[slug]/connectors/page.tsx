@@ -112,7 +112,7 @@ export default async function ConnectorsPage({
           enabled.has(WEBEX_USER_CONNECTOR)
             ? dbResult.val
                 .selectFrom('provider_grants')
-                .select(['display_name', 'requested_scopes'])
+                .select(['display_name', 'requested_scopes', 'metadata'])
                 .where('tenant_id', '=', tenant.id)
                 .where('provider', '=', WEBEX_USER)
                 .where('subject', '=', session.subject)
@@ -220,6 +220,13 @@ export default async function ConnectorsPage({
             tenantId={tenant.id}
             connected={webexGrant !== undefined && webexGrant !== null}
             displayName={webexGrant?.display_name ?? null}
+            allSpaces={
+              typeof webexGrant?.metadata === 'object' &&
+              webexGrant.metadata !== null &&
+              !Array.isArray(webexGrant.metadata) &&
+              'allSpaces' in webexGrant.metadata &&
+              webexGrant.metadata.allSpaces === true
+            }
             ceiling={webexCeiling}
             priorScopes={webexGrant?.requested_scopes ?? null}
           />

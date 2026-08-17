@@ -18,8 +18,7 @@ import { closeDatabase } from '@renkei/db';
 import { eventsQueue } from './queue';
 import { handlerFor, registerHandler } from './handlers';
 import { createEventLoop, schedulePeriodicSweep } from './loop';
-import { createWebexMessageHandler } from './handlers/webex-message';
-import { createWebexAttachmentActionHandler } from './handlers/webex-attachment-action';
+import { createWebexUserMessageHandler } from './handlers/webex-user-message';
 import {
   createMicrosoftGrantConnectedHandler,
   createMicrosoftChangeNotificationHandler,
@@ -44,8 +43,7 @@ import { logger, attachPersistentLogging } from './logger';
  * the retry/dead-letter path) rather than having them silently swallowed.
  */
 function registerConnectorHandlers(): void {
-  registerHandler('webex', 'messages.created', createWebexMessageHandler());
-  registerHandler('webex', 'attachmentActions.created', createWebexAttachmentActionHandler());
+  registerHandler('webex', 'user-message.created', createWebexUserMessageHandler());
   registerHandler('microsoft', 'grant.connected', createMicrosoftGrantConnectedHandler());
   registerHandler('microsoft', 'change-notification', createMicrosoftChangeNotificationHandler());
   registerHandler('microsoft', 'lifecycle', createMicrosoftLifecycleHandler());

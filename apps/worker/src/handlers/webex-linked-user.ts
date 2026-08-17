@@ -155,3 +155,78 @@ export async function resolveLinkedWebexUserAccess(
 
   return { accessToken: grant.accessToken };
 }
+
+export interface WebexUserGrantAccess {
+  accessToken: string;
+  subject: string;
+}
+
+/**
+ * A grant's own access by ACCOUNT id — how the all-spaces webhook handler
+ * turns a delivery back into "whose webhook, acting with whose token".
+ * Same refresh path as the by-email resolver above.
+ */
+export async function resolveWebexUserAccessByAccount(
+  tenantId: string,
+  accountId: string
+): Promise<WebexUserGrantAccess | null> {
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) return null;
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return null;
+
+  const row = await dbResult.val
+    .selectFrom('provider_grants')
+    .select('subject')
+    .where('tenant_id', '=', tenantId)
+    .where('provider', '=', WEBEX_USER)
+    .where('provider_account_id', '=', accountId)
+    .executeTakeFirst();
+  if (!row?.subject) return null;
+
+  const grantResult = await getGrant(WEBEX_USER, tenantId, accountId, keyResult.val);
+  if (!grantResult.ok || !grantResult.val) return null;
+  let grant = grantResult.val;
+
+  if (new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS) {
+    const configResult = await readConnectorConfigCached(
+      tenantId,
+      WEBEX_USER_CONNECTOR,
+      keyResult.val
+    );
+    const clientSecret = configResult.ok ? configResult.val?.secrets.clientSecret : undefined;
+    if (!clientSecret) return null;
+    const refreshed = await refreshGrantTokens(
+      new WebexUserAdapter(clientSecret),
+      tenantId,
+      grant.accountId,
+      keyResult.val,
+      logger
+    );
+    if (!refreshed.ok) return null;
+    grant = { ...grant, accessToken: refreshed.val.accessToken };
+  }
+
+  return { accessToken: grant.accessToken, subject: row.subject };
+}
+
+/**
+ * The by-SUBJECT variant — the reply handler knows the run's owner, not
+ * their account id.
+ */
+export async function resolveWebexUserAccessBySubject(
+  tenantId: string,
+  subject: string
+): Promise<WebexUserGrantAccess | null> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return null;
+  const row = await dbResult.val
+    .selectFrom('provider_grants')
+    .select('provider_account_id')
+    .where('tenant_id', '=', tenantId)
+    .where('provider', '=', WEBEX_USER)
+    .where('subject', '=', subject)
+    .executeTakeFirst();
+  if (!row) return null;
+  return resolveWebexUserAccessByAccount(tenantId, row.provider_account_id);
+}

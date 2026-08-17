@@ -8,20 +8,21 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { WebexWebhook } from './client';
 import {
-  REQUIRED_WEBEX_WEBHOOKS,
-  webexWebhookTargetUrl,
+  USER_SPACES_WEBHOOKS,
+  webexUserWebhookTargetUrl,
   inspectWebexWebhooks,
   ensureWebexWebhooks,
+  deleteWebexWebhooksFor,
   type WebexWebhooksClient,
 } from './webhooks-manager';
 
-const TARGET = 'https://renkei.example.com/api/webhooks/webex/tenant-1';
+const TARGET = 'https://renkei.example.com/api/webhooks/webex/tenant-1/user/acct-1';
 const SECRET = 'signing-secret';
 
 function hook(over: Partial<WebexWebhook>): WebexWebhook {
   return {
     id: 'hook-1',
-    name: 'Renkei ingestion',
+    name: 'Renkei all spaces',
     targetUrl: TARGET,
     resource: 'messages',
     event: 'created',
@@ -31,12 +32,9 @@ function hook(over: Partial<WebexWebhook>): WebexWebhook {
   };
 }
 
-/** Both required registrations, healthy. */
+/** The one required registration, healthy. */
 function healthyPair(): WebexWebhook[] {
-  return [
-    hook({ id: 'hook-msg' }),
-    hook({ id: 'hook-act', resource: 'attachmentActions', name: 'Renkei push-to-renkei' }),
-  ];
+  return [hook({ id: 'hook-msg' })];
 }
 
 interface StubCalls {
@@ -63,10 +61,10 @@ function stubClient(hooks: WebexWebhook[]): { client: WebexWebhooksClient; calls
   };
 }
 
-describe('webexWebhookTargetUrl', () => {
-  it('joins base and tenant, tolerating a trailing slash', () => {
-    expect(webexWebhookTargetUrl('https://r.example.com/', 'tenant-1')).toBe(
-      'https://r.example.com/api/webhooks/webex/tenant-1'
+describe('webexUserWebhookTargetUrl', () => {
+  it('joins base, tenant and account, tolerating a trailing slash', () => {
+    expect(webexUserWebhookTargetUrl('https://r.example.com/', 'tenant-1', 'acct 1')).toBe(
+      'https://r.example.com/api/webhooks/webex/tenant-1/user/acct%201'
     );
   });
 });
@@ -77,22 +75,24 @@ describe('inspectWebexWebhooks', () => {
     const result = await inspectWebexWebhooks(client, TARGET, SECRET);
     expect(result.ok && result.val.healthy).toBe(true);
     if (result.ok) {
-      expect(result.val.registrations.map((r) => r.state)).toEqual(['ok', 'ok']);
+      expect(result.val.registrations.map((r) => r.state)).toEqual(['ok']);
     }
   });
 
-  it('reports missing, inactive, and secret-mismatch distinctly', async () => {
-    const { client } = stubClient([
-      hook({ id: 'hook-msg', status: 'inactive' }),
-      hook({ id: 'hook-act', resource: 'attachmentActions', secret: 'rotated-away' }),
-    ]);
-    const result = await inspectWebexWebhooks(client, TARGET, SECRET);
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.val.healthy).toBe(false);
-      expect(result.val.registrations[0]?.state).toBe('inactive');
-      expect(result.val.registrations[1]?.state).toBe('secret-mismatch');
-    }
+  it('reports inactive and secret-mismatch distinctly', async () => {
+    const inactive = await inspectWebexWebhooks(
+      stubClient([hook({ id: 'hook-msg', status: 'inactive' })]).client,
+      TARGET,
+      SECRET
+    );
+    expect(inactive.ok && inactive.val.registrations[0]?.state).toBe('inactive');
+
+    const mismatch = await inspectWebexWebhooks(
+      stubClient([hook({ id: 'hook-msg', secret: 'rotated-away' })]).client,
+      TARGET,
+      SECRET
+    );
+    expect(mismatch.ok && mismatch.val.registrations[0]?.state).toBe('secret-mismatch');
   });
 
   it('reports missing when nothing targets this tenant endpoint', async () => {
@@ -100,7 +100,7 @@ describe('inspectWebexWebhooks', () => {
     const result = await inspectWebexWebhooks(client, TARGET, SECRET);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.val.registrations.map((r) => r.state)).toEqual(['missing', 'missing']);
+      expect(result.val.registrations.map((r) => r.state)).toEqual(['missing']);
     }
   });
 
@@ -122,7 +122,7 @@ describe('ensureWebexWebhooks', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.val.changed).toBe(false);
-      expect(result.val.registrations.map((r) => r.action)).toEqual(['kept', 'kept']);
+      expect(result.val.registrations.map((r) => r.action)).toEqual(['kept']);
     }
     expect(calls.created).toHaveLength(0);
     expect(calls.deleted).toHaveLength(0);
@@ -134,10 +134,10 @@ describe('ensureWebexWebhooks', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.val.changed).toBe(true);
-      expect(result.val.registrations.map((r) => r.action)).toEqual(['created', 'created']);
+      expect(result.val.registrations.map((r) => r.action)).toEqual(['created']);
     }
-    expect(calls.created).toHaveLength(REQUIRED_WEBEX_WEBHOOKS.length);
-    expect(calls.created.map((c) => c.resource)).toEqual(['messages', 'attachmentActions']);
+    expect(calls.created).toHaveLength(USER_SPACES_WEBHOOKS.length);
+    expect(calls.created.map((c) => c.resource)).toEqual(['messages']);
     expect(calls.created.every((c) => c.secret === SECRET && c.targetUrl === TARGET)).toBe(true);
   });
 
@@ -150,7 +150,6 @@ describe('ensureWebexWebhooks', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.val.registrations[0]?.action).toBe('recreated');
-      expect(result.val.registrations[1]?.action).toBe('kept');
     }
     expect(calls.deleted).toEqual(['hook-msg']);
     expect(calls.created).toHaveLength(1);
@@ -205,5 +204,20 @@ describe('ensureWebexWebhooks', () => {
     const failing = { ...client, listWebhooks: async () => err('WEBEX_API_ERROR' as const) };
     const result = await ensureWebexWebhooks(failing, { targetUrl: TARGET, secret: SECRET });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('deleteWebexWebhooksFor', () => {
+  it('deletes exactly the hooks pointing at the target, idempotently', async () => {
+    const { client, calls } = stubClient([
+      hook({ id: 'hook-msg' }),
+      hook({ id: 'other', targetUrl: 'https://elsewhere.example.com/hook' }),
+    ]);
+    const result = await deleteWebexWebhooksFor(client, TARGET);
+    expect(result.ok && result.val.deleted).toBe(1);
+    expect(calls.deleted).toEqual(['hook-msg']);
+
+    const empty = await deleteWebexWebhooksFor(stubClient([]).client, TARGET);
+    expect(empty.ok && empty.val.deleted).toBe(0);
   });
 });

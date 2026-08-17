@@ -29,9 +29,9 @@ import { extractText } from '@renkei/document-text';
 import { resolveMicrosoftAccess } from './microsoft-access';
 import { sanitizeEmailForTenant } from '@renkei/email-sanitizer';
 import type { MessageOverride, RawEmail } from '@renkei/email-sanitizer';
-import { createWebexAccessVerifier } from '@renkei/connector-webex';
+import { createWebexUserAccessVerifier, WebexClient } from '@renkei/connector-webex';
 import type { EventHandler } from '../handlers';
-import { resolveWebexContext } from './webex-context';
+import { resolveLinkedWebexUserAccess } from './webex-linked-user';
 import { logger } from '../logger';
 
 const COMPONENT = 'knowledge/ingest';
@@ -412,17 +412,24 @@ export function createKnowledgeEnrichItemHandler(): EventHandler {
     const embedder = await resolveEmbeddingProvider(event.tenant_id);
     if (!embedder) return;
 
-    // The ACL gate needs a live verifier under the tenant's bot client —
-    // enrichment discloses prior content, so it verifies against the acting
-    // identity exactly as the inline search did.
-    const context = await resolveWebexContext(event.tenant_id);
+    // The ACL gate verifies with the ACTING USER's own WebEx grant — there
+    // is no bot. No grant → webex refs stay default-denied, which is the
+    // gate's contract, not a failure.
     const searched = await searchKnowledge({
       tenantId: event.tenant_id,
       userEmail: accessSubject,
       query,
       k: 3,
       embedder,
-      verifiers: new Map([['webex', createWebexAccessVerifier(context.client)]]),
+      verifiers: new Map([
+        [
+          'webex',
+          createWebexUserAccessVerifier(async (userEmail) => {
+            const access = await resolveLinkedWebexUserAccess(event.tenant_id, userEmail);
+            return access ? new WebexClient(access.accessToken) : null;
+          }),
+        ],
+      ]),
       excludeRef: { provider, refId },
     });
     if (!searched.ok) {

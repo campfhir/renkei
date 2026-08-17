@@ -15,8 +15,11 @@ jest.mock('@renkei/knowledge', () => ({
   searchKnowledge: jest.fn(),
 }));
 jest.mock('@renkei/email-sanitizer', () => ({ sanitizeEmailForTenant: jest.fn() }));
-jest.mock('@renkei/connector-webex', () => ({ createWebexAccessVerifier: jest.fn() }));
-jest.mock('./webex-context', () => ({ resolveWebexContext: jest.fn() }));
+jest.mock('@renkei/connector-webex', () => ({
+  createWebexUserAccessVerifier: jest.fn(() => ({ provider: 'webex', verifyAccess: jest.fn() })),
+  WebexClient: class {},
+}));
+jest.mock('./webex-linked-user', () => ({ resolveLinkedWebexUserAccess: jest.fn() }));
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import {
@@ -43,9 +46,9 @@ const {
 const { sanitizeEmailForTenant: mockSanitizeEmailForTenant } = jest.requireMock<{
   sanitizeEmailForTenant: jest.Mock;
 }>('@renkei/email-sanitizer');
-const { resolveWebexContext: mockResolveWebexContext } = jest.requireMock<{
-  resolveWebexContext: jest.Mock;
-}>('./webex-context');
+const { resolveLinkedWebexUserAccess: mockResolveLinkedWebexUserAccess } = jest.requireMock<{
+  resolveLinkedWebexUserAccess: jest.Mock;
+}>('./webex-linked-user');
 
 function event(type: string, payload: Record<string, unknown>): ClaimedEvent {
   return {
@@ -266,7 +269,7 @@ describe('enrich.item', () => {
   };
 
   beforeEach(() => {
-    mockResolveWebexContext.mockResolvedValue({ client: {}, botPersonId: null });
+    mockResolveLinkedWebexUserAccess.mockResolvedValue({ accessToken: 'user-token' });
     mockSearchKnowledge.mockResolvedValue(
       ok({
         hits: [

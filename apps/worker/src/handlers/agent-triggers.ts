@@ -93,6 +93,12 @@ export async function fanOutMailReceived(params: {
  */
 export async function fanOutWebexMessage(params: {
   tenantId: string;
+  /**
+   * The WATCHER — the user whose all-spaces webhook delivered this and
+   * whose agents may run. Not derived from the sender: the whole point of
+   * watching a space is reacting to OTHER people's messages.
+   */
+  ownerSubject: string;
   senderEmail: string;
   messageId: string;
   roomId: string;
@@ -101,18 +107,11 @@ export async function fanOutWebexMessage(params: {
   try {
     const dbResult = getDatabase();
     if (!dbResult.ok) return 0;
-    const identity = await dbResult.val
-      .selectFrom('identities')
-      .select('subject')
-      .where('tenant_id', '=', params.tenantId)
-      .where('email', '=', params.senderEmail.toLowerCase())
-      .executeTakeFirst();
-    if (!identity) return 0;
     const started = await fanOutAgentEvents(dbResult.val, queue.producer, {
       tenantId: params.tenantId,
       source: 'webex',
       type: 'message.received',
-      ownerSubject: identity.subject,
+      ownerSubject: params.ownerSubject,
       payload: {
         text: params.text.slice(0, BODY_PREVIEW_CHARS),
         sender: params.senderEmail,

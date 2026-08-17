@@ -62,3 +62,24 @@ export function createWebexAccessVerifier(
     },
   };
 }
+
+/**
+ * The user-token variant: no bot exists, so membership is asked with the
+ * REQUESTING user's own client, resolved per call by email. No grant on
+ * file → no client → every webex ref stays denied, the gate's default.
+ */
+export function createWebexUserAccessVerifier(
+  clientFor: (userEmail: string) => Promise<Pick<WebexClient, 'isRoomMember'> | null>
+): AccessVerifier {
+  return {
+    provider: 'webex',
+    async verifyAccess(
+      userEmail: string,
+      refs: readonly SourceRef[]
+    ): Promise<Result<SourceRef[], 'VERIFICATION_FAILED'>> {
+      const client = await clientFor(userEmail);
+      if (!client) return ok([]);
+      return createWebexAccessVerifier(client).verifyAccess(userEmail, refs);
+    },
+  };
+}

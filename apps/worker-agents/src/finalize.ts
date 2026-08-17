@@ -70,7 +70,14 @@ async function enqueueThreadReply(
     tenantId: run.tenantId,
     source: 'agents',
     type: 'run.reply',
-    payload: { roomId: state.roomId, parentId: state.messageId, markdown },
+    // ownerSubject: the reply posts with the run OWNER's own WebEx grant —
+    // there is no bot; the agent speaks as the person it belongs to.
+    payload: {
+      roomId: state.roomId,
+      parentId: state.messageId,
+      markdown,
+      ownerSubject: run.ownerSubject,
+    },
   });
   if (!enqueued.ok) {
     logger.warn('could not enqueue thread reply for run {runId}', {

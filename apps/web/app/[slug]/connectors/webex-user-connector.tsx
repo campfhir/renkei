@@ -18,12 +18,15 @@ export default function WebexUserConnector({
   tenantId,
   connected,
   displayName,
+  allSpaces,
   ceiling,
   priorScopes,
 }: {
   tenantId: string;
   connected: boolean;
   displayName: string | null;
+  /** The opt-in all-spaces webhook: agents fire from every space they're in. */
+  allSpaces: boolean;
   /** The org's allowed scopes — the most a user can grant. */
   ceiling: string[];
   /** Scopes on the user's previous grant, seeding the picker on reconnect. */
@@ -57,6 +60,31 @@ export default function WebexUserConnector({
   const authorizeUrl = `/api/webex/${tenantId}/authorize?scopes=${encodeURIComponent(
     scopesOfOptions(WEBEX_USER_SCOPE_OPTIONS, selectedIds).join(' ')
   )}`;
+
+  const [spacesBusy, setSpacesBusy] = useState(false);
+  const [spacesNotice, setSpacesNotice] = useState<string | null>(null);
+
+  async function toggleAllSpaces(enabled: boolean) {
+    setSpacesBusy(true);
+    setSpacesNotice(null);
+    try {
+      const response = await fetch(`/api/webex/${tenantId}/all-spaces`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setSpacesNotice(typeof data.error === 'string' ? data.error : 'Could not update');
+        return;
+      }
+      router.refresh();
+    } catch {
+      setSpacesNotice('Could not reach the server');
+    } finally {
+      setSpacesBusy(false);
+    }
+  }
 
   async function disconnect() {
     setBusy(true);
@@ -109,6 +137,42 @@ export default function WebexUserConnector({
 
       {notice && (
         <p className="mt-3 rounded-md bg-gray-100 p-2 text-sm dark:bg-gray-900">{notice}</p>
+      )}
+
+      {connected && (
+        <div className="mt-3 rounded-md border border-gray-200 p-3 dark:border-gray-800">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0 max-w-md">
+              <p className="text-sm font-medium">Trigger my agents from all my spaces</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                Registers a webhook on your own WebEx account covering every space you&apos;re in —
+                including ones you join later. Messages feed only your own agents&apos; triggers;
+                nothing is stored or indexed, and your own messages never trigger your agents (that
+                would loop). Agent replies post as you.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={allSpaces}
+              aria-label="Trigger my agents from all my spaces"
+              disabled={spacesBusy}
+              onClick={() => void toggleAllSpaces(!allSpaces)}
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                allSpaces ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-700'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${
+                  allSpaces ? 'left-[1.375rem]' : 'left-0.5'
+                }`}
+              />
+            </button>
+          </div>
+          {spacesNotice && (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">{spacesNotice}</p>
+          )}
+        </div>
       )}
 
       {!connected && (

@@ -35,17 +35,25 @@ export interface RequiredWebhook {
 }
 
 /**
- * The registrations Renkei's WebEx connector needs: ambient message
- * ingestion, and the Action.Submit events behind "Push to Renkei".
+ * The one registration the user-token model needs: a no-roomId-filter
+ * messages webhook on the USER's own OAuth token, covering every space
+ * they are in — including ones they join later. (The old org-bot pair —
+ * ambient ingestion + push-card actions — is gone with the bot itself.)
  */
-export const REQUIRED_WEBEX_WEBHOOKS: readonly RequiredWebhook[] = [
-  { resource: 'messages', event: 'created', name: 'Renkei ingestion' },
-  { resource: 'attachmentActions', event: 'created', name: 'Renkei push-to-renkei' },
+export const USER_SPACES_WEBHOOKS: readonly RequiredWebhook[] = [
+  { resource: 'messages', event: 'created', name: 'Renkei all spaces' },
 ];
 
-/** The receipt endpoint a tenant's webhooks must target. */
-export function webexWebhookTargetUrl(publicBaseUrl: string, tenantId: string): string {
-  return `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/webex/${encodeURIComponent(tenantId)}`;
+/** The per-user receipt endpoint an all-spaces webhook must target. */
+export function webexUserWebhookTargetUrl(
+  publicBaseUrl: string,
+  tenantId: string,
+  accountId: string
+): string {
+  return (
+    `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/webex/` +
+    `${encodeURIComponent(tenantId)}/user/${encodeURIComponent(accountId)}`
+  );
 }
 
 export type WebhookHealthState = 'ok' | 'missing' | 'inactive' | 'secret-mismatch' | 'duplicate';
@@ -101,14 +109,15 @@ function isHealthy(hook: WebexWebhook, secret: string): boolean {
 export async function inspectWebexWebhooks(
   client: WebexWebhooksClient,
   targetUrl: string,
-  secret: string
+  secret: string,
+  required: readonly RequiredWebhook[] = USER_SPACES_WEBHOOKS
 ): Promise<Result<WebhookInspection, 'WEBEX_API_ERROR'>> {
   const listed = await client.listWebhooks();
   if (!listed.ok) return listed;
 
-  const registrations = REQUIRED_WEBEX_WEBHOOKS.map((required): WebhookHealth => {
-    const found = listed.val.filter((hook) => matches(hook, targetUrl, required));
-    const base = { resource: required.resource, event: required.event };
+  const registrations = required.map((requiredHook): WebhookHealth => {
+    const found = listed.val.filter((hook) => matches(hook, targetUrl, requiredHook));
+    const base = { resource: requiredHook.resource, event: requiredHook.event };
     if (found.length === 0) {
       return { ...base, state: 'missing', webhookId: null, status: null };
     }
@@ -137,13 +146,13 @@ export async function inspectWebexWebhooks(
  */
 export async function ensureWebexWebhooks(
   client: WebexWebhooksClient,
-  options: { targetUrl: string; secret: string }
+  options: { targetUrl: string; secret: string; required?: readonly RequiredWebhook[] }
 ): Promise<Result<WebhookReconciliation, 'WEBEX_API_ERROR'>> {
   const listed = await client.listWebhooks();
   if (!listed.ok) return listed;
 
   const registrations: WebhookRepair[] = [];
-  for (const required of REQUIRED_WEBEX_WEBHOOKS) {
+  for (const required of options.required ?? USER_SPACES_WEBHOOKS) {
     const found = listed.val.filter((hook) => matches(hook, options.targetUrl, required));
     const healthy = found.find((hook) => isHealthy(hook, options.secret));
     const base = { resource: required.resource, event: required.event };
@@ -185,4 +194,24 @@ export async function ensureWebexWebhooks(
     changed: registrations.some((registration) => registration.action !== 'kept'),
     registrations,
   });
+}
+
+/**
+ * Delete every webhook pointing at a target — the opt-out path. Idempotent:
+ * nothing to delete reconciles to deleted 0.
+ */
+export async function deleteWebexWebhooksFor(
+  client: WebexWebhooksClient,
+  targetUrl: string
+): Promise<Result<{ deleted: number }, 'WEBEX_API_ERROR'>> {
+  const listed = await client.listWebhooks();
+  if (!listed.ok) return listed;
+  let deleted = 0;
+  for (const hook of listed.val) {
+    if (hook.targetUrl !== targetUrl) continue;
+    const removed = await client.deleteWebhook(hook.id);
+    if (!removed.ok) return removed;
+    deleted += 1;
+  }
+  return ok({ deleted });
 }

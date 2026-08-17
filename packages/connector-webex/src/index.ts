@@ -39,10 +39,11 @@ export {
   type WebhookRegistration,
 } from './client';
 export {
-  REQUIRED_WEBEX_WEBHOOKS,
-  webexWebhookTargetUrl,
+  USER_SPACES_WEBHOOKS,
+  webexUserWebhookTargetUrl,
   inspectWebexWebhooks,
   ensureWebexWebhooks,
+  deleteWebexWebhooksFor,
   type WebexWebhooksClient,
   type RequiredWebhook,
   type WebhookHealth,
@@ -52,7 +53,7 @@ export {
   type WebhookRepairAction,
   type WebhookReconciliation,
 } from './webhooks-manager';
-export { createWebexAccessVerifier, webexRefId } from './verifier';
+export { createWebexAccessVerifier, createWebexUserAccessVerifier, webexRefId } from './verifier';
 export {
   buildPushToRenkeiCard,
   parsePushAction,

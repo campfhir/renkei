@@ -1,7 +1,7 @@
 /**
  * The agents/run.failed handler — telling the owner their agent broke,
  * over BOTH channels they have connected: an email (sent from their own
- * Outlook grant, to their own address) and a WebEx DM from the org bot.
+ * Outlook grant, to their own address).
  * Each channel is skipped silently when unconnected; the run page shows
  * the failure regardless, so notification is reach, never the record.
  *
@@ -15,7 +15,6 @@ import { graphRequest } from '@renkei/connector-microsoft';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { resolveMicrosoftAccess } from './microsoft-access';
-import { resolveWebexContext } from './webex-context';
 import { registrationUrl } from './feed-url';
 import { logger } from '../logger';
 
@@ -123,26 +122,8 @@ export function createAgentRunFailedHandler(): EventHandler {
       });
     }
 
-    // Channel 2: WebEx DM from the org bot.
-    try {
-      const context = await resolveWebexContext(tenantId);
-      const posted = await context.client.postMessage({
-        toPersonEmail: identity.email,
-        markdown: `Your agent **${agentName}** stopped on a failure: ${reason}${link ? `\n\n[See the run](${link})` : ''}`,
-      });
-      if (!posted.ok) {
-        logger.debug('failure DM not delivered for run {runId}', {
-          component: 'worker/agent-notify',
-          runId: payload.runId,
-        });
-      }
-    } catch (error) {
-      // No WebEx configured is the common, silent case.
-      logger.debug('failure DM skipped for run {runId}: {error}', {
-        component: 'worker/agent-notify',
-        runId: payload.runId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    // The old second channel — a WebEx DM from the org bot — went with the
+    // bot. WebEx cannot message yourself with your own token, so mail is
+    // the notification channel; the run page has everything either way.
   };
 }
