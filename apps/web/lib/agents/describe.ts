@@ -134,7 +134,7 @@ export async function generateAgentDescription(
         },
       ],
       tools: [],
-      maxTokens: MAX_OUTPUT_TOKENS,
+      maxTokens: Math.max(MAX_OUTPUT_TOKENS, llm.maxOutputTokens),
     }),
     new Promise<'timeout'>((resolve) =>
       setTimeout(() => resolve('timeout'), GENERATION_TIMEOUT_MS)

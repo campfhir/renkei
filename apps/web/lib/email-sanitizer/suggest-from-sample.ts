@@ -147,7 +147,7 @@ export async function suggestBannerPhrasesFromSample(
         { role: 'user', content: [{ type: 'text', text: promptOf(strippable, existing) }] },
       ],
       tools: [],
-      maxTokens: MAX_OUTPUT_TOKENS,
+      maxTokens: Math.max(MAX_OUTPUT_TOKENS, llm.maxOutputTokens),
     }),
     new Promise<'timeout'>((resolve) => {
       timer = setTimeout(() => resolve('timeout'), SUGGEST_TIMEOUT_MS);

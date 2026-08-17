@@ -96,7 +96,7 @@ export async function suggestCleanerScript(
         { role: 'user', content: [{ type: 'text', text: promptOf(sample, instructions) }] },
       ],
       tools: [],
-      maxTokens: MAX_OUTPUT_TOKENS,
+      maxTokens: Math.max(MAX_OUTPUT_TOKENS, llm.maxOutputTokens),
     }),
     new Promise<'timeout'>((resolve) => {
       timer = setTimeout(() => resolve('timeout'), SUGGEST_TIMEOUT_MS);
