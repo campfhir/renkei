@@ -488,7 +488,10 @@ export async function draftAgentFromProse(
           'You turn plain-language automation descriptions into structured steps. You reply with strict JSON.',
         messages,
         tools: [],
-        maxTokens: MAX_OUTPUT_TOKENS,
+        // The model config's own ceiling when it is higher: reasoning
+        // deployments spend completion tokens on thinking first, and 4096
+        // can be ALL reasoning with no JSON left.
+        maxTokens: Math.max(MAX_OUTPUT_TOKENS, llm.maxOutputTokens),
         // Just under the outer race so the HTTP call, not the race, decides.
         timeoutMs: Math.max(10_000, remaining - 5_000),
       }),
@@ -507,7 +510,32 @@ export async function draftAgentFromProse(
         tenantId,
         kind: completion.err.type,
       });
-      return { error: 'The model could not draft steps — try again or write them by hand.' };
+      // The kind decides what the user can actually DO about it — a bare
+      // "could not draft steps" hides whether to retry, wait, or go fix
+      // the model configuration.
+      const kind = completion.err.type;
+      if (kind === 'auth') {
+        return {
+          error:
+            'The model rejected the organization’s API key — an admin can check it under Agent models.',
+        };
+      }
+      if (kind === 'rate_limit' || kind === 'overloaded') {
+        return { error: 'The model is rate-limiting right now — try again in a minute.' };
+      }
+      if (kind === 'timeout' || kind === 'network') {
+        return {
+          error: 'The model did not answer in time — try again, or try a shorter description.',
+        };
+      }
+      if (kind === 'invalid_request') {
+        return {
+          error: `The model rejected the request${completion.err.message ? `: ${completion.err.message.slice(0, 200)}` : ''} — an admin can check the model configuration under Agent models.`,
+        };
+      }
+      return {
+        error: `The model failed (${kind}) — try again or write the steps by hand.`,
+      };
     }
 
     const raw = completion.val.content
