@@ -13,12 +13,18 @@
  * half of why someone opens it.
  */
 
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import Link from 'next/link';
 import ConnectorIcon from '@/components/connector-icon';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { signInUrl } from '@/lib/sign-in-url';
-import { getUsageReport, type UsageReport, type ToolUsageRow } from './actions';
+import {
+  getUsageReport,
+  getToolDetail,
+  type UsageReport,
+  type ToolUsageRow,
+  type ToolDetail,
+} from './actions';
 import { friendlyToolName } from '@/lib/tool-name';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 
@@ -40,6 +46,7 @@ interface Row {
   connector: string | null;
   kind: 'read' | 'act' | null;
   title: string | null;
+  description: string | null;
   calls: number;
   errors: number;
   medianMs: number;
@@ -63,6 +70,7 @@ function joinRows(tools: ToolDescriptor[], usage: ToolUsageRow[]): Row[] {
       connector: tool.connector,
       kind: tool.kind,
       title: tool.title,
+      description: tool.description,
       calls: 0,
       errors: 0,
       medianMs: 0,
@@ -83,6 +91,7 @@ function joinRows(tools: ToolDescriptor[], usage: ToolUsageRow[]): Row[] {
         connector: row.connector,
         kind: null,
         title: null,
+        description: null,
         calls: row.calls,
         errors: row.errors,
         medianMs: row.medianMs,
@@ -160,12 +169,14 @@ function TrendChart({ points }: { points: UsageReport['trend'] }) {
  * greyed rather than hidden, because "what else can I do" is half the question
  * this page answers.
  */
-function ToolCard({ row }: { row: Row }) {
+function ToolCard({ row, onOpen }: { row: Row; onOpen: () => void }) {
   const used = row.calls > 0;
   return (
-    <div
+    <button
+      type="button"
+      onClick={onOpen}
       title={row.name}
-      className={`flex min-h-[5.5rem] flex-col justify-between rounded-lg border p-3 ${
+      className={`flex min-h-[5.5rem] flex-col justify-between rounded-lg border p-3 text-left hover:border-blue-400 hover:shadow-sm dark:hover:border-blue-600 ${
         used
           ? 'border-gray-200 dark:border-gray-800'
           : 'border-dashed border-gray-200 dark:border-gray-800'
@@ -221,6 +232,146 @@ function ToolCard({ row }: { row: Row }) {
           </span>
         )}
       </div>
+    </button>
+  );
+}
+
+/**
+ * One tool up close, on top of the page rather than a page of its own.
+ *
+ * The failure list shows when, how long, and (tenant-wide) whose call — never
+ * arguments or error text, because usage telemetry stores none (the tools'
+ * own responses carry their error messages; this page carries the pattern).
+ * Saying that on the panel stops the reader hunting for a detail level that
+ * deliberately does not exist.
+ */
+function ToolDetailDialog({
+  row,
+  tenantId,
+  days,
+  scope,
+  onClose,
+}: {
+  row: Row;
+  tenantId: string;
+  days: number;
+  scope: 'self' | 'tenant';
+  onClose: () => void;
+}) {
+  const [detail, setDetail] = useState<ToolDetail | null>(null);
+
+  useEffect(() => {
+    let stale = false;
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    getToolDetail(tenantId, row.name, days, timeZone, scope).then((fetched) => {
+      if (!stale) setDetail(fetched);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [tenantId, row.name, days, scope]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const stats = detail ?? row;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
+      role="dialog"
+      aria-modal="true"
+      aria-label={friendlyToolName(row.name, row.title)}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-xl border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-800 dark:bg-gray-950"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold">{friendlyToolName(row.name, row.title)}</h3>
+            <p className="font-mono text-xs text-gray-500">{row.name}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          </button>
+        </div>
+
+        {row.description && (
+          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">{row.description}</p>
+        )}
+
+        <dl className="mt-4 grid grid-cols-4 gap-2 text-center">
+          {(
+            [
+              ['Calls', stats.calls.toLocaleString()],
+              ['Failed', stats.errors.toLocaleString()],
+              ['Median', formatMs(stats.medianMs)],
+              ['p95', formatMs(stats.p95Ms)],
+            ] as const
+          ).map(([label, value]) => (
+            <div
+              key={label}
+              className="rounded-lg border border-gray-200 px-2 py-2 dark:border-gray-800"
+            >
+              <dt className="text-[10px] uppercase tracking-wide text-gray-500">{label}</dt>
+              <dd className="text-sm font-semibold tabular-nums">{value}</dd>
+            </div>
+          ))}
+        </dl>
+
+        {!detail && <p className="mt-4 text-sm text-gray-500">Loading…</p>}
+        {detail?.error && (
+          <p className="mt-4 text-sm text-red-600 dark:text-red-400">{detail.error}</p>
+        )}
+
+        {detail && !detail.error && (
+          <div className="mt-4">
+            <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
+              Recent failures
+            </h4>
+            {detail.failures.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                No failed calls in the last {detail.days === 1 ? '24 hours' : `${detail.days} days`}
+                .
+              </p>
+            ) : (
+              <>
+                <ul className="max-h-56 divide-y divide-gray-100 overflow-y-auto rounded-lg border border-gray-200 text-sm dark:divide-gray-900 dark:border-gray-800">
+                  {detail.failures.map((failure) => (
+                    <li
+                      key={failure.at + (failure.by ?? '')}
+                      className="flex items-baseline justify-between gap-3 px-3 py-1.5"
+                    >
+                      <span className="tabular-nums">{new Date(failure.at).toLocaleString()}</span>
+                      <span className="flex items-baseline gap-3 text-gray-500">
+                        {failure.by && <span className="truncate">{failure.by}</span>}
+                        <span className="tabular-nums">{formatMs(failure.durationMs)}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-xs text-gray-500">
+                  Times and durations only — arguments and error text are never recorded here. The
+                  error message went back to whoever made the call.
+                </p>
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -248,6 +399,7 @@ export default function UsageViewer({
 }) {
   const [report, setReport] = useState(initial);
   const [pending, startTransition] = useTransition();
+  const [selected, setSelected] = useState<Row | null>(null);
 
   function refresh(days: number, scope: 'self' | 'tenant') {
     startTransition(async () => {
@@ -403,6 +555,32 @@ export default function UsageViewer({
         </section>
       )}
 
+      {groups.length > 1 && (
+        <nav
+          aria-label="Jump to connector"
+          className="sticky top-14 z-20 -mx-2 flex gap-1.5 overflow-x-auto border-b border-gray-200 bg-white px-2 py-2 dark:border-gray-800 dark:bg-black"
+        >
+          {groups.map(([label, groupRows]) => {
+            const key = groupRows[0]?.connector;
+            return (
+              <button
+                key={label}
+                type="button"
+                onClick={() =>
+                  document
+                    .getElementById(`connector-${label.replace(/[^A-Za-z0-9]+/g, '-')}`)
+                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }
+                className="flex shrink-0 items-center gap-1.5 rounded-full border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+              >
+                {key && <ConnectorIcon capabilityKey={key} label={label} size={14} />}
+                {label}
+              </button>
+            );
+          })}
+        </nav>
+      )}
+
       <section className="flex flex-col">
         {rows.length === 0 && (
           <p className="text-sm text-gray-500">
@@ -418,15 +596,22 @@ export default function UsageViewer({
           const key = groupRows[0]?.connector;
           const groupCalls = groupRows.reduce((sum, row) => sum + row.calls, 0);
           return (
-            <div key={label}>
+            <div
+              key={label}
+              id={`connector-${label.replace(/[^A-Za-z0-9]+/g, '-')}`}
+              className="scroll-mt-[6.5rem]"
+            >
               {/*
                 Each heading sticks to the same offset, so as a group scrolls
                 past, the next heading arrives at the top and carries the
                 previous one out of view — one connector named at the top at
-                all times. `top-14` clears the app bar; the opaque background
-                is what stops cards showing through as they pass under.
+                all times. The offset clears the app bar plus the jump nav
+                (which only exists with 2+ groups); the opaque background is
+                what stops cards showing through as they pass under.
               */}
-              <h2 className="sticky top-14 z-10 -mx-2 mb-3 flex items-baseline gap-3 border-b border-gray-200 bg-white px-2 py-2 dark:border-gray-800 dark:bg-black">
+              <h2
+                className={`sticky ${groups.length > 1 ? 'top-[6.1rem]' : 'top-14'} z-10 -mx-2 mb-3 flex items-baseline gap-3 border-b border-gray-200 bg-white px-2 py-2 dark:border-gray-800 dark:bg-black`}
+              >
                 {key && <ConnectorIcon capabilityKey={key} label={label} size={18} />}
                 <span className="font-semibold">{label}</span>
                 <span className="text-sm font-normal text-gray-500">
@@ -443,13 +628,23 @@ export default function UsageViewer({
               */}
               <div className="mb-8 grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-3">
                 {groupRows.map((row) => (
-                  <ToolCard key={row.name} row={row} />
+                  <ToolCard key={row.name} row={row} onOpen={() => setSelected(row)} />
                 ))}
               </div>
             </div>
           );
         })}
       </section>
+
+      {selected && (
+        <ToolDetailDialog
+          row={selected}
+          tenantId={tenantId}
+          days={report.days}
+          scope={report.scope}
+          onClose={() => setSelected(null)}
+        />
+      )}
     </div>
   );
 }

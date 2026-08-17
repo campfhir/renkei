@@ -428,6 +428,58 @@ describe('reading document text', () => {
   });
 });
 
+describe('downloading the raw file', () => {
+  it('returns the pre-authenticated download link with the ids restated', async () => {
+    routes = [
+      {
+        match: 'downloadUrl',
+        body: {
+          id: 'item-1',
+          name: 'deck.pptx',
+          size: 2048,
+          file: {
+            mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          },
+          '@microsoft.graph.downloadUrl': 'https://cdn.example.test/preauth?tempauth=abc',
+        },
+      },
+      {
+        match: '/items/item-1?',
+        body: { id: 'item-1', name: 'deck.pptx', parentReference: { driveId: 'drive-1' } },
+      },
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const result = await tools.get('sharepoint_download_document')!({
+      driveId: 'drive-1',
+      itemId: 'item-1',
+    });
+
+    const text = textOf(result);
+    expect(text).toContain('https://cdn.example.test/preauth?tempauth=abc');
+    // The ids come back with the link so the next call needs no re-resolve.
+    expect(text).toContain('driveId: drive-1');
+    expect(text).toContain('itemId: item-1');
+  });
+
+  it('refuses a folder and points at listing it instead', async () => {
+    routes = [
+      { match: 'downloadUrl', body: { id: 'item-2', name: 'Specs', folder: {} } },
+      {
+        match: '/items/item-2?',
+        body: { id: 'item-2', name: 'Specs', folder: {}, parentReference: { driveId: 'drive-1' } },
+      },
+    ];
+    const tools = await toolsOf(registerSharePointTools);
+
+    const result = await tools.get('sharepoint_download_document')!({
+      driveId: 'drive-1',
+      itemId: 'item-2',
+    });
+    expect(textOf(result)).toContain('sharepoint_list_folder');
+  });
+});
+
 describe('onedrive tools', () => {
   it('defaults to the caller’s own drive without being told', async () => {
     routes = [
@@ -440,6 +492,48 @@ describe('onedrive tools', () => {
     const result = await tools.get('onedrive_list_folder')!({});
     expect(requests[0]!.url).toContain('/me/drive');
     expect(textOf(result)).toContain('notes.txt');
+  });
+
+  it('labels listing entries with the exact parameter names the tools take', async () => {
+    routes = [
+      { match: '/me/drive?', body: { id: 'my-drive' } },
+      { match: '/root?', body: { id: 'root-1', name: 'root', parentReference: {} } },
+      { match: '/children', body: { value: [{ id: 'f1', name: 'notes.txt', size: 12 }] } },
+    ];
+    const tools = await toolsOf(registerOneDriveTools);
+
+    const text = textOf(await tools.get('onedrive_list_folder')!({}));
+    // `itemId:` and a header `driveId:`, matching the input schema — a listing
+    // labelled `id:` leaves the follow-up call guessing which id goes where.
+    expect(text).toContain('driveId: my-drive');
+    expect(text).toContain('itemId: f1');
+    expect(text).not.toContain('\n    id:');
+  });
+
+  it('hands out the REMOTE ids for shared items, not the local pointer', async () => {
+    routes = [
+      {
+        match: '/sharedWithMe',
+        body: {
+          value: [
+            {
+              id: 'pointer-1',
+              name: 'roadmap.xlsx',
+              remoteItem: { id: 'remote-1', parentReference: { driveId: 'their-drive' } },
+              createdBy: { user: { displayName: 'Casey' } },
+            },
+          ],
+        },
+      },
+    ];
+    const tools = await toolsOf(registerOneDriveTools);
+
+    const text = textOf(await tools.get('onedrive_list_shared_with_me')!({}));
+    // The shared entry is a pointer; only remoteItem's ids work against the
+    // owner's drive. Handing out pointer-1 sends every follow-up call to 404.
+    expect(text).toContain('driveId: their-drive');
+    expect(text).toContain('itemId: remote-1');
+    expect(text).not.toContain('pointer-1');
   });
 
   it('rejects an upload past the simple-upload ceiling instead of truncating', async () => {

@@ -26,10 +26,23 @@ export const ONEDRIVE_MCP_CONNECTOR = 'onedrive';
 function fileLine(entry: Record<string, unknown>): string {
   const size = byteSize(num(entry.size));
   const modified = str(entry.lastModifiedDateTime).slice(0, 10);
-  const parent = str(rec(entry.parentReference).path).replace(/^\/drive\/root:?/, '') || '/';
+  // Recent items can live in OTHER drives (a shared library, a colleague's
+  // OneDrive), so each entry names its own driveId — the caller's default
+  // drive would be the wrong one to pair the itemId with. `remoteItem`
+  // carries the real ids when the entry is a pointer into another drive.
+  const remote = rec(entry.remoteItem);
+  const parentReference = rec(remote.parentReference ?? entry.parentReference);
+  const parent =
+    str(parentReference.path)
+      .replace(/^\/drives\/[^/]+\/root:?/, '')
+      .replace(/^\/drive\/root:?/, '') || '/';
+  const driveId = str(parentReference.driveId);
+  const itemId = str(remote.id) || str(entry.id);
   return (
     `📄 ${str(entry.name)}${size ? ` — ${size}` : ''}${modified ? `, modified ${modified}` : ''}\n` +
-    `    in ${parent}\n    itemId: ${str(entry.id)}`
+    `    in ${parent}\n` +
+    (driveId ? `    driveId: ${driveId}\n` : '') +
+    `    itemId: ${itemId}`
   );
 }
 
@@ -95,11 +108,15 @@ export async function registerOneDriveTools(
       if (entries.length === 0) return textResult('Nothing has been shared with you.');
 
       const lines = entries.map((entry) => {
-        const parent = rec(entry.remoteItem ?? entry).parentReference;
+        const remote = rec(entry.remoteItem);
+        const parent = rec(remote.parentReference ?? entry.parentReference);
         const owner = str(rec(rec(entry.createdBy).user).displayName);
+        // The itemId that works against that driveId is the REMOTE item's id;
+        // the top-level id is only this user's pointer to it.
+        const itemId = str(remote.id) || str(entry.id);
         return (
           `📄 ${str(entry.name)}${owner ? ` — shared by ${owner}` : ''}\n` +
-          `    driveId: ${str(rec(parent).driveId)}\n    itemId: ${str(entry.id)}`
+          `    driveId: ${str(parent.driveId)}\n    itemId: ${itemId}`
         );
       });
       return textResult(

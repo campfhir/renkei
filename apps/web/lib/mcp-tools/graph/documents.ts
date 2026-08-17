@@ -49,9 +49,18 @@ function selectorSchema(options: NamespaceOptions): Record<string, z.ZodTypeAny>
       .string()
       .describe('A pasted SharePoint/OneDrive link to the file or folder. The easiest option.')
       .optional(),
-    driveId: z.string().describe('Drive id, from a previous listing.').optional(),
-    itemId: z.string().describe('Item id, from a previous listing.').optional(),
-    path: z.string().describe('Path inside the drive, e.g. "Specs/2026/plan.docx".').optional(),
+    driveId: z
+      .string()
+      .describe('Drive id, echoed by listings and searches. Pair with itemId or path.')
+      .optional(),
+    itemId: z
+      .string()
+      .describe('Item id, echoed by listings and searches. Pair it with that driveId.')
+      .optional(),
+    path: z
+      .string()
+      .describe('Slash-separated path inside the drive, e.g. "Specs/2026/plan.docx".')
+      .optional(),
   };
   if (!options.usesMyDrive) {
     base.site = z
@@ -77,14 +86,34 @@ function selectorOf(args: Record<string, unknown>): ItemSelector {
   };
 }
 
-/** One line per child in a folder listing. */
+/** parentReference.path → a human path ("/Specs/2026"), or '' when absent. */
+export function folderPathOf(entry: Record<string, unknown>): string {
+  const raw = str(rec(entry.parentReference).path);
+  if (!raw) return '';
+  return (
+    decodeURIComponent(
+      raw.replace(/^\/drives\/[^/]+\/root:?/, '').replace(/^\/drive\/root:?/, '')
+    ) || '/'
+  );
+}
+
+/**
+ * One line per child in a listing. The id is labelled `itemId` — the exact
+ * parameter name the other tools take — because a listing whose labels do
+ * not match the parameters makes the follow-up call a guessing game.
+ */
 function itemLine(entry: Record<string, unknown>): string {
   const isFolder = entry.folder !== undefined;
   const size = byteSize(num(entry.size));
   const modified = str(entry.lastModifiedDateTime).slice(0, 10);
   const by = str(rec(rec(entry.lastModifiedBy).user).displayName);
+  const location = folderPathOf(entry);
   const bits = [size, modified && `modified ${modified}`, by && `by ${by}`].filter(Boolean);
-  return `${isFolder ? '📁' : '📄'} ${str(entry.name)}${bits.length ? ` — ${bits.join(', ')}` : ''}\n    id: ${str(entry.id)}`;
+  return (
+    `${isFolder ? '📁' : '📄'} ${str(entry.name)}${bits.length ? ` — ${bits.join(', ')}` : ''}` +
+    (location ? `\n    in ${location}` : '') +
+    `\n    itemId: ${str(entry.id)}`
+  );
 }
 
 function permissionLine(entry: Record<string, unknown>): string {
@@ -131,7 +160,8 @@ export function registerDocumentTools(
       title: `${title} · Read — List what is in a folder`,
       description:
         `Files and folders inside a ${title} folder, newest first. Omit every selector to ` +
-        `list the root. Each entry includes its id, which the other ${prefix}_* tools accept.`,
+        `list the root. Each entry carries the itemId — and the header the driveId — that ` +
+        `the other ${prefix}_* tools take.`,
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         ...selector,
@@ -166,7 +196,9 @@ export function registerDocumentTools(
         return textResult(`${resolved.item.name || 'That folder'} is empty.`);
       return textResult(
         withPresentationHint(
-          `${resolved.item.name || 'Root'} — ${entries.length} item(s)\n\n${entries.map(itemLine).join('\n')}`,
+          `${resolved.item.name || 'Root'} — ${entries.length} item(s)\n` +
+            `driveId: ${resolved.item.driveId} (pair it with an itemId below in other ${prefix}_* calls)\n\n` +
+            entries.map(itemLine).join('\n'),
           'Render as a list; folders first.'
         )
       );
@@ -327,12 +359,73 @@ export function registerDocumentTools(
   );
 
   server.registerTool(
+    `${prefix}_download_document`,
+    {
+      title: `${title} · Read — Get a download link for the raw file`,
+      description:
+        `A short-lived link to the file's exact bytes — for when the original file is needed, ` +
+        `not its text (comparing versions, feeding another system, images, archives). The link ` +
+        `is pre-authenticated: a plain HTTP GET with no headers fetches it, from curl, a ` +
+        `browser, or any HTTP tool. It expires after about an hour; call again for a fresh ` +
+        `one. To read a document's text instead, use ${prefix}_read_document.`,
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object(selector),
+    },
+    async (args: Record<string, unknown>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const fallback = await defaultDriveFor(options, context, access.accessToken);
+
+      const resolved = await resolveDriveItem(
+        context,
+        access.accessToken,
+        selectorOf(args),
+        fallback
+      );
+      if (!resolved.ok) return errText(resolved.error);
+
+      const item = await graphGet(
+        context,
+        access.accessToken,
+        `/drives/${resolved.item.driveId}/items/${resolved.item.itemId}` +
+          '?$select=id,name,size,file,folder,webUrl,@microsoft.graph.downloadUrl'
+      );
+      if (!item.ok) return errText(item.error);
+
+      const body = item.body;
+      if (body.folder !== undefined) {
+        return errText(
+          `"${resolved.item.name}" is a folder — download its files individually ` +
+            `(${prefix}_list_folder shows what is inside).`
+        );
+      }
+      const downloadUrl = str(body['@microsoft.graph.downloadUrl']);
+      if (!downloadUrl) {
+        return errText(`Graph offered no download link for "${resolved.item.name}".`);
+      }
+      return textResult(
+        [
+          `${str(body.name)} — ${byteSize(num(body.size)) || 'unknown size'}` +
+            `${str(rec(body.file).mimeType) ? ` (${str(rec(body.file).mimeType)})` : ''}`,
+          '',
+          'Download link (pre-authenticated, no headers needed, expires in about an hour):',
+          downloadUrl,
+          '',
+          `driveId: ${resolved.item.driveId}`,
+          `itemId: ${str(body.id)}`,
+        ].join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
     `${prefix}_search_documents`,
     {
       title: `${title} · Read — Search for documents by name or content`,
       description:
         `Search ${title} for documents matching a query. Searches file names and, where ` +
-        'the service has indexed them, contents. Returns ids the other tools accept.',
+        'the service has indexed them, contents. Each hit carries its location and itemId; ' +
+        'the header carries the driveId to pair it with in the other tools.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         query: z.string().min(1).describe('What to search for.'),
@@ -375,7 +468,7 @@ export function registerDocumentTools(
         context,
         access.accessToken,
         `/drives/${driveId}/root/search(q='${query}')?$top=${max}` +
-          '&$select=id,name,size,folder,file,webUrl,lastModifiedDateTime'
+          '&$select=id,name,size,folder,file,webUrl,lastModifiedDateTime,parentReference'
       );
       if (!found.ok) return errText(found.error);
 
@@ -383,7 +476,9 @@ export function registerDocumentTools(
       if (entries.length === 0) return textResult(`Nothing in ${title} matched "${args.query}".`);
       return textResult(
         withPresentationHint(
-          `${entries.length} match(es) for "${args.query}"\n\n${entries.map(itemLine).join('\n')}`,
+          `${entries.length} match(es) for "${args.query}"\n` +
+            `driveId: ${driveId} (pair it with an itemId below in other ${prefix}_* calls)\n\n` +
+            entries.map(itemLine).join('\n'),
           'Render as a list of results.'
         )
       );
@@ -431,7 +526,7 @@ export function registerDocumentTools(
       if (!created.ok) return errText(created.error);
       return textResult(
         `Created folder "${str(created.body.name)}" in ${parent.item.name || 'the root'}.\n` +
-          `itemId: ${str(created.body.id)}`
+          `driveId: ${parent.item.driveId}\nitemId: ${str(created.body.id)}`
       );
     }
   );
@@ -690,7 +785,7 @@ export function registerDocumentTools(
       return textResult(
         `Uploaded "${str(uploaded.body.name) || String(args.filename)}" ` +
           `(${byteSize(bytes.byteLength)}) to ${parent.item.name || 'the root'}.\n` +
-          `itemId: ${str(uploaded.body.id)}`
+          `driveId: ${parent.item.driveId}\nitemId: ${str(uploaded.body.id)}`
       );
     }
   );

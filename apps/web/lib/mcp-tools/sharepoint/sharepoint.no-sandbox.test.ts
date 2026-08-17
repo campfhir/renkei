@@ -83,6 +83,7 @@ const TOOLS = [
   'sharepoint_list_folder',
   'sharepoint_get_document',
   'sharepoint_read_document',
+  'sharepoint_download_document',
   'sharepoint_search_documents',
   'sharepoint_create_folder',
   'sharepoint_rename_document',

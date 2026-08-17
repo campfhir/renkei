@@ -223,6 +223,163 @@ export async function getUsageReport(
   }
 }
 
+export interface ToolFailureRow {
+  /** ISO timestamp of the failed call. */
+  at: string;
+  durationMs: number;
+  /** Who made it — only in the tenant-wide view; null in the self view. */
+  by: string | null;
+}
+
+export interface ToolDetail {
+  tool: string;
+  days: number;
+  scope: 'self' | 'tenant';
+  calls: number;
+  errors: number;
+  medianMs: number;
+  p95Ms: number;
+  trend: UsagePoint[];
+  /** Most recent failures, newest first. */
+  failures: ToolFailureRow[];
+  error?: string;
+}
+
+/**
+ * One tool, up close — what the card cannot say in two lines.
+ *
+ * The usage table is content-free by design (migration 032), so "details on
+ * a failure" means when it happened, how long it ran, and — for an operator
+ * looking tenant-wide — whose call it was. Never what the call contained,
+ * and never an error message, because the table has nowhere to hold one.
+ * Scope is resolved from the session exactly as in getUsageReport: a
+ * non-operator is pinned to their own calls before any query runs.
+ */
+export async function getToolDetail(
+  tenantId: string,
+  tool: string,
+  requestedDays = 7,
+  requestedTimeZone?: string,
+  requestedScope?: 'self' | 'tenant'
+): Promise<ToolDetail> {
+  const days = clampDays(requestedDays);
+  const timeZone = safeTimeZone(requestedTimeZone);
+  const empty: ToolDetail = {
+    tool,
+    days,
+    scope: 'self',
+    calls: 0,
+    errors: 0,
+    medianMs: 0,
+    p95Ms: 0,
+    trend: [],
+    failures: [],
+  };
+
+  const session = await getSessionFromCookies(tenantId);
+  if (!session) return { ...empty, error: 'Sign in to see tool usage' };
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return { ...empty, error: 'Database unavailable' };
+  const db = dbResult.val;
+
+  const isOperator = session.roles.includes(ROLE_OPERATOR);
+  if (!isOperator && !session.roles.includes(ROLE_USER)) {
+    return { ...empty, error: 'Your account has no role in this tenant' };
+  }
+  const scope = resolveScope(isOperator, requestedScope);
+  const tenantWide = scope === 'tenant';
+  const ownSubject = session.subject;
+
+  const since = sql<Date>`NOW() - MAKE_INTERVAL(days => ${days})`;
+
+  try {
+    let totalsQuery = db
+      .selectFrom('tool_calls')
+      .select([
+        sql<string>`count(*)`.as('calls'),
+        sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
+        sql<string>`percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms)`.as('median_ms'),
+        sql<string>`percentile_disc(0.95) WITHIN GROUP (ORDER BY duration_ms)`.as('p95_ms'),
+      ])
+      .where('tenant_id', '=', tenantId)
+      .where('tool', '=', tool)
+      .where('started_at', '>=', since);
+    if (!tenantWide) totalsQuery = totalsQuery.where('subject', '=', ownSubject);
+    const totals = await totalsQuery.executeTakeFirst();
+
+    let trendQuery = db
+      .selectFrom('tool_calls')
+      .select([
+        sql<string>`to_char(date_trunc('day', started_at AT TIME ZONE ${timeZone}), 'YYYY-MM-DD')`.as(
+          'day'
+        ),
+        sql<string>`count(*)`.as('calls'),
+        sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
+      ])
+      .where('tenant_id', '=', tenantId)
+      .where('tool', '=', tool)
+      .where('started_at', '>=', since);
+    if (!tenantWide) trendQuery = trendQuery.where('subject', '=', ownSubject);
+    // Grouped by the alias for the same reason getUsageReport is: repeating
+    // the expression rebinds ${timeZone} and Postgres rejects the query.
+    const trendRows = await trendQuery
+      .groupBy(sql`day`)
+      .orderBy(sql`day`, 'asc')
+      .execute();
+
+    let failureQuery = db
+      .selectFrom('tool_calls')
+      .leftJoin('identities', (join) =>
+        join
+          .onRef('identities.subject', '=', 'tool_calls.subject')
+          .onRef('identities.tenant_id', '=', 'tool_calls.tenant_id')
+      )
+      .select([
+        'tool_calls.started_at as started_at',
+        'tool_calls.duration_ms as duration_ms',
+        'tool_calls.subject as subject',
+        'identities.display_name as display_name',
+        'identities.email as email',
+      ])
+      .where('tool_calls.tenant_id', '=', tenantId)
+      .where('tool_calls.tool', '=', tool)
+      .where('tool_calls.status', '<>', 'ok')
+      .where('tool_calls.started_at', '>=', since);
+    if (!tenantWide) failureQuery = failureQuery.where('tool_calls.subject', '=', ownSubject);
+    const failureRows = await failureQuery
+      .orderBy('tool_calls.started_at', 'desc')
+      .limit(25)
+      .execute();
+
+    return {
+      tool,
+      days,
+      scope,
+      calls: Number(totals?.calls ?? 0),
+      errors: Number(totals?.errors ?? 0),
+      medianMs: Number(totals?.median_ms ?? 0),
+      p95Ms: Number(totals?.p95_ms ?? 0),
+      trend: zeroFill(
+        trendRows.map((row) => ({
+          day: row.day,
+          calls: Number(row.calls),
+          errors: Number(row.errors),
+        })),
+        days,
+        timeZone,
+        new Date()
+      ),
+      failures: failureRows.map((row) => ({
+        at: row.started_at instanceof Date ? row.started_at.toISOString() : String(row.started_at),
+        durationMs: Number(row.duration_ms),
+        by: tenantWide ? row.display_name || row.email || row.subject || 'unknown' : null,
+      })),
+    };
+  } catch (error) {
+    return { ...empty, scope, error: error instanceof Error ? error.message : 'Could not read' };
+  }
+}
+
 /**
  * The tools this caller is offered over MCP right now.
  *

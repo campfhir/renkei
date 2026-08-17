@@ -51,6 +51,7 @@ const TOOLS = [
   'onedrive_list_folder',
   'onedrive_get_document',
   'onedrive_read_document',
+  'onedrive_download_document',
   'onedrive_search_documents',
   'onedrive_create_folder',
   'onedrive_rename_document',
