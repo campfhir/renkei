@@ -505,10 +505,11 @@ export async function draftAgentFromProse(
           'The model took over five minutes and was cut off — try again, or try a shorter description.',
       };
     if (!completion.ok) {
-      logger.warn('prose draft failed: {kind}', {
+      logger.warn('prose draft failed: {kind} {message}', {
         component: 'agents/draft',
         tenantId,
         kind: completion.err.type,
+        message: completion.err.message?.slice(0, 300) ?? '',
       });
       // The kind decides what the user can actually DO about it — a bare
       // "could not draft steps" hides whether to retry, wait, or go fix

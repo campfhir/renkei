@@ -141,7 +141,11 @@ export async function generateAgentDescription(
     ),
   ]);
   if (completion === 'timeout') return failed('timeout');
-  if (!completion.ok) return failed(completion.err.type);
+  if (!completion.ok) {
+    return failed(
+      `${completion.err.type}${completion.err.message ? `: ${completion.err.message.slice(0, 300)}` : ''}`
+    );
+  }
 
   const text = completion.val.content
     .flatMap((block) => (block.type === 'text' ? [block.text] : []))
