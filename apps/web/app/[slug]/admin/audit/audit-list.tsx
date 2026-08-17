@@ -42,6 +42,15 @@ function describe(event: AuditEventRow): string {
       return byAdmin ? `turned off agent “${agent}” (admin action)` : `turned off agent “${agent}”`;
     case 'agent.deleted':
       return `deleted agent “${agent}”`;
+    case 'settings.updated': {
+      const changed =
+        typeof details.changed === 'object' && details.changed !== null
+          ? Object.keys(details.changed)
+          : [];
+      return changed.length > 0
+        ? `changed organization settings: ${changed.join(', ')}`
+        : 'changed organization settings';
+    }
     default:
       return event.action;
   }

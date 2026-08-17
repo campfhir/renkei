@@ -27,7 +27,8 @@ export type AuditAction =
   | 'agent.updated'
   | 'agent.enabled'
   | 'agent.disabled'
-  | 'agent.deleted';
+  | 'agent.deleted'
+  | 'settings.updated';
 
 export interface AuditEventInput {
   tenantId: string;
