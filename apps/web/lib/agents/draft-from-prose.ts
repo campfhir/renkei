@@ -20,7 +20,10 @@ import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { friendlyToolName } from '@/lib/tool-name';
 import { logger } from '@/lib/logger';
 
-const DRAFT_TIMEOUT_MS = 45_000;
+// Generous on purpose: reasoning models (Foundry deployments especially)
+// routinely take over a minute on a long description, and cutting them off
+// wastes the whole spend. The builder shows staged progress meanwhile.
+const DRAFT_TIMEOUT_MS = 150_000;
 const MAX_OUTPUT_TOKENS = 4_096;
 const MAX_PROSE_CHARS = 4_000;
 
@@ -75,7 +78,17 @@ function promptOf(
     '- Each step does ONE thing and may use AT MOST ONE tool from the list below (a step may also be pure reasoning with no tool).',
     '- Mark the tool in the instruction as {{tool:tool_name}} and reference known variables as {{var:name}}. Use ONLY tools and variables from the lists.',
     '- When a later step needs an earlier step\'s result, give the earlier step a short "saveAs" name (spaces allowed, e.g. "the ticket") and reference it as {{var:the ticket}}.',
-    '- Steps run in order; a failed step stops the automation, so no fallback steps are needed.',
+    '- Steps run strictly in order — but people rarely DESCRIBE them in order ("before all that ' +
+      'you might need to…", "first look up…"). Reorder into the true execution sequence: gather ' +
+      'context first, look things up, then act on what was found.',
+    '- Branching lives INSIDE a step\'s instruction, not in extra steps: a step may say "If no ' +
+      'ticket was found in {{var:the search}}, create one with {{tool:x}} using …; otherwise ' +
+      'finish this step without using the tool." The runner follows plain conditions like that. ' +
+      'A step may also end the whole automation: "…and stop here." Never invent parallel ' +
+      'branches or jump-to-step logic.',
+    '- Carry the user\'s guardrails into the step that acts (e.g. "if this thread was already ' +
+      'handled, do not update the same ticket again — stop instead").',
+    '- A step that FAILS stops the automation on its own, so no cleanup steps for failures.',
     ...(revising
       ? [
           '- Every returned step carries "from": the sN id of the existing step it is based on (kept or tweaked), or null for a brand-new step. Unchanged and tweaked steps MUST carry their id — it preserves the owner\'s retry settings.',
@@ -165,6 +178,7 @@ export async function draftAgentFromProse(
   }
   const llm = llmResult.val;
 
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const completion = await Promise.race([
     llm.provider.complete({
       system:
@@ -183,9 +197,15 @@ export async function draftAgentFromProse(
       tools: [],
       maxTokens: MAX_OUTPUT_TOKENS,
     }),
-    new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), DRAFT_TIMEOUT_MS)),
-  ]);
-  if (completion === 'timeout') return { error: 'The model took too long — try again.' };
+    new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), DRAFT_TIMEOUT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  if (completion === 'timeout')
+    return {
+      error:
+        'The model took over two minutes and was cut off — try again, or try a shorter description.',
+    };
   if (!completion.ok) {
     logger.warn('prose draft failed: {kind}', {
       component: 'agents/draft',

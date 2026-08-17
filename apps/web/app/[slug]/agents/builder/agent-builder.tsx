@@ -117,6 +117,11 @@ export function AgentBuilder({
   const [proseOpen, setProseOpen] = useState(!existing);
   const [drafting, setDrafting] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
+  // Elapsed-time feedback for the long synchronous draft call: the wait is
+  // real model time (the server allows up to 150s), and a bare spinner past
+  // ten seconds reads as "hung" — staged messages read as "working".
+  const [draftSeconds, setDraftSeconds] = useState(0);
+  const [draftMode, setDraftMode] = useState<'create' | 'revise'>('create');
   const [drafted, setDrafted] = useState(false);
 
   // The summary is written server-side AFTER the save response; poll the
@@ -153,6 +158,24 @@ export function AgentBuilder({
     return () => clearInterval(timer);
   }, [review?.pending, agentId, tenantId]);
 
+  useEffect(() => {
+    if (!drafting) return;
+    setDraftSeconds(0);
+    const timer = setInterval(() => setDraftSeconds((seconds) => seconds + 1), 1_000);
+    return () => clearInterval(timer);
+  }, [drafting]);
+
+  const draftStatus = (() => {
+    if (draftSeconds < 3) return 'Sending your description to your org’s model…';
+    if (draftSeconds < 20)
+      return draftMode === 'revise'
+        ? 'Revising your steps — applying the change you described…'
+        : 'Splitting it into steps and picking the skills…';
+    if (draftSeconds < 60)
+      return `Still thinking (${draftSeconds}s) — matching skills and details…`;
+    return `Still working (${draftSeconds}s) — bigger models can take a couple of minutes. Hang tight.`;
+  })();
+
   const draftFromProse = async () => {
     if (drafting || prose.trim().length < 10) return;
     // With real steps present this is a REVISION: the current steps go
@@ -170,6 +193,7 @@ export function AgentBuilder({
     ) {
       return;
     }
+    setDraftMode(hasRealSteps ? 'revise' : 'create');
     setDrafting(true);
     setDraftError(null);
     const result = await sendJsonFull<{ name: string; steps: AgentStep[] }>(
@@ -414,13 +438,20 @@ export function AgentBuilder({
             </button>
             {drafted && !drafting ? (
               <span className="text-xs text-green-700 dark:text-green-400">
-                Drafted below — review every step before saving.
+                {draftMode === 'revise'
+                  ? 'Revised below — steps the change didn’t touch kept their settings.'
+                  : 'Drafted below — review every step before saving.'}
               </span>
             ) : null}
             {draftError ? (
               <span className="text-xs text-red-600 dark:text-red-400">{draftError}</span>
             ) : null}
           </div>
+          {drafting ? (
+            <p aria-live="polite" className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+              {draftStatus}
+            </p>
+          ) : null}
         </section>
       ) : null}
 
