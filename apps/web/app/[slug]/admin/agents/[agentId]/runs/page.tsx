@@ -6,6 +6,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { listRunsForAdmin } from '@/lib/agents/runs-view';
 import { StatusPill } from '../../../../agents/run-timeline';
+import LocalTime from '@/components/local-time';
 
 /** Admin view: any agent's run statuses — content stays behind the detail rule. */
 export default async function AdminAgentRunsPage({
@@ -61,7 +62,7 @@ export default async function AdminAgentRunsPage({
                   ) : null}
                 </span>
                 <span className="text-xs text-gray-500">
-                  {new Date(run.createdAt).toLocaleString()}
+                  <LocalTime at={run.createdAt} />
                 </span>
               </Link>
             </li>

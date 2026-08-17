@@ -8,6 +8,7 @@ import { sql } from 'kysely';
 import ConnectorIcon from '@/components/connector-icon';
 import { grantProviderLabel } from '@/lib/provider-labels';
 import RevokeGrantButton from './revoke-grant-button';
+import LocalTime from '@/components/local-time';
 
 /**
  * Everyone in the org, and what the platform is FOR each of them: which
@@ -160,7 +161,7 @@ export default async function PeoplePage({
                 </div>
                 {person.lastActive && (
                   <span className="text-xs text-gray-500">
-                    active {new Date(person.lastActive).toLocaleDateString()}
+                    active <LocalTime at={person.lastActive} format="date" />
                   </span>
                 )}
               </div>

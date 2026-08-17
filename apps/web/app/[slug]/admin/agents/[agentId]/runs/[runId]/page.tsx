@@ -6,6 +6,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getRunForAdmin } from '@/lib/agents/runs-view';
 import { RunTimeline, StatusPill } from '../../../../../agents/run-timeline';
+import LocalTime from '@/components/local-time';
 
 /**
  * Admin run detail. The projection this page receives already withheld
@@ -43,7 +44,7 @@ export default async function AdminRunDetailPage({
         <h1 className="text-xl font-bold">Run</h1>
         <StatusPill status={run.status} />
         <span className="text-sm text-gray-500">
-          via {run.triggerKind} · {new Date(run.createdAt).toLocaleString()}
+          via {run.triggerKind} · <LocalTime at={run.createdAt} />
         </span>
       </div>
       {run.error ? (

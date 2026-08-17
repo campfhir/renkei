@@ -8,6 +8,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { getAgent } from '@/lib/agents/store';
 import { getRunForOwner } from '@/lib/agents/runs-view';
 import { RunTimeline, StatusPill } from '../../../run-timeline';
+import LocalTime from '@/components/local-time';
 
 /** One run, owner's view: every attempt with full content. */
 export default async function AgentRunDetailPage({
@@ -45,7 +46,7 @@ export default async function AgentRunDetailPage({
         <h1 className="text-xl font-bold">Run</h1>
         <StatusPill status={run.status} />
         <span className="text-sm text-gray-500">
-          via {run.triggerKind} · {new Date(run.createdAt).toLocaleString()}
+          via {run.triggerKind} · <LocalTime at={run.createdAt} />
         </span>
       </div>
       {run.error ? (

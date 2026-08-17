@@ -8,6 +8,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { getAgent } from '@/lib/agents/store';
 import { listRunsForOwner } from '@/lib/agents/runs-view';
 import { StatusPill } from '../../run-timeline';
+import LocalTime from '@/components/local-time';
 
 /** The owner's run list — full visibility over their own agent's history. */
 export default async function AgentRunsPage({
@@ -78,7 +79,7 @@ export default async function AgentRunsPage({
                   ) : null}
                 </span>
                 <span className="text-xs text-gray-500">
-                  {new Date(run.createdAt).toLocaleString()}
+                  <LocalTime at={run.createdAt} />
                   {run.durationMs !== null ? ` · ${(run.durationMs / 1000).toFixed(1)}s` : ''}
                 </span>
               </Link>

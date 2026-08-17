@@ -8,6 +8,7 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { listAgentsForAdmin } from '@/lib/agents/runs-view';
 import { AdminAgentActions } from './admin-agent-actions';
 import { RetentionForm } from './retention-form';
+import LocalTime from '@/components/local-time';
 
 /**
  * Agent oversight: every agent in the org, owner-attributed, with the
@@ -83,7 +84,7 @@ export default async function AdminAgentsPage({
                     )}
                   </td>
                   <td className="py-2 pr-3 text-gray-500">
-                    {agent.lastRunAt ? new Date(agent.lastRunAt).toLocaleString() : '—'}
+                    {agent.lastRunAt ? <LocalTime at={agent.lastRunAt} /> : '—'}
                   </td>
                   <td className="py-2 text-right">
                     {agent.enabled ? <AdminAgentActions slug={slug} agentId={agent.id} /> : null}
