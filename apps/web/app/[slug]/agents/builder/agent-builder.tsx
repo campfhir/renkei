@@ -457,9 +457,153 @@ export function AgentBuilder({
   const panelWide = selectedTrigger?.draft.kind === 'schedule';
 
   return (
-    <div data-wide-page className="pb-24">
+    <div data-wide-page className="pb-24 lg:pb-4">
       <div className="lg:flex lg:items-start lg:gap-6">
-        <div className={`min-w-0 flex-1 space-y-6 ${selection ? '' : 'mx-auto lg:max-w-3xl'}`}>
+        {/* Agent settings: model, name, worth-checking, and (desktop only)
+            the save bar. Plain stacked content on mobile — first, above the
+            flow, no sidebar chrome. On desktop it docks as the SECOND
+            column (lg:order-last puts it there regardless of DOM position,
+            which has to come first here for mobile's stacking order) and
+            swaps out via lg:hidden for the node/trigger editor while
+            something is selected — that editor takes this same slot.
+            Nothing here needs to hide on mobile: a selected node opens its
+            own modal, floating over this content rather than replacing it. */}
+        <div
+          className={`space-y-4 lg:order-last lg:w-[26rem] lg:max-h-[calc(100vh-7rem)] lg:shrink-0 lg:self-start lg:overflow-y-auto lg:rounded-lg lg:border lg:border-gray-200 lg:bg-white lg:p-4 lg:sticky lg:top-4 lg:dark:border-gray-800 lg:dark:bg-gray-950 ${selection ? 'lg:hidden' : ''}`}
+        >
+          {models.length > 0 ? (
+            <div>
+              <label
+                className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400"
+                htmlFor="agent-model"
+              >
+                Model
+              </label>
+              <select
+                id="agent-model"
+                value={llmModelId ?? ''}
+                onChange={(event) => setLlmModelId(event.target.value || null)}
+                className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs dark:border-gray-700 dark:bg-gray-900"
+              >
+                <option value="">
+                  Organization default
+                  {models.find((model) => model.isDefault)
+                    ? ` (${models.find((model) => model.isDefault)?.label})`
+                    : ''}
+                </option>
+                {models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          <div>
+            <label className="mb-1 block text-sm font-medium" htmlFor="agent-name">
+              Name it
+            </label>
+            <input
+              id="agent-name"
+              className={inputClass}
+              value={name}
+              maxLength={200}
+              placeholder="e.g. Ticket from urgent email"
+              onChange={(event) => setName(event.target.value)}
+            />
+            {issuesAt('name').map((message) => (
+              <p key={message} className="mt-1 text-xs text-red-600 dark:text-red-400">
+                {message}
+              </p>
+            ))}
+          </div>
+
+          {agentId ? (
+            <div className="rounded-md border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                  Worth checking
+                </h2>
+                <button
+                  type="button"
+                  disabled={checking}
+                  onClick={() => void recheck()}
+                  className="flex items-center gap-1.5 text-xs font-medium text-amber-700 hover:underline disabled:opacity-50 dark:text-amber-300"
+                >
+                  {checking ? (
+                    <>
+                      <span
+                        aria-hidden="true"
+                        className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700 dark:border-amber-800 dark:border-t-amber-300"
+                      />
+                      Checking…
+                    </>
+                  ) : (
+                    'Re-check'
+                  )}
+                </button>
+              </div>
+              {checkNotes.length > 0 ? (
+                <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-amber-900 dark:text-amber-200">
+                  {checkNotes.map((note) => (
+                    <li key={note.issue}>
+                      {note.issue}
+                      {note.fix ? (
+                        <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/70">
+                          Suggestion: {note.fix}
+                        </p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-sm text-amber-800/70 dark:text-amber-200/60">
+                  Nothing flagged on the last check.
+                </p>
+              )}
+              <p className="mt-2 text-xs text-amber-700/60 dark:text-amber-300/50">
+                These look at the last saved version — save your edits, then re-check.
+              </p>
+            </div>
+          ) : null}
+
+          {/* Desktop-only: mobile keeps the fixed bottom bar below, always
+              reachable without first scrolling the sidebar into view. */}
+          <div className="hidden border-t border-gray-100 pt-3 dark:border-gray-800 lg:block">
+            <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+              {issues.length > 0
+                ? `${issues.length} thing${issues.length === 1 ? '' : 's'} to fix before saving`
+                : enabled
+                  ? 'This agent is on.'
+                  : 'Saved agents start turned off — you review, then turn them on.'}
+            </p>
+            {saveError ? (
+              <p className="mb-2 text-xs text-red-600 dark:text-red-400">{saveError}</p>
+            ) : null}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  router.push(agentId ? `/${slug}/agents/${agentId}` : `/${slug}/agents`)
+                }
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || clientIssues.length > 0}
+                className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="min-w-0 flex-1 space-y-6">
           {!proseOpen && existing ? (
             <p>
               <button
@@ -553,74 +697,6 @@ export function AgentBuilder({
           ) : null}
 
           <section>
-            <label className="mb-1 block text-sm font-medium" htmlFor="agent-name">
-              Name it
-            </label>
-            <input
-              id="agent-name"
-              className={inputClass}
-              value={name}
-              maxLength={200}
-              placeholder="e.g. Ticket from urgent email"
-              onChange={(event) => setName(event.target.value)}
-            />
-            {issuesAt('name').map((message) => (
-              <p key={message} className="mt-1 text-xs text-red-600 dark:text-red-400">
-                {message}
-              </p>
-            ))}
-          </section>
-
-          {agentId ? (
-            <section className="rounded-md border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/40">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                  Worth checking
-                </h2>
-                <button
-                  type="button"
-                  disabled={checking}
-                  onClick={() => void recheck()}
-                  className="flex items-center gap-1.5 text-xs font-medium text-amber-700 hover:underline disabled:opacity-50 dark:text-amber-300"
-                >
-                  {checking ? (
-                    <>
-                      <span
-                        aria-hidden="true"
-                        className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700 dark:border-amber-800 dark:border-t-amber-300"
-                      />
-                      Checking…
-                    </>
-                  ) : (
-                    'Re-check'
-                  )}
-                </button>
-              </div>
-              {checkNotes.length > 0 ? (
-                <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-amber-900 dark:text-amber-200">
-                  {checkNotes.map((note) => (
-                    <li key={note.issue}>
-                      {note.issue}
-                      {note.fix ? (
-                        <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/70">
-                          Suggestion: {note.fix}
-                        </p>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-2 text-sm text-amber-800/70 dark:text-amber-200/60">
-                  Nothing flagged on the last check.
-                </p>
-              )}
-              <p className="mt-2 text-xs text-amber-700/60 dark:text-amber-300/50">
-                These look at the last saved version — save your edits, then re-check.
-              </p>
-            </section>
-          ) : null}
-
-          <section>
             <FlowCanvas
               nodes={steps}
               ordinals={ordinals}
@@ -638,32 +714,6 @@ export function AgentBuilder({
               onDelete={deleteNode}
             />
           </section>
-
-          {models.length > 0 ? (
-            <section>
-              <label className="mb-1 block text-sm font-medium" htmlFor="agent-model">
-                Which model runs it?
-              </label>
-              <select
-                id="agent-model"
-                className={inputClass}
-                value={llmModelId ?? ''}
-                onChange={(event) => setLlmModelId(event.target.value || null)}
-              >
-                <option value="">
-                  Organization default
-                  {models.find((model) => model.isDefault)
-                    ? ` (${models.find((model) => model.isDefault)?.label})`
-                    : ''}
-                </option>
-                {models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.label}
-                  </option>
-                ))}
-              </select>
-            </section>
-          ) : null}
         </div>
 
         {selection?.type === 'new-trigger' ? (
@@ -741,7 +791,8 @@ export function AgentBuilder({
         ) : null}
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-950/95">
+      {/* Mobile-only: desktop's save bar lives in the sidebar above. */}
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-950/95 lg:hidden">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 sm:px-2">
           <p className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
             {issues.length > 0
@@ -756,7 +807,12 @@ export function AgentBuilder({
             ) : null}
             <button
               type="button"
-              onClick={() => router.push(`/${slug}/agents`)}
+              // Editing an existing agent: back to its overview, not the flat
+              // list. Drafting a brand-new one (agentId still null): nothing
+              // to show yet, so the list is the only place to go.
+              onClick={() =>
+                router.push(agentId ? `/${slug}/agents/${agentId}` : `/${slug}/agents`)
+              }
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-700"
             >
               Cancel

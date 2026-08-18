@@ -24,6 +24,7 @@ import type { AgentChoice, BuilderTrigger } from './trigger-node';
 import { TriggerNode } from './trigger-node';
 import { StepNode } from './step-node';
 import { BranchNode } from './branch-node';
+import { Icon, ICONS } from '@/components/icons';
 
 export type BuilderSelection =
   { type: 'step'; id: string } | { type: 'trigger'; index: number } | { type: 'new-trigger' };
@@ -64,15 +65,16 @@ function Connector({
         +
       </button>
       {open ? (
-        <div className="absolute left-1/2 top-1/2 z-20 ml-4 flex -translate-y-1/2 flex-col overflow-hidden rounded-md border border-gray-200 bg-white text-left shadow-lg dark:border-gray-700 dark:bg-gray-950">
+        <div className="absolute left-1/2 top-1/2 z-20 ml-4 flex w-max -translate-y-1/2 flex-col overflow-hidden rounded-md border border-gray-200 bg-white text-left shadow-lg dark:border-gray-700 dark:bg-gray-950">
           <button
             type="button"
             onClick={() => {
               setOpen(false);
               onInsert(location, 'step');
             }}
-            className="px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+            className="flex items-center gap-2 whitespace-nowrap px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
           >
+            <Icon path={ICONS.step} className="h-4 w-4 text-gray-400" />
             Add a step
           </button>
           {allowBranch ? (
@@ -82,8 +84,9 @@ function Connector({
                 setOpen(false);
                 onInsert(location, 'branch');
               }}
-              className="px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+              className="flex items-center gap-2 whitespace-nowrap px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
             >
+              <Icon path={ICONS.branch} className="h-4 w-4 text-indigo-500" />
               Add an if/else branch
             </button>
           ) : null}

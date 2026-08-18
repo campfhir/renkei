@@ -11,7 +11,10 @@ export const ICONS = {
   trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
   share: 'M12 3v12M8 7l4-4 4 4M5 11v9h14v-9',
   chevron: 'M9 6l6 6-6 6',
+  chevronLeft: 'M15 6l-6 6 6 6',
   close: 'M6 6l12 12M18 6L6 18',
+  step: 'M5 5h14v14H5z',
+  branch: 'M12 2v6M12 8c0 3-6 2-6 6v6M12 8c0 3 6 2 6 6v6',
 };
 
 export function Icon({ path, className }: { path: string; className?: string }) {

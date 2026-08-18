@@ -37,7 +37,11 @@ export function EditorPanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const header = (
+  // Mobile: a modal the person opened and closes (X). Desktop: this panel
+  // occupies the SAME slot the agent-settings sidebar sits in the rest of
+  // the time — closing it isn't leaving anywhere, it's going back to that,
+  // so a back arrow reads truer than a close button.
+  const mobileHeader = (
     <div className="mb-3 flex items-center justify-between gap-2">
       <h2 className="min-w-0 truncate text-sm font-semibold">{title}</h2>
       <button
@@ -59,7 +63,17 @@ export function EditorPanel({
           width === 'wide' ? 'lg:w-[36rem]' : 'lg:w-[26rem]'
         } shrink-0 self-start rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto`}
       >
-        {header}
+        <div className="mb-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="mb-2 flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.chevronLeft} className="h-3.5 w-3.5" />
+            Back
+          </button>
+          <h2 className="truncate text-sm font-semibold">{title}</h2>
+        </div>
         {children}
         {footer ? (
           <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-800">{footer}</div>
@@ -80,7 +94,7 @@ export function EditorPanel({
         onClick={(event) => event.stopPropagation()}
         className="min-h-full w-full bg-white p-4 dark:bg-gray-950 sm:my-8 sm:min-h-0 sm:max-w-lg sm:rounded-xl sm:border sm:border-gray-200 sm:shadow-xl sm:dark:border-gray-800"
       >
-        {header}
+        {mobileHeader}
         {children}
         {footer ? (
           <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-800">{footer}</div>
