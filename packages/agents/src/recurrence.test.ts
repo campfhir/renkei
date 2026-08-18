@@ -30,6 +30,7 @@ describe('isRecurrence', () => {
   it('accepts each preset shape', () => {
     expect(isRecurrence({ every: 'hour' })).toBe(true);
     expect(isRecurrence({ every: 'day', at: '09:30' })).toBe(true);
+    expect(isRecurrence({ every: 'weekday', at: '08:00' })).toBe(true);
     expect(isRecurrence({ every: 'week', weekday: 1, at: '08:00' })).toBe(true);
     expect(isRecurrence({ every: 'month', day: 28, at: '23:59' })).toBe(true);
     // Day 29-31 is CLAMPED to short months, so it's a legal ask now.
@@ -126,6 +127,27 @@ describe('computeNextRun', () => {
     const next = computeNextRun({ every: 'day', at: '02:30' }, 'America/Los_Angeles', from);
     // The candidate resolves an hour later on the clock (03:30 PDT).
     expect(next.toISOString()).toBe('2026-03-08T10:30:00.000Z');
+  });
+});
+
+describe('computeNextRun: weekdays', () => {
+  it('fires Monday through Friday and skips the weekend', () => {
+    const rec = { every: 'weekday', at: '08:00' } as const;
+    // 2026-08-14 is a Friday; after Friday's 08:00 the next run is Monday.
+    const friday = computeNextRun(rec, 'UTC', new Date('2026-08-14T09:00:00Z'));
+    expect(friday.toISOString()).toBe('2026-08-17T08:00:00.000Z'); // Monday
+    // Mid-Thursday → Friday.
+    const thursday = computeNextRun(rec, 'UTC', new Date('2026-08-13T09:00:00Z'));
+    expect(thursday.toISOString()).toBe('2026-08-14T08:00:00.000Z');
+    // Saturday → Monday.
+    const saturday = computeNextRun(rec, 'UTC', new Date('2026-08-15T00:00:00Z'));
+    expect(saturday.toISOString()).toBe('2026-08-17T08:00:00.000Z');
+  });
+
+  it('reads as prose', () => {
+    expect(describeRecurrence({ every: 'weekday', at: '08:00' })).toBe(
+      'every weekday (Mon–Fri) at 08:00'
+    );
   });
 });
 

@@ -44,6 +44,32 @@ function parsePayload(event: ClaimedEvent): FailedPayload | null {
   };
 }
 
+/**
+ * Human wording for a raw error_kind — the fallback when the run row has no
+ * error sentence. Local copy: the worker cannot import apps/web's
+ * run-labels, and six literals beat a shared package.
+ */
+function friendlyErrorKind(errorKind: string): string {
+  switch (errorKind) {
+    case 'step_failed':
+      return 'a step failed';
+    case 'config':
+      return 'a setup problem';
+    case 'timeout':
+      return 'it ran out of time';
+    case 'llm_auth':
+      return 'an AI model sign-in problem';
+    case 'llm_error':
+      return 'an AI model error';
+    case 'llm_rate_limit':
+      return 'the AI model was busy';
+    case 'guard':
+      return 'a safety guard stopped it';
+    default:
+      return errorKind;
+  }
+}
+
 export function createAgentRunFailedHandler(): EventHandler {
   return async (event) => {
     const payload = parsePayload(event);
@@ -80,7 +106,9 @@ export function createAgentRunFailedHandler(): EventHandler {
     }
 
     const agentName = agent?.name ?? 'Your agent';
-    const reason = run?.error ?? payload.errorKind ?? 'an unknown problem';
+    const reason =
+      run?.error ??
+      (payload.errorKind ? friendlyErrorKind(payload.errorKind) : 'an unknown problem');
     const link = base ? `${base}/agents/${payload.agentId}/runs/${payload.runId}` : null;
     const bodyText = `Your agent “${agentName}” stopped on a failure: ${reason}${link ? `\n\nSee the run: ${link}` : ''}`;
 

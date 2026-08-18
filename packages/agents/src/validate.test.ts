@@ -220,3 +220,178 @@ describe('validateAgentDraft', () => {
     expect(messagesOf(issues)).toContain('Two steps save their result under the same name.');
   });
 });
+
+/**
+ * Branch rules — version 2 documents. The version recompute is the load-
+ * bearing one: the SERVER decides 1 vs 2, and a linear doc must come out
+ * byte-identical to what pre-branch builds wrote.
+ */
+import { randomUUID as uuid } from 'node:crypto';
+import type { BranchStep } from './steps';
+
+function branchNode(overrides: Partial<BranchStep> = {}): BranchStep {
+  return {
+    id: uuid(),
+    kind: 'branch',
+    name: 'Anything urgent?',
+    condition: [text('Did the search find anything urgent?')],
+    paths: [
+      { id: uuid(), name: 'Yes', steps: [step({ name: 'Escalate' })] },
+      { id: uuid(), name: 'Otherwise', steps: [] },
+    ],
+    maxAttempts: 2,
+    ...overrides,
+  };
+}
+
+describe('branch validation', () => {
+  it('accepts a well-formed branch with an empty else path', () => {
+    const issues = validateAgentDraft(
+      draft({ steps: { version: 2, steps: [step(), branchNode()] } }),
+      TOOLS
+    );
+    expect(issues).toEqual([]);
+  });
+
+  it('rejects a tool chip in the condition', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 2,
+          steps: [branchNode({ condition: [text('Check with '), toolChip('jira_get_issue')] })],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues)).toContain(
+      'A branch can’t use a skill — do that work in a step above, save the result, and branch on it.'
+    );
+  });
+
+  it('rejects a branch whose paths are both empty', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 2,
+          steps: [
+            branchNode({
+              paths: [
+                { id: uuid(), name: 'Yes', steps: [] },
+                { id: uuid(), name: 'No', steps: [] },
+              ],
+            }),
+          ],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues)).toContain(
+      'This branch does nothing — add a step to a path or remove the branch.'
+    );
+  });
+
+  it('addresses nested issues with the recursive path grammar', () => {
+    const bad = step({ name: '' });
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 2,
+          steps: [
+            branchNode({
+              paths: [
+                { id: uuid(), name: 'Yes', steps: [bad] },
+                { id: uuid(), name: 'No', steps: [] },
+              ],
+            }),
+          ],
+        },
+      }),
+      TOOLS
+    );
+    expect(issues.some((issue) => issue.path === 'steps.0.paths.0.steps.0.name')).toBe(true);
+  });
+
+  it('rejects nesting beyond one branch inside a branch', () => {
+    const tooDeep = branchNode({
+      paths: [
+        {
+          id: uuid(),
+          name: 'Yes',
+          steps: [
+            branchNode({
+              paths: [
+                { id: uuid(), name: 'Deeper', steps: [branchNode()] },
+                { id: uuid(), name: 'No', steps: [] },
+              ],
+            }),
+          ],
+        },
+        { id: uuid(), name: 'No', steps: [] },
+      ],
+    });
+    const issues = validateAgentDraft(draft({ steps: { version: 2, steps: [tooDeep] } }), TOOLS);
+    expect(messagesOf(issues)).toContain(
+      'Branches can only nest one level deep — move this one up.'
+    );
+  });
+
+  it('lets a save inside one path be referenced after the branch (permissive scope)', () => {
+    const saver = step({ name: 'Look up', saveAs: 'ticket' });
+    const after = step({
+      name: 'Use it',
+      instruction: [text('Summarize '), varChip('ticket')],
+      tool: null,
+    });
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 2,
+          steps: [
+            branchNode({
+              paths: [
+                { id: uuid(), name: 'Yes', steps: [saver] },
+                { id: uuid(), name: 'No', steps: [] },
+              ],
+            }),
+            after,
+          ],
+        },
+      }),
+      TOOLS
+    );
+    expect(issues).toEqual([]);
+  });
+});
+
+describe('normalizeAgentDraft with branches', () => {
+  it('recomputes the version: 2 iff a branch exists', () => {
+    const withBranch = normalizeAgentDraft(
+      draft({ steps: { version: 1 as const, steps: [step(), branchNode()] } })
+    );
+    expect(withBranch.steps.version).toBe(2);
+
+    const linear = normalizeAgentDraft(draft({ steps: { version: 2, steps: [step()] } }));
+    expect(linear.steps.version).toBe(1);
+  });
+
+  it('keeps a linear doc byte-identical to the pre-branch shape', () => {
+    const plain = step({ name: '  Trim me  ', kind: 'action' });
+    const normalized = normalizeAgentDraft(draft({ steps: { version: 1, steps: [plain] } }));
+    const out = normalized.steps.steps[0];
+    // The optional discriminant is STRIPPED, not just undefined-valued — the
+    // serialized row must match what pre-branch builds wrote.
+    expect('kind' in out).toBe(false);
+    expect(out.name).toBe('Trim me');
+  });
+
+  it('clamps branch attempts and trims branch and path names', () => {
+    const messy = branchNode({ name: '  If urgent  ', maxAttempts: 99 });
+    messy.paths[0].name = '  Yes  ';
+    const normalized = normalizeAgentDraft(draft({ steps: { version: 2, steps: [messy] } }));
+    const out = normalized.steps.steps[0];
+    if (out.kind !== 'branch') throw new Error('expected a branch');
+    expect(out.name).toBe('If urgent');
+    expect(out.maxAttempts).toBe(10);
+    expect(out.paths[0].name).toBe('Yes');
+  });
+});

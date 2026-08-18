@@ -30,12 +30,16 @@ export default async function EditAgentPage({
 
   const data = await loadBuilderData(dbResult.val, tenant.id, session.subject, agentId);
 
+  // No width cap here: the builder manages its own — it self-centers while
+  // reading and goes two-column (canvas + editor panel) on selection.
   return (
-    <div className="mx-auto max-w-3xl">
-      <h1 className="mb-1 text-xl font-bold">Edit “{agent.name}”</h1>
-      <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-        Changes apply to future runs — anything already queued keeps the steps it was queued with.
-      </p>
+    <div>
+      <div className="mx-auto mb-6 lg:max-w-3xl">
+        <h1 className="mb-1 text-xl font-bold">Edit “{agent.name}”</h1>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Changes apply to future runs — anything already queued keeps the steps it was queued with.
+        </p>
+      </div>
       <AgentBuilder
         slug={slug}
         tenantId={tenant.id}

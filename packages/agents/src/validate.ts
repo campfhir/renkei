@@ -9,24 +9,39 @@
  * asking for 99 attempts persists with 10, because the cap is the platform's
  * decision, not a negotiation with the client. `normalizeAgentDraft` is
  * therefore part of the contract: routes persist the normalized draft, not
- * the submitted one.
+ * the submitted one — including the VERSION, which the normalizer computes
+ * (2 iff a branch exists) no matter what the client sent.
  *
  * Tool existence is checked against the SAVING USER's tool projection
  * (whatever list the caller passes — the web fetches it from the catalog).
  * Losing a tool later does not invalidate the saved agent; availability is
  * a runtime property owned by the gates, and the engine pre-flights it per
  * run.
+ *
+ * Issue paths are all-numeric and recursive — `steps.2.condition`,
+ * `steps.2.paths.1.steps.0.instruction` — so a UI can claim issues by
+ * longest prefix at every nesting level.
  */
 
 import {
+  BRANCH_DEFAULT_ATTEMPTS,
+  MAX_BRANCH_DEPTH,
   MAX_INSTRUCTION_CHARS,
   MAX_STEP_ATTEMPTS,
   MAX_STEPS,
   VARIABLE_NAME_PATTERN,
+  containsBranch,
+  countNodes,
+  flattenActionSteps,
+  isBranchStep,
   toolSegments,
   varSegments,
-  type AgentStep,
+  walkSteps,
+  type ActionStep,
+  type AgentStepNode,
   type AgentStepsDoc,
+  type BranchPath,
+  type BranchStep,
   type InstructionSegment,
 } from './steps';
 import { BUILTIN_VARIABLES } from './variables';
@@ -62,14 +77,14 @@ function segmentChars(segments: InstructionSegment[]): number {
   }, 0);
 }
 
-function validateStep(
-  step: AgentStep,
-  index: number,
+function validateActionStep(
+  step: ActionStep,
+  prefix: string,
   toolsByName: Map<string, ToolDescriptorLike>,
   knownVariables: Set<string>
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const at = (field: string) => `steps.${index}.${field}`;
+  const at = (field: string) => `${prefix}.${field}`;
 
   if (step.name.trim().length === 0) {
     issues.push({ path: at('name'), message: 'Give this step a short name.' });
@@ -117,7 +132,7 @@ function validateStep(
   declaredCodes.add('other');
   const seenCodes = new Set<string>();
   step.failureHandling.forEach((handling, handlingIndex) => {
-    const hAt = `steps.${index}.failureHandling.${handlingIndex}`;
+    const hAt = `${prefix}.failureHandling.${handlingIndex}`;
     if (descriptor && !declaredCodes.has(handling.outcome)) {
       issues.push({
         path: hAt,
@@ -172,6 +187,121 @@ function validateStep(
   return issues;
 }
 
+function validateBranchStep(
+  branch: BranchStep,
+  prefix: string,
+  depth: number,
+  toolsByName: Map<string, ToolDescriptorLike>,
+  knownVariables: Set<string>
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  if (depth > MAX_BRANCH_DEPTH) {
+    issues.push({
+      path: prefix,
+      message: 'Branches can only nest one level deep — move this one up.',
+    });
+  }
+  if (branch.name.trim().length === 0) {
+    issues.push({ path: `${prefix}.name`, message: 'Give this branch a short name.' });
+  }
+  if (branch.condition.length === 0 || segmentChars(branch.condition) === 0) {
+    issues.push({ path: `${prefix}.condition`, message: 'Describe the condition to check.' });
+  }
+  if (segmentChars(branch.condition) > MAX_INSTRUCTION_CHARS) {
+    issues.push({
+      path: `${prefix}.condition`,
+      message: `Keep the condition under ${MAX_INSTRUCTION_CHARS.toLocaleString()} characters.`,
+    });
+  }
+  if (toolSegments(branch.condition).length > 0) {
+    issues.push({
+      path: `${prefix}.condition`,
+      message:
+        'A branch can’t use a skill — do that work in a step above, save the result, and branch on it.',
+    });
+  }
+  for (const name of varSegments(branch.condition)) {
+    if (!knownVariables.has(name)) {
+      issues.push({
+        path: `${prefix}.condition`,
+        message: `"${name}" is not something this agent knows — remove or replace the chip.`,
+      });
+    }
+  }
+  branch.paths.forEach((path, pathIndex) => {
+    if (path.name.trim().length === 0) {
+      issues.push({ path: `${prefix}.paths.${pathIndex}.name`, message: 'Name this path.' });
+    }
+    path.steps.forEach((node, nodeIndex) => {
+      issues.push(
+        ...validateNode(
+          node,
+          `${prefix}.paths.${pathIndex}.steps.${nodeIndex}`,
+          depth + 1,
+          toolsByName,
+          knownVariables
+        )
+      );
+    });
+  });
+  if (branch.paths.every((path) => path.steps.length === 0)) {
+    issues.push({
+      path: prefix,
+      message: 'This branch does nothing — add a step to a path or remove the branch.',
+    });
+  }
+
+  return issues;
+}
+
+function validateNode(
+  node: AgentStepNode,
+  prefix: string,
+  depth: number,
+  toolsByName: Map<string, ToolDescriptorLike>,
+  knownVariables: Set<string>
+): ValidationIssue[] {
+  return isBranchStep(node)
+    ? validateBranchStep(node, prefix, depth, toolsByName, knownVariables)
+    : validateActionStep(node, prefix, toolsByName, knownVariables);
+}
+
+function clampAttempts(value: number, cap: number, fallback: number): number {
+  return Math.min(cap, Math.max(1, Math.round(Number.isFinite(value) ? value : fallback)));
+}
+
+function normalizeNode(node: AgentStepNode, cap: number): AgentStepNode {
+  if (isBranchStep(node)) {
+    const normalizePath = (path: BranchPath): BranchPath => ({
+      ...path,
+      name: path.name.trim(),
+      steps: path.steps.map((child) => normalizeNode(child, cap)),
+    });
+    const paths: [BranchPath, BranchPath] = [
+      normalizePath(node.paths[0]),
+      normalizePath(node.paths[1]),
+    ];
+    return {
+      ...node,
+      name: node.name.trim(),
+      maxAttempts: clampAttempts(node.maxAttempts, cap, BRANCH_DEFAULT_ATTEMPTS),
+      paths,
+    };
+  }
+  // Strip the optional discriminant so linear documents stay byte-identical
+  // with what pre-branch builds wrote.
+  const { kind: _kind, ...step } = node;
+  return {
+    ...step,
+    name: step.name.trim(),
+    // Spaces are legal INSIDE a result name; the edges are trimmed so
+    // the pattern (and every later lookup) never meets stray whitespace.
+    ...(step.saveAs !== undefined ? { saveAs: step.saveAs.trim() || undefined } : {}),
+    maxAttempts: clampAttempts(step.maxAttempts, cap, 1),
+  };
+}
+
 /**
  * Clamp ceilings into the draft. Routes persist THIS, never the raw
  * submission — which is what makes the attempt cap server-enforced no
@@ -184,24 +314,32 @@ export function normalizeAgentDraft(
   options: { attemptsCap?: number } = {}
 ): AgentDraft {
   const cap = Math.max(1, options.attemptsCap ?? MAX_STEP_ATTEMPTS);
+  const steps = draft.steps.steps.map((node) => normalizeNode(node, cap));
   return {
     ...draft,
     name: draft.name.trim(),
     steps: {
-      version: 1,
-      steps: draft.steps.steps.map((step) => ({
-        ...step,
-        name: step.name.trim(),
-        // Spaces are legal INSIDE a result name; the edges are trimmed so
-        // the pattern (and every later lookup) never meets stray whitespace.
-        ...(step.saveAs !== undefined ? { saveAs: step.saveAs.trim() || undefined } : {}),
-        maxAttempts: Math.min(
-          cap,
-          Math.max(1, Math.round(Number.isFinite(step.maxAttempts) ? step.maxAttempts : 1))
-        ),
-      })),
+      // The SERVER owns the version rule: 2 iff a branch exists, so linear
+      // agents stay runnable by workers that predate branching.
+      version: containsBranch(steps) ? 2 : 1,
+      steps,
     },
   };
+}
+
+/**
+ * Which saveAs names are bound on EVERY run ('always': top level) vs only
+ * when some branch path runs ('conditional'). The validator stays
+ * permissive either way — this exists so a UI can hint "may be unset".
+ */
+export function savesByPathCoverage(nodes: AgentStepNode[]): Map<string, 'always' | 'conditional'> {
+  const out = new Map<string, 'always' | 'conditional'>();
+  for (const { node, depth } of walkSteps(nodes)) {
+    if (!isBranchStep(node) && node.saveAs) {
+      out.set(node.saveAs, depth === 1 ? 'always' : 'conditional');
+    }
+  }
+  return out;
 }
 
 export function validateAgentDraft(
@@ -218,38 +356,46 @@ export function validateAgentDraft(
     issues.push({ path: 'name', message: 'Keep the name under 200 characters.' });
   }
 
-  const steps = draft.steps.steps;
-  if (steps.length === 0) {
+  const nodes = draft.steps.steps;
+  const walked = walkSteps(nodes);
+  if (nodes.length === 0) {
     issues.push({ path: 'steps', message: 'Add at least one step.' });
   }
-  if (steps.length > MAX_STEPS) {
+  if (countNodes(nodes) > MAX_STEPS) {
     issues.push({ path: 'steps', message: `Keep the agent to ${MAX_STEPS} steps or fewer.` });
   }
 
-  const ids = new Set(steps.map((step) => step.id));
-  if (ids.size !== steps.length) {
+  // Doc-wide id uniqueness — node ids AND branch-path ids share the space:
+  // run records reference node ids and resume walks the tree by them.
+  const allIds = walked.flatMap(({ node }) =>
+    isBranchStep(node) ? [node.id, node.paths[0].id, node.paths[1].id] : [node.id]
+  );
+  if (new Set(allIds).size !== allIds.length) {
     issues.push({ path: 'steps', message: 'Two steps share an id — reload and try again.' });
   }
 
   // saveAs names must be unique: a later rebinding would silently change
   // what earlier chips meant.
-  const saveAsNames = steps.flatMap((step) => (step.saveAs ? [step.saveAs] : []));
+  const actionSteps = flattenActionSteps(nodes);
+  const saveAsNames = actionSteps.flatMap((step) => (step.saveAs ? [step.saveAs] : []));
   if (new Set(saveAsNames).size !== saveAsNames.length) {
     issues.push({ path: 'steps', message: 'Two steps save their result under the same name.' });
   }
 
   // The variable namespace: builtins ∪ trigger-provided ∪ every saveAs.
-  // Deliberately not order-sensitive — the doc is linear today, but a chip
-  // referencing a later step's result reads as a mistake to a human, so the
-  // builder warns on it; the validator only rejects names bound nowhere.
+  // Deliberately not order-sensitive, and PERMISSIVE across branch paths —
+  // a save inside one path is referenceable after the branch (the runtime
+  // renders an unset var as `(unknown: name)` and reports it, so a wiring
+  // miss is visible, not silent). The builder may hint via
+  // savesByPathCoverage; the validator only rejects names bound nowhere.
   const knownVariables = new Set<string>([
     ...BUILTIN_VARIABLES.map((variable) => variable.name),
     ...triggerVariableNames(draft.triggers),
     ...saveAsNames,
   ]);
 
-  steps.forEach((step, index) => {
-    issues.push(...validateStep(step, index, toolsByName, knownVariables));
+  nodes.forEach((node, index) => {
+    issues.push(...validateNode(node, `steps.${index}`, 1, toolsByName, knownVariables));
   });
 
   issues.push(

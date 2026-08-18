@@ -8,7 +8,7 @@
  * inputs, earlier steps' saved results), not as the plan.
  */
 
-import { renderInstruction, type AgentStep } from '@renkei/agents';
+import { renderInstruction, type AgentStep, type BranchStep } from '@renkei/agents';
 import type { LlmMessage, LlmToolDef } from '@renkei/agent-llm';
 
 export const FINISH_STEP_TOOL = 'finish_step';
@@ -68,6 +68,86 @@ export const SYSTEM_PROMPT = [
   'Declare failure honestly: a tool error you could not work around, or a result that clearly does not match the step’s intent, is a failure, not a success.',
   'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled — and record anything future runs must know via finish_step’s remember field.',
 ].join(' ');
+
+export const CHOOSE_PATH_TOOL = 'choose_path';
+
+export const CHOOSE_PATH_DEF: LlmToolDef = {
+  name: CHOOSE_PATH_TOOL,
+  description: 'Decide which path the automation takes. Call exactly once.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      choice: {
+        type: 'string',
+        enum: ['yes', 'no'],
+        description: 'yes → the condition holds; no → it does not.',
+      },
+      reason: {
+        type: 'string',
+        description: 'One or two sentences on why, written for the agent owner.',
+      },
+    },
+    required: ['choice', 'reason'],
+  },
+};
+
+/**
+ * The condition evaluator's frame: judgment only, no tools, no invention.
+ * Mirrors finish_step's forced-call pattern — one declared verdict.
+ */
+export const BRANCH_SYSTEM_PROMPT = [
+  'You are deciding one yes/no branch of an automated workflow that a person drafted.',
+  'Judge only from the information given — you have no tools and must not invent facts.',
+  'When the information given does not settle the condition, choose the answer the condition’s wording treats as the default ("no" for "did anything happen?" style conditions).',
+  'Call choose_path exactly once.',
+].join(' ');
+
+export interface BranchPromptInput {
+  branch: BranchStep;
+  variables: Record<string, string>;
+  attempt: number;
+  /** One-paragraph summary of the previous evaluation attempt's failure. */
+  previousFailure?: string;
+  /** Rendered agent memory (summary + recent entries), already bounded. */
+  memoryText?: string;
+  /** Rendered agent knowledge notes, already bounded. */
+  knowledgeText?: string;
+}
+
+export function buildBranchMessages(input: BranchPromptInput): {
+  messages: LlmMessage[];
+  unbound: string[];
+} {
+  const rendered = renderInstruction(input.branch.condition, input.variables);
+  const variableLines = Object.entries(input.variables)
+    .map(([name, value]) => `- ${name}: ${value}`)
+    .join('\n');
+
+  const parts = [
+    `Branch: ${input.branch.name}`,
+    `Condition to decide: ${rendered.text}`,
+    `If YES (choice: "yes") the automation takes the path "${input.branch.paths[0].name}". ` +
+      `If NO (choice: "no") it takes the path "${input.branch.paths[1].name}".`,
+    ...(variableLines ? [`Known information:\n${variableLines}`] : []),
+    ...(input.memoryText
+      ? [`What you remember (notes from this agent’s earlier runs):\n${input.memoryText}`]
+      : []),
+    ...(input.knowledgeText
+      ? [`Your knowledge notes (reference material this agent keeps):\n${input.knowledgeText}`]
+      : []),
+    ...(input.attempt > 1
+      ? [
+          `This is attempt ${input.attempt} of ${input.branch.maxAttempts}.`,
+          ...(input.previousFailure ? [`Previous attempt: ${input.previousFailure}`] : []),
+        ]
+      : []),
+  ];
+
+  return {
+    messages: [{ role: 'user', content: [{ type: 'text', text: parts.join('\n\n') }] }],
+    unbound: rendered.unbound,
+  };
+}
 
 export interface AttemptPromptInput {
   step: AgentStep;

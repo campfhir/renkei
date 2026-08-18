@@ -87,8 +87,7 @@ export default function KnowledgePanel({
   };
 
   return (
-    <section className="mb-4">
-      <h2 className="mb-2 text-sm font-semibold">Knowledge</h2>
+    <div>
       <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
         Reference notes this agent reads at the start of every run — policies, contacts, standing
         instructions. The agent can add its own with the knowledge tools.
@@ -188,6 +187,6 @@ export default function KnowledgePanel({
       )}
 
       {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
-    </section>
+    </div>
   );
 }

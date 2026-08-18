@@ -25,10 +25,17 @@ import { sql } from 'kysely';
 import { randomUUID } from 'node:crypto';
 import type { DB, Json } from '@renkei/db';
 import {
+  findNodeById,
+  flattenActionSteps,
   isAgentStepsDoc,
+  isBranchStep,
   renderInstruction,
   toolSegments,
-  type AgentStep,
+  walkSteps,
+  type ActionStep,
+  type AgentStepNode,
+  type BranchPath,
+  type BranchStep,
   type FailureHandling,
 } from '@renkei/agents';
 import {
@@ -48,7 +55,16 @@ import {
   renderAgentMemory,
   renderAgentKnowledgeNotes,
 } from '@renkei/agents/memory';
-import { buildAttemptMessages, FINISH_STEP_DEF, FINISH_STEP_TOOL, SYSTEM_PROMPT } from './prompt';
+import {
+  BRANCH_SYSTEM_PROMPT,
+  buildAttemptMessages,
+  buildBranchMessages,
+  CHOOSE_PATH_DEF,
+  CHOOSE_PATH_TOOL,
+  FINISH_STEP_DEF,
+  FINISH_STEP_TOOL,
+  SYSTEM_PROMPT,
+} from './prompt';
 import { logger } from './logger';
 
 const NORMAL_TOOL_CAP = 3;
@@ -183,11 +199,49 @@ function classifyFailure(primaryResults: McpToolResult[], declaredCode: string |
   return declaredCode ?? 'other';
 }
 
-function handlingFor(step: AgentStep, code: string): FailureHandling | undefined {
+function handlingFor(step: ActionStep, code: string): FailureHandling | undefined {
   return (
     step.failureHandling.find((handling) => handling.outcome === code) ??
     step.failureHandling.find((handling) => handling.outcome === 'other')
   );
+}
+
+function chooseArgsOf(input: unknown): { choice: 'yes' | 'no'; reason: string } | null {
+  if (typeof input !== 'object' || input === null) return null;
+  const args: { choice?: unknown; reason?: unknown } = input;
+  if (args.choice !== 'yes' && args.choice !== 'no') return null;
+  return { choice: args.choice, reason: typeof args.reason === 'string' ? args.reason : '' };
+}
+
+/**
+ * One executable frame: a sibling list and the position within it. The
+ * stack of frames IS the program counter — popping an exhausted frame
+ * lands execution after the branch block that pushed it.
+ */
+interface Frame {
+  nodes: AgentStepNode[];
+  index: number;
+}
+
+/**
+ * The frame stack that puts `startId` on top, derived purely from where the
+ * id lives in the tree — ids are doc-unique, so the ancestor chain IS the
+ * record of which paths the run took. Unknown/absent id → start at the top.
+ */
+function buildResumeStack(nodes: AgentStepNode[], startId: string | null): Frame[] {
+  if (!startId) return [{ nodes, index: 0 }];
+  const found = findNodeById(nodes, startId);
+  if (!found) return [{ nodes, index: 0 }];
+  const stack: Frame[] = [];
+  let container = nodes;
+  for (const ancestor of found.ancestors) {
+    const branchIndex = container.indexOf(ancestor.branch);
+    // Past the branch, so popping this frame continues AFTER the block.
+    stack.push({ nodes: container, index: Math.max(0, branchIndex) + 1 });
+    container = ancestor.path.steps;
+  }
+  stack.push({ nodes: found.siblings, index: found.index });
+  return stack;
 }
 
 function finishArgsOf(input: unknown): {
@@ -292,7 +346,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
       await finalizeRun(run, 'failed', 'config', 'The saved steps could not be read.', {});
       return;
     }
-    const steps = run.steps_snapshot.steps;
+    const nodes = run.steps_snapshot.steps;
+    // Pre-order ordinal per node id — what agent_run_steps.step_index
+    // records. On a linear doc this is the flat index, byte-for-byte the
+    // old behavior; inside branches it stays monotone along any executed
+    // sequence, so timeline ordering keeps working.
+    const ordinals = new Map(walkSteps(nodes).map((entry) => [entry.node.id, entry.ordinal]));
 
     // The agent may have been disabled between enqueue and claim.
     const agentRow = await db
@@ -365,7 +424,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .orderBy('attempt')
         .execute();
       const vars = await baseVariables(run);
-      recoverSavedVars(steps, priorAttempts, vars);
+      recoverSavedVars(nodes, priorAttempts, vars);
 
       // The agent's carried context: memory (earlier runs' breadcrumbs)
       // and its own knowledge notes, both bounded at render time — the
@@ -374,34 +433,61 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // amnesiac, it never fails it.
       const context = await loadRunContext(run);
 
-      let stepIndex = run.current_step_id
-        ? Math.max(
-            0,
-            steps.findIndex((step) => step.id === run.current_step_id)
-          )
-        : 0;
+      // Crash-resume rebuilds the frame stack from where current_step_id
+      // sits in the tree; a fresh run starts one frame at the top.
+      const stack = buildResumeStack(nodes, run.current_step_id);
 
-      while (stepIndex < steps.length) {
-        const step = steps[stepIndex];
+      while (stack.length > 0) {
+        const frame = stack[stack.length - 1];
+        if (frame.index >= frame.nodes.length) {
+          // This sibling list is done — resume the enclosing one, which is
+          // already positioned after its branch block.
+          stack.pop();
+          continue;
+        }
+        const node = frame.nodes[frame.index];
         await db
           .updateTable('agent_runs')
-          .set({ current_step_id: step.id, updated_at: sql`NOW()` })
+          .set({ current_step_id: node.id, updated_at: sql`NOW()` })
           .where('id', '=', runId)
           .execute();
 
+        if (isBranchStep(node)) {
+          const decided = await evaluateBranch(
+            run,
+            node,
+            llm,
+            vars,
+            context,
+            deadline,
+            settings.agentMaxStepAttempts,
+            ordinals
+          );
+          if (decided.kind === 'fail') {
+            await finalizeRun(run, 'failed', decided.errorKind, decided.error, vars);
+            return;
+          }
+          // Advance past the branch FIRST, then descend — popping the path
+          // frame later lands exactly after the block.
+          frame.index += 1;
+          stack.push({ nodes: decided.path.steps, index: 0 });
+          continue;
+        }
+
         const result = await executeStep(
           run,
-          step,
+          node,
           toolsByName,
           llm,
           mcp,
           vars,
           context,
           deadline,
-          settings.agentMaxStepAttempts
+          settings.agentMaxStepAttempts,
+          ordinals
         );
         if (result.kind === 'advance') {
-          stepIndex += 1;
+          frame.index += 1;
           continue;
         }
         if (result.kind === 'finish') {
@@ -474,12 +560,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
   }
 
   function recoverSavedVars(
-    steps: AgentStep[],
+    nodes: AgentStepNode[],
     prior: AttemptRecord[],
     vars: Record<string, string>
   ): void {
     const saveAsByStep = new Map(
-      steps.flatMap((step) => (step.saveAs ? [[step.id, step.saveAs] as const] : []))
+      flattenActionSteps(nodes).flatMap((step) =>
+        step.saveAs ? [[step.id, step.saveAs] as const] : []
+      )
     );
     for (const attempt of prior) {
       if (attempt.status !== 'succeeded') continue;
@@ -497,14 +585,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
   async function executeStep(
     run: RunRow,
-    step: AgentStep,
+    step: ActionStep,
     toolsByName: Map<string, McpToolInfo>,
     llm: ResolvedLlm,
     mcp: McpClient,
     vars: Record<string, string>,
     context: RunContextText,
     deadline: number,
-    orgAttemptCap: number
+    orgAttemptCap: number,
+    ordinals: Map<string, number>
   ): Promise<
     | { kind: 'advance' }
     | { kind: 'finish'; quiet: boolean }
@@ -580,14 +669,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const rowId = randomUUID();
       // The tripwire: a racing second executor violates the unique
       // constraint here and backs off via queue redelivery.
-      const stepIndexOf = (id: string): number => {
-        const doc = run.steps_snapshot;
-        if (!isAgentStepsDoc(doc)) return 0;
-        return Math.max(
-          0,
-          doc.steps.findIndex((entry) => entry.id === id)
-        );
-      };
       try {
         await db
           .insertInto('agent_run_steps')
@@ -596,7 +677,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             tenant_id: run.tenant_id,
             run_id: run.id,
             step_id: step.id,
-            step_index: stepIndexOf(step.id),
+            step_index: ordinals.get(step.id) ?? 0,
             attempt,
             status: 'running',
             started_at: sql`NOW()`,
@@ -717,9 +798,248 @@ export function createAgentRunHandler(deps: EngineDeps) {
     }
   }
 
+  /**
+   * Decide a branch: a forced choose_path call against the condition — a
+   * slimmed sibling of executeStep with the SAME bookkeeping (attempt rows
+   * before LLM spend, budget by counting rows, unique-constraint tripwire,
+   * deadline) and NO tools. Success closes the attempt row with outcome
+   * 'path_chosen' and detail.chosenPathId, which is also what redelivery
+   * reuses instead of asking the model twice.
+   */
+  async function evaluateBranch(
+    run: RunRow,
+    branch: BranchStep,
+    llm: ResolvedLlm,
+    vars: Record<string, string>,
+    context: RunContextText,
+    deadline: number,
+    orgAttemptCap: number,
+    ordinals: Map<string, number>
+  ): Promise<
+    { kind: 'path'; path: BranchPath } | { kind: 'fail'; errorKind: string; error: string }
+  > {
+    const pathById = (id: string | undefined): BranchPath | null => {
+      if (branch.paths[0].id === id) return branch.paths[0];
+      if (branch.paths[1].id === id) return branch.paths[1];
+      return null;
+    };
+
+    const budget = Math.min(branch.maxAttempts, Math.max(1, orgAttemptCap));
+    let lastFailureSummary: string | undefined;
+
+    for (;;) {
+      // Close an evaluation a crashed worker left open, then recount.
+      await db
+        .updateTable('agent_run_steps')
+        .set({
+          status: 'failed',
+          outcome: 'llm_error',
+          outcome_code: 'other',
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+        })
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', branch.id)
+        .where('status', '=', 'running')
+        .execute();
+
+      // Redelivery/resume: an already-decided branch is not re-asked.
+      const succeeded = await db
+        .selectFrom('agent_run_steps')
+        .select('detail')
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', branch.id)
+        .where('status', '=', 'succeeded')
+        .executeTakeFirst();
+      if (succeeded) {
+        const detail: { chosenPathId?: unknown } =
+          typeof succeeded.detail === 'object' &&
+          succeeded.detail !== null &&
+          !Array.isArray(succeeded.detail)
+            ? succeeded.detail
+            : {};
+        const chosen =
+          typeof detail.chosenPathId === 'string' ? pathById(detail.chosenPathId) : null;
+        if (chosen) return { kind: 'path', path: chosen };
+        // Unreadable choice: fall through and re-evaluate under whatever
+        // budget the counted rows leave.
+      }
+
+      const counted = await db
+        .selectFrom('agent_run_steps')
+        .select(({ fn }) => fn.countAll<string>().as('count'))
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', branch.id)
+        .executeTakeFirst();
+      const attemptsUsed = Number(counted?.count ?? 0);
+
+      if (attemptsUsed >= budget) {
+        return {
+          kind: 'fail',
+          errorKind: 'step_failed',
+          error: `Branch "${branch.name}" could not be decided after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}${lastFailureSummary ? `: ${clip(lastFailureSummary, 300)}` : '.'}`,
+        };
+      }
+      if (Date.now() > deadline) {
+        return { kind: 'fail', errorKind: 'timeout', error: 'The run exceeded its time budget.' };
+      }
+
+      const attempt = attemptsUsed + 1;
+      const rowId = randomUUID();
+      try {
+        await db
+          .insertInto('agent_run_steps')
+          .values({
+            id: rowId,
+            tenant_id: run.tenant_id,
+            run_id: run.id,
+            step_id: branch.id,
+            step_index: ordinals.get(branch.id) ?? 0,
+            attempt,
+            status: 'running',
+            started_at: sql`NOW()`,
+          })
+          .execute();
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('agent_run_steps_attempt')) {
+          throw new TransientFailure('another executor holds this run');
+        }
+        throw error;
+      }
+
+      const built = buildBranchMessages({
+        branch,
+        variables: vars,
+        attempt,
+        ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
+        ...(context.memoryText ? { memoryText: context.memoryText } : {}),
+        ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
+      });
+      const resolvedInstruction = renderInstruction(branch.condition, vars).text;
+      const messages: LlmMessage[] = [...built.messages];
+      const usage = { inputTokens: 0, outputTokens: 0 };
+      let failureSummary = 'The model never chose a path.';
+
+      let decidedPath: BranchPath | null = null;
+      let decidedReason = '';
+      // A short turn cap: forced choose_path should answer immediately; one
+      // nudge covers a model that answered in prose first.
+      for (let turn = 0; turn < 3 && !decidedPath; turn += 1) {
+        const completion = await llm.provider.complete({
+          system: BRANCH_SYSTEM_PROMPT,
+          messages,
+          tools: [CHOOSE_PATH_DEF],
+          toolChoice: { name: CHOOSE_PATH_TOOL },
+          maxTokens: llm.maxOutputTokens,
+          ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
+        });
+        if (!completion.ok) {
+          const kind = completion.err.type;
+          if (kind === 'auth') {
+            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
+            return {
+              kind: 'fail',
+              errorKind: 'llm_auth',
+              error: 'The model rejected the API key.',
+            };
+          }
+          if (kind === 'invalid_request') {
+            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
+            return {
+              kind: 'fail',
+              errorKind: 'llm_error',
+              error: completion.err.message ?? 'The model rejected the request.',
+            };
+          }
+          if (kind === 'rate_limit' || kind === 'overloaded' || kind === 'network') {
+            // Nothing spent — void the row and let the queue back off.
+            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
+            throw new TransientFailure(`model ${kind}`);
+          }
+          failureSummary = completion.err.message ?? `The model failed (${kind}).`;
+          break;
+        }
+
+        usage.inputTokens += completion.val.usage.inputTokens;
+        usage.outputTokens += completion.val.usage.outputTokens;
+        messages.push({ role: 'assistant', content: completion.val.content });
+
+        const toolUses = completion.val.content.filter(
+          (block): block is Extract<LlmContentBlock, { type: 'tool_use' }> =>
+            block.type === 'tool_use'
+        );
+        const chooseUse = toolUses.find((use) => use.name === CHOOSE_PATH_TOOL);
+        const choice = chooseUse ? chooseArgsOf(chooseUse.input) : null;
+        if (chooseUse && choice) {
+          decidedPath = choice.choice === 'yes' ? branch.paths[0] : branch.paths[1];
+          decidedReason = choice.reason;
+          break;
+        }
+        messages.push({
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'Call choose_path exactly once with {choice: "yes" | "no", reason}.',
+            },
+          ],
+        });
+      }
+
+      if (decidedPath) {
+        const detail = {
+          resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+          llmSummary: clip(decidedReason, PREVIEW_CHARS),
+          declaredOutcome: 'success',
+          chosenPathId: decidedPath.id,
+          chosenPathName: decidedPath.name,
+          ...(built.unbound.length > 0 ? { unboundVariables: built.unbound } : {}),
+          usage,
+        };
+        await db
+          .updateTable('agent_run_steps')
+          .set({
+            status: 'succeeded',
+            outcome: 'path_chosen',
+            outcome_code: null,
+            tool_call_count: 0,
+            detail: clip(JSON.stringify(detail), DETAIL_CHARS),
+            finished_at: sql`NOW()`,
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', rowId)
+          .execute();
+        return { kind: 'path', path: decidedPath };
+      }
+
+      // The attempt failed to produce a choice — close it and let the loop
+      // retry until the budget runs out.
+      lastFailureSummary = failureSummary;
+      const detail = {
+        resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+        llmSummary: clip(failureSummary, PREVIEW_CHARS),
+        declaredOutcome: 'failure',
+        usage,
+      };
+      await db
+        .updateTable('agent_run_steps')
+        .set({
+          status: 'failed',
+          outcome: 'llm_error',
+          outcome_code: 'other',
+          tool_call_count: 0,
+          detail: clip(JSON.stringify(detail), DETAIL_CHARS),
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', rowId)
+        .execute();
+    }
+  }
+
   async function runAttempt(
     run: RunRow,
-    step: AgentStep,
+    step: ActionStep,
     attempt: number,
     guidance: FailureHandling['guidance'],
     toolsByName: Map<string, McpToolInfo>,
@@ -938,7 +1258,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
   }
 
   function decideOutcome(
-    step: AgentStep,
+    step: ActionStep,
     finish: {
       outcome: 'success' | 'failure';
       code: string | null;

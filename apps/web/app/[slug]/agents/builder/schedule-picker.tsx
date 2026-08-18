@@ -54,6 +54,7 @@ function timezoneOptions(current: string): string[] {
 type RuleKind =
   | 'hour'
   | 'day'
+  | 'weekday'
   | 'week'
   | 'month-day'
   | 'month-nth'
@@ -67,6 +68,8 @@ function ruleKindOf(rule: Recurrence): RuleKind {
       return 'hour';
     case 'day':
       return 'day';
+    case 'weekday':
+      return 'weekday';
     case 'week':
       return 'week';
     case 'month':
@@ -89,6 +92,9 @@ function RuleRow({ rule, onChange }: { rule: Recurrence; onChange: (rule: Recurr
         break;
       case 'day':
         onChange({ every: 'day', at });
+        break;
+      case 'weekday':
+        onChange({ every: 'weekday', at });
         break;
       case 'week':
         onChange({ every: 'week', weekday: 1, at });
@@ -141,6 +147,7 @@ function RuleRow({ rule, onChange }: { rule: Recurrence; onChange: (rule: Recurr
       >
         <option value="hour">Every hour</option>
         <option value="day">Every day</option>
+        <option value="weekday">Every weekday (Mon–Fri)</option>
         <option value="week">Weekly on a day…</option>
         <option value="month-day">Monthly on a date…</option>
         <option value="month-nth">Monthly on the Nth weekday…</option>

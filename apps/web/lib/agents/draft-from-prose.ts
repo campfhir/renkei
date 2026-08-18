@@ -17,7 +17,13 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import {
   BUILTIN_VARIABLES,
-  type AgentStep,
+  MAX_BRANCH_DEPTH,
+  flattenActionSteps,
+  isBranchStep,
+  walkSteps,
+  type ActionStep,
+  type AgentStepNode,
+  type BranchPath,
   type FailureHandling,
   type InstructionSegment,
 } from '@renkei/agents';
@@ -49,10 +55,32 @@ function segmentsToTokens(segments: InstructionSegment[]): string {
     .join('');
 }
 
+/**
+ * Current nodes → the numbered sN lines revisions quote. Pre-order over the
+ * whole tree so `from` ids can name nodes inside branch paths too.
+ */
+function currentLinesOf(nodes: AgentStepNode[]): string {
+  return walkSteps(nodes)
+    .map(({ node, ordinal, depth }) => {
+      const indent = '  '.repeat(depth - 1);
+      if (isBranchStep(node)) {
+        return (
+          `${indent}s${ordinal + 1}. [branch] "${node.name}" — decides: ${segmentsToTokens(node.condition)}` +
+          ` (if yes → "${node.paths[0].name}", otherwise → "${node.paths[1].name}"; the indented steps below belong to those paths)`
+        );
+      }
+      return (
+        `${indent}s${ordinal + 1}. "${node.name}" — ${segmentsToTokens(node.instruction)}` +
+        (node.saveAs ? ` (saves result as "${node.saveAs}")` : '')
+      );
+    })
+    .join('\n');
+}
+
 function promptOf(
   text: string,
   tools: ToolDescriptor[],
-  currentSteps: AgentStep[],
+  currentSteps: AgentStepNode[],
   triggerVars: string[]
 ): string {
   const toolLines = tools
@@ -69,13 +97,7 @@ function promptOf(
   ].join('\n');
 
   const revising = currentSteps.length > 0;
-  const currentLines = currentSteps
-    .map(
-      (step, index) =>
-        `s${index + 1}. "${step.name}" — ${segmentsToTokens(step.instruction)}` +
-        (step.saveAs ? ` (saves result as "${step.saveAs}")` : '')
-    )
-    .join('\n');
+  const currentLines = currentLinesOf(currentSteps);
 
   return [
     revising
@@ -90,11 +112,17 @@ function promptOf(
     '- Steps run strictly in order — but people rarely DESCRIBE them in order ("before all that ' +
       'you might need to…", "first look up…"). Reorder into the true execution sequence: gather ' +
       'context first, look things up, then act on what was found.',
-    '- Branching lives INSIDE a step\'s instruction, not in extra steps: a step may say "If no ' +
-      'ticket was found in {{var:the search}}, create one with {{tool:x}} using …; otherwise ' +
-      'finish this step without using the tool." The runner follows plain conditions like that. ' +
-      'A step may also end the whole automation: "…and stop here." Never invent parallel ' +
-      'branches or jump-to-step logic.',
+    '- When the description forks on a condition ("if a ticket exists, comment on it; ' +
+      'otherwise create one"), use a BRANCH object in the steps array: {"kind": "branch", ' +
+      '"name": short label, "condition": a yes/no question in plain words (may use ' +
+      '{{var:...}}, NEVER {{tool:...}} — do any tool work in a step BEFORE the branch and ' +
+      'save the result), "ifLabel"/"elseLabel": short path names, "ifSteps"/"elseSteps": ' +
+      'arrays of steps (same shape as top-level steps; either may be empty — an empty ' +
+      'elseSteps just continues). After either path finishes, the automation continues with ' +
+      'the steps AFTER the branch. A branch may contain one more level of branch inside its ' +
+      "paths, never deeper. Small conditions that only tweak wording stay INSIDE a step's " +
+      'instruction ("If nothing was found, say so briefly"); use a branch when the two ' +
+      'outcomes need DIFFERENT steps or tools. Never invent jump-to-step logic.',
     '- Carry the user\'s guardrails into the step that acts (e.g. "if this thread was already ' +
       'handled, do not update the same ticket again — stop instead").',
     '- A step that FAILS stops the automation by default. To handle a specific failure of a ' +
@@ -154,6 +182,18 @@ function promptOf(
         ]
       : []),
     '  }',
+    '  A steps array entry may INSTEAD be a branch:',
+    '  {',
+    '    "kind": "branch",',
+    '    "name": string — a short label for the decision, never empty,',
+    '    "condition": string — a yes/no question in plain words; {{var:...}} allowed,',
+    '      {{tool:...}} forbidden,',
+    '    "ifLabel": string — short name for the yes path (e.g. "A ticket exists"),',
+    '    "elseLabel": string — short name for the no path (e.g. "Otherwise"),',
+    '    "ifSteps": array of steps (may be empty),',
+    '    "elseSteps": array of steps (may be empty; not both empty)' + (revising ? ',' : ''),
+    ...(revising ? ['    "from": string or null — the sN id of the existing branch, or null'] : []),
+    '  }',
     '}',
     'Every field must be present on every step. Do not add fields not listed here.',
   ].join('\n');
@@ -203,7 +243,7 @@ function segmentsOf(
 
 export interface DraftedAgent {
   name: string;
-  steps: AgentStep[];
+  steps: AgentStepNode[];
 }
 
 /**
@@ -236,6 +276,28 @@ const STEP_SHAPE = z.object({
     .optional(),
 });
 
+/**
+ * The branch wire shape. Its path arrays stay unknown[] here — each entry
+ * is checked individually by the recursive parse, so one malformed nested
+ * step degrades to feedback instead of voiding the whole branch.
+ */
+const BRANCH_SHAPE = z.object({
+  kind: z.literal('branch'),
+  name: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  condition: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  ifLabel: z.string().optional(),
+  elseLabel: z.string().optional(),
+  ifSteps: z.array(z.unknown()),
+  elseSteps: z.array(z.unknown()),
+  from: z.string().nullable().optional(),
+});
+
+function isBranchWire(entry: unknown): boolean {
+  if (typeof entry !== 'object' || entry === null) return false;
+  const candidate: { kind?: unknown } = entry;
+  return candidate.kind === 'branch';
+}
+
 /** zod issues → the quotable one-liners the retry feedback is built from. */
 function zodProblems(prefix: string, error: z.ZodError): string[] {
   return error.issues.map(
@@ -251,9 +313,26 @@ function zodProblems(prefix: string, error: z.ZodError): string[] {
  * not in the list") — because those strings go back to the model verbatim
  * as the retry feedback, and "unusable answer" teaches it nothing.
  */
+/** Shared mutable state for one reply's recursive parse. */
+interface ParseState {
+  problems: string[];
+  softProblems: string[];
+  knownVars: Set<string>;
+  usedSaveAs: Set<string>;
+  validTools: Set<string>;
+  outcomesByTool: Map<string, Set<string>>;
+  /** sN (pre-order over the CURRENT tree) → the existing node. */
+  originByRef: Map<string, AgentStepNode>;
+}
+
+function originOf(state: ParseState, from: string | null | undefined): AgentStepNode | undefined {
+  if (typeof from !== 'string') return undefined;
+  return state.originByRef.get(from.trim());
+}
+
 function parseDraftReply(
   raw: string,
-  currentSteps: AgentStep[],
+  currentSteps: AgentStepNode[],
   validTools: Set<string>,
   outcomesByTool: Map<string, Set<string>>,
   seedVars: Set<string>
@@ -283,143 +362,20 @@ function parseDraftReply(
   }
   const parsed = envelope.data;
 
-  const problems: string[] = [];
-  const softProblems: string[] = [];
-  const knownVars = new Set(seedVars);
-  const usedSaveAs = new Set<string>();
-  const steps: AgentStep[] = [];
+  const state: ParseState = {
+    problems: [],
+    softProblems: [],
+    knownVars: new Set(seedVars),
+    usedSaveAs: new Set<string>(),
+    validTools,
+    outcomesByTool,
+    originByRef: new Map(
+      walkSteps(currentSteps).map(({ node, ordinal }) => [`s${ordinal + 1}`, node])
+    ),
+  };
 
-  for (const [index, entry] of parsed.steps.entries()) {
-    const label = `Step ${index + 1}`;
-    const checked = STEP_SHAPE.safeParse(entry);
-    if (!checked.success) {
-      problems.push(...zodProblems(`${label}: `, checked.error));
-      continue;
-    }
-    const step = checked.data;
-
-    // Unknown chips degrade to plain text, but they are also the retry
-    // feedback that matters most: an invented tool name means the step
-    // loses its skill entirely.
-    for (const match of step.instruction.matchAll(TOKEN_PATTERN)) {
-      const [, kind, rawName] = match;
-      const name = rawName.trim();
-      if (kind === 'tool' && !validTools.has(name)) {
-        softProblems.push(
-          `${label} uses {{tool:${name}}}, which is not in the available tools list — pick a tool from the list or make it a reasoning step.`
-        );
-      } else if (kind === 'var' && !knownVars.has(name) && !name.startsWith('trigger.')) {
-        softProblems.push(
-          `${label} references {{var:${name}}}, which no earlier step saves and no trigger provides.`
-        );
-      }
-    }
-    if (
-      typeof step.tool === 'string' &&
-      step.tool &&
-      !step.instruction.includes(`{{tool:${step.tool}}}`)
-    ) {
-      softProblems.push(
-        `${label} sets "tool": "${step.tool}" but its instruction has no matching {{tool:${step.tool}}} token.`
-      );
-    }
-
-    const segments = segmentsOf(step.instruction, validTools, knownVars);
-    const tool = segments.find(
-      (segment): segment is Extract<InstructionSegment, { t: 'tool' }> => segment.t === 'tool'
-    );
-
-    // "from": sN → the existing step this one is based on. Its identity,
-    // attempt budget, and — when the tool didn't change — failure handling
-    // survive the revision; the model only authors words and chips.
-    const fromMatch = typeof step.from === 'string' ? /^s(\d+)$/.exec(step.from.trim()) : null;
-    const origin = fromMatch ? currentSteps[Number(fromMatch[1]) - 1] : undefined;
-    const sameTool = origin !== undefined && origin.tool === (tool?.name ?? null);
-
-    let saveAs =
-      typeof step.saveAs === 'string' && step.saveAs.trim() ? step.saveAs.trim() : origin?.saveAs;
-    if (saveAs) {
-      // Result names must be unique across steps (the validator enforces
-      // it at save); a duplicate is renamed so the draft stays usable and
-      // the model is told what it did wrong.
-      if (usedSaveAs.has(saveAs.toLowerCase())) {
-        softProblems.push(
-          `${label} reuses the result name "${saveAs}" — every saveAs must be unique across steps.`
-        );
-        let suffix = 2;
-        let candidate = `${saveAs} ${suffix}`;
-        while (usedSaveAs.has(candidate.toLowerCase())) {
-          suffix += 1;
-          candidate = `${saveAs} ${suffix}`;
-        }
-        saveAs = candidate.slice(0, 64);
-      }
-      usedSaveAs.add(saveAs.toLowerCase());
-      knownVars.add(saveAs); // later steps may reference it
-    }
-
-    // Model-authored failure handling, checked against the tool's REAL
-    // outcome codes so the validator never bounces what drafting produced.
-    const authoredHandling: FailureHandling[] = [];
-    if (step.failures && step.failures.length > 0) {
-      if (!tool) {
-        softProblems.push(
-          `${label} has "failures" but no tool — failure handling belongs to tool steps.`
-        );
-      } else {
-        const validCodes = outcomesByTool.get(tool.name) ?? new Set(['other']);
-        const seenCodes = new Set<string>();
-        for (const failure of step.failures) {
-          if (seenCodes.has(failure.outcome)) continue;
-          if (!validCodes.has(failure.outcome)) {
-            softProblems.push(
-              `${label} handles "${failure.outcome}", which is not a failure code of ` +
-                `${tool.name} — its codes are: ${[...validCodes].join(', ')}.`
-            );
-            continue;
-          }
-          seenCodes.add(failure.outcome);
-          const guidanceText = typeof failure.guidance === 'string' ? failure.guidance.trim() : '';
-          if (failure.action === 'retry' && !guidanceText) {
-            softProblems.push(
-              `${label} retries on "${failure.outcome}" without guidance — guidance is ` +
-                'required for retry, so it was changed to stop.'
-            );
-            authoredHandling.push({ outcome: failure.outcome, action: 'exit' });
-            continue;
-          }
-          authoredHandling.push(
-            failure.action === 'retry'
-              ? {
-                  outcome: failure.outcome,
-                  action: 'retry',
-                  guidance: segmentsOf(guidanceText, validTools, knownVars, true),
-                }
-              : { outcome: failure.outcome, action: 'exit' }
-          );
-        }
-      }
-    }
-
-    steps.push({
-      id: origin?.id ?? randomUUID(),
-      name: typeof step.name === 'string' ? step.name.slice(0, 80) : (origin?.name ?? ''),
-      instruction: segments,
-      tool: tool?.name ?? null,
-      maxAttempts: step.tries ?? origin?.maxAttempts ?? 5,
-      // The model's explicit handling wins; absent that, a revision keeps
-      // the origin's (failure conditions belong to a tool — a changed tool
-      // starts clean).
-      failureHandling:
-        step.failures !== undefined ? authoredHandling : sameTool ? origin.failureHandling : [],
-      ...(saveAs ? { saveAs } : {}),
-      ...(step.onSuccess && step.onSuccess !== 'continue'
-        ? { onSuccess: step.onSuccess }
-        : step.onSuccess === undefined && origin?.onSuccess
-          ? { onSuccess: origin.onSuccess }
-          : {}),
-    });
-  }
+  const steps = parseNodeList(parsed.steps, 'Step', state, 1);
+  const { problems, softProblems } = state;
 
   if (steps.length === 0) {
     return {
@@ -432,12 +388,26 @@ function parseDraftReply(
   softProblems.push(...problems);
 
   // A model that echoes the same origin twice would duplicate ids; keep the
-  // first claim, regenerate the rest.
+  // first claim, regenerate the rest — across the whole tree, path ids
+  // included.
   const seenIds = new Set<string>();
-  for (const step of steps) {
-    if (seenIds.has(step.id)) step.id = randomUUID();
-    seenIds.add(step.id);
-  }
+  const claimId = (id: string): string => {
+    const fresh = seenIds.has(id) ? randomUUID() : id;
+    seenIds.add(fresh);
+    return fresh;
+  };
+  const dedupe = (nodes: AgentStepNode[]): void => {
+    for (const node of nodes) {
+      node.id = claimId(node.id);
+      if (isBranchStep(node)) {
+        for (const path of node.paths) {
+          path.id = claimId(path.id);
+          dedupe(path.steps);
+        }
+      }
+    }
+  };
+  dedupe(steps);
 
   return {
     ok: true,
@@ -449,6 +419,224 @@ function parseDraftReply(
   };
 }
 
+/** Parse a wire steps array — branch entries recurse, broken ones diagnose. */
+function parseNodeList(
+  entries: unknown[],
+  labelPrefix: string,
+  state: ParseState,
+  depth: number
+): AgentStepNode[] {
+  const nodes: AgentStepNode[] = [];
+  for (const [index, entry] of entries.entries()) {
+    const label = `${labelPrefix} ${index + 1}`;
+    if (isBranchWire(entry)) {
+      const parsedBranch = parseBranchEntry(entry, label, state, depth);
+      if (parsedBranch) nodes.push(parsedBranch);
+      continue;
+    }
+    const checked = STEP_SHAPE.safeParse(entry);
+    if (!checked.success) {
+      state.problems.push(...zodProblems(`${label}: `, checked.error));
+      continue;
+    }
+    nodes.push(parseActionEntry(checked.data, label, state));
+  }
+  return nodes;
+}
+
+function parseBranchEntry(
+  entry: unknown,
+  label: string,
+  state: ParseState,
+  depth: number
+): AgentStepNode | null {
+  const checked = BRANCH_SHAPE.safeParse(entry);
+  if (!checked.success) {
+    state.problems.push(...zodProblems(`${label} (branch): `, checked.error));
+    return null;
+  }
+  const wire = checked.data;
+
+  if (depth >= MAX_BRANCH_DEPTH) {
+    state.softProblems.push(
+      `${label} nests a branch deeper than one level — restructure so branches sit at most one inside another.`
+    );
+    return null;
+  }
+  if (/\{\{tool:/.test(wire.condition)) {
+    state.softProblems.push(
+      `${label} puts a {{tool:...}} token in a branch condition — do that work in a step before the branch and save the result; the tool token was dropped.`
+    );
+  }
+  for (const match of wire.condition.matchAll(TOKEN_PATTERN)) {
+    const [, kind, rawName] = match;
+    const name = rawName.trim();
+    if (kind === 'var' && !state.knownVars.has(name) && !name.startsWith('trigger.')) {
+      state.softProblems.push(
+        `${label} references {{var:${name}}} in its condition, which no earlier step saves and no trigger provides.`
+      );
+    }
+  }
+  // No tool chips in a condition ever — drop even valid ones.
+  const condition = segmentsOf(wire.condition, new Set<string>(), state.knownVars);
+
+  const origin = originOf(state, wire.from);
+  const branchOrigin = origin && isBranchStep(origin) ? origin : undefined;
+
+  const path = (
+    pathIndex: 0 | 1,
+    labelText: string | undefined,
+    fallback: string,
+    steps: unknown[]
+  ): BranchPath => ({
+    id: branchOrigin?.paths[pathIndex].id ?? randomUUID(),
+    name: (labelText ?? '').trim().slice(0, 80) || fallback,
+    steps: parseNodeList(steps, `${label}.${pathIndex === 0 ? 'if' : 'else'}`, state, depth + 1),
+  });
+
+  return {
+    id: branchOrigin?.id ?? randomUUID(),
+    kind: 'branch',
+    name: wire.name.slice(0, 80),
+    condition,
+    paths: [
+      path(0, wire.ifLabel, 'If so', wire.ifSteps),
+      path(1, wire.elseLabel, 'Otherwise', wire.elseSteps),
+    ],
+    maxAttempts: branchOrigin?.maxAttempts ?? 2,
+  };
+}
+
+function parseActionEntry(
+  step: z.infer<typeof STEP_SHAPE>,
+  label: string,
+  state: ParseState
+): ActionStep {
+  const { softProblems, knownVars, usedSaveAs, validTools, outcomesByTool } = state;
+
+  // Unknown chips degrade to plain text, but they are also the retry
+  // feedback that matters most: an invented tool name means the step
+  // loses its skill entirely.
+  for (const match of step.instruction.matchAll(TOKEN_PATTERN)) {
+    const [, kind, rawName] = match;
+    const name = rawName.trim();
+    if (kind === 'tool' && !validTools.has(name)) {
+      softProblems.push(
+        `${label} uses {{tool:${name}}}, which is not in the available tools list — pick a tool from the list or make it a reasoning step.`
+      );
+    } else if (kind === 'var' && !knownVars.has(name) && !name.startsWith('trigger.')) {
+      softProblems.push(
+        `${label} references {{var:${name}}}, which no earlier step saves and no trigger provides.`
+      );
+    }
+  }
+  if (
+    typeof step.tool === 'string' &&
+    step.tool &&
+    !step.instruction.includes(`{{tool:${step.tool}}}`)
+  ) {
+    softProblems.push(
+      `${label} sets "tool": "${step.tool}" but its instruction has no matching {{tool:${step.tool}}} token.`
+    );
+  }
+
+  const segments = segmentsOf(step.instruction, validTools, knownVars);
+  const tool = segments.find(
+    (segment): segment is Extract<InstructionSegment, { t: 'tool' }> => segment.t === 'tool'
+  );
+
+  // "from": sN → the existing step this one is based on. Its identity,
+  // attempt budget, and — when the tool didn't change — failure handling
+  // survive the revision; the model only authors words and chips.
+  const foundOrigin = originOf(state, step.from);
+  const origin = foundOrigin && !isBranchStep(foundOrigin) ? foundOrigin : undefined;
+  const sameTool = origin !== undefined && origin.tool === (tool?.name ?? null);
+
+  let saveAs =
+    typeof step.saveAs === 'string' && step.saveAs.trim() ? step.saveAs.trim() : origin?.saveAs;
+  if (saveAs) {
+    // Result names must be unique across steps (the validator enforces
+    // it at save); a duplicate is renamed so the draft stays usable and
+    // the model is told what it did wrong.
+    if (usedSaveAs.has(saveAs.toLowerCase())) {
+      softProblems.push(
+        `${label} reuses the result name "${saveAs}" — every saveAs must be unique across steps.`
+      );
+      let suffix = 2;
+      let candidate = `${saveAs} ${suffix}`;
+      while (usedSaveAs.has(candidate.toLowerCase())) {
+        suffix += 1;
+        candidate = `${saveAs} ${suffix}`;
+      }
+      saveAs = candidate.slice(0, 64);
+    }
+    usedSaveAs.add(saveAs.toLowerCase());
+    knownVars.add(saveAs); // later steps may reference it
+  }
+
+  // Model-authored failure handling, checked against the tool's REAL
+  // outcome codes so the validator never bounces what drafting produced.
+  const authoredHandling: FailureHandling[] = [];
+  if (step.failures && step.failures.length > 0) {
+    if (!tool) {
+      softProblems.push(
+        `${label} has "failures" but no tool — failure handling belongs to tool steps.`
+      );
+    } else {
+      const validCodes = outcomesByTool.get(tool.name) ?? new Set(['other']);
+      const seenCodes = new Set<string>();
+      for (const failure of step.failures) {
+        if (seenCodes.has(failure.outcome)) continue;
+        if (!validCodes.has(failure.outcome)) {
+          softProblems.push(
+            `${label} handles "${failure.outcome}", which is not a failure code of ` +
+              `${tool.name} — its codes are: ${[...validCodes].join(', ')}.`
+          );
+          continue;
+        }
+        seenCodes.add(failure.outcome);
+        const guidanceText = typeof failure.guidance === 'string' ? failure.guidance.trim() : '';
+        if (failure.action === 'retry' && !guidanceText) {
+          softProblems.push(
+            `${label} retries on "${failure.outcome}" without guidance — guidance is ` +
+              'required for retry, so it was changed to stop.'
+          );
+          authoredHandling.push({ outcome: failure.outcome, action: 'exit' });
+          continue;
+        }
+        authoredHandling.push(
+          failure.action === 'retry'
+            ? {
+                outcome: failure.outcome,
+                action: 'retry',
+                guidance: segmentsOf(guidanceText, validTools, knownVars, true),
+              }
+            : { outcome: failure.outcome, action: 'exit' }
+        );
+      }
+    }
+  }
+
+  return {
+    id: origin?.id ?? randomUUID(),
+    name: typeof step.name === 'string' ? step.name.slice(0, 80) : (origin?.name ?? ''),
+    instruction: segments,
+    tool: tool?.name ?? null,
+    maxAttempts: step.tries ?? origin?.maxAttempts ?? 5,
+    // The model's explicit handling wins; absent that, a revision keeps
+    // the origin's (failure conditions belong to a tool — a changed tool
+    // starts clean).
+    failureHandling:
+      step.failures !== undefined ? authoredHandling : sameTool ? origin.failureHandling : [],
+    ...(saveAs ? { saveAs } : {}),
+    ...(step.onSuccess && step.onSuccess !== 'continue'
+      ? { onSuccess: step.onSuccess }
+      : step.onSuccess === undefined && origin?.onSuccess
+        ? { onSuccess: origin.onSuccess }
+        : {}),
+  };
+}
+
 export async function draftAgentFromProse(
   db: Kysely<DB>,
   tenantId: string,
@@ -456,7 +644,7 @@ export async function draftAgentFromProse(
   tools: ToolDescriptor[],
   options: {
     /** Present when revising: the builder's CURRENT (possibly unsaved) steps. */
-    currentSteps?: AgentStep[];
+    currentSteps?: AgentStepNode[];
     /** trigger.* names the attached triggers provide, so those chips verify. */
     triggerVars?: string[];
   } = {}
@@ -481,7 +669,7 @@ export async function draftAgentFromProse(
     ...triggerVars,
     // Existing saveAs names stay referenceable even before their step is
     // re-emitted (the model may reorder).
-    ...currentSteps.flatMap((step) => (step.saveAs ? [step.saveAs] : [])),
+    ...flattenActionSteps(currentSteps).flatMap((step) => (step.saveAs ? [step.saveAs] : [])),
   ]);
 
   // One corrective round trip: a failed parse (or a draft with invented

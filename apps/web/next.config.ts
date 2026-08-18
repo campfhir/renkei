@@ -15,6 +15,11 @@ import type { NextConfig } from 'next';
  * differ over which they try, and serving both costs nothing.
  */
 const nextConfig: NextConfig = {
+  // Dev only: Next 16 blocks dev resources (chunks, HMR) requested from an
+  // origin other than "localhost", and it counts 127.0.0.1 as other — which
+  // silently breaks hydration for anything browsing via the IP, Playwright
+  // included. Ignored by production builds.
+  allowedDevOrigins: ['127.0.0.1'],
   // Workspace packages ship TypeScript source; Next compiles them in-place.
   transpilePackages: [
     '@renkei/db',

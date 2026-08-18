@@ -10,8 +10,9 @@
  * not show.
  */
 
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB, Json } from '@renkei/db';
+import { findNodeById, isAgentStepsDoc } from '@renkei/agents';
 
 export interface RunSummary {
   id: string;
@@ -19,6 +20,8 @@ export interface RunSummary {
   triggerKind: string;
   errorKind: string | null;
   error: string | null;
+  /** Resolved from the snapshot when errorKind is 'step_failed', else null. */
+  failedStepName: string | null;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
@@ -56,18 +59,31 @@ interface RunRow {
   trigger_kind: string;
   error_kind: string | null;
   error: string | null;
+  current_step_id: string | null;
   created_at: Date;
   started_at: Date | null;
   finished_at: Date | null;
 }
 
-function summaryOf(row: RunRow): RunSummary {
+/** The failed step's name, from wherever the caller has a snapshot. */
+function failedStepNameOf(
+  row: Pick<RunRow, 'error_kind' | 'current_step_id'>,
+  snapshot: Json | null | undefined
+): string | null {
+  if (row.error_kind !== 'step_failed' || !row.current_step_id) return null;
+  if (!isAgentStepsDoc(snapshot)) return null;
+  const found = findNodeById(snapshot.steps, row.current_step_id);
+  return found?.node.name || null;
+}
+
+function summaryOf(row: RunRow, snapshot?: Json | null): RunSummary {
   return {
     id: row.id,
     status: row.status,
     triggerKind: row.trigger_kind,
     errorKind: row.error_kind,
     error: row.error,
+    failedStepName: failedStepNameOf(row, snapshot),
     createdAt: row.created_at.toISOString(),
     startedAt: iso(row.started_at),
     finishedAt: iso(row.finished_at),
@@ -84,10 +100,20 @@ const RUN_COLUMNS = [
   'trigger_kind',
   'error_kind',
   'error',
+  'current_step_id',
   'created_at',
   'started_at',
   'finished_at',
 ] as const;
+
+/**
+ * The snapshot ONLY for rows that need it for a name lookup — a list of
+ * healthy runs transfers zero jsonb, and `RunSummary` never exposes the
+ * snapshot itself.
+ */
+const FAILED_SNAPSHOT = sql<Json | null>`
+  case when error_kind = 'step_failed' then steps_snapshot end
+`.as('failed_snapshot');
 
 export async function listRunsForOwner(
   db: Kysely<DB>,
@@ -98,7 +124,7 @@ export async function listRunsForOwner(
 ): Promise<RunSummary[]> {
   let query = db
     .selectFrom('agent_runs')
-    .select(RUN_COLUMNS)
+    .select([...RUN_COLUMNS, FAILED_SNAPSHOT])
     .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('agent_id', '=', agentId);
@@ -107,7 +133,7 @@ export async function listRunsForOwner(
     .orderBy('created_at', 'desc')
     .limit(options.limit ?? 50)
     .execute();
-  return rows.map(summaryOf);
+  return rows.map((row) => summaryOf(row, row.failed_snapshot));
 }
 
 async function runDetail(
@@ -135,7 +161,7 @@ async function runDetail(
     .execute();
 
   return {
-    ...summaryOf(runRow),
+    ...summaryOf(runRow, runRow.steps_snapshot),
     stepsSnapshot: runRow.steps_snapshot,
     attempts: attemptRows.map((row) => {
       // THE visibility rule: content for the owner always; for an admin
@@ -187,13 +213,13 @@ export async function listRunsForAdmin(
 ): Promise<RunSummary[]> {
   const rows = await db
     .selectFrom('agent_runs')
-    .select(RUN_COLUMNS)
+    .select([...RUN_COLUMNS, FAILED_SNAPSHOT])
     .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .orderBy('created_at', 'desc')
     .limit(options.limit ?? 50)
     .execute();
-  return rows.map(summaryOf);
+  return rows.map((row) => summaryOf(row, row.failed_snapshot));
 }
 
 export async function getRunForAdmin(

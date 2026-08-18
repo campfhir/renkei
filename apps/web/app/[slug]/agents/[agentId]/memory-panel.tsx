@@ -4,9 +4,9 @@ import ClearMemoryButton from './clear-memory-button';
 
 /**
  * What this agent currently remembers: the rolling summary (compaction's
- * output) and the raw entry rows, newest first. Rendered on the agent's
- * overview page — the same "read the recipe" surface — because "why did it
- * skip that message?" is answered here, not in the run log.
+ * output) and the raw entry rows, newest first. Rendered inside the
+ * overview page's collapsible "Memory" section — the wrapper owns the
+ * heading, this component owns only the content.
  *
  * Ownership is the PAGE's concern: the overview page only renders for the
  * owner (getAgent is subject-scoped), so this component just reads.
@@ -38,20 +38,16 @@ export default async function MemoryPanel({
 
   if (!summary && entries.length === 0) {
     return (
-      <section className="mb-4">
-        <h2 className="mb-2 text-sm font-semibold">Memory</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Nothing yet — runs leave notes here (and steps can add their own), so later runs know what
-          was already handled.
-        </p>
-      </section>
+      <p className="text-sm text-gray-500 dark:text-gray-400">
+        Nothing yet — runs leave notes here (and steps can add their own), so later runs know what
+        was already handled.
+      </p>
     );
   }
 
   return (
-    <section className="mb-4">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">Memory</h2>
+    <div>
+      <div className="mb-2 flex justify-end">
         <ClearMemoryButton tenantId={tenantId} agentId={agentId} />
       </div>
 
@@ -84,6 +80,6 @@ export default async function MemoryPanel({
       <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
         Older entries fold into the summary automatically; runs only ever see a bounded slice.
       </p>
-    </section>
+    </div>
   );
 }

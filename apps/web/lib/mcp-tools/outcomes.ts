@@ -217,6 +217,14 @@ export const CURATED_OUTCOMES: Record<string, ToolOutcomes> = {
       retriable: true,
     },
   ]),
+  webex_note_to_self: curated('The note was posted', [
+    {
+      code: 'space-unavailable',
+      label: "A private space couldn't be found or created",
+      description: 'WebEx offered no space containing only the user and refused to create one.',
+      retriable: true,
+    },
+  ]),
 };
 
 function isFailureEntry(value: unknown): value is ToolFailureOutcome {

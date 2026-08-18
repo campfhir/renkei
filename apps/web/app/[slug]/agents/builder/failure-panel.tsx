@@ -58,8 +58,9 @@ export function FailurePanel({
 
   const anyRetry = handling.some((entry) => entry.action === 'retry');
 
+  // No border of its own — the step editor's disclosure provides the frame.
   return (
-    <div className="mt-3 rounded-md border border-gray-200 p-3 dark:border-gray-800">
+    <div className="mt-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-gray-700 dark:text-gray-300">
           <span className="mr-1 text-green-600 dark:text-green-400">✓</span>

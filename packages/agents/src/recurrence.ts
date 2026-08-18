@@ -34,6 +34,7 @@ export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 export type Recurrence =
   | { every: 'hour' }
   | { every: 'day'; at: string }
+  | { every: 'weekday'; at: string } // Monday-Friday
   | { every: 'week'; weekday: Weekday; at: string }
   | { every: 'month'; day: number; at: string }
   | { every: 'month'; on: 'last-day' | 'first-weekday' | 'last-weekday'; at: string }
@@ -93,6 +94,7 @@ export function isRecurrence(value: unknown): value is Recurrence {
     case 'hour':
       return true;
     case 'day':
+    case 'weekday':
       return validAt;
     case 'week':
       return validAt && validWeekday;
@@ -350,6 +352,7 @@ function dateStringOf(year: number, month: number, day: number): string {
 function matchesRuleDay(recurrence: Recurrence, dayCursor: Date): boolean {
   if (recurrence.every === 'day') return true;
   const weekday = dayCursor.getUTCDay();
+  if (recurrence.every === 'weekday') return weekday >= 1 && weekday <= 5;
   if (recurrence.every === 'week') return weekday === recurrence.weekday;
   // 'hour' never reaches the day walk; the narrowing keeps TS honest.
   if (recurrence.every !== 'month') return false;
@@ -538,6 +541,8 @@ export function describeRecurrence(recurrence: Recurrence): string {
       return 'every hour';
     case 'day':
       return `every day at ${recurrence.at}`;
+    case 'weekday':
+      return `every weekday (Mon–Fri) at ${recurrence.at}`;
     case 'week':
       return `every ${WEEKDAY_NAMES[recurrence.weekday]} at ${recurrence.at}`;
     case 'month': {

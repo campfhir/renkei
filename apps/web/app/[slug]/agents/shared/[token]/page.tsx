@@ -1,8 +1,9 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
-import { describeSchedule, instructionPreview, triggerEventById } from '@renkei/agents';
+import { describeSchedule, flattenActionSteps, triggerEventById } from '@renkei/agents';
 import type { TriggerDraft } from '@renkei/agents';
+import StepsOutline from '../../[agentId]/steps-outline';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -48,7 +49,11 @@ export default async function SharedAgentPage({
   const agent = await getAgentByShareToken(dbResult.val, tenant.id, token);
   if (!agent) notFound();
 
-  const tools = [...new Set(agent.steps.steps.flatMap((step) => (step.tool ? [step.tool] : [])))];
+  const tools = [
+    ...new Set(
+      flattenActionSteps(agent.steps.steps).flatMap((step) => (step.tool ? [step.tool] : []))
+    ),
+  ];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -88,20 +93,9 @@ export default async function SharedAgentPage({
       )}
 
       <h2 className="mb-2 text-sm font-semibold">Steps</h2>
-      <ol className="mb-4 space-y-2">
-        {agent.steps.steps.map((step, index) => (
-          <li
-            key={step.id}
-            className="rounded-md border border-gray-200 p-3 text-sm dark:border-gray-800"
-          >
-            <span className="mr-2 font-semibold">{index + 1}.</span>
-            <span className="font-medium">{step.name}</span>
-            <p className="mt-1 text-gray-600 dark:text-gray-400">
-              {instructionPreview(step.instruction)}
-            </p>
-          </li>
-        ))}
-      </ol>
+      <div className="mb-4">
+        <StepsOutline doc={agent.steps} />
+      </div>
 
       {tools.length > 0 ? (
         <p className="text-xs text-gray-500 dark:text-gray-400">

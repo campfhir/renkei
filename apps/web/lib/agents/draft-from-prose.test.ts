@@ -39,7 +39,14 @@ jest.mock('@renkei/agent-llm', () => ({
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
+import { isBranchStep, type ActionStep, type AgentStepNode } from '@renkei/agents';
 import { draftAgentFromProse } from './draft-from-prose';
+
+/** Narrow a drafted node to an action step — branches fail the test loudly. */
+function actionOf(node: AgentStepNode | undefined): ActionStep {
+  if (!node || isBranchStep(node)) throw new Error('expected an action step');
+  return node;
+}
 
 const db = {} as Kysely<DB>;
 const TOOLS: ToolDescriptor[] = [
@@ -84,7 +91,7 @@ describe('draftAgentFromProse retry loop', () => {
     const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
     expect(result.steps).toHaveLength(1);
-    expect(result.steps[0].tool).toBe('jira_search_issues');
+    expect(actionOf(result.steps[0]).tool).toBe('jira_search_issues');
 
     // The second call carried the diagnosis, not a shrug.
     expect(requests).toHaveLength(2);
@@ -106,7 +113,7 @@ describe('draftAgentFromProse retry loop', () => {
 
     const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
-    expect(result.steps[0].tool).toBe('jira_search_issues');
+    expect(actionOf(result.steps[0]).tool).toBe('jira_search_issues');
     expect(JSON.stringify(requests[1].messages)).toContain('jira_make_ticket');
   });
 
@@ -123,7 +130,7 @@ describe('draftAgentFromProse retry loop', () => {
     if ('error' in result) throw new Error(result.error);
     // The invented chip degraded to text; the step survived as tool-less.
     expect(result.steps).toHaveLength(1);
-    expect(result.steps[0].tool).toBeNull();
+    expect(actionOf(result.steps[0]).tool).toBeNull();
   });
 
   it('parses model-authored failure handling, tries, and retry guidance', async () => {
@@ -152,7 +159,7 @@ describe('draftAgentFromProse retry loop', () => {
 
     const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
-    const step = result.steps[0];
+    const step = actionOf(result.steps[0]);
     expect(step.maxAttempts).toBe(4);
     expect(step.failureHandling).toHaveLength(2);
     expect(step.failureHandling[0]).toMatchObject({ outcome: 'not-found', action: 'retry' });
@@ -233,9 +240,9 @@ describe('draftAgentFromProse retry loop', () => {
 
     const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
     if ('error' in result) throw new Error(result.error);
-    expect(result.steps[1].onSuccess).toBe('stop-quiet');
-    expect(result.steps[0].saveAs).toBe('the result');
-    expect(result.steps[1].saveAs).toBe('the result 2');
+    expect(actionOf(result.steps[1]).onSuccess).toBe('stop-quiet');
+    expect(actionOf(result.steps[0]).saveAs).toBe('the result');
+    expect(actionOf(result.steps[1]).saveAs).toBe('the result 2');
     // The feedback named the duplicate.
     expect(JSON.stringify(requests[1].messages)).toContain('reuses the result name');
   });

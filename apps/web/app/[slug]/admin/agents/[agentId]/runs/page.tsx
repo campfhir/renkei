@@ -6,6 +6,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { listRunsForAdmin } from '@/lib/agents/runs-view';
 import { StatusPill } from '../../../../agents/run-timeline';
+import { errorSummary } from '@/lib/agents/run-labels';
 import LocalTime from '@/components/local-time';
 
 /** Admin view: any agent's run statuses — content stays behind the detail rule. */
@@ -58,7 +59,9 @@ export default async function AdminAgentRunsPage({
                   <StatusPill status={run.status} />
                   <span className="text-gray-600 dark:text-gray-400">via {run.triggerKind}</span>
                   {run.errorKind ? (
-                    <span className="text-xs text-red-600 dark:text-red-400">{run.errorKind}</span>
+                    <span className="text-xs text-red-600 dark:text-red-400">
+                      {errorSummary(run.errorKind, run.failedStepName)}
+                    </span>
                   ) : null}
                 </span>
                 <span className="text-xs text-gray-500">

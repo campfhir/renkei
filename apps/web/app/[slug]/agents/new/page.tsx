@@ -25,13 +25,17 @@ export default async function NewAgentPage({
   if (!dbResult.ok) notFound();
   const data = await loadBuilderData(dbResult.val, tenant.id, session.subject);
 
+  // No width cap here: the builder manages its own — it self-centers while
+  // reading and goes two-column (canvas + editor panel) on selection.
   return (
-    <div className="mx-auto max-w-3xl">
-      <h1 className="mb-1 text-xl font-bold">New agent</h1>
-      <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-        Describe each step in plain words. Type <code>/</code> in a step to add a skill or a detail;
-        each step can use one skill.
-      </p>
+    <div>
+      <div className="mx-auto mb-6 lg:max-w-3xl">
+        <h1 className="mb-1 text-xl font-bold">New agent</h1>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
+          Describe each step in plain words. Type <code>/</code> in a step to add a skill or a
+          detail; each step can use one skill.
+        </p>
+      </div>
       <AgentBuilder
         slug={slug}
         tenantId={tenant.id}

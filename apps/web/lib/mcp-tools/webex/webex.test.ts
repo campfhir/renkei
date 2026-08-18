@@ -131,6 +131,21 @@ describe('webex_send_message', () => {
     expect(textOf(result)).toContain('not both');
   });
 
+  it('refuses to DM the user’s own address, pointing at webex_note_to_self', async () => {
+    const tools = await toolsOf();
+
+    // Case differs from the stubbed grant email on purpose — WebEx addresses
+    // are case-insensitive, so the guard must be too.
+    const result = await tools.get('webex_send_message')!({
+      toPersonEmail: 'Alice@Example.com',
+      markdown: 'note to me',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('webex_note_to_self');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+
   it('sends to a room, given only roomId', async () => {
     mockCall.mockResolvedValue(jsonResponse({ id: 'msg-9', roomId: 'room-1' }));
     const tools = await toolsOf();
@@ -141,6 +156,72 @@ describe('webex_send_message', () => {
     expect(textOf(result)).toContain('msg-9');
     const [, init] = mockCall.mock.calls[0] as [string, RequestInit];
     expect(JSON.parse(init.body as string)).toMatchObject({ roomId: 'room-1', markdown: 'hi' });
+  });
+});
+
+describe('webex_note_to_self', () => {
+  it('posts into an existing space that contains only the user, without creating one', async () => {
+    mockCall
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [{ id: 'room-solo', title: 'Scratch', type: 'group' }] })
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'mem-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'msg-1', roomId: 'room-solo' }));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_note_to_self')!({ markdown: 'remember this' });
+
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('room-solo');
+    expect(textOf(result)).toContain('msg-1');
+    const paths = mockCall.mock.calls.map(([path]) => path as string);
+    expect(paths).toHaveLength(3);
+    expect(paths[0]).toContain('/rooms?');
+    expect(paths[1]).toContain('/memberships?roomId=room-solo');
+    expect(paths[2]).toBe('/messages');
+  });
+
+  it('probes a room titled "Note to Self" before more recently active rooms', async () => {
+    mockCall
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [
+            { id: 'room-busy', title: 'Engineering', type: 'group' },
+            { id: 'room-note', title: 'Note to Self', type: 'group' },
+          ],
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'mem-1' }] }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'msg-1', roomId: 'room-note' }));
+    const tools = await toolsOf();
+
+    await tools.get('webex_note_to_self')!({ markdown: 'x' });
+
+    expect(mockCall.mock.calls[1][0]).toContain('roomId=room-note');
+  });
+
+  it('creates "Note to Self" when every space has other members', async () => {
+    mockCall
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [{ id: 'room-team', title: 'Team', type: 'group' }] })
+      )
+      .mockResolvedValueOnce(jsonResponse({ items: [{ id: 'mem-1' }, { id: 'mem-2' }] }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'room-new', title: 'Note to Self' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'msg-2', roomId: 'room-new' }));
+    const tools = await toolsOf();
+
+    const result = await tools.get('webex_note_to_self')!({ markdown: 'todo' });
+
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toContain('newly created');
+    const [createPath, createInit] = mockCall.mock.calls[2] as [string, RequestInit];
+    expect(createPath).toBe('/rooms');
+    expect(JSON.parse(createInit.body as string)).toEqual({ title: 'Note to Self' });
+    const [, sendInit] = mockCall.mock.calls[3] as [string, RequestInit];
+    expect(JSON.parse(sendInit.body as string)).toMatchObject({
+      roomId: 'room-new',
+      markdown: 'todo',
+    });
   });
 });
 
@@ -196,5 +277,38 @@ describe('webexScopeFor', () => {
 
   it('defaults everything else to message read', () => {
     expect(webexScopeFor('webex_get_message')).toEqual(['spark:messages_read']);
+  });
+
+  it('names all four scopes note_to_self stands on', () => {
+    expect(webexScopeFor('webex_note_to_self')).toEqual([
+      'spark:messages_write',
+      'spark:rooms_read',
+      'spark:rooms_write',
+      'spark:memberships_read',
+    ]);
+  });
+});
+
+describe('threaded replies', () => {
+  it('marks a reply with its thread root id, the one parentId can reply under', async () => {
+    mockCall.mockResolvedValue(
+      jsonResponse({
+        items: [
+          {
+            id: 'msg-2',
+            roomId: 'room-1',
+            personEmail: 'bob@example.com',
+            text: 'agreed',
+            parentId: 'msg-root',
+            created: '2026-08-18',
+          },
+        ],
+      })
+    );
+    const tools = await toolsOf();
+
+    const text = textOf(await tools.get('webex_list_messages')!({ roomId: 'room-1' }));
+
+    expect(text).toContain('in thread msg-root');
   });
 });

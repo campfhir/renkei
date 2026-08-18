@@ -8,6 +8,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { getAgent } from '@/lib/agents/store';
 import { listRunsForOwner } from '@/lib/agents/runs-view';
 import { StatusPill } from '../../run-timeline';
+import { errorSummary } from '@/lib/agents/run-labels';
 import LocalTime from '@/components/local-time';
 
 /** The owner's run list — full visibility over their own agent's history. */
@@ -83,7 +84,9 @@ export default async function AgentRunsPage({
                   <StatusPill status={run.status} />
                   <span className="text-gray-600 dark:text-gray-400">via {run.triggerKind}</span>
                   {run.errorKind ? (
-                    <span className="text-xs text-red-600 dark:text-red-400">{run.errorKind}</span>
+                    <span className="text-xs text-red-600 dark:text-red-400">
+                      {errorSummary(run.errorKind, run.failedStepName)}
+                    </span>
                   ) : null}
                 </span>
                 <span className="text-xs text-gray-500">

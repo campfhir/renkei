@@ -6,13 +6,16 @@
  * query seam.
  */
 
-import { isAgentStepsDoc } from '@renkei/agents';
+import { findNodeById, isAgentStepsDoc, isBranchStep } from '@renkei/agents';
+import { statusLabel, outcomeCodeLabel } from '@/lib/agents/run-labels';
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
 
 function stepName(run: RunDetail, stepId: string, stepIndex: number): string {
   if (isAgentStepsDoc(run.stepsSnapshot)) {
-    const step = run.stepsSnapshot.steps.find((entry) => entry.id === stepId);
-    if (step?.name) return step.name;
+    const found = findNodeById(run.stepsSnapshot.steps, stepId);
+    if (found?.node.name) {
+      return isBranchStep(found.node) ? `Branch: ${found.node.name}` : found.node.name;
+    }
   }
   return `Step ${stepIndex + 1}`;
 }
@@ -33,7 +36,7 @@ function statusTone(status: string): string {
 export function StatusPill({ status }: { status: string }) {
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusTone(status)}`}>
-      {status}
+      {statusLabel(status)}
     </span>
   );
 }
@@ -44,6 +47,7 @@ interface DetailShape {
   guidanceUsed?: unknown;
   saveValue?: unknown;
   toolCalls?: unknown;
+  chosenPathName?: unknown;
 }
 
 function AttemptDetail({ attempt }: { attempt: AttemptView }) {
@@ -61,6 +65,11 @@ function AttemptDetail({ attempt }: { attempt: AttemptView }) {
   const toolCalls = Array.isArray(detail.toolCalls) ? detail.toolCalls : [];
   return (
     <div className="mt-1 space-y-1 text-xs text-gray-600 dark:text-gray-400">
+      {attempt.outcome === 'path_chosen' && typeof detail.chosenPathName === 'string' ? (
+        <p className="font-medium text-indigo-700 dark:text-indigo-300">
+          Took path: {detail.chosenPathName}
+        </p>
+      ) : null}
       {typeof detail.llmSummary === 'string' && detail.llmSummary ? (
         <p>{detail.llmSummary}</p>
       ) : null}
@@ -141,7 +150,7 @@ export function RunTimeline({ run }: { run: RunDetail }) {
                   <StatusPill status={attempt.status} />
                   {attempt.outcomeCode ? (
                     <span className="rounded-full border border-gray-300 px-2 py-0.5 text-gray-600 dark:border-gray-700 dark:text-gray-400">
-                      {attempt.outcomeCode}
+                      {outcomeCodeLabel(attempt.outcomeCode)}
                     </span>
                   ) : null}
                   {attempt.toolCallCount > 0 ? (

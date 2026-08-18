@@ -12,7 +12,7 @@ import { sql } from 'kysely';
 import { closeDatabase, getDatabase } from '@renkei/db';
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { LlmRequest, LlmResponse, ResolvedLlm } from '@renkei/agent-llm';
-import type { AgentStepsDoc } from '@renkei/agents';
+import { isAgentStepsDoc, type AgentStepsDoc } from '@renkei/agents';
 import { createAgentRunHandler } from './engine';
 import type { McpClient, McpToolResult } from './mcp-client';
 
@@ -566,5 +566,212 @@ maybe('agent run engine', () => {
     const callsAfterFirst = toolCallCount;
     await handler({ payload: { runId } });
     expect(toolCallCount).toBe(callsAfterFirst);
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* Branching (version 2 documents)                                     */
+  /* ------------------------------------------------------------------ */
+
+  const choosePath = (choice: 'yes' | 'no'): LlmResponse => ({
+    content: [
+      {
+        type: 'tool_use',
+        id: `tu_${Math.random().toString(36).slice(2)}`,
+        name: 'choose_path',
+        input: { choice, reason: `chose ${choice}` },
+      },
+    ],
+    stopReason: 'tool_use',
+    usage: { inputTokens: 10, outputTokens: 5 },
+  });
+
+  const reasoningStep = (name: string, overrides: Record<string, unknown> = {}) => ({
+    id: randomUUID(),
+    name,
+    instruction: [{ t: 'text' as const, v: `Do: ${name}` }],
+    tool: null,
+    maxAttempts: 1,
+    failureHandling: [],
+    ...overrides,
+  });
+
+  function branchDoc(options: { elseSteps?: object[]; branchAttempts?: number } = {}): {
+    doc: AgentStepsDoc;
+    ids: { branch: string; inYes: string; after: string };
+  } {
+    const inYes = reasoningStep('in yes path');
+    const after = reasoningStep('after the branch');
+    const branchId = randomUUID();
+    const doc = {
+      version: 2,
+      steps: [
+        {
+          id: branchId,
+          kind: 'branch',
+          name: 'Anything urgent?',
+          condition: [{ t: 'text', v: 'Is anything urgent in the subject?' }],
+          paths: [
+            { id: randomUUID(), name: 'Yes', steps: [inYes] },
+            { id: randomUUID(), name: 'Otherwise', steps: options.elseSteps ?? [] },
+          ],
+          maxAttempts: options.branchAttempts ?? 2,
+        },
+        after,
+      ],
+    };
+    if (!isAgentStepsDoc(doc)) throw new Error('fixture is not a valid v2 doc');
+    return { doc, ids: { branch: branchId, inYes: inYes.id, after: after.id } };
+  }
+
+  it('takes the yes path, then continues after the branch', async () => {
+    const { doc, ids } = branchDoc();
+    const { runId } = await seedRun(doc);
+    // Call order: choose_path, then finish for "in yes", then finish for "after".
+    const llm = stubLlm((_request, call) => (call === 0 ? choosePath('yes') : finish('success')));
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .selectAll()
+      .where('run_id', '=', runId)
+      .orderBy('step_index')
+      .execute();
+    expect(attempts.map((row) => row.step_id)).toEqual([ids.branch, ids.inYes, ids.after]);
+    // Pre-order ordinals: branch 0, yes-child 1, after 2 (the empty else
+    // path holds no nodes to number).
+    expect(attempts.map((row) => row.step_index)).toEqual([0, 1, 2]);
+    const branchRow = attempts[0];
+    expect(branchRow.outcome).toBe('path_chosen');
+    expect(branchRow.tool_call_count).toBe(0);
+    const detail: { chosenPathName?: unknown; llmSummary?: unknown } =
+      typeof branchRow.detail === 'object' &&
+      branchRow.detail !== null &&
+      !Array.isArray(branchRow.detail)
+        ? branchRow.detail
+        : {};
+    expect(detail.chosenPathName).toBe('Yes');
+    expect(detail.llmSummary).toBe('chose yes');
+  });
+
+  it('falls through an empty else path straight to the step after the branch', async () => {
+    const { doc, ids } = branchDoc();
+    const { runId } = await seedRun(doc);
+    const llm = stubLlm((_request, call) => (call === 0 ? choosePath('no') : finish('success')));
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['step_id', 'status'])
+      .where('run_id', '=', runId)
+      .orderBy('step_index')
+      .execute();
+    // The yes-path step never ran; only the branch decision and the tail step.
+    expect(attempts.map((row) => row.step_id)).toEqual([ids.branch, ids.after]);
+  });
+
+  it('fails the run as step_failed when the model never chooses within the budget', async () => {
+    const { doc, ids } = branchDoc({ branchAttempts: 2 });
+    const { runId } = await seedRun(doc);
+    // Never a valid choose_path call — plain text every turn.
+    const llm = stubLlm(() => ({
+      content: [{ type: 'text', text: 'hmm, unsure' }],
+      stopReason: 'end_turn',
+      usage: { inputTokens: 10, outputTokens: 5 },
+    }));
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error', 'current_step_id'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('failed');
+    expect(run.error_kind).toBe('step_failed');
+    expect(run.error).toContain('Anything urgent?');
+    expect(run.current_step_id).toBe(ids.branch);
+
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['status', 'outcome'])
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toHaveLength(2);
+    expect(attempts.every((row) => row.status === 'failed')).toBe(true);
+  });
+
+  it('reuses a decided branch on redelivery instead of asking the model again', async () => {
+    const { doc, ids } = branchDoc();
+    const { runId } = await seedRun(doc);
+    let chooseCalls = 0;
+    const llm = stubLlm((request, call) => {
+      const forced =
+        typeof request.toolChoice === 'object' && request.toolChoice?.name === 'choose_path';
+      if (forced) {
+        chooseCalls += 1;
+        return choosePath('yes');
+      }
+      // Fail the yes-path step's single attempt so the run fails mid-path…
+      return call < 2 ? finish('failure', { code: 'other' }) : finish('success');
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const afterFirst = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'current_step_id'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(afterFirst.status).toBe('failed');
+    expect(afterFirst.current_step_id).toBe(ids.inYes);
+    expect(chooseCalls).toBe(1);
+
+    // …then force it back to running and redeliver: resume must land inside
+    // the yes path (the ancestor chain from current_step_id) and must NOT
+    // re-ask choose_path.
+    await db
+      .updateTable('agent_runs')
+      .set({ status: 'running', error_kind: null, error: null, finished_at: null })
+      .where('id', '=', runId)
+      .execute();
+    await handler({ payload: { runId } });
+
+    const afterSecond = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    // The yes-path step's budget (1) is spent, so the resumed run fails the
+    // same way — the assertion that matters is chooseCalls staying at 1.
+    expect(afterSecond.status).toBe('failed');
+    expect(chooseCalls).toBe(1);
   });
 });

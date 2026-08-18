@@ -14,6 +14,9 @@ import type { DB } from '@renkei/db';
 import {
   describeSchedule,
   instructionPreview,
+  isBranchStep,
+  type ActionStep,
+  type AgentStepNode,
   type AgentStepsDoc,
   type TriggerDraft,
 } from '@renkei/agents';
@@ -41,27 +44,52 @@ function describeTrigger(draft: TriggerDraft): string {
   }
 }
 
-function promptOf(name: string, steps: AgentStepsDoc, triggers: TriggerDraft[]): string {
-  const stepLines = steps.steps
-    .map((step, index) => {
-      const failure = step.failureHandling
-        .map((handling) =>
-          handling.action === 'retry'
-            ? `on "${handling.outcome}" retry (max ${step.maxAttempts} attempts) with: ${instructionPreview(handling.guidance ?? [])}`
-            : `on "${handling.outcome}" stop`
-        )
-        .join('; ');
+function actionStepLines(step: ActionStep, label: string, indent: string): string {
+  const failure = step.failureHandling
+    .map((handling) =>
+      handling.action === 'retry'
+        ? `on "${handling.outcome}" retry (max ${step.maxAttempts} attempts) with: ${instructionPreview(handling.guidance ?? [])}`
+        : `on "${handling.outcome}" stop`
+    )
+    .join('; ');
+  return [
+    `${indent}${label} ${step.name}`,
+    `${indent}   does: ${instructionPreview(step.instruction)}`,
+    step.tool ? `${indent}   tool: ${step.tool}` : `${indent}   tool: none (reasoning only)`,
+    step.saveAs ? `${indent}   saves result as: ${step.saveAs}` : null,
+    failure
+      ? `${indent}   failure handling: ${failure}`
+      : `${indent}   failure handling: stop on any failure`,
+  ]
+    .filter((line): line is string => line !== null)
+    .join('\n');
+}
+
+function nodeLines(nodes: AgentStepNode[], prefix: string, indent: string): string {
+  return nodes
+    .map((node, index) => {
+      const label = `${prefix}${index + 1}.`;
+      if (!isBranchStep(node)) return actionStepLines(node, label, indent);
+      const pathBlock = (pathIndex: 0 | 1, heading: string) => {
+        const path = node.paths[pathIndex];
+        const body = path.steps.length
+          ? nodeLines(path.steps, `${prefix}${index + 1}.${pathIndex + 1}.`, `${indent}      `)
+          : `${indent}      (nothing — continues after the branch)`;
+        return `${indent}   ${heading} "${path.name}":\n${body}`;
+      };
       return [
-        `${index + 1}. ${step.name}`,
-        `   does: ${instructionPreview(step.instruction)}`,
-        step.tool ? `   tool: ${step.tool}` : '   tool: none (reasoning only)',
-        step.saveAs ? `   saves result as: ${step.saveAs}` : null,
-        failure ? `   failure handling: ${failure}` : '   failure handling: stop on any failure',
-      ]
-        .filter((line): line is string => line !== null)
-        .join('\n');
+        `${indent}${label} ${node.name} (a branch)`,
+        `${indent}   decides: ${instructionPreview(node.condition)}`,
+        pathBlock(0, 'if yes, path'),
+        pathBlock(1, 'otherwise, path'),
+        `${indent}   after either path finishes, the automation continues below the branch`,
+      ].join('\n');
     })
     .join('\n');
+}
+
+function promptOf(name: string, steps: AgentStepsDoc, triggers: TriggerDraft[]): string {
+  const stepLines = nodeLines(steps.steps, '', '');
   const triggerLines =
     triggers.length > 0
       ? triggers.map(describeTrigger).join('; ')

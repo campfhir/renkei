@@ -40,6 +40,22 @@ export const WEBEX_USER_SCOPE_OPTIONS: ScopeOption[] = [
     defaultChecked: true,
   },
   {
+    id: 'note-to-self',
+    scopes: ['spark:rooms_write', 'spark:memberships_read'],
+    label: 'Note-to-self space',
+    hint:
+      'webex_note_to_self — WebEx cannot DM your own address, so this finds a space ' +
+      'containing only the user (memberships_read) or creates one titled "Note to Self" ' +
+      '(rooms_write) and posts there; how agents deliver digests to their owner. Off by ' +
+      'default: add both scopes on the Integration at developer.webex.com before checking ' +
+      'this, or the authorize step fails. Anyone already connected needs to reconnect ' +
+      'afterward — a grant only carries the scopes consented to at connect time.',
+    userHint:
+      'Keep a private "Note to Self" space where Renkei can post reminders and digests for you.',
+    group: 'messaging',
+    defaultChecked: false,
+  },
+  {
     id: 'meeting:schedules_read',
     scopes: ['meeting:schedules_read'],
     label: 'List meetings',

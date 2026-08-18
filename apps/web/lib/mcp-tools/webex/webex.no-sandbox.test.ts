@@ -62,6 +62,7 @@ const CALLS: { tool: string; args: Record<string, unknown> }[] = [
   { tool: 'webex_get_message', args: { messageId: 'msg-1' } },
   { tool: 'webex_capture_message', args: { messageId: 'msg-1' } },
   { tool: 'webex_send_message', args: { roomId: 'room-1', markdown: 'hi' } },
+  { tool: 'webex_note_to_self', args: { markdown: 'hi' } },
   // The preview never has to reach auth (its room-title lookup is
   // best-effort and a lookup failure still previews), so a denied credential
   // cannot make it fail — empty args exercise its validation path instead,

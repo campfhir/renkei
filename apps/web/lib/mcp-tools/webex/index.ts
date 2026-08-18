@@ -106,7 +106,42 @@ function str(value: unknown): string {
 
 function messageLine(message: Record<string, unknown>): string {
   const text = str(message.text) || '(no text — possibly a card or attachment)';
-  return `[${str(message.created)}] ${str(message.personEmail)} (${str(message.id)}):\n  ${text.replace(/\n/g, '\n  ')}`;
+  // WebEx threads reply under the ROOT message's id, so a reply's parentId is
+  // the one identifier that lets a caller answer in the same thread.
+  const thread = str(message.parentId) ? ` — in thread ${str(message.parentId)}` : '';
+  return `[${str(message.created)}] ${str(message.personEmail)} (${str(message.id)})${thread}:\n  ${text.replace(/\n/g, '\n  ')}`;
+}
+
+/** How the markdown field explains itself everywhere a message is composed. */
+const MARKDOWN_HINT =
+  'Message body, WebEx markdown. Tag a person with <@personEmail:their.email@org.com>; ' +
+  '<@all> tags everyone in a group space.';
+
+/** How the parentId field explains itself everywhere a message is composed. */
+const PARENT_ID_HINT =
+  'Thread root to reply under — the id in "in thread <id>" from webex_list_messages, or a ' +
+  "top-level message's own id. Omitted = new top-level message.";
+
+/** The title webex_note_to_self creates — and finds first on every later run. */
+const NOTE_TO_SELF_TITLE = 'Note to Self';
+/** Membership probes before concluding no solo space exists and creating one. */
+const SOLO_PROBE_CAP = 20;
+
+/**
+ * WebEx cannot create a 1:1 room between an account and itself — POST
+ * /messages with the caller's own email answers an opaque 400 "Failed to
+ * create room", every time. Caught up front so the caller is redirected to
+ * webex_note_to_self instead of burning the attempt.
+ */
+async function selfDmError(context: MCPToolContext, toPersonEmail: string): Promise<string | null> {
+  const access = await resolveWebexAccess(context);
+  // Identity unknown (unresolved grant, no recorded email): let WebEx answer.
+  if (typeof access === 'string' || !access.personEmail) return null;
+  if (access.personEmail.toLowerCase() !== toPersonEmail.trim().toLowerCase()) return null;
+  return (
+    'That address is your own WebEx account, and WebEx cannot deliver a 1:1 message to ' +
+    'yourself. Use webex_note_to_self instead, or send to a space by roomId.'
+  );
 }
 
 /** Which WebEx scope each tool stands on; used at both registration and call time. */
@@ -117,6 +152,15 @@ export function webexScopeFor(toolName: string): string[] {
     case 'webex_send_message_preview':
     case 'webex_send_message_confirm':
       return ['spark:messages_write'];
+    // Reads rooms and their memberships to find a space holding only the
+    // user, may create one, then posts — four scopes, all load-bearing.
+    case 'webex_note_to_self':
+      return [
+        'spark:messages_write',
+        'spark:rooms_read',
+        'spark:rooms_write',
+        'spark:memberships_read',
+      ];
     case 'webex_list_meetings':
       return ['meeting:schedules_read'];
     case 'webex_list_transcripts':
@@ -182,7 +226,9 @@ export async function registerWebexUserTools(
       title: 'WebEx · Read — List WebEx messages in a room',
       description:
         'Read recent messages in a room the connected user is a member of, newest first. ' +
-        'Access is the user’s own — rooms they are not in cannot be read.',
+        'Access is the user’s own — rooms they are not in cannot be read. Threaded replies ' +
+        'are marked "in thread <id>"; pass that id as parentId to webex_send_message to ' +
+        'answer in the same thread.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         roomId: z.string().min(1).describe('Room id from webex_list_rooms'),
@@ -319,8 +365,10 @@ export async function registerWebexUserTools(
       title: 'WebEx · Act — Send a WebEx message',
       description:
         'Post a message as the connected user, to a room or a person — e.g. a summary of Jira ' +
-        'tickets assembled with the Jira tools. Markdown supported. This speaks AS the user, so ' +
-        'only send what they asked to send.',
+        'tickets assembled with the Jira tools. Markdown supported, including mentions; pass ' +
+        'parentId to reply inside an existing thread. This speaks AS the user, so only send ' +
+        'what they asked to send. To message the user themself, use webex_note_to_self — ' +
+        'WebEx rejects a 1:1 to your own address.',
       // The one acting tool: readOnlyHint false, so org read-only mode disables it.
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
@@ -329,8 +377,8 @@ export async function registerWebexUserTools(
           .string()
           .describe('Recipient email for a 1:1 message instead of a room')
           .optional(),
-        markdown: z.string().min(1).describe('Message body, WebEx markdown'),
-        parentId: z.string().describe('Message id to reply to, threading under it').optional(),
+        markdown: z.string().min(1).describe(MARKDOWN_HINT),
+        parentId: z.string().describe(PARENT_ID_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -338,6 +386,10 @@ export async function registerWebexUserTools(
       const toPersonEmail = str(args.toPersonEmail);
       if (!roomId && !toPersonEmail) return errText('Provide roomId or toPersonEmail.');
       if (roomId && toPersonEmail) return errText('Provide roomId or toPersonEmail, not both.');
+      if (toPersonEmail) {
+        const refusal = await selfDmError(context, toPersonEmail);
+        if (refusal) return errText(refusal);
+      }
 
       const result = await webexCall(auth, webexScopeFor('webex_send_message'), '/messages', {
         method: 'POST',
@@ -359,7 +411,110 @@ export async function registerWebexUserTools(
         tenantId: context.tenantId,
         roomId: str(sent.roomId),
       });
-      return textResult(`Sent (message id ${str(sent.id) || 'unknown'}).`);
+      // Room id included so a 1:1 send's room is addressable afterward —
+      // follow-ups and thread replies need it, and only this response has it.
+      return textResult(
+        `Sent (message id ${str(sent.id) || 'unknown'}` +
+          `${str(sent.roomId) ? `, room ${str(sent.roomId)}` : ''}).`
+      );
+    }
+  );
+
+  server.registerTool(
+    'webex_note_to_self',
+    {
+      title: 'WebEx · Act — Send yourself a note',
+      description:
+        'Post a message to the connected user’s private note-to-self space — reminders, ' +
+        'digests, focus lists addressed to the user themself. WebEx cannot deliver a 1:1 ' +
+        'message to your own address, so this is THE way to WebEx yourself: it finds a space ' +
+        'containing only the user (creating one titled "Note to Self" if none exists) and ' +
+        'posts there. Markdown supported.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        markdown: z.string().min(1).describe('Note body, WebEx markdown'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const markdown = str(args.markdown);
+      if (!markdown) return errText('markdown is required');
+      const scopes = webexScopeFor('webex_note_to_self');
+
+      // Only group rooms can hold a single person — a direct room always has
+      // two. Title matches are probed first, so the space this tool creates
+      // is found on the first probe of every later run; the cap bounds only
+      // the first-ever scan of a member-heavy account.
+      const roomsResult = await webexGet(
+        auth,
+        scopes,
+        '/rooms?max=100&type=group&sortBy=lastactivity'
+      );
+      if (!roomsResult.ok) return errText(roomsResult.error);
+      const rooms = items(roomsResult.body);
+      const titled = (room: Record<string, unknown>) =>
+        str(room.title).trim().toLowerCase() === NOTE_TO_SELF_TITLE.toLowerCase();
+      const candidates = [...rooms.filter(titled), ...rooms.filter((room) => !titled(room))];
+
+      let roomId = '';
+      let roomTitle = '';
+      for (const room of candidates.slice(0, SOLO_PROBE_CAP)) {
+        const id = str(room.id);
+        if (!id) continue;
+        const membership = await webexGet(
+          auth,
+          scopes,
+          `/memberships?roomId=${encodeURIComponent(id)}&max=2`
+        );
+        if (!membership.ok) return errText(membership.error);
+        if (items(membership.body).length === 1) {
+          roomId = id;
+          roomTitle = str(room.title);
+          break;
+        }
+      }
+
+      let created = false;
+      if (!roomId) {
+        const createResult = await webexCall(auth, scopes, '/rooms', {
+          method: 'POST',
+          json: { title: NOTE_TO_SELF_TITLE },
+        });
+        if (!createResult.ok) return errText(createResult.error);
+        const createdBody: unknown = await createResult.response.json().catch(() => null);
+        roomId =
+          typeof createdBody === 'object' && createdBody !== null
+            ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+              str((createdBody as Record<string, unknown>).id)
+            : '';
+        if (!roomId) return errText('WebEx did not return an id for the created space.');
+        roomTitle = NOTE_TO_SELF_TITLE;
+        created = true;
+      }
+
+      const sendResult = await webexCall(auth, scopes, '/messages', {
+        method: 'POST',
+        json: { roomId, markdown },
+      });
+      if (!sendResult.ok) return errText(sendResult.error);
+      const sentBody: unknown = await sendResult.response.json().catch(() => null);
+      const sent =
+        typeof sentBody === 'object' && sentBody !== null
+          ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+            (sentBody as Record<string, unknown>)
+          : {};
+      logger.info('webex_note_to_self sent', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        roomId,
+        created,
+      });
+      return textResult(
+        `Sent to ${
+          created
+            ? `a newly created "${NOTE_TO_SELF_TITLE}" space`
+            : `"${roomTitle || NOTE_TO_SELF_TITLE}"`
+        } (room ${roomId}, message id ${str(sent.id) || 'unknown'}).`
+      );
     }
   );
 
@@ -386,8 +541,8 @@ export async function registerWebexUserTools(
           .string()
           .describe('Recipient email for a 1:1 message instead of a room')
           .optional(),
-        markdown: z.string().min(1).describe('Message body, WebEx markdown'),
-        parentId: z.string().describe('Message id to reply to, threading under it').optional(),
+        markdown: z.string().min(1).describe(MARKDOWN_HINT),
+        parentId: z.string().describe(PARENT_ID_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -395,6 +550,10 @@ export async function registerWebexUserTools(
       const toPersonEmail = str(args.toPersonEmail);
       if (!roomId && !toPersonEmail) return errText('Provide roomId or toPersonEmail.');
       if (roomId && toPersonEmail) return errText('Provide roomId or toPersonEmail, not both.');
+      if (toPersonEmail) {
+        const refusal = await selfDmError(context, toPersonEmail);
+        if (refusal) return errText(refusal);
+      }
       const markdown = str(args.markdown);
       if (!markdown) return errText('markdown is required');
 
@@ -441,8 +600,8 @@ export async function registerWebexUserTools(
       inputSchema: z.object({
         roomId: z.string().describe('Destination room id').optional(),
         toPersonEmail: z.string().describe('Recipient email for a 1:1 message').optional(),
-        markdown: z.string().min(1).describe('Message body, WebEx markdown'),
-        parentId: z.string().describe('Message id to reply to, threading under it').optional(),
+        markdown: z.string().min(1).describe(MARKDOWN_HINT),
+        parentId: z.string().describe(PARENT_ID_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -450,6 +609,10 @@ export async function registerWebexUserTools(
       const toPersonEmail = str(args.toPersonEmail);
       if (!roomId && !toPersonEmail) return errText('Provide roomId or toPersonEmail.');
       if (roomId && toPersonEmail) return errText('Provide roomId or toPersonEmail, not both.');
+      if (toPersonEmail) {
+        const refusal = await selfDmError(context, toPersonEmail);
+        if (refusal) return errText(refusal);
+      }
 
       const result = await webexCall(auth, webexScopeFor('webex_send_message'), '/messages', {
         method: 'POST',
@@ -471,7 +634,10 @@ export async function registerWebexUserTools(
         tenantId: context.tenantId,
         roomId: str(sent.roomId),
       });
-      return textResult(`Sent (message id ${str(sent.id) || 'unknown'}).`);
+      return textResult(
+        `Sent (message id ${str(sent.id) || 'unknown'}` +
+          `${str(sent.roomId) ? `, room ${str(sent.roomId)}` : ''}).`
+      );
     }
   );
 

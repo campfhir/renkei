@@ -1,9 +1,10 @@
 'use client';
 
 /**
- * The whole builder on one scrolling page — name, triggers, steps — not a
- * wizard: the point of drafting a recipe is seeing it whole, and a
- * non-technical author reviews by reading top to bottom.
+ * The builder as a flow chart: triggers are the start node, steps are
+ * collapsed nodes on a vertical spine, and whatever is selected gets edited
+ * in the side panel (desktop) or a modal (phone) — the canvas shows the
+ * whole recipe at a glance, the panel shows one thing's details.
  *
  * Validation runs the SAME @renkei/agents function the server treats as
  * authority, here only for inline hints; the server's answer (422 +
@@ -14,12 +15,16 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { randomUUID } from '@/lib/agents/uuid';
 import {
   BUILTIN_VARIABLES,
+  containsBranch,
+  findNodeById,
+  flattenActionSteps,
+  isBranchStep,
   triggerVariableNames,
   validateAgentDraft,
-  type AgentStep,
+  walkSteps,
+  type AgentStepNode,
   type AgentStepsDoc,
   type ValidationIssue,
 } from '@renkei/agents';
@@ -28,8 +33,22 @@ import type { MintedApiKey, StoredAgent } from '@/lib/agents/store';
 import { parseReviewNotes, type ReviewNote } from '@/lib/agents/notes';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { toToolOptions, toVariableOptions, type VariableOption } from './options';
-import { StepCard } from './step-card';
-import { TriggerPanel, type AgentChoice, type BuilderTrigger } from './trigger-panel';
+import { FlowCanvas, type BuilderSelection } from './flow-canvas';
+import {
+  insertNode,
+  issuesByNode,
+  moveSibling,
+  newBranch,
+  newStep,
+  removeNode,
+  updateNode,
+  type InsertLocation,
+} from './flow-tree';
+import { EditorPanel } from './editor-panel';
+import { StepEditor } from './step-editor';
+import { BranchEditor } from './branch-editor';
+import { summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
+import { TriggerChooser, TriggerEditor } from './trigger-editor';
 import type { CalendarOption } from './schedule-picker';
 import { ReviewPanel } from './review-panel';
 
@@ -64,18 +83,6 @@ function notesOf(agent: StoredAgent | undefined | null): ReviewNote[] {
   return parseReviewNotes(agent?.reviewNotes);
 }
 
-function newStep(attemptsCap: number): AgentStep {
-  return {
-    id: randomUUID(),
-    name: '',
-    instruction: [],
-    tool: null,
-    // 5 tries by default; a stricter org cap wins.
-    maxAttempts: Math.min(5, attemptsCap),
-    failureHandling: [],
-  };
-}
-
 export function AgentBuilder({
   slug,
   tenantId,
@@ -89,7 +96,9 @@ export function AgentBuilder({
   const router = useRouter();
   const [agentId, setAgentId] = useState<string | null>(existing?.id ?? null);
   const [name, setName] = useState(existing?.name ?? '');
-  const [steps, setSteps] = useState<AgentStep[]>(existing?.steps.steps ?? [newStep(attemptsCap)]);
+  const [steps, setSteps] = useState<AgentStepNode[]>(
+    existing?.steps.steps ?? [newStep(attemptsCap)]
+  );
   const [triggers, setTriggers] = useState<BuilderTrigger[]>(
     existing?.triggers.map((trigger) => ({
       id: trigger.id,
@@ -99,6 +108,7 @@ export function AgentBuilder({
       lastError: trigger.lastError,
     })) ?? []
   );
+  const [selection, setSelection] = useState<BuilderSelection | null>(null);
   const [enabled, setEnabled] = useState(existing?.enabled ?? false);
   const [llmModelId, setLlmModelId] = useState<string | null>(existing?.llmModelId ?? null);
   const [saving, setSaving] = useState(false);
@@ -189,8 +199,10 @@ export function AgentBuilder({
     // along as context, the model applies the described change, and
     // untouched steps keep their retry settings. Still confirmed — it
     // rewrites what's on screen.
-    const hasRealSteps = steps.some(
-      (step) => step.instruction.length > 0 || step.tool !== null || step.name.trim()
+    const hasRealSteps = walkSteps(steps).some(({ node }) =>
+      isBranchStep(node)
+        ? node.condition.length > 0 || node.name.trim().length > 0
+        : node.instruction.length > 0 || node.tool !== null || node.name.trim().length > 0
     );
     if (
       hasRealSteps &&
@@ -204,7 +216,7 @@ export function AgentBuilder({
     setDrafting(true);
     setDraftError(null);
     setDraftDetail(null);
-    const result = await sendJsonFull<{ name: string; steps: AgentStep[]; detail?: string }>(
+    const result = await sendJsonFull<{ name: string; steps: AgentStepNode[]; detail?: string }>(
       `/api/tenant/${tenantId}/agents/draft`,
       'POST',
       {
@@ -220,6 +232,7 @@ export function AgentBuilder({
       return;
     }
     setSteps(result.data.steps);
+    setSelection(null);
     if (!name.trim() && result.data.name) setName(result.data.name);
     setDrafted(true);
     setServerIssues([]);
@@ -254,7 +267,16 @@ export function AgentBuilder({
   const toolOptions = useMemo(() => toToolOptions(tools), [tools]);
   const toolDescriptors = useMemo(() => new Map(tools.map((tool) => [tool.name, tool])), [tools]);
 
-  const stepsDoc: AgentStepsDoc = useMemo(() => ({ version: 1, steps }), [steps]);
+  const stepsDoc: AgentStepsDoc = useMemo(
+    // The server recomputes the version on save; matching its rule here
+    // keeps the client draft identical to what will persist.
+    () => ({ version: containsBranch(steps) ? 2 : 1, steps }),
+    [steps]
+  );
+  const ordinals = useMemo(
+    () => new Map(walkSteps(steps).map((entry) => [entry.node.id, entry.ordinal])),
+    [steps]
+  );
   const draft = useMemo(
     () => ({
       name,
@@ -273,7 +295,7 @@ export function AgentBuilder({
       description: 'Provided by a trigger when the agent starts.',
       source: 'trigger' as const,
     }));
-    const fromSteps = steps.flatMap((step) =>
+    const fromSteps = flattenActionSteps(steps).flatMap((step) =>
       step.saveAs
         ? [
             {
@@ -291,11 +313,11 @@ export function AgentBuilder({
   const knownVarNames = useMemo(() => new Set(variables.map((v) => v.name)), [variables]);
   const invalidVars = useMemo(() => {
     const used = new Set<string>();
-    for (const step of steps) {
-      for (const segment of [
-        ...step.instruction,
-        ...step.failureHandling.flatMap((h) => h.guidance ?? []),
-      ]) {
+    for (const { node } of walkSteps(steps)) {
+      const segments = isBranchStep(node)
+        ? node.condition
+        : [...node.instruction, ...node.failureHandling.flatMap((h) => h.guidance ?? [])];
+      for (const segment of segments) {
         if (segment.t === 'var' && !knownVarNames.has(segment.name)) used.add(segment.name);
       }
     }
@@ -304,8 +326,11 @@ export function AgentBuilder({
 
   const clientIssues = useMemo(() => validateAgentDraft(draft, tools), [draft, tools]);
   const issues = serverIssues.length > 0 ? serverIssues : clientIssues;
+  // Exact prefix match: `steps.1` must NOT claim `steps.10.instruction`.
   const issuesAt = (prefix: string) =>
-    issues.filter((issue) => issue.path.startsWith(prefix)).map((issue) => issue.message);
+    issues
+      .filter((issue) => issue.path === prefix || issue.path.startsWith(`${prefix}.`))
+      .map((issue) => issue.message);
 
   const persist = async (
     withEnabled: boolean,
@@ -382,256 +407,339 @@ export function AgentBuilder({
     }
   };
 
-  const updateStep = (index: number, step: AgentStep) => {
-    setSteps((current) => current.map((existingStep, at) => (at === index ? step : existingStep)));
+  const issueMap = useMemo(() => issuesByNode(steps, issues), [steps, issues]);
+
+  const selectedNode =
+    selection?.type === 'step' ? (findNodeById(steps, selection.id)?.node ?? null) : null;
+  const selectedTrigger =
+    selection?.type === 'trigger' ? (triggers[selection.index] ?? null) : null;
+
+  const changeNode = (id: string, next: AgentStepNode) => {
+    setSteps((current) => updateNode(current, id, () => next));
   };
 
-  return (
-    <div className="space-y-6 pb-24">
-      {!proseOpen && existing ? (
-        <p>
-          <button
-            type="button"
-            onClick={() => setProseOpen(true)}
-            className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
-          >
-            ✨ Redraft from a description…
-          </button>
-        </p>
-      ) : null}
+  const insertAt = (location: InsertLocation, kind: 'step' | 'branch') => {
+    const node = kind === 'branch' ? newBranch() : newStep(attemptsCap);
+    setSteps((current) => insertNode(current, location, node));
+    setSelection({ type: 'step', id: node.id });
+    setServerIssues([]);
+  };
 
-      {proseOpen ? (
-        <section className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold">
-              {existing ? 'Redraft from a description' : 'Start from a description'}
-            </h2>
-            {existing ? (
+  const moveNode = (id: string, direction: -1 | 1) => {
+    setSteps((current) => moveSibling(current, id, direction));
+  };
+
+  const deleteNode = (id: string) => {
+    const found = findNodeById(steps, id);
+    if (
+      found &&
+      isBranchStep(found.node) &&
+      found.node.paths.some((path) => path.steps.length > 0) &&
+      !window.confirm('Delete this branch and every step inside its paths?')
+    ) {
+      return;
+    }
+    setSteps((current) => removeNode(current, id));
+    setSelection((current) => (current?.type === 'step' && current.id === id ? null : current));
+  };
+
+  const panelTitle = (() => {
+    if (selection?.type === 'new-trigger') return 'Add a trigger';
+    if (selectedTrigger) return summaryOf(selectedTrigger.draft, otherAgents);
+    if (selectedNode) {
+      const ordinal = (ordinals.get(selectedNode.id) ?? 0) + 1;
+      if (isBranchStep(selectedNode)) return selectedNode.name.trim() || 'Branch';
+      return selectedNode.name.trim() || `Step ${ordinal}`;
+    }
+    return '';
+  })();
+
+  const panelWide = selectedTrigger?.draft.kind === 'schedule';
+
+  return (
+    <div data-wide-page className="pb-24">
+      <div className="lg:flex lg:items-start lg:gap-6">
+        <div className={`min-w-0 flex-1 space-y-6 ${selection ? '' : 'mx-auto lg:max-w-3xl'}`}>
+          {!proseOpen && existing ? (
+            <p>
               <button
                 type="button"
-                aria-label="Close"
-                onClick={() => setProseOpen(false)}
-                className="rounded p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                onClick={() => setProseOpen(true)}
+                className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
               >
-                ✕
+                ✨ Redraft from a description…
               </button>
-            ) : null}
-          </div>
-          <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
-            {existing
-              ? 'Describe the change in your own words — add a step, remove one, tweak an instruction, or redo the whole thing. Steps the change doesn’t touch keep their retry settings.'
-              : 'Describe the whole thing in your own words — we’ll draft the steps and pick the skills; you review and adjust everything below before saving.'}
-          </p>
-          <textarea
-            value={prose}
-            onChange={(event) => setProse(event.target.value)}
-            rows={3}
-            maxLength={4000}
-            placeholder="e.g. When someone messages me about a ticket, look it up in Jira, add their message as a comment, and reply in the thread with what changed."
-            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-          />
-          <div className="mt-2 flex items-center gap-3">
-            <button
-              type="button"
-              disabled={drafting || prose.trim().length < 10}
-              onClick={() => void draftFromProse()}
-              className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-            >
+            </p>
+          ) : null}
+
+          {proseOpen ? (
+            <section className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold">
+                  {existing ? 'Redraft from a description' : 'Start from a description'}
+                </h2>
+                {existing ? (
+                  <button
+                    type="button"
+                    aria-label="Close"
+                    onClick={() => setProseOpen(false)}
+                    className="rounded p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  >
+                    ✕
+                  </button>
+                ) : null}
+              </div>
+              <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
+                {existing
+                  ? 'Describe the change in your own words — add a step, remove one, tweak an instruction, or redo the whole thing. Steps the change doesn’t touch keep their retry settings.'
+                  : 'Describe the whole thing in your own words — we’ll draft the steps and pick the skills; you review and adjust everything below before saving.'}
+              </p>
+              <textarea
+                value={prose}
+                onChange={(event) => setProse(event.target.value)}
+                rows={3}
+                maxLength={4000}
+                placeholder="e.g. When someone messages me about a ticket, look it up in Jira, add their message as a comment, and reply in the thread with what changed."
+                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+              />
+              <div className="mt-2 flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={drafting || prose.trim().length < 10}
+                  onClick={() => void draftFromProse()}
+                  className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {drafting ? (
+                    <>
+                      <span
+                        aria-hidden="true"
+                        className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-300 border-t-white"
+                      />
+                      Drafting…
+                    </>
+                  ) : drafted ? (
+                    'Draft again'
+                  ) : (
+                    'Draft the steps for me'
+                  )}
+                </button>
+                {drafted && !drafting ? (
+                  <span className="text-xs text-green-700 dark:text-green-400">
+                    {draftMode === 'revise'
+                      ? 'Revised below — steps the change didn’t touch kept their settings.'
+                      : 'Drafted below — review every step before saving.'}
+                  </span>
+                ) : null}
+                {draftError ? (
+                  <span className="text-xs text-red-600 dark:text-red-400">{draftError}</span>
+                ) : null}
+              </div>
               {drafting ? (
-                <>
-                  <span
-                    aria-hidden="true"
-                    className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-300 border-t-white"
-                  />
-                  Drafting…
-                </>
-              ) : drafted ? (
-                'Draft again'
-              ) : (
-                'Draft the steps for me'
-              )}
-            </button>
-            {drafted && !drafting ? (
-              <span className="text-xs text-green-700 dark:text-green-400">
-                {draftMode === 'revise'
-                  ? 'Revised below — steps the change didn’t touch kept their settings.'
-                  : 'Drafted below — review every step before saving.'}
-              </span>
-            ) : null}
-            {draftError ? (
-              <span className="text-xs text-red-600 dark:text-red-400">{draftError}</span>
-            ) : null}
-          </div>
-          {drafting ? (
-            <p aria-live="polite" className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-              {draftStatus}
-            </p>
+                <p aria-live="polite" className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                  {draftStatus}
+                </p>
+              ) : null}
+              {draftDetail && !drafting ? (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                    What was sent (content redacted)
+                  </summary>
+                  <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-white p-2 font-mono text-[11px] dark:border-gray-800 dark:bg-gray-950">
+                    {draftDetail}
+                  </pre>
+                </details>
+              ) : null}
+            </section>
           ) : null}
-          {draftDetail && !drafting ? (
-            <details className="mt-2">
-              <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                What was sent (content redacted)
-              </summary>
-              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-white p-2 font-mono text-[11px] dark:border-gray-800 dark:bg-gray-950">
-                {draftDetail}
-              </pre>
-            </details>
-          ) : null}
-        </section>
-      ) : null}
 
-      <section>
-        <label className="mb-1 block text-sm font-medium" htmlFor="agent-name">
-          Name it
-        </label>
-        <input
-          id="agent-name"
-          className={inputClass}
-          value={name}
-          maxLength={200}
-          placeholder="e.g. Ticket from urgent email"
-          onChange={(event) => setName(event.target.value)}
-        />
-        {issuesAt('name').map((message) => (
-          <p key={message} className="mt-1 text-xs text-red-600 dark:text-red-400">
-            {message}
-          </p>
-        ))}
-      </section>
-
-      {agentId ? (
-        <section className="rounded-md border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/40">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
-              Worth checking
-            </h2>
-            <button
-              type="button"
-              disabled={checking}
-              onClick={() => void recheck()}
-              className="flex items-center gap-1.5 text-xs font-medium text-amber-700 hover:underline disabled:opacity-50 dark:text-amber-300"
-            >
-              {checking ? (
-                <>
-                  <span
-                    aria-hidden="true"
-                    className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700 dark:border-amber-800 dark:border-t-amber-300"
-                  />
-                  Checking…
-                </>
-              ) : (
-                'Re-check'
-              )}
-            </button>
-          </div>
-          {checkNotes.length > 0 ? (
-            <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-amber-900 dark:text-amber-200">
-              {checkNotes.map((note) => (
-                <li key={note.issue}>
-                  {note.issue}
-                  {note.fix ? (
-                    <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/70">
-                      Suggestion: {note.fix}
-                    </p>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-2 text-sm text-amber-800/70 dark:text-amber-200/60">
-              Nothing flagged on the last check.
-            </p>
-          )}
-          <p className="mt-2 text-xs text-amber-700/60 dark:text-amber-300/50">
-            These look at the last saved version — save your edits, then re-check.
-          </p>
-        </section>
-      ) : null}
-
-      <section>
-        <h2 className="mb-2 text-sm font-semibold">When should it run?</h2>
-        <TriggerPanel
-          triggers={triggers}
-          onChange={(next) => {
-            setTriggers(next);
-            setServerIssues([]);
-          }}
-          otherAgents={otherAgents}
-          calendars={calendars}
-          issues={issuesAt('triggers')}
-        />
-      </section>
-
-      <section>
-        <h2 className="mb-2 text-sm font-semibold">What should it do?</h2>
-        <div className="space-y-3">
-          {steps.map((step, index) => (
-            <StepCard
-              key={step.id}
-              step={step}
-              index={index}
-              count={steps.length}
-              attemptsCap={attemptsCap}
-              onChange={(next) => updateStep(index, next)}
-              onMove={(direction) => {
-                setSteps((current) => {
-                  const next = [...current];
-                  const target = index + direction;
-                  if (target < 0 || target >= next.length) return current;
-                  [next[index], next[target]] = [next[target], next[index]];
-                  return next;
-                });
-              }}
-              onDelete={() => setSteps((current) => current.filter((_, at) => at !== index))}
-              tools={toolOptions}
-              toolDescriptors={toolDescriptors}
-              variables={variables}
-              invalidVars={invalidVars}
-              issues={issuesAt(`steps.${index}`)}
+          <section>
+            <label className="mb-1 block text-sm font-medium" htmlFor="agent-name">
+              Name it
+            </label>
+            <input
+              id="agent-name"
+              className={inputClass}
+              value={name}
+              maxLength={200}
+              placeholder="e.g. Ticket from urgent email"
+              onChange={(event) => setName(event.target.value)}
             />
-          ))}
-        </div>
-        <button
-          type="button"
-          onClick={() => setSteps((current) => [...current, newStep(attemptsCap)])}
-          className="mt-3 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
-        >
-          + Add a step
-        </button>
-        {issues
-          .filter((issue) => issue.path === 'steps')
-          .map((issue) => (
-            <p key={issue.message} className="mt-1 text-xs text-red-600 dark:text-red-400">
-              {issue.message}
-            </p>
-          ))}
-      </section>
-
-      {models.length > 0 ? (
-        <section>
-          <label className="mb-1 block text-sm font-medium" htmlFor="agent-model">
-            Which model runs it?
-          </label>
-          <select
-            id="agent-model"
-            className={inputClass}
-            value={llmModelId ?? ''}
-            onChange={(event) => setLlmModelId(event.target.value || null)}
-          >
-            <option value="">
-              Organization default
-              {models.find((model) => model.isDefault)
-                ? ` (${models.find((model) => model.isDefault)?.label})`
-                : ''}
-            </option>
-            {models.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.label}
-              </option>
+            {issuesAt('name').map((message) => (
+              <p key={message} className="mt-1 text-xs text-red-600 dark:text-red-400">
+                {message}
+              </p>
             ))}
-          </select>
-        </section>
-      ) : null}
+          </section>
+
+          {agentId ? (
+            <section className="rounded-md border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                  Worth checking
+                </h2>
+                <button
+                  type="button"
+                  disabled={checking}
+                  onClick={() => void recheck()}
+                  className="flex items-center gap-1.5 text-xs font-medium text-amber-700 hover:underline disabled:opacity-50 dark:text-amber-300"
+                >
+                  {checking ? (
+                    <>
+                      <span
+                        aria-hidden="true"
+                        className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700 dark:border-amber-800 dark:border-t-amber-300"
+                      />
+                      Checking…
+                    </>
+                  ) : (
+                    'Re-check'
+                  )}
+                </button>
+              </div>
+              {checkNotes.length > 0 ? (
+                <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-amber-900 dark:text-amber-200">
+                  {checkNotes.map((note) => (
+                    <li key={note.issue}>
+                      {note.issue}
+                      {note.fix ? (
+                        <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/70">
+                          Suggestion: {note.fix}
+                        </p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-sm text-amber-800/70 dark:text-amber-200/60">
+                  Nothing flagged on the last check.
+                </p>
+              )}
+              <p className="mt-2 text-xs text-amber-700/60 dark:text-amber-300/50">
+                These look at the last saved version — save your edits, then re-check.
+              </p>
+            </section>
+          ) : null}
+
+          <section>
+            <FlowCanvas
+              nodes={steps}
+              ordinals={ordinals}
+              triggers={triggers}
+              otherAgents={otherAgents}
+              selection={selection}
+              issuesFor={(nodeId) => issueMap.get(nodeId)?.length ?? 0}
+              triggerIssues={issuesAt('triggers')}
+              stepsIssues={issues
+                .filter((issue) => issue.path === 'steps')
+                .map((issue) => issue.message)}
+              onSelect={setSelection}
+              onInsert={insertAt}
+              onMove={moveNode}
+              onDelete={deleteNode}
+            />
+          </section>
+
+          {models.length > 0 ? (
+            <section>
+              <label className="mb-1 block text-sm font-medium" htmlFor="agent-model">
+                Which model runs it?
+              </label>
+              <select
+                id="agent-model"
+                className={inputClass}
+                value={llmModelId ?? ''}
+                onChange={(event) => setLlmModelId(event.target.value || null)}
+              >
+                <option value="">
+                  Organization default
+                  {models.find((model) => model.isDefault)
+                    ? ` (${models.find((model) => model.isDefault)?.label})`
+                    : ''}
+                </option>
+                {models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}
+                  </option>
+                ))}
+              </select>
+            </section>
+          ) : null}
+        </div>
+
+        {selection?.type === 'new-trigger' ? (
+          <EditorPanel title="Add a trigger" onClose={() => setSelection(null)}>
+            <TriggerChooser
+              otherAgents={otherAgents}
+              onChoose={(draftTrigger) => {
+                setTriggers((current) => [...current, { draft: draftTrigger, enabled: true }]);
+                setSelection({ type: 'trigger', index: triggers.length });
+                setServerIssues([]);
+              }}
+            />
+          </EditorPanel>
+        ) : null}
+
+        {selectedTrigger && selection?.type === 'trigger' ? (
+          <EditorPanel
+            title={panelTitle}
+            width={panelWide ? 'wide' : 'normal'}
+            onClose={() => setSelection(null)}
+            footer={
+              <button
+                type="button"
+                onClick={() => {
+                  const index = selection.index;
+                  setTriggers((current) => current.filter((_, at) => at !== index));
+                  setSelection(null);
+                }}
+                className="text-sm text-red-600 hover:underline dark:text-red-400"
+              >
+                Remove this trigger
+              </button>
+            }
+          >
+            <TriggerEditor
+              trigger={selectedTrigger}
+              otherAgents={otherAgents}
+              calendars={calendars}
+              onChange={(draftTrigger) => {
+                const index = selection.index;
+                setTriggers((current) =>
+                  current.map((entry, at) =>
+                    at === index ? { ...entry, draft: draftTrigger } : entry
+                  )
+                );
+              }}
+            />
+          </EditorPanel>
+        ) : null}
+
+        {selectedNode ? (
+          <EditorPanel title={panelTitle} onClose={() => setSelection(null)}>
+            {isBranchStep(selectedNode) ? (
+              <BranchEditor
+                branch={selectedNode}
+                onChange={(next) => changeNode(selectedNode.id, next)}
+                variables={variables}
+                invalidVars={invalidVars}
+                issues={issueMap.get(selectedNode.id) ?? []}
+              />
+            ) : (
+              <StepEditor
+                step={selectedNode}
+                ordinal={(ordinals.get(selectedNode.id) ?? 0) + 1}
+                attemptsCap={attemptsCap}
+                onChange={(next) => changeNode(selectedNode.id, next)}
+                tools={toolOptions}
+                toolDescriptors={toolDescriptors}
+                variables={variables}
+                invalidVars={invalidVars}
+                issues={issueMap.get(selectedNode.id) ?? []}
+              />
+            )}
+          </EditorPanel>
+        ) : null}
+      </div>
 
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-950/95">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 sm:px-2">

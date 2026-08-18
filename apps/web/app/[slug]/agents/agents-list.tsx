@@ -17,6 +17,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { StoredAgent } from '@/lib/agents/store';
 import { sendJsonFull } from '@/lib/fetch-json';
+import { Icon, ICONS } from '@/components/icons';
 
 function triggerBadge(kind: string): string {
   switch (kind) {
@@ -32,31 +33,6 @@ function triggerBadge(kind: string): string {
       return kind;
   }
 }
-
-/** Hand-rolled 16px stroke icons — the repo carries no icon dependency. */
-function Icon({ path, className }: { path: string; className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className ?? 'h-4 w-4'}
-      aria-hidden="true"
-    >
-      <path d={path} />
-    </svg>
-  );
-}
-
-const ICONS = {
-  play: 'M8 5.5v13l11-6.5z',
-  pencil: 'M17 3l4 4L8 20l-5 1 1-5zM15 5l4 4',
-  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2',
-  trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
-};
 
 function IconButton({
   label,
