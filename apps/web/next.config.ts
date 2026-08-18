@@ -42,9 +42,18 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ['quickjs-emscripten'],
   async rewrites() {
     return [
-      // RFC 8414 path-insert form for the per-tenant authorization server.
+      // RFC 8414 path-insert form for the per-tenant authorization server,
+      // with and without the transport segment the client was handed (a
+      // client that built this URL from the resource's own address, which
+      // includes /{transport}, needs the same match the protected-resource
+      // rules below already give it — otherwise it falls through to the
+      // catch-all and gets the system-level, tenant-less document instead).
       {
         source: '/.well-known/oauth-authorization-server/api/mcp/:tenantId',
+        destination: '/api/mcp/:tenantId/.well-known/oauth-authorization-server',
+      },
+      {
+        source: '/.well-known/oauth-authorization-server/api/mcp/:tenantId/:transport',
         destination: '/api/mcp/:tenantId/.well-known/oauth-authorization-server',
       },
       // RFC 9728 path-insert form for the per-tenant protected resource, with

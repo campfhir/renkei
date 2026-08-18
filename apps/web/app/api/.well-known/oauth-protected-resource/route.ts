@@ -1,34 +1,29 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getOrigin } from '@/lib/get-origin';
+import { NextResponse } from 'next/server';
 
 /**
- * OAuth Protected Resource Metadata endpoint (RFC 9728)
- * Published at /.well-known/oauth-protected-resource
+ * OAuth Protected Resource Metadata endpoint (RFC 9728) — system level.
  *
- * Advertises which authorization server(s) protect this API, allowing MCP clients
- * to discover the issuer and obtain tokens before accessing the MCP server.
+ * Renkei has no system-level protected resource: every MCP endpoint is
+ * tenant-scoped, and its 401 challenge already names the tenant-scoped
+ * protected-resource document via `WWW-Authenticate: resource_metadata=...`.
+ * This system-level document used to point at the system-level authorization
+ * server, which is non-functional (see the sibling
+ * oauth-authorization-server route's docblock) — serving it risked steering
+ * a client into that dead end instead of following the challenge it was
+ * actually given. 404 pushes every client through the per-tenant document at
+ * /api/mcp/{tenantId}/.well-known/oauth-protected-resource, which is correct
+ * and already what the 401 response advertises.
  */
-export async function GET(request: NextRequest): Promise<NextResponse> {
-
-  const originResult = await getOrigin(request);
-  if (!originResult.ok) {
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
-  const baseUrl = originResult.val;
-
-  const metadata = {
-    resource: baseUrl,
-    // RFC 9728 defines this as an array of issuer identifier strings. It held
-    // objects, which a strict client rejects, and advertised a jwks_uri that
-    // does not exist and would not be meaningful anyway: the tokens issued here
-    // are opaque and validated by database lookup, not signature.
-    //
-    // MCP clients want the per-tenant document at
-    // /api/mcp/{tenantId}/.well-known/oauth-protected-resource; this
-    // system-level one covers the platform's own OAuth.
-    authorization_servers: [baseUrl],
-    bearer_methods_supported: ['header'],
-  };
-
-  return NextResponse.json(metadata);
+export async function GET(): Promise<NextResponse> {
+  return NextResponse.json(
+    {
+      error: 'not_found',
+      error_description:
+        'This server has no system-level protected resource — every MCP endpoint is ' +
+        'tenant-scoped. Follow the resource_metadata field of the WWW-Authenticate ' +
+        'challenge returned by the protected MCP endpoint you are calling, or fetch ' +
+        '/api/mcp/{tenantId}/.well-known/oauth-protected-resource directly.',
+    },
+    { status: 404 }
+  );
 }

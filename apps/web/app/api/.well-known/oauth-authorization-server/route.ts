@@ -1,45 +1,36 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { DEFAULT_ORG_SETTINGS } from '@renkei/settings';
-import { getOrigin } from '@/lib/get-origin';
+import { NextResponse } from 'next/server';
 
 /**
- * OAuth Authorization Server Metadata endpoint (RFC 8414) - System level
- * This is a generic endpoint at the root level. For tenant-specific servers,
- * use the tenant-scoped endpoint at /api/mcp/[tenantId]/.well-known/oauth-authorization-server
+ * OAuth Authorization Server Metadata endpoint (RFC 8414) — system level.
+ *
+ * This used to advertise /api/oauth/{authorize,token,register}, but that
+ * flow cannot actually authenticate an MCP call: /api/oauth/authorize
+ * auto-approves with no real user session (subject: 'system'), and
+ * /api/oauth/token issues an access token it never persists, so nothing
+ * built on it can pass resolveAccessToken() — the very first real request
+ * 401s. A client that completes registration and the authorize/token dance
+ * against this document believes it succeeded and only discovers otherwise
+ * on its first authenticated call, which is a worse failure than a 404 here.
+ *
+ * Renkei's authorization server is per tenant. The protected MCP endpoint's
+ * 401 response already names the right one via
+ * `WWW-Authenticate: resource_metadata=...` (RFC 9728) — that document's
+ * `authorization_servers` entry is the tenant-scoped issuer, whose metadata
+ * lives at /api/mcp/{tenantId}/.well-known/oauth-authorization-server (also
+ * reachable via the RFC 8414 path-insert form at
+ * /.well-known/oauth-authorization-server/api/mcp/{tenantId}, see
+ * next.config.ts).
  */
-export async function GET(request: NextRequest): Promise<NextResponse> {
-
-  const originResult = await getOrigin(request);
-  if (!originResult.ok) {
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
-  const baseUrl = originResult.val;
-  const dcrEnabled = DEFAULT_ORG_SETTINGS.enableDcr;
-
-  // Note: These are placeholder endpoints. For MCP connections, use tenant-scoped endpoints.
-  // When connecting via /api/mcp/{tenantId}/http, the OAuth discovery should use
-  // /api/mcp/{tenantId}/.well-known/oauth-authorization-server
-  const metadata = {
-    issuer: baseUrl,
-    authorization_endpoint: `${baseUrl}/api/oauth/authorize`,
-    token_endpoint: `${baseUrl}/api/oauth/token`,
-    ...(dcrEnabled && {
-      registration_endpoint: `${baseUrl}/api/oauth/register`,
-    }),
-    response_types_supported: ['code'],
-    response_modes_supported: ['query', 'fragment'],
-    grant_types_supported: dcrEnabled
-      ? ['authorization_code', 'refresh_token']
-      : ['authorization_code'],
-    token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
-    code_challenge_methods_supported: ['S256', 'plain'],
-    scopes_supported: ['openid', 'profile', 'email'],
-    claims_supported: ['sub', 'name', 'email', 'email_verified'],
-    subject_types_supported: ['public'],
-    id_token_signing_alg_values_supported: ['RS256'],
-    service_documentation: 'https://github.com/campfhir/renkei',
-    ui_locales_supported: ['en-US'],
-  };
-
-  return NextResponse.json(metadata);
+export async function GET(): Promise<NextResponse> {
+  return NextResponse.json(
+    {
+      error: 'not_found',
+      error_description:
+        'This server has no system-level authorization server — every MCP endpoint is ' +
+        'tenant-scoped. Discover the right one from the resource_metadata field of the ' +
+        'WWW-Authenticate challenge your MCP endpoint returned, or fetch ' +
+        '/api/mcp/{tenantId}/.well-known/oauth-authorization-server directly.',
+    },
+    { status: 404 }
+  );
 }

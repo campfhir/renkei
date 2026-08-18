@@ -81,23 +81,35 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const clientId = `client_${randomUUID()}`;
     const clientSecret = generateSecret(32);
 
-    // Extract tenant ID from request (Referer header when coming from MCP endpoint)
-    // Format: https://domain/api/mcp/{tenantId}/...
-    let tenantId: string | undefined;
+    // This system-level endpoint has no tenant of its own; it exists only
+    // for a caller that reaches it without ever fetching tenant-scoped
+    // discovery metadata (which now 404s at the system level — see
+    // app/api/.well-known/oauth-authorization-server/route.ts). The only
+    // signal available is the Referer header a browser sends when it
+    // followed a link from the tenant-scoped MCP endpoint's own pages; a
+    // bare API caller (curl, most DCR clients) sends none. There used to be
+    // a hardcoded fallback to an all-zero "system tenant" here, but nothing
+    // ever seeds that row — it was not a fallback, it was a guaranteed
+    // "Tenant not found" for every caller that reached this line. An
+    // unresolved tenant is now a clear, actionable error instead of a guess.
     const referer = request.headers.get('referer');
-    if (referer) {
-      const match = referer.match(/\/api\/mcp\/([a-f0-9-]+)/);
-      if (match) {
-        tenantId = match[1];
-      }
-    }
+    const tenantId = referer?.match(/\/api\/mcp\/([a-f0-9-]+)/)?.[1];
 
-    // Fallback: use system tenant if not extracted from referer
     if (!tenantId) {
-      tenantId = '00000000-0000-0000-0000-000000000000';
+      return NextResponse.json(
+        {
+          error: 'invalid_request',
+          error_description:
+            'Could not determine which tenant to register against. Discover the ' +
+            'tenant-scoped registration endpoint from the resource_metadata field of ' +
+            'the WWW-Authenticate challenge your MCP endpoint returned, or POST to ' +
+            '/api/mcp/{tenantId}/oauth/register directly.',
+        },
+        { status: 400 }
+      );
     }
 
-    // Verify tenant exists
+    // Verify the tenant the Referer named actually exists.
     const tenant = await db
       .selectFrom('tenants')
       .select('id')
