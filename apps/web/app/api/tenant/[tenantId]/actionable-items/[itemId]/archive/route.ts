@@ -29,11 +29,17 @@ export async function POST(
   }
   const db = dbResult.val;
 
+  // Same visibility rule as the feed: a caller may archive only a tenant-wide
+  // card (no owner) or their own. Without the owner predicate a signed-in user
+  // could archive another user's private card by id.
   const item = await db
     .selectFrom('actionable_items')
     .select(['id', 'status', 'archived_at'])
     .where('id', '=', itemId)
     .where('tenant_id', '=', tenantId)
+    .where((eb) =>
+      eb.or([eb('owner_subject', 'is', null), eb('owner_subject', '=', session.subject)])
+    )
     .executeTakeFirst();
   if (!item) {
     return NextResponse.json({ error: 'Item not found' }, { status: 404 });
@@ -78,11 +84,16 @@ export async function DELETE(
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
 
+  // Owner-scoped like the feed and the archive POST: a private card owned by
+  // another user does not match, so it cannot be unarchived by id.
   const result = await dbResult.val
     .updateTable('actionable_items')
     .set({ archived_at: null, archived_by: null, updated_at: sql`NOW()` })
     .where('id', '=', itemId)
     .where('tenant_id', '=', tenantId)
+    .where((eb) =>
+      eb.or([eb('owner_subject', 'is', null), eb('owner_subject', '=', session.subject)])
+    )
     .executeTakeFirst();
 
   if (Number(result.numUpdatedRows ?? 0) === 0) {

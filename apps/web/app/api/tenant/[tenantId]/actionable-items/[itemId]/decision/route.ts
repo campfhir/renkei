@@ -40,11 +40,18 @@ export async function POST(
   }
   const db = dbResult.val;
 
+  // Same visibility rule as the feed: a caller may act only on a tenant-wide
+  // card (no owner) or their own. Scoping the fetch by owner means a private
+  // card owned by another user is 404 here, not decidable — without this a
+  // signed-in user could approve/dismiss someone else's private card by id.
   const item = await db
     .selectFrom('actionable_items')
     .select(['id', 'kind', 'status', 'suggested_action'])
     .where('id', '=', itemId)
     .where('tenant_id', '=', tenantId)
+    .where((eb) =>
+      eb.or([eb('owner_subject', 'is', null), eb('owner_subject', '=', session.subject)])
+    )
     .executeTakeFirst();
   if (!item) {
     return NextResponse.json({ error: 'Item not found' }, { status: 404 });

@@ -64,25 +64,31 @@ export async function GET(
       });
     }
 
-    // renkei-user: can only see their own sessions
+    // renkei-user: can only see their own sessions. The account id is derived
+    // from the caller's own grant, never read from the query string — trusting
+    // a client-supplied accountId let any user enumerate another user's
+    // sessions. A NULL-subject grant predates per-user ownership and never matches.
     if (userRoles.has('renkei-user')) {
-      if (!accountId) {
-        return NextResponse.json({ error: 'accountId parameter required' }, { status: 400 });
-      }
-
       const grant = await db
         .selectFrom('provider_grants')
         .select('provider_account_id')
         .where('tenant_id', '=', tenantId)
         .where('provider', '=', 'atlassian')
-        .where('provider_account_id', '=', accountId)
+        .where('subject', '=', session.subject)
         .executeTakeFirst();
 
       if (!grant) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+        return NextResponse.json({ error: 'No Jira grant for this user' }, { status: 403 });
       }
 
-      const sessionsResult = await getUserSessions(tenantId, accountId);
+      const ownAccountId = grant.provider_account_id;
+
+      // A caller may still name an account, but only their own.
+      if (accountId && accountId !== ownAccountId) {
+        return NextResponse.json({ error: 'Cannot view other users sessions' }, { status: 403 });
+      }
+
+      const sessionsResult = await getUserSessions(tenantId, ownAccountId);
       if (!sessionsResult.ok) {
         return NextResponse.json({ error: 'Database error' }, { status: 500 });
       }
@@ -91,7 +97,7 @@ export async function GET(
       return NextResponse.json({
         role: 'renkei-user',
         roles: [...userRoles],
-        accountId,
+        accountId: ownAccountId,
         sessions: sessions.map((s) => ({
           id: s.id,
           userAgent: s.userAgent || 'Unknown',
@@ -122,11 +128,11 @@ export async function DELETE(
   const { searchParams } = new URL(request.url);
   const sessionId = searchParams.get('sessionId');
   const targetAccountId = searchParams.get('accountId');
-  const session = await getSessionFromRequest(request, tenantId);
-  if (!session) {
+  const authSession = await getSessionFromRequest(request, tenantId);
+  if (!authSession) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const userRoles = new Set(session.roles);
+  const userRoles = new Set(authSession.roles);
 
   if (!sessionId) {
     return NextResponse.json({ error: 'sessionId query parameter required' }, { status: 400 });
@@ -168,36 +174,39 @@ export async function DELETE(
       return NextResponse.json({ success: true, revokedSession: sessionId });
     }
 
-    // renkei-user: can only revoke their own sessions
+    // renkei-user: can only revoke their own sessions. The caller's account is
+    // derived from their own grant, never read from the query string, and the
+    // target session must belong to that account — otherwise any user could
+    // revoke another user's session (integrity/DoS) by naming their id.
     if (userRoles.has('renkei-user')) {
-      if (!targetAccountId) {
-        return NextResponse.json({ error: 'accountId parameter required' }, { status: 400 });
-      }
-
-      if (targetAccountId !== session.accountId) {
-        return NextResponse.json({ error: 'Cannot revoke other users sessions' }, { status: 403 });
-      }
-
-      // Verify user has a grant
       const grant = await db
         .selectFrom('provider_grants')
         .select('provider_account_id')
         .where('tenant_id', '=', tenantId)
         .where('provider', '=', 'atlassian')
-        .where('provider_account_id', '=', targetAccountId)
+        .where('subject', '=', authSession.subject)
         .executeTakeFirst();
 
       if (!grant) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+        return NextResponse.json({ error: 'No Jira grant for this user' }, { status: 403 });
+      }
+
+      const ownAccountId = grant.provider_account_id;
+
+      // The session being revoked must be the caller's own. A caller may name
+      // an accountId, but only their own.
+      if (session.accountId !== ownAccountId) {
+        return NextResponse.json({ error: 'Cannot revoke other users sessions' }, { status: 403 });
+      }
+      if (targetAccountId && targetAccountId !== ownAccountId) {
+        return NextResponse.json({ error: 'Cannot revoke other users sessions' }, { status: 403 });
       }
 
       const revokeResult = await revokeSession(sessionId, tenantId);
       if (!revokeResult.ok) {
         return NextResponse.json({ error: 'Database error' }, { status: 500 });
       }
-      console.log(
-        `[Tenant ${tenantId}] User ${targetAccountId} revoked their session ${sessionId}`
-      );
+      console.log(`[Tenant ${tenantId}] User ${ownAccountId} revoked their session ${sessionId}`);
       return NextResponse.json({ success: true });
     }
 
