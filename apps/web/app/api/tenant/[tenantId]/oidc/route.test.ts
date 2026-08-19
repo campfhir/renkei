@@ -153,6 +153,51 @@ describe('tenant OIDC configuration', () => {
       expect(response.status).toBe(400);
       expect(mockCreateTenantOidc).not.toHaveBeenCalled();
     });
+
+    it('refuses an SSRF discovery endpoint (metadata IP) without fetching it', async () => {
+      // The unauthenticated bootstrap path must not be usable to reach cloud
+      // metadata or internal hosts.
+      stubDb({ existingOidc: false });
+      mockGetSession.mockResolvedValue(null);
+
+      const response = await POST(
+        post({
+          ...VALID_BODY,
+          discoveryEndpoint: 'https://169.254.169.254/latest/meta-data/',
+        }),
+        params()
+      );
+
+      expect(response.status).toBe(400);
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(mockCreateTenantOidc).not.toHaveBeenCalled();
+    });
+
+    it('refuses a non-https discovery endpoint', async () => {
+      stubDb({ existingOidc: false });
+      mockGetSession.mockResolvedValue(null);
+
+      const response = await POST(
+        post({ ...VALID_BODY, discoveryEndpoint: 'http://idp.example.com/.well-known/x' }),
+        params()
+      );
+
+      expect(response.status).toBe(400);
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('refuses when the discovery document names an internal issuer', async () => {
+      // A public discovery URL must not be able to smuggle an internal issuer
+      // (which login/callback would later fetch) past the guard.
+      stubDb({ existingOidc: false });
+      mockGetSession.mockResolvedValue(null);
+      stubDiscovery('https://localhost/');
+
+      const response = await POST(post(VALID_BODY), params());
+
+      expect(response.status).toBe(400);
+      expect(mockCreateTenantOidc).not.toHaveBeenCalled();
+    });
   });
 
   describe('POST on a configured tenant', () => {

@@ -4,13 +4,14 @@ import { NextResponse } from 'next/server';
  * OAuth Authorization Server Metadata endpoint (RFC 8414) — system level.
  *
  * This used to advertise /api/oauth/{authorize,token,register}, but that
- * flow cannot actually authenticate an MCP call: /api/oauth/authorize
- * auto-approves with no real user session (subject: 'system'), and
- * /api/oauth/token issues an access token it never persists, so nothing
- * built on it can pass resolveAccessToken() — the very first real request
- * 401s. A client that completes registration and the authorize/token dance
- * against this document believes it succeeded and only discovers otherwise
- * on its first authenticated call, which is a worse failure than a 404 here.
+ * flow could never authenticate an MCP call: the system-level authorize
+ * endpoint auto-approved with no real user session (subject: 'system') and
+ * the token endpoint issued an access token it never persisted, so nothing
+ * built on it could pass resolveAccessToken() — the very first real request
+ * 401s. Beyond being a dead end, the unauthenticated authorize endpoint was
+ * an unauthenticated issuer of tenant-scoped codes, so both routes have since
+ * been removed; this document is a 404 and every client is pushed to the
+ * tenant-scoped discovery chain below.
  *
  * Renkei's authorization server is per tenant. The protected MCP endpoint's
  * 401 response already names the right one via

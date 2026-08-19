@@ -85,26 +85,33 @@ export async function POST(
 
     // Check for user role
     if (userRoles.has('renkei-user')) {
-      // User must have accountId to view their own logs
-      if (!requestedAccountId) {
-        return NextResponse.json({ error: 'accountId required to view logs' }, { status: 400 });
-      }
-
-      // Verify user has a Jira grant for this tenant
+      // A user sees only their own logs. The account id is derived from the
+      // caller's own grant, never read from the query string — "this account
+      // has a grant" is not "the caller owns this account", so trusting a
+      // client-supplied accountId let any user read another user's logs. A
+      // grant with a NULL subject predates per-user ownership and never matches.
       const grant = await db
         .selectFrom('provider_grants')
         .select('provider_account_id')
         .where('tenant_id', '=', tenantId)
         .where('provider', '=', 'atlassian')
-        .where('provider_account_id', '=', requestedAccountId)
+        .where('subject', '=', session.subject)
         .executeTakeFirst();
 
       if (!grant) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+        return NextResponse.json({ error: 'No Jira grant for this user' }, { status: 403 });
+      }
+
+      const accountId = grant.provider_account_id;
+
+      // A caller may still name an account, but only their own: serving their
+      // own logs under someone else's id would misreport whose activity these are.
+      if (requestedAccountId && requestedAccountId !== accountId) {
+        return NextResponse.json({ error: 'Cannot view other users logs' }, { status: 403 });
       }
 
       // User can view only their own logs
-      const queryOptions = buildLogQueryOptions(userQuery, tenantId, requestedAccountId);
+      const queryOptions = buildLogQueryOptions(userQuery, tenantId, accountId);
       const adapter = new PostgresAdapter({ db, ...logCipherOptions() });
       const result = await adapter.query(queryOptions);
 
@@ -120,7 +127,7 @@ export async function POST(
         role: 'renkei-user',
         roles: [...userRoles],
         tenantId,
-        accountId: requestedAccountId,
+        accountId,
         query: userQuery || undefined,
         logs: result.val,
         count: result.val.length,

@@ -3,6 +3,7 @@ import { getDatabase } from '@renkei/db';
 import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
+import { safeFetch, assertSafeHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 
@@ -109,10 +110,26 @@ export async function POST(
       );
     }
 
+    // The discovery endpoint is caller-supplied (and on an unconfigured tenant
+    // this whole POST is unauthenticated), so the fetch is SSRF-guarded: https
+    // only, no localhost/private/metadata targets. Without it, this endpoint
+    // could be pointed at 169.254.169.254 or an internal service.
+    try {
+      assertSafeHttpsUrl(body.discoveryEndpoint);
+    } catch (error) {
+      if (error instanceof BlockedUrlError) {
+        return NextResponse.json(
+          { error: `Discovery endpoint is not an allowed URL: ${error.message}` },
+          { status: 400 }
+        );
+      }
+      throw error;
+    }
+
     // Fetch and validate discovery endpoint
     let issuer: string;
     try {
-      const discoveryResponse = await fetch(body.discoveryEndpoint);
+      const discoveryResponse = await safeFetch(body.discoveryEndpoint);
       if (!discoveryResponse.ok) {
         return NextResponse.json(
           { error: `Failed to fetch discovery endpoint: ${discoveryResponse.status}` },
@@ -130,12 +147,23 @@ export async function POST(
         );
       }
 
+      // The issuer is stored and later fetched (login/callback build the
+      // discovery URL from it), so it must itself be a safe public https URL —
+      // a discovery document must not smuggle an internal issuer past the guard.
+      assertSafeHttpsUrl(issuer);
+
       logger.info('Fetched issuer from discovery: {issuer}', {
         component: 'auth/oidc',
         tenantId,
         issuer,
       });
     } catch (error) {
+      if (error instanceof BlockedUrlError) {
+        return NextResponse.json(
+          { error: `Discovery endpoint is not an allowed URL: ${error.message}` },
+          { status: 400 }
+        );
+      }
       logger.error('Failed to fetch discovery endpoint: {error}', {
         component: 'auth/oidc',
         tenantId,

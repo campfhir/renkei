@@ -5,6 +5,7 @@ import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { sessionCookieName } from '@/lib/session';
 import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
+import { safeFetch } from '@/lib/safe-fetch';
 import { randomUUID } from 'crypto';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -54,8 +55,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'OIDC not configured for this tenant' }, { status: 400 });
     }
 
-    // Generate state for CSRF protection
+    // Generate state (CSRF) and nonce (id_token replay). The nonce is sent to
+    // the IdP and echoed back in the id_token, where the callback verifies it.
     const state = randomUUID();
+    const nonce = randomUUID();
     const stateExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     // Store pending OIDC state
@@ -65,7 +68,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         id: randomUUID(),
         state,
         tenant_id: tenantId,
-        nonce: randomUUID(),
+        nonce,
         expires_at: stateExpiresAt.toISOString(),
       })
       .execute();
@@ -77,7 +80,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     console.log(`[OIDC] Fetching discovery from: ${discoveryUrl}`);
 
     try {
-      const discoveryResponse = await fetch(discoveryUrl);
+      // SSRF-guarded: the issuer is operator-configured, but the fetch is still
+      // constrained to a public https target so a stale or hostile issuer can't
+      // drive a server-side request at an internal address.
+      const discoveryResponse = await safeFetch(discoveryUrl);
       if (discoveryResponse.ok) {
         const discovery = await discoveryResponse.json();
         authorizationEndpoint = discovery.authorization_endpoint;
@@ -114,6 +120,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('scope', 'openid profile email');
     authUrl.searchParams.set('state', state);
+    authUrl.searchParams.set('nonce', nonce);
 
     // Store redirect target in session (via cookie)
     const response = NextResponse.redirect(authUrl);
@@ -127,6 +134,18 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     response.cookies.delete(sessionCookieName(tenantId));
 
     response.cookies.set(`oidc_redirect_${tenantId}`, redirect, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 10 * 60, // 10 minutes
+    });
+
+    // Bind the flow to THIS browser. The callback requires this cookie to match
+    // the state it receives, so a state+code pair captured by an attacker and
+    // replayed into a victim's browser (login CSRF / session fixation) fails:
+    // the victim's browser never carries the attacker's state cookie. sameSite
+    // 'lax' still sends it on the top-level redirect back from the IdP.
+    response.cookies.set(`oidc_state_${tenantId}`, state, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',

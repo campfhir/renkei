@@ -7,6 +7,8 @@ import { createSession, sessionCookieName, sessionCookieOptions } from '@/lib/se
 import { identityClaimsFromIdToken, upsertIdentity } from '@/lib/identity';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
+import { safeFetch, assertPublicHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
+import { verifyIdTokenClaims } from '@/lib/oidc-id-token';
 
 interface OIDCTokenResponse {
   access_token: string;
@@ -25,7 +27,9 @@ function decodeJWT(token: string): DecodedToken | null {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
 
-    const decoded = Buffer.from(parts[1], 'base64').toString('utf-8');
+    // JWT segments are base64url, not base64: decoding as plain base64
+    // mishandles the '-' and '_' characters.
+    const decoded = Buffer.from(parts[1], 'base64url').toString('utf-8');
     return JSON.parse(decoded);
   } catch {
     return null;
@@ -66,7 +70,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Look up pending OIDC state
     const pendingSignIn = await db
       .selectFrom('pending_oidc_signin')
-      .select(['tenant_id', 'expires_at'])
+      .select(['tenant_id', 'expires_at', 'nonce'])
       .where('state', '=', state)
       .executeTakeFirst();
 
@@ -81,6 +85,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     const tenantId = pendingSignIn.tenant_id;
+
+    // CSRF / session-fixation defense: the state must match the cookie the login
+    // route set in THIS browser. A state+code pair captured elsewhere and
+    // replayed into a victim's browser carries no matching cookie, so it is
+    // rejected here before any session is minted. The cookie is cleared on the
+    // response below regardless of outcome.
+    const stateCookie = request.cookies.get(`oidc_state_${tenantId}`)?.value;
+    if (!stateCookie || stateCookie !== state) {
+      await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
+      logger.warn('OIDC state cookie missing or mismatched; rejecting callback', {
+        component: 'auth/oidc',
+        tenantId,
+      });
+      const response = NextResponse.json({ error: 'Invalid state' }, { status: 400 });
+      response.cookies.delete(`oidc_state_${tenantId}`);
+      return response;
+    }
 
     // Get OIDC config
     const oidcResult = await getTenantOidc(tenantId);
@@ -99,7 +120,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     console.log(`[OIDC] Fetching discovery from: ${discoveryUrl}`);
 
     try {
-      const discoveryResponse = await fetch(discoveryUrl);
+      // SSRF-guarded like the login route: constrain the issuer-derived fetch
+      // to a public https target.
+      const discoveryResponse = await safeFetch(discoveryUrl);
       if (discoveryResponse.ok) {
         const discovery = await discoveryResponse.json();
         tokenEndpoint = discovery.token_endpoint;
@@ -130,6 +153,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const origin = originResult.val;
+
+    // The token endpoint comes from the discovery document (or the issuer
+    // fallback) and this request carries the client secret, so it is
+    // SSRF-guarded too: the secret must not be POSTed to an internal address a
+    // hostile discovery document named.
+    try {
+      await assertPublicHttpsUrl(tokenEndpoint);
+    } catch (tokenUrlError) {
+      if (tokenUrlError instanceof BlockedUrlError) {
+        logger.error('Token endpoint is not an allowed URL: {detail}', {
+          component: 'auth/oidc',
+          tenantId,
+          detail: tokenUrlError.message,
+        });
+        return NextResponse.json({ error: 'Invalid token endpoint' }, { status: 400 });
+      }
+      throw tokenUrlError;
+    }
+
     const tokenResponse = await fetch(tokenEndpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -168,6 +210,28 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         { error: 'Identity provider did not return a subject claim' },
         { status: 400 }
       );
+    }
+
+    // Validate the id_token's claims. The token is fetched over the TLS
+    // back-channel directly from the token endpoint, so signature verification
+    // is defense-in-depth (RFC 8725 permits omitting it for back-channel
+    // tokens); nonce, aud, iss, and exp are checked here because they catch
+    // replay and token-substitution that the back-channel alone does not.
+    const claimError = verifyIdTokenClaims(decoded, {
+      issuer: oidc.issuer,
+      clientId: oidc.clientId,
+      nonce: pendingSignIn.nonce,
+    });
+    if (claimError) {
+      await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
+      logger.error('id_token claim validation failed: {detail}', {
+        component: 'auth/oidc',
+        tenantId,
+        detail: claimError,
+      });
+      const response = NextResponse.json({ error: 'Invalid id_token' }, { status: 400 });
+      response.cookies.delete(`oidc_state_${tenantId}`);
+      return response;
     }
 
     // Record the identity spine entry (subject → email) while the id_token
@@ -256,6 +320,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     response.cookies.delete(`oidc_token_${tenantId}`);
     response.cookies.delete(`oidc_roles_${tenantId}`);
     response.cookies.delete(`oidc_redirect_${tenantId}`);
+    // The one-time CSRF binding cookie has done its job.
+    response.cookies.delete(`oidc_state_${tenantId}`);
 
     return response;
   } catch (error) {

@@ -2,7 +2,7 @@ import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import { HttpAdapter, type E2ESigningKeysJwk } from '@campfhir/bored-logs/adapters/http';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { getDatabase } from '@renkei/db';
-import { resolveLogCipher } from './log-encryption';
+import { requireLogCipher, type LogCipher } from './log-encryption';
 import packageJson from '../package.json';
 
 /**
@@ -50,18 +50,23 @@ export async function attachPersistentLogging(): Promise<void> {
     });
     return;
   }
-  const cipherResult = resolveLogCipher();
-  if (cipherResult.state === 'invalid') {
-    logger.error('LOG_ENCRYPTION_KEY is malformed; secure log attributes stored UNENCRYPTED', {
-      component: 'worker-agents/logging',
-      error: cipherResult.error,
-    });
+  // Encryption is mandatory on the direct-Postgres path: a missing or malformed
+  // key is fatal, never a silent plaintext downgrade, so crash rather than write
+  // secure() bodies in the clear.
+  let cipher: LogCipher;
+  try {
+    cipher = requireLogCipher();
+  } catch (error) {
+    console.error(
+      `FATAL [worker-agents/logging]: ${error instanceof Error ? error.message : String(error)}`
+    );
+    process.exit(1);
   }
-  const cipher = cipherResult.state === 'on' ? cipherResult.cipher : undefined;
   const adapter = new PostgresAdapter({
     db: dbResult.val,
     level: process.env.LOG_DB_LEVEL ?? 'info',
-    ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
+    encrypt: cipher.encrypt,
+    decrypt: cipher.decrypt,
   });
   try {
     await adapter.migrate();

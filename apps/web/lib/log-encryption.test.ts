@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { resolveLogCipher } from './log-encryption';
+import { resolveLogCipher, requireLogCipher } from './log-encryption';
 
 describe('resolveLogCipher', () => {
   const key = randomBytes(32).toString('base64');
@@ -31,5 +31,27 @@ describe('resolveLogCipher', () => {
     if (a.state !== 'on' || b.state !== 'on') throw new Error('expected ciphers on');
     const stored = a.cipher.encrypt('payload').toString('base64url');
     expect(() => b.cipher.decrypt(stored)).toThrow(/decryption failed/);
+  });
+});
+
+describe('requireLogCipher', () => {
+  const key = randomBytes(32).toString('base64');
+
+  it('returns a working cipher for a valid key', () => {
+    const cipher = requireLogCipher(key);
+    const stored = cipher.encrypt('payload').toString('base64url');
+    expect(cipher.decrypt(stored)).toBe('payload');
+  });
+
+  it('throws when the key is unset — encryption is mandatory, no silent plaintext', () => {
+    expect(() => requireLogCipher(undefined)).toThrow(/required but unavailable/);
+    expect(() => requireLogCipher('')).toThrow(/required but unavailable/);
+  });
+
+  it('throws when the key is malformed', () => {
+    expect(() => requireLogCipher('not-a-key')).toThrow(/required but unavailable/);
+    expect(() => requireLogCipher(randomBytes(16).toString('base64'))).toThrow(
+      /required but unavailable/
+    );
   });
 });

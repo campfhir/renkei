@@ -6,8 +6,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql } from 'kysely';
-import { closeDatabase, getDatabase } from '@renkei/db';
+import { sql, type Kysely } from 'kysely';
+import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { InMemoryQueue } from '@renkei/queue';
 import type { AgentStepsDoc } from '@renkei/agents';
 import { fanOutAgentEvents } from '@renkei/agents/event-fanout';
@@ -17,11 +17,11 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 maybe('agent event fan-out', () => {
   jest.setTimeout(20_000);
 
-  const db = (() => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('database unavailable');
-    return result.val;
-  })();
+  // Acquired in beforeAll, not at describe-collection time: describe.skip still
+  // runs its callback to register tests, so acquiring the database here (when
+  // this suite is skipped for lack of DATABASE_URL) would throw at collection
+  // and fail the whole file instead of skipping it.
+  let db: Kysely<DB>;
 
   const tenantId = randomUUID();
   const owner = `owner-${tenantId.slice(0, 8)}`;
@@ -42,6 +42,9 @@ maybe('agent event fan-out', () => {
   };
 
   beforeAll(async () => {
+    const result = getDatabase();
+    if (!result.ok) throw new Error('database unavailable');
+    db = result.val;
     await db
       .insertInto('tenants')
       .values({ id: tenantId, slug: `fanout-test-${tenantId.slice(0, 8)}` })
