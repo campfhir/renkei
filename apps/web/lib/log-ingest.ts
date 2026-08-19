@@ -9,6 +9,7 @@ import type { Kysely } from 'kysely';
 import type { LoggerTables } from '@campfhir/bored-logs/adapters/psql';
 import { getDatabase } from '@renkei/db';
 import { logger } from '@/lib/logger';
+import type { LogCipher } from '@/lib/log-encryption';
 
 /**
  * The server half of e2e-encrypted log shipping: other applications (the
@@ -62,22 +63,27 @@ async function build(): Promise<LogShippingHandlers | null> {
   // `docker logs`. ingest() preserves the shipper's application/version, so
   // this logger's own identity never stamps a shipped record.
   // Shipped secure() values arrive tagged and encrypt at rest here — the
-  // shipper needs no key material (worker payload bodies included).
-  const { resolveLogCipher } = await import('@/lib/log-encryption');
-  const cipherResult = resolveLogCipher();
-  if (cipherResult.state === 'invalid') {
-    logger.error('LOG_ENCRYPTION_KEY is malformed; shipped secure attributes stored UNENCRYPTED', {
-      component: 'web/log-ingest',
-    });
+  // shipper needs no key material (worker payload bodies included). Encryption
+  // is mandatory: a missing or malformed key is fatal, never a silent plaintext
+  // downgrade, so the process crashes rather than persisting bodies in the clear.
+  const { requireLogCipher } = await import('@/lib/log-encryption');
+  let cipher: LogCipher;
+  try {
+    cipher = requireLogCipher();
+  } catch (error) {
+    console.error(
+      `FATAL [web/log-ingest]: ${error instanceof Error ? error.message : String(error)}`
+    );
+    process.exit(1);
   }
-  const cipher = cipherResult.state === 'on' ? cipherResult.cipher : undefined;
 
   const sink = createLogger({});
   sink.addAdapter(
     new PostgresAdapter({
       db: dbResult.val,
       level: process.env.LOG_DB_LEVEL ?? 'info',
-      ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
+      encrypt: cipher.encrypt,
+      decrypt: cipher.decrypt,
     })
   );
 

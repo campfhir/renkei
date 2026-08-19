@@ -1,5 +1,6 @@
 import { logger } from '@/lib/logger';
 import { getDatabase } from '@renkei/db';
+import type { LogCipher } from '@/lib/log-encryption';
 
 // register() re-runs on dev recompiles, and the logger it decorates is a
 // process-wide singleton — without this guard each recompile would attach
@@ -29,25 +30,25 @@ export async function register() {
     }
 
     // secure()-marked attributes (failed-request payloads) encrypt at rest
-    // when LOG_ENCRYPTION_KEY is set. A malformed key is reported loudly but
-    // does not stop logging — availability over confidentiality, flagged.
-    const { resolveLogCipher } = await import('@/lib/log-encryption');
-    const cipherResult = resolveLogCipher();
-    if (cipherResult.state === 'invalid') {
-      logger.error(
-        'LOG_ENCRYPTION_KEY is malformed; secure log attributes will be stored UNENCRYPTED: {error}',
-        {
-          component: 'web/instrumentation',
-          error: cipherResult.error,
-        }
+    // with LOG_ENCRYPTION_KEY. Encryption is mandatory: a missing or malformed
+    // key is a fatal misconfiguration, not a silent downgrade to plaintext, so
+    // we crash the process rather than write sensitive bodies in the clear.
+    const { requireLogCipher } = await import('@/lib/log-encryption');
+    let cipher: LogCipher;
+    try {
+      cipher = requireLogCipher();
+    } catch (error) {
+      console.error(
+        `FATAL [web/instrumentation]: ${error instanceof Error ? error.message : String(error)}`
       );
+      process.exit(1);
     }
-    const cipher = cipherResult.state === 'on' ? cipherResult.cipher : undefined;
 
     const adapter = new PostgresAdapter({
       db: dbResult.val,
       level: process.env.LOG_DB_LEVEL ?? 'info',
-      ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
+      encrypt: cipher.encrypt,
+      decrypt: cipher.decrypt,
       onWarning(w) {
         if (w.type === 'attr_keys_truncated') {
           logger.warn('attribute keys truncated', { component: 'logging/adapter' });
