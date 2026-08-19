@@ -57,8 +57,24 @@ RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 # pnpm's os/cpu fields mean only the matching platform binary is installed.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY --parents apps/*/package.json packages/*/package.json ./
+# next declares @playwright/test as an OPTIONAL peer dependency (its opt-in
+# experimental/testmode/playwright integration, which nothing here uses —
+# next's own server bootstrap never imports it). Because apps/web also
+# carries @playwright/test as a real devDependency (for the e2e/ screenshot
+# rig), pnpm's peer auto-install satisfies that optional peer from it and
+# bakes the resolution into next's locked identity in pnpm-lock.yaml — so
+# `--prod` no longer excludes it: installing "next" now means installing
+# whatever peer-resolved variant is locked, dev split or not. The three
+# playwright packages that drags in (playwright, playwright-core,
+# @playwright/test — trace viewer, recorder, AI agent skill files, no
+# browser binaries) are dead weight in a production image; strip them
+# after install rather than fight pnpm's peer resolution.
 RUN pnpm install --frozen-lockfile --prod --filter renkei... && \
-    rm -rf /root/.pnpm-store /root/.npm
+    rm -rf /root/.pnpm-store /root/.npm && \
+    rm -rf node_modules/.pnpm/playwright@* node_modules/.pnpm/playwright-core@* \
+      node_modules/.pnpm/@playwright+test@* \
+      node_modules/.pnpm/node_modules/playwright node_modules/.pnpm/node_modules/playwright-core \
+      node_modules/.pnpm/node_modules/@playwright
 
 # The workspace packages ship TypeScript source (compiled into the build via
 # transpilePackages); the workspace links still need the packages present, and

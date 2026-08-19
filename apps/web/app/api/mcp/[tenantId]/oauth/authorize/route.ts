@@ -4,6 +4,7 @@ import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
+import { getOrigin } from '@/lib/get-origin';
 
 /**
  * Tenant-scoped OAuth 2.0 Authorization endpoint (RFC 6749 section 3.1)
@@ -92,7 +93,14 @@ export async function GET(
     // is a browser redirect flow, so bounce through login and come back.
     const session = await getSessionFromRequest(request, tenantId);
     if (!session) {
-      const loginUrl = new URL('/api/auth/oidc/login', request.nextUrl.origin);
+      // request.nextUrl.origin is the internal address behind a reverse
+      // proxy (e.g. localhost:3000), unreachable for the user's browser;
+      // getOrigin resolves the public one.
+      const originResult = await getOrigin(request);
+      if (!originResult.ok) {
+        return NextResponse.json({ error: 'server_error' }, { status: 500 });
+      }
+      const loginUrl = new URL('/api/auth/oidc/login', originResult.val);
       loginUrl.searchParams.set('tenantId', tenantId);
       loginUrl.searchParams.set('redirect', `${request.nextUrl.pathname}${request.nextUrl.search}`);
       return NextResponse.redirect(loginUrl);
