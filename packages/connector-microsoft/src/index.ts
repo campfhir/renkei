@@ -47,6 +47,7 @@ export {
   type GraphBatchOptions,
 } from './mail-batch';
 export { buildMailQueryPath, type MailSearchFilters, type MailQueryOptions } from './mail-filter';
+export { graphUploadViaSession, UPLOAD_SESSION_CHUNK_BYTES } from './upload-session';
 export {
   microsoftRefId,
   ownerOfMicrosoftRefId,

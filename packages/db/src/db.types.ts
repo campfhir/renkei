@@ -371,6 +371,24 @@ export interface MailBulkJobs {
   updated_at: Generated<Timestamp>;
 }
 
+export interface UploadSlots {
+  account_id: string;
+  completed_at: Timestamp | null;
+  content_type: string | null;
+  created_at: Generated<Timestamp>;
+  destination: Json;
+  expires_at: Timestamp;
+  filename: string;
+  id: string;
+  kind: string;
+  max_bytes: number;
+  result: string | null;
+  status: Generated<string>;
+  subject: string;
+  tenant_id: string;
+  token_hash: string;
+}
+
 export interface KnowledgeChunks {
   content: string;
   created_at: Generated<Timestamp>;
@@ -681,5 +699,6 @@ export interface DB {
   tenant_settings: TenantSettings;
   tenants: Tenants;
   tool_calls: ToolCalls;
+  upload_slots: UploadSlots;
   webhook_subscriptions: WebhookSubscriptions;
 }

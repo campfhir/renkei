@@ -51,10 +51,16 @@ export class MicrosoftAdapter implements ProviderAdapter {
             client_secret: this.clientSecret,
             refresh_token: refreshToken,
           }),
+          // Bounded like every connector client: a stalled token endpoint
+          // must not hang the caller's whole request path.
+          signal: AbortSignal.timeout(15_000),
         }
       );
-    } catch {
-      return err('REFRESH_FAILED' as const, { message: 'token endpoint unreachable' });
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      return err('REFRESH_FAILED' as const, {
+        message: timedOut ? 'token endpoint timed out after 15000ms' : 'token endpoint unreachable',
+      });
     }
 
     if (!response.ok) {
