@@ -31,6 +31,8 @@ import { createAgentRunFailedHandler } from './handlers/agent-run-failed';
 import { createMailBulkJobHandler } from './handlers/mail-bulk-jobs';
 import { createMailJobsSweep, MAIL_JOBS_SWEEP_INTERVAL_MS } from './health/mail-jobs';
 import { createUploadSlotsSweep, UPLOAD_SLOTS_SWEEP_INTERVAL_MS } from './health/upload-slots';
+import { createAgentFiringsSweep, AGENT_FIRINGS_SWEEP_INTERVAL_MS } from './health/agent-firings';
+import { withSweepLock } from './health/sweep-lock';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
 import {
@@ -91,23 +93,27 @@ async function main(): Promise<void> {
   // comment for why. Stopped only once event processing has wound down, so
   // "stopped" in the log means everything actually stopped.
   const stopSweeps = [
+    // The provider-facing sweeps are list-then-create against external
+    // systems, so with multiple worker replicas they run under an advisory
+    // lock — one runner per pass, or duplicate webhook registrations
+    // double-deliver every event (see sweep-lock.ts).
     schedulePeriodicSweep(
       'webhook health',
       'webex/webhook-health',
       WEBHOOK_HEALTH_INTERVAL_MS,
-      sweepWebexWebhooks
+      withSweepLock('webex-webhooks', sweepWebexWebhooks)
     ),
     schedulePeriodicSweep(
       'microsoft subscription',
       'microsoft/subscription-health',
       MICROSOFT_SUBSCRIPTION_INTERVAL_MS,
-      sweepMicrosoftSubscriptions
+      withSweepLock('microsoft-subscriptions', sweepMicrosoftSubscriptions)
     ),
     schedulePeriodicSweep(
       'content watch',
       'content/watch-sweep',
       CONTENT_WATCH_INTERVAL_MS,
-      sweepContentWatches
+      withSweepLock('content-watches', sweepContentWatches)
     ),
     ...(() => {
       // Row hygiene: fail stalled mail runs, expire/prune upload slots.
@@ -125,6 +131,12 @@ async function main(): Promise<void> {
               'uploadslots/sweep',
               UPLOAD_SLOTS_SWEEP_INTERVAL_MS,
               createUploadSlotsSweep(dbResult.val)
+            ),
+            schedulePeriodicSweep(
+              'agent trigger firings',
+              'agentfirings/sweep',
+              AGENT_FIRINGS_SWEEP_INTERVAL_MS,
+              createAgentFiringsSweep(dbResult.val)
             ),
           ]
         : [];
