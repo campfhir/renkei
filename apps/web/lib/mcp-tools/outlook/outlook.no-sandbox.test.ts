@@ -115,6 +115,8 @@ const TOOLS = [
   'outlook_create_event',
   'outlook_find_meeting_times',
   'outlook_respond_event',
+  'outlook_cancel_event_preview',
+  'outlook_cancel_event_confirm',
 ];
 
 describe('every Outlook tool, against a denied credential', () => {
