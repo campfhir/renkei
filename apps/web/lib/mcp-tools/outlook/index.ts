@@ -38,6 +38,7 @@ import {
   previewToolMeta,
 } from '../widgets';
 import type { GraphAuth } from '../graph/graph-auth';
+import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
 
 export const OUTLOOK_MCP_CONNECTOR = 'microsoft';
 
@@ -71,15 +72,23 @@ async function graphGet(
         Prefer: 'outlook.body-content-type="text"',
         ...extraHeaders,
       },
+      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     });
-  } catch {
+  } catch (error) {
+    const timedOut = isTimeoutError(error);
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
       tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
+      timedOut,
     });
-    return { ok: false, error: 'Could not reach graph.microsoft.com' };
+    return {
+      ok: false,
+      error: timedOut
+        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
+        : 'Could not reach graph.microsoft.com',
+    };
   }
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
@@ -123,15 +132,23 @@ async function graphPost(
         'Content-Type': 'application/json',
       },
       body: requestBody,
+      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     });
-  } catch {
+  } catch (error) {
+    const timedOut = isTimeoutError(error);
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
       tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
+      timedOut,
     });
-    return { ok: false, error: 'Could not reach graph.microsoft.com' };
+    return {
+      ok: false,
+      error: timedOut
+        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
+        : 'Could not reach graph.microsoft.com',
+    };
   }
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
@@ -177,15 +194,23 @@ async function graphPatch(
         'Content-Type': 'application/json',
       },
       body: requestBody,
+      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     });
-  } catch {
+  } catch (error) {
+    const timedOut = isTimeoutError(error);
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
       tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
+      timedOut,
     });
-    return { ok: false, error: 'Could not reach graph.microsoft.com' };
+    return {
+      ok: false,
+      error: timedOut
+        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
+        : 'Could not reach graph.microsoft.com',
+    };
   }
   if (!response.ok) {
     const responseBody = await response.text().catch(() => '');
@@ -214,6 +239,7 @@ async function graphDelete(
     const response = await fetch(`${GRAPH_BASE_URL}${pathAndQuery}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) {
       logger.warn('Could not clean up an orphaned draft', {
@@ -245,15 +271,23 @@ async function graphDeleteChecked(
     response = await fetch(`${GRAPH_BASE_URL}${pathAndQuery}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${accessToken}` },
+      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     });
-  } catch {
+  } catch (error) {
+    const timedOut = isTimeoutError(error);
     logger.warn('Graph API unreachable', {
       component: 'outlook/fetch',
       tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
+      timedOut,
     });
-    return { ok: false, error: 'Could not reach graph.microsoft.com' };
+    return {
+      ok: false,
+      error: timedOut
+        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
+        : 'Could not reach graph.microsoft.com',
+    };
   }
   if (!response.ok) {
     const responseBody = await response.text().catch(() => '');

@@ -100,6 +100,33 @@ describe('jira_add_attachment', () => {
     expect(options.body).toBeInstanceOf(FormData);
   });
 
+  it('strips a data: URL prefix before uploading', async () => {
+    jiraFetchMock.mockResolvedValue(new Response('[]', { status: 200 }));
+
+    const handler = await addAttachmentHandler(1024);
+    const result = await handler({
+      issueKey: 'PROJ-1',
+      filename: 'pixel.png',
+      contentBase64: `data:image/png;base64,${Buffer.from('hello').toString('base64')}`,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(jiraFetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects invalid base64 without calling Jira', async () => {
+    const handler = await addAttachmentHandler(1024);
+    const result = await handler({
+      issueKey: 'PROJ-1',
+      filename: 'note.txt',
+      contentBase64: 'not@base64!content',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('not valid base64');
+    expect(jiraFetchMock).not.toHaveBeenCalled();
+  });
+
   it('surfaces auth.fetch failures as tool errors', async () => {
     jiraFetchMock.mockRejectedValue(new Error('Jira API 403: attachments are disabled'));
 

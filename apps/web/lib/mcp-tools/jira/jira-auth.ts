@@ -117,6 +117,15 @@ export function granularJiraScopes(toolName: string, readOnly: boolean): string[
   if (toolName === 'jira_list_projects') {
     return ['read:project:jira', 'read:project.property:jira'];
   }
+  // Atlassian's attachment endpoint wants its own granular scope
+  // (write:attachment:jira, docs/atlassian-granular-scopes.md), not just
+  // write:issue:jira. It rides the same jira-write bundle
+  // (lib/atlassian-scopes.ts), so no grant that can write issues lacks it —
+  // gating on it hides the tool only from grants that would 401 anyway,
+  // the jira_list_projects rule.
+  if (toolName === 'jira_add_attachment') {
+    return ['read:issue:jira', 'write:issue:jira', 'write:attachment:jira'];
+  }
   const deleteScope = DELETE_TOOL_SCOPES[toolName];
   if (deleteScope) return ['read:issue:jira', deleteScope];
   return readOnly ? ['read:issue:jira'] : ['read:issue:jira', 'write:issue:jira'];

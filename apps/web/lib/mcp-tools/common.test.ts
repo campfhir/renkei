@@ -109,3 +109,23 @@ describe('jiraFetch FormData bodies', () => {
     expect(headersOf(fetchMock.mock.calls[0])['Content-Type']).toBe('application/json');
   });
 });
+
+describe('jiraFetch timeouts', () => {
+  it('turns a stalled request into a JiraApiError 504 instead of hanging', async () => {
+    jest
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValue(Object.assign(new Error('aborted'), { name: 'TimeoutError' }));
+
+    await expect(jiraFetch('https://example.test/rest/api/3/myself', 'token-t')).rejects.toThrow(
+      /timed out after \d+ms/
+    );
+  });
+
+  it('reports an unreachable API as a JiraApiError instead of a raw TypeError', async () => {
+    jest.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'));
+
+    await expect(jiraFetch('https://example.test/rest/api/3/myself', 'token-u')).rejects.toThrow(
+      'Could not reach the Jira API'
+    );
+  });
+});

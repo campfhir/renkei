@@ -10,6 +10,9 @@ import type { MCPToolContext } from '../common';
 import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
+import { base64LengthFor, decodeBase64Attachment } from '../fetch-guard';
+
+const DEFAULT_MAX_ATTACHMENT_BYTES = 20_971_520; // 20MB — matches jira_add_attachment
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
@@ -449,7 +452,14 @@ export async function registerRequestDetailsTools(
       inputSchema: z.object({
         issueKey: z.string().describe('Request key, e.g. SUP-1'),
         filename: z.string().describe('File name'),
-        contentBase64: z.string().describe('File content as base64'),
+        contentBase64: z
+          .string()
+          .min(1)
+          .max(base64LengthFor(context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES))
+          .describe(
+            "The file's bytes, base64-encoded (a data:*;base64, URL prefix is stripped " +
+              'automatically).'
+          ),
       }),
     },
     async (args: Record<string, any>) => {
@@ -495,7 +505,25 @@ export async function registerRequestDetailsTools(
           };
         }
 
-        const bytes = Buffer.from(contentBase64 as string, 'base64');
+        const decoded = decodeBase64Attachment(String(contentBase64));
+        if (!decoded.ok) {
+          return { content: [{ type: 'text' as const, text: decoded.error }], isError: true };
+        }
+        const bytes = decoded.buffer;
+        // Same org-configurable ceiling as jira_add_attachment — this tool
+        // previously had no cap at all.
+        const maxBytes = context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
+        if (bytes.byteLength > maxBytes) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Attachment is ${bytes.byteLength} bytes; the limit is ${maxBytes} bytes (MAX_ATTACHMENT_BYTES)`,
+              },
+            ],
+            isError: true,
+          };
+        }
         const formData = new FormData();
         formData.append('file', new Blob([bytes]), filename as string);
 
