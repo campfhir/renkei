@@ -20,7 +20,7 @@ export function sharepointScopeFor(toolName: string): string[] {
     case 'sharepoint_update_page':
     case 'sharepoint_publish_page':
     case 'sharepoint_delete_page':
-    case 'sharepoint_upload_document':
+    case 'sharepoint_request_document_upload':
     case 'sharepoint_rename_document':
     case 'sharepoint_move_document':
     case 'sharepoint_copy_document':

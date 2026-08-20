@@ -334,10 +334,10 @@ server {
   ssl_ciphers HIGH:!aNULL:!MD5;
   ssl_prefer_server_ciphers on;
 
-  # Attachment tool calls carry base64 file content in the JSON-RPC body:
-  # the default 20 MB attachment cap inflates to ~27 MB on the wire. Without
-  # this, nginx's 1 MB default rejects any file over ~750 KB with an HTML
-  # 413 the MCP client never surfaces — it just looks like a hang.
+  # /api/upload/{slotId} receives RAW file bytes (the out-of-band upload
+  # endpoint the *_request_*_upload tools mint) — the default 20 MB
+  # attachment cap needs headroom here. Without this, nginx's 1 MB default
+  # rejects any real file with an HTML 413.
   client_max_body_size 32m;
   client_body_timeout 60s;
 
@@ -369,19 +369,39 @@ server {
 }
 ```
 
-### Troubleshooting: attachment uploads hang or fail
+### The out-of-band upload endpoint
 
-If `jira_add_attachment` (or any upload tool) appears to hang or dies with a
-413:
+File uploads never travel inside a tool call. A `*_request_*_upload` tool
+(`jira_request_attachment_upload`, `jsm_request_attachment_upload`,
+`confluence_request_attachment_upload`, `onedrive_request_document_upload`,
+`sharepoint_request_document_upload`,
+`outlook_request_draft_attachment_upload`) mints a single-use slot that
+expires in 15 minutes, and the client sends the RAW bytes to
+`POST /api/upload/{slotId}` with the opaque bearer token in the
+`Authorization` header — from a shell via `curl --data-binary`, or through
+the browser page `GET /api/upload/{slotId}` serves (the token rides the URL
+fragment, so it never appears in server logs). Only the SHA-256 of the token
+is stored; the claim is atomic, so a token works exactly once.
+`check_file_upload` reports the outcome. `PUBLIC_BASE_URL` must be set (or
+the request's origin is used) for the minted URLs to be reachable.
 
-- Check `client_max_body_size` — nginx's default is 1 MB, which rejects any
-  file over ~750 KB once base64 inflation (~1.33×) is counted. The rejection
-  is an HTML 413 the MCP stream cannot represent, so clients see a stall.
+### Troubleshooting: uploads fail or tool calls "hang"
+
+- A tool call that stalls at EVERY file size, while small probes answer
+  instantly, is almost never the server: it is the LLM client generating
+  file content as base64 tool-call output tokens (a 1 MB file is hundreds of
+  thousands of output tokens — the request never finishes streaming, and the
+  server never sees it). That is why the base64 upload tools were removed;
+  point the model at the `*_request_*_upload` flow instead.
+- A 413 from `POST /api/upload/{slotId}` before the size limit you expect:
+  check `client_max_body_size` (nginx's default is 1 MB).
 - Check `proxy_read_timeout`/`proxy_send_timeout` cover the app's upload
   budget (120s).
+- A 410 from the upload endpoint means the slot expired (15 minutes), was
+  already used, or the token is wrong — mint a fresh one.
 - The app itself aborts stalled upstream calls at 15s (reads) / 120s
-  (uploads) and reports a timeout error — if a tool call still never
-  returns, the layer eating it is in front of the app.
+  (uploads) and reports a timeout error — if a request to the app still
+  never returns, the layer eating it is in front of the app.
 
 ## SSL/TLS with Let's Encrypt
 

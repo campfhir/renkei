@@ -22,6 +22,8 @@ const EXACT: Record<string, string> = {
   jira_connect: 'jira',
   analyze_transcript: 'jira',
   search_knowledge: 'knowledge',
+  // Cross-connector upload-slot status; grouped with Jira like whoami.
+  check_file_upload: 'jira',
   // The orchestrator and the two Jira periods it loops over.
   daily_summary: 'jira',
   sprint_summary: 'jira',

@@ -118,25 +118,6 @@ export const projectKeySchema = z
   .string()
   .regex(/^[A-Z][A-Z0-9_]*$/, 'must be an uppercase project key, e.g. SCRUM');
 
-export const attachmentFields = {
-  filename: z
-    .string()
-    .min(1)
-    .max(255)
-    .describe('Name to store the file under. A path is reduced to its last segment.'),
-  contentBase64: z
-    .string()
-    .min(1)
-    .describe(
-      "The file's bytes, base64-encoded. A `data:*;base64,` URL prefix is stripped " +
-        'automatically; anything else must be bare, valid base64.'
-    ),
-  contentType: z
-    .string()
-    .optional()
-    .describe('MIME type. Inferred from the file extension when omitted.'),
-};
-
 export interface MCPToolResult {
   type: 'text' | 'image' | 'resource';
   text?: string;

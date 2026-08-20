@@ -523,7 +523,12 @@ const handler = async (
             'When a request covers many items, prefer a bulk read tool, one search with the ' +
             'right fields, or outlook_start_bulk_mail_job (an async job — poll ' +
             'outlook_get_bulk_mail_job rather than resubmitting) over calling a single-item ' +
-            'tool once per item.',
+            'tool once per item. Never generate file content as base64 tool arguments: to ' +
+            'upload a file, call the destination\'s *_request_*_upload tool, send the raw ' +
+            'bytes to the returned short-lived endpoint (curl with the Authorization header, ' +
+            'or the browser link), then confirm with check_file_upload; to attach a file ' +
+            'that already lives in Microsoft 365 to a Jira issue, use jira_add_attachment ' +
+            'with a driveItem or outlookAttachment source.',
           verboseLogs: false,
         }
       );

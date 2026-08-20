@@ -23,7 +23,7 @@ export function onedriveScopeFor(toolName: string): string[] {
     case 'onedrive_list_shared_with_me':
       return ['Files.Read.All'];
 
-    case 'onedrive_upload_document':
+    case 'onedrive_request_document_upload':
     case 'onedrive_create_folder':
     case 'onedrive_rename_document':
     case 'onedrive_move_document':

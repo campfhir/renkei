@@ -106,6 +106,7 @@ const TOOLS = [
   'outlook_move_message',
   'outlook_start_bulk_mail_job',
   'outlook_get_bulk_mail_job',
+  'outlook_request_draft_attachment_upload',
   'outlook_create_mail_folder',
   'outlook_rename_mail_folder',
   'outlook_delete_mail_folder',

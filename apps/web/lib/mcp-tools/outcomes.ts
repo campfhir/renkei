@@ -223,14 +223,6 @@ export const CURATED_OUTCOMES: Record<string, ToolOutcomes> = {
       retriable: true,
     },
   ]),
-  sharepoint_upload_document: curated('The document was uploaded', [
-    {
-      code: 'file-too-large',
-      label: 'The file was too large',
-      description: 'The upload exceeded the size the site accepts.',
-      retriable: false,
-    },
-  ]),
   jsm_create_request: curated('The request was created', [
     {
       code: 'request-type-invalid',

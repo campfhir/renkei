@@ -10,7 +10,7 @@ import type { MCPToolContext } from '../common';
 import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
-import { base64LengthFor, decodeBase64Attachment } from '../fetch-guard';
+import { createUploadSlot } from '../upload-slots';
 
 const DEFAULT_MAX_ATTACHMENT_BYTES = 20_971_520; // 20MB — matches jira_add_attachment
 
@@ -442,140 +442,54 @@ export async function registerRequestDetailsTools(
     }
   );
 
-  // jsm_add_request_attachment
+  // jsm_request_attachment_upload — the out-of-band byte path; JSM tool
+  // arguments must never carry file content (model-generated base64 at any
+  // real size reads as a hang).
   server.registerTool(
-    'jsm_add_request_attachment',
+    'jsm_request_attachment_upload',
     {
-      title: 'JSM · Act — Attach a file to a customer request',
-      description: 'Upload a file attachment to a request.',
+      title: 'JSM · Act — Request an upload endpoint for a request attachment',
+      description:
+        'Attach a NEW file to a customer request — without base64. Returns a short-lived ' +
+        'single-use endpoint; send the raw bytes there (curl with the Authorization header, ' +
+        'or the returned browser link). Never generate file content as a tool argument.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Request key, e.g. SUP-1'),
-        filename: z.string().describe('File name'),
-        contentBase64: z
-          .string()
-          .min(1)
-          .max(base64LengthFor(context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES))
-          .describe(
-            "The file's bytes, base64-encoded (a data:*;base64, URL prefix is stripped " +
-              'automatically).'
-          ),
+        filename: z.string().min(1).describe('File name'),
+        contentType: z.string().describe('MIME type (optional)').optional(),
       }),
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_add_request_attachment invoked', {
+      logger.info('jsm_request_attachment_upload invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
         displayName,
       });
-      try {
-        const { issueKey, filename, contentBase64 } = args;
-
-        if (!issueKey || !filename || !contentBase64) {
-          return {
-            content: [
-              { type: 'text' as const, text: 'issueKey, filename, and contentBase64 are required' },
-            ],
-            isError: true,
-          };
-        }
-
-        // The servicedeskapi attachment flow is two-legged: multipart upload
-        // to the SERVICE DESK's attachTemporaryFile, then attach the returned
-        // temporary ids to the request as JSON (AttachmentCreateDTO:
-        // temporaryAttachmentIds + public). The old code POSTed multipart
-        // straight at the request — a shape this API never accepted — and
-        // bypassed jiraFetch, so the failures never even reached the logs.
-        const reqResponse = await auth.fetch(
-          serviceDeskScopes('jsm_add_request_attachment', false),
-          `/rest/servicedeskapi/request/${encodeURIComponent(issueKey as string)}`
-        );
-        if (!reqResponse.ok) return errText(await describeJsmAuthFailure(reqResponse));
-        const reqBody = (await reqResponse.json()) as any;
-        const serviceDeskId =
-          typeof reqBody?.serviceDeskId === 'string' ? reqBody.serviceDeskId : '';
-        if (!serviceDeskId) {
-          return {
-            content: [
-              { type: 'text' as const, text: `Could not resolve the service desk of ${issueKey}` },
-            ],
-            isError: true,
-          };
-        }
-
-        const decoded = decodeBase64Attachment(String(contentBase64));
-        if (!decoded.ok) {
-          return { content: [{ type: 'text' as const, text: decoded.error }], isError: true };
-        }
-        const bytes = decoded.buffer;
-        // Same org-configurable ceiling as jira_add_attachment — this tool
-        // previously had no cap at all.
-        const maxBytes = context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
-        if (bytes.byteLength > maxBytes) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `Attachment is ${bytes.byteLength} bytes; the limit is ${maxBytes} bytes (MAX_ATTACHMENT_BYTES)`,
-              },
-            ],
-            isError: true,
-          };
-        }
-        const formData = new FormData();
-        formData.append('file', new Blob([bytes]), filename as string);
-
-        const upload = await auth.fetch(
-          serviceDeskScopes('jsm_add_request_attachment', false),
-          `/rest/servicedeskapi/servicedesk/${serviceDeskId}/attachTemporaryFile`,
-          {
-            method: 'POST',
-            body: formData,
-            // Required for multipart uploads to Atlassian; without it 404/403.
-            headers: { 'X-Atlassian-Token': 'no-check' },
-          }
-        );
-        if (!upload.ok) return errText(await describeJsmAuthFailure(upload));
-        const uploaded = (await upload.json()) as any;
-        const temporaryAttachmentIds = Array.isArray(uploaded?.temporaryAttachments)
-          ? uploaded.temporaryAttachments
-              .map((t: any) =>
-                typeof t?.temporaryAttachmentId === 'string' ? t.temporaryAttachmentId : ''
-              )
-              .filter(Boolean)
-          : [];
-        if (temporaryAttachmentIds.length === 0) {
-          return {
-            content: [
-              { type: 'text' as const, text: 'Upload succeeded but returned no attachment id' },
-            ],
-            isError: true,
-          };
-        }
-
-        const attachResponse = await auth.fetch(
-          serviceDeskScopes('jsm_add_request_attachment', false),
-          `/rest/servicedeskapi/request/${encodeURIComponent(issueKey as string)}/attachment`,
-          {
-            method: 'POST',
-            body: JSON.stringify({ temporaryAttachmentIds, public: true }),
-          }
-        );
-        if (!attachResponse.ok) return errText(await describeJsmAuthFailure(attachResponse));
-
+      const issueKey = typeof args.issueKey === 'string' ? args.issueKey : '';
+      const filename = typeof args.filename === 'string' ? args.filename : '';
+      if (!issueKey || !filename) {
         return {
-          content: [{ type: 'text' as const, text: `Attached ${filename} to ${issueKey}` }],
-        };
-      } catch (error) {
-        return {
-          content: [
-            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
-          ],
+          content: [{ type: 'text' as const, text: 'issueKey and filename are required' }],
           isError: true,
         };
       }
+      const slot = await createUploadSlot(
+        context,
+        'jsm-attachment',
+        { requestKey: issueKey },
+        {
+          filename,
+          contentType: typeof args.contentType === 'string' ? args.contentType : undefined,
+          maxBytes: context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES,
+        }
+      );
+      if (!slot.ok) {
+        return { content: [{ type: 'text' as const, text: slot.error }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: slot.instructions }] };
     }
   );
 }

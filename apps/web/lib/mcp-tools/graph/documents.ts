@@ -19,7 +19,6 @@ import {
   graphPost,
   graphPatch,
   graphDelete,
-  graphPutContent,
   values,
   str,
   num,
@@ -32,7 +31,7 @@ import { graphDownload } from '@renkei/connector-microsoft';
 import { extractText } from '@renkei/document-text';
 import { logger } from '@/lib/logger';
 import { resolveDriveItem, resolveMyDriveId, type ItemSelector } from './resolve';
-import { base64LengthFor, decodeBase64Attachment } from '../fetch-guard';
+import { createUploadSlot, type UploadSlotKind } from '../upload-slots';
 
 export interface NamespaceOptions {
   /** 'sharepoint' | 'onedrive' */
@@ -41,6 +40,8 @@ export interface NamespaceOptions {
   title: string;
   /** OneDrive resolves /me/drive; SharePoint requires an explicit site. */
   usesMyDrive: boolean;
+  /** The upload-slot kind this namespace's request-upload tool mints. */
+  slotKind: UploadSlotKind;
 }
 
 /** The selector fields every document tool accepts. See resolve.ts for why. */
@@ -723,25 +724,19 @@ export function registerDocumentTools(
   );
 
   server.registerTool(
-    `${prefix}_upload_document`,
+    `${prefix}_request_document_upload`,
     {
-      title: `${title} · Act — Upload a document`,
+      title: `${title} · Act — Request an upload endpoint for a new document`,
       description:
-        `Upload a file into a folder. Selectors name the PARENT folder. Content is ` +
-        `base64. Files larger than about 4 MB are rejected — those need an upload ` +
-        `session, which this tool does not open.`,
+        `Upload a NEW file into a folder — without base64. Selectors name the PARENT ` +
+        `folder. Returns a short-lived single-use endpoint; send the raw bytes there ` +
+        `(curl with the Authorization header, or the returned browser link). Handles ` +
+        `large files via Graph upload sessions. Never generate file content as a tool ` +
+        `argument.`,
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         ...selector,
         filename: z.string().min(1).describe('Name for the uploaded file, with extension.'),
-        contentBase64: z
-          .string()
-          .min(1)
-          .max(base64LengthFor(4 * 1024 * 1024))
-          .describe(
-            'File content, base64 encoded (a data:*;base64, URL prefix is stripped ' +
-              'automatically). Simple upload tops out at 4 MB decoded.'
-          ),
         contentType: z
           .string()
           .describe('MIME type (default application/octet-stream).')
@@ -757,6 +752,8 @@ export function registerDocumentTools(
       if (typeof access === 'string') return errText(access);
       const fallback = await defaultDriveFor(options, context, access.accessToken);
 
+      // Resolve the parent NOW so a bad folder fails at request time, not
+      // after the user has already pushed the bytes.
       const parent = await resolveDriveItem(
         context,
         access.accessToken,
@@ -765,34 +762,22 @@ export function registerDocumentTools(
       );
       if (!parent.ok) return errText(parent.error);
 
-      // Strict decode: Buffer.from never throws on bad base64 — the old
-      // try/catch here was dead code that let corrupt input through.
-      const decoded = decodeBase64Attachment(String(args.contentBase64));
-      if (!decoded.ok) return errText(decoded.error);
-      const bytes = new Uint8Array(decoded.buffer);
-      // The simple upload endpoint's own ceiling; past it Graph requires an
-      // upload session, and silently truncating would be far worse.
-      if (bytes.byteLength > 4 * 1024 * 1024) {
-        return errText(
-          `That file is ${byteSize(bytes.byteLength)}. Simple upload tops out at 4 MB.`
-        );
-      }
-
-      const name = encodeURIComponent(String(args.filename));
-      const conflict = str(args.ifNameTaken) || 'rename';
-      const uploaded = await graphPutContent(
+      const slot = await createUploadSlot(
         context,
-        access.accessToken,
-        `/drives/${parent.item.driveId}/items/${parent.item.itemId}:/${name}:/content` +
-          `?@microsoft.graph.conflictBehavior=${conflict}`,
-        bytes,
-        str(args.contentType) || 'application/octet-stream'
+        options.slotKind,
+        {
+          driveId: parent.item.driveId,
+          parentItemId: parent.item.itemId,
+          ifNameTaken: str(args.ifNameTaken) || 'rename',
+        },
+        {
+          filename: String(args.filename),
+          contentType: str(args.contentType) || undefined,
+        }
       );
-      if (!uploaded.ok) return errText(uploaded.error);
+      if (!slot.ok) return errText(slot.error);
       return textResult(
-        `Uploaded "${str(uploaded.body.name) || String(args.filename)}" ` +
-          `(${byteSize(bytes.byteLength)}) to ${parent.item.name || 'the root'}.\n` +
-          `driveId: ${parent.item.driveId}\nitemId: ${str(uploaded.body.id)}`
+        `Destination: ${parent.item.name || 'the drive root'}.\n${slot.instructions}`
       );
     }
   );

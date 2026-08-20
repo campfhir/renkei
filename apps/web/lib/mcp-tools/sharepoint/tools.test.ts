@@ -26,6 +26,7 @@ jest.mock('@renkei/db', () => ({
   getDatabase: () => ({
     ok: true,
     val: {
+      insertInto: () => ({ values: () => ({ execute: async () => [] }) }),
       selectFrom: () => ({
         select: () => ({
           where: () => ({
@@ -100,6 +101,7 @@ const context = (): MCPToolContext =>
     tenantId: 'tenant-1',
     accountId: 'acct-1',
     subject: 'subject-1',
+    origin: 'https://renkei.example',
     siteUrl: '',
     apiBaseUrl: '',
     accessToken: '',
@@ -536,19 +538,39 @@ describe('onedrive tools', () => {
     expect(text).not.toContain('pointer-1');
   });
 
-  it('rejects an upload past the simple-upload ceiling instead of truncating', async () => {
+  it('mints an out-of-band upload endpoint once the parent folder resolves', async () => {
     routes = [
       { match: '/me/drive?', body: { id: 'my-drive' } },
       { match: '/root?', body: { id: 'root-1', name: 'root', parentReference: {} } },
     ];
     const tools = await toolsOf(registerOneDriveTools);
 
-    const result = await tools.get('onedrive_upload_document')!({
+    const result = await tools.get('onedrive_request_document_upload')!({
       filename: 'big.bin',
-      contentBase64: Buffer.alloc(5 * 1024 * 1024).toString('base64'),
     });
 
-    expect(textOf(result)).toContain('4 MB');
+    const text = textOf(result);
+    // Both byte paths, neither of them base64 through the model: curl with
+    // the bearer in the Authorization header, and the fragment-token page.
+    expect(text).toContain('https://renkei.example/api/upload/');
+    expect(text).toContain("-H 'Authorization: Bearer ");
+    expect(text).toContain('check_file_upload');
+  });
+
+  it('fails a request against a bad parent folder before any bytes move', async () => {
+    routes = [
+      { match: '/me/drive?', body: { id: 'my-drive' } },
+      // No stub for the folder itself → resolveDriveItem sees a 404.
+    ];
+    const tools = await toolsOf(registerOneDriveTools);
+
+    const result = (await tools.get('onedrive_request_document_upload')!({
+      filename: 'big.bin',
+      itemId: 'missing-folder',
+    })) as { content: { text: string }[]; isError?: boolean };
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).not.toContain('/api/upload/');
   });
 });
 
