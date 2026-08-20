@@ -25,7 +25,10 @@ import { createRetentionSweep, createStuckRunJanitor } from './maintenance';
 import { createMemoryCompactionSweep, MEMORY_COMPACTION_SWEEP_MS } from './memory-compaction';
 import { logger, attachPersistentLogging } from './logger';
 
-const SCHEDULE_SWEEP_MS = 60_000;
+// 30s keeps a scheduled agent's mean lateness ~15s — the "runs when I said
+// it would" feel; the sweep is one indexed select + optimistic updates, so
+// halving the interval is cheap.
+const SCHEDULE_SWEEP_MS = 30_000;
 const RETENTION_SWEEP_MS = 60 * 60_000;
 const JANITOR_SWEEP_MS = 10 * 60_000;
 
