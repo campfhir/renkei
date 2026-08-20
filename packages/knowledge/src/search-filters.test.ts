@@ -180,6 +180,71 @@ describe('searchKnowledge filter construction', () => {
   });
 });
 
+describe('owner-scoped candidate narrowing', () => {
+  const ownerScopedVerifier = (provider: string) => ({
+    provider,
+    ownerScoped: true as const,
+    verifyAccess: async () => ({ ok: true as const, val: [] }),
+  });
+  const liveVerifier = (provider: string) => ({
+    provider,
+    verifyAccess: async () => ({ ok: true as const, val: [] }),
+  });
+
+  it('keeps foreign-owned rows out of the SQL for ownerScoped providers', async () => {
+    // Fetched-then-denied still counts toward `elided`, and a withheld tally
+    // of a coworker's mailbox is itself a disclosure — the rows must never
+    // leave the database.
+    await searchKnowledge({
+      ...baseOptions,
+      verifiers: new Map([
+        ['microsoft', ownerScopedVerifier('microsoft')],
+        ['note', ownerScopedVerifier('note')],
+      ]),
+    });
+    const sqlText = renderedSql();
+    expect(sqlText).toContain('provider NOT IN');
+    expect(sqlText).toContain('ref_id LIKE');
+    expect(allValues()).toContain('scott@example.com/%');
+    expect(allValues()).toContain('microsoft');
+    expect(allValues()).toContain('note');
+  });
+
+  it('normalizes and LIKE-escapes the requester email, mirroring the verifiers', async () => {
+    await searchKnowledge({
+      ...baseOptions,
+      userEmail: '  Scott_T@Example.com ',
+      verifiers: new Map([['zoom', ownerScopedVerifier('zoom')]]),
+    });
+    // Trimmed and lowercased like every verifier's parse; `_` escaped so an
+    // email that happens to contain a LIKE metacharacter matches literally.
+    expect(allValues()).toContain('scott\\_t@example.com/%');
+  });
+
+  it('leaves live-verified providers alone', async () => {
+    await searchKnowledge({
+      ...baseOptions,
+      verifiers: new Map([['jira', liveVerifier('jira')]]),
+    });
+    const sqlText = renderedSql();
+    expect(sqlText).not.toContain('provider NOT IN');
+    expect(sqlText).not.toContain('ref_id LIKE');
+  });
+
+  it('applies the same narrowing to the recency browse', async () => {
+    await listRecentKnowledge({
+      tenantId: 'tenant-1',
+      userEmail: 'scott@example.com',
+      k: 5,
+      verifiers: new Map([['microsoft', ownerScopedVerifier('microsoft')]]),
+      sources: [{ provider: 'microsoft', kind: 'msg' }, { provider: 'jira' }],
+    });
+    const sqlText = renderedSql();
+    expect(sqlText).toContain('provider NOT IN');
+    expect(allValues()).toContain('scott@example.com/%');
+  });
+});
+
 describe('searchKnowledge result shape', () => {
   it('surfaces source_at as an ISO string', async () => {
     rows = [

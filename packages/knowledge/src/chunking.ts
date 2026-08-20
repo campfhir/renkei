@@ -233,7 +233,7 @@ export async function deleteStaleScopeChunks(
   return ok(Number(result.val.numDeletedRows ?? 0));
 }
 
-function escapeLike(value: string): string {
+export function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 

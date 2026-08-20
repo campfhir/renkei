@@ -34,6 +34,7 @@ export function hostOfZoomRefId(refId: string): string | null {
 export function createZoomAccessVerifier(): AccessVerifier {
   return {
     provider: 'zoom',
+    ownerScoped: true,
     async verifyAccess(
       userId: string,
       refs: readonly SourceRef[]

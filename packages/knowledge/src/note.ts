@@ -51,6 +51,7 @@ export function ownerOfNoteRefId(refId: string): string | null {
 export function createNoteAccessVerifier(): AccessVerifier {
   return {
     provider: NOTE_KNOWLEDGE_PROVIDER,
+    ownerScoped: true,
     async verifyAccess(
       userId: string,
       refs: readonly SourceRef[]
