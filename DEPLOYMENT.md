@@ -309,6 +309,13 @@ upstream jira_mcp {
   server 127.0.0.1:3000;
 }
 
+# Keep-alive must survive ordinary requests: only actual WebSocket upgrades
+# should send `Connection: upgrade`, everything else keeps its connection.
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  '' close;
+}
+
 server {
   listen 80;
   server_name yourdomain.com;
@@ -327,6 +334,13 @@ server {
   ssl_ciphers HIGH:!aNULL:!MD5;
   ssl_prefer_server_ciphers on;
 
+  # Attachment tool calls carry base64 file content in the JSON-RPC body:
+  # the default 20 MB attachment cap inflates to ~27 MB on the wire. Without
+  # this, nginx's 1 MB default rejects any file over ~750 KB with an HTML
+  # 413 the MCP client never surfaces — it just looks like a hang.
+  client_max_body_size 32m;
+  client_body_timeout 60s;
+
   # Security headers
   add_header Strict-Transport-Security "max-age=31536000" always;
   add_header X-Frame-Options DENY;
@@ -336,15 +350,38 @@ server {
     proxy_pass http://jira_mcp;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection 'upgrade';
+    proxy_set_header Connection $connection_upgrade;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_cache_bypass $http_upgrade;
+    # Match the app's upload timeout (120s): large multipart uploads to
+    # Jira/Graph legitimately take minutes on slow links. The app aborts
+    # its own upstream calls at 15s (reads) / 120s (uploads), so nginx
+    # should never be the layer that gives up first.
+    proxy_read_timeout 120s;
+    proxy_send_timeout 120s;
+    # Optional for very large uploads: stream the body to the app instead
+    # of buffering it to disk first.
+    # proxy_request_buffering off;
   }
 }
 ```
+
+### Troubleshooting: attachment uploads hang or fail
+
+If `jira_add_attachment` (or any upload tool) appears to hang or dies with a
+413:
+
+- Check `client_max_body_size` — nginx's default is 1 MB, which rejects any
+  file over ~750 KB once base64 inflation (~1.33×) is counted. The rejection
+  is an HTML 413 the MCP stream cannot represent, so clients see a stall.
+- Check `proxy_read_timeout`/`proxy_send_timeout` cover the app's upload
+  budget (120s).
+- The app itself aborts stalled upstream calls at 15s (reads) / 120s
+  (uploads) and reports a timeout error — if a tool call still never
+  returns, the layer eating it is in front of the app.
 
 ## SSL/TLS with Let's Encrypt
 

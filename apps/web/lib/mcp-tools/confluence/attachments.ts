@@ -20,6 +20,7 @@ import {
 import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
 import type { ConfluenceAuth } from './confluence-auth';
+import { base64LengthFor, decodeBase64Attachment } from '../fetch-guard';
 
 /** Fallback when no limit is on the context; matches the org-settings default. */
 const DEFAULT_MAX_ATTACHMENT_BYTES = 20_971_520; // 20MB
@@ -85,7 +86,13 @@ export async function registerAttachmentTools(
       inputSchema: z.object({
         contentId: z.string().min(1).describe('Page or blog post id'),
         filename: z.string().min(1).describe('File name to store as'),
-        contentBase64: z.string().min(1).describe('File content, base64-encoded'),
+        contentBase64: z
+          .string()
+          .min(1)
+          .max(base64LengthFor(context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES))
+          .describe(
+            'File content, base64-encoded (a data:*;base64, URL prefix is stripped automatically)'
+          ),
         comment: z.string().describe('Comment shown alongside the attachment').optional(),
       }),
     },
@@ -99,7 +106,9 @@ export async function registerAttachmentTools(
       const contentBase64 = str(args.contentBase64);
       if (!contentBase64) return errText('contentBase64 is required');
 
-      const buffer = Buffer.from(contentBase64, 'base64');
+      const decoded = decodeBase64Attachment(contentBase64);
+      if (!decoded.ok) return errText(decoded.error);
+      const buffer = decoded.buffer;
       const maxBytes = context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
       if (buffer.byteLength > maxBytes) {
         return errText(`Attachment is ${buffer.byteLength} bytes; the limit is ${maxBytes} bytes.`);

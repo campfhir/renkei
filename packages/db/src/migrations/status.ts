@@ -76,6 +76,7 @@ export const EXPECTED_MIGRATIONS = [
   '043-schedule-calendars',
   '044-agent-memories',
   '045-agent-share-token',
+  '046-mail-bulk-jobs',
 ];
 
 export interface MigrationStatus {

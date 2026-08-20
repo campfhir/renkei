@@ -171,6 +171,22 @@ export const CURATED_OUTCOMES: Record<string, ToolOutcomes> = {
       retriable: true,
     },
   ]),
+  outlook_start_bulk_mail_job: curated('The job was accepted', [
+    {
+      code: 'bad-selection',
+      label: 'The selection was invalid',
+      description:
+        'Both or neither of messageIds and filters were given, or a required action ' +
+        'parameter was missing.',
+      retriable: true,
+    },
+    {
+      code: 'too-many',
+      label: 'Too many messages',
+      description: 'The selection exceeds the 1000-message job cap.',
+      retriable: true,
+    },
+  ]),
   outlook_send_mail: curated('The email was sent', [
     {
       code: 'recipient-rejected',

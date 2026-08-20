@@ -10,6 +10,7 @@ import type { MCPToolContext } from '../common';
 import { getCachedDisplayName } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+import { base64LengthFor, decodeBase64Attachment } from '../fetch-guard';
 
 /** Fallback when no limit is on the context; matches the org-settings default. */
 const DEFAULT_MAX_ATTACHMENT_BYTES = 20_971_520; // 20MB
@@ -29,7 +30,14 @@ export async function registerAttachmentTools(
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
         filename: z.string().describe('File name to store as'),
-        contentBase64: z.string().describe('File content as base64'),
+        contentBase64: z
+          .string()
+          .min(1)
+          .max(base64LengthFor(context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES))
+          .describe(
+            "The file's bytes, base64-encoded (a data:*;base64, URL prefix is stripped " +
+              `automatically). Decoded limit: ${Math.floor((context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES) / 1_048_576)} MB.`
+          ),
       }),
     },
     async (args: Record<string, any>) => {
@@ -52,7 +60,13 @@ export async function registerAttachmentTools(
           };
         }
 
-        const buffer = Buffer.from(contentBase64, 'base64');
+        // Strict decode: Buffer.from alone silently mis-decodes data: URLs
+        // and truncated payloads into corrupt attachments.
+        const decoded = decodeBase64Attachment(String(contentBase64));
+        if (!decoded.ok) {
+          return { content: [{ type: 'text' as const, text: decoded.error }], isError: true };
+        }
+        const buffer = decoded.buffer;
 
         const maxBytes = context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
         if (buffer.byteLength > maxBytes) {

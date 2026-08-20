@@ -9,6 +9,12 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { refreshAtlassianTokenDirect } from '@/lib/tenant-operations';
 import { logger, secure } from '@/lib/logger';
+import {
+  REQUEST_TIMEOUT_MS,
+  UPLOAD_TIMEOUT_MS,
+  isTimeoutError,
+  timeoutSignal,
+} from './fetch-guard';
 
 export interface MCPToolContext {
   tenantId: string;
@@ -121,7 +127,10 @@ export const attachmentFields = {
   contentBase64: z
     .string()
     .min(1)
-    .describe("The file's bytes, base64-encoded. A `data:` URL is also accepted."),
+    .describe(
+      "The file's bytes, base64-encoded. A `data:*;base64,` URL prefix is stripped " +
+        'automatically; anything else must be bare, valid base64.'
+    ),
   contentType: z
     .string()
     .optional()
@@ -381,6 +390,23 @@ export async function jiraFetch(
   // may be preset for it — fetch generates the header from the body.
   const contentTypeHeader: Record<string, string> =
     options?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' };
+  // A stalled upstream must become an error the caller can render, never a
+  // tool call that hangs while the MCP stream keepalives forever. Multipart
+  // uploads get the long budget — 20MB on a slow link is minutes, not 15s.
+  const timeoutMs = options?.body instanceof FormData ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
+  const guardedFetch = async (init: RequestInit): Promise<Response> => {
+    try {
+      return await fetch(url, { ...init, signal: timeoutSignal(init, timeoutMs) });
+    } catch (error) {
+      if (isTimeoutError(error)) {
+        throw new JiraApiError(
+          `Jira API request timed out after ${timeoutMs}ms — the site may be slow or unreachable`,
+          504
+        );
+      }
+      throw new JiraApiError('Could not reach the Jira API', 502);
+    }
+  };
 
   // Make initial request
   const headers = {
@@ -390,7 +416,7 @@ export async function jiraFetch(
     ...options?.headers,
   };
 
-  let response = await fetch(url, {
+  let response = await guardedFetch({
     ...options,
     headers,
   });
@@ -480,7 +506,7 @@ export async function jiraFetch(
       ...options?.headers,
     };
 
-    response = await fetch(url, {
+    response = await guardedFetch({
       ...options,
       headers: retryHeaders,
     });

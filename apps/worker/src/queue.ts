@@ -27,6 +27,10 @@ export type { ClaimedMessage as ClaimedEvent, Disposition } from '@renkei/queue'
  * handler ends by publishing a domain event (domain-events.ts), and an
  * instance fixated on the provider must also dispatch what it publishes —
  * otherwise its events would pile up waiting for an unfixated sibling.
+ *
+ * A fixated deployment must also list 'mailjobs' on SOME instance — the
+ * async Outlook bulk mail jobs (handlers/mail-bulk-jobs.ts) arrive on that
+ * source, and nothing else drains it.
  */
 function eventSourcesFromEnv(): readonly string[] | undefined {
   const raw = process.env.WORKER_EVENT_SOURCES;

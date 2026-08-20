@@ -32,6 +32,7 @@ import { graphDownload } from '@renkei/connector-microsoft';
 import { extractText } from '@renkei/document-text';
 import { logger } from '@/lib/logger';
 import { resolveDriveItem, resolveMyDriveId, type ItemSelector } from './resolve';
+import { base64LengthFor, decodeBase64Attachment } from '../fetch-guard';
 
 export interface NamespaceOptions {
   /** 'sharepoint' | 'onedrive' */
@@ -733,7 +734,14 @@ export function registerDocumentTools(
       inputSchema: z.object({
         ...selector,
         filename: z.string().min(1).describe('Name for the uploaded file, with extension.'),
-        contentBase64: z.string().min(1).describe('File content, base64 encoded.'),
+        contentBase64: z
+          .string()
+          .min(1)
+          .max(base64LengthFor(4 * 1024 * 1024))
+          .describe(
+            'File content, base64 encoded (a data:*;base64, URL prefix is stripped ' +
+              'automatically). Simple upload tops out at 4 MB decoded.'
+          ),
         contentType: z
           .string()
           .describe('MIME type (default application/octet-stream).')
@@ -757,12 +765,11 @@ export function registerDocumentTools(
       );
       if (!parent.ok) return errText(parent.error);
 
-      let bytes: Uint8Array;
-      try {
-        bytes = new Uint8Array(Buffer.from(String(args.contentBase64), 'base64'));
-      } catch {
-        return errText('contentBase64 is not valid base64.');
-      }
+      // Strict decode: Buffer.from never throws on bad base64 — the old
+      // try/catch here was dead code that let corrupt input through.
+      const decoded = decodeBase64Attachment(String(args.contentBase64));
+      if (!decoded.ok) return errText(decoded.error);
+      const bytes = new Uint8Array(decoded.buffer);
       // The simple upload endpoint's own ceiling; past it Graph requires an
       // upload session, and silently truncating would be far worse.
       if (bytes.byteLength > 4 * 1024 * 1024) {

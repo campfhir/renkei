@@ -19,6 +19,12 @@ import { getGrant, refreshGrantTokens, MICROSOFT, MicrosoftAdapter } from '@renk
 import { getDatabase } from '@renkei/db';
 import { getMicrosoftApp } from '@/lib/microsoft-app';
 import { logger, secure } from '@/lib/logger';
+import {
+  REQUEST_TIMEOUT_MS,
+  UPLOAD_TIMEOUT_MS,
+  isTimeoutError,
+  timeoutSignal,
+} from '../fetch-guard';
 /**
  * All these calls need of their caller.
  *
@@ -159,15 +165,23 @@ async function graphCall(
         ...extraHeaders,
       },
       ...(json === undefined ? {} : { body: JSON.stringify(json) }),
+      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     });
-  } catch {
+  } catch (error) {
+    const timedOut = isTimeoutError(error);
     logger.warn('Graph API unreachable', {
       component: 'graph/fetch',
       tenantId: context.tenantId,
       subject: context.subject,
       path: pathAndQuery,
+      timedOut,
     });
-    return { ok: false, error: 'Could not reach graph.microsoft.com' };
+    return {
+      ok: false,
+      error: timedOut
+        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
+        : 'Could not reach graph.microsoft.com',
+    };
   }
 
   const responseBody = await response.text().catch(() => '');
@@ -254,9 +268,15 @@ export async function graphPutContent(
       method: 'PUT',
       headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': contentType },
       body,
+      signal: timeoutSignal(undefined, UPLOAD_TIMEOUT_MS),
     });
-  } catch {
-    return { ok: false, error: 'Could not reach graph.microsoft.com' };
+  } catch (error) {
+    return {
+      ok: false,
+      error: isTimeoutError(error)
+        ? `graph.microsoft.com timed out after ${UPLOAD_TIMEOUT_MS}ms`
+        : 'Could not reach graph.microsoft.com',
+    };
   }
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {

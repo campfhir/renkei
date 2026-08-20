@@ -38,6 +38,16 @@ export const MICROSOFT_CONNECTOR = 'microsoft';
 
 export { GRAPH_BASE_URL, graphRequest } from './client';
 export {
+  BATCH_CHUNK_SIZE,
+  graphBatch,
+  summarizeBatch,
+  withCategoryChanges,
+  type BatchRequestItem,
+  type BatchResultItem,
+  type GraphBatchOptions,
+} from './mail-batch';
+export { buildMailQueryPath, type MailSearchFilters, type MailQueryOptions } from './mail-filter';
+export {
   microsoftRefId,
   ownerOfMicrosoftRefId,
   objectIdOfMicrosoftRefId,

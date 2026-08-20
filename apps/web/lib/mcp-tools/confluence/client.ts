@@ -29,6 +29,12 @@ import { getDatabase } from '@renkei/db';
 import { getAtlassianConfluenceApp } from '@/lib/atlassian-app';
 import { logger, secure } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
+import {
+  REQUEST_TIMEOUT_MS,
+  UPLOAD_TIMEOUT_MS,
+  isTimeoutError,
+  timeoutSignal,
+} from '../fetch-guard';
 
 /** Refresh when the token is inside this window of expiry. */
 const REFRESH_MARGIN_MS = 2 * 60 * 1000;
@@ -141,6 +147,9 @@ async function confluenceRequest(
 ): Promise<{ ok: true; response: Response } | { ok: false; error: string }> {
   const jsonBody = init?.json !== undefined ? JSON.stringify(init.json) : undefined;
   const body = jsonBody ?? init?.body;
+  // Uploads (FormData) get the long budget; a missing deadline here used to
+  // turn a stalled upstream into a tool call that never returned.
+  const timeoutMs = body instanceof FormData ? UPLOAD_TIMEOUT_MS : REQUEST_TIMEOUT_MS;
   let response: Response;
   try {
     response = await fetch(
@@ -154,17 +163,25 @@ async function confluenceRequest(
           ...init?.extraHeaders,
         },
         ...(body !== undefined ? { body } : {}),
+        signal: timeoutSignal(undefined, timeoutMs),
       }
     );
-  } catch {
+  } catch (error) {
+    const timedOut = isTimeoutError(error);
     logger.warn('Confluence API unreachable', {
       component: 'confluence/fetch',
       tenantId: scope.tenantId,
       subject: scope.subject,
       path: pathAndQuery,
       method: init?.method ?? 'GET',
+      timedOut,
     });
-    return { ok: false, error: 'Could not reach api.atlassian.com' };
+    return {
+      ok: false,
+      error: timedOut
+        ? `api.atlassian.com timed out after ${timeoutMs}ms`
+        : 'Could not reach api.atlassian.com',
+    };
   }
   if (!response.ok) {
     const responseBody = await response.text().catch(() => '');
