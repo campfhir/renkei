@@ -520,8 +520,10 @@ const handler = async (
             'read-only mode. Some Act tools have *_preview variants that render an ' +
             'interactive card for the user to confirm or cancel — prefer those whenever the ' +
             'user should review before something is sent or scheduled on their behalf. ' +
-            'When a request covers many items, prefer a *_bulk_* tool (or one search with ' +
-            'the right fields) over calling a single-item tool once per item.',
+            'When a request covers many items, prefer a bulk read tool, one search with the ' +
+            'right fields, or outlook_start_bulk_mail_job (an async job — poll ' +
+            'outlook_get_bulk_mail_job rather than resubmitting) over calling a single-item ' +
+            'tool once per item.',
           verboseLogs: false,
         }
       );

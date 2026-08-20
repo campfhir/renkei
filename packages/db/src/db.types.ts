@@ -351,6 +351,26 @@ export interface JiraSessions {
   user_agent: string | null;
 }
 
+export interface MailBulkJobs {
+  account_id: string;
+  action: string;
+  created_at: Generated<Timestamp>;
+  failed: Generated<number>;
+  failures: Generated<Json>;
+  finished_at: Timestamp | null;
+  id: string;
+  last_error: string | null;
+  params: Generated<Json>;
+  selection: Json;
+  started_at: Timestamp | null;
+  status: Generated<string>;
+  subject: string;
+  succeeded: Generated<number>;
+  tenant_id: string;
+  total: number | null;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface KnowledgeChunks {
   content: string;
   created_at: Generated<Timestamp>;
@@ -641,6 +661,7 @@ export interface DB {
   log_attr: LogAttr;
   log_attr_blob: LogAttrBlob;
   logs: Logs;
+  mail_bulk_jobs: MailBulkJobs;
   oauth_access_tokens: OauthAccessTokens;
   oauth_authorization_codes: OauthAuthorizationCodes;
   oauth_clients: OauthClients;

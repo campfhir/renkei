@@ -14,7 +14,7 @@
  * of either process can be added without coordination.
  */
 
-import { closeDatabase } from '@renkei/db';
+import { closeDatabase, getDatabase } from '@renkei/db';
 import { eventsQueue } from './queue';
 import { handlerFor, registerHandler } from './handlers';
 import { createEventLoop, schedulePeriodicSweep } from './loop';
@@ -28,6 +28,8 @@ import {
 import { createZoomTranscriptHandler, createZoomSummaryHandler } from './handlers/zoom-events';
 import { createDomainDispatchHandler } from './handlers/domain-dispatch';
 import { createAgentRunFailedHandler } from './handlers/agent-run-failed';
+import { createMailBulkJobHandler } from './handlers/mail-bulk-jobs';
+import { createMailJobsSweep, MAIL_JOBS_SWEEP_INTERVAL_MS } from './health/mail-jobs';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
 import {
@@ -50,6 +52,9 @@ function registerConnectorHandlers(): void {
   registerHandler('microsoft', 'message-override', createMicrosoftMessageOverrideHandler());
   registerHandler('zoom', 'recording.transcript_completed', createZoomTranscriptHandler());
   registerHandler('zoom', 'meeting.summary_completed', createZoomSummaryHandler());
+  // Async Outlook bulk mail actions — submitted by the MCP tool as a bare
+  // {jobId} pointer; the mail_bulk_jobs row is the source of truth.
+  registerHandler('mailjobs', 'bulk-action', createMailBulkJobHandler());
   // Emitted by worker-agents when a run fails; delivery of the owner's
   // notification belongs here, where the connector paths live. (run.reply
   // is gone: agents that answer in a room do it as a STEP now.)
@@ -103,6 +108,20 @@ async function main(): Promise<void> {
       CONTENT_WATCH_INTERVAL_MS,
       sweepContentWatches
     ),
+    ...(() => {
+      // Mail bulk job hygiene: fail stalled runs, prune terminal rows.
+      const dbResult = getDatabase();
+      return dbResult.ok
+        ? [
+            schedulePeriodicSweep(
+              'mail bulk jobs',
+              'mailjobs/sweep',
+              MAIL_JOBS_SWEEP_INTERVAL_MS,
+              createMailJobsSweep(dbResult.val)
+            ),
+          ]
+        : [];
+    })(),
   ];
 
   await loop.run();

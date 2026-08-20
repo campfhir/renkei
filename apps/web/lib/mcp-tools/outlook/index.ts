@@ -23,7 +23,14 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { GRAPH_BASE_URL, objectIdOfMicrosoftRefId } from '@renkei/connector-microsoft';
+import {
+  GRAPH_BASE_URL,
+  buildMailQueryPath,
+  graphBatch,
+  objectIdOfMicrosoftRefId,
+  withCategoryChanges,
+  type MailSearchFilters,
+} from '@renkei/connector-microsoft';
 import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
 import { withheldNote } from '@renkei/gates';
 import { logger, secure } from '@/lib/logger';
@@ -39,6 +46,7 @@ import {
 } from '../widgets';
 import type { GraphAuth } from '../graph/graph-auth';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
+import { registerBulkJobTools } from './bulk-jobs';
 
 export const OUTLOOK_MCP_CONNECTOR = 'microsoft';
 
@@ -305,164 +313,6 @@ async function graphDeleteChecked(
   return { ok: true };
 }
 
-/** Graph's JSON $batch endpoint accepts at most this many sub-requests per call. */
-const BATCH_CHUNK_SIZE = 20;
-
-interface BatchRequestItem {
-  /** Caller-chosen correlation id — echoed back on the matching result, so a message id doubles as one. */
-  id: string;
-  method: 'GET' | 'PATCH' | 'POST' | 'DELETE';
-  /** Relative to the Graph API root, same as every other helper here (e.g. "/me/messages/{id}"). */
-  url: string;
-  body?: unknown;
-}
-
-interface BatchResultItem {
-  id: string;
-  ok: boolean;
-  body: Record<string, unknown> | null;
-  error?: string;
-}
-
-/** How many times a 429'd sub-request is re-sent before its failure is reported. */
-const BATCH_RETRY_ROUNDS = 3;
-/** Fallback pause when Graph 429s a sub-request without a Retry-After header. */
-const BATCH_DEFAULT_RETRY_MS = 5_000;
-/** Ceiling on any single honored Retry-After, so one hostile value can't hang a tool call. */
-const BATCH_MAX_RETRY_MS = 30_000;
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Send one chunk (≤20) and map Graph's per-sub-request outcomes back onto the inputs. */
-async function runBatchChunk(
-  context: MCPToolContext,
-  accessToken: string,
-  chunk: readonly BatchRequestItem[]
-): Promise<{ results: BatchResultItem[]; retryable: BatchRequestItem[]; retryAfterMs: number }> {
-  const result = await graphPost(context, accessToken, '/$batch', {
-    requests: chunk.map((item) => ({
-      id: item.id,
-      method: item.method,
-      url: item.url,
-      ...(item.body !== undefined
-        ? { headers: { 'Content-Type': 'application/json' }, body: item.body }
-        : {}),
-    })),
-  });
-  if (!result.ok) {
-    return {
-      results: chunk.map((item) => ({ id: item.id, ok: false, body: null, error: result.error })),
-      retryable: [],
-      retryAfterMs: 0,
-    };
-  }
-
-  const responsesRaw = result.body?.responses;
-  const responses = Array.isArray(responsesRaw) ? responsesRaw : [];
-  const results: BatchResultItem[] = [];
-  const retryable: BatchRequestItem[] = [];
-  let retryAfterMs = 0;
-
-  for (const item of chunk) {
-    const entry = rec(responses.find((response) => str(rec(response).id) === item.id));
-    const status = typeof entry.status === 'number' ? entry.status : 0;
-    if (status === 429 || status === 503) {
-      // Throttled, not refused: worth another round rather than reporting a
-      // failure the caller would only re-attempt by hand anyway.
-      retryable.push(item);
-      const retryAfter = Number(str(rec(entry.headers)['Retry-After']));
-      if (Number.isFinite(retryAfter) && retryAfter > 0) {
-        retryAfterMs = Math.max(retryAfterMs, Math.min(retryAfter * 1000, BATCH_MAX_RETRY_MS));
-      }
-      continue;
-    }
-    const ok = status >= 200 && status < 300;
-    results.push({
-      id: item.id,
-      ok,
-      body: ok ? rec(entry.body) : null,
-      error: ok ? undefined : describeBatchItemError(status, entry.body),
-    });
-  }
-
-  return { results, retryable, retryAfterMs };
-}
-
-/**
- * Run many single-message operations as Graph $batch calls instead of one
- * HTTP round trip per message — what every outlook_bulk_* tool is built
- * on. Chunked at BATCH_CHUNK_SIZE (Graph's hard per-batch limit) and run
- * SEQUENTIALLY on purpose: firing all chunks at once is how a 200-message
- * action turns into 200 simultaneous mailbox operations and earns a 429
- * for the whole run. Sub-requests that come back throttled (429/503) are
- * retried a few rounds, honoring Retry-After when Graph sends one.
- *
- * A chunk that fails at the transport/auth level (network error, bad
- * token) fails every item in that chunk with the same error; a chunk that
- * succeeds still reports each item's own status, since Graph settles
- * sub-requests independently.
- */
-async function graphBatch(
-  context: MCPToolContext,
-  accessToken: string,
-  requests: readonly BatchRequestItem[]
-): Promise<{ ok: true; results: BatchResultItem[] } | { ok: false; error: string }> {
-  const chunks: BatchRequestItem[][] = [];
-  for (let i = 0; i < requests.length; i += BATCH_CHUNK_SIZE) {
-    chunks.push(requests.slice(i, i + BATCH_CHUNK_SIZE));
-  }
-  if (chunks.length === 0) return { ok: true, results: [] };
-
-  const results: BatchResultItem[] = [];
-  for (const chunk of chunks) {
-    let pending: readonly BatchRequestItem[] = chunk;
-    for (let round = 0; round <= BATCH_RETRY_ROUNDS && pending.length > 0; round += 1) {
-      const outcome = await runBatchChunk(context, accessToken, pending);
-      results.push(...outcome.results);
-      pending = outcome.retryable;
-      if (pending.length === 0) break;
-      if (round === BATCH_RETRY_ROUNDS) {
-        // Out of rounds — report the still-throttled items as failures
-        // rather than silently dropping them from the summary.
-        results.push(
-          ...pending.map((item) => ({
-            id: item.id,
-            ok: false,
-            body: null,
-            error: 'Graph kept rate limiting this message (429); try it again later.',
-          }))
-        );
-        break;
-      }
-      await sleep(outcome.retryAfterMs || BATCH_DEFAULT_RETRY_MS);
-    }
-  }
-
-  return { ok: true, results };
-}
-
-function describeBatchItemError(status: number, body: unknown): string {
-  const message = str(rec(rec(body).error).message);
-  return message || describeStatus(status);
-}
-
-/** A one-line-per-failure summary for a bulk action's results — capped so 200 failures don't flood the reply. */
-function summarizeBatch(results: readonly BatchResultItem[], verb: string): string {
-  const succeeded = results.filter((result) => result.ok);
-  const failed = results.filter((result) => !result.ok);
-  const lines = [`${verb}: ${succeeded.length} of ${results.length} succeeded.`];
-  if (failed.length > 0) {
-    const MAX_SHOWN = 20;
-    const shown = failed.slice(0, MAX_SHOWN);
-    lines.push('Failed:');
-    lines.push(...shown.map((result) => `  • ${result.id}: ${result.error ?? 'unknown error'}`));
-    if (failed.length > shown.length) lines.push(`  …and ${failed.length - shown.length} more.`);
-  }
-  return lines.join('\n');
-}
-
 function values(body: Record<string, unknown>): Record<string, unknown>[] {
   return Array.isArray(body.value)
     ? body.value.filter(
@@ -627,20 +477,6 @@ function unionAddresses(base: readonly string[], extra: readonly string[]): stri
   return merged;
 }
 
-/** `current` categories with `add` merged in and `remove` taken out, order preserved. */
-function withCategoryChanges(
-  current: readonly string[],
-  add: readonly string[],
-  remove: readonly string[]
-): string[] {
-  const removeSet = new Set(remove);
-  const result = current.filter((category) => !removeSet.has(category));
-  for (const category of add) {
-    if (!result.includes(category)) result.push(category);
-  }
-  return result;
-}
-
 /**
  * Reply / reply-all / forward all follow the same shape once recipients can
  * be edited: Graph's one-shot `/reply`, `/replyAll`, `/forward` actions only
@@ -798,15 +634,15 @@ function outlookScopeFor(toolName: string): string[] {
     case 'outlook_send_draft_confirm':
     case 'outlook_discard_draft_confirm':
       return ['Mail.Send'];
+    // The bulk-job pair shares one scope so it appears and disappears
+    // together — a status tool without its submit tool (or vice versa) is
+    // just noise, the same reasoning as the preview/confirm pairs above.
     case 'outlook_mark_message':
     case 'outlook_flag_message':
     case 'outlook_categorize_message':
     case 'outlook_move_message':
-    case 'outlook_bulk_mark_messages':
-    case 'outlook_bulk_flag_messages':
-    case 'outlook_bulk_categorize_messages':
-    case 'outlook_bulk_move_messages':
-    case 'outlook_bulk_archive_messages':
+    case 'outlook_start_bulk_mail_job':
+    case 'outlook_get_bulk_mail_job':
       return ['Mail.ReadWrite'];
     case 'outlook_create_mail_folder':
     case 'outlook_rename_mail_folder':
@@ -874,6 +710,10 @@ export async function registerOutlookTools(
   // all — the org may have narrowed the checkboxes, or the user narrowed
   // their own connect.
   const server = withScopeGate(rawServer, context.graphScopes, (name) => outlookScopeFor(name));
+
+  // The async bulk mail job pair (replacing the synchronous outlook_bulk_*
+  // act tools) lives in its own module — this file is long enough.
+  registerBulkJobTools(server, context, auth);
 
   server.registerTool(
     'outlook_list_mail_folders',
@@ -1200,7 +1040,6 @@ export async function registerOutlookTools(
       if (messageIds.length === 0) return errText('messageIds is required');
 
       const batch = await graphBatch(
-        context,
         access.accessToken,
         messageIds.map((id) => ({
           id,
@@ -1208,9 +1047,9 @@ export async function registerOutlookTools(
           url:
             `/me/messages/${encodeURIComponent(id)}/attachments` +
             `?$select=id,name,contentType,size,isInline`,
-        }))
+        })),
+        { lane: 'interactive' }
       );
-      if (!batch.ok) return errText(batch.error);
 
       const sections: string[] = [];
       let totalAttachments = 0;
@@ -1294,8 +1133,9 @@ export async function registerOutlookTools(
       description:
         'Structured search across the mailbox (or one folder) — read/unread, flag status, ' +
         'categories, sender, subject substring, attachments, received-date range — with paging ' +
-        'via pageToken. Built to feed the outlook_bulk_* action tools: search here for the ' +
-        'messages you mean, then mark/flag/categorize/archive their ids in bulk. Two modes worth ' +
+        'via pageToken. Built to feed outlook_start_bulk_mail_job: search here for the ' +
+        'messages you mean, then submit their ids (or these same filters) as one async job. Two ' +
+        'modes worth ' +
         'reaching for on a big cleanup: countOnly sizes a category (with a top-senders ' +
         'breakdown) before you commit, and groupBySender collapses a page into per-sender groups ' +
         'so automated noise is obvious without reading every subject line. For a freetext query ' +
@@ -1368,63 +1208,25 @@ export async function registerOutlookTools(
       const groupBySender = args.groupBySender === true;
       const pageToken = str(args.pageToken);
 
-      const basePath = str(args.folder)
-        ? `/me/mailFolders/${encodeURIComponent(str(args.folder))}/messages`
-        : '/me/messages';
-
-      /**
-       * Filter clause order is load-bearing, not cosmetic: Graph documents
-       * that when $filter and $orderby are combined on messages, every
-       * $orderby property must also appear in $filter AND must come before
-       * any property that isn't in the $orderby — otherwise Exchange answers
-       * 400 InefficientFilter ("The restriction or sort order is too complex
-       * for this operation"). Since we always order by receivedDateTime, its
-       * clauses lead.
-       */
-      function buildQuery(top: number, withCount: boolean): string {
-        const quote = (value: string) => value.replace(/'/g, "''");
-        const dateFilters: string[] = [];
-        if (str(args.receivedAfter)) {
-          dateFilters.push(`receivedDateTime ge ${str(args.receivedAfter)}`);
-        }
-        if (str(args.receivedBefore)) {
-          dateFilters.push(`receivedDateTime lt ${str(args.receivedBefore)}`);
-        }
-        const otherFilters: string[] = [];
-        if (typeof args.isRead === 'boolean') otherFilters.push(`isRead eq ${args.isRead}`);
-        if (str(args.flagStatus)) {
-          otherFilters.push(`flag/flagStatus eq '${quote(str(args.flagStatus))}'`);
-        }
-        if (Array.isArray(args.categories)) {
-          for (const category of args.categories) {
-            if (typeof category === 'string' && category) {
-              otherFilters.push(`categories/any(c:c eq '${quote(category)}')`);
-            }
-          }
-        }
-        if (typeof args.hasAttachments === 'boolean') {
-          otherFilters.push(`hasAttachments eq ${args.hasAttachments}`);
-        }
-        if (str(args.from)) {
-          otherFilters.push(`from/emailAddress/address eq '${quote(str(args.from))}'`);
-        }
-        // subjectContains is deliberately NOT here: Graph's mail $filter has
-        // no working contains() for subject (it 400s), and $search — which
-        // does support subject: — cannot be combined with $filter on mail at
-        // all. So substring matching happens client-side below, which also
-        // gets true substring semantics rather than $search's word/prefix
-        // tokenization.
-        const filters = [...dateFilters, ...otherFilters];
-
-        const parts = [
-          `$top=${top}`,
-          '$orderby=receivedDateTime desc',
-          '$select=id,subject,from,receivedDateTime,isRead,flag,categories',
-        ];
-        if (filters.length > 0) parts.push(`$filter=${encodeURIComponent(filters.join(' and '))}`);
-        if (withCount) parts.push('$count=true');
-        return `${basePath}?${parts.join('&')}`;
-      }
+      // The clause builder is shared with the worker's mail bulk jobs —
+      // filter shape, InefficientFilter-safe ordering, and the client-side
+      // subjectContains rule all live in @renkei/connector-microsoft now.
+      const searchFilters: MailSearchFilters = {
+        folder: str(args.folder) || undefined,
+        ...(typeof args.isRead === 'boolean' ? { isRead: args.isRead } : {}),
+        flagStatus: str(args.flagStatus) || undefined,
+        categories: Array.isArray(args.categories)
+          ? args.categories.filter((c: unknown): c is string => typeof c === 'string' && !!c)
+          : undefined,
+        ...(typeof args.hasAttachments === 'boolean'
+          ? { hasAttachments: args.hasAttachments }
+          : {}),
+        from: str(args.from) || undefined,
+        receivedAfter: str(args.receivedAfter) || undefined,
+        receivedBefore: str(args.receivedBefore) || undefined,
+      };
+      const buildQuery = (top: number, withCount: boolean): string =>
+        buildMailQueryPath(searchFilters, { top, withCount });
 
       // ---- dry run: a total, plus who it's from, without listing anything.
       if (countOnly) {
@@ -1568,7 +1370,7 @@ export async function registerOutlookTools(
         'IMPORTANT: this searches Renkei’s INDEX of your mail, not the live mailbox — it only ' +
         'covers what has been ingested and embedded, so it can miss very recent or ' +
         'never-indexed mail and is not a substitute for a real mailbox query. Results carry ' +
-        'message ids, so they feed the outlook_bulk_* action tools directly.',
+        'message ids, so they feed outlook_start_bulk_mail_job directly.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         query: z.string().min(1).max(2000).describe('What the mail is about, in natural language'),
@@ -2531,7 +2333,7 @@ export async function registerOutlookTools(
       title: 'Outlook · Act — Mark a message read or unread',
       description:
         'Set the read/unread status of ONE message. For many messages, use ' +
-        'outlook_bulk_mark_messages instead — one call, not one per message.',
+        'outlook_start_bulk_mail_job instead — one job, not one call per message.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         messageId: z
@@ -2564,7 +2366,7 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Act — Flag or unflag a message',
       description:
-        'Set a follow-up flag on ONE message (many: use outlook_bulk_flag_messages): ' +
+        'Set a follow-up flag on ONE message (many: use outlook_start_bulk_mail_job): ' +
         '"flagged" to flag it, "complete" to mark a flagged message done, or "notFlagged" ' +
         'to clear the flag.',
       annotations: { readOnlyHint: false },
@@ -2601,7 +2403,7 @@ export async function registerOutlookTools(
       title: 'Outlook · Act — Categorize a message',
       description:
         'Add or remove Outlook color categories on ONE message (many: use ' +
-        'outlook_bulk_categorize_messages) — the closest thing Outlook has to ' +
+        'outlook_start_bulk_mail_job) — the closest thing Outlook has to ' +
         'a "pin" or tag (Graph has no separate pin flag on messages). Pass add/remove to adjust ' +
         'the existing set, or replace to set the exact list (pass replace: [] to clear all ' +
         'categories).',
@@ -2669,8 +2471,8 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Act — Move a message to another folder',
       description:
-        'Move ONE message to a different mail folder (many: use outlook_bulk_move_messages ' +
-        'or outlook_bulk_archive_messages) — e.g. archive it, or file it into a project ' +
+        'Move ONE message to a different mail folder (many: use outlook_start_bulk_mail_job ' +
+        'with action "move" or "archive") — e.g. archive it, or file it into a project ' +
         'folder. destinationFolder accepts either a folder id from outlook_list_mail_folders, or ' +
         'a well-known folder name directly: inbox, archive, deleteditems, drafts, sentitems, ' +
         'junkemail. To archive a message, pass "archive" — no need to look up its id first.',
@@ -2702,300 +2504,6 @@ export async function registerOutlookTools(
       );
       if (!result.ok) return errText(result.error);
       return textResult(`Moved to "${destinationFolder}".`);
-    }
-  );
-
-  server.registerTool(
-    'outlook_bulk_mark_messages',
-    {
-      title: 'Outlook · Act — Mark multiple messages read or unread',
-      description:
-        'Mark up to 200 messages read or unread in one call — pair with outlook_bulk_search_messages ' +
-        'to find the message ids first. Uses Graph batching, so each message succeeds or fails ' +
-        'independently; the reply reports both counts.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        messageIds: z
-          .array(z.string().min(1))
-          .min(1)
-          .max(200)
-          .describe('Message ids, e.g. from outlook_bulk_search_messages'),
-        isRead: z.boolean().describe('true to mark read, false to mark unread'),
-      }),
-    },
-    async (args: Record<string, any>) => {
-      const access = await auth.resolve();
-      if (typeof access === 'string') return errText(access);
-      const messageIds = Array.isArray(args.messageIds)
-        ? args.messageIds.map(String).filter(Boolean)
-        : [];
-      if (messageIds.length === 0) return errText('messageIds is required');
-      if (typeof args.isRead !== 'boolean') return errText('isRead is required');
-
-      const batch = await graphBatch(
-        context,
-        access.accessToken,
-        messageIds.map((id) => ({
-          id,
-          method: 'PATCH' as const,
-          url: `/me/messages/${encodeURIComponent(id)}`,
-          body: { isRead: args.isRead },
-        }))
-      );
-      if (!batch.ok) return errText(batch.error);
-      return textResult(summarizeBatch(batch.results, `Marked ${args.isRead ? 'read' : 'unread'}`));
-    }
-  );
-
-  server.registerTool(
-    'outlook_bulk_flag_messages',
-    {
-      title: 'Outlook · Act — Flag or unflag multiple messages',
-      description:
-        'Set the same follow-up flag state on up to 200 messages in one call — pair with ' +
-        'outlook_bulk_search_messages to find the message ids first.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        messageIds: z
-          .array(z.string().min(1))
-          .min(1)
-          .max(200)
-          .describe('Message ids, e.g. from outlook_bulk_search_messages'),
-        status: z.enum(['flagged', 'complete', 'notFlagged']).describe('Flag state to set'),
-      }),
-    },
-    async (args: Record<string, any>) => {
-      const access = await auth.resolve();
-      if (typeof access === 'string') return errText(access);
-      const messageIds = Array.isArray(args.messageIds)
-        ? args.messageIds.map(String).filter(Boolean)
-        : [];
-      if (messageIds.length === 0) return errText('messageIds is required');
-      const status = str(args.status);
-      if (!status) return errText('status is required');
-
-      const batch = await graphBatch(
-        context,
-        access.accessToken,
-        messageIds.map((id) => ({
-          id,
-          method: 'PATCH' as const,
-          url: `/me/messages/${encodeURIComponent(id)}`,
-          body: { flag: { flagStatus: status } },
-        }))
-      );
-      if (!batch.ok) return errText(batch.error);
-      return textResult(summarizeBatch(batch.results, `Flag set to "${status}"`));
-    }
-  );
-
-  server.registerTool(
-    'outlook_bulk_categorize_messages',
-    {
-      title: 'Outlook · Act — Categorize multiple messages',
-      description:
-        'Add, remove, or replace Outlook categories on up to 200 messages in one call. add/remove ' +
-        'reads each message’s current categories first (Graph has no partial-array update), then ' +
-        'writes the merged result — two batched round trips, not one. replace skips the read and ' +
-        'sets the exact same list on every message.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        messageIds: z
-          .array(z.string().min(1))
-          .min(1)
-          .max(200)
-          .describe('Message ids, e.g. from outlook_bulk_search_messages'),
-        add: z.array(z.string().min(1)).describe('Category names to add').optional(),
-        remove: z.array(z.string().min(1)).describe('Category names to remove').optional(),
-        replace: z
-          .array(z.string())
-          .describe(
-            'Set every message to exactly this category list, overriding add/remove (pass [] to clear all)'
-          )
-          .optional(),
-      }),
-    },
-    async (args: Record<string, any>) => {
-      const access = await auth.resolve();
-      if (typeof access === 'string') return errText(access);
-      const messageIds = Array.isArray(args.messageIds)
-        ? args.messageIds.map(String).filter(Boolean)
-        : [];
-      if (messageIds.length === 0) return errText('messageIds is required');
-      const add = Array.isArray(args.add) ? args.add.map(String).filter(Boolean) : [];
-      const remove = Array.isArray(args.remove) ? args.remove.map(String).filter(Boolean) : [];
-      const replace = Array.isArray(args.replace)
-        ? args.replace.map(String).filter(Boolean)
-        : undefined;
-      if (!replace && add.length === 0 && remove.length === 0) {
-        return errText('Provide add, remove, or replace.');
-      }
-
-      let categoriesFor: (id: string) => string[];
-      if (replace) {
-        categoriesFor = () => replace;
-      } else {
-        const readBatch = await graphBatch(
-          context,
-          access.accessToken,
-          messageIds.map((id) => ({
-            id,
-            method: 'GET' as const,
-            url: `/me/messages/${encodeURIComponent(id)}?$select=categories`,
-          }))
-        );
-        if (!readBatch.ok) return errText(readBatch.error);
-        const existingById = new Map<string, string[]>();
-        for (const result of readBatch.results) {
-          const existing = Array.isArray(result.body?.categories)
-            ? result.body.categories.filter(
-                (category): category is string => typeof category === 'string'
-              )
-            : [];
-          existingById.set(result.id, existing);
-        }
-        categoriesFor = (id) => withCategoryChanges(existingById.get(id) ?? [], add, remove);
-      }
-
-      const writeBatch = await graphBatch(
-        context,
-        access.accessToken,
-        messageIds.map((id) => ({
-          id,
-          method: 'PATCH' as const,
-          url: `/me/messages/${encodeURIComponent(id)}`,
-          body: { categories: categoriesFor(id) },
-        }))
-      );
-      if (!writeBatch.ok) return errText(writeBatch.error);
-      return textResult(summarizeBatch(writeBatch.results, 'Categorized'));
-    }
-  );
-
-  server.registerTool(
-    'outlook_bulk_move_messages',
-    {
-      title: 'Outlook · Act — Move multiple messages to another folder',
-      description:
-        'Move up to 200 messages to a different mail folder in one call — e.g. archive them (pass ' +
-        'destinationFolder: "archive") or file them into a project folder. destinationFolder ' +
-        'accepts either a folder id from outlook_list_mail_folders, or a well-known name: inbox, ' +
-        'archive, deleteditems, drafts, sentitems, junkemail.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        messageIds: z
-          .array(z.string().min(1))
-          .min(1)
-          .max(200)
-          .describe('Message ids, e.g. from outlook_bulk_search_messages'),
-        destinationFolder: z
-          .string()
-          .min(1)
-          .describe('Folder id, or a well-known name like "archive" or "deleteditems"'),
-      }),
-    },
-    async (args: Record<string, any>) => {
-      const access = await auth.resolve();
-      if (typeof access === 'string') return errText(access);
-      const messageIds = Array.isArray(args.messageIds)
-        ? args.messageIds.map(String).filter(Boolean)
-        : [];
-      if (messageIds.length === 0) return errText('messageIds is required');
-      const destinationFolder = str(args.destinationFolder);
-      if (!destinationFolder) return errText('destinationFolder is required');
-
-      const batch = await graphBatch(
-        context,
-        access.accessToken,
-        messageIds.map((id) => ({
-          id,
-          method: 'POST' as const,
-          url: `/me/messages/${encodeURIComponent(id)}/move`,
-          body: { destinationId: destinationFolder },
-        }))
-      );
-      if (!batch.ok) return errText(batch.error);
-      return textResult(summarizeBatch(batch.results, `Moved to "${destinationFolder}"`));
-    }
-  );
-
-  server.registerTool(
-    'outlook_bulk_archive_messages',
-    {
-      title: 'Outlook · Act — Archive multiple messages (mark read + move)',
-      description:
-        'The inbox-triage workhorse: marks up to 200 messages read AND moves them out of the ' +
-        'inbox in one call, instead of pairing outlook_bulk_mark_messages with ' +
-        'outlook_bulk_move_messages over the same id list. Defaults to the Archive folder; pass ' +
-        'destinationFolder to file them somewhere else instead (a folder id, or a well-known ' +
-        'name like "deleteditems"). Set markRead: false to move without marking read.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        messageIds: z
-          .array(z.string().min(1))
-          .min(1)
-          .max(200)
-          .describe('Message ids, e.g. from outlook_bulk_search_messages'),
-        destinationFolder: z
-          .string()
-          .describe('Where to file them (default "archive") — a folder id or well-known name')
-          .optional(),
-        markRead: z.boolean().describe('Also mark them read (default true)').optional(),
-      }),
-    },
-    async (args: Record<string, any>) => {
-      const access = await auth.resolve();
-      if (typeof access === 'string') return errText(access);
-      const messageIds = Array.isArray(args.messageIds)
-        ? args.messageIds.map(String).filter(Boolean)
-        : [];
-      if (messageIds.length === 0) return errText('messageIds is required');
-      const destinationFolder = str(args.destinationFolder) || 'archive';
-      const markRead = args.markRead !== false;
-
-      // Mark first, move second, and only move what the mark step actually
-      // touched: /move returns a NEW message id in the destination folder, so
-      // marking afterwards would need the post-move ids. Sequencing it this
-      // way keeps both steps keyed on the ids the caller passed in.
-      let readyToMove = messageIds;
-      let markSummary = '';
-      if (markRead) {
-        const markBatch = await graphBatch(
-          context,
-          access.accessToken,
-          messageIds.map((id) => ({
-            id,
-            method: 'PATCH' as const,
-            url: `/me/messages/${encodeURIComponent(id)}`,
-            body: { isRead: true },
-          }))
-        );
-        if (!markBatch.ok) return errText(markBatch.error);
-        readyToMove = markBatch.results.filter((result) => result.ok).map((result) => result.id);
-        const markFailures = markBatch.results.length - readyToMove.length;
-        markSummary =
-          markFailures > 0
-            ? `${summarizeBatch(markBatch.results, 'Marked read')}\n\n`
-            : `Marked read: ${readyToMove.length} of ${messageIds.length} succeeded.\n\n`;
-        if (readyToMove.length === 0) {
-          return textResult(`${markSummary}Nothing left to move.`);
-        }
-      }
-
-      const moveBatch = await graphBatch(
-        context,
-        access.accessToken,
-        readyToMove.map((id) => ({
-          id,
-          method: 'POST' as const,
-          url: `/me/messages/${encodeURIComponent(id)}/move`,
-          body: { destinationId: destinationFolder },
-        }))
-      );
-      if (!moveBatch.ok) return errText(moveBatch.error);
-      return textResult(
-        markSummary + summarizeBatch(moveBatch.results, `Moved to "${destinationFolder}"`)
-      );
     }
   );
 

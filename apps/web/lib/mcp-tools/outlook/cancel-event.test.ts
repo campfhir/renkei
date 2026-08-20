@@ -47,6 +47,13 @@ jest.mock('@renkei/db', () => ({
 }));
 jest.mock('@renkei/connector-microsoft', () => ({
   GRAPH_BASE_URL: 'https://graph.microsoft.com/v1.0',
+  BATCH_CHUNK_SIZE: 20,
+  graphBatch: jest.requireActual('@renkei/connector-microsoft/src/mail-batch').graphBatch,
+  summarizeBatch: jest.requireActual('@renkei/connector-microsoft/src/mail-batch').summarizeBatch,
+  withCategoryChanges: jest.requireActual('@renkei/connector-microsoft/src/mail-batch')
+    .withCategoryChanges,
+  buildMailQueryPath: jest.requireActual('@renkei/connector-microsoft/src/mail-filter')
+    .buildMailQueryPath,
 }));
 jest.mock('@/lib/microsoft-app', () => ({ getMicrosoftApp: async () => null }));
 jest.mock('@renkei/knowledge', () => ({
