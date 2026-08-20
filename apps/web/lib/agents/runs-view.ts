@@ -120,7 +120,7 @@ export async function listRunsForOwner(
   tenantId: string,
   ownerSubject: string,
   agentId: string,
-  options: { status?: 'succeeded' | 'failed'; limit?: number } = {}
+  options: { status?: 'succeeded' | 'failed' | 'stopped'; limit?: number } = {}
 ): Promise<RunSummary[]> {
   let query = db
     .selectFrom('agent_runs')

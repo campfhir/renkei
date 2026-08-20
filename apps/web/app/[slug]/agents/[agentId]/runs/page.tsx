@@ -34,7 +34,8 @@ export default async function AgentRunsPage({
   const agent = await getAgent(dbResult.val, tenant.id, session.subject, agentId);
   if (!agent) notFound();
 
-  const filter = status === 'succeeded' || status === 'failed' ? status : undefined;
+  const filter =
+    status === 'succeeded' || status === 'failed' || status === 'stopped' ? status : undefined;
   const runs = await listRunsForOwner(dbResult.val, tenant.id, session.subject, agentId, {
     status: filter,
   });
@@ -55,6 +56,7 @@ export default async function AgentRunsPage({
           { label: 'All', href: `/${slug}/agents/${agentId}/runs` },
           { label: 'Succeeded', href: `/${slug}/agents/${agentId}/runs?status=succeeded` },
           { label: 'Failed', href: `/${slug}/agents/${agentId}/runs?status=failed` },
+          { label: 'Stopped', href: `/${slug}/agents/${agentId}/runs?status=stopped` },
         ].map((tab) => (
           <Link
             key={tab.label}
