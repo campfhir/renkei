@@ -79,7 +79,8 @@ export interface FinalizedRun {
   tenantId: string;
   agentId: string;
   ownerSubject: string;
-  status: 'succeeded' | 'failed';
+  /** 'stopped' = the run ended gracefully with nothing to do — not a failure. */
+  status: 'succeeded' | 'failed' | 'stopped';
   errorKind: string | null;
   error: string | null;
   /** saveAs bindings accumulated over the run, for chained agents. */
@@ -134,8 +135,12 @@ interface ToolCallRecord {
 
 interface AttemptOutcome {
   succeeded: boolean;
-  /** Set when a successful finish_step declared the whole run over. */
-  stopRun?: 'done' | 'quiet';
+  /**
+   * Set when finish_step declared the whole run over: 'done'/'quiet' from a
+   * success's stop flags, 'nothing' from outcome 'nothing-to-do' — the step
+   * judged the automation does not apply to this input at all.
+   */
+  stopRun?: 'done' | 'quiet' | 'nothing';
   outcome: 'tool_ok' | 'llm_declared' | 'tool_error' | 'llm_error' | 'guard';
   outcomeCode: string | null;
   summary: string;
@@ -245,7 +250,7 @@ function buildResumeStack(nodes: AgentStepNode[], startId: string | null): Frame
 }
 
 function finishArgsOf(input: unknown): {
-  outcome: 'success' | 'failure';
+  outcome: 'success' | 'failure' | 'nothing-to-do';
   code: string | null;
   summary: string;
   saveValue: string | null;
@@ -263,7 +268,9 @@ function finishArgsOf(input: unknown): {
     quiet?: unknown;
     remember?: unknown;
   } = input;
-  if (args.outcome !== 'success' && args.outcome !== 'failure') return null;
+  if (args.outcome !== 'success' && args.outcome !== 'failure' && args.outcome !== 'nothing-to-do') {
+    return null;
+  }
   return {
     outcome: args.outcome,
     code: typeof args.code === 'string' ? args.code : null,
@@ -325,7 +332,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
       return;
     }
     // Idempotent redelivery: a terminal run is simply acknowledged.
-    if (run.status === 'succeeded' || run.status === 'failed' || run.status === 'canceled') return;
+    if (
+      run.status === 'succeeded' ||
+      run.status === 'failed' ||
+      run.status === 'canceled' ||
+      run.status === 'stopped'
+    ) {
+      return;
+    }
 
     try {
       await executeRun(run);
@@ -496,6 +510,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
           await finalizeRun(run, 'succeeded', null, null, vars, result.quiet);
           return;
         }
+        if (result.kind === 'stop') {
+          // The step judged the automation does not apply to this input —
+          // a graceful terminal: no error, and quiet so no notification and
+          // no chained agents (nothing was done to chain from). The why is
+          // on the step's attempt row in the run timeline.
+          await finalizeRun(run, 'stopped', null, null, vars, true);
+          return;
+        }
         await finalizeRun(run, 'failed', result.errorKind, result.error, vars);
         return;
       }
@@ -597,6 +619,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
   ): Promise<
     | { kind: 'advance' }
     | { kind: 'finish'; quiet: boolean }
+    | { kind: 'stop'; reason: string }
     | { kind: 'fail'; errorKind: string; error: string }
   > {
     // Pre-flight: the step's tool must exist in the OWNER's live projection.
@@ -720,7 +743,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const detail = {
         resolvedInstruction: clip(outcome.resolvedInstruction, PREVIEW_CHARS),
         llmSummary: clip(outcome.summary, PREVIEW_CHARS),
-        declaredOutcome: outcome.succeeded ? 'success' : 'failure',
+        declaredOutcome:
+          outcome.stopRun === 'nothing'
+            ? 'nothing-to-do'
+            : outcome.succeeded
+              ? 'success'
+              : 'failure',
         ...(outcome.saveValue !== null
           ? { saveValue: clip(outcome.saveValue, PREVIEW_CHARS) }
           : {}),
@@ -768,6 +796,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
 
       if (outcome.succeeded) {
+        // A 'nothing-to-do' declaration ends the run gracefully — its own
+        // terminal, distinct from success, never a failure.
+        if (outcome.stopRun === 'nothing') {
+          return { kind: 'stop', reason: clip(outcome.summary, 300) };
+        }
         if (step.saveAs && outcome.saveValue !== null) vars[step.saveAs] = outcome.saveValue;
         // A stop can be declared at runtime (the instruction's own "…and
         // stop here", via finish_step) or configured statically on the
@@ -1205,7 +1238,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
             content:
               `Tool budget spent (${toolCap} calls this attempt) — this call was not made. ` +
               'Call finish_step now: declare success if what you already found satisfies the ' +
-              'step, or failure with the best-matching code if it clearly does not.' +
+              'step, "nothing-to-do" if the automation turned out not to apply to this input, ' +
+              'or failure with the best-matching code if it clearly does not.' +
               (repetitive
                 ? ` Note: every call this attempt was ${use.name} — if you were covering many ` +
                   'items one at a time, say so in finish_step: the step should use a bulk ' +
@@ -1269,7 +1303,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
   function decideOutcome(
     step: ActionStep,
     finish: {
-      outcome: 'success' | 'failure';
+      outcome: 'success' | 'failure' | 'nothing-to-do';
       code: string | null;
       summary: string;
       saveValue: string | null;
@@ -1283,6 +1317,21 @@ export function createAgentRunHandler(deps: EngineDeps) {
       'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'remember'
     >
   ): AttemptOutcome {
+    if (finish.outcome === 'nothing-to-do') {
+      // The step judged the automation does not apply to this input — a
+      // judgment call, not an error, so the attempt records as succeeded
+      // (its summary carries the why) and the run ends gracefully.
+      return {
+        ...base,
+        succeeded: true,
+        stopRun: 'nothing',
+        outcome: primaryResults.length > 0 ? 'tool_ok' : 'llm_declared',
+        outcomeCode: null,
+        summary: finish.summary,
+        saveValue: null,
+        remember: finish.remember,
+      };
+    }
     if (finish.outcome === 'success') {
       // Reality check: a declared success over a primary tool that only ever
       // errored is recorded as the failure it is.
@@ -1344,7 +1393,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
   async function finalizeRun(
     run: RunRow,
-    status: 'succeeded' | 'failed',
+    status: 'succeeded' | 'failed' | 'stopped',
     errorKind: string | null,
     error: string | null,
     vars: Record<string, string>,

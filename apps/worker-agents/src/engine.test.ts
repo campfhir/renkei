@@ -47,7 +47,7 @@ function stubMcp(tools: string[], callTool: (name: string) => McpToolResult): Mc
 }
 
 const finish = (
-  outcome: 'success' | 'failure',
+  outcome: 'success' | 'failure' | 'nothing-to-do',
   extra: Record<string, unknown> = {}
 ): LlmResponse => ({
   content: [
@@ -428,6 +428,79 @@ maybe('agent run engine', () => {
     expect(attempts).toHaveLength(1);
     // The finalize hook was told this stop wants silence.
     expect(finalized[0]).toMatchObject({ status: 'succeeded', quiet: true });
+  });
+
+  it('ends the run as stopped — not failed — when finish_step declares nothing-to-do', async () => {
+    const twoSteps: AgentStepsDoc = {
+      version: 1,
+      steps: [
+        {
+          id: randomUUID(),
+          name: 'Classify ticket type',
+          instruction: [{ t: 'text', v: 'Pick the target project, or conclude none applies.' }],
+          tool: null,
+          maxAttempts: 1,
+          failureHandling: [],
+        },
+        {
+          id: randomUUID(),
+          name: 'Never reached',
+          instruction: [{ t: 'text', v: 'Create the ticket.' }],
+          tool: null,
+          maxAttempts: 1,
+          failureHandling: [],
+        },
+      ],
+    };
+    const { runId } = await seedRun(twoSteps);
+    const finalized: unknown[] = [];
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () => stubMcp([], () => okToolResult),
+      resolveLlm: async () => ok(stubLlm(() => finish('nothing-to-do'))),
+      mintToken: async () => 'stub-token',
+      revokeToken: async () => undefined,
+      onFinalized: async (run) => {
+        finalized.push(run);
+      },
+    });
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    // A graceful terminal: no error, no failure taxonomy, nothing red.
+    expect(run.status).toBe('stopped');
+    expect(run.error_kind).toBeNull();
+    expect(run.error).toBeNull();
+
+    // Step 2 never ran; the attempt records as a succeeded judgment whose
+    // detail carries the why for the run timeline.
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['status', 'outcome', 'detail'])
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].status).toBe('succeeded');
+    expect(JSON.stringify(attempts[0].detail)).toContain('nothing-to-do');
+
+    // The finalize hook sees the graceful status, marked quiet: no
+    // notification, no chained agents.
+    expect(finalized[0]).toMatchObject({ status: 'stopped', quiet: true });
+
+    // Redelivering a stopped run is a no-op.
+    await handler({ payload: { runId } });
+    const attemptsAfter = await db
+      .selectFrom('agent_run_steps')
+      .select('id')
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attemptsAfter).toHaveLength(1);
+    expect(finalized).toHaveLength(1);
   });
 
   it('stops after a step whose onSuccess is configured to stop', async () => {

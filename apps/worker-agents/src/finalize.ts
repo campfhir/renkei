@@ -34,8 +34,10 @@ export function createFinalizeHook(
 ) {
   return async function onFinalized(run: FinalizedRun): Promise<void> {
     // A quiet stop is the run ASKING for invisibility: no notification,
-    // no chained agents. History still has it; nothing else.
-    if (run.quiet) {
+    // no chained agents. History still has it; nothing else. A 'stopped'
+    // run (nothing to do) is quiet by construction — and guarded here
+    // explicitly too, because nothing was done to notify or chain from.
+    if (run.quiet || run.status === 'stopped') {
       logger.info('run {runId} stopped quietly', {
         component: 'worker-agents/finalize',
         runId: run.runId,

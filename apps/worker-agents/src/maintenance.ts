@@ -31,7 +31,7 @@ export function createRetentionSweep(db: Kysely<DB>) {
         DELETE FROM agent_runs WHERE id IN (
           SELECT id FROM agent_runs
           WHERE tenant_id = ${tenantId}
-            AND status IN ('succeeded', 'failed', 'canceled')
+            AND status IN ('succeeded', 'failed', 'canceled', 'stopped')
             AND created_at < NOW() - make_interval(days => ${days})
           ORDER BY created_at
           LIMIT ${RETENTION_BATCH}
