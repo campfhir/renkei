@@ -123,7 +123,7 @@ export function granularJiraScopes(toolName: string, readOnly: boolean): string[
   // (lib/atlassian-scopes.ts), so no grant that can write issues lacks it —
   // gating on it hides the tool only from grants that would 401 anyway,
   // the jira_list_projects rule.
-  if (toolName === 'jira_add_attachment') {
+  if (toolName === 'jira_add_attachment' || toolName === 'jira_request_attachment_upload') {
     return ['read:issue:jira', 'write:issue:jira', 'write:attachment:jira'];
   }
   const deleteScope = DELETE_TOOL_SCOPES[toolName];

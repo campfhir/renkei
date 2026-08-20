@@ -51,7 +51,7 @@ export function confluenceScopeFor(toolName: string): string[] {
 
     case 'confluence_list_attachments':
       return ['read:attachment:confluence'];
-    case 'confluence_upload_attachment':
+    case 'confluence_request_attachment_upload':
       return ['write:attachment:confluence'];
     case 'confluence_delete_attachment':
       return ['delete:attachment:confluence'];

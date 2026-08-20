@@ -42,9 +42,15 @@ export class ZoomAdapter implements ProviderAdapter {
           grant_type: 'refresh_token',
           refresh_token: refreshToken,
         }),
+        // Bounded like every connector client: a stalled token endpoint must
+        // not hang the caller's whole request path.
+        signal: AbortSignal.timeout(15_000),
       });
-    } catch {
-      return err('REFRESH_FAILED' as const, { message: 'Could not reach zoom.us' });
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      return err('REFRESH_FAILED' as const, {
+        message: timedOut ? 'zoom.us token endpoint timed out after 15000ms' : 'Could not reach zoom.us',
+      });
     }
 
     if (!response.ok) {

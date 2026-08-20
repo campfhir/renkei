@@ -90,7 +90,7 @@ const TOOLS = [
   'sharepoint_move_document',
   'sharepoint_copy_document',
   'sharepoint_delete_document',
-  'sharepoint_upload_document',
+  'sharepoint_request_document_upload',
   'sharepoint_list_document_access',
   'sharepoint_share_document',
   'sharepoint_add_user_to_document',

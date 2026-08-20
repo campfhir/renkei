@@ -73,9 +73,15 @@ export class AtlassianAdapter implements ProviderAdapter {
           client_secret: this.clientSecret,
           refresh_token: refreshToken,
         }),
+        // A stalled token endpoint must not hang the caller's whole request
+        // path — every connector client aborts at 15s, so refresh does too.
+        signal: AbortSignal.timeout(15_000),
       });
-    } catch {
-      return err('REFRESH_FAILED' as const, { message: 'token endpoint unreachable' });
+    } catch (error) {
+      const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      return err('REFRESH_FAILED' as const, {
+        message: timedOut ? 'token endpoint timed out after 15000ms' : 'token endpoint unreachable',
+      });
     }
 
     if (!response.ok) {

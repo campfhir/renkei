@@ -26,6 +26,7 @@ import { registerAllTools } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
 import { registerCardTools, CARDS_CONNECTOR } from '@/lib/mcp-tools/cards';
+import { registerUploadStatusTool } from '@/lib/mcp-tools/upload-slots';
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
 import { oauthWebexAuth } from '@/lib/mcp-tools/webex/webex-auth';
 import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/outlook';
@@ -202,6 +203,10 @@ export async function registerRenkeiTools(
     context
   );
   registerCardTools(withCapabilityGate(server, projection, CARDS_CONNECTOR), context);
+  // check_file_upload is cross-connector — any *_request_*_upload tool can
+  // mint the slot it reads — so it registers on the raw server, ungated,
+  // the way whoami does.
+  registerUploadStatusTool(server, context);
   if (webexAvailable) {
     // Production's one path: the caller's own WebEx grant. Anything else (a
     // future sandbox credential) is injected by whoever calls

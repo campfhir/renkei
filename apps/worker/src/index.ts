@@ -30,6 +30,7 @@ import { createDomainDispatchHandler } from './handlers/domain-dispatch';
 import { createAgentRunFailedHandler } from './handlers/agent-run-failed';
 import { createMailBulkJobHandler } from './handlers/mail-bulk-jobs';
 import { createMailJobsSweep, MAIL_JOBS_SWEEP_INTERVAL_MS } from './health/mail-jobs';
+import { createUploadSlotsSweep, UPLOAD_SLOTS_SWEEP_INTERVAL_MS } from './health/upload-slots';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
 import {
@@ -109,7 +110,7 @@ async function main(): Promise<void> {
       sweepContentWatches
     ),
     ...(() => {
-      // Mail bulk job hygiene: fail stalled runs, prune terminal rows.
+      // Row hygiene: fail stalled mail runs, expire/prune upload slots.
       const dbResult = getDatabase();
       return dbResult.ok
         ? [
@@ -118,6 +119,12 @@ async function main(): Promise<void> {
               'mailjobs/sweep',
               MAIL_JOBS_SWEEP_INTERVAL_MS,
               createMailJobsSweep(dbResult.val)
+            ),
+            schedulePeriodicSweep(
+              'upload slots',
+              'uploadslots/sweep',
+              UPLOAD_SLOTS_SWEEP_INTERVAL_MS,
+              createUploadSlotsSweep(dbResult.val)
             ),
           ]
         : [];

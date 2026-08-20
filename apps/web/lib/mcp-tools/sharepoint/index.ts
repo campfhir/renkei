@@ -43,5 +43,6 @@ export async function registerSharePointTools(
     // SharePoint has no default drive: guessing one would act on the wrong
     // library silently, so a site (or an explicit driveId) is required.
     usesMyDrive: false,
+    slotKind: 'sharepoint-document',
   });
 }

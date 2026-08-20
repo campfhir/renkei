@@ -134,5 +134,6 @@ export async function registerOneDriveTools(
     // Unlike SharePoint, "the drive" is unambiguous here, so every selector
     // is optional and the tools default to the caller's own OneDrive.
     usesMyDrive: true,
+    slotKind: 'onedrive-document',
   });
 }

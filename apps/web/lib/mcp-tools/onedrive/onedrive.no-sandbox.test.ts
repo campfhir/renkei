@@ -58,7 +58,7 @@ const TOOLS = [
   'onedrive_move_document',
   'onedrive_copy_document',
   'onedrive_delete_document',
-  'onedrive_upload_document',
+  'onedrive_request_document_upload',
   'onedrive_list_document_access',
   'onedrive_share_document',
   'onedrive_add_user_to_document',

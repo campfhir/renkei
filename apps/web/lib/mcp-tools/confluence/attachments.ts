@@ -9,18 +9,16 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import {
   confluenceGet,
-  confluenceUpload,
   confluenceDelete,
   values,
   textResult,
   errText,
   str,
-  rec,
 } from './client';
 import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
 import type { ConfluenceAuth } from './confluence-auth';
-import { base64LengthFor, decodeBase64Attachment } from '../fetch-guard';
+import { createUploadSlot } from '../upload-slots';
 
 /** Fallback when no limit is on the context; matches the org-settings default. */
 const DEFAULT_MAX_ATTACHMENT_BYTES = 20_971_520; // 20MB
@@ -78,57 +76,39 @@ export async function registerAttachmentTools(
   );
 
   server.registerTool(
-    'confluence_upload_attachment',
+    'confluence_request_attachment_upload',
     {
-      title: 'Confluence · Act — Upload an attachment',
-      description: 'Attach a file to a page or blog post.',
+      title: 'Confluence · Act — Request an upload endpoint for an attachment',
+      description:
+        'Attach a NEW file to a page or blog post — without base64. Returns a short-lived ' +
+        'single-use endpoint; send the raw bytes there (curl with the Authorization header, ' +
+        'or the returned browser link). Never generate file content as a tool argument.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         contentId: z.string().min(1).describe('Page or blog post id'),
         filename: z.string().min(1).describe('File name to store as'),
-        contentBase64: z
-          .string()
-          .min(1)
-          .max(base64LengthFor(context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES))
-          .describe(
-            'File content, base64-encoded (a data:*;base64, URL prefix is stripped automatically)'
-          ),
         comment: z.string().describe('Comment shown alongside the attachment').optional(),
+        contentType: z.string().describe('MIME type (optional)').optional(),
       }),
     },
     async (args: Record<string, any>) => {
-      const access = await auth.resolve();
-      if (typeof access === 'string') return errText(access);
       const contentId = str(args.contentId);
       if (!contentId) return errText('contentId is required');
       const filename = str(args.filename);
       if (!filename) return errText('filename is required');
-      const contentBase64 = str(args.contentBase64);
-      if (!contentBase64) return errText('contentBase64 is required');
 
-      const decoded = decodeBase64Attachment(contentBase64);
-      if (!decoded.ok) return errText(decoded.error);
-      const buffer = decoded.buffer;
-      const maxBytes = context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
-      if (buffer.byteLength > maxBytes) {
-        return errText(`Attachment is ${buffer.byteLength} bytes; the limit is ${maxBytes} bytes.`);
-      }
-
-      const form = new FormData();
-      form.append('file', new Blob([buffer]), filename);
-      if (str(args.comment)) form.append('comment', str(args.comment));
-
-      const result = await confluenceUpload(
+      const slot = await createUploadSlot(
         context,
-        access,
-        `/rest/api/content/${encodeURIComponent(contentId)}/child/attachment`,
-        form
+        'confluence-attachment',
+        { contentId, ...(str(args.comment) ? { comment: str(args.comment) } : {}) },
+        {
+          filename,
+          contentType: str(args.contentType) || undefined,
+          maxBytes: context.maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES,
+        }
       );
-      if (!result.ok) return errText(result.error);
-      const uploaded = values(result.body)[0];
-      return textResult(
-        `Uploaded "${filename}"${uploaded ? ` (id ${str(rec(uploaded).id)})` : ''} to ${contentId}.`
-      );
+      if (!slot.ok) return errText(slot.error);
+      return textResult(slot.instructions);
     }
   );
 

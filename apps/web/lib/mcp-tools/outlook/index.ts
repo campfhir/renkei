@@ -47,6 +47,7 @@ import {
 import type { GraphAuth } from '../graph/graph-auth';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
 import { registerBulkJobTools } from './bulk-jobs';
+import { createUploadSlot } from '../upload-slots';
 
 export const OUTLOOK_MCP_CONNECTOR = 'microsoft';
 
@@ -633,6 +634,7 @@ function outlookScopeFor(toolName: string): string[] {
     case 'outlook_forward_preview':
     case 'outlook_send_draft_confirm':
     case 'outlook_discard_draft_confirm':
+    case 'outlook_request_draft_attachment_upload':
       return ['Mail.Send'];
     // The bulk-job pair shares one scope so it appears and disappears
     // together — a status tool without its submit tool (or vice versa) is
@@ -714,6 +716,43 @@ export async function registerOutlookTools(
   // The async bulk mail job pair (replacing the synchronous outlook_bulk_*
   // act tools) lives in its own module — this file is long enough.
   registerBulkJobTools(server, context, auth);
+
+  // outlook_request_draft_attachment_upload — files reach a composed email
+  // via an out-of-band endpoint, never as model-generated base64.
+  server.registerTool(
+    'outlook_request_draft_attachment_upload',
+    {
+      title: 'Outlook · Act — Request an upload endpoint for a draft attachment',
+      description:
+        'Attach a NEW file to an email draft (the draftId from ' +
+        'outlook_send_mail_preview/reply/forward previews) — without base64. Returns a ' +
+        'short-lived single-use endpoint; send the raw bytes there (curl with the ' +
+        'Authorization header, or the returned browser link). Never generate file content ' +
+        'as a tool argument.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        draftId: z.string().min(1).describe('Draft message id from a compose preview'),
+        filename: z.string().min(1).describe('File name for the attachment'),
+        contentType: z.string().describe('MIME type (optional)').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const draftId = str(args.draftId);
+      const filename = str(args.filename);
+      if (!draftId || !filename) return errText('draftId and filename are required');
+
+      const slot = await createUploadSlot(
+        context,
+        'outlook-draft-attachment',
+        { draftId },
+        { filename, contentType: str(args.contentType) || undefined }
+      );
+      if (!slot.ok) return errText(slot.error);
+      return textResult(slot.instructions);
+    }
+  );
 
   server.registerTool(
     'outlook_list_mail_folders',

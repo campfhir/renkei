@@ -147,7 +147,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['Files.Read', 'Files.ReadWrite'],
     label: 'Manage my OneDrive',
     hint:
-      'onedrive_upload_document, onedrive_create_folder, onedrive_rename_document, ' +
+      'onedrive_request_document_upload, onedrive_create_folder, onedrive_rename_document, ' +
       'onedrive_move_document, onedrive_copy_document, onedrive_delete_document, ' +
       'onedrive_share_document — creates, renames, moves, DELETES and shares files as the user. ' +
       'Carries Files.Read, so the read tools come with it. Off by default: add Files.ReadWrite ' +
@@ -203,7 +203,7 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['Sites.Read.All', 'Sites.ReadWrite.All'],
     label: 'Manage SharePoint content',
     hint:
-      'sharepoint_create_page, sharepoint_update_page, sharepoint_upload_document, ' +
+      'sharepoint_create_page, sharepoint_update_page, sharepoint_request_document_upload, ' +
       'sharepoint_rename_document, sharepoint_move_document, sharepoint_delete_document, ' +
       'sharepoint_update_document_metadata, sharepoint_share_document. Does NOT change ' +
       'site-level permissions — Graph offers no delegated API for that, and Renkei deliberately ' +
