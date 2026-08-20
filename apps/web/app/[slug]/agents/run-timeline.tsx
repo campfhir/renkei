@@ -28,6 +28,10 @@ function statusTone(status: string): string {
       return 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300';
     case 'running':
       return 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300';
+    // A graceful "nothing to do" end — neutral on purpose: not the green of
+    // work done, and emphatically not the red of a failure.
+    case 'stopped':
+      return 'bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300';
     default:
       return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
   }

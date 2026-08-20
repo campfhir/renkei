@@ -119,6 +119,10 @@ export function createDomainDispatchHandler(): EventHandler {
       type: event.type,
       ownerSubject: payload.ownerSubject,
       payload: payload.data,
+      // Firing-lock fallback for payloads without a stable id of their
+      // own — a replay of this row (the retry window in the header) then
+      // still counts as the same firing.
+      eventId: event.id,
     });
     if (started.length > 0) {
       logger.debug('{count} agent run(s) started for {source}/{type}', {

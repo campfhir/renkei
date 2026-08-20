@@ -147,6 +147,14 @@ export interface Agents {
   updated_at: Generated<Timestamp>;
 }
 
+export interface AgentTriggerFirings {
+  created_at: Generated<Timestamp>;
+  dedupe_key: string;
+  run_id: string | null;
+  tenant_id: string;
+  trigger_id: string;
+}
+
 export interface AgentTriggers {
   agent_id: string;
   config: Generated<Json>;
@@ -658,6 +666,7 @@ export interface DB {
   agent_memories: AgentMemories;
   agent_run_steps: AgentRunSteps;
   agent_runs: AgentRuns;
+  agent_trigger_firings: AgentTriggerFirings;
   agent_triggers: AgentTriggers;
   agents: Agents;
   audit_events: AuditEvents;

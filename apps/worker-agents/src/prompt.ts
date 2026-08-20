@@ -20,7 +20,15 @@ export const FINISH_STEP_DEF: LlmToolDef = {
   inputSchema: {
     type: 'object',
     properties: {
-      outcome: { type: 'string', enum: ['success', 'failure'] },
+      outcome: {
+        type: 'string',
+        enum: ['success', 'failure', 'nothing-to-do'],
+        description:
+          "'success' when the step's work is done; 'failure' when it could not be done; " +
+          "'nothing-to-do' when the step determined the automation does not apply to this " +
+          'input at all (out of scope, no valid target, already handled) — the WHOLE run ' +
+          'ends there gracefully, as a non-failure, with summary saying why.',
+      },
       code: {
         type: 'string',
         description:
@@ -65,6 +73,7 @@ export const SYSTEM_PROMPT = [
   'You may call only the tools provided. When the step’s work is done, or it is clear it cannot be done, call finish_step exactly once with the outcome.',
   'Aim to finish: when what you have satisfies the step’s intent, declare success rather than double-checking with more calls.',
   'When the instruction says the whole automation should end at this step ("…and stop here"), set stop: true on finish_step; when it says to end silently or do nothing, also set quiet: true.',
+  'When the work turns out not to apply to this input at all — out of scope, no valid target, nothing left to do — that is not a failure: declare outcome "nothing-to-do" with a summary saying why, and the automation ends there gracefully.',
   'Declare failure honestly: a tool error you could not work around, or a result that clearly does not match the step’s intent, is a failure, not a success.',
   'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled — and record anything future runs must know via finish_step’s remember field.',
 ].join(' ');

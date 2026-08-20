@@ -1,8 +1,10 @@
 /**
  * Event → run fan-out against a real database (skipped without
  * DATABASE_URL). What must hold: only the event owner's enabled agents
- * fire, match filters filter, and the event payload arrives as the run's
- * initial state.
+ * fire, match filters filter, the event payload arrives as the run's
+ * initial state, and the firing lock (agent_trigger_firings) makes a
+ * repeated delivery of the SAME source event a no-op — that is the
+ * multi-worker-process duplicate-run guard.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -149,6 +151,55 @@ maybe('agent event fan-out', () => {
     const firedAgents = runs.map((run) => run.agent_id);
     expect(firedAgents).toContain(filtered);
     expect(firedAgents).not.toContain(other);
+  });
+
+  it('fires a source event at most once per trigger, however often it is delivered', async () => {
+    // A fresh owner so earlier tests' lingering agents cannot muddy counts.
+    const soloOwner = `solo-${randomUUID().slice(0, 8)}`;
+    await seedEventAgent(soloOwner);
+    const queue = new InMemoryQueue();
+    const messageId = `dup-${randomUUID()}`;
+    const event = mailEvent(soloOwner, { messageId });
+
+    const first = await fanOutAgentEvents(db, queue.producer, event);
+    // The duplicate-webhook / replay case: same message, second delivery.
+    const second = await fanOutAgentEvents(db, queue.producer, event);
+    const fresh = await fanOutAgentEvents(
+      db,
+      queue.producer,
+      mailEvent(soloOwner, { messageId: `fresh-${randomUUID()}` })
+    );
+
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(0);
+    expect(fresh).toHaveLength(1);
+
+    // The winner's run is recorded on the firing row.
+    const firing = await db
+      .selectFrom('agent_trigger_firings')
+      .select('run_id')
+      .where('dedupe_key', '=', `msg:${messageId}`)
+      .executeTakeFirstOrThrow();
+    expect(firing.run_id).toBe(first[0]);
+  });
+
+  it('falls back to the delivery id, and without one does not lock at all', async () => {
+    const soloOwner = `solo-${randomUUID().slice(0, 8)}`;
+    await seedEventAgent(soloOwner);
+    const queue = new InMemoryQueue();
+    // No messageId/meetingUuid in the payload — the queue-row id is the key.
+    const bare = (eventId?: string) => ({
+      ...mailEvent(soloOwner, { messageId: '' }),
+      eventId,
+    });
+
+    const deliveryId = randomUUID();
+    expect(await fanOutAgentEvents(db, queue.producer, bare(deliveryId))).toHaveLength(1);
+    expect(await fanOutAgentEvents(db, queue.producer, bare(deliveryId))).toHaveLength(0);
+
+    // No key derivable anywhere → pre-lock behavior (fires every time).
+    expect(await fanOutAgentEvents(db, queue.producer, bare(undefined))).toHaveLength(1);
+    expect(await fanOutAgentEvents(db, queue.producer, bare(undefined))).toHaveLength(1);
   });
 
   it('fires zoom transcript-completed triggers with the payload as state', async () => {

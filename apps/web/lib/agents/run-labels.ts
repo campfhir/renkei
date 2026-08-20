@@ -15,6 +15,9 @@ const STATUS_LABELS: Record<string, string> = {
   succeeded: 'Succeeded',
   failed: 'Failed',
   canceled: 'Canceled',
+  // A graceful early end — a step judged the automation does not apply to
+  // this input. Deliberately not a failure and not a plain success.
+  stopped: 'Stopped — nothing to do',
 };
 
 /** Title-case label for a run or attempt status; unknown values capitalize. */
