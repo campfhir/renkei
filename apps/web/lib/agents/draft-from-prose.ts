@@ -77,11 +77,17 @@ function currentLinesOf(nodes: AgentStepNode[]): string {
     .join('\n');
 }
 
+/** A trigger-provided variable with the catalog's explanation of what it is. */
+export interface TriggerVarInfo {
+  name: string;
+  description: string;
+}
+
 function promptOf(
   text: string,
   tools: ToolDescriptor[],
   currentSteps: AgentStepNode[],
-  triggerVars: string[]
+  triggerVars: TriggerVarInfo[]
 ): string {
   const toolLines = tools
     .filter((tool) => !tool.appOnly)
@@ -93,7 +99,7 @@ function promptOf(
     .join('\n');
   const varLines = [
     ...BUILTIN_VARIABLES.map((variable) => `- ${variable.name}: ${variable.description}`),
-    ...triggerVars.map((name) => `- ${name}: provided by a trigger when the automation starts`),
+    ...triggerVars.map((variable) => `- ${variable.name}: ${variable.description}`),
   ].join('\n');
 
   const revising = currentSteps.length > 0;
@@ -106,7 +112,7 @@ function promptOf(
     'Rules:',
     '- Each step does ONE thing and may use AT MOST ONE tool from the list below (a step may also be pure reasoning with no tool).',
     '- Mark the tool in the instruction as {{tool:tool_name}} and reference known variables as {{var:name}}. Use ONLY tools and variables from the lists.',
-    '- When a later step needs an earlier step\'s result, give the earlier step a short "saveAs" name (spaces allowed, e.g. "the ticket") and reference it as {{var:the ticket}}.',
+    '- When a later step needs an earlier step\'s result, give the earlier step a short "saveAs" name (starts with a letter; then letters, numbers, spaces, ".", "-" or "_"; at most 64 characters — e.g. "the ticket") and reference it as {{var:the ticket}}.',
     '- Every "saveAs" name must be UNIQUE — never reuse a name across steps. Later references use the exact earlier name.',
     '- When the description says the flow ENDS at a step on success, set that step\'s "onSuccess" to "stop"; when it should end silently doing nothing (no reply, no follow-up — e.g. "if it\'s not relevant, ignore it"), use "stop-quiet". For CONDITIONAL endings keep the condition in the instruction words ("If …, … and stop here" / "…stop silently") — the runner honors those at runtime.',
     '- Steps run strictly in order — but people rarely DESCRIBE them in order ("before all that ' +
@@ -146,7 +152,7 @@ function promptOf(
     'Available tools:',
     toolLines,
     '',
-    'Available variables (more may exist from triggers; use only these unless the user names trigger data — then use {{var:trigger.<name>}} as they describe it):',
+    'Available variables (trigger.* variables describe the event that starts the automation — pass the id-shaped ones to the matching connector tool to act on that item, e.g. reply where a message came from by giving its space/room id variable to that connector\'s send tool). Use ONLY these variable names. Never invent trigger.* names: if the described automation reacts to an event but no matching trigger.* variable is listed, write the step in plain words instead — the user must attach that trigger in the builder before its data exists:',
     varLines,
     '',
     revising ? 'The user asked for this change:' : 'The user wrote:',
@@ -166,7 +172,8 @@ function promptOf(
     '    "tool": string or null — EXACTLY the tool_name inside the instruction\'s',
     '      {{tool:...}} token, or null for a reasoning step with no tool,',
     '    "saveAs": string or null — a short result name when later steps reference it',
-    '      (starts with a letter; letters, numbers, spaces, - or _), otherwise null,',
+    '      (starts with a letter; then letters, numbers, spaces, ".", "-" or "_";',
+    '      at most 64 characters), otherwise null,',
     '    "tries": integer 1-10 or omitted — total attempts for this step (default 5),',
     '    "onSuccess": "continue" (default), "stop" (the automation ends here successfully),',
     '      or "stop-quiet" (ends silently: no reply, no follow-up automations),',
@@ -228,7 +235,10 @@ function segmentsOf(
     if (kind === 'tool' && validTools.has(name) && (allowMultipleTools || !toolPlaced)) {
       segments.push({ t: 'tool', name });
       toolPlaced = true;
-    } else if (kind === 'var' && (knownVars.has(name) || name.startsWith('trigger.'))) {
+    } else if (kind === 'var' && knownVars.has(name)) {
+      // trigger.* names get no free pass: a chip naming trigger data no
+      // attached trigger provides would bounce at save ("not something this
+      // agent knows"), so it degrades to text like any other unknown var.
       segments.push({ t: 'var', name });
     } else {
       // An invented tool, a duplicate tool chip, or an unknown variable:
@@ -239,6 +249,36 @@ function segmentsOf(
   }
   pushText(instruction.slice(cursor));
   return segments;
+}
+
+/**
+ * The retry feedback for a {{var:trigger.*}} chip nothing provides: name the
+ * trigger variables that DO exist so the corrective round trip can pick one,
+ * or say plainly that a trigger must be attached first.
+ */
+function unknownTriggerVarProblem(label: string, name: string, knownVars: Set<string>): string {
+  const available = [...knownVars].filter((known) => known.startsWith('trigger.'));
+  return (
+    `${label} uses {{var:${name}}}, but no attached trigger provides it — ` +
+    (available.length > 0
+      ? `the available trigger variables are: ${available.join(', ')}.`
+      : 'no trigger is attached, so no trigger.* variables exist; write the step in plain words (the user attaches the trigger in the builder).')
+  );
+}
+
+/**
+ * Coerce a model-authored saveAs into VARIABLE_NAME_PATTERN shape (letter
+ * first; letters, numbers, spaces, ".", "-", "_"; ≤64 chars) so a draft can
+ * never bounce at save on a result name. Returns '' when nothing survives.
+ */
+function sanitizeSaveAs(raw: string): string {
+  let name = raw
+    .trim()
+    .replace(/[^A-Za-z0-9 _.-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  name = name.replace(/^[^A-Za-z]+/, '');
+  return name.slice(0, 64).trim();
 }
 
 export interface DraftedAgent {
@@ -471,9 +511,11 @@ function parseBranchEntry(
   for (const match of wire.condition.matchAll(TOKEN_PATTERN)) {
     const [, kind, rawName] = match;
     const name = rawName.trim();
-    if (kind === 'var' && !state.knownVars.has(name) && !name.startsWith('trigger.')) {
+    if (kind === 'var' && !state.knownVars.has(name)) {
       state.softProblems.push(
-        `${label} references {{var:${name}}} in its condition, which no earlier step saves and no trigger provides.`
+        name.startsWith('trigger.')
+          ? unknownTriggerVarProblem(`${label} (condition)`, name, state.knownVars)
+          : `${label} references {{var:${name}}} in its condition, which no earlier step saves and no trigger provides.`
       );
     }
   }
@@ -524,9 +566,11 @@ function parseActionEntry(
       softProblems.push(
         `${label} uses {{tool:${name}}}, which is not in the available tools list — pick a tool from the list or make it a reasoning step.`
       );
-    } else if (kind === 'var' && !knownVars.has(name) && !name.startsWith('trigger.')) {
+    } else if (kind === 'var' && !knownVars.has(name)) {
       softProblems.push(
-        `${label} references {{var:${name}}}, which no earlier step saves and no trigger provides.`
+        name.startsWith('trigger.')
+          ? unknownTriggerVarProblem(label, name, knownVars)
+          : `${label} references {{var:${name}}}, which no earlier step saves and no trigger provides.`
       );
     }
   }
@@ -554,6 +598,18 @@ function parseActionEntry(
 
   let saveAs =
     typeof step.saveAs === 'string' && step.saveAs.trim() ? step.saveAs.trim() : origin?.saveAs;
+  if (saveAs) {
+    // Names that would bounce at save are coerced into shape here, with the
+    // rule fed back so the corrective round trip learns it.
+    const sanitized = sanitizeSaveAs(saveAs);
+    if (sanitized !== saveAs) {
+      softProblems.push(
+        `${label} names its result "${saveAs}", which is not a usable name — start with a letter, then letters, numbers, spaces, ".", "-" or "_" (64 characters max).` +
+          (sanitized ? ` It was renamed to "${sanitized}".` : ' The name was dropped.')
+      );
+      saveAs = sanitized || origin?.saveAs;
+    }
+  }
   if (saveAs) {
     // Result names must be unique across steps (the validator enforces
     // it at save); a duplicate is renamed so the draft stays usable and
@@ -645,8 +701,9 @@ export async function draftAgentFromProse(
   options: {
     /** Present when revising: the builder's CURRENT (possibly unsaved) steps. */
     currentSteps?: AgentStepNode[];
-    /** trigger.* names the attached triggers provide, so those chips verify. */
-    triggerVars?: string[];
+    /** trigger.* variables the attached triggers provide (name + what it
+     * is), so those chips verify and the prompt can explain them. */
+    triggerVars?: TriggerVarInfo[];
   } = {}
 ): Promise<DraftedAgent | { error: string; detail?: string }> {
   const currentSteps = options.currentSteps ?? [];
@@ -666,7 +723,7 @@ export async function draftAgentFromProse(
   );
   const seedVars = new Set([
     ...BUILTIN_VARIABLES.map((variable) => variable.name),
-    ...triggerVars,
+    ...triggerVars.map((variable) => variable.name),
     // Existing saveAs names stay referenceable even before their step is
     // re-emitted (the model may reorder).
     ...flattenActionSteps(currentSteps).flatMap((step) => (step.saveAs ? [step.saveAs] : [])),

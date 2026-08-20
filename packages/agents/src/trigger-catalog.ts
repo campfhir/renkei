@@ -48,7 +48,11 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
       trigger('subject', 'Email subject', 'The subject line of the email that triggered this run.'),
       trigger('body', 'Email body', 'A text preview of the email that triggered this run.'),
       trigger('from', 'Sender', 'The address the triggering email came from.'),
-      trigger('messageId', 'Email id', 'The identifier tools can use to fetch the full email.'),
+      trigger(
+        'messageId',
+        'Email id',
+        'The identifier of the triggering email; pass it to outlook_get_message to read the full email or to outlook_reply_preview to answer it.'
+      ),
     ],
   },
   {
@@ -61,8 +65,16 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
     provides: [
       trigger('text', 'Message text', 'The text of the message that triggered this run.'),
       trigger('sender', 'Sender', 'Who posted the triggering message.'),
-      trigger('roomId', 'Space id', 'The identifier of the space the message was posted in.'),
-      trigger('messageId', 'Message id', 'The identifier tools can use to fetch the message.'),
+      trigger(
+        'roomId',
+        'Space id',
+        'The identifier of the space the message was posted in; pass it to webex_send_message to reply in that space.'
+      ),
+      trigger(
+        'messageId',
+        'Message id',
+        'The identifier of the triggering message; pass it to webex_get_message to fetch it.'
+      ),
     ],
   },
   {

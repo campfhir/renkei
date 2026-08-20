@@ -171,7 +171,8 @@ function validateActionStep(
   if (step.saveAs !== undefined && !VARIABLE_NAME_PATTERN.test(step.saveAs)) {
     issues.push({
       path: at('saveAs'),
-      message: 'Result names start with a letter and use letters, numbers, spaces, - or _.',
+      message:
+        'Result names start with a letter and use letters, numbers, spaces, ".", "-" or "_" (64 characters max).',
     });
   }
 

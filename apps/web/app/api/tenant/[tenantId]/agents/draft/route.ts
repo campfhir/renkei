@@ -11,7 +11,34 @@ import { getDatabase } from '@renkei/db';
 import { isAgentStepsDoc } from '@renkei/agents';
 import { getSessionFromRequest } from '@/lib/session';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
-import { draftAgentFromProse } from '@/lib/agents/draft-from-prose';
+import { draftAgentFromProse, type TriggerVarInfo } from '@/lib/agents/draft-from-prose';
+
+/** Accept {name, description} entries, tolerating the older bare-string form. */
+function parseTriggerVars(value: unknown): TriggerVarInfo[] {
+  if (!Array.isArray(value)) return [];
+  const parsed: TriggerVarInfo[] = [];
+  for (const entry of value) {
+    if (typeof entry === 'string' && entry.length <= 128) {
+      parsed.push({ name: entry, description: 'Provided by a trigger when the automation starts.' });
+    } else if (typeof entry === 'object' && entry !== null) {
+      const candidate: { name?: unknown; description?: unknown } = entry;
+      if (
+        typeof candidate.name === 'string' &&
+        candidate.name.length > 0 &&
+        candidate.name.length <= 128
+      ) {
+        parsed.push({
+          name: candidate.name,
+          description:
+            typeof candidate.description === 'string' && candidate.description
+              ? candidate.description.slice(0, 400)
+              : 'Provided by a trigger when the automation starts.',
+        });
+      }
+    }
+  }
+  return parsed;
+}
 
 export async function POST(
   request: NextRequest,
@@ -36,11 +63,7 @@ export async function POST(
   // Revision context: the builder's CURRENT (possibly unsaved) steps — the
   // model revises what the user is looking at, not what was last saved.
   const currentSteps = isAgentStepsDoc(payload.steps) ? payload.steps.steps : [];
-  const triggerVars = Array.isArray(payload.triggerVars)
-    ? payload.triggerVars.filter(
-        (name): name is string => typeof name === 'string' && name.length <= 128
-      )
-    : [];
+  const triggerVars = parseTriggerVars(payload.triggerVars);
 
   const tools = await listAvailableTools(tenantId, session.subject);
   const drafted = await draftAgentFromProse(dbResult.val, tenantId, payload.text.trim(), tools, {

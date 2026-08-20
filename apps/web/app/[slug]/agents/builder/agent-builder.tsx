@@ -21,7 +21,7 @@ import {
   findNodeById,
   flattenActionSteps,
   isBranchStep,
-  triggerVariableNames,
+  triggerVariableDescriptors,
   validateAgentDraft,
   walkSteps,
   type AgentStepNode,
@@ -222,7 +222,11 @@ export function AgentBuilder({
       {
         text: prose,
         ...(hasRealSteps ? { steps: stepsDoc } : {}),
-        triggerVars: triggerVariableNames(triggers.map((trigger) => trigger.draft)),
+        // Names WITH their catalog descriptions, so the drafting model knows
+        // what each trigger variable is and how to use it.
+        triggerVars: triggerVariableDescriptors(triggers.map((trigger) => trigger.draft)).map(
+          ({ name: varName, description }) => ({ name: varName, description })
+        ),
       }
     );
     setDrafting(false);
@@ -289,12 +293,7 @@ export function AgentBuilder({
   );
 
   const variables: VariableOption[] = useMemo(() => {
-    const fromTriggers = triggerVariableNames(draft.triggers).map((varName) => ({
-      name: varName,
-      label: varName.replace(/^trigger\./, '').replace(/([a-z])([A-Z])/g, '$1 $2'),
-      description: 'Provided by a trigger when the agent starts.',
-      source: 'trigger' as const,
-    }));
+    const fromTriggers = triggerVariableDescriptors(draft.triggers);
     const fromSteps = flattenActionSteps(steps).flatMap((step) =>
       step.saveAs
         ? [
