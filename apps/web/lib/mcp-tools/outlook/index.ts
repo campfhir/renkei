@@ -990,7 +990,8 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Read — List a message’s attachments',
       description:
-        'List the files attached to one message — name, type, size, and the attachment id that ' +
+        'List the files attached to ONE message (many: use outlook_bulk_list_attachments) — ' +
+        'name, type, size, and the attachment id that ' +
         'feeds outlook_get_attachment. Inline images (embedded signature logos and the like) are ' +
         'hidden by default since they are almost never what someone means by "the attachment"; ' +
         'pass includeInline to see them. Note a message can carry inline images while ' +
@@ -2494,7 +2495,9 @@ export async function registerOutlookTools(
     'outlook_mark_message',
     {
       title: 'Outlook · Act — Mark a message read or unread',
-      description: 'Set the read/unread status of a message.',
+      description:
+        'Set the read/unread status of ONE message. For many messages, use ' +
+        'outlook_bulk_mark_messages instead — one call, not one per message.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         messageId: z
@@ -2527,8 +2530,9 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Act — Flag or unflag a message',
       description:
-        'Set a follow-up flag on a message: "flagged" to flag it, "complete" to mark a flagged ' +
-        'message done, or "notFlagged" to clear the flag.',
+        'Set a follow-up flag on ONE message (many: use outlook_bulk_flag_messages): ' +
+        '"flagged" to flag it, "complete" to mark a flagged message done, or "notFlagged" ' +
+        'to clear the flag.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         messageId: z
@@ -2562,7 +2566,8 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Act — Categorize a message',
       description:
-        'Add or remove Outlook color categories on a message — the closest thing Outlook has to ' +
+        'Add or remove Outlook color categories on ONE message (many: use ' +
+        'outlook_bulk_categorize_messages) — the closest thing Outlook has to ' +
         'a "pin" or tag (Graph has no separate pin flag on messages). Pass add/remove to adjust ' +
         'the existing set, or replace to set the exact list (pass replace: [] to clear all ' +
         'categories).',
@@ -2630,7 +2635,8 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Act — Move a message to another folder',
       description:
-        'Move a message to a different mail folder — e.g. archive it, or file it into a project ' +
+        'Move ONE message to a different mail folder (many: use outlook_bulk_move_messages ' +
+        'or outlook_bulk_archive_messages) — e.g. archive it, or file it into a project ' +
         'folder. destinationFolder accepts either a folder id from outlook_list_mail_folders, or ' +
         'a well-known folder name directly: inbox, archive, deleteditems, drafts, sentitems, ' +
         'junkemail. To archive a message, pass "archive" — no need to look up its id first.',

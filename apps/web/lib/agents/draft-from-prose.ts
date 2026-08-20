@@ -111,6 +111,7 @@ function promptOf(
       : 'A user described an automation in plain words. Split it into ordered steps for a step-runner.',
     'Rules:',
     '- Each step does ONE thing and may use AT MOST ONE tool from the list below (a step may also be pure reasoning with no tool).',
+    '- When a step covers MANY items (a sprint of issues, a folder of mail, a search result set), choose the bulk tool (named *_bulk_*) or a single search over per-item tools — one step, one call, never one step per item.',
     '- Mark the tool in the instruction as {{tool:tool_name}} and reference known variables as {{var:name}}. Use ONLY tools and variables from the lists.',
     '- When a later step needs an earlier step\'s result, give the earlier step a short "saveAs" name (starts with a letter; then letters, numbers, spaces, ".", "-" or "_"; at most 64 characters — e.g. "the ticket") and reference it as {{var:the ticket}}.',
     '- Every "saveAs" name must be UNIQUE — never reuse a name across steps. Later references use the exact earlier name.',

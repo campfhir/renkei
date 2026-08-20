@@ -157,6 +157,20 @@ export const CURATED_OUTCOMES: Record<string, ToolOutcomes> = {
       retriable: true,
     },
   ]),
+  jira_bulk_get_worklogs: curated('Worklogs were retrieved', [
+    {
+      code: 'bad-query',
+      label: "The selection couldn't be understood",
+      description: 'The JQL or issue keys were rejected by Jira.',
+      retriable: true,
+    },
+    {
+      code: 'no-results',
+      label: 'Nothing matched the selection',
+      description: 'The query ran fine but selected no issues.',
+      retriable: true,
+    },
+  ]),
   outlook_send_mail: curated('The email was sent', [
     {
       code: 'recipient-rejected',

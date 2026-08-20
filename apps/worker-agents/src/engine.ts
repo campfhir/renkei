@@ -1195,13 +1195,22 @@ export function createAgentRunHandler(deps: EngineDeps) {
           // failure when it clearly is not), which the step's failure
           // handling can route — where a guard failure routed nowhere.
           budgetExhausted = true;
+          // Same-tool repetition usually means iterating items one call at a
+          // time — the fix is a bulk tool in the step, not more budget.
+          const repetitive =
+            toolCalls.length > 1 && toolCalls.every((call) => call.tool === use.name);
           results.push({
             type: 'tool_result',
             toolUseId: use.id,
             content:
               `Tool budget spent (${toolCap} calls this attempt) — this call was not made. ` +
               'Call finish_step now: declare success if what you already found satisfies the ' +
-              'step, or failure with the best-matching code if it clearly does not.',
+              'step, or failure with the best-matching code if it clearly does not.' +
+              (repetitive
+                ? ` Note: every call this attempt was ${use.name} — if you were covering many ` +
+                  'items one at a time, say so in finish_step: the step should use a bulk ' +
+                  'variant of the tool (or one search covering all items) instead.'
+                : ''),
             isError: true,
           });
           continue;
