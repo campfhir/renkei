@@ -61,7 +61,12 @@ maybe('agent event fan-out', () => {
 
   async function seedEventAgent(
     ownerSubject: string,
-    options: { enabled?: boolean; match?: Record<string, string> } = {}
+    options: {
+      enabled?: boolean;
+      match?: Record<string, string>;
+      eventSource?: string;
+      eventType?: string;
+    } = {}
   ): Promise<string> {
     const agentId = randomUUID();
     await db
@@ -82,8 +87,8 @@ maybe('agent event fan-out', () => {
         tenant_id: tenantId,
         agent_id: agentId,
         kind: 'event',
-        event_source: 'microsoft',
-        event_type: 'mail.received',
+        event_source: options.eventSource ?? 'microsoft',
+        event_type: options.eventType ?? 'mail.received',
         config: JSON.stringify({ match: options.match ?? {} }),
         enabled: true,
       })
@@ -144,5 +149,43 @@ maybe('agent event fan-out', () => {
     const firedAgents = runs.map((run) => run.agent_id);
     expect(firedAgents).toContain(filtered);
     expect(firedAgents).not.toContain(other);
+  });
+
+  it('fires zoom transcript-completed triggers with the payload as state', async () => {
+    const zoomAgent = await seedEventAgent(owner, {
+      eventSource: 'zoom',
+      eventType: 'recording.transcript_completed',
+    });
+
+    const queue = new InMemoryQueue();
+    const started = await fanOutAgentEvents(db, queue.producer, {
+      tenantId,
+      source: 'zoom',
+      type: 'recording.transcript_completed',
+      ownerSubject: owner,
+      payload: {
+        meetingId: '987654',
+        meetingUuid: 'uuid-1==',
+        topic: 'Weekly sync',
+        hostEmail: 'host@example.com',
+        startTime: '2026-08-20T15:00:00Z',
+        transcriptPreview: 'Alice: hello there',
+      },
+    });
+    expect(started).toHaveLength(1);
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['agent_id', 'initial_state'])
+      .where('id', '=', started[0])
+      .executeTakeFirstOrThrow();
+    expect(run.agent_id).toBe(zoomAgent);
+    const state: { meetingUuid?: unknown } =
+      typeof run.initial_state === 'object' &&
+      run.initial_state !== null &&
+      !Array.isArray(run.initial_state)
+        ? run.initial_state
+        : {};
+    expect(state.meetingUuid).toBe('uuid-1==');
   });
 });

@@ -60,6 +60,8 @@ function registerConnectorHandlers(): void {
   const dispatch = createDomainDispatchHandler();
   registerHandler('domain', 'message.received', dispatch);
   registerHandler('domain', 'mail.received', dispatch);
+  registerHandler('domain', 'recording.transcript_completed', dispatch);
+  registerHandler('domain', 'meeting.summary_completed', dispatch);
   logger.info('webex, microsoft, zoom and dispatch handlers registered', {
     component: 'worker/loop',
   });

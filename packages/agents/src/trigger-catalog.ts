@@ -65,6 +65,52 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
       trigger('messageId', 'Message id', 'The identifier tools can use to fetch the message.'),
     ],
   },
+  {
+    id: 'zoom/recording.transcript_completed',
+    source: 'zoom',
+    type: 'recording.transcript_completed',
+    connector: 'zoom',
+    label: 'A meeting transcript is ready',
+    description:
+      'Runs when a Zoom meeting you hosted finishes processing its recording transcript.',
+    provides: [
+      trigger('meetingId', 'Meeting id', 'The numeric id of the Zoom meeting.'),
+      trigger(
+        'meetingUuid',
+        'Meeting uuid',
+        'The uuid of the exact meeting occurrence; pass it to zoom_get_transcript.'
+      ),
+      trigger('topic', 'Meeting topic', 'The topic (title) of the meeting.'),
+      trigger('hostEmail', 'Host email', 'The email address of the meeting host.'),
+      trigger('startTime', 'Start time', 'When the meeting started (ISO timestamp).'),
+      trigger(
+        'transcriptPreview',
+        'Transcript preview',
+        'The first part of the transcript text; pass the meeting uuid to zoom_get_transcript for the full text.'
+      ),
+    ],
+  },
+  {
+    id: 'zoom/meeting.summary_completed',
+    source: 'zoom',
+    type: 'meeting.summary_completed',
+    connector: 'zoom',
+    label: 'A meeting summary is ready',
+    description:
+      'Runs when Zoom AI Companion finishes the summary of a meeting you hosted.',
+    provides: [
+      trigger('meetingId', 'Meeting id', 'The numeric id of the Zoom meeting.'),
+      trigger('meetingUuid', 'Meeting uuid', 'The uuid of the exact meeting occurrence.'),
+      trigger('topic', 'Meeting topic', 'The topic (title) of the meeting.'),
+      trigger('hostEmail', 'Host email', 'The email address of the meeting host.'),
+      trigger('startTime', 'Start time', 'When the meeting started (ISO timestamp).'),
+      trigger(
+        'summaryPreview',
+        'Summary preview',
+        'The first part of the summary text; pass the meeting id to zoom_get_meeting_summary for the full summary.'
+      ),
+    ],
+  },
 ];
 
 export function triggerEventById(id: string): TriggerEventDescriptor | undefined {
