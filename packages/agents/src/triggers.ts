@@ -20,6 +20,7 @@ import {
 } from './recurrence';
 import { triggerEventById } from './trigger-catalog';
 import { VARIABLE_NAME_PATTERN } from './steps';
+import type { VariableDescriptor } from './variables';
 
 export interface ApiTriggerInput {
   /** Becomes the `trigger.<name>` variable steps can reference. */
@@ -116,7 +117,7 @@ function validateOne(draft: TriggerDraft, index: number): TriggerIssue[] {
         if (!VARIABLE_NAME_PATTERN.test(input.name)) {
           issues.push({
             index,
-            message: `"${input.name}" is not a usable input name — start with a letter, then letters, numbers, - or _.`,
+            message: `"${input.name}" is not a usable input name — start with a letter, then letters, numbers, spaces, ".", "-" or "_" (64 characters max).`,
           });
         }
         if (seen.has(input.name)) {
@@ -172,33 +173,60 @@ export function validateTriggerDrafts(drafts: TriggerDraft[]): TriggerIssue[] {
 }
 
 /**
- * The `trigger.*` variable names the attached triggers provide — catalog
- * `provides` for events, author-named inputs for API triggers, the parent
- * run's summary for agent triggers, and fire time for schedules.
+ * The full `trigger.*` variable descriptors the attached triggers provide —
+ * catalog `provides` for events, author-named inputs for API triggers, the
+ * parent run's summary for agent triggers, and fire time for schedules.
+ * Descriptions ride along so consumers (the drafting prompt, autocomplete)
+ * can explain what each variable IS, not just that it exists.
  */
-export function triggerVariableNames(drafts: TriggerDraft[]): string[] {
-  const names = new Set<string>();
+export function triggerVariableDescriptors(drafts: TriggerDraft[]): VariableDescriptor[] {
+  const byName = new Map<string, VariableDescriptor>();
+  const add = (descriptor: VariableDescriptor) => {
+    if (!byName.has(descriptor.name)) byName.set(descriptor.name, descriptor);
+  };
   for (const draft of drafts) {
     switch (draft.kind) {
       case 'event': {
         for (const variable of triggerEventById(draft.eventId)?.provides ?? []) {
-          names.add(variable.name);
+          add(variable);
         }
         break;
       }
       case 'api': {
-        for (const input of draft.inputs) names.add(`trigger.${input.name}`);
+        for (const input of draft.inputs) {
+          add({
+            name: `trigger.${input.name}`,
+            label: input.label,
+            description: 'An input the caller supplies when starting this agent.',
+            source: 'trigger',
+          });
+        }
         break;
       }
       case 'agent': {
-        names.add('trigger.parentSummary');
+        add({
+          name: 'trigger.parentSummary',
+          label: 'Parent run summary',
+          description: "What the triggering agent's run concluded.",
+          source: 'trigger',
+        });
         break;
       }
       case 'schedule': {
-        names.add('trigger.scheduledFor');
+        add({
+          name: 'trigger.scheduledFor',
+          label: 'Scheduled time',
+          description: 'The ISO time this run was scheduled to start.',
+          source: 'trigger',
+        });
         break;
       }
     }
   }
-  return [...names];
+  return [...byName.values()];
+}
+
+/** Just the names — kept in terms of the descriptors so the two can't drift. */
+export function triggerVariableNames(drafts: TriggerDraft[]): string[] {
+  return triggerVariableDescriptors(drafts).map((descriptor) => descriptor.name);
 }

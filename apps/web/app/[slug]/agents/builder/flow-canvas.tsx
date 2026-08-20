@@ -12,7 +12,7 @@
  * flow library, the layout is plain grid/flex.
  */
 
-import { useState, Fragment } from 'react';
+import { useRef, useState, Fragment } from 'react';
 import {
   isBranchStep,
   MAX_BRANCH_DEPTH,
@@ -25,6 +25,7 @@ import { TriggerNode } from './trigger-node';
 import { StepNode } from './step-node';
 import { BranchNode } from './branch-node';
 import { Icon, ICONS } from '@/components/icons';
+import { useDismiss } from '@/lib/use-dismiss';
 
 export type BuilderSelection =
   { type: 'step'; id: string } | { type: 'trigger'; index: number } | { type: 'new-trigger' };
@@ -51,8 +52,15 @@ function Connector({
   grow?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  // Clicking anywhere else (or Escape) cancels the add — each connector owns
+  // its own popup, so without this they only closed by re-clicking their "+".
+  useDismiss(open, menuRef, () => setOpen(false));
   return (
-    <div className={`relative flex ${grow ? 'min-h-9 flex-1' : 'h-9'} flex-col items-center`}>
+    <div
+      ref={menuRef}
+      className={`relative flex ${grow ? 'min-h-9 flex-1' : 'h-9'} flex-col items-center`}
+    >
       <span aria-hidden="true" className="h-full w-px bg-gray-300 dark:bg-gray-700" />
       <button
         type="button"

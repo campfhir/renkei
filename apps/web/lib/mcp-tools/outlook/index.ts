@@ -30,7 +30,13 @@ import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { buildKnowledgeVerifiers } from '../knowledge';
 import { withPresentationHint, type MCPToolContext } from '../common';
-import { APP_ONLY_META, EMAIL_COMPOSE_URI, confirmGuard, previewToolMeta } from '../widgets';
+import {
+  APP_ONLY_META,
+  EMAIL_COMPOSE_URI,
+  ISSUE_PREVIEW_URI,
+  confirmGuard,
+  previewToolMeta,
+} from '../widgets';
 import type { GraphAuth } from '../graph/graph-auth';
 
 export const OUTLOOK_MCP_CONNECTOR = 'microsoft';
@@ -774,6 +780,8 @@ function outlookScopeFor(toolName: string): string[] {
       return ['MailboxFolder.ReadWrite'];
     case 'outlook_create_event':
     case 'outlook_respond_event':
+    case 'outlook_cancel_event_preview':
+    case 'outlook_cancel_event_confirm':
       return ['Calendars.ReadWrite'];
     case 'outlook_search_users':
     case 'outlook_get_user':
@@ -982,7 +990,8 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Read — List a message’s attachments',
       description:
-        'List the files attached to one message — name, type, size, and the attachment id that ' +
+        'List the files attached to ONE message (many: use outlook_bulk_list_attachments) — ' +
+        'name, type, size, and the attachment id that ' +
         'feeds outlook_get_attachment. Inline images (embedded signature logos and the like) are ' +
         'hidden by default since they are almost never what someone means by "the attachment"; ' +
         'pass includeInline to see them. Note a message can carry inline images while ' +
@@ -2486,7 +2495,9 @@ export async function registerOutlookTools(
     'outlook_mark_message',
     {
       title: 'Outlook · Act — Mark a message read or unread',
-      description: 'Set the read/unread status of a message.',
+      description:
+        'Set the read/unread status of ONE message. For many messages, use ' +
+        'outlook_bulk_mark_messages instead — one call, not one per message.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         messageId: z
@@ -2519,8 +2530,9 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Act — Flag or unflag a message',
       description:
-        'Set a follow-up flag on a message: "flagged" to flag it, "complete" to mark a flagged ' +
-        'message done, or "notFlagged" to clear the flag.',
+        'Set a follow-up flag on ONE message (many: use outlook_bulk_flag_messages): ' +
+        '"flagged" to flag it, "complete" to mark a flagged message done, or "notFlagged" ' +
+        'to clear the flag.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         messageId: z
@@ -2554,7 +2566,8 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Act — Categorize a message',
       description:
-        'Add or remove Outlook color categories on a message — the closest thing Outlook has to ' +
+        'Add or remove Outlook color categories on ONE message (many: use ' +
+        'outlook_bulk_categorize_messages) — the closest thing Outlook has to ' +
         'a "pin" or tag (Graph has no separate pin flag on messages). Pass add/remove to adjust ' +
         'the existing set, or replace to set the exact list (pass replace: [] to clear all ' +
         'categories).',
@@ -2622,7 +2635,8 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Act — Move a message to another folder',
       description:
-        'Move a message to a different mail folder — e.g. archive it, or file it into a project ' +
+        'Move ONE message to a different mail folder (many: use outlook_bulk_move_messages ' +
+        'or outlook_bulk_archive_messages) — e.g. archive it, or file it into a project ' +
         'folder. destinationFolder accepts either a folder id from outlook_list_mail_folders, or ' +
         'a well-known folder name directly: inbox, archive, deleteditems, drafts, sentitems, ' +
         'junkemail. To archive a message, pass "archive" — no need to look up its id first.',
@@ -3336,6 +3350,151 @@ export async function registerOutlookTools(
         `Responded "${response}"${str(args.comment) ? ' with a comment' : ''}` +
           (proposedStart ? `, proposing ${proposedStart} → ${proposedEnd} (${timezone}).` : '.')
       );
+    }
+  );
+
+  const cancelEventSchema = z.object({
+    eventId: z.string().min(1).describe('Event id from outlook_list_events'),
+    comment: z
+      .string()
+      .describe('Message sent with the cancellation (used only when the user is the organizer)')
+      .optional(),
+  });
+
+  server.registerTool(
+    'outlook_cancel_event_preview',
+    {
+      title: 'Outlook · Act — Preview canceling a calendar event',
+      description:
+        'Show the user an interactive preview card to cancel a calendar event — the card does ' +
+        'the canceling. As the organizer this cancels for every attendee (a cancellation is ' +
+        'sent); as an attendee it only removes the event from their calendar. Always use this ' +
+        'card — canceling notifies people.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      inputSchema: cancelEventSchema,
+    },
+    async (args: Record<string, any>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const eventId = str(args.eventId);
+      if (!eventId) return errText('eventId is required');
+      const result = await graphGet(
+        context,
+        access.accessToken,
+        `/me/events/${encodeURIComponent(eventId)}` +
+          `?$select=id,subject,start,end,organizer,attendees,location,isOrganizer`
+      );
+      if (!result.ok) return errText(result.error);
+      const event = result.body;
+      const isOrganizer = event.isOrganizer === true;
+      const subject = str(event.subject) || '(no subject)';
+      const organizer = rec(rec(event.organizer).emailAddress);
+      const attendeeCount = Array.isArray(event.attendees) ? event.attendees.length : 0;
+      const comment = str(args.comment);
+      const where = str(rec(event.location).displayName);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              `The cancellation of "${subject}" is awaiting the user's decision on the preview ` +
+              `card. Do not cancel it another way and do not repeat its contents in your reply; ` +
+              `the user confirms or cancels from the card. If no card appeared in this client, ` +
+              `ask the user how to proceed.`,
+          },
+        ],
+        structuredContent: {
+          kind: 'issue',
+          title: isOrganizer ? 'Cancel event' : 'Remove event from calendar',
+          subtitle: subject,
+          confirmTool: 'outlook_cancel_event_confirm',
+          confirmLabel: isOrganizer ? 'Cancel event' : 'Remove',
+          confirmArgs: { eventId, ...(comment ? { comment } : {}) },
+          fields: [
+            { label: 'Event', value: subject },
+            {
+              label: 'When',
+              value: `${str(rec(event.start).dateTime)} → ${str(rec(event.end).dateTime)}`,
+            },
+            {
+              label: 'Organizer',
+              value: str(organizer.name) || str(organizer.address) || '(unknown)',
+            },
+            { label: 'Attendees', value: String(attendeeCount) },
+            ...(where ? [{ label: 'Where', value: where }] : []),
+            {
+              label: 'Effect',
+              value: isOrganizer
+                ? 'Cancels the event for every attendee — a cancellation is sent.'
+                : 'Removes it from your calendar only; the organizer’s event is untouched.',
+            },
+            ...(comment && isOrganizer ? [{ label: 'Message', value: comment }] : []),
+          ],
+        },
+      };
+    }
+  );
+
+  server.registerTool(
+    'outlook_cancel_event_confirm',
+    {
+      title: 'Outlook · Act — Cancel a previewed event (card only)',
+      description:
+        'Cancel (or, as a non-organizer, remove) a calendar event the user approved on a ' +
+        'preview card.' + confirmGuard('outlook_cancel_event_preview'),
+      annotations: { readOnlyHint: false },
+      _meta: APP_ONLY_META,
+      inputSchema: cancelEventSchema,
+    },
+    async (args: Record<string, any>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const eventId = str(args.eventId);
+      if (!eventId) return errText('eventId is required');
+      // The organizer/attendee split is re-checked HERE, never trusted from
+      // the card's args: the card passes confirmArgs through verbatim, and
+      // organizer-cancel vs self-remove must not be forgeable (or stale).
+      const lookup = await graphGet(
+        context,
+        access.accessToken,
+        `/me/events/${encodeURIComponent(eventId)}?$select=id,subject,isOrganizer`
+      );
+      if (!lookup.ok) return errText(lookup.error);
+      const subject = str(lookup.body.subject) || '(no subject)';
+      const isOrganizer = lookup.body.isOrganizer === true;
+
+      if (isOrganizer) {
+        const comment = str(args.comment);
+        const result = await graphPost(
+          context,
+          access.accessToken,
+          `/me/events/${encodeURIComponent(eventId)}/cancel`,
+          comment ? { comment } : {}
+        );
+        if (!result.ok) return errText(result.error);
+        logger.info('outlook_cancel_event_confirm cancelled event', {
+          component: 'mcp/tool',
+          tenantId: context.tenantId,
+          eventId,
+          role: 'organizer',
+        });
+        return textResult(`Cancelled "${subject}" — attendees were notified.`);
+      }
+
+      const removal = await graphDeleteChecked(
+        context,
+        access.accessToken,
+        `/me/events/${encodeURIComponent(eventId)}`
+      );
+      if (!removal.ok) return errText(removal.error);
+      logger.info('outlook_cancel_event_confirm removed event', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        eventId,
+        role: 'attendee',
+      });
+      return textResult(`Removed "${subject}" from your calendar.`);
     }
   );
 }

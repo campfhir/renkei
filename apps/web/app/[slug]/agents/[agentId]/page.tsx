@@ -9,6 +9,7 @@ import { getAgent, readShareToken } from '@/lib/agents/store';
 import { listRunsForOwner } from '@/lib/agents/runs-view';
 import { parseReviewNotes } from '@/lib/agents/notes';
 import { Icon, ICONS } from '@/components/icons';
+import { triggerBadge, triggerSummary } from '@/lib/agents/trigger-summary';
 import CollapsibleSection from '@/components/collapsible-section';
 import MemoryPanel from './memory-panel';
 import KnowledgePanel from './knowledge-panel';
@@ -51,7 +52,17 @@ export default async function AgentOverviewPage({
   return (
     <div className="mx-auto max-w-5xl">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <h1 className="min-w-0 flex-1 text-xl font-bold">{agent.name}</h1>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <Link
+            href={`/${slug}/agents`}
+            aria-label="All agents"
+            title="Back to all agents"
+            className="shrink-0 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.chevronLeft} />
+          </Link>
+          <h1 className="min-w-0 truncate text-xl font-bold">{agent.name}</h1>
+        </div>
         <div className="flex shrink-0 items-center gap-2 text-sm">
           <span
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${
@@ -88,6 +99,38 @@ export default async function AgentOverviewPage({
         {/* The rail is FIRST in the DOM so it stacks above the steps on
             phones; on lg the explicit grid placement puts it right. */}
         <aside className="mb-6 lg:col-start-2 lg:row-start-1 lg:mb-0">
+          {/* When does it run — the schedule/event answer the card view has
+              but this page was missing. */}
+          <div className="mb-3 rounded-md border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-950">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              Runs
+            </p>
+            {agent.triggers.length > 0 ? (
+              <ul className="mt-1 space-y-2">
+                {agent.triggers.map((trigger) => (
+                  <li key={trigger.id} className="text-sm text-gray-800 dark:text-gray-200">
+                    <span className="mr-2 inline-block rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                      {triggerBadge(trigger.draft.kind)}
+                    </span>
+                    {triggerSummary(trigger.draft)}
+                    {!trigger.enabled ? (
+                      <span className="ml-2 text-xs text-gray-400">(off)</span>
+                    ) : null}
+                    {trigger.lastError ? (
+                      <p className="mt-0.5 text-xs text-red-600 dark:text-red-400">
+                        Last error: {trigger.lastError}
+                      </p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                No triggers — runs only when started by hand.
+              </p>
+            )}
+          </div>
+
           {reviewNotes.length > 0 ? (
             <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950">
               <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">

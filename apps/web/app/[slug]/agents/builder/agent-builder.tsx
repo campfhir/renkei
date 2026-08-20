@@ -21,7 +21,7 @@ import {
   findNodeById,
   flattenActionSteps,
   isBranchStep,
-  triggerVariableNames,
+  triggerVariableDescriptors,
   validateAgentDraft,
   walkSteps,
   type AgentStepNode,
@@ -222,7 +222,11 @@ export function AgentBuilder({
       {
         text: prose,
         ...(hasRealSteps ? { steps: stepsDoc } : {}),
-        triggerVars: triggerVariableNames(triggers.map((trigger) => trigger.draft)),
+        // Names WITH their catalog descriptions, so the drafting model knows
+        // what each trigger variable is and how to use it.
+        triggerVars: triggerVariableDescriptors(triggers.map((trigger) => trigger.draft)).map(
+          ({ name: varName, description }) => ({ name: varName, description })
+        ),
       }
     );
     setDrafting(false);
@@ -289,12 +293,7 @@ export function AgentBuilder({
   );
 
   const variables: VariableOption[] = useMemo(() => {
-    const fromTriggers = triggerVariableNames(draft.triggers).map((varName) => ({
-      name: varName,
-      label: varName.replace(/^trigger\./, '').replace(/([a-z])([A-Z])/g, '$1 $2'),
-      description: 'Provided by a trigger when the agent starts.',
-      source: 'trigger' as const,
-    }));
+    const fromTriggers = triggerVariableDescriptors(draft.triggers);
     const fromSteps = flattenActionSteps(steps).flatMap((step) =>
       step.saveAs
         ? [
@@ -455,122 +454,310 @@ export function AgentBuilder({
   })();
 
   const panelWide = selectedTrigger?.draft.kind === 'schedule';
+  // The rail stretches for the schedule editor's wide layout.
+  const railWide = Boolean(selection) && panelWide;
+
+  // The node/trigger editors live inside the rail's scroll body on desktop;
+  // on mobile EditorPanel renders them as modals, so DOM position is moot.
+  const editorPanels = (
+    <>
+      {selection?.type === 'new-trigger' ? (
+        <EditorPanel title="Add a trigger" onClose={() => setSelection(null)}>
+          <TriggerChooser
+            otherAgents={otherAgents}
+            onChoose={(draftTrigger) => {
+              setTriggers((current) => [...current, { draft: draftTrigger, enabled: true }]);
+              setSelection({ type: 'trigger', index: triggers.length });
+              setServerIssues([]);
+            }}
+          />
+        </EditorPanel>
+      ) : null}
+
+      {selectedTrigger && selection?.type === 'trigger' ? (
+        <EditorPanel
+          title={panelTitle}
+          onClose={() => setSelection(null)}
+          footer={
+            <button
+              type="button"
+              onClick={() => {
+                const index = selection.index;
+                setTriggers((current) => current.filter((_, at) => at !== index));
+                setSelection(null);
+              }}
+              className="text-sm text-red-600 hover:underline dark:text-red-400"
+            >
+              Remove this trigger
+            </button>
+          }
+        >
+          <TriggerEditor
+            trigger={selectedTrigger}
+            otherAgents={otherAgents}
+            calendars={calendars}
+            onChange={(draftTrigger) => {
+              const index = selection.index;
+              setTriggers((current) =>
+                current.map((entry, at) =>
+                  at === index ? { ...entry, draft: draftTrigger } : entry
+                )
+              );
+            }}
+          />
+        </EditorPanel>
+      ) : null}
+
+      {selectedNode ? (
+        <EditorPanel title={panelTitle} onClose={() => setSelection(null)}>
+          {isBranchStep(selectedNode) ? (
+            <BranchEditor
+              branch={selectedNode}
+              onChange={(next) => changeNode(selectedNode.id, next)}
+              variables={variables}
+              invalidVars={invalidVars}
+              issues={issueMap.get(selectedNode.id) ?? []}
+            />
+          ) : (
+            <StepEditor
+              step={selectedNode}
+              ordinal={(ordinals.get(selectedNode.id) ?? 0) + 1}
+              attemptsCap={attemptsCap}
+              onChange={(next) => changeNode(selectedNode.id, next)}
+              tools={toolOptions}
+              toolDescriptors={toolDescriptors}
+              variables={variables}
+              invalidVars={invalidVars}
+              issues={issueMap.get(selectedNode.id) ?? []}
+            />
+          )}
+        </EditorPanel>
+      ) : null}
+    </>
+  );
+
+  // The redraft-from-a-description panel — docked in the rail under the name.
+  const prosePanel = (
+    <>
+      {!proseOpen && existing ? (
+        <p>
+          <button
+            type="button"
+            onClick={() => setProseOpen(true)}
+            className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            ✨ Redraft from a description…
+          </button>
+        </p>
+      ) : null}
+
+      {proseOpen ? (
+        <section className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold">
+              {existing ? 'Redraft from a description' : 'Start from a description'}
+            </h2>
+            {existing ? (
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => setProseOpen(false)}
+                className="rounded p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+              >
+                ✕
+              </button>
+            ) : null}
+          </div>
+          <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
+            {existing
+              ? 'Describe the change in your own words — add a step, remove one, tweak an instruction, or redo the whole thing. Steps the change doesn’t touch keep their retry settings.'
+              : 'Describe the whole thing in your own words — we’ll draft the steps and pick the skills; you review and adjust everything below before saving.'}
+          </p>
+          <textarea
+            value={prose}
+            onChange={(event) => setProse(event.target.value)}
+            rows={3}
+            maxLength={4000}
+            placeholder="e.g. When someone messages me about a ticket, look it up in Jira, add their message as a comment, and reply in the thread with what changed."
+            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+          />
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              disabled={drafting || prose.trim().length < 10}
+              onClick={() => void draftFromProse()}
+              className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {drafting ? (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-300 border-t-white"
+                  />
+                  Drafting…
+                </>
+              ) : drafted ? (
+                'Draft again'
+              ) : (
+                'Draft the steps for me'
+              )}
+            </button>
+            {drafted && !drafting ? (
+              <span className="text-xs text-green-700 dark:text-green-400">
+                {draftMode === 'revise'
+                  ? 'Revised below — steps the change didn’t touch kept their settings.'
+                  : 'Drafted below — review every step before saving.'}
+              </span>
+            ) : null}
+            {draftError ? (
+              <span className="text-xs text-red-600 dark:text-red-400">{draftError}</span>
+            ) : null}
+          </div>
+          {drafting ? (
+            <p aria-live="polite" className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+              {draftStatus}
+            </p>
+          ) : null}
+          {draftDetail && !drafting ? (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
+                What was sent (content redacted)
+              </summary>
+              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-white p-2 font-mono text-[11px] dark:border-gray-800 dark:bg-gray-950">
+                {draftDetail}
+              </pre>
+            </details>
+          ) : null}
+        </section>
+      ) : null}
+    </>
+  );
 
   return (
     <div data-wide-page className="pb-24 lg:pb-4">
       <div className="lg:flex lg:items-start lg:gap-6">
-        {/* Agent settings: model, name, worth-checking, and (desktop only)
-            the save bar. Plain stacked content on mobile — first, above the
-            flow, no sidebar chrome. On desktop it docks as the SECOND
-            column (lg:order-last puts it there regardless of DOM position,
-            which has to come first here for mobile's stacking order) and
-            swaps out via lg:hidden for the node/trigger editor while
-            something is selected — that editor takes this same slot.
-            Nothing here needs to hide on mobile: a selected node opens its
-            own modal, floating over this content rather than replacing it. */}
+        {/* The right rail. On desktop it docks as the SECOND column
+            (lg:order-last puts it there regardless of DOM position, which
+            has to come first here for mobile's stacking order) and holds
+            EITHER the agent settings (model, name, redraft, notes) OR —
+            while a node/trigger is selected — that editor, both inside one
+            scrollable body with the Save/Cancel footer pinned OUTSIDE the
+            scroll, so Save stays visible whatever is open and however long
+            the content runs. Plain stacked content on mobile — no sidebar
+            chrome, nothing hides: a selected node opens its own modal,
+            floating over this content rather than replacing it. */}
         <div
-          className={`space-y-4 lg:order-last lg:w-[26rem] lg:max-h-[calc(100vh-7rem)] lg:shrink-0 lg:self-start lg:overflow-y-auto lg:rounded-lg lg:border lg:border-gray-200 lg:bg-white lg:p-4 lg:sticky lg:top-4 lg:dark:border-gray-800 lg:dark:bg-gray-950 ${selection ? 'lg:hidden' : ''}`}
+          className={`lg:order-last ${railWide ? 'lg:w-[36rem]' : 'lg:w-[26rem]'} lg:sticky lg:top-4 lg:flex lg:max-h-[calc(100vh-7rem)] lg:shrink-0 lg:flex-col lg:self-start lg:rounded-lg lg:border lg:border-gray-200 lg:bg-white lg:dark:border-gray-800 lg:dark:bg-gray-950`}
         >
-          {models.length > 0 ? (
-            <div>
-              <label
-                className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400"
-                htmlFor="agent-model"
-              >
-                Model
-              </label>
-              <select
-                id="agent-model"
-                value={llmModelId ?? ''}
-                onChange={(event) => setLlmModelId(event.target.value || null)}
-                className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs dark:border-gray-700 dark:bg-gray-900"
-              >
-                <option value="">
-                  Organization default
-                  {models.find((model) => model.isDefault)
-                    ? ` (${models.find((model) => model.isDefault)?.label})`
-                    : ''}
-                </option>
-                {models.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : null}
+          <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:p-4">
+            <div className={`space-y-4 ${selection ? 'lg:hidden' : ''}`}>
+              {models.length > 0 ? (
+                <div>
+                  <label
+                    className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400"
+                    htmlFor="agent-model"
+                  >
+                    Model
+                  </label>
+                  <select
+                    id="agent-model"
+                    value={llmModelId ?? ''}
+                    onChange={(event) => setLlmModelId(event.target.value || null)}
+                    className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs dark:border-gray-700 dark:bg-gray-900"
+                  >
+                    <option value="">
+                      Organization default
+                      {models.find((model) => model.isDefault)
+                        ? ` (${models.find((model) => model.isDefault)?.label})`
+                        : ''}
+                    </option>
+                    {models.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
 
-          <div>
-            <label className="mb-1 block text-sm font-medium" htmlFor="agent-name">
-              Name it
-            </label>
-            <input
-              id="agent-name"
-              className={inputClass}
-              value={name}
-              maxLength={200}
-              placeholder="e.g. Ticket from urgent email"
-              onChange={(event) => setName(event.target.value)}
-            />
-            {issuesAt('name').map((message) => (
-              <p key={message} className="mt-1 text-xs text-red-600 dark:text-red-400">
-                {message}
-              </p>
-            ))}
+              <div>
+                <label className="mb-1 block text-sm font-medium" htmlFor="agent-name">
+                  Name it
+                </label>
+                <input
+                  id="agent-name"
+                  className={inputClass}
+                  value={name}
+                  maxLength={200}
+                  placeholder="e.g. Ticket from urgent email"
+                  onChange={(event) => setName(event.target.value)}
+                />
+                {issuesAt('name').map((message) => (
+                  <p key={message} className="mt-1 text-xs text-red-600 dark:text-red-400">
+                    {message}
+                  </p>
+                ))}
+              </div>
+
+              {prosePanel}
+
+              {agentId ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+                  <div className="flex items-center justify-between gap-2">
+                    <h2 className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                      Worth checking
+                    </h2>
+                    <button
+                      type="button"
+                      disabled={checking}
+                      onClick={() => void recheck()}
+                      className="flex items-center gap-1.5 text-xs font-medium text-amber-700 hover:underline disabled:opacity-50 dark:text-amber-300"
+                    >
+                      {checking ? (
+                        <>
+                          <span
+                            aria-hidden="true"
+                            className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700 dark:border-amber-800 dark:border-t-amber-300"
+                          />
+                          Checking…
+                        </>
+                      ) : (
+                        'Re-check'
+                      )}
+                    </button>
+                  </div>
+                  {checkNotes.length > 0 ? (
+                    <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-amber-900 dark:text-amber-200">
+                      {checkNotes.map((note) => (
+                        <li key={note.issue}>
+                          {note.issue}
+                          {note.fix ? (
+                            <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/70">
+                              Suggestion: {note.fix}
+                            </p>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-sm text-amber-800/70 dark:text-amber-200/60">
+                      Nothing flagged on the last check.
+                    </p>
+                  )}
+                  <p className="mt-2 text-xs text-amber-700/60 dark:text-amber-300/50">
+                    These look at the last saved version — save your edits, then re-check.
+                  </p>
+                </div>
+              ) : null}
+            </div>
+
+            {editorPanels}
           </div>
 
-          {agentId ? (
-            <div className="rounded-md border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/40">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                  Worth checking
-                </h2>
-                <button
-                  type="button"
-                  disabled={checking}
-                  onClick={() => void recheck()}
-                  className="flex items-center gap-1.5 text-xs font-medium text-amber-700 hover:underline disabled:opacity-50 dark:text-amber-300"
-                >
-                  {checking ? (
-                    <>
-                      <span
-                        aria-hidden="true"
-                        className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-amber-700 dark:border-amber-800 dark:border-t-amber-300"
-                      />
-                      Checking…
-                    </>
-                  ) : (
-                    'Re-check'
-                  )}
-                </button>
-              </div>
-              {checkNotes.length > 0 ? (
-                <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-amber-900 dark:text-amber-200">
-                  {checkNotes.map((note) => (
-                    <li key={note.issue}>
-                      {note.issue}
-                      {note.fix ? (
-                        <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/70">
-                          Suggestion: {note.fix}
-                        </p>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-2 text-sm text-amber-800/70 dark:text-amber-200/60">
-                  Nothing flagged on the last check.
-                </p>
-              )}
-              <p className="mt-2 text-xs text-amber-700/60 dark:text-amber-300/50">
-                These look at the last saved version — save your edits, then re-check.
-              </p>
-            </div>
-          ) : null}
-
-          {/* Desktop-only: mobile keeps the fixed bottom bar below, always
-              reachable without first scrolling the sidebar into view. */}
-          <div className="hidden border-t border-gray-100 pt-3 dark:border-gray-800 lg:block">
+          {/* Desktop-only pinned footer: mobile keeps the fixed bottom bar
+              below. Rendered whatever is selected — editing a node must
+              never hide Save. */}
+          <div className="hidden shrink-0 border-t border-gray-100 p-4 pt-3 dark:border-gray-800 lg:block">
             <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
               {issues.length > 0
                 ? `${issues.length} thing${issues.length === 1 ? '' : 's'} to fix before saving`
@@ -604,98 +791,6 @@ export function AgentBuilder({
         </div>
 
         <div className="min-w-0 flex-1 space-y-6">
-          {!proseOpen && existing ? (
-            <p>
-              <button
-                type="button"
-                onClick={() => setProseOpen(true)}
-                className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
-              >
-                ✨ Redraft from a description…
-              </button>
-            </p>
-          ) : null}
-
-          {proseOpen ? (
-            <section className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold">
-                  {existing ? 'Redraft from a description' : 'Start from a description'}
-                </h2>
-                {existing ? (
-                  <button
-                    type="button"
-                    aria-label="Close"
-                    onClick={() => setProseOpen(false)}
-                    className="rounded p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-                  >
-                    ✕
-                  </button>
-                ) : null}
-              </div>
-              <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
-                {existing
-                  ? 'Describe the change in your own words — add a step, remove one, tweak an instruction, or redo the whole thing. Steps the change doesn’t touch keep their retry settings.'
-                  : 'Describe the whole thing in your own words — we’ll draft the steps and pick the skills; you review and adjust everything below before saving.'}
-              </p>
-              <textarea
-                value={prose}
-                onChange={(event) => setProse(event.target.value)}
-                rows={3}
-                maxLength={4000}
-                placeholder="e.g. When someone messages me about a ticket, look it up in Jira, add their message as a comment, and reply in the thread with what changed."
-                className="mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
-              />
-              <div className="mt-2 flex items-center gap-3">
-                <button
-                  type="button"
-                  disabled={drafting || prose.trim().length < 10}
-                  onClick={() => void draftFromProse()}
-                  className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  {drafting ? (
-                    <>
-                      <span
-                        aria-hidden="true"
-                        className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-300 border-t-white"
-                      />
-                      Drafting…
-                    </>
-                  ) : drafted ? (
-                    'Draft again'
-                  ) : (
-                    'Draft the steps for me'
-                  )}
-                </button>
-                {drafted && !drafting ? (
-                  <span className="text-xs text-green-700 dark:text-green-400">
-                    {draftMode === 'revise'
-                      ? 'Revised below — steps the change didn’t touch kept their settings.'
-                      : 'Drafted below — review every step before saving.'}
-                  </span>
-                ) : null}
-                {draftError ? (
-                  <span className="text-xs text-red-600 dark:text-red-400">{draftError}</span>
-                ) : null}
-              </div>
-              {drafting ? (
-                <p aria-live="polite" className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-                  {draftStatus}
-                </p>
-              ) : null}
-              {draftDetail && !drafting ? (
-                <details className="mt-2">
-                  <summary className="cursor-pointer text-xs text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">
-                    What was sent (content redacted)
-                  </summary>
-                  <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-gray-200 bg-white p-2 font-mono text-[11px] dark:border-gray-800 dark:bg-gray-950">
-                    {draftDetail}
-                  </pre>
-                </details>
-              ) : null}
-            </section>
-          ) : null}
-
           <section>
             <FlowCanvas
               nodes={steps}
@@ -715,80 +810,6 @@ export function AgentBuilder({
             />
           </section>
         </div>
-
-        {selection?.type === 'new-trigger' ? (
-          <EditorPanel title="Add a trigger" onClose={() => setSelection(null)}>
-            <TriggerChooser
-              otherAgents={otherAgents}
-              onChoose={(draftTrigger) => {
-                setTriggers((current) => [...current, { draft: draftTrigger, enabled: true }]);
-                setSelection({ type: 'trigger', index: triggers.length });
-                setServerIssues([]);
-              }}
-            />
-          </EditorPanel>
-        ) : null}
-
-        {selectedTrigger && selection?.type === 'trigger' ? (
-          <EditorPanel
-            title={panelTitle}
-            width={panelWide ? 'wide' : 'normal'}
-            onClose={() => setSelection(null)}
-            footer={
-              <button
-                type="button"
-                onClick={() => {
-                  const index = selection.index;
-                  setTriggers((current) => current.filter((_, at) => at !== index));
-                  setSelection(null);
-                }}
-                className="text-sm text-red-600 hover:underline dark:text-red-400"
-              >
-                Remove this trigger
-              </button>
-            }
-          >
-            <TriggerEditor
-              trigger={selectedTrigger}
-              otherAgents={otherAgents}
-              calendars={calendars}
-              onChange={(draftTrigger) => {
-                const index = selection.index;
-                setTriggers((current) =>
-                  current.map((entry, at) =>
-                    at === index ? { ...entry, draft: draftTrigger } : entry
-                  )
-                );
-              }}
-            />
-          </EditorPanel>
-        ) : null}
-
-        {selectedNode ? (
-          <EditorPanel title={panelTitle} onClose={() => setSelection(null)}>
-            {isBranchStep(selectedNode) ? (
-              <BranchEditor
-                branch={selectedNode}
-                onChange={(next) => changeNode(selectedNode.id, next)}
-                variables={variables}
-                invalidVars={invalidVars}
-                issues={issueMap.get(selectedNode.id) ?? []}
-              />
-            ) : (
-              <StepEditor
-                step={selectedNode}
-                ordinal={(ordinals.get(selectedNode.id) ?? 0) + 1}
-                attemptsCap={attemptsCap}
-                onChange={(next) => changeNode(selectedNode.id, next)}
-                tools={toolOptions}
-                toolDescriptors={toolDescriptors}
-                variables={variables}
-                invalidVars={invalidVars}
-                issues={issueMap.get(selectedNode.id) ?? []}
-              />
-            )}
-          </EditorPanel>
-        ) : null}
       </div>
 
       {/* Mobile-only: desktop's save bar lives in the sidebar above. */}

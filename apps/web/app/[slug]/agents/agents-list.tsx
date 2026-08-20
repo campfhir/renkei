@@ -18,21 +18,7 @@ import { useRouter } from 'next/navigation';
 import type { StoredAgent } from '@/lib/agents/store';
 import { sendJsonFull } from '@/lib/fetch-json';
 import { Icon, ICONS } from '@/components/icons';
-
-function triggerBadge(kind: string): string {
-  switch (kind) {
-    case 'event':
-      return 'On an event';
-    case 'schedule':
-      return 'Scheduled';
-    case 'agent':
-      return 'After an agent';
-    case 'api':
-      return 'API';
-    default:
-      return kind;
-  }
-}
+import { triggerBadge } from '@/lib/agents/trigger-summary';
 
 function IconButton({
   label,

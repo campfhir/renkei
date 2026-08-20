@@ -3,11 +3,9 @@
 /**
  * The one editing surface of the flow builder. The canvas stays a chart of
  * collapsed nodes; whatever is SELECTED — a step, a trigger — gets edited in
- * here: a docked, sticky sidebar on desktop (click another node, the panel
+ * here: content inside the builder's right rail on desktop (the rail owns
+ * width, border, sticky and scrolling; click another node and the panel
  * just swaps content, Jira-style), a full-screen modal on phones.
- *
- * Width is the caller's call: 'wide' exists for the schedule editor, whose
- * rule rows and blackout forms would be cramped at sidebar width.
  */
 
 import { useEffect, type ReactNode } from 'react';
@@ -16,13 +14,11 @@ import { Icon, ICONS } from '@/components/icons';
 
 export function EditorPanel({
   title,
-  width = 'normal',
   onClose,
   footer,
   children,
 }: {
   title: string;
-  width?: 'normal' | 'wide';
   onClose: () => void;
   footer?: ReactNode;
   children: ReactNode;
@@ -57,12 +53,7 @@ export function EditorPanel({
 
   if (isDesktop) {
     return (
-      <aside
-        aria-label={title}
-        className={`${
-          width === 'wide' ? 'lg:w-[36rem]' : 'lg:w-[26rem]'
-        } shrink-0 self-start rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto`}
-      >
+      <section aria-label={title}>
         <div className="mb-3">
           <button
             type="button"
@@ -78,7 +69,7 @@ export function EditorPanel({
         {footer ? (
           <div className="mt-4 border-t border-gray-100 pt-3 dark:border-gray-800">{footer}</div>
         ) : null}
-      </aside>
+      </section>
     );
   }
 

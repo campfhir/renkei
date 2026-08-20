@@ -22,6 +22,9 @@ export interface ZoomHostAccess {
   accountId: string;
   /** Lowercased — the refId owner segment. */
   hostEmail: string;
+  /** The grant owner's subject — the ownerSubject for domain events.
+   * Nullable in the schema; a grant without one cannot fire agents. */
+  subject: string | null;
 }
 
 /**
@@ -54,7 +57,7 @@ export async function resolveZoomHostAccess(
   let row = hostId
     ? await dbResult.val
         .selectFrom('provider_grants')
-        .select(['provider_account_id', 'metadata'])
+        .select(['provider_account_id', 'metadata', 'subject'])
         .where('tenant_id', '=', tenantId)
         .where('provider', '=', ZOOM)
         .where('provider_account_id', '=', hostId)
@@ -63,7 +66,7 @@ export async function resolveZoomHostAccess(
   if (!row && hostEmail) {
     row = await dbResult.val
       .selectFrom('provider_grants')
-      .select(['provider_account_id', 'metadata'])
+      .select(['provider_account_id', 'metadata', 'subject'])
       .where('tenant_id', '=', tenantId)
       .where('provider', '=', ZOOM)
       .where(sql<string>`metadata->>'email'`, '=', hostEmail.toLowerCase())
@@ -105,5 +108,10 @@ export async function resolveZoomHostAccess(
     throw new Error(`zoom grant for ${grant.accountId} carries no email for refIds`);
   }
 
-  return { accessToken: grant.accessToken, accountId: grant.accountId, hostEmail: email };
+  return {
+    accessToken: grant.accessToken,
+    accountId: grant.accountId,
+    hostEmail: email,
+    subject: row.subject,
+  };
 }

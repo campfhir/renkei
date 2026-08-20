@@ -542,7 +542,8 @@ export async function registerWriteTools(
     {
       title: 'Jira · Act — Update a Jira issue',
       description:
-        'Update an existing Jira issue. Story points, the original estimate, and any custom ' +
+        'Update ONE existing Jira issue (same change across many: use jira_bulk_update_issues). ' +
+        'Story points, the original estimate, and any custom ' +
         "field can be set: field names are resolved against this site's own schema, so no " +
         'customfield id needs to be known in advance. A field this project will not accept is ' +
         'dropped and recorded as a comment rather than failing the whole update.',
@@ -790,7 +791,9 @@ export async function registerWriteTools(
     'jira_transition_issue',
     {
       title: 'Jira · Act — Move a Jira issue through its workflow',
-      description: 'Transition an issue to a different status.',
+      description:
+        'Transition ONE issue to a different status. For many issues, use ' +
+        'jira_bulk_transition_issues instead — one call, not one per issue.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),

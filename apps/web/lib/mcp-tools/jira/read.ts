@@ -170,7 +170,8 @@ export async function registerReadTools(
     {
       title: 'Jira · Read — Search Jira issues with JQL',
       description:
-        'Runs a JQL query and returns matching issues. Results are capped at 100. ' +
+        'Runs a JQL query and returns matching issues — with `fields`, one search replaces ' +
+        'calling jira_get_issue once per issue. Results are capped at 100. ' +
         'Use `project = SCRUM` for a specific project or `status != Done` for filtering.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -178,6 +179,14 @@ export async function registerReadTools(
           .string()
           .describe('JQL query, e.g. "project = SCRUM AND status != Done ORDER BY updated DESC"'),
         maxResults: z.number().describe('Maximum results (1-100, default 50)').optional(),
+        fields: z
+          .array(z.string().min(1))
+          .max(20)
+          .describe(
+            'Extra issue fields to include per result (e.g. "description", "labels", ' +
+              '"duedate", "components") — appended to the standard set'
+          )
+          .optional(),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -202,6 +211,10 @@ export async function registerReadTools(
           };
         }
 
+        const extraFields = isArray(args.fields)
+          ? args.fields.filter((field): field is string => typeof field === 'string' && !!field)
+          : [];
+
         // /rest/api/3/search was removed by Atlassian (CHANGE-2046). Its
         // replacement pages by cursor rather than offset and, critically,
         // returns only issue ids unless `fields` is given explicitly.
@@ -222,6 +235,7 @@ export async function registerReadTools(
                 'created',
                 'updated',
                 'issuetype',
+                ...extraFields,
               ],
             }),
           }
@@ -250,6 +264,12 @@ export async function registerReadTools(
               return null;
             }
             const fields = issue.fields;
+            // Caller-requested extras render as compact JSON — the caller
+            // named the field, so the raw shape is what they asked for.
+            const extras = extraFields
+              .filter((field) => fields[field] !== undefined && fields[field] !== null)
+              .map((field) => `${field}: ${JSON.stringify(fields[field]).slice(0, 500)}`)
+              .join('; ');
             return {
               key: issue.key,
               summary: fields.summary,
@@ -259,6 +279,7 @@ export async function registerReadTools(
                 (isRecord(fields.assignee) ? fields.assignee.displayName : null) || 'Unassigned',
               reporter: (isRecord(fields.reporter) ? fields.reporter.displayName : null) || null,
               updated: fields.updated,
+              extras,
             };
           })
           .filter((issue): issue is NonNullable<typeof issue> => issue !== null);
@@ -273,7 +294,8 @@ export async function registerReadTools(
           ...issues.map(
             (i: Record<string, unknown>) =>
               `• ${i.key}: ${i.summary} [${i.status}] (${i.priority}) assigned to ${i.assignee}` +
-              (i.reporter ? `, reported by ${i.reporter}` : '')
+              (i.reporter ? `, reported by ${i.reporter}` : '') +
+              (i.extras ? ` — ${i.extras}` : '')
           ),
         ];
 

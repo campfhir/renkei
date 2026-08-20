@@ -48,7 +48,11 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
       trigger('subject', 'Email subject', 'The subject line of the email that triggered this run.'),
       trigger('body', 'Email body', 'A text preview of the email that triggered this run.'),
       trigger('from', 'Sender', 'The address the triggering email came from.'),
-      trigger('messageId', 'Email id', 'The identifier tools can use to fetch the full email.'),
+      trigger(
+        'messageId',
+        'Email id',
+        'The identifier of the triggering email; pass it to outlook_get_message to read the full email or to outlook_reply_preview to answer it.'
+      ),
     ],
   },
   {
@@ -61,8 +65,62 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
     provides: [
       trigger('text', 'Message text', 'The text of the message that triggered this run.'),
       trigger('sender', 'Sender', 'Who posted the triggering message.'),
-      trigger('roomId', 'Space id', 'The identifier of the space the message was posted in.'),
-      trigger('messageId', 'Message id', 'The identifier tools can use to fetch the message.'),
+      trigger(
+        'roomId',
+        'Space id',
+        'The identifier of the space the message was posted in; pass it to webex_send_message to reply in that space.'
+      ),
+      trigger(
+        'messageId',
+        'Message id',
+        'The identifier of the triggering message; pass it to webex_get_message to fetch it.'
+      ),
+    ],
+  },
+  {
+    id: 'zoom/recording.transcript_completed',
+    source: 'zoom',
+    type: 'recording.transcript_completed',
+    connector: 'zoom',
+    label: 'A meeting transcript is ready',
+    description:
+      'Runs when a Zoom meeting you hosted finishes processing its recording transcript.',
+    provides: [
+      trigger('meetingId', 'Meeting id', 'The numeric id of the Zoom meeting.'),
+      trigger(
+        'meetingUuid',
+        'Meeting uuid',
+        'The uuid of the exact meeting occurrence; pass it to zoom_get_transcript.'
+      ),
+      trigger('topic', 'Meeting topic', 'The topic (title) of the meeting.'),
+      trigger('hostEmail', 'Host email', 'The email address of the meeting host.'),
+      trigger('startTime', 'Start time', 'When the meeting started (ISO timestamp).'),
+      trigger(
+        'transcriptPreview',
+        'Transcript preview',
+        'The first part of the transcript text; pass the meeting uuid to zoom_get_transcript for the full text.'
+      ),
+    ],
+  },
+  {
+    id: 'zoom/meeting.summary_completed',
+    source: 'zoom',
+    type: 'meeting.summary_completed',
+    connector: 'zoom',
+    label: 'A meeting summary is ready',
+    description:
+      'Runs when Zoom AI Companion finishes the summary of a meeting you hosted.',
+    provides: [
+      trigger('meetingId', 'Meeting id', 'The numeric id of the Zoom meeting.'),
+      trigger('meetingUuid', 'Meeting uuid', 'The uuid of the exact meeting occurrence.'),
+      trigger('topic', 'Meeting topic', 'The topic (title) of the meeting.'),
+      trigger('hostEmail', 'Host email', 'The email address of the meeting host.'),
+      trigger('startTime', 'Start time', 'When the meeting started (ISO timestamp).'),
+      trigger(
+        'summaryPreview',
+        'Summary preview',
+        'The first part of the summary text; pass the meeting id to zoom_get_meeting_summary for the full summary.'
+      ),
     ],
   },
 ];

@@ -27,7 +27,9 @@ export async function registerWorklogTools(
     'jira_list_worklogs',
     {
       title: 'Jira · Read — List worklogs on an issue',
-      description: 'List all time tracking entries on a specific issue.',
+      description:
+        'For many issues use jira_bulk_get_worklogs — one call covers a whole sprint. This ' +
+        'lists all time tracking entries on ONE specific issue.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
@@ -82,6 +84,125 @@ export async function registerWorklogTools(
                 lines.join('\n'),
                 'a table (Author, Time spent, Date, Comment) usually scans faster than this flat ' +
                   'list.'
+              ),
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // jira_bulk_get_worklogs — the "worklogs for a whole sprint" answer in one
+  // HTTP call: search/jql returns each issue's embedded worklog list (first
+  // 20 entries, with a total marker) plus its aggregate timetracking.
+  server.registerTool(
+    'jira_bulk_get_worklogs',
+    {
+      title: 'Jira · Read — Worklogs across many issues at once',
+      description:
+        'Time tracking for MANY issues in one call — a sprint, an epic, any JQL selection. ' +
+        'Returns each issue’s total time spent and its worklog entries (first 20 per issue). ' +
+        'Always prefer this over calling jira_list_worklogs once per issue.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        jql: z
+          .string()
+          .describe('JQL selecting the issues, e.g. "sprint = 42" or "project = PROJ"')
+          .optional(),
+        issueKeys: z
+          .array(z.string().min(1))
+          .max(100)
+          .describe('Explicit issue keys instead of JQL')
+          .optional(),
+        maxResults: z.number().describe('Maximum issues covered (1-100, default 50)').optional(),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.info('jira_bulk_get_worklogs invoked', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
+      try {
+        const issueKeys = Array.isArray(args.issueKeys)
+          ? args.issueKeys.filter((key): key is string => typeof key === 'string' && !!key)
+          : [];
+        const jql =
+          typeof args.jql === 'string' && args.jql.trim()
+            ? args.jql.trim()
+            : issueKeys.length > 0
+              ? `key in (${issueKeys.join(', ')})`
+              : '';
+        if (!jql) return errText('Provide jql or issueKeys.');
+        const maxResults = Math.min(
+          (typeof args.maxResults === 'number' ? args.maxResults : 50) || 50,
+          context.maxJqlResults
+        );
+
+        const response = await auth.fetch(
+          granularJiraScopes('jira_bulk_get_worklogs', true),
+          '/rest/api/3/search/jql',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              jql,
+              maxResults,
+              fields: ['summary', 'worklog', 'timetracking'],
+            }),
+          }
+        );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
+
+        const data = (await response.json()) as any;
+        const issues: any[] = Array.isArray(data?.issues) ? data.issues : [];
+        if (issues.length === 0) {
+          return { content: [{ type: 'text' as const, text: 'No issues matched.' }] };
+        }
+
+        const lines: string[] = [];
+        for (const issue of issues) {
+          const fields = issue?.fields ?? {};
+          const timeSpent = fields.timetracking?.timeSpent;
+          const worklogField = fields.worklog ?? {};
+          const entries: any[] = Array.isArray(worklogField.worklogs) ? worklogField.worklogs : [];
+          const total = typeof worklogField.total === 'number' ? worklogField.total : entries.length;
+          lines.push(
+            `• ${issue.key}: ${fields.summary ?? ''} — total logged: ${timeSpent || (total === 0 ? 'none' : 'N/A')}` +
+              (total === 0 ? '' : ` (${total} worklog${total === 1 ? '' : 's'})`)
+          );
+          for (const entry of entries) {
+            const author = entry.author?.displayName || 'Unknown';
+            const started = entry.started ? new Date(entry.started).toLocaleDateString() : 'N/A';
+            lines.push(`    - ${author}: ${entry.timeSpent || 'N/A'} (${started})`);
+          }
+          if (total > entries.length) {
+            lines.push(
+              `    … ${total - entries.length} more — call jira_list_worklogs ${issue.key} for the full list.`
+            );
+          }
+        }
+        const more = typeof data?.nextPageToken === 'string' && data.nextPageToken.length > 0;
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: withPresentationHint(
+                [
+                  `Worklogs across ${issues.length} issue${issues.length === 1 ? '' : 's'}` +
+                    (more ? ' — more match; narrow the JQL or raise maxResults.' : '') +
+                    ':',
+                  ...lines,
+                ].join('\n'),
+                'a table (Issue, Total logged, Who, When) usually scans faster than this flat list.'
               ),
             },
           ],

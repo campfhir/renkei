@@ -83,6 +83,7 @@ export {
 } from './trigger-catalog';
 export {
   isTriggerDraft,
+  triggerVariableDescriptors,
   triggerVariableNames,
   validateTriggerDrafts,
   type ApiTriggerInput,

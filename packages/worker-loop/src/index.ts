@@ -32,9 +32,13 @@ export interface LoopMessage {
 
 export type LoopDisposition = { status: 'retry'; delaySeconds: number } | { status: 'dead' };
 
-/** Poll cadence: quick when draining a backlog, relaxed when idle. */
+/** Poll cadence: quick when draining a backlog, relaxed when idle. The idle
+ * delay bounds per-hop latency for push-driven work — an event crosses up to
+ * three queue hops (intake → domain lane → agent job), so 1s keeps the
+ * webhook-to-agent-run feel well under the ~30s target while costing only a
+ * few indexed single-row claim queries per second across all consumers. */
 const BUSY_DELAY_MS = 100;
-const IDLE_DELAY_MS = 5_000;
+const IDLE_DELAY_MS = 1_000;
 
 export interface EventLoopDeps<M extends LoopMessage> {
   claim: () => Promise<M | null>;

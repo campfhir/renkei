@@ -519,7 +519,9 @@ const handler = async (
             'Read tools are safe anywhere; Act tools change systems and are disabled in org ' +
             'read-only mode. Some Act tools have *_preview variants that render an ' +
             'interactive card for the user to confirm or cancel — prefer those whenever the ' +
-            'user should review before something is sent or scheduled on their behalf.',
+            'user should review before something is sent or scheduled on their behalf. ' +
+            'When a request covers many items, prefer a *_bulk_* tool (or one search with ' +
+            'the right fields) over calling a single-item tool once per item.',
           verboseLogs: false,
         }
       );

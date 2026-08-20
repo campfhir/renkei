@@ -85,8 +85,10 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
     label: 'Manage calendar',
     hint:
       'outlook_create_event (sends invites), outlook_respond_event (accept/tentative/decline, ' +
-      'propose a new time) — acts as the user; org read-only mode disables them',
-    userHint: 'Create and change events on your calendar, and respond to invitations as you.',
+      'propose a new time), outlook_cancel_event_preview (cancel or remove an event via a ' +
+      'confirm card) — acts as the user; org read-only mode disables them',
+    userHint:
+      'Create, change and cancel events on your calendar, and respond to invitations as you.',
     group: 'calendar',
     defaultChecked: true,
   },

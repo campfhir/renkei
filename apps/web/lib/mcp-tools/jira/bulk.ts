@@ -23,7 +23,7 @@ export async function registerBulkTools(
   context: MCPToolContext,
   auth: JiraAuth
 ): Promise<void> {
-  // jira_bulk_update_issues (not in renkei_tools.json but keeping for now)
+  // jira_bulk_update_issues
   server.registerTool(
     'jira_bulk_update_issues',
     {

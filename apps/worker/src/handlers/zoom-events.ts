@@ -17,6 +17,7 @@ import { ZoomClient, vttToText, parseZoomWebhookPayload } from '@renkei/connecto
 import { ZOOM } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { enqueueKnowledgeEvent } from '../enqueue';
+import { publishDomainEvent, BODY_PREVIEW_CHARS } from '../domain-events';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { resolveZoomHostAccess } from './zoom-access';
@@ -53,26 +54,23 @@ function factsOf(event: ClaimedEvent): ZoomEventFacts {
   };
 }
 
-export function createZoomTranscriptHandler(): EventHandler {
+export function createZoomTranscriptHandler(
+  deps: { publish?: typeof publishDomainEvent } = {}
+): EventHandler {
+  const publish = deps.publish ?? publishDomainEvent;
+
   return async (event) => {
     const facts = factsOf(event);
     const tenantId = event.tenant_id;
 
     const access = await resolveZoomHostAccess(tenantId, facts.hostId, facts.hostEmail);
     if (!access) {
+      // No grant means no owner subject either — nothing to ingest AND no
+      // agents to fire under the owner-scoped fan-out rule.
       logger.info('host {hostEmail} has no zoom grant; transcript skipped', {
         component: COMPONENT,
         tenantId,
         hostEmail: facts.hostEmail ?? facts.hostId ?? '(unknown)',
-      });
-      return;
-    }
-
-    const embedder = await resolveEmbeddingProvider(tenantId);
-    if (!embedder) {
-      logger.info('knowledge layer off; transcript not indexed', {
-        component: COMPONENT,
-        tenantId,
       });
       return;
     }
@@ -98,39 +96,71 @@ export function createZoomTranscriptHandler(): EventHandler {
         tenantId,
         meetingUuid: facts.meetingUuid,
       });
-      return;
     }
 
-    // Embedding is deferred to the embedding queue (Decision #20): the
-    // bounded Zoom fetch/download above stays here, the network-bound
-    // chunk-and-embed does not.
-    const refId = `${access.hostEmail}/${facts.meetingUuid}/transcript`;
-    await enqueueKnowledgeEvent(
-      tenantId,
-      'ingest.object',
-      {
-        provider: ZOOM,
-        refId,
-        content: facts.topic ? `Meeting: ${facts.topic}\n\n${text}` : text,
-        metadata: {
-          kind: 'transcript',
-          meetingId: facts.meetingId ?? undefined,
-          meetingUuid: facts.meetingUuid,
-          topic: facts.topic || undefined,
-          startTime: facts.startTime || undefined,
-          hostEmail: access.hostEmail,
+    // Knowledge indexing is optional (the embedder may be off, the text may
+    // be empty) — agent triggers below fire regardless, so the embedder
+    // check gates ONLY this enqueue.
+    const embedder = await resolveEmbeddingProvider(tenantId);
+    if (embedder && text.trim()) {
+      // Embedding is deferred to the embedding queue (Decision #20): the
+      // bounded Zoom fetch/download above stays here, the network-bound
+      // chunk-and-embed does not.
+      const refId = `${access.hostEmail}/${facts.meetingUuid}/transcript`;
+      await enqueueKnowledgeEvent(
+        tenantId,
+        'ingest.object',
+        {
+          provider: ZOOM,
+          refId,
+          content: facts.topic ? `Meeting: ${facts.topic}\n\n${text}` : text,
+          metadata: {
+            kind: 'transcript',
+            meetingId: facts.meetingId ?? undefined,
+            meetingUuid: facts.meetingUuid,
+            topic: facts.topic || undefined,
+            startTime: facts.startTime || undefined,
+            hostEmail: access.hostEmail,
+          },
+          sourceAt: facts.startTime || null,
+          chunking: TRANSCRIPT_CHUNKING,
         },
-        sourceAt: facts.startTime || null,
-        chunking: TRANSCRIPT_CHUNKING,
-      },
-      // Redeliveries of the same transcript stay serial; different meetings
-      // embed in parallel.
-      `zoom/${refId}`
-    );
-    logger.info('queued transcript for {meetingUuid} for indexing', {
-      component: COMPONENT,
+        // Redeliveries of the same transcript stay serial; different meetings
+        // embed in parallel.
+        `zoom/${refId}`
+      );
+      logger.info('queued transcript for {meetingUuid} for indexing', {
+        component: COMPONENT,
+        tenantId,
+        meetingUuid: facts.meetingUuid,
+      });
+    } else if (!embedder) {
+      logger.info('knowledge layer off; transcript not indexed', {
+        component: COMPONENT,
+        tenantId,
+      });
+    }
+
+    // The handler's LAST act (the retry contract in domain-events.ts): the
+    // host's event-triggered agents fire even when knowledge is off or the
+    // transcript came back empty — they refetch by id under their own grant.
+    // `data` keys mirror the trigger catalog's provides, minus `trigger.`.
+    if (!access.subject) return;
+    await publish({
       tenantId,
-      meetingUuid: facts.meetingUuid,
+      provider: 'zoom',
+      type: 'recording.transcript_completed',
+      ownerSubject: access.subject,
+      data: {
+        meetingId: facts.meetingId ?? '',
+        meetingUuid: facts.meetingUuid,
+        topic: facts.topic,
+        hostEmail: access.hostEmail,
+        startTime: facts.startTime,
+        transcriptPreview: text.slice(0, BODY_PREVIEW_CHARS),
+      },
+      occurredAt: facts.startTime || undefined,
+      orderingKey: `zoom/${tenantId}/${facts.meetingUuid}`,
     });
   };
 }
@@ -142,24 +172,23 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-export function createZoomSummaryHandler(): EventHandler {
+export function createZoomSummaryHandler(
+  deps: { publish?: typeof publishDomainEvent } = {}
+): EventHandler {
+  const publish = deps.publish ?? publishDomainEvent;
+
   return async (event) => {
     const facts = factsOf(event);
     const tenantId = event.tenant_id;
 
     const access = await resolveZoomHostAccess(tenantId, facts.hostId, facts.hostEmail);
     if (!access) {
+      // No grant → no owner subject → no agents to fire either; skip whole.
       logger.info('host {hostEmail} has no zoom grant; summary skipped', {
         component: COMPONENT,
         tenantId,
         hostEmail: facts.hostEmail ?? facts.hostId ?? '(unknown)',
       });
-      return;
-    }
-
-    const embedder = await resolveEmbeddingProvider(tenantId);
-    if (!embedder) {
-      logger.info('knowledge layer off; summary not indexed', { component: COMPONENT, tenantId });
       return;
     }
 
@@ -199,33 +228,58 @@ export function createZoomSummaryHandler(): EventHandler {
         tenantId,
         meetingId: facts.meetingId,
       });
-      return;
     }
 
-    const refId = `${access.hostEmail}/${facts.meetingUuid}/summary`;
-    await enqueueKnowledgeEvent(
-      tenantId,
-      'ingest.object',
-      {
-        provider: ZOOM,
-        refId,
-        content: text,
-        metadata: {
-          kind: 'summary',
-          meetingId: facts.meetingId,
-          meetingUuid: facts.meetingUuid,
-          topic: facts.topic || undefined,
-          startTime: facts.startTime || undefined,
-          hostEmail: access.hostEmail,
+    // As in the transcript handler: the embedder gates ONLY the knowledge
+    // enqueue; the domain event below publishes regardless.
+    const embedder = await resolveEmbeddingProvider(tenantId);
+    if (embedder && text.trim()) {
+      const refId = `${access.hostEmail}/${facts.meetingUuid}/summary`;
+      await enqueueKnowledgeEvent(
+        tenantId,
+        'ingest.object',
+        {
+          provider: ZOOM,
+          refId,
+          content: text,
+          metadata: {
+            kind: 'summary',
+            meetingId: facts.meetingId,
+            meetingUuid: facts.meetingUuid,
+            topic: facts.topic || undefined,
+            startTime: facts.startTime || undefined,
+            hostEmail: access.hostEmail,
+          },
+          sourceAt: facts.startTime || null,
         },
-        sourceAt: facts.startTime || null,
-      },
-      `zoom/${refId}`
-    );
-    logger.info('queued AI summary for meeting {meetingId} for indexing', {
-      component: COMPONENT,
+        `zoom/${refId}`
+      );
+      logger.info('queued AI summary for meeting {meetingId} for indexing', {
+        component: COMPONENT,
+        tenantId,
+        meetingId: facts.meetingId,
+      });
+    } else if (!embedder) {
+      logger.info('knowledge layer off; summary not indexed', { component: COMPONENT, tenantId });
+    }
+
+    // Last act — see the transcript handler. Keys mirror the catalog row.
+    if (!access.subject) return;
+    await publish({
       tenantId,
-      meetingId: facts.meetingId,
+      provider: 'zoom',
+      type: 'meeting.summary_completed',
+      ownerSubject: access.subject,
+      data: {
+        meetingId: facts.meetingId,
+        meetingUuid: facts.meetingUuid,
+        topic: facts.topic,
+        hostEmail: access.hostEmail,
+        startTime: facts.startTime,
+        summaryPreview: text.slice(0, BODY_PREVIEW_CHARS),
+      },
+      occurredAt: facts.startTime || undefined,
+      orderingKey: `zoom/${tenantId}/${facts.meetingUuid}`,
     });
   };
 }

@@ -252,4 +252,63 @@ describe('draftAgentFromProse retry loop', () => {
     const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
     expect('error' in result && result.error).toContain('no JSON object');
   });
+
+  it('sanitizes an illegal result name and feeds the rule back', async () => {
+    const badName = JSON.stringify({
+      name: 'x',
+      steps: [
+        {
+          name: 'Search',
+          instruction: 'Search with {{tool:jira_search_issues}}',
+          tool: 'jira_search_issues',
+          saveAs: '2nd result!!',
+        },
+      ],
+    });
+    replies = [badName, badName];
+
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    // Stripped to pattern shape: leading non-letters and "!" gone.
+    expect(actionOf(result.steps[0]).saveAs).toBe('nd result');
+    expect(JSON.stringify(requests[1].messages)).toContain('not a usable name');
+  });
+
+  it('degrades an unprovided trigger.* chip to text and names the legal set', async () => {
+    const inventedTrigger = JSON.stringify({
+      name: 'x',
+      steps: [
+        {
+          name: 'Reply',
+          instruction: 'Reply in {{var:trigger.roomId}} politely.',
+          tool: null,
+        },
+      ],
+    });
+    replies = [inventedTrigger, inventedTrigger];
+
+    const result = await draftAgentFromProse(db, 't1', 'reply to webex messages', TOOLS, {
+      triggerVars: [{ name: 'trigger.subject', description: 'The subject line.' }],
+    });
+    if ('error' in result) throw new Error(result.error);
+    // The chip degraded to plain text, so the save can never bounce on it.
+    expect(actionOf(result.steps[0]).instruction).toEqual(
+      expect.arrayContaining([{ t: 'text', v: 'Reply in trigger.roomId politely.' }])
+    );
+    const feedback = JSON.stringify(requests[1].messages);
+    expect(feedback).toContain('no attached trigger provides it');
+    expect(feedback).toContain('trigger.subject');
+  });
+
+  it('renders trigger variable descriptions into the prompt', async () => {
+    replies = [GOOD_REPLY];
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+      triggerVars: [
+        { name: 'trigger.roomId', description: 'Pass it to webex_send_message to reply.' },
+      ],
+    });
+    if ('error' in result) throw new Error(result.error);
+    const prompt = JSON.stringify(requests[0].messages);
+    expect(prompt).toContain('trigger.roomId: Pass it to webex_send_message to reply.');
+  });
 });
