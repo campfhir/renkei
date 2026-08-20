@@ -78,6 +78,7 @@ export const EXPECTED_MIGRATIONS = [
   '045-agent-share-token',
   '046-mail-bulk-jobs',
   '047-upload-slots',
+  '048-agent-trigger-firings',
 ];
 
 export interface MigrationStatus {

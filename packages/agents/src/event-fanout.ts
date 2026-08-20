@@ -29,6 +29,27 @@ export interface AgentEventInput {
   ownerSubject: string;
   /** Becomes trigger.* variables; keys must match the catalog's provides. */
   payload: Record<string, unknown>;
+  /**
+   * The delivery's queue-row id — the firing-lock fallback for event types
+   * whose payload carries no stable identifier of its own.
+   */
+  eventId?: string;
+}
+
+/**
+ * The name of the source event, for the firing lock. Payload-derived where
+ * the payload has a stable id — that is what makes the SAME message
+ * delivered twice (duplicate webhook registrations produce distinct queue
+ * rows) still count as one firing. The queue-row id fallback still
+ * deduplicates replays of one delivery.
+ */
+function dedupeKeyFor(event: AgentEventInput): string | null {
+  const payload = event.payload;
+  const messageId = typeof payload.messageId === 'string' ? payload.messageId : '';
+  if (messageId) return `msg:${messageId}`;
+  const meetingUuid = typeof payload.meetingUuid === 'string' ? payload.meetingUuid : '';
+  if (meetingUuid) return `meeting:${meetingUuid}`;
+  return event.eventId ? `event:${event.eventId}` : null;
 }
 
 interface MatchFilters {
@@ -74,6 +95,7 @@ export async function fanOutAgentEvents(
     .where('a.owner_subject', '=', event.ownerSubject)
     .execute();
 
+  const dedupeKey = dedupeKeyFor(event);
   const started: string[] = [];
   for (const trigger of triggers) {
     const config: { match?: MatchFilters } =
@@ -84,6 +106,25 @@ export async function fanOutAgentEvents(
         : {};
     if (!matches(config.match ?? {}, event.payload)) continue;
     if (!isAgentStepsDoc(trigger.steps)) continue;
+
+    // The firing lock: one run per (trigger, source event), across every
+    // worker process. Whoever wins this INSERT creates the run; a lost
+    // conflict means another process (or a replay of this delivery, or a
+    // duplicate webhook registration's second delivery) already did.
+    if (dedupeKey) {
+      const claimed = await db
+        .insertInto('agent_trigger_firings')
+        .values({
+          trigger_id: trigger.trigger_id,
+          dedupe_key: dedupeKey,
+          tenant_id: event.tenantId,
+          run_id: null,
+        })
+        .onConflict((oc) => oc.columns(['trigger_id', 'dedupe_key']).doNothing())
+        .returning('trigger_id')
+        .executeTakeFirst();
+      if (!claimed) continue;
+    }
 
     const result = await createAgentRun(db, producer, {
       tenantId: event.tenantId,
@@ -97,12 +138,30 @@ export async function fanOutAgentEvents(
     });
     if (result.ok) {
       started.push(result.val.runId);
+      if (dedupeKey) {
+        await db
+          .updateTable('agent_trigger_firings')
+          .set({ run_id: result.val.runId })
+          .where('trigger_id', '=', trigger.trigger_id)
+          .where('dedupe_key', '=', dedupeKey)
+          .execute();
+      }
       await db
         .updateTable('agent_triggers')
         .set({ last_fired_at: sql`NOW()`, last_error: null, updated_at: sql`NOW()` })
         .where('id', '=', trigger.trigger_id)
         .execute();
     } else {
+      // Release the claim so a redelivery may retry what a cap or outage
+      // refused — mirrors createAgentRun's own "better no trace than a
+      // phantom" cleanup.
+      if (dedupeKey) {
+        await db
+          .deleteFrom('agent_trigger_firings')
+          .where('trigger_id', '=', trigger.trigger_id)
+          .where('dedupe_key', '=', dedupeKey)
+          .execute();
+      }
       // A refused run (cap, cycle) is the trigger's news to carry, never
       // the pipeline's to fail on.
       await db
