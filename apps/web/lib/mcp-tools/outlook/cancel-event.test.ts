@@ -62,7 +62,13 @@ jest.mock('@renkei/knowledge', () => ({
 }));
 jest.mock('../knowledge', () => ({ buildKnowledgeVerifiers: async () => new Map() }));
 jest.mock('@/lib/logger', () => ({
-  logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+  logger: {
+    info: () => undefined,
+    debug: () => undefined,
+    verbose: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+  },
   secure: (value: unknown) => value,
 }));
 

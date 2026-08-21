@@ -98,7 +98,7 @@ export async function refreshGrantTokens(
   logger: GrantLogger = silentLogger
 ): Promise<Result<RefreshedTokens, RefreshError>> {
   const provider = adapter.provider;
-  logger.info('[Refresh] Starting token refresh', { provider, tenantId, accountId });
+  logger.debug('[Refresh] Starting token refresh', { provider, tenantId, accountId });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -119,7 +119,7 @@ export async function refreshGrantTokens(
       // The other process may have refreshed already — reuse its result.
       const refetch = await getGrant(provider, tenantId, accountId, encryptionKey);
       if (refetch.ok && refetch.val) {
-        logger.info('[Refresh] Using refreshed token from other process', {
+        logger.debug('[Refresh] Using refreshed token from other process', {
           provider,
           tenantId,
           accountId,
@@ -194,7 +194,7 @@ export async function refreshGrantTokens(
       return updateResult;
     }
 
-    logger.info('[Refresh] Token refreshed successfully', {
+    logger.debug('[Refresh] Token refreshed successfully', {
       provider,
       tenantId,
       accountId,

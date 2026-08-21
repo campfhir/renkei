@@ -152,7 +152,7 @@ export async function POST(
       // a discovery document must not smuggle an internal issuer past the guard.
       assertSafeHttpsUrl(issuer);
 
-      logger.info('Fetched issuer from discovery: {issuer}', {
+      logger.debug('Fetched issuer from discovery: {issuer}', {
         component: 'auth/oidc',
         tenantId,
         issuer,

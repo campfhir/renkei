@@ -433,7 +433,7 @@ export async function registerKnowledgeTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      logger.info('search_knowledge invoked', {
+      logger.debug('search_knowledge invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

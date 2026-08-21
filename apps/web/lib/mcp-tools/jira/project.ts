@@ -41,7 +41,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_projects invoked', {
+      logger.debug('jira_list_projects invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -109,7 +109,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_components invoked', {
+      logger.debug('jira_list_components invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -181,7 +181,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_fields invoked', {
+      logger.debug('jira_list_fields invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -262,7 +262,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_search_users invoked', {
+      logger.debug('jira_search_users invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -326,7 +326,7 @@ export async function registerProjectTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_transitions invoked', {
+      logger.debug('jira_list_transitions invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

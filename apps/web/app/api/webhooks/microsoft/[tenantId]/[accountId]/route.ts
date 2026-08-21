@@ -121,7 +121,7 @@ export async function POST(
     if (enqueued.ok) accepted += 1;
   }
 
-  logger.info('Graph notifications accepted', {
+  logger.debug('Graph notifications accepted', {
     component: 'microsoft/webhook',
     tenantId,
     accepted,

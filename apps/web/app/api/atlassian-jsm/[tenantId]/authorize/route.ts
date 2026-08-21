@@ -102,7 +102,7 @@ export async function GET(
     authUrl.searchParams.append('state', state);
     authUrl.searchParams.append('prompt', 'consent');
 
-    logger.info('Atlassian JSM authorize redirect', {
+    logger.debug('Atlassian JSM authorize redirect', {
       component: 'auth/oauth',
       tenantId,
       clientId: app.clientId,

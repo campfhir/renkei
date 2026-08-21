@@ -93,7 +93,7 @@ export async function registerJsmCustomerTools(
       // Named distinctly: this handler also destructures a `displayName` from
       // args, which is the *customer's* name, not the caller's.
       const invokerDisplayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_create_customer invoked', {
+      logger.debug('jsm_create_customer invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -158,7 +158,7 @@ export async function registerJsmCustomerTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_add_customer_to_servicedesk invoked', {
+      logger.debug('jsm_add_customer_to_servicedesk invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -225,7 +225,7 @@ export async function registerJsmCustomerTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_remove_customer_from_servicedesk invoked', {
+      logger.debug('jsm_remove_customer_from_servicedesk invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -288,7 +288,7 @@ export async function registerJsmCustomerTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_invite_customers_to_servicedesk invoked', {
+      logger.debug('jsm_invite_customers_to_servicedesk invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

@@ -37,7 +37,7 @@ export async function registerWorklogTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_worklogs invoked', {
+      logger.debug('jira_list_worklogs invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -126,7 +126,7 @@ export async function registerWorklogTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_bulk_get_worklogs invoked', {
+      logger.debug('jira_bulk_get_worklogs invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -174,7 +174,8 @@ export async function registerWorklogTools(
           const timeSpent = fields.timetracking?.timeSpent;
           const worklogField = fields.worklog ?? {};
           const entries: any[] = Array.isArray(worklogField.worklogs) ? worklogField.worklogs : [];
-          const total = typeof worklogField.total === 'number' ? worklogField.total : entries.length;
+          const total =
+            typeof worklogField.total === 'number' ? worklogField.total : entries.length;
           lines.push(
             `• ${issue.key}: ${fields.summary ?? ''} — total logged: ${timeSpent || (total === 0 ? 'none' : 'N/A')}` +
               (total === 0 ? '' : ` (${total} worklog${total === 1 ? '' : 's'})`)
@@ -239,7 +240,7 @@ export async function registerWorklogTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_create_worklog invoked', {
+      logger.debug('jira_create_worklog invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -317,7 +318,7 @@ export async function registerWorklogTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_delete_worklog invoked', {
+      logger.debug('jira_delete_worklog invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

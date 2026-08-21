@@ -101,7 +101,7 @@ export async function registerReadTools(
     },
     async (_args: Record<string, unknown>) => {
       const cachedDisplayName = getCachedDisplayName(context.accountId);
-      logger.info('whoami invoked', {
+      logger.debug('whoami invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -146,7 +146,7 @@ export async function registerReadTools(
           `Account ID: ${accountId}`,
           `Site: ${context.siteUrl}`,
         ];
-        logger.info('whoami success', { component: 'mcp/tool', displayName, accountId });
+        logger.debug('whoami success', { component: 'mcp/tool', displayName, accountId });
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
         logger.error('whoami error', {
@@ -191,7 +191,7 @@ export async function registerReadTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_search_issues invoked', {
+      logger.debug('jira_search_issues invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -520,7 +520,7 @@ export async function registerReadTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_count_issues invoked', {
+      logger.debug('jira_count_issues invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -598,7 +598,7 @@ export async function registerReadTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_get_issue invoked', {
+      logger.debug('jira_get_issue invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -728,7 +728,7 @@ export async function registerReadTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_boards invoked', {
+      logger.debug('jira_list_boards invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -814,7 +814,7 @@ export async function registerReadTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_sprints invoked', {
+      logger.debug('jira_list_sprints invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

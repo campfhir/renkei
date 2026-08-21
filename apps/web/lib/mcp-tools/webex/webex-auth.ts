@@ -197,7 +197,7 @@ export function oauthWebexAuth(context: MCPToolContext): WebexAuth {
         responseBody: loggedBody ? secure(truncateForLog(loggedBody)) : undefined,
       };
       if (response.ok) {
-        logger.info('WebEx API OK response', logFields);
+        logger.debug('WebEx API OK response', logFields);
       } else {
         logger.warn('WebEx API non-OK response', logFields);
       }

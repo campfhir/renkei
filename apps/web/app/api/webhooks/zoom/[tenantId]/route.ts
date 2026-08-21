@@ -130,7 +130,7 @@ export async function POST(
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });
   }
 
-  logger.info('Event accepted', { component: 'zoom/webhook', tenantId, type: payload.val.type });
+  logger.debug('Event accepted', { component: 'zoom/webhook', tenantId, type: payload.val.type });
   return NextResponse.json({ accepted: true });
 }
 
