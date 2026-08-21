@@ -58,14 +58,19 @@ export function StepEditor({
   const failureIssuePresent = issues.length > 0 && step.failureHandling.length > 0;
   const failureHint = (() => {
     const retries = step.failureHandling.filter((entry) => entry.action === 'retry').length;
+    const benign = step.failureHandling.filter((entry) => entry.action === 'stop-quiet').length;
     const stop =
       step.onSuccess === 'stop'
         ? ' · stops when done'
         : step.onSuccess === 'stop-quiet'
           ? ' · stops silently when done'
           : '';
-    if (retries === 0) return `every failure stops the agent${stop}`;
-    return `${retries} ${retries === 1 ? 'retry' : 'retries'} configured${stop}`;
+    const parts = [
+      ...(retries > 0 ? [`${retries} ${retries === 1 ? 'retry' : 'retries'} configured`] : []),
+      ...(benign > 0 ? [`${benign} treated as not an error`] : []),
+    ];
+    if (parts.length === 0) return `every failure stops the agent${stop}`;
+    return `${parts.join(', ')}${stop}`;
   })();
 
   return (

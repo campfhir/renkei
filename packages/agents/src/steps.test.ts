@@ -58,6 +58,29 @@ describe('isAgentStepsDoc', () => {
     expect(isAgentStepsDoc({ version: 1, steps: [branch()] })).toBe(false);
   });
 
+  it('accepts every failure-handling action, and only those', () => {
+    // Plain object literals, not the typed helper: the guard takes unknown,
+    // and the point is exactly which action STRINGS it admits.
+    const doc = (handlingAction: string): unknown => ({
+      version: 1,
+      steps: [
+        {
+          id: randomUUID(),
+          name: 'Find it',
+          instruction: [{ t: 'text', v: 'Find it.' }],
+          tool: 'jira_get_issue',
+          maxAttempts: 1,
+          failureHandling: [{ outcome: 'not-found', action: handlingAction }],
+        },
+      ],
+    });
+    expect(isAgentStepsDoc(doc('exit'))).toBe(true);
+    expect(isAgentStepsDoc(doc('retry'))).toBe(true);
+    // 'stop-quiet' = the owner declared the outcome benign (not an error).
+    expect(isAgentStepsDoc(doc('stop-quiet'))).toBe(true);
+    expect(isAgentStepsDoc(doc('continue'))).toBe(false);
+  });
+
   it('accepts a v2 document with a branch', () => {
     expect(isAgentStepsDoc({ version: 2, steps: [action(), branch()] })).toBe(true);
   });

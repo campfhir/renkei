@@ -3,7 +3,9 @@
 /**
  * "If something goes wrong" — one row per condition the step's tool
  * enumerates (the outcome metadata served with the tool catalog), each a
- * choice between stopping the agent and retrying with extra guidance.
+ * choice between stopping the agent, retrying with extra guidance, and
+ * declaring the condition benign ("ticket not found" is sometimes just
+ * "nothing to do") — which ends the run silently as 'stopped', not failed.
  *
  * The default is stop: an absent handling entry means exit, so a user who
  * configures nothing gets the safe behavior. Retry reveals a guidance
@@ -151,6 +153,20 @@ export function FailurePanel({
                     }`}
                   >
                     Try again with extra guidance
+                  </button>
+                  <button
+                    type="button"
+                    title="Treat this as not an error: the run ends silently — no reply, no notification, no follow-up automations — and shows as stopped, not failed."
+                    onClick={() =>
+                      setEntry(failure.code, { outcome: failure.code, action: 'stop-quiet' })
+                    }
+                    className={`px-2.5 py-1 ${
+                      action === 'stop-quiet'
+                        ? 'bg-gray-700 text-white dark:bg-gray-300 dark:text-gray-900'
+                        : 'text-gray-600 dark:text-gray-400'
+                    }`}
+                  >
+                    Not an error — stop silently
                   </button>
                 </div>
               </div>
