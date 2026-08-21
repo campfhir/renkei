@@ -34,6 +34,20 @@ export function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
 
   try {
     state.pool = new Pool({ connectionString });
+    // An IDLE connection dying (Postgres restart, network drop, server-side
+    // reap) emits the pool's 'error' event. Without a listener Node treats
+    // it as an unhandled 'error' and KILLS THE PROCESS — dumping the raw pg
+    // client — so a routine database restart became a worker crash-loop.
+    // Handled, pg-pool simply discards the dead client and the next query
+    // checks out a fresh connection. console.error, not a logger: this
+    // package sits below every app's logging stack.
+    state.pool.on('error', (error) => {
+      console.error(
+        `[db] idle connection error (recovering): ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    });
     return ok(state.pool);
   } catch {
     return err('DB_INIT_ERROR' as const);
