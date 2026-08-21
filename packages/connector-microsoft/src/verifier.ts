@@ -22,6 +22,7 @@ import { ownerOfMicrosoftRefId } from './refs';
 export function createMicrosoftAccessVerifier(): AccessVerifier {
   return {
     provider: 'microsoft',
+    ownerScoped: true,
     async verifyAccess(
       userId: string,
       refs: readonly SourceRef[]

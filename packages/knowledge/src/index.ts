@@ -16,6 +16,7 @@ import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { vectorLiteral } from './embeddings';
 import type { EmbeddingProvider } from './embeddings';
+import { escapeLike } from './chunking';
 
 export {
   EMBEDDINGS_CONNECTOR,
@@ -160,6 +161,28 @@ function filterFragments(filters: CandidateFilters) {
   };
 }
 
+/**
+ * The proposal-side half of ownerScoped verifiers (see AccessVerifier):
+ * providers whose whole ACL is the ref's owner prefix admit only the
+ * requester's own rows into the candidate set. Foreign-owned rows would be
+ * withheld by the gate anyway, but fetching them still counts them — and a
+ * withheld tally of a coworker's mailbox is itself a disclosure, besides
+ * eating overfetch slots that owned rows could have filled.
+ *
+ * The predicate mirrors the verifiers' parse exactly: owner is everything
+ * before the first `/`, compared lowercased. Providers without the flag —
+ * including providers with no verifier at all — pass through untouched, so
+ * live-verified content and deployment bugs are still counted honestly.
+ */
+function ownerScopeFragment(verifiers: ReadonlyMap<string, AccessVerifier>, userEmail: string) {
+  const scoped = [...verifiers.values()]
+    .filter((verifier) => verifier.ownerScoped)
+    .map((verifier) => sql`${verifier.provider}`);
+  if (scoped.length === 0) return sql`TRUE`;
+  const ownPrefix = `${escapeLike(userEmail.trim().toLowerCase())}/%`;
+  return sql`(provider NOT IN (${sql.join(scoped, sql`, `)}) OR ref_id LIKE ${ownPrefix})`;
+}
+
 function toHit(row: CandidateRow): KnowledgeHit {
   return {
     provider: row.provider,
@@ -221,6 +244,7 @@ export async function listRecentKnowledge(
 
   const sources = (options.sources ?? []).filter((source) => source.provider.trim());
   const filters = filterFragments(options);
+  const owner = ownerScopeFragment(options.verifiers, options.userEmail);
   const overfetch = Math.max(options.k * 2, options.k + 4);
 
   // One UNION ALL branch per source, each with its own LIMIT, so a quiet
@@ -233,6 +257,7 @@ export async function listRecentKnowledge(
      WHERE tenant_id = ${options.tenantId}
        AND source_at IS NOT NULL
        AND ${where}
+       AND ${owner}
        AND ${filters.after}
        AND ${filters.before}
      ORDER BY source_at DESC
@@ -308,6 +333,7 @@ export async function searchKnowledge(
   // afterwards would discard most of an already-small candidate set and
   // starve the result list.
   const filters = filterFragments(options);
+  const owner = ownerScopeFragment(options.verifiers, options.userEmail);
 
   const rowsResult = await wrapAsync(
     () =>
@@ -317,6 +343,7 @@ export async function searchKnowledge(
         FROM knowledge_chunks
         WHERE tenant_id = ${options.tenantId}
           AND ${filters.source}
+          AND ${owner}
           AND ${filters.after}
           AND ${filters.before}
         ORDER BY distance
