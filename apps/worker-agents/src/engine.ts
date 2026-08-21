@@ -826,9 +826,18 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const handling = handlingFor(step, lastFailureCode);
       // The owner declared this outcome NOT an error ("ticket not found" is
       // sometimes just "nothing to do") — the same graceful terminal as a
-      // declared nothing-to-do. The attempt row above already recorded the
-      // outcome code, so the run timeline still says exactly what happened.
+      // declared nothing-to-do. The attempt row keeps its outcome code (the
+      // timeline still says exactly what happened) but its STATUS becomes
+      // 'stopped', matching the run: left 'failed', the timeline showed a
+      // red Failed pill inside a nothing-to-do run, and the admin redaction
+      // rule (step content is visible on failures, for troubleshooting)
+      // exposed content of a step the owner explicitly declared benign.
       if (handling?.action === 'stop-quiet') {
+        await db
+          .updateTable('agent_run_steps')
+          .set({ status: 'stopped', updated_at: sql`NOW()` })
+          .where('id', '=', rowId)
+          .execute();
         return { kind: 'stop', reason: clip(lastFailureSummary, 300) };
       }
       if (!handling || handling.action === 'exit') {

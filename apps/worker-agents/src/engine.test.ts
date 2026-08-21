@@ -405,14 +405,17 @@ maybe('agent run engine', () => {
     expect(run.error_kind).toBeNull();
     expect(run.error).toBeNull();
 
-    // The timeline still says exactly what happened on the attempt.
+    // The attempt keeps its outcome code (the timeline says what happened)
+    // but its status matches the run's graceful end — not a red Failed pill
+    // inside a nothing-to-do run, and not admin-visible content either
+    // (the redaction rule shows step content only for failures).
     const attempts = await db
       .selectFrom('agent_run_steps')
       .select(['status', 'outcome_code'])
       .where('run_id', '=', runId)
       .execute();
     expect(attempts).toHaveLength(1);
-    expect(attempts[0].status).toBe('failed');
+    expect(attempts[0].status).toBe('stopped');
     expect(attempts[0].outcome_code).toBe('not-found');
 
     // Quiet: no notification, no chained agents.
