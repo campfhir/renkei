@@ -36,9 +36,10 @@ test('admin — agent oversight totals', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/admin/agents`);
   await expect(page.getByRole('heading', { name: 'Agent oversight' })).toBeVisible();
   // One period at a time: the toggle drives the org total AND the per-agent
-  // Runs column. Flip to a non-default bucket before the shot.
+  // Runs and Failures columns. Flip to a non-default bucket before the shot.
   await page.getByRole('button', { name: 'This quarter' }).click();
   await expect(page.getByRole('columnheader', { name: 'Runs (this quarter)' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Failures (this quarter)' })).toBeVisible();
   await expect(page.getByText('across all agents')).toBeVisible();
   await shot(page, testInfo, 'admin-agent-oversight');
 });

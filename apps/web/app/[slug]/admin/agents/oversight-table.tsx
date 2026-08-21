@@ -2,10 +2,10 @@
 
 /**
  * The oversight list with its run tallies, one PERIOD at a time: a single
- * toggle (today … all-time) drives both the org-wide total and the
- * per-agent Runs column, instead of six number columns shouting at once.
- * Client component purely for that toggle — the data all arrives from the
- * server page, pre-bucketed.
+ * toggle (today … all-time) drives the org-wide total, the per-agent Runs
+ * column AND the Failures column, instead of six number columns shouting
+ * at once. Client component purely for that toggle — the data all arrives
+ * from the server page, pre-bucketed.
  */
 
 import { useState } from 'react';
@@ -36,16 +36,21 @@ export default function OversightTable({
   slug,
   agents,
   runsByAgent,
+  failuresByAgent,
   totals,
+  failureTotals,
   dailyCap,
 }: {
   slug: string;
   agents: AdminAgentRow[];
   runsByAgent: Record<string, RunBuckets>;
+  failuresByAgent: Record<string, RunBuckets>;
   totals: RunBuckets;
+  failureTotals: RunBuckets;
   dailyCap: number | null;
 }): React.ReactNode {
   const [bucket, setBucket] = useState<keyof RunBuckets>('today');
+  const bucketLabel = BUCKETS.find((option) => option.key === bucket)?.label.toLowerCase();
 
   return (
     <div>
@@ -75,6 +80,14 @@ export default function OversightTable({
           {totals[bucket].toLocaleString('en-US')}
           <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
             run{totals[bucket] === 1 ? '' : 's'} across all agents
+            {failureTotals[bucket] > 0 ? (
+              <>
+                {' · '}
+                <span className="font-medium text-red-600 dark:text-red-400">
+                  {failureTotals[bucket].toLocaleString('en-US')} failed
+                </span>
+              </>
+            ) : null}
             {bucket === 'today' && dailyCap !== null
               ? ` — of the ${dailyCap.toLocaleString('en-US')}-per-day cap`
               : ''}
@@ -92,10 +105,8 @@ export default function OversightTable({
                 <th className="py-2 pr-3">Agent</th>
                 <th className="py-2 pr-3">Owner</th>
                 <th className="py-2 pr-3">State</th>
-                <th className="py-2 pr-3 text-right">
-                  Runs ({BUCKETS.find((option) => option.key === bucket)?.label.toLowerCase()})
-                </th>
-                <th className="py-2 pr-3">Failures (7d)</th>
+                <th className="py-2 pr-3 text-right">Runs ({bucketLabel})</th>
+                <th className="py-2 pr-3 text-right">Failures ({bucketLabel})</th>
                 <th className="py-2 pr-3">Last run</th>
                 <th className="py-2" />
               </tr>
@@ -118,10 +129,10 @@ export default function OversightTable({
                   <td className="py-2 pr-3 text-right tabular-nums">
                     {(runsByAgent[agent.id]?.[bucket] ?? 0).toLocaleString('en-US')}
                   </td>
-                  <td className="py-2 pr-3">
-                    {agent.recentFailures > 0 ? (
+                  <td className="py-2 pr-3 text-right tabular-nums">
+                    {(failuresByAgent[agent.id]?.[bucket] ?? 0) > 0 ? (
                       <span className="font-medium text-red-600 dark:text-red-400">
-                        {agent.recentFailures}
+                        {(failuresByAgent[agent.id]?.[bucket] ?? 0).toLocaleString('en-US')}
                       </span>
                     ) : (
                       '0'

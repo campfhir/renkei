@@ -301,6 +301,55 @@ export async function graphPutContent(
   return { ok: true, body: {} };
 }
 
+/**
+ * The pre-authenticated download URL for a file, via `GET …/content` with the
+ * 302 caught by hand instead of followed. Graph sometimes omits the
+ * `@microsoft.graph.downloadUrl` annotation from item metadata — seen on
+ * items shared from another drive — while /content still redirects fine, so
+ * this is the fallback when the annotation is missing (the same dual path
+ * @renkei/connector-microsoft's graphDownload takes to fetch bytes).
+ */
+export async function graphContentDownloadUrl(
+  context: GraphCallContext,
+  accessToken: string,
+  driveId: string,
+  itemId: string
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const path = `/drives/${driveId}/items/${itemId}/content`;
+  let response: Response;
+  try {
+    response = await fetch(`${GRAPH_BASE_URL}${path}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      redirect: 'manual',
+      signal: timeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: isTimeoutError(error)
+        ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
+        : 'Could not reach graph.microsoft.com',
+    };
+  }
+  const location = response.headers.get('location');
+  if (response.status >= 300 && response.status < 400 && location) {
+    return { ok: true, url: location };
+  }
+  logger.warn('Graph /content offered no redirect', {
+    component: 'graph/fetch',
+    tenantId: context.tenantId,
+    subject: context.subject,
+    path,
+    status: response.status,
+  });
+  return {
+    ok: false,
+    error: response.ok
+      ? 'Graph offered no download redirect for this file.'
+      : describeStatus(response.status),
+  };
+}
+
 // ——— shared shaping helpers ———
 
 export function values(body: Record<string, unknown>): Record<string, unknown>[] {

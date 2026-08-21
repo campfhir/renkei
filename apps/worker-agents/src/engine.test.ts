@@ -587,7 +587,7 @@ maybe('agent run engine', () => {
   });
 
   it('stops immediately on a failure handled as exit', async () => {
-    const { runId } = await seedRun(
+    const { runId, agentId } = await seedRun(
       singleStep({
         maxAttempts: 5,
         failureHandling: [{ outcome: 'no-permission', action: 'exit' }],
@@ -623,6 +623,14 @@ maybe('agent run engine', () => {
       .where('run_id', '=', runId)
       .execute();
     expect(attempts).toHaveLength(1);
+
+    // The failed finalize bumps the durable failure tally (migration 050).
+    const counter = await db
+      .selectFrom('agent_run_counters')
+      .select('failures')
+      .where('agent_id', '=', agentId)
+      .executeTakeFirstOrThrow();
+    expect(counter.failures).toBe(1);
   });
 
   it('records a declared success over an all-error tool as tool_error', async () => {

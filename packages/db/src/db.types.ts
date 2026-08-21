@@ -91,6 +91,7 @@ export interface AgentMemories {
 export interface AgentRunCounters {
   agent_id: string;
   day: Timestamp;
+  failures: Generated<number>;
   runs: Generated<number>;
   tenant_id: string;
 }

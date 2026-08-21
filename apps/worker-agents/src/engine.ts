@@ -55,6 +55,7 @@ import {
   renderAgentMemory,
   renderAgentKnowledgeNotes,
 } from '@renkei/agents/memory';
+import { recordAgentRunFailure } from '@renkei/agents/runs';
 import {
   BRANCH_SYSTEM_PROMPT,
   buildAttemptMessages,
@@ -1442,6 +1443,19 @@ export function createAgentRunHandler(deps: EngineDeps) {
       status,
       errorKind: errorKind ?? undefined,
     });
+    if (status === 'failed') {
+      // The durable failure tally the oversight page buckets by period —
+      // best effort, same as the run tally at creation.
+      const tally = await recordAgentRunFailure(db, run.tenant_id, run.agent_id);
+      if (!tally.ok) {
+        logger.warn('failure tally not recorded for run {runId}', {
+          component: 'worker-agents/engine',
+          runId: run.id,
+          tenantId: run.tenant_id,
+          agentId: run.agent_id,
+        });
+      }
+    }
     // The automatic breadcrumb — what makes "did I already handle this?"
     // answerable even when no step remembered anything explicitly. Carries
     // the trigger's identifying vars (messageId etc.), never bodies.
