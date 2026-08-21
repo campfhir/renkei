@@ -13,6 +13,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB, Json } from '@renkei/db';
 import { findNodeById, isAgentStepsDoc } from '@renkei/agents';
+import { isUuid } from '@/lib/uuid';
 
 export interface RunSummary {
   id: string;
@@ -122,6 +123,7 @@ export async function listRunsForOwner(
   agentId: string,
   options: { status?: 'succeeded' | 'failed' | 'stopped'; limit?: number } = {}
 ): Promise<RunSummary[]> {
+  if (!isUuid(agentId)) return [];
   let query = db
     .selectFrom('agent_runs')
     .select([...RUN_COLUMNS, FAILED_SNAPSHOT])
@@ -192,6 +194,7 @@ export async function getRunForOwner(
   agentId: string,
   runId: string
 ): Promise<RunDetail | null> {
+  if (!isUuid(agentId) || !isUuid(runId)) return null;
   const row = await db
     .selectFrom('agent_runs')
     .select([...RUN_COLUMNS, 'steps_snapshot'])
@@ -211,6 +214,7 @@ export async function listRunsForAdmin(
   agentId: string,
   options: { limit?: number } = {}
 ): Promise<RunSummary[]> {
+  if (!isUuid(agentId)) return [];
   const rows = await db
     .selectFrom('agent_runs')
     .select([...RUN_COLUMNS, FAILED_SNAPSHOT])
@@ -228,6 +232,7 @@ export async function getRunForAdmin(
   agentId: string,
   runId: string
 ): Promise<RunDetail | null> {
+  if (!isUuid(agentId) || !isUuid(runId)) return null;
   const row = await db
     .selectFrom('agent_runs')
     .select([...RUN_COLUMNS, 'steps_snapshot'])

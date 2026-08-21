@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { logger } from '@/lib/logger';
+import { hasMalformedUuidSegment } from '@/lib/uuid';
 
 /**
  * Health checks, Next internals, and log shipping never log: the health probe
@@ -35,6 +36,12 @@ export async function proxy(request: NextRequest) {
         // observability only, never a trust decision.
         ip: request.headers.get('x-forwarded-for') ?? request.headers.get('x-real-ip') ?? undefined,
       });
+    }
+    // A uuid-keyed API path with a malformed id — usually a pasted URL that
+    // picked up trailing punctuation from an autolinker. Postgres would
+    // answer the cast with a 22P02 and the route would 500; it is a 404.
+    if (hasMalformedUuidSegment(pathname)) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
     return NextResponse.next();
   } catch (error) {

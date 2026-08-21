@@ -12,12 +12,14 @@ import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { isUuid } from '@/lib/uuid';
 
 export async function POST(
   _request: NextRequest,
   { params }: { params: Promise<{ slug: string; agentId: string }> }
 ): Promise<NextResponse> {
   const { slug, agentId } = await params;
+  if (!isUuid(agentId)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const tenant = await tenantForSlug(slug);
   if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
   const access = await checkAccess(tenant.id, [ROLE_OPERATOR]);

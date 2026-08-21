@@ -24,6 +24,7 @@ import { createAgentRun } from '@renkei/agents/runs';
 import { sha256Hex } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { digestsMatch, getBearerToken } from '@/lib/mcp-token';
+import { isUuid } from '@/lib/uuid';
 
 const MAX_STATE_BYTES = 64 * 1024;
 /** Small in-memory burst brake; the daily cap in createAgentRun is the law. */
@@ -57,6 +58,9 @@ async function agentById(
   tenantId: string,
   agentId: string
 ): Promise<AgentRow | null> {
+  // Callers paste this id into external tools; a malformed one (glued-on
+  // punctuation from an autolinker) is "no such agent", not a 22P02 → 500.
+  if (!isUuid(agentId)) return null;
   const row = await db
     .selectFrom('agents')
     .select(['id', 'owner_subject', 'name', 'steps', 'llm_model_id', 'enabled'])
