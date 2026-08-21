@@ -91,6 +91,23 @@ export function initialDeltaUrl(kind: DeltaKind, opts?: InitialDeltaOptions): st
 /** More pages than this in one round means something is wrong upstream. */
 const MAX_DELTA_PAGES = 50;
 
+/**
+ * Items per delta page, via `Prefer: odata.maxpagesize` — honored per
+ * REQUEST, so it also thins a series already mid-flight on a $skiptoken.
+ * Unbounded, Graph serves pages of FULL message bodies whose render time is
+ * the mailbox's business, not ours; one heavy page blew the client timeout
+ * on every retry (the skiptoken pins retries to the same page), wedging the
+ * inbox delta permanently.
+ */
+const DELTA_PAGE_SIZE = 25;
+
+/**
+ * Delta pages are background sync and legitimately slow — a page of full
+ * mail bodies is worth waiting for, because failing just re-pays the same
+ * latency on the retry. Distinct from the client's 15s interactive default.
+ */
+const DELTA_TIMEOUT_MS = 60_000;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -132,7 +149,10 @@ export async function runDeltaRound(
       // Mail bodies come back as HTML by default; text keeps the index clean.
       // Graph ignores unknown Prefer tokens, so this is inert on the drive and
       // to-do resources rather than meaningful to them.
-      headers: { Prefer: 'outlook.body-content-type="text"' },
+      headers: {
+        Prefer: `outlook.body-content-type="text", odata.maxpagesize=${DELTA_PAGE_SIZE}`,
+      },
+      timeoutMs: DELTA_TIMEOUT_MS,
     });
     if (!result.ok) return result;
 

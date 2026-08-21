@@ -117,7 +117,11 @@ describe('runDeltaRound', () => {
     await runDeltaRound('token-1', '/me/calendarView/delta?startDateTime=a&endDateTime=b');
 
     for (const [, init] of fetchMock.mock.calls) {
-      expect(new Headers(init?.headers).get('Prefer')).toBe('outlook.body-content-type="text"');
+      const prefer = new Headers(init?.headers).get('Prefer') ?? '';
+      expect(prefer).toContain('outlook.body-content-type="text"');
+      // Pages are size-capped too: unbounded pages of full mail bodies once
+      // outlived the client timeout, wedging a series on one heavy page.
+      expect(prefer).toContain('odata.maxpagesize=25');
     }
   });
 
@@ -153,8 +157,7 @@ describe('runDeltaRound', () => {
       expect(result.val.items).toHaveLength(50);
     }
     expect(fetchMock).toHaveBeenCalledTimes(50);
-  }, // take several real seconds at 5/sec, past Jest's default 5000ms. // TokenBucket, not mocked) — 50 real page fetches past a 5-request burst // graphRequest is rate-limited for real here (client.ts's module-level
-  15_000);
+  }, 15_000); // take several real seconds at 5/sec, past Jest's default 5000ms. // TokenBucket, not mocked) — 50 real page fetches past a 5-request burst // graphRequest is rate-limited for real here (client.ts's module-level
 
   it('honours a caller-supplied page cap, so one big library cannot hog a sweep', async () => {
     const fetchMock = jest.spyOn(globalThis, 'fetch').mockImplementation(async () =>

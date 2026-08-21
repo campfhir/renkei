@@ -38,6 +38,13 @@ const limiter = new LaneLimiter({
 export interface GraphRequestOptions {
   /** Defaults to 'background'; verifiers and MCP tools pass 'interactive'. */
   lane?: RequestLane;
+  /**
+   * Per-call ceiling override, for requests Graph is legitimately slow to
+   * answer (delta pages of full mail bodies). The 15s default fits
+   * interactive calls; a background sync page is worth waiting longer for
+   * than it is worth failing, because a retry re-pays the same latency.
+   */
+  timeoutMs?: number;
 }
 
 export async function graphRequest(
@@ -60,13 +67,13 @@ export async function graphRequest(
       },
       // A caller-supplied signal (none today) still wins — theirs may carry
       // its own cancellation semantics we should not override.
-      signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: init?.signal ?? AbortSignal.timeout(init?.timeoutMs ?? REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'TimeoutError';
     return err('GRAPH_API_ERROR' as const, {
       message: timedOut
-        ? `Graph API timed out after ${REQUEST_TIMEOUT_MS}ms for ${url}`
+        ? `Graph API timed out after ${init?.timeoutMs ?? REQUEST_TIMEOUT_MS}ms for ${url}`
         : 'Graph API unreachable',
     });
   }
