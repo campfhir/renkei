@@ -176,6 +176,31 @@ describe('listAvailableTools', () => {
     expect(tools.some((name) => name.startsWith('onedrive_'))).toBe(true);
   });
 
+  it('gates the JSM family on the second Atlassian app grant, like the MCP route', async () => {
+    // Post-split, the JSM scopes live on the "Renkei JSM" grant, not the main
+    // one. A catalog that only reads the main grant silently drops every
+    // jsm_* tool from the agent builder while the live server still serves
+    // them — the exact drift this module exists to prevent.
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      'atlassian-jsm': {
+        requested_scopes: [
+          'read:request:jira-service-management',
+          'write:request:jira-service-management',
+        ],
+        granted_scopes: null,
+      },
+    };
+    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools).toContain('jsm_list_request_types');
+    expect(tools).toContain('jsm_create_request');
+  });
+
+  it('omits JSM tools when neither Atlassian grant carries the JSM scopes', async () => {
+    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools.some((name) => name.startsWith('jsm_'))).toBe(false);
+  });
+
   it('drops mutating tools in org read-only mode', async () => {
     readOnly = true;
     const tools = await listAvailableTools('tenant-1', 'subject-1');

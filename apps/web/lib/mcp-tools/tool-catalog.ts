@@ -23,7 +23,7 @@ import type { DB } from '@renkei/db';
 import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { createProjection } from '@renkei/capability-registry';
-import { ATLASSIAN } from '@renkei/provider-grants';
+import { ATLASSIAN, ATLASSIAN_JSM } from '@renkei/provider-grants';
 import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import { connectorKeyForTool } from '@/lib/mcp-tools/tool-connector';
@@ -120,6 +120,36 @@ async function jiraScopesFor(
 }
 
 /**
+ * The caller's grant on the second Atlassian app ("Renkei JSM"), scopes only.
+ *
+ * The MCP route swaps this grant's scopes in before registering the JSM/Ops
+ * families (registerAllTools), so the catalog must too or every jsm_* tool
+ * silently vanishes from the builder while the live server still serves it —
+ * post-split, the main grant no longer carries the JSM scopes. Read straight
+ * from the grant row like jiraScopesFor above: no token is decrypted or
+ * refreshed, because enumeration must never be able to transact.
+ */
+async function jsmGrantScopesFor(
+  db: Kysely<DB>,
+  tenantId: string,
+  subject: string
+): Promise<{ accountId: string; scopes: string[] } | null> {
+  const row = await db
+    .selectFrom('provider_grants')
+    .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
+    .where('tenant_id', '=', tenantId)
+    .where('provider', '=', ATLASSIAN_JSM)
+    .where('subject', '=', subject)
+    .limit(1)
+    .executeTakeFirst();
+  if (!row) return null;
+  return {
+    accountId: row.provider_account_id,
+    scopes: row.granted_scopes ?? row.requested_scopes,
+  };
+}
+
+/**
  * Every tool this caller would be offered over MCP right now.
  *
  * A caller who has not connected Jira still gets their real list: the scope
@@ -136,7 +166,10 @@ export async function listAvailableTools(
   if (!dbResult.ok) return [];
   const db = dbResult.val;
 
-  const jira = await jiraScopesFor(db, tenantId, subject);
+  const [jira, jsm] = await Promise.all([
+    jiraScopesFor(db, tenantId, subject),
+    jsmGrantScopesFor(db, tenantId, subject),
+  ]);
 
   const settingsResult = await getOrgSettings(tenantId);
   if (!settingsResult.ok) return [];
@@ -167,6 +200,12 @@ export async function listAvailableTools(
     graphScopes: availability.microsoftAvailable ? availability.graphScopes : undefined,
     zoomScopes: availability.zoomAvailable ? availability.zoomScopes : undefined,
     confluenceScopes: availability.confluenceAvailable ? availability.confluenceScopes : undefined,
+    // Scopes real, credentials deliberately empty — same reasoning as the
+    // token fields above: the JSM scope gates read these at registration,
+    // and nothing here may be able to reach Atlassian.
+    jsmGrant: jsm
+      ? { accessToken: '', cloudId: '', accountId: jsm.accountId, scopes: jsm.scopes }
+      : undefined,
     db,
   };
 
