@@ -52,6 +52,11 @@ function StepCard({ step, ordinal }: { step: ActionStep; ordinal: number }): Rea
           Retries up to {step.maxAttempts}× on handled failures.
         </p>
       ) : null}
+      {step.failureHandling.some((entry) => entry.action === 'stop-quiet') ? (
+        <p className="mt-1 text-xs text-gray-500">
+          Some failure conditions are treated as “nothing to do” and end the run silently.
+        </p>
+      ) : null}
     </li>
   );
 }

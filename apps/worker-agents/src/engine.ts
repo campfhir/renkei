@@ -268,7 +268,11 @@ function finishArgsOf(input: unknown): {
     quiet?: unknown;
     remember?: unknown;
   } = input;
-  if (args.outcome !== 'success' && args.outcome !== 'failure' && args.outcome !== 'nothing-to-do') {
+  if (
+    args.outcome !== 'success' &&
+    args.outcome !== 'failure' &&
+    args.outcome !== 'nothing-to-do'
+  ) {
     return null;
   }
   return {
@@ -511,7 +515,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
           return;
         }
         if (result.kind === 'stop') {
-          // The step judged the automation does not apply to this input —
+          // The step judged the automation does not apply to this input (a
+          // declared nothing-to-do, or a failure the owner marked benign) —
           // a graceful terminal: no error, and quiet so no notification and
           // no chained agents (nothing was done to chain from). The why is
           // on the step's attempt row in the run timeline.
@@ -819,6 +824,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
       lastFailureSummary = outcome.summary || 'The previous attempt failed.';
       lastFailureCode = outcome.outcomeCode ?? 'other';
       const handling = handlingFor(step, lastFailureCode);
+      // The owner declared this outcome NOT an error ("ticket not found" is
+      // sometimes just "nothing to do") — the same graceful terminal as a
+      // declared nothing-to-do. The attempt row above already recorded the
+      // outcome code, so the run timeline still says exactly what happened.
+      if (handling?.action === 'stop-quiet') {
+        return { kind: 'stop', reason: clip(lastFailureSummary, 300) };
+      }
       if (!handling || handling.action === 'exit') {
         return {
           kind: 'fail',

@@ -136,8 +136,11 @@ function promptOf(
       'tool step differently, add it to that step\'s "failures" array using one of the tool\'s ' +
       'listed failure codes: {"outcome": code, "action": "stop"} stops deliberately, ' +
       '{"outcome": code, "action": "retry", "guidance": "corrective instruction"} retries with ' +
-      'that guidance. Guidance may use {{var:...}} and {{tool:...}} chips — guidance tools ' +
-      'become available to the step ONLY on retries (the corrective set). Unlisted codes stop.',
+      'that guidance, and {"outcome": code, "action": "stop-quiet"} declares the condition NOT ' +
+      'an error (e.g. "nothing found" just means there is nothing to do) — the run ends ' +
+      'silently and shows as stopped rather than failed. Guidance may use {{var:...}} and ' +
+      '{{tool:...}} chips — guidance tools become available to the step ONLY on retries (the ' +
+      'corrective set). Unlisted codes stop.',
     '- When the user\'s description implies retrying (e.g. "search again with different ' +
       'keywords"), express it as a "retry" failure handling with that guidance, and set "tries" ' +
       'to how many total attempts make sense (1-10, default 5).',
@@ -153,7 +156,7 @@ function promptOf(
     'Available tools:',
     toolLines,
     '',
-    'Available variables (trigger.* variables describe the event that starts the automation — pass the id-shaped ones to the matching connector tool to act on that item, e.g. reply where a message came from by giving its space/room id variable to that connector\'s send tool). Use ONLY these variable names. Never invent trigger.* names: if the described automation reacts to an event but no matching trigger.* variable is listed, write the step in plain words instead — the user must attach that trigger in the builder before its data exists:',
+    "Available variables (trigger.* variables describe the event that starts the automation — pass the id-shaped ones to the matching connector tool to act on that item, e.g. reply where a message came from by giving its space/room id variable to that connector's send tool). Use ONLY these variable names. Never invent trigger.* names: if the described automation reacts to an event but no matching trigger.* variable is listed, write the step in plain words instead — the user must attach that trigger in the builder before its data exists:",
     varLines,
     '',
     revising ? 'The user asked for this change:' : 'The user wrote:',
@@ -180,7 +183,8 @@ function promptOf(
     '      or "stop-quiet" (ends silently: no reply, no follow-up automations),',
     '    "failures": array or omitted — only meaningful on tool steps; each entry:',
     '      { "outcome": one of the tool\'s failure codes,',
-    '        "action": "stop" or "retry",',
+    '        "action": "stop", "retry", or "stop-quiet" (not an error — end the run',
+    '          silently),',
     '        "guidance": string (required when action is "retry"; plain words, may use',
     '          {{tool:...}} and {{var:...}} tokens) or null }' + (revising ? ',' : ''),
     ...(revising
@@ -310,7 +314,7 @@ const STEP_SHAPE = z.object({
     .array(
       z.object({
         outcome: z.string().min(1, 'must be a failure code'),
-        action: z.enum(['stop', 'retry']),
+        action: z.enum(['stop', 'retry', 'stop-quiet']),
         guidance: z.string().nullable().optional(),
       })
     )
@@ -668,7 +672,9 @@ function parseActionEntry(
                 action: 'retry',
                 guidance: segmentsOf(guidanceText, validTools, knownVars, true),
               }
-            : { outcome: failure.outcome, action: 'exit' }
+            : failure.action === 'stop-quiet'
+              ? { outcome: failure.outcome, action: 'stop-quiet' }
+              : { outcome: failure.outcome, action: 'exit' }
         );
       }
     }

@@ -35,7 +35,14 @@ export type InstructionSegment =
 export interface FailureHandling {
   /** Failure code from the tool's outcome enumeration, incl. 'other'. */
   outcome: string;
-  action: 'retry' | 'exit';
+  /**
+   * 'exit' fails the run (the default for unhandled codes); 'retry' tries
+   * again with guidance; 'stop-quiet' declares the outcome NOT an error —
+   * "ticket not found" is sometimes just "nothing to do" — and ends the run
+   * gracefully as 'stopped': silent like onSuccess 'stop-quiet' (no reply,
+   * no notification, no chained agents), recorded in run history only.
+   */
+  action: 'retry' | 'exit' | 'stop-quiet';
   /**
    * Corrective guidance shown to the model on retry attempts. Required for
    * 'retry'. MAY contain tool chips — several, deliberately laxer than the
@@ -151,7 +158,9 @@ function isFailureHandling(value: unknown): value is FailureHandling {
   if (typeof value !== 'object' || value === null) return false;
   const entry: { outcome?: unknown; action?: unknown; guidance?: unknown } = value;
   if (typeof entry.outcome !== 'string' || entry.outcome.length === 0) return false;
-  if (entry.action !== 'retry' && entry.action !== 'exit') return false;
+  if (entry.action !== 'retry' && entry.action !== 'exit' && entry.action !== 'stop-quiet') {
+    return false;
+  }
   if (entry.guidance !== undefined) {
     if (!Array.isArray(entry.guidance)) return false;
     if (!entry.guidance.every(isInstructionSegment)) return false;

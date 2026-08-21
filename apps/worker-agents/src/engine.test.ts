@@ -375,6 +375,50 @@ maybe('agent run engine', () => {
     expect(attempts[0].tool_call_count).toBe(3);
   });
 
+  it("ends the run as stopped when the failure's handling declares it not an error", async () => {
+    // "Ticket not found" is not always a failure: the owner marked the code
+    // 'stop-quiet', so the run ends as the graceful 'stopped' terminal —
+    // silent, nothing red — while the attempt row keeps the real outcome.
+    const { runId } = await seedRun(
+      singleStep({ failureHandling: [{ outcome: 'not-found', action: 'stop-quiet' }] })
+    );
+    const finalized: unknown[] = [];
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () => stubMcp(['jira_get_issue'], () => notFoundToolResult),
+      resolveLlm: async () => ok(stubLlm(() => finish('failure', { code: 'not-found' }))),
+      mintToken: async () => 'stub-token',
+      revokeToken: async () => undefined,
+      onFinalized: async (run) => {
+        finalized.push(run);
+      },
+    });
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('stopped');
+    expect(run.error_kind).toBeNull();
+    expect(run.error).toBeNull();
+
+    // The timeline still says exactly what happened on the attempt.
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['status', 'outcome_code'])
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].status).toBe('failed');
+    expect(attempts[0].outcome_code).toBe('not-found');
+
+    // Quiet: no notification, no chained agents.
+    expect(finalized[0]).toMatchObject({ status: 'stopped', quiet: true });
+  });
+
   it('ends the run early — and quietly — when finish_step declares stop', async () => {
     const twoSteps: AgentStepsDoc = {
       version: 1,
