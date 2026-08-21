@@ -101,7 +101,7 @@ export async function registerAttachmentTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_add_attachment invoked', {
+      logger.debug('jira_add_attachment invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -110,7 +110,10 @@ export async function registerAttachmentTools(
       try {
         const issueKey = str(args.issueKey);
         if (!issueKey) {
-          return { content: [{ type: 'text' as const, text: 'issueKey is required' }], isError: true };
+          return {
+            content: [{ type: 'text' as const, text: 'issueKey is required' }],
+            isError: true,
+          };
         }
         const driveItem = args.driveItem;
         const outlookAttachment = args.outlookAttachment;

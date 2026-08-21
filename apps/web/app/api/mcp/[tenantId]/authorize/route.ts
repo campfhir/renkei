@@ -112,7 +112,7 @@ export async function GET(
     // silently reusing the previous grant's screen-less approval.
     authUrl.searchParams.append('prompt', 'consent');
 
-    logger.info('Jira OAuth authorize redirect', {
+    logger.debug('Jira OAuth authorize redirect', {
       component: 'auth/oauth',
       tenantId,
       clientId: app.clientId,

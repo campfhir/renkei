@@ -218,7 +218,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return handleZoomCallback(request, tenant, pendingSignIn.subject, code, pendingSignIn.scopes);
     }
 
-    logger.info('Jira callback', { component: 'auth/oauth', tenantId: tenant.id });
+    logger.debug('Jira callback', { component: 'auth/oauth', tenantId: tenant.id });
 
     // The org's Atlassian app registration, from connector config. The
     // authorize step used the same reader, so both legs of the exchange
@@ -235,7 +235,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    logger.info('Exchanging code for tokens', { component: 'auth/oauth', tenantId: tenant.id });
+    logger.debug('Exchanging code for tokens', { component: 'auth/oauth', tenantId: tenant.id });
 
     // Exchange authorization code for Jira tokens
     const tokenResponse = await fetch('https://auth.atlassian.com/oauth/token', {
@@ -265,7 +265,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Record only whether a token came back, never any of its bytes: these
     // records are persisted by the Postgres log adapter and are readable over
     // HTTP by tenant users, so even a 20-character prefix does not belong here.
-    logger.info('Token response OK', {
+    logger.debug('Token response OK', {
       component: 'auth/oauth',
       tenantId: tenant.id,
       hasAccessToken: Boolean(tokenData.access_token),
@@ -280,7 +280,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Invalid token response format' }, { status: 400 });
     }
 
-    logger.info('Fetching accessible resources', { component: 'auth/oauth', tenantId: tenant.id });
+    logger.debug('Fetching accessible resources', { component: 'auth/oauth', tenantId: tenant.id });
     // Get accessible resources first to determine site URL
     const resourcesResponse = await fetch(
       'https://api.atlassian.com/oauth/token/accessible-resources',
@@ -301,7 +301,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
 
     const resources = await resourcesResponse.json();
-    logger.info('Resources received', { component: 'auth/oauth', tenantId: tenant.id, resources });
+    logger.debug('Resources received', { component: 'auth/oauth', tenantId: tenant.id, resources });
     if (!isResourceArray(resources)) {
       logger.error('Invalid resources format', {
         component: 'auth/oauth',
@@ -348,14 +348,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         });
         return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
       }
-      logger.info('No accessible resources (jira-less scopes); using fallback site identity', {
+      logger.debug('No accessible resources (jira-less scopes); using fallback site identity', {
         component: 'auth/oauth',
         tenantId: tenant.id,
         cloudId,
       });
     }
 
-    logger.info('Fetching user info', {
+    logger.debug('Fetching user info', {
       component: 'auth/oauth',
       tenantId: tenant.id,
       cloudId,
@@ -375,7 +375,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     let displayName = '';
     if (userResponse.ok) {
       const userInfo = await userResponse.json();
-      logger.info('User info received', { component: 'auth/oauth', tenantId: tenant.id, userInfo });
+      logger.debug('User info received', {
+        component: 'auth/oauth',
+        tenantId: tenant.id,
+        userInfo,
+      });
       if (!isJiraUserInfo(userInfo)) {
         logger.error('Invalid user info response format', {
           component: 'auth/oauth',
@@ -417,7 +421,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         .where('provider_account_id', '=', sub)
         .executeTakeFirst();
       if (priorName?.display_name) displayName = priorName.display_name;
-      logger.info('User identity from token claims (jira-less scopes)', {
+      logger.debug('User identity from token claims (jira-less scopes)', {
         component: 'auth/oauth',
         tenantId: tenant.id,
         accountId,
@@ -427,7 +431,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Cache the displayName for logging
     cacheUserDisplayName(accountId, displayName);
 
-    logger.info('Storing Jira grant', {
+    logger.debug('Storing Jira grant', {
       component: 'auth/oauth',
       tenantId: tenant.id,
       subject: pendingSignIn.subject,
@@ -470,7 +474,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     const origin = originResult.val;
     const connectorsUrl = new URL(`/${tenant.slug}/connectors`, origin);
-    logger.info('Redirecting', {
+    logger.debug('Redirecting', {
       component: 'auth/oauth',
       tenantId: tenant.id,
       url: connectorsUrl.toString(),
@@ -1010,7 +1014,7 @@ async function handleAtlassianJsmCallback(
   code: string,
   requestedScopes: string | null
 ): Promise<NextResponse> {
-  logger.info('Atlassian JSM callback', { component: 'auth/oauth', tenantId: tenant.id });
+  logger.debug('Atlassian JSM callback', { component: 'auth/oauth', tenantId: tenant.id });
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
   const db = dbResult.val;
@@ -1167,7 +1171,7 @@ async function handleAtlassianConfluenceCallback(
   code: string,
   requestedScopes: string | null
 ): Promise<NextResponse> {
-  logger.info('Atlassian Confluence callback', { component: 'auth/oauth', tenantId: tenant.id });
+  logger.debug('Atlassian Confluence callback', { component: 'auth/oauth', tenantId: tenant.id });
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
   const db = dbResult.val;

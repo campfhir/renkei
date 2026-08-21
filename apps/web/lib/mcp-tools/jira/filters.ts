@@ -33,7 +33,7 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_filters invoked', {
+      logger.debug('jira_list_filters invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -100,7 +100,7 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_get_filter invoked', {
+      logger.debug('jira_get_filter invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -161,7 +161,7 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_create_filter invoked', {
+      logger.debug('jira_create_filter invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -229,7 +229,7 @@ export async function registerFilterTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_delete_filter invoked', {
+      logger.debug('jira_delete_filter invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

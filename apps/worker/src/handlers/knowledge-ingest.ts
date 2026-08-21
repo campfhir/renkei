@@ -311,7 +311,7 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
       }
       // Every one of the rest is deterministic: retrying cannot change a
       // file's format, its password, or its corruption.
-      logger.info('no text from {refId} ({reason})', {
+      logger.debug('no text from {refId} ({reason})', {
         component: COMPONENT,
         tenantId,
         refId,

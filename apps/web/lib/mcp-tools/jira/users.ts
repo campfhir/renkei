@@ -34,7 +34,7 @@ export async function registerUserTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_users invoked', {
+      logger.debug('jira_list_users invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -100,7 +100,7 @@ export async function registerUserTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_get_user invoked', {
+      logger.debug('jira_get_user invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -169,7 +169,7 @@ export async function registerUserTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_groups invoked', {
+      logger.debug('jira_list_groups invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -229,7 +229,7 @@ export async function registerUserTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_group_members invoked', {
+      logger.debug('jira_list_group_members invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -297,7 +297,7 @@ export async function registerUserTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_get_user_groups invoked', {
+      logger.debug('jira_get_user_groups invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

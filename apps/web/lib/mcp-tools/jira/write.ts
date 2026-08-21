@@ -278,7 +278,7 @@ export async function registerWriteTools(
   });
   const createIssueHandler = async (args: Record<string, unknown>) => {
     const displayName = getCachedDisplayName(context.accountId);
-    logger.info('jira_create_issue invoked', {
+    logger.debug('jira_create_issue invoked', {
       component: 'mcp/tool',
       tenantId: context.tenantId,
       accountId: context.accountId,
@@ -418,7 +418,7 @@ export async function registerWriteTools(
   });
   const updateIssueHandler = async (args: Record<string, unknown>) => {
     const displayName = getCachedDisplayName(context.accountId);
-    logger.info('jira_update_issue invoked', {
+    logger.debug('jira_update_issue invoked', {
       component: 'mcp/tool',
       tenantId: context.tenantId,
       accountId: context.accountId,
@@ -744,7 +744,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_add_comment invoked', {
+      logger.debug('jira_add_comment invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -805,7 +805,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_transition_issue invoked', {
+      logger.debug('jira_transition_issue invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -922,7 +922,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_log_work invoked', {
+      logger.debug('jira_log_work invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -990,7 +990,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_delete_issue invoked', {
+      logger.debug('jira_delete_issue invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -1043,7 +1043,7 @@ export async function registerWriteTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_delete_comment invoked', {
+      logger.debug('jira_delete_comment invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

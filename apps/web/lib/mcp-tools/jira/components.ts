@@ -34,7 +34,7 @@ export async function registerComponentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_get_component invoked', {
+      logger.debug('jira_get_component invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -96,7 +96,7 @@ export async function registerComponentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_create_component invoked', {
+      logger.debug('jira_create_component invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -168,7 +168,7 @@ export async function registerComponentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_delete_component invoked', {
+      logger.debug('jira_delete_component invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

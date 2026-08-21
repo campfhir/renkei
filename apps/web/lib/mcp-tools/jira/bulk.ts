@@ -37,7 +37,7 @@ export async function registerBulkTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_bulk_update_issues invoked', {
+      logger.debug('jira_bulk_update_issues invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -195,7 +195,7 @@ export async function registerBulkTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_bulk_transition_issues invoked', {
+      logger.debug('jira_bulk_transition_issues invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

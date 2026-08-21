@@ -135,7 +135,7 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
 
     const access = await resolveMicrosoftAccess(tenantId, accountId);
     const synced = await runSubscriptionSync(tenantId, access, row);
-    logger.info('delta round for {resource}: {changed} changed, {removed} removed', {
+    logger.debug('delta round for {resource}: {changed} changed, {removed} removed', {
       component: COMPONENT,
       tenantId,
       resource: row.resource,

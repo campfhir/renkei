@@ -38,7 +38,7 @@ export async function registerVersionTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_versions invoked', {
+      logger.debug('jira_list_versions invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -124,7 +124,7 @@ export async function registerVersionTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_create_version invoked', {
+      logger.debug('jira_create_version invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -198,7 +198,7 @@ export async function registerVersionTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_get_version invoked', {
+      logger.debug('jira_get_version invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

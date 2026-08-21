@@ -47,7 +47,7 @@ export async function registerJsmTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_list_service_desks invoked', {
+      logger.debug('jsm_list_service_desks invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -113,7 +113,7 @@ export async function registerJsmTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_list_request_types invoked', {
+      logger.debug('jsm_list_request_types invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -186,7 +186,7 @@ export async function registerJsmTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_list_requests invoked', {
+      logger.debug('jsm_list_requests invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -356,7 +356,7 @@ export async function registerJsmTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_get_request invoked', {
+      logger.debug('jsm_get_request invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -416,7 +416,7 @@ export async function registerJsmTools(
   });
   const createRequestHandler = async (args: Record<string, any>) => {
     const displayName = getCachedDisplayName(context.accountId);
-    logger.info('jsm_create_request invoked', {
+    logger.debug('jsm_create_request invoked', {
       component: 'mcp/tool',
       tenantId: context.tenantId,
       accountId: context.accountId,
@@ -608,7 +608,7 @@ export async function registerJsmTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_add_request_comment invoked', {
+      logger.debug('jsm_add_request_comment invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -671,7 +671,7 @@ export async function registerJsmTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_list_request_transitions invoked', {
+      logger.debug('jsm_list_request_transitions invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -727,7 +727,7 @@ export async function registerJsmTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_transition_request invoked', {
+      logger.debug('jsm_transition_request invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -811,7 +811,7 @@ export async function registerJsmTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_list_customers invoked', {
+      logger.debug('jsm_list_customers invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

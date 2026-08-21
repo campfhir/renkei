@@ -86,7 +86,7 @@ export async function sweepContentWatches(): Promise<void> {
   }
 
   if (watches.length === 0) return;
-  logger.info('polling {count} content watch(es)', {
+  logger.debug('polling {count} content watch(es)', {
     component: COMPONENT,
     count: watches.length,
   });

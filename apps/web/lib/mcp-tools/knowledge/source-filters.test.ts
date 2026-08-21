@@ -41,7 +41,13 @@ jest.mock('@renkei/knowledge', () => ({
   searchKnowledge: async () => ({ ok: true, val: { hits: [], elided: 0 } }),
 }));
 jest.mock('@/lib/logger', () => ({
-  logger: { info: () => undefined, warn: () => undefined, error: () => undefined },
+  logger: {
+    info: () => undefined,
+    debug: () => undefined,
+    verbose: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+  },
 }));
 
 import { sourceFiltersFor, KNOWLEDGE_SOURCE_NAMES } from './index';

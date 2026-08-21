@@ -101,7 +101,7 @@ export async function GET(
     authUrl.searchParams.append('state', state);
     authUrl.searchParams.append('prompt', 'consent');
 
-    logger.info('Atlassian Confluence authorize redirect', {
+    logger.debug('Atlassian Confluence authorize redirect', {
       component: 'auth/oauth',
       tenantId,
       clientId: app.clientId,

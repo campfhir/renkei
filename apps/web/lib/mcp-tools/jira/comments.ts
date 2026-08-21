@@ -35,7 +35,7 @@ export async function registerCommentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_list_comments invoked', {
+      logger.debug('jira_list_comments invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -184,7 +184,7 @@ export async function registerCommentTools(
     },
     async (args: Record<string, unknown>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_bulk_get_comments invoked', {
+      logger.debug('jira_bulk_get_comments invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

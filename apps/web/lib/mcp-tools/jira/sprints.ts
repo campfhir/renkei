@@ -143,7 +143,7 @@ export async function registerSprintTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_create_sprint invoked', {
+      logger.debug('jira_create_sprint invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -203,7 +203,7 @@ export async function registerSprintTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_move_issue_to_sprint invoked', {
+      logger.debug('jira_move_issue_to_sprint invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -260,7 +260,7 @@ export async function registerSprintTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_remove_issue_from_sprint invoked', {
+      logger.debug('jira_remove_issue_from_sprint invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -342,7 +342,7 @@ export async function registerSprintTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_complete_sprint invoked', {
+      logger.debug('jira_complete_sprint invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

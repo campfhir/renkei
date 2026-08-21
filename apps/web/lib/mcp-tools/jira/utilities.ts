@@ -64,7 +64,7 @@ export async function registerUtilityTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('analyze_transcript invoked', {
+      logger.debug('analyze_transcript invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -88,7 +88,7 @@ export async function registerUtilityTools(
           sprintId: typeof sprintId === 'string' ? sprintId : undefined,
         });
 
-        logger.info('analyze_transcript results', {
+        logger.debug('analyze_transcript results', {
           component: 'mcp/tool',
           tenantId: context.tenantId,
           accountId: context.accountId,
@@ -122,7 +122,7 @@ export async function registerUtilityTools(
     },
     async (_args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jira_connect invoked', {
+      logger.debug('jira_connect invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,

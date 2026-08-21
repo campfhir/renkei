@@ -421,7 +421,7 @@ export async function jiraFetch(
 
     const { tenantId, accountId, provider } = metadata;
     const refreshKey = getRefreshKey(provider, tenantId, accountId);
-    logger.info('401 response, refreshing token', {
+    logger.debug('401 response, refreshing token', {
       component: 'jira/fetch',
       tenantId,
       accountId,
@@ -450,7 +450,7 @@ export async function jiraFetch(
           throw new Error(error);
         }
 
-        logger.info('Token refresh success', { component: 'jira/fetch', tenantId, accountId });
+        logger.debug('Token refresh success', { component: 'jira/fetch', tenantId, accountId });
         // Record the new token so later calls holding the stale capture skip
         // the 401 round trip entirely. Subject carries over — a refresh does
         // not change whose token this is.
@@ -541,7 +541,7 @@ export async function jiraFetch(
     .clone()
     .text()
     .catch(() => '');
-  logger.info('OK response', {
+  logger.debug('OK response', {
     component: 'jira/fetch',
     tenantId: metadata?.tenantId,
     accountId: metadata?.accountId,

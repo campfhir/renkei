@@ -24,7 +24,7 @@ export async function proxy(request: NextRequest) {
     // resolves the tenant and guards itself, redirecting signed-out visitors
     // into the OIDC flow via signInUrl. One request, one log line.
     if (!isNoiseRoute(pathname)) {
-      logger.info('{method} {pathname}', {
+      logger.verbose('{method} {pathname}', {
         component: 'web/proxy',
         method: request.method,
         pathname,

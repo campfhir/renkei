@@ -145,7 +145,7 @@ export async function generateAgentDescription(
   }
 ): Promise<{ description: string | null; reviewNotes: ReviewNote[] }> {
   const failed = async (reason: string) => {
-    logger.info('agent description generation skipped: {reason}', {
+    logger.debug('agent description generation skipped: {reason}', {
       component: 'agents/describe',
       tenantId,
       agentId: agent.id,

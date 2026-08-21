@@ -37,7 +37,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_get_request_type_fields invoked', {
+      logger.debug('jsm_get_request_type_fields invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -115,7 +115,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_list_request_approvals invoked', {
+      logger.debug('jsm_list_request_approvals invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -188,7 +188,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_get_request_sla invoked', {
+      logger.debug('jsm_get_request_sla invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -272,7 +272,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_list_request_participants invoked', {
+      logger.debug('jsm_list_request_participants invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -345,7 +345,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_add_request_participant invoked', {
+      logger.debug('jsm_add_request_participant invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -399,7 +399,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_remove_request_participant invoked', {
+      logger.debug('jsm_remove_request_participant invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
@@ -462,7 +462,7 @@ export async function registerRequestDetailsTools(
     },
     async (args: Record<string, any>) => {
       const displayName = getCachedDisplayName(context.accountId);
-      logger.info('jsm_request_attachment_upload invoked', {
+      logger.debug('jsm_request_attachment_upload invoked', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
         accountId: context.accountId,
