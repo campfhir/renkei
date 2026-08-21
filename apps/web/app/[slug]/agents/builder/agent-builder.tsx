@@ -45,6 +45,7 @@ import {
   type InsertLocation,
 } from './flow-tree';
 import { EditorPanel } from './editor-panel';
+import { useMediaQuery } from '@/lib/use-media-query';
 import { StepEditor } from './step-editor';
 import { BranchEditor } from './branch-editor';
 import { summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
@@ -109,6 +110,10 @@ export function AgentBuilder({
     })) ?? []
   );
   const [selection, setSelection] = useState<BuilderSelection | null>(null);
+  // Same breakpoint EditorPanel uses to choose rail vs modal. Below it, the
+  // modal covers the canvas — and with it the selected node's move/delete
+  // controls — so those actions must ride inside the modal as its footer.
+  const isDesktop = useMediaQuery('(min-width: 1024px)');
   const [enabled, setEnabled] = useState(existing?.enabled ?? false);
   const [llmModelId, setLlmModelId] = useState<string | null>(existing?.llmModelId ?? null);
   const [saving, setSaving] = useState(false);
@@ -408,8 +413,10 @@ export function AgentBuilder({
 
   const issueMap = useMemo(() => issuesByNode(steps, issues), [steps, issues]);
 
-  const selectedNode =
-    selection?.type === 'step' ? (findNodeById(steps, selection.id)?.node ?? null) : null;
+  // The whole find result, not just the node: the mobile footer needs the
+  // sibling list and index to disable move-up/-down at the edges.
+  const selectedFound = selection?.type === 'step' ? findNodeById(steps, selection.id) : null;
+  const selectedNode = selectedFound?.node ?? null;
   const selectedTrigger =
     selection?.type === 'trigger' ? (triggers[selection.index] ?? null) : null;
 
@@ -509,7 +516,41 @@ export function AgentBuilder({
       ) : null}
 
       {selectedNode ? (
-        <EditorPanel title={panelTitle} onClose={() => setSelection(null)}>
+        <EditorPanel
+          title={panelTitle}
+          onClose={() => setSelection(null)}
+          // Desktop keeps these on the canvas next to the selected node;
+          // deleting closes the modal because deleteNode clears the selection.
+          footer={
+            !isDesktop && selectedFound ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={selectedFound.index === 0}
+                  onClick={() => moveNode(selectedNode.id, -1)}
+                  className="rounded-md border border-gray-200 px-3 py-1.5 text-sm text-gray-600 disabled:opacity-30 dark:border-gray-800 dark:text-gray-300"
+                >
+                  ↑ Move up
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedFound.index === selectedFound.siblings.length - 1}
+                  onClick={() => moveNode(selectedNode.id, 1)}
+                  className="rounded-md border border-gray-200 px-3 py-1.5 text-sm text-gray-600 disabled:opacity-30 dark:border-gray-800 dark:text-gray-300"
+                >
+                  ↓ Move down
+                </button>
+                <button
+                  type="button"
+                  onClick={() => deleteNode(selectedNode.id)}
+                  className="ml-auto rounded-md px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+                >
+                  {isBranchStep(selectedNode) ? 'Delete branch' : 'Delete step'}
+                </button>
+              </div>
+            ) : undefined
+          }
+        >
           {isBranchStep(selectedNode) ? (
             <BranchEditor
               branch={selectedNode}
