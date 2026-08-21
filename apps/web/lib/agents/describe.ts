@@ -15,6 +15,7 @@ import {
   describeSchedule,
   instructionPreview,
   isBranchStep,
+  walkSteps,
   type ActionStep,
   type AgentStepNode,
   type AgentStepsDoc,
@@ -65,15 +66,26 @@ function actionStepLines(step: ActionStep, label: string, indent: string): strin
     .join('\n');
 }
 
-function nodeLines(nodes: AgentStepNode[], prefix: string, indent: string): string {
+/**
+ * Labels come from the SAME pre-order ordinals the builder canvas, the
+ * outline, and the run timeline render — never a positional `5.1.2.`
+ * scheme of this prompt's own. The concerns this prompt produces name
+ * steps by number, and a number the owner cannot find on their canvas
+ * points the fix at the wrong step.
+ */
+function nodeLines(
+  nodes: AgentStepNode[],
+  ordinals: ReadonlyMap<string, number>,
+  indent: string
+): string {
   return nodes
-    .map((node, index) => {
-      const label = `${prefix}${index + 1}.`;
+    .map((node) => {
+      const label = `Step ${(ordinals.get(node.id) ?? 0) + 1}:`;
       if (!isBranchStep(node)) return actionStepLines(node, label, indent);
       const pathBlock = (pathIndex: 0 | 1, heading: string) => {
         const path = node.paths[pathIndex];
         const body = path.steps.length
-          ? nodeLines(path.steps, `${prefix}${index + 1}.${pathIndex + 1}.`, `${indent}      `)
+          ? nodeLines(path.steps, ordinals, `${indent}      `)
           : `${indent}      (nothing — continues after the branch)`;
         return `${indent}   ${heading} "${path.name}":\n${body}`;
       };
@@ -89,7 +101,8 @@ function nodeLines(nodes: AgentStepNode[], prefix: string, indent: string): stri
 }
 
 function promptOf(name: string, steps: AgentStepsDoc, triggers: TriggerDraft[]): string {
-  const stepLines = nodeLines(steps.steps, '', '');
+  const ordinals = new Map(walkSteps(steps.steps).map((entry) => [entry.node.id, entry.ordinal]));
+  const stepLines = nodeLines(steps.steps, ordinals, '');
   const triggerLines =
     triggers.length > 0
       ? triggers.map(describeTrigger).join('; ')
@@ -109,6 +122,7 @@ function promptOf(name: string, steps: AgentStepsDoc, triggers: TriggerDraft[]):
     'Reply with JSON only, no code fences: {"summary": "...", "concerns": [{"issue": "...", "fix": "..."}]}.',
     'summary: 2-3 plain sentences telling the OWNER what this agent does, no technical terms, no tool identifiers.',
     'concerns: 0-5 REAL logic problems a reviewer should check: an instruction promising work no step or tool performs, a step needing information nothing provides, contradictory failure handling, a saved result nothing uses. Each carries "issue" (what is wrong, one sentence) and "fix" (the concrete edit the owner should make, one sentence, e.g. which step to add or how to reword an instruction). Empty array if none.',
+    'When naming a step, use its number EXACTLY as labeled above ("Step 7") — the owner sees these same numbers in the editor. Never invent dotted numbering like "Step 5.1.2".',
   ].join('\n');
 }
 

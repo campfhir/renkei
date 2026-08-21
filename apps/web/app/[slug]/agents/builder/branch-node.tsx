@@ -11,11 +11,18 @@ import { instructionPreview, type BranchStep } from '@renkei/agents';
 
 export function BranchNode({
   branch,
+  ordinal,
   selected,
   issueCount,
   onSelect,
 }: {
   branch: BranchStep;
+  /**
+   * Pre-order step number, shown so the sequence has no visible gaps: a
+   * branch consumes an ordinal like any node, and review notes ("Step 6")
+   * must be findable on the canvas.
+   */
+  ordinal: number;
   selected: boolean;
   issueCount: number;
   onSelect: () => void;
@@ -45,6 +52,9 @@ export function BranchNode({
         </span>
       ) : null}
       <span className="flex items-center gap-2">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[11px] font-semibold text-indigo-700 dark:bg-indigo-900 dark:text-indigo-300">
+          {ordinal}
+        </span>
         <span aria-hidden="true" className="text-indigo-600 dark:text-indigo-400">
           ⑂
         </span>
