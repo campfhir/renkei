@@ -9,6 +9,8 @@ import { getAgent } from '@/lib/agents/store';
 import { getRunForOwner } from '@/lib/agents/runs-view';
 import { RunTimeline, StatusPill } from '../../../run-timeline';
 import LocalTime from '@/components/local-time';
+import CopyDebugButton from '@/components/copy-debug-button';
+import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 
 /** One run, owner's view: every attempt with full content. */
 export default async function AgentRunDetailPage({
@@ -48,6 +50,9 @@ export default async function AgentRunDetailPage({
         <span className="text-sm text-gray-500">
           via {run.triggerKind} · <LocalTime at={run.createdAt} />
         </span>
+        {run.status === 'failed' || run.attempts.some((a) => a.status === 'failed') ? (
+          <CopyDebugButton text={renderRunDebugMarkdown(agent.name, run)} />
+        ) : null}
       </div>
       {run.error ? (
         <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300">

@@ -437,13 +437,37 @@ export async function registerJsmTools(
         };
       }
 
+      // The GET endpoints take the project KEY in their URL path, so models
+      // that just used "CAS" for jsm_get_request_type_fields naturally pass
+      // it here too — but POST /request wants the NUMERIC id in the body
+      // and answers a bare 400 for a key. Resolve rather than reject: the
+      // desk lookup accepts the key and echoes its id.
+      let deskId = String(serviceDeskId).trim();
+      if (!/^\d+$/.test(deskId)) {
+        const deskResponse = await auth.fetch(
+          serviceDeskScopes('jsm_list_service_desks', true),
+          `/rest/servicedeskapi/servicedesk/${encodeURIComponent(deskId)}`
+        );
+        if (!deskResponse.ok) {
+          return errText(
+            `Service desk "${deskId}" could not be resolved to its numeric id — ` +
+              `jsm_list_service_desks shows every desk with its serviceDeskId.`
+          );
+        }
+        const desk = (await deskResponse.json().catch(() => null)) as any;
+        if (!str(desk?.id)) {
+          return errText(`Service desk "${deskId}" answered without an id.`);
+        }
+        deskId = str(desk.id);
+      }
+
       // The servicedeskapi wants issue fields nested under
       // requestFieldValues — top-level summary (platform-API style) is
       // "Invalid request payload". The 401 scope gate used to fire before
       // payload validation, which is why this never surfaced until the
       // JSM app's scopes landed.
       const body: any = {
-        serviceDeskId: String(serviceDeskId),
+        serviceDeskId: deskId,
         requestTypeId: String(requestTypeId),
         requestFieldValues: {
           summary,
