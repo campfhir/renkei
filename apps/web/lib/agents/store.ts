@@ -32,6 +32,7 @@ import {
   type TriggerDraft,
 } from '@renkei/agents';
 import { hashToken, generateSecret } from '@/lib/mcp-token';
+import { isUuid } from '@/lib/uuid';
 
 export interface TriggerPayload {
   /** Present when the builder is editing an existing trigger row. */
@@ -263,6 +264,9 @@ export async function getAgent(
   ownerSubject: string,
   agentId: string
 ): Promise<StoredAgent | null> {
+  // The id usually arrives from a URL; a malformed one (pasted link with
+  // glued-on punctuation) is "no such agent", not a 22P02 → 500.
+  if (!isUuid(agentId)) return null;
   const row = await db
     .selectFrom('agents')
     .select(AGENT_COLUMNS)
