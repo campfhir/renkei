@@ -341,7 +341,29 @@ export async function runSubscriptionSync(
   const startUrl = row.delta_link ?? deltaStartUrl(row.resource);
   const round = await runDeltaRound(access.accessToken, startUrl);
   if (!round.ok) {
-    throw new Error(`delta round failed for ${row.resource} (tenant ${tenantId})`);
+    // An aged-out delta token (410: resyncRequired / SyncStateNotFound) is
+    // not a failure — it is Graph's instruction to restart the series. The
+    // drive path has handled this from day one; without it here, every
+    // notification for the resource fails its whole attempt budget and
+    // dead-letters, forever, because the poisoned cursor never changes.
+    if (round.err.cause === 410 && row.delta_link !== null) {
+      await db
+        .updateTable('webhook_subscriptions')
+        .set({ delta_link: null, sync_status: 'syncing', updated_at: sql`NOW()` })
+        .where('id', '=', row.id)
+        .execute();
+      logger.info('delta token expired for {resource}; restarting the series', {
+        component: COMPONENT,
+        tenantId,
+        resource: row.resource,
+      });
+      return runSubscriptionSync(tenantId, access, { ...row, delta_link: null });
+    }
+    // The Graph status and URL ride along — "delta round failed" alone once
+    // hid a permanent 410 behind five retries per notification.
+    throw new Error(
+      `delta round failed for ${row.resource} (tenant ${tenantId}): ${round.err.message ?? 'unknown'}`
+    );
   }
 
   // A cursorless round returns the resource's whole current state, so it is
