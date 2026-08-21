@@ -89,6 +89,13 @@ function getCacheKey(
  * The caller's grant on the second Atlassian app ("Renkei JSM"), decrypted —
  * or null when they have not connected it (JSM tools then fall back to the
  * main grant). Effective scopes prefer what the token actually carries.
+ *
+ * Null for any OTHER reason is not a quiet fallback — the caller HAS a JSM
+ * grant, and returning null makes every jsm_* tool vanish from this request's
+ * tool list while the connect page still shows JSM connected. getGrant
+ * refreshes the access token, so a transient Atlassian failure lands exactly
+ * here; without the warns this presents as tools that "sometimes disappear"
+ * with nothing in the logs to say why.
  */
 async function resolveJsmGrant(
   db: Kysely<DB>,
@@ -105,18 +112,27 @@ async function resolveJsmGrant(
     .executeTakeFirst();
   if (!row) return null;
 
+  const failed = (reason: string): null => {
+    logger.warn(
+      'JSM grant exists but could not be resolved ({reason}); jsm_* tools are absent this request',
+      { component: 'mcp/transport', tenantId, subject, reason }
+    );
+    return null;
+  };
+
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return null;
+  if (!keyResult.ok) return failed('encryption key unavailable');
   const grantResult = await getGrant(
     ATLASSIAN_JSM,
     tenantId,
     row.provider_account_id,
     keyResult.val
   );
-  if (!grantResult.ok || !grantResult.val) return null;
+  if (!grantResult.ok) return failed('grant read/refresh failed');
+  if (!grantResult.val) return failed('grant row disappeared');
   const grant = grantResult.val;
   const site = readAtlassianMetadata(grant.metadata);
-  if (!site.cloudId) return null;
+  if (!site.cloudId) return failed('no cloudId in grant metadata');
   return {
     accessToken: grant.accessToken,
     cloudId: site.cloudId,
@@ -524,7 +540,7 @@ const handler = async (
             'right fields, or outlook_start_bulk_mail_job (an async job — poll ' +
             'outlook_get_bulk_mail_job rather than resubmitting) over calling a single-item ' +
             'tool once per item. Never generate file content as base64 tool arguments: to ' +
-            'upload a file, call the destination\'s *_request_*_upload tool, send the raw ' +
+            "upload a file, call the destination's *_request_*_upload tool, send the raw " +
             'bytes to the returned short-lived endpoint (curl with the Authorization header, ' +
             'or the browser link), then confirm with check_file_upload; to attach a file ' +
             'that already lives in Microsoft 365 to a Jira issue, use jira_add_attachment ' +
