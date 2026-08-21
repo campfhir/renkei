@@ -72,7 +72,7 @@ export function createZoomTranscriptHandler(
         tenantId,
         hostEmail: facts.hostEmail ?? facts.hostId ?? '(unknown)',
       });
-      return;
+      return 'skipped';
     }
 
     const client = new ZoomClient(access.accessToken);
@@ -189,7 +189,7 @@ export function createZoomSummaryHandler(
         tenantId,
         hostEmail: facts.hostEmail ?? facts.hostId ?? '(unknown)',
       });
-      return;
+      return 'skipped';
     }
 
     if (!facts.meetingId) throw new Error('summary event carries no meeting id');

@@ -30,6 +30,7 @@ import { createDomainDispatchHandler } from './handlers/domain-dispatch';
 import { createAgentRunFailedHandler } from './handlers/agent-run-failed';
 import { createMailBulkJobHandler } from './handlers/mail-bulk-jobs';
 import { createMailJobsSweep, MAIL_JOBS_SWEEP_INTERVAL_MS } from './health/mail-jobs';
+import { sweepLogRetention, LOG_RETENTION_SWEEP_INTERVAL_MS } from './health/log-retention';
 import { createUploadSlotsSweep, UPLOAD_SLOTS_SWEEP_INTERVAL_MS } from './health/upload-slots';
 import { createAgentFiringsSweep, AGENT_FIRINGS_SWEEP_INTERVAL_MS } from './health/agent-firings';
 import { withSweepLock } from './health/sweep-lock';
@@ -77,7 +78,7 @@ function registerConnectorHandlers(): void {
 
 const loop = createEventLoop({
   claim: () => eventsQueue.consumer.claim(),
-  complete: (event) => eventsQueue.consumer.complete(event),
+  complete: (event, outcome) => eventsQueue.consumer.complete(event, outcome),
   fail: (event, error) => eventsQueue.consumer.fail(event, error),
   handlerFor,
   label: 'worker/loop',
@@ -114,6 +115,14 @@ async function main(): Promise<void> {
       'content/watch-sweep',
       CONTENT_WATCH_INTERVAL_MS,
       withSweepLock('content-watches', sweepContentWatches)
+    ),
+    // Under the advisory lock like the provider sweeps: purge jobs are
+    // resumable, but two replicas planning the same purge is still waste.
+    schedulePeriodicSweep(
+      'log retention',
+      'logs/retention-sweep',
+      LOG_RETENTION_SWEEP_INTERVAL_MS,
+      withSweepLock('log-retention', sweepLogRetention)
     ),
     ...(() => {
       // Row hygiene: fail stalled mail runs, expire/prune upload slots.

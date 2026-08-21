@@ -79,6 +79,7 @@ export const EXPECTED_MIGRATIONS = [
   '046-mail-bulk-jobs',
   '047-upload-slots',
   '048-agent-trigger-firings',
+  '049-agent-run-counters',
 ];
 
 export interface MigrationStatus {

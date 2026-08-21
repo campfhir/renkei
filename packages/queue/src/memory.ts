@@ -17,10 +17,17 @@
 
 import { randomUUID } from 'node:crypto';
 import { ok, err } from '@campfhir/safe-functions/helpers';
-import type { ClaimedMessage, DeadLetter, Disposition, Queue, QueueMessageInput } from './contract';
+import type {
+  ClaimedMessage,
+  CompletionOutcome,
+  DeadLetter,
+  Disposition,
+  Queue,
+  QueueMessageInput,
+} from './contract';
 import { failureDisposition, DEFAULT_RETRY_POLICY, type RetryPolicy } from './policy';
 
-export type MemoryMessageStatus = 'pending' | 'processing' | 'processed';
+export type MemoryMessageStatus = 'pending' | 'processing' | 'processed' | 'skipped';
 
 export interface MemoryMessage {
   id: string;
@@ -141,10 +148,13 @@ export class InMemoryQueue implements Queue {
       };
     },
 
-    complete: async (message: ClaimedMessage): Promise<void> => {
+    complete: async (
+      message: ClaimedMessage,
+      outcome: CompletionOutcome = 'processed'
+    ): Promise<void> => {
       const row = this.rows.find((r) => r.id === message.id);
       if (!row) return;
-      row.status = 'processed';
+      row.status = outcome;
       row.lockedAt = null;
       row.completedAt = Date.now();
     },
@@ -273,8 +283,8 @@ export class InMemoryQueue implements Queue {
     return this.deadRows.map((row) => ({ ...row }));
   }
 
-  /** True once nothing is live: every message processed or dead-lettered. */
+  /** True once nothing is live: every message processed, skipped, or dead-lettered. */
   settled(): boolean {
-    return this.rows.every((row) => row.status === 'processed');
+    return this.rows.every((row) => row.status === 'processed' || row.status === 'skipped');
   }
 }

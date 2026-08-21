@@ -22,6 +22,7 @@
 
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
+import { getOrgSettings } from '@renkei/settings';
 import { ATLASSIAN, ATLASSIAN_CONFLUENCE } from '@renkei/provider-grants';
 import { logger } from '../logger';
 import { resolveAtlassianAccess } from '../handlers/atlassian-access';
@@ -34,8 +35,13 @@ const COMPONENT = 'content/watch-sweep';
 /** How often the sweep itself wakes; per-row due-time does the real pacing. */
 export const CONTENT_WATCH_INTERVAL_MS = 5 * 60_000;
 
-/** How stale a watch may get before it is polled again. */
-const WATCH_DUE_MS = 15 * 60_000;
+/**
+ * The floor of the per-org poll dial (`contentPollMinutes`): candidates are
+ * fetched due-by-the-floor, then filtered per tenant against its own
+ * setting — the sweep gate runs before any tenant is known, so the org dial
+ * can only be applied after the rows are in hand.
+ */
+const MIN_WATCH_DUE_MS = 5 * 60_000;
 
 /** Watches polled per pass, so a large org can't monopolize one sweep. */
 const MAX_WATCHES_PER_PASS = 25;
@@ -53,10 +59,11 @@ export async function sweepContentWatches(): Promise<void> {
   }
   const db = dbResult.val;
 
-  const dueBefore = new Date(Date.now() - WATCH_DUE_MS);
-  let watches: WatchRow[];
+  const now = Date.now();
+  const dueBefore = new Date(now - MIN_WATCH_DUE_MS);
+  let candidates: (WatchRow & { last_synced_at: Date | null })[];
   try {
-    watches = await db
+    candidates = await db
       .selectFrom('content_watches')
       .select([
         'id',
@@ -67,6 +74,7 @@ export async function sweepContentWatches(): Promise<void> {
         'scope_key',
         'scope_label',
         'cursor',
+        'last_synced_at',
       ])
       .where('enabled', '=', true)
       // Never-synced rows (NULL) come first — a watch just created should
@@ -83,6 +91,31 @@ export async function sweepContentWatches(): Promise<void> {
       error: error instanceof Error ? error.message : String(error),
     });
     return;
+  }
+
+  // The org dial: each tenant's contentPollMinutes decides how stale its
+  // watches may get. Settings are cached (60s) per tenant, so this costs one
+  // read per tenant per pass, not per watch. An unreadable settings row
+  // falls back to the floor — polling too often beats silently never.
+  const dueMsByTenant = new Map<string, number>();
+  const dueMsFor = async (tenantId: string): Promise<number> => {
+    const cached = dueMsByTenant.get(tenantId);
+    if (cached !== undefined) return cached;
+    const settings = await getOrgSettings(tenantId);
+    const minutes = settings.ok ? Math.max(5, settings.val.contentPollMinutes) : 5;
+    const ms = minutes * 60_000;
+    dueMsByTenant.set(tenantId, ms);
+    return ms;
+  };
+  const watches: WatchRow[] = [];
+  for (const candidate of candidates) {
+    const dueMs = await dueMsFor(candidate.tenant_id);
+    if (
+      candidate.last_synced_at === null ||
+      new Date(candidate.last_synced_at).getTime() < now - dueMs
+    ) {
+      watches.push(candidate);
+    }
   }
 
   if (watches.length === 0) return;

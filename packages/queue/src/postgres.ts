@@ -23,6 +23,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type {
   QueuePurger,
   ClaimedMessage,
+  CompletionOutcome,
   DeadLetter,
   DeadLetterStore,
   Disposition,
@@ -178,19 +179,22 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
       return claimOne(dbResult.val, null);
     },
 
-    async complete(message: ClaimedMessage) {
+    async complete(message: ClaimedMessage, outcome: CompletionOutcome = 'processed') {
       const dbResult = getDatabase();
       if (!dbResult.ok) return;
+      // 'skipped' is terminal exactly like 'processed' — the claim query
+      // only ever looks at pending/processing — it differs only in what the
+      // row tells an operator afterwards.
       if (config.clearPayloadOnComplete) {
         await sql`
           UPDATE ${live()}
-          SET status = 'processed', locked_at = NULL, payload = '{}'::jsonb, updated_at = NOW()
+          SET status = ${outcome}, locked_at = NULL, payload = '{}'::jsonb, updated_at = NOW()
           WHERE id = ${message.id}
         `.execute(dbResult.val);
       } else {
         await sql`
           UPDATE ${live()}
-          SET status = 'processed', locked_at = NULL, updated_at = NOW()
+          SET status = ${outcome}, locked_at = NULL, updated_at = NOW()
           WHERE id = ${message.id}
         `.execute(dbResult.val);
       }

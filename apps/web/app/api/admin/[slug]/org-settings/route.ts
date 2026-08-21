@@ -28,6 +28,11 @@ const NUMERIC_BOUNDS = {
   // Above the 10 default is allowed on purpose; 100 is the typo guard.
   agentMaxStepAttempts: [1, 100],
   agentMaxRunsPerDay: [1, 10_000],
+  // Floor 5: the worker's sweep wakes every 5 minutes, so smaller values
+  // would promise a freshness the sweep cannot deliver.
+  contentPollMinutes: [5, 1_440],
+  // 0 = keep forever; a year of logs is the typo guard on the other end.
+  logRetentionDays: [0, 3_650],
 } as const;
 
 const NUMERIC_KEYS = [
@@ -41,6 +46,8 @@ const NUMERIC_KEYS = [
   'agentRunTimeoutMinutes',
   'agentMaxStepAttempts',
   'agentMaxRunsPerDay',
+  'contentPollMinutes',
+  'logRetentionDays',
 ] as const;
 
 const BOOLEAN_KEYS = ['readOnly', 'enableDcr'] as const;
@@ -61,6 +68,8 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
     agentMaxStepAttempts: settings.agentMaxStepAttempts,
     agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
+    contentPollMinutes: settings.contentPollMinutes,
+    logRetentionDays: settings.logRetentionDays,
   };
 }
 

@@ -81,6 +81,22 @@ export interface OrgSettings {
   agentMaxStepAttempts: number;
   /** Per-tenant ceiling on runs started per day — the runaway-trigger brake. */
   agentMaxRunsPerDay: number;
+  /**
+   * How stale watched content (Jira projects, Confluence spaces, document
+   * libraries) may get before the worker polls it again. Atlassian offers
+   * plain OAuth apps no push, so this dial IS that content's freshness —
+   * and its provider-API bill. The worker's sweep wakes every 5 minutes, so
+   * values below 5 cannot poll any faster.
+   */
+  contentPollMinutes: number;
+  /**
+   * How long bored-logs rows are kept before the retention sweep purges
+   * them. 0 = keep forever (the default — deleting observability data is an
+   * explicit choice). The logs table is deployment-wide, so with several
+   * tenants the sweep honors the LONGEST retention any tenant asks for and
+   * purges nothing while any tenant keeps the default.
+   */
+  logRetentionDays: number;
 }
 
 /** The defaults formerly hardcoded in the environment schema. */
@@ -102,6 +118,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentRunTimeoutMinutes: 15,
   agentMaxStepAttempts: 10,
   agentMaxRunsPerDay: 200,
+  contentPollMinutes: 15,
+  logRetentionDays: 0,
 };
 
 const CACHE_TTL_MS = 60_000;
@@ -187,6 +205,8 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
       coerce(stored.get('agent_max_step_attempts'), d.agentMaxStepAttempts)
     ),
     agentMaxRunsPerDay: Number(coerce(stored.get('agent_max_runs_per_day'), d.agentMaxRunsPerDay)),
+    contentPollMinutes: Number(coerce(stored.get('content_poll_minutes'), d.contentPollMinutes)),
+    logRetentionDays: Number(coerce(stored.get('log_retention_days'), d.logRetentionDays)),
   };
 
   orgCache.set(tenantId, { value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -220,6 +240,8 @@ export async function setOrgSettings(
     ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
     ['agent_max_step_attempts', updates.agentMaxStepAttempts],
     ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
+    ['content_poll_minutes', updates.contentPollMinutes],
+    ['log_retention_days', updates.logRetentionDays],
   ];
 
   for (const [key, value] of pairs) {

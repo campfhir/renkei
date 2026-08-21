@@ -1,7 +1,9 @@
 import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { sql, type Kysely } from 'kysely';
+import { getDatabase, type DB } from '@renkei/db';
+import { getOrgSettings } from '@renkei/settings';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -16,6 +18,64 @@ import KnowledgePanel from './knowledge-panel';
 import ShareAgentButton from './share-agent';
 import RecentRuns from './recent-runs';
 import StepsOutline from './steps-outline';
+
+interface InvocationCounts {
+  today: number;
+  week: number;
+  month: number;
+  quarter: number;
+  year: number;
+  allTime: number;
+  /** Runs started org-wide today, for reading against the daily cap. */
+  orgToday: number;
+}
+
+/**
+ * Run tallies from the durable counters (migration 049), which survive the
+ * run-retention prune — that survival is what makes the quarterly/yearly/
+ * all-time numbers real rather than "since retention began". Calendar
+ * buckets, not trailing windows, because the numbers exist to be read
+ * against the org's per-day cap, which is calendar-shaped in spirit.
+ */
+async function invocationCountsOf(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string
+): Promise<InvocationCounts> {
+  const result = await sql<{
+    today: string;
+    week: string;
+    month: string;
+    quarter: string;
+    year: string;
+    all_time: string;
+  }>`
+    SELECT
+      COALESCE(SUM(runs) FILTER (WHERE day = CURRENT_DATE), 0) AS today,
+      COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS week,
+      COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS month,
+      COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS quarter,
+      COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS year,
+      COALESCE(SUM(runs), 0) AS all_time
+    FROM agent_run_counters
+    WHERE tenant_id = ${tenantId} AND agent_id = ${agentId}
+  `.execute(db);
+  const row = result.rows[0];
+  const orgResult = await sql<{ total: string }>`
+    SELECT COALESCE(SUM(runs), 0) AS total
+    FROM agent_run_counters
+    WHERE tenant_id = ${tenantId} AND day = CURRENT_DATE
+  `.execute(db);
+  return {
+    today: Number(row?.today ?? 0),
+    week: Number(row?.week ?? 0),
+    month: Number(row?.month ?? 0),
+    quarter: Number(row?.quarter ?? 0),
+    year: Number(row?.year ?? 0),
+    allTime: Number(row?.all_time ?? 0),
+    orgToday: Number(orgResult.rows[0]?.total ?? 0),
+  };
+}
 
 /**
  * The readable overview of one agent. Steps are the main column — the
@@ -43,11 +103,22 @@ export default async function AgentOverviewPage({
   const agent = await getAgent(dbResult.val, tenant.id, session.subject, agentId);
   if (!agent) notFound();
 
-  const [shareToken, recentRuns] = await Promise.all([
+  const [shareToken, recentRuns, invocations, settingsResult] = await Promise.all([
     readShareToken(dbResult.val, tenant.id, session.subject, agentId),
     listRunsForOwner(dbResult.val, tenant.id, session.subject, agentId, { limit: 5 }),
+    invocationCountsOf(dbResult.val, tenant.id, agentId),
+    getOrgSettings(tenant.id),
   ]);
   const reviewNotes = parseReviewNotes(agent.reviewNotes);
+  const dailyCap = settingsResult.ok ? settingsResult.val.agentMaxRunsPerDay : null;
+  const invocationRows: { label: string; count: number }[] = [
+    { label: 'Today', count: invocations.today },
+    { label: 'This week', count: invocations.week },
+    { label: 'This month', count: invocations.month },
+    { label: 'This quarter', count: invocations.quarter },
+    { label: 'This year', count: invocations.year },
+    { label: 'All time', count: invocations.allTime },
+  ];
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -157,6 +228,28 @@ export default async function AgentOverviewPage({
 
           <CollapsibleSection title="Memory">
             <MemoryPanel tenantId={tenant.id} agentId={agentId} />
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Invocations">
+            <dl className="grid grid-cols-3 gap-2">
+              {invocationRows.map((row) => (
+                <div
+                  key={row.label}
+                  className="rounded-md bg-gray-50 px-2 py-1.5 text-center dark:bg-gray-900"
+                >
+                  <dd className="text-base font-semibold tabular-nums">
+                    {row.count.toLocaleString('en-US')}
+                  </dd>
+                  <dt className="text-[11px] text-gray-500 dark:text-gray-400">{row.label}</dt>
+                </div>
+              ))}
+            </dl>
+            {dailyCap !== null ? (
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                All agents together today: {invocations.orgToday.toLocaleString('en-US')} of the{' '}
+                {dailyCap.toLocaleString('en-US')}-per-day cap.
+              </p>
+            ) : null}
           </CollapsibleSection>
 
           <CollapsibleSection title="Recent runs" defaultOpen>

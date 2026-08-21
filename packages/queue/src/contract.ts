@@ -73,11 +73,21 @@ export interface QueueProducer {
   enqueue(message: QueueMessageInput): Promise<Result<void, 'QUEUE_ERROR'>>;
 }
 
+/**
+ * How a completed message resolved. 'skipped' is still an ack — the message
+ * is done and never redelivered — but records that the handler decided there
+ * was nothing to do (no grant on file, a stale notification, a feature off)
+ * rather than doing the work. Without the distinction, "processed" on the
+ * admin's event monitor claims work happened when it silently did not — the
+ * silent-success class this codebase keeps relearning.
+ */
+export type CompletionOutcome = 'processed' | 'skipped';
+
 export interface QueueConsumer {
   /** The oldest deliverable message, or null when there is none. */
   claim(): Promise<ClaimedMessage | null>;
   /** Ack: the message is done and will never be delivered again. */
-  complete(message: ClaimedMessage): Promise<void>;
+  complete(message: ClaimedMessage, outcome?: CompletionOutcome): Promise<void>;
   /** Nack: retry per policy, or move to the dead-letter store. */
   fail(message: ClaimedMessage, error: string): Promise<Disposition>;
 }

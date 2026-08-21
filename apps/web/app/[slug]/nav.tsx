@@ -114,6 +114,7 @@ export default function AppNav({
               { href: `/${slug}/admin/people`, label: 'People' },
               { href: `/${slug}/admin/sites`, label: 'Sites' },
               { href: `/${slug}/admin/audit`, label: 'Audit' },
+              { href: `/${slug}/admin/events`, label: 'Events' },
               { href: `/${slug}/admin/settings`, label: 'Settings' },
             ],
           },

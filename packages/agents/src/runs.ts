@@ -136,5 +136,19 @@ export async function createAgentRun(
     return err('QUEUE_ERROR' as const);
   }
 
+  // The durable tally the overview's quarterly/yearly/all-time numbers read
+  // (migration 049): run ROWS are pruned by retention, counters are not.
+  // Best effort — a run that started must not fail over its bookkeeping.
+  await wrapAsync(
+    () =>
+      sql`
+        INSERT INTO agent_run_counters (tenant_id, agent_id, day, runs)
+        VALUES (${input.tenantId}, ${input.agentId}, CURRENT_DATE, 1)
+        ON CONFLICT (tenant_id, agent_id, day)
+        DO UPDATE SET runs = agent_run_counters.runs + 1
+      `.execute(db),
+    'DB_ERROR' as const
+  );
+
   return ok({ runId });
 }

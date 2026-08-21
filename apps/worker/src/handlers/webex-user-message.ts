@@ -56,7 +56,7 @@ export function createWebexUserMessageHandler(
         component: 'webex/user-ingest',
         tenantId: event.tenant_id,
       });
-      return;
+      return 'skipped';
     }
 
     const messageResult = await makeClient(access.accessToken).getMessage(payload.messageId);
@@ -72,9 +72,9 @@ export function createWebexUserMessageHandler(
         component: 'webex/user-ingest',
         messageId: message.id,
       });
-      return;
+      return 'skipped';
     }
-    if (!message.text) return;
+    if (!message.text) return 'skipped';
 
     await publish({
       tenantId: event.tenant_id,

@@ -96,7 +96,7 @@ async function main(): Promise<void> {
 
   const loop = createEventLoop({
     claim: () => queue.consumer.claim(),
-    complete: (event) => queue.consumer.complete(event),
+    complete: (event, outcome) => queue.consumer.complete(event, outcome),
     fail: (event, error) => queue.consumer.fail(event, error),
     // Runs enqueue under a per-agent fairness lane (`agents:{agentId}`);
     // the bare `agents` form still matches so rows enqueued before lanes

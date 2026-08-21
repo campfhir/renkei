@@ -130,7 +130,7 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
         tenantId,
         subscriptionId,
       });
-      return;
+      return 'skipped';
     }
 
     const access = await resolveMicrosoftAccess(tenantId, accountId);

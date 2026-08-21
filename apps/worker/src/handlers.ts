@@ -8,9 +8,10 @@
  * picks the event up.
  */
 
+import type { HandlerResolution } from '@renkei/worker-loop';
 import type { ClaimedEvent } from './queue';
 
-export type EventHandler = (event: ClaimedEvent) => Promise<void>;
+export type EventHandler = (event: ClaimedEvent) => Promise<HandlerResolution>;
 
 const handlers = new Map<string, EventHandler>();
 

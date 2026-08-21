@@ -32,6 +32,14 @@ async function shot(
   });
 }
 
+test('admin — event monitor', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/admin/events`);
+  await expect(page.getByRole('heading', { name: 'Events' })).toBeVisible();
+  // One seeded row per renderable status, failed (dead-lettered) included.
+  await expect(page.getByText('Failed · 1')).toBeVisible();
+  await shot(page, testInfo, 'admin-events');
+});
+
 test('agents list', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/agents`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
@@ -58,6 +66,21 @@ test('agent overview — memory section open', async ({ page }, testInfo) => {
   }
   await expect(page.getByText('Summary (compacted', { exact: false })).toBeVisible();
   await shot(page, testInfo, 'agent-overview-memory-open');
+});
+
+test('agent overview — invocations open', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}`);
+  await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
+  if (testInfo.project.name === 'mobile') {
+    await page.getByRole('button', { name: 'Invocations' }).click();
+    await expect(page.getByRole('dialog', { name: 'Invocations' })).toBeVisible();
+  } else {
+    await page.getByText('Invocations', { exact: true }).click();
+  }
+  await expect(page.getByText('All time')).toBeVisible();
+  // Seeded counters: 3 today +4 this week (2d ago) +6 this month (12d) …
+  await expect(page.getByText('per-day cap', { exact: false })).toBeVisible();
+  await shot(page, testInfo, 'agent-overview-invocations-open');
 });
 
 test('runs list', async ({ page }, testInfo) => {

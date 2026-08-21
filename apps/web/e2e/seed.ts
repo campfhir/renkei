@@ -183,6 +183,8 @@ function attemptDetail(input: {
 
 export async function seed(client: Client): Promise<void> {
   // Delete in FK-dependency order, then insert fresh.
+  await client.query('DELETE FROM events WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM events_dead_letters WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM agent_run_steps WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM agent_runs WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM agent_memories WHERE tenant_id = $1', [E2E_TENANT_ID]);
@@ -649,4 +651,88 @@ export async function seed(client: Client): Promise<void> {
       ]
     );
   }
+
+  // The admin event monitor: one row per status it can render (the deletes
+  // live in the FK-ordered block at the top — events reference the tenant).
+  // The webex/microsoft rows reuse the Jira grant's account id on purpose —
+  // the page resolves owners via provider_grants by account id alone, so
+  // they display as the seeded user's email.
+  const eventRows = [
+    {
+      source: 'webex',
+      type: 'user-message.created',
+      payload: { accountId: 'e2e-jira-account' },
+      status: 'processed',
+      attempts: 1,
+      at: hoursAgo(0.2),
+    },
+    {
+      source: 'microsoft',
+      type: 'change-notification',
+      payload: { accountId: 'e2e-jira-account' },
+      status: 'processed',
+      attempts: 1,
+      at: hoursAgo(0.5),
+    },
+    {
+      source: 'zoom',
+      type: 'recording.transcript_completed',
+      payload: { payload: { object: { host_email: 'guest-host@example.com' } } },
+      status: 'skipped',
+      attempts: 1,
+      at: hoursAgo(1),
+    },
+    {
+      source: 'domain:webex',
+      type: 'message.received',
+      payload: { ownerSubject: E2E_SUBJECT, provider: 'webex' },
+      status: 'processed',
+      attempts: 1,
+      at: hoursAgo(0.19),
+    },
+    {
+      source: 'webex',
+      type: 'user-message.created',
+      payload: { accountId: 'e2e-jira-account' },
+      status: 'pending',
+      attempts: 2,
+      at: hoursAgo(0.1),
+    },
+  ];
+  for (const row of eventRows) {
+    await client.query(
+      `INSERT INTO events (id, tenant_id, source, type, payload, status, attempts, created_at, updated_at)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $7)`,
+      [
+        E2E_TENANT_ID,
+        row.source,
+        row.type,
+        JSON.stringify(row.payload),
+        row.status,
+        row.attempts,
+        row.at,
+      ]
+    );
+  }
+  await client.query(
+    `INSERT INTO events_dead_letters
+       (id, tenant_id, source, type, payload, attempts, last_error, created_at)
+     VALUES (gen_random_uuid(), $1, 'microsoft', 'change-notification', $2, 5,
+             'Graph answered 503 on every attempt', $3)`,
+    [E2E_TENANT_ID, JSON.stringify({ accountId: 'e2e-jira-account' }), hoursAgo(3)]
+  );
+
+  // Run tallies for the overview's Invocations panel: today, earlier this
+  // week/month/year — enough spread that every bucket shows a distinct
+  // number. (Cleanup rides the tenant delete's cascade.)
+  await client.query(
+    `INSERT INTO agent_run_counters (tenant_id, agent_id, day, runs) VALUES
+       ($1, $2, CURRENT_DATE, 3),
+       ($1, $2, CURRENT_DATE - 2, 4),
+       ($1, $2, CURRENT_DATE - 12, 6),
+       ($1, $2, CURRENT_DATE - 70, 9),
+       ($1, $2, CURRENT_DATE - 320, 20)
+     ON CONFLICT (tenant_id, agent_id, day) DO UPDATE SET runs = EXCLUDED.runs`,
+    [E2E_TENANT_ID, AGENT_RICH_ID]
+  );
 }

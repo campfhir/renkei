@@ -68,6 +68,18 @@ describe('delivery basics', () => {
     expect(await queue.consumer.claim()).toBeNull();
     expect(queue.settled()).toBe(true);
   });
+
+  it("completing as 'skipped' acks too, but keeps the verdict on the row", async () => {
+    // Terminal exactly like processed — never redelivered — but an admin
+    // reading the row can tell "handled by doing nothing" from "did the work".
+    const queue = new InMemoryQueue({ leaseMs: -1 });
+    await queue.producer.enqueue(input());
+    const message = await mustClaim(queue);
+    await queue.consumer.complete(message, 'skipped');
+    expect(await queue.consumer.claim()).toBeNull();
+    expect(queue.settled()).toBe(true);
+    expect(queue.snapshot()[0]?.status).toBe('skipped');
+  });
 });
 
 describe('retry and dead-letter lifecycle', () => {

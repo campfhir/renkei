@@ -88,6 +88,13 @@ export interface AgentMemories {
   updated_at: Generated<Timestamp>;
 }
 
+export interface AgentRunCounters {
+  agent_id: string;
+  day: Timestamp;
+  runs: Generated<number>;
+  tenant_id: string;
+}
+
 export interface AgentRuns {
   agent_id: string;
   created_at: Generated<Timestamp>;
@@ -664,6 +671,7 @@ export interface DB {
   agent_jobs: AgentJobs;
   agent_jobs_dead_letters: AgentJobsDeadLetters;
   agent_memories: AgentMemories;
+  agent_run_counters: AgentRunCounters;
   agent_run_steps: AgentRunSteps;
   agent_runs: AgentRuns;
   agent_trigger_firings: AgentTriggerFirings;

@@ -45,7 +45,7 @@ function registerKnowledgeHandlers(): void {
 
 const loop = createEventLoop({
   claim: () => embeddingQueue.consumer.claim(),
-  complete: (event) => embeddingQueue.consumer.complete(event),
+  complete: (event, outcome) => embeddingQueue.consumer.complete(event, outcome),
   fail: (event, error) => embeddingQueue.consumer.fail(event, error),
   handlerFor,
   label: 'worker/embeddings-loop',

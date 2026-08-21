@@ -32,6 +32,14 @@ export interface LoopMessage {
 
 export type LoopDisposition = { status: 'retry'; delaySeconds: number } | { status: 'dead' };
 
+/**
+ * A handler's resolution. Returning nothing means the work was done;
+ * 'skipped' means the handler decided there was nothing to do (no grant, a
+ * stale notification, a feature switched off) — still an ack, recorded so
+ * the admin's event monitor can tell the two apart.
+ */
+export type HandlerResolution = void | 'skipped';
+
 /** Poll cadence: quick when draining a backlog, relaxed when idle. The idle
  * delay bounds per-hop latency for push-driven work — an event crosses up to
  * three queue hops (intake → domain lane → agent job), so 1s keeps the
@@ -42,9 +50,11 @@ const IDLE_DELAY_MS = 1_000;
 
 export interface EventLoopDeps<M extends LoopMessage> {
   claim: () => Promise<M | null>;
-  complete: (message: M) => Promise<void>;
+  complete: (message: M, outcome?: 'processed' | 'skipped') => Promise<void>;
   fail: (message: M, error: string) => Promise<LoopDisposition>;
-  handlerFor: (message: Pick<M, 'source' | 'type'>) => ((message: M) => Promise<void>) | undefined;
+  handlerFor: (
+    message: Pick<M, 'source' | 'type'>
+  ) => ((message: M) => Promise<HandlerResolution>) | undefined;
   logger: LoopLogger;
   busyDelayMs?: number;
   idleDelayMs?: number;
@@ -109,9 +119,14 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
     }
 
     try {
-      await handler(event);
-      await deps.complete(event);
-      logger.debug('completed event {eventId}', { component, eventId: event.id });
+      const resolution = await handler(event);
+      const outcome = resolution === 'skipped' ? 'skipped' : 'processed';
+      await deps.complete(event, outcome);
+      logger.debug('completed event {eventId} ({outcome})', {
+        component,
+        eventId: event.id,
+        outcome,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const disposition = await deps.fail(event, message);

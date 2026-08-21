@@ -16,6 +16,8 @@ export interface EditableSettings {
   agentRunTimeoutMinutes: number;
   agentMaxStepAttempts: number;
   agentMaxRunsPerDay: number;
+  contentPollMinutes: number;
+  logRetentionDays: number;
 }
 
 const inputClass =
@@ -174,6 +176,21 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How many agents may trigger each other in a chain before the platform refuses."
         >
           {numberInput('agentMaxChainDepth', '1–10')}
+        </Row>
+      </Section>
+
+      <Section title="Data & logs">
+        <Row
+          label="Content poll interval (minutes)"
+          hint="How stale watched Jira projects, Confluence spaces and document libraries may get before they are polled again. Lower = fresher search results and more provider API calls."
+        >
+          {numberInput('contentPollMinutes', '5–1,440')}
+        </Row>
+        <Row
+          label="Log retention (days)"
+          hint="How long platform logs are kept before being purged. 0 keeps them forever. Deployment-wide: with several organizations, the longest retention wins."
+        >
+          {numberInput('logRetentionDays', '0–3,650')}
         </Row>
       </Section>
 
