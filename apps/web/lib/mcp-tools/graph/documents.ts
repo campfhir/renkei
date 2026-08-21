@@ -19,6 +19,7 @@ import {
   graphPost,
   graphPatch,
   graphDelete,
+  graphContentDownloadUrl,
   values,
   str,
   num,
@@ -401,9 +402,23 @@ export function registerDocumentTools(
             `(${prefix}_list_folder shows what is inside).`
         );
       }
-      const downloadUrl = str(body['@microsoft.graph.downloadUrl']);
+      // Graph sometimes leaves the annotation off item metadata (seen on
+      // items shared from another drive) even though the file downloads
+      // fine — catch /content's 302 by hand before declaring defeat.
+      let downloadUrl = str(body['@microsoft.graph.downloadUrl']);
       if (!downloadUrl) {
-        return errText(`Graph offered no download link for "${resolved.item.name}".`);
+        const viaContent = await graphContentDownloadUrl(
+          context,
+          access.accessToken,
+          resolved.item.driveId,
+          resolved.item.itemId
+        );
+        if (!viaContent.ok) {
+          return errText(
+            `Graph offered no download link for "${resolved.item.name}" — ${viaContent.error}`
+          );
+        }
+        downloadUrl = viaContent.url;
       }
       return textResult(
         [

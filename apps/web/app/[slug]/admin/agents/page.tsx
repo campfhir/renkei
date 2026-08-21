@@ -10,15 +10,16 @@ import { RetentionForm } from './retention-form';
 import OversightTable, { type RunBuckets } from './oversight-table';
 
 /**
- * Agent oversight: every agent in the org, owner-attributed, with run
- * tallies and the week's failure count. Agents are not confidential (their
- * run CONTENT mostly is — see the run pages); an operator can see what
- * exists and turn a misbehaving one off, never edit it.
+ * Agent oversight: every agent in the org, owner-attributed, with run and
+ * failure tallies. Agents are not confidential (their run CONTENT mostly
+ * is — see the run pages); an operator can see what exists and turn a
+ * misbehaving one off, never edit it.
  *
- * Run tallies come from the durable counters (migration 049) — counter
- * rows survive the run-retention prune, so year/all-time are real. This
- * page fetches every bucket; the client table shows one at a time behind
- * a period toggle.
+ * Run and failure tallies come from the durable counters (migrations 049
+ * and 050) — counter rows survive the run-retention prune, so year and
+ * all-time are real. This page fetches every bucket; the client table
+ * shows one period at a time behind a toggle that drives the org total,
+ * the Runs column and the Failures column together.
  */
 
 interface BucketRow {
@@ -28,6 +29,12 @@ interface BucketRow {
   quarter: string;
   year: string;
   all_time: string;
+  failed_today: string;
+  failed_week: string;
+  failed_month: string;
+  failed_quarter: string;
+  failed_year: string;
+  failed_all_time: string;
 }
 
 function toBuckets(row: BucketRow | undefined): RunBuckets {
@@ -41,13 +48,30 @@ function toBuckets(row: BucketRow | undefined): RunBuckets {
   };
 }
 
+function toFailureBuckets(row: BucketRow | undefined): RunBuckets {
+  return {
+    today: Number(row?.failed_today ?? 0),
+    week: Number(row?.failed_week ?? 0),
+    month: Number(row?.failed_month ?? 0),
+    quarter: Number(row?.failed_quarter ?? 0),
+    year: Number(row?.failed_year ?? 0),
+    allTime: Number(row?.failed_all_time ?? 0),
+  };
+}
+
 const BUCKET_COLUMNS = sql`
   COALESCE(SUM(runs) FILTER (WHERE day = CURRENT_DATE), 0) AS today,
   COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS week,
   COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS month,
   COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS quarter,
   COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS year,
-  COALESCE(SUM(runs), 0) AS all_time
+  COALESCE(SUM(runs), 0) AS all_time,
+  COALESCE(SUM(failures) FILTER (WHERE day = CURRENT_DATE), 0) AS failed_today,
+  COALESCE(SUM(failures) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS failed_week,
+  COALESCE(SUM(failures) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS failed_month,
+  COALESCE(SUM(failures) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS failed_quarter,
+  COALESCE(SUM(failures) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS failed_year,
+  COALESCE(SUM(failures), 0) AS failed_all_time
 `;
 
 export default async function AdminAgentsPage({
@@ -73,6 +97,7 @@ export default async function AdminAgentsPage({
     WHERE tenant_id = ${tenant.id}
   `.execute(dbResult.val);
   const totals = toBuckets(totalsResult.rows[0]);
+  const failureTotals = toFailureBuckets(totalsResult.rows[0]);
   const dailyCap = settingsResult.ok ? settingsResult.val.agentMaxRunsPerDay : null;
 
   const perAgentResult = await sql<BucketRow & { agent_id: string }>`
@@ -83,6 +108,9 @@ export default async function AdminAgentsPage({
   `.execute(dbResult.val);
   const runsByAgent = Object.fromEntries(
     perAgentResult.rows.map((row) => [row.agent_id, toBuckets(row)])
+  );
+  const failuresByAgent = Object.fromEntries(
+    perAgentResult.rows.map((row) => [row.agent_id, toFailureBuckets(row)])
   );
 
   const retentionDays = settingsResult.ok
@@ -101,7 +129,9 @@ export default async function AdminAgentsPage({
         slug={slug}
         agents={agents}
         runsByAgent={runsByAgent}
+        failuresByAgent={failuresByAgent}
         totals={totals}
+        failureTotals={failureTotals}
         dailyCap={dailyCap}
       />
 

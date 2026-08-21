@@ -464,6 +464,39 @@ describe('downloading the raw file', () => {
     expect(text).toContain('itemId: item-1');
   });
 
+  it('falls back to /content’s redirect when Graph omits the annotation', async () => {
+    // Seen on items shared from another drive: the metadata answer carries
+    // no @microsoft.graph.downloadUrl even though the file downloads fine.
+    const tools = await toolsOf(registerSharePointTools);
+    global.fetch = jest.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.includes('/content')) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: 'https://cdn.example.test/preauth?tempauth=xyz' },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          id: 'item-1',
+          name: 'shared.xlsx',
+          size: 4096,
+          parentReference: { driveId: 'drive-1' },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+
+    const result = await tools.get('sharepoint_download_document')!({
+      driveId: 'drive-1',
+      itemId: 'item-1',
+    });
+
+    const text = textOf(result);
+    expect(text).toContain('https://cdn.example.test/preauth?tempauth=xyz');
+    expect(text).toContain('driveId: drive-1');
+  });
+
   it('refuses a folder and points at listing it instead', async () => {
     routes = [
       { match: 'downloadUrl', body: { id: 'item-2', name: 'Specs', folder: {} } },

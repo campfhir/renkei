@@ -80,6 +80,7 @@ export const EXPECTED_MIGRATIONS = [
   '047-upload-slots',
   '048-agent-trigger-firings',
   '049-agent-run-counters',
+  '050-agent-run-failure-counters',
 ];
 
 export interface MigrationStatus {

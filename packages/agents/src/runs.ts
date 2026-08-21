@@ -152,3 +152,29 @@ export async function createAgentRun(
 
   return ok({ runId });
 }
+
+/**
+ * The failure-side tally (migration 050), bumped when a run finalizes as
+ * 'failed'. Lands on TODAY — the day the run became a failure — which may
+ * be the day after its start was tallied; the columns are independent
+ * counts, not a ratio of the same rows. Best effort like the run tally: a
+ * finished run must not fail over its bookkeeping.
+ */
+export async function recordAgentRunFailure(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string
+): Promise<Result<void, 'DB_ERROR'>> {
+  const result = await wrapAsync(
+    () =>
+      sql`
+        INSERT INTO agent_run_counters (tenant_id, agent_id, day, runs, failures)
+        VALUES (${tenantId}, ${agentId}, CURRENT_DATE, 0, 1)
+        ON CONFLICT (tenant_id, agent_id, day)
+        DO UPDATE SET failures = agent_run_counters.failures + 1
+      `.execute(db),
+    'DB_ERROR' as const
+  );
+  if (!result.ok) return err('DB_ERROR' as const, { cause: result.err });
+  return ok(undefined);
+}

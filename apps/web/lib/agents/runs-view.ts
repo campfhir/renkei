@@ -246,11 +246,14 @@ export interface AdminAgentRow {
   ownerEmail: string | null;
   enabled: boolean;
   descriptionStatus: string;
-  recentFailures: number;
   lastRunAt: string | null;
 }
 
-/** Every agent in the org, with the week's failure count — the oversight list. */
+/**
+ * Every agent in the org — the oversight list. Run and failure tallies come
+ * from agent_run_counters on the page itself, not from here: run ROWS are
+ * pruned by retention, counters are not.
+ */
 export async function listAgentsForAdmin(
   db: Kysely<DB>,
   tenantId: string
@@ -267,22 +270,13 @@ export async function listAgentsForAdmin(
 
   const rows: AdminAgentRow[] = [];
   for (const agent of agents) {
-    const [failures, lastRun] = await Promise.all([
-      db
-        .selectFrom('agent_runs')
-        .select(({ fn }) => fn.countAll<string>().as('count'))
-        .where('agent_id', '=', agent.id)
-        .where('status', '=', 'failed')
-        .where('created_at', '>', new Date(Date.now() - 7 * 24 * 60 * 60_000))
-        .executeTakeFirst(),
-      db
-        .selectFrom('agent_runs')
-        .select('created_at')
-        .where('agent_id', '=', agent.id)
-        .orderBy('created_at', 'desc')
-        .limit(1)
-        .executeTakeFirst(),
-    ]);
+    const lastRun = await db
+      .selectFrom('agent_runs')
+      .select('created_at')
+      .where('agent_id', '=', agent.id)
+      .orderBy('created_at', 'desc')
+      .limit(1)
+      .executeTakeFirst();
     rows.push({
       id: agent.id,
       name: agent.name,
@@ -290,7 +284,6 @@ export async function listAgentsForAdmin(
       ownerEmail: agent.email,
       enabled: agent.enabled,
       descriptionStatus: agent.description_status,
-      recentFailures: Number(failures?.count ?? 0),
       lastRunAt: lastRun ? lastRun.created_at.toISOString() : null,
     });
   }

@@ -726,13 +726,14 @@ export async function seed(client: Client): Promise<void> {
   // week/month/year — enough spread that every bucket shows a distinct
   // number. (Cleanup rides the tenant delete's cascade.)
   await client.query(
-    `INSERT INTO agent_run_counters (tenant_id, agent_id, day, runs) VALUES
-       ($1, $2, CURRENT_DATE, 3),
-       ($1, $2, CURRENT_DATE - 2, 4),
-       ($1, $2, CURRENT_DATE - 12, 6),
-       ($1, $2, CURRENT_DATE - 70, 9),
-       ($1, $2, CURRENT_DATE - 320, 20)
-     ON CONFLICT (tenant_id, agent_id, day) DO UPDATE SET runs = EXCLUDED.runs`,
+    `INSERT INTO agent_run_counters (tenant_id, agent_id, day, runs, failures) VALUES
+       ($1, $2, CURRENT_DATE, 3, 1),
+       ($1, $2, CURRENT_DATE - 2, 4, 0),
+       ($1, $2, CURRENT_DATE - 12, 6, 2),
+       ($1, $2, CURRENT_DATE - 70, 9, 0),
+       ($1, $2, CURRENT_DATE - 320, 20, 5)
+     ON CONFLICT (tenant_id, agent_id, day)
+     DO UPDATE SET runs = EXCLUDED.runs, failures = EXCLUDED.failures`,
     [E2E_TENANT_ID, AGENT_RICH_ID]
   );
 }
