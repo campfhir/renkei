@@ -287,6 +287,7 @@ function NodeColumn({
             <>
               <BranchNode
                 branch={node}
+                ordinal={(ordinals.get(node.id) ?? 0) + 1}
                 selected={selectedId === node.id}
                 issueCount={handlers.issuesFor(node.id)}
                 onSelect={() => handlers.onSelect({ type: 'step', id: node.id })}
