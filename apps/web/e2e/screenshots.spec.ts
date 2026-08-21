@@ -32,6 +32,16 @@ async function shot(
   });
 }
 
+test('admin — agent oversight totals', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/admin/agents`);
+  await expect(page.getByRole('heading', { name: 'Agent oversight' })).toBeVisible();
+  await expect(page.getByText('Runs started, all agents together')).toBeVisible();
+  // Both the totals strip and the per-agent column carry run numbers.
+  await expect(page.getByRole('term').filter({ hasText: 'All time' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Runs today' })).toBeVisible();
+  await shot(page, testInfo, 'admin-agent-oversight');
+});
+
 test('admin — event monitor', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/admin/events`);
   await expect(page.getByRole('heading', { name: 'Events' })).toBeVisible();
