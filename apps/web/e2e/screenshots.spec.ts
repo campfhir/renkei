@@ -104,6 +104,9 @@ test('runs list', async ({ page }, testInfo) => {
 test('failed run detail', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/runs/${RUN_STEP_FAILED_ID}`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  // Failed runs carry a copy-to-clipboard of the full debug context, for
+  // pasting into Claude Code or another dev tool.
+  await expect(page.getByRole('button', { name: 'Copy for debugging' })).toBeVisible();
   await shot(page, testInfo, 'run-detail-failed');
 });
 
