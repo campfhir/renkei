@@ -71,6 +71,7 @@ write:issue.time-tracking:jira
 write:issue:jira
 write:project-version:jira
 write:project.component:jira
+write:remote-link:jira
 delete:comment.property:jira
 delete:comment:jira
 delete:filter:jira

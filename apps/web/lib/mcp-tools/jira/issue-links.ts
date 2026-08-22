@@ -179,6 +179,96 @@ export async function registerIssueLinkTools(
     }
   );
 
+  // jira_create_remote_link
+  server.registerTool(
+    'jira_create_remote_link',
+    {
+      title: 'Jira · Act — Add a web link to an issue',
+      description:
+        'Add an external URL to an issue’s Links panel (a "remote link" / web link) — ' +
+        'use this instead of pasting a URL into a comment when the link should live with ' +
+        'the issue. Pass the same globalId again to UPDATE that link in place rather than ' +
+        'adding a duplicate.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+        url: z.string().describe('The link target, e.g. https://docs.example.com/spec'),
+        title: z.string().describe('Link text shown in the Links panel'),
+        summary: z.string().describe('Optional tooltip/summary line').optional(),
+        relationship: z
+          .string()
+          .describe('How the link relates, e.g. "documentation for" (optional)')
+          .optional(),
+        globalId: z
+          .string()
+          .describe(
+            'Stable identity for upserts — posting the same globalId updates the existing ' +
+              'link instead of creating another (optional)'
+          )
+          .optional(),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.debug('jira_create_remote_link invoked', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
+      try {
+        const issueKey = typeof args.issueKey === 'string' ? args.issueKey : '';
+        const url = typeof args.url === 'string' ? args.url : '';
+        const title = typeof args.title === 'string' ? args.title : '';
+        if (!issueKey || !url || !title) {
+          return errText('issueKey, url, and title are required');
+        }
+        if (!/^https?:\/\//i.test(url)) {
+          return errText('url must be an absolute http(s) URL — Jira rejects anything else.');
+        }
+
+        const body = {
+          ...(typeof args.globalId === 'string' && args.globalId
+            ? { globalId: args.globalId }
+            : {}),
+          ...(typeof args.relationship === 'string' && args.relationship
+            ? { relationship: args.relationship }
+            : {}),
+          object: {
+            url,
+            title,
+            ...(typeof args.summary === 'string' && args.summary ? { summary: args.summary } : {}),
+          },
+        };
+
+        const response = await auth.fetch(
+          granularJiraScopes('jira_create_remote_link', false),
+          `/rest/api/3/issue/${encodeURIComponent(issueKey)}/remotelink`,
+          { method: 'POST', body: JSON.stringify(body) }
+        );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
+
+        // 201 = created, 200 = an existing link with this globalId was updated.
+        const verb = response.status === 200 ? 'Updated' : 'Added';
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `${verb} web link on ${issueKey}: "${title}" → ${url}`,
+            },
+          ],
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
   // jira_delete_issue_link
   server.registerTool(
     'jira_delete_issue_link',
