@@ -73,7 +73,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
   {
     id: 'jira-write',
     label: 'Create & update work items',
-    hint: 'Create, edit, transition, comment, attach, log work, link, filters, components, versions (org read-only mode disables these regardless)',
+    hint: 'Create, edit, transition, comment, attach, log work, link, web links, filters, components, versions (org read-only mode disables these regardless)',
     group: 'jira',
     defaultChecked: true,
     scopes: [
@@ -89,6 +89,7 @@ export const ATLASSIAN_SCOPE_OPTIONS: ScopeOption[] = [
       'write:issue:jira',
       'write:project-version:jira',
       'write:project.component:jira',
+      'write:remote-link:jira',
     ],
   },
   {

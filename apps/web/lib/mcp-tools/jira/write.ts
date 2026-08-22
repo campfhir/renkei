@@ -970,63 +970,151 @@ export async function registerWriteTools(
     }
   );
 
-  // jira_delete_issue
+  // jira_delete_issue — schema and handler shared with the card-invoked
+  // jira_delete_issue_confirm below, so the confirm path IS the delete path.
+  const deleteIssueSchema = z.object({
+    issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
+    deleteSubtasks: z
+      .boolean()
+      .describe(
+        'If true, delete the issue and all its subtasks. If false, the issue cannot be deleted if it has subtasks.'
+      )
+      .optional(),
+  });
+  const deleteIssueHandler = async (args: Record<string, unknown>) => {
+    const displayName = getCachedDisplayName(context.accountId);
+    logger.debug('jira_delete_issue invoked', {
+      component: 'mcp/tool',
+      tenantId: context.tenantId,
+      accountId: context.accountId,
+      displayName,
+    });
+    try {
+      const { issueKey, deleteSubtasks } = args;
+
+      if (!isString(issueKey)) {
+        return {
+          content: [{ type: 'text' as const, text: 'issueKey is required' }],
+          isError: true,
+        };
+      }
+
+      let path = `/rest/api/3/issue/${issueKey}`;
+      if (deleteSubtasks === true) {
+        path += '?deleteSubtasks=true';
+      }
+
+      const response = await auth.fetch(granularJiraScopes('jira_delete_issue', false), path, {
+        method: 'DELETE',
+      });
+      if (!response.ok) return errText(await describeJiraAuthFailure(response));
+
+      const text = `Issue ${issueKey} has been deleted.`;
+      return { content: [{ type: 'text' as const, text }] };
+    } catch (error) {
+      return {
+        content: [
+          { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+        ],
+        isError: true,
+      };
+    }
+  };
   server.registerTool(
     'jira_delete_issue',
     {
       title: 'Jira · Act — Delete a Jira issue',
       description:
-        'Permanently delete a Jira issue. If the issue has subtasks, set deleteSubtasks to true to delete them along with the issue. This action cannot be undone.',
+        'Permanently delete a Jira issue. If the issue has subtasks, set deleteSubtasks to true ' +
+        'to delete them along with the issue. This action cannot be undone — prefer ' +
+        'jira_delete_issue_preview whenever the user should confirm first.',
       annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
-        deleteSubtasks: z
-          .boolean()
-          .describe(
-            'If true, delete the issue and all its subtasks. If false, the issue cannot be deleted if it has subtasks.'
-          )
-          .optional(),
-      }),
+      inputSchema: deleteIssueSchema,
+    },
+    deleteIssueHandler
+  );
+
+  server.registerTool(
+    'jira_delete_issue_preview',
+    {
+      title: 'Jira · Act — Preview an issue deletion before it happens',
+      description:
+        'Show the user an interactive confirmation card before permanently deleting a Jira ' +
+        'issue — the card does the deleting. Prefer this over jira_delete_issue whenever a ' +
+        'person is present to confirm: deletion cannot be undone.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      inputSchema: deleteIssueSchema,
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_delete_issue invoked', {
-        component: 'mcp/tool',
-        tenantId: context.tenantId,
-        accountId: context.accountId,
-        displayName,
-      });
+      const { issueKey } = args;
+      if (!isString(issueKey) || !issueKey) return errText('issueKey is required');
+
+      // Best-effort context so the card names what dies: summary, type, and
+      // the subtask count that decides whether deleteSubtasks matters. A
+      // failed read costs the labels, never the preview.
+      let summary = '';
+      let issueType = '';
+      let subtaskCount = 0;
       try {
-        const { issueKey, deleteSubtasks } = args;
-
-        if (!isString(issueKey)) {
-          return {
-            content: [{ type: 'text' as const, text: 'issueKey is required' }],
-            isError: true,
-          };
+        const response = await auth.fetch(
+          granularJiraScopes('jira_get_issue', true),
+          `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=summary,issuetype,subtasks`
+        );
+        const body: unknown = response.ok ? await response.json().catch(() => null) : null;
+        if (isRecord(body) && isRecord(body.fields)) {
+          if (isString(body.fields.summary)) summary = body.fields.summary;
+          if (isRecord(body.fields.issuetype) && isString(body.fields.issuetype.name)) {
+            issueType = body.fields.issuetype.name;
+          }
+          if (isArray(body.fields.subtasks)) subtaskCount = body.fields.subtasks.length;
         }
-
-        let path = `/rest/api/3/issue/${issueKey}`;
-        if (deleteSubtasks === true) {
-          path += '?deleteSubtasks=true';
-        }
-
-        const response = await auth.fetch(granularJiraScopes('jira_delete_issue', false), path, {
-          method: 'DELETE',
-        });
-        if (!response.ok) return errText(await describeJiraAuthFailure(response));
-
-        const text = `Issue ${issueKey} has been deleted.`;
-        return { content: [{ type: 'text' as const, text }] };
-      } catch (error) {
-        return {
-          content: [
-            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
-          ],
-          isError: true,
-        };
+      } catch {
+        // preview renders with the key alone
       }
+
+      return {
+        content: [{ type: 'text' as const, text: previewGuidance(`The deletion of ${issueKey}`) }],
+        structuredContent: {
+          kind: 'issue',
+          title: `Delete ${issueKey} permanently`,
+          ...(summary ? { subtitle: summary } : {}),
+          confirmTool: 'jira_delete_issue_confirm',
+          confirmLabel: 'Delete permanently',
+          confirmArgs: args,
+          fields: [
+            { label: 'Issue', value: issueKey },
+            ...(issueType ? [{ label: 'Type', value: issueType }] : []),
+            ...(subtaskCount > 0
+              ? [
+                  {
+                    label: 'Subtasks',
+                    value:
+                      args.deleteSubtasks === true
+                        ? `${subtaskCount} — will be deleted too`
+                        : `${subtaskCount} — deletion will be REFUSED unless deleteSubtasks is set`,
+                  },
+                ]
+              : []),
+            { label: 'Undo', value: 'None — deletion is permanent' },
+          ],
+        },
+      };
     }
+  );
+
+  server.registerTool(
+    'jira_delete_issue_confirm',
+    {
+      title: 'Jira · Act — Delete a previewed issue (card only)',
+      description:
+        'Permanently delete an issue the user approved on a preview card.' +
+        confirmGuard('jira_delete_issue_preview'),
+      annotations: { readOnlyHint: false },
+      _meta: APP_ONLY_META,
+      inputSchema: deleteIssueSchema,
+    },
+    deleteIssueHandler
   );
 
   // jira_delete_comment

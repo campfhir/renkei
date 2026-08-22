@@ -22,7 +22,11 @@ function stubAuth(): JiraAuth {
   };
 }
 
-type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean };
+type ToolResult = {
+  content: { type: string; text?: string }[];
+  isError?: boolean;
+  structuredContent?: Record<string, unknown>;
+};
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
 
 interface Call {
@@ -170,6 +174,36 @@ const putFields = () => {
 
 beforeEach(() => {
   clearFieldSchemaCache();
+});
+
+describe('jira_delete_issue preview/confirm', () => {
+  it('previews without deleting — the card holds the request', async () => {
+    serve([]);
+    const preview = (await tools()).get('jira_delete_issue_preview')!;
+
+    const result = await preview({ issueKey: 'CHG-25' });
+
+    expect(calls.some((call) => call.method === 'DELETE')).toBe(false);
+    expect(result.structuredContent).toMatchObject({
+      confirmTool: 'jira_delete_issue_confirm',
+      confirmLabel: 'Delete permanently',
+      title: 'Delete CHG-25 permanently',
+    });
+    // The card must say there is no undo.
+    expect(JSON.stringify(result.structuredContent)).toContain('permanent');
+  });
+
+  it('confirm IS the delete handler — one DELETE, no drift between paths', async () => {
+    serve([]);
+    const confirm = (await tools()).get('jira_delete_issue_confirm')!;
+
+    const result = await confirm({ issueKey: 'CHG-25', deleteSubtasks: true });
+
+    const deletes = calls.filter((call) => call.method === 'DELETE');
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]?.url).toContain('/rest/api/3/issue/CHG-25?deleteSubtasks=true');
+    expect(result.content[0]?.text).toContain('CHG-25 has been deleted');
+  });
 });
 
 describe('jira_update_issue', () => {

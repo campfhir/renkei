@@ -75,6 +75,9 @@ const BOARD_WRITE_TOOLS = new Set([
 /** Delete tools gate on their own delete:* scope — a separate bundle. */
 const DELETE_TOOL_SCOPES: Record<string, string> = {
   jira_delete_issue: 'delete:issue:jira',
+  // The preview/confirm pair stands on the same scope as the delete it gates.
+  jira_delete_issue_preview: 'delete:issue:jira',
+  jira_delete_issue_confirm: 'delete:issue:jira',
   jira_delete_comment: 'delete:comment:jira',
   jira_delete_filter: 'delete:filter:jira',
   jira_delete_worklog: 'delete:issue-worklog:jira',
@@ -126,6 +129,13 @@ export function granularJiraScopes(toolName: string, readOnly: boolean): string[
   // the jira_list_projects rule.
   if (toolName === 'jira_add_attachment' || toolName === 'jira_request_attachment_upload') {
     return ['read:issue:jira', 'write:issue:jira', 'write:attachment:jira'];
+  }
+  // Remote links (the Links panel's web links) carry their own granular
+  // scope. It rides the jira-write bundle as of 2026-08-22 — gating on it
+  // hides the tool from grants minted before then, which would 401 at
+  // Atlassian until the user reconnects (the jira_list_projects rule).
+  if (toolName === 'jira_create_remote_link') {
+    return ['read:issue:jira', 'write:remote-link:jira'];
   }
   const deleteScope = DELETE_TOOL_SCOPES[toolName];
   if (deleteScope) return ['read:issue:jira', deleteScope];
