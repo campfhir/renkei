@@ -17,6 +17,7 @@
 
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
+import { contentEncryptionKey, decryptContent, isEncryptedContent } from '@renkei/crypto';
 import {
   resolveEmbeddingProvider,
   ingestObjectChunks,
@@ -55,6 +56,27 @@ function required(payload: Record<string, unknown>, key: string): string {
   return value;
 }
 
+/**
+ * A payload field the producer encrypted at rest (enqueue.ts's
+ * CONTENT_FIELDS), decrypted right before use. A value without the envelope
+ * marker is a legacy plaintext payload from before the rollout and passes
+ * through. A missing/bad key throws — retry cannot fix it, and the
+ * dead-letter row's last_error says exactly what to configure.
+ */
+function decryptedField(value: unknown, label: string): string {
+  const text = str(value);
+  if (!text || !isEncryptedContent(text)) return text;
+  const keyResult = contentEncryptionKey();
+  if (!keyResult.ok) {
+    throw new Error(`cannot decrypt payload '${label}': ${keyResult.err.message}`);
+  }
+  const opened = decryptContent(text, keyResult.val);
+  if (!opened.ok) {
+    throw new Error(`cannot decrypt payload '${label}': wrong key or corrupt envelope`);
+  }
+  return opened.val;
+}
+
 function chunkingOf(payload: Record<string, unknown>): { maxChars?: number; overlap?: number } {
   const chunking = isRecord(payload.chunking) ? payload.chunking : {};
   return {
@@ -84,6 +106,19 @@ function rawEmailOfPayload(raw: Record<string, unknown>): RawEmail {
       contentType: str(body.contentType) === 'html' ? 'html' : 'text',
     },
   };
+}
+
+/**
+ * `payload.raw` in both eras: an encrypted JSON string from the current
+ * producer, a bare record from a payload queued before the rollout.
+ */
+function rawRecordOfPayload(value: unknown): Record<string, unknown> {
+  if (isRecord(value)) return value;
+  if (typeof value === 'string' && isEncryptedContent(value)) {
+    const parsed: unknown = JSON.parse(decryptedField(value, 'raw'));
+    if (isRecord(parsed)) return parsed;
+  }
+  throw new Error("knowledge event payload is missing 'raw'");
 }
 
 function overrideOfPayload(value: unknown): MessageOverride | undefined {
@@ -127,7 +162,7 @@ export function createKnowledgeIngestObjectHandler(): EventHandler {
       {
         provider,
         refId,
-        content: str(payload.content),
+        content: decryptedField(payload.content, 'content'),
         metadata: isRecord(payload.metadata) ? payload.metadata : {},
         sourceAt: str(payload.sourceAt) || null,
       },
@@ -155,7 +190,7 @@ export function createKnowledgeIngestEmailHandler(): EventHandler {
     const payload = payloadOf(event);
     const refId = required(payload, 'refId');
     const ownerUpn = required(payload, 'ownerUpn');
-    if (!isRecord(payload.raw)) throw new Error("knowledge event payload is missing 'raw'");
+    const rawRecord = rawRecordOfPayload(payload.raw);
 
     const embedder = await resolveEmbeddingProvider(event.tenant_id);
     if (!embedder) {
@@ -175,7 +210,7 @@ export function createKnowledgeIngestEmailHandler(): EventHandler {
       refId,
       ownerUpn,
       accountId: str(payload.accountId) || null,
-      raw: rawEmailOfPayload(payload.raw),
+      raw: rawEmailOfPayload(rawRecord),
       override,
       // No embedder alongside an override, on purpose: near-duplicate dedup
       // is for the automatic ingest path only. An override is a deliberate
@@ -405,7 +440,7 @@ export function createKnowledgeEnrichItemHandler(): EventHandler {
     const itemId = required(payload, 'itemId');
     const provider = required(payload, 'provider');
     const refId = required(payload, 'refId');
-    const query = str(payload.query);
+    const query = decryptedField(payload.query, 'query');
     const accessSubject = str(payload.accessSubject);
     if (!query.trim() || !accessSubject) return; // nothing to search, or nobody to gate for
 

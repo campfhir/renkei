@@ -33,6 +33,7 @@
  * embedding workers are running.
  */
 
+import { contentEncryptionKey, encryptContent } from '@renkei/crypto';
 import { embeddingQueue } from './queue';
 import { logger } from './logger';
 
@@ -62,6 +63,46 @@ export type KnowledgeEventType =
  * re-capture the object, retrying the event is strictly better than
  * silently losing it from the index.
  */
+/**
+ * The payload fields that carry CONTENT, by type — encrypted at rest in the
+ * queue row (and its dead-letter copy) and decrypted by the consumer right
+ * before use. Everything else in the payload is identifiers and routing
+ * metadata, which stays plaintext because reindex's discardPending and the
+ * fairness lanes match on it. `raw` (a whole RawEmail object) rides as one
+ * encrypted JSON string; the consumer dual-reads a legacy record.
+ */
+const CONTENT_FIELDS: Partial<Record<KnowledgeEventType, readonly string[]>> = {
+  'ingest.object': ['content'],
+  'ingest.email': ['raw'],
+  'enrich.item': ['query'],
+};
+
+function withEncryptedContent(
+  type: KnowledgeEventType,
+  payload: Record<string, unknown>
+): Record<string, unknown> | null {
+  const fields = CONTENT_FIELDS[type];
+  if (!fields) return payload;
+  const keyResult = contentEncryptionKey();
+  if (!keyResult.ok) {
+    // Refusing to enqueue beats silently queuing plaintext: the caller's
+    // failure path logs it, and the sweep re-captures the object once the
+    // key is configured. (TOKEN_ENCRYPTION_KEY is the fallback, so this is
+    // effectively unreachable in a working deployment.)
+    return null;
+  }
+  const out: Record<string, unknown> = { ...payload };
+  for (const field of fields) {
+    const value = out[field];
+    if (value === undefined) continue;
+    out[field] = encryptContent(
+      typeof value === 'string' ? value : JSON.stringify(value),
+      keyResult.val
+    );
+  }
+  return out;
+}
+
 export async function enqueueKnowledgeEvent(
   tenantId: string,
   type: KnowledgeEventType,
@@ -69,6 +110,19 @@ export async function enqueueKnowledgeEvent(
   orderingKey: string | null = null,
   options: { strict?: boolean } = {}
 ): Promise<void> {
+  const encrypted = withEncryptedContent(type, payload);
+  if (encrypted === null) {
+    const message = 'content encryption key unavailable';
+    if (options.strict) throw new Error(`knowledge job ${type} not enqueued: ${message}`);
+    logger.error('knowledge job {type} not enqueued: {error}', {
+      component: 'worker/enqueue',
+      type,
+      tenantId,
+      error: message,
+    });
+    return;
+  }
+
   // The provider becomes a fairness LANE on the source. Every knowledge event
   // used to be `knowledge`, which made the queue's round-robin useless here:
   // there was only ever one source to be fair between, so a big Confluence
@@ -79,7 +133,7 @@ export async function enqueueKnowledgeEvent(
     tenantId,
     source: provider ? `${KNOWLEDGE_SOURCE}:${provider}` : KNOWLEDGE_SOURCE,
     type,
-    payload,
+    payload: encrypted,
     orderingKey,
   });
   if (!enqueued.ok) {

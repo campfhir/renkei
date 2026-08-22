@@ -18,6 +18,6 @@
       "@renkei/gates": ["../../packages/gates/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules"]
 }

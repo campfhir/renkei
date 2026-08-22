@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
+import { contentEncryptionKey, encryptContent } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { vectorLiteral } from './embeddings';
@@ -40,7 +41,7 @@ export async function ingestChunk(
   tenantId: string,
   embedder: EmbeddingProvider,
   chunk: KnowledgeChunkInput
-): Promise<Result<void, 'EMBEDDING_FAILED' | 'DB_ERROR'>> {
+): Promise<Result<void, 'EMBEDDING_FAILED' | 'DB_ERROR' | 'ENCRYPTION_FAILED'>> {
   const embedded = await embedder.embed([chunk.content]);
   if (!embedded.ok) return embedded;
   return upsertChunkRow(tenantId, chunk, embedded.val[0] ?? []);
@@ -51,11 +52,21 @@ export async function upsertChunkRow(
   tenantId: string,
   chunk: KnowledgeChunkInput,
   embedding: readonly number[]
-): Promise<Result<void, 'DB_ERROR'>> {
+): Promise<Result<void, 'DB_ERROR' | 'ENCRYPTION_FAILED'>> {
   const vector = vectorLiteral(embedding);
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
+
+  // Content is CIPHERTEXT at rest; the embedding vector stays as computed
+  // from the plaintext (that is the whole point of having it), and
+  // provider/ref_id/metadata stay plaintext because the ACL gate, the
+  // owner-scope prefix filter and the search filters all match on them.
+  const keyResult = contentEncryptionKey();
+  if (!keyResult.ok) {
+    return err('ENCRYPTION_FAILED' as const, { message: keyResult.err.message });
+  }
+  const storedContent = encryptContent(chunk.content, keyResult.val);
 
   const sourceAt = sourceAtValue(chunk.sourceAt);
   const result = await wrapAsync(
@@ -68,7 +79,7 @@ export async function upsertChunkRow(
           provider: chunk.provider,
           ref_id: chunk.refId,
           metadata: JSON.stringify(chunk.metadata),
-          content: chunk.content,
+          content: storedContent,
           embedding: sql`${vector}::vector`,
           source_at: sourceAt,
         })
@@ -78,7 +89,7 @@ export async function upsertChunkRow(
           // pin the row to whatever date the first ingest saw.
           oc.columns(['tenant_id', 'provider', 'ref_id']).doUpdateSet({
             metadata: JSON.stringify(chunk.metadata),
-            content: chunk.content,
+            content: storedContent,
             embedding: sql`${vector}::vector`,
             source_at: sourceAt,
           })

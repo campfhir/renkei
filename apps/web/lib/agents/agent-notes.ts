@@ -19,6 +19,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
+import { contentEncryptionKey, revealContent } from '@renkei/crypto';
 import {
   resolveEmbeddingProvider,
   ingestObjectChunks,
@@ -80,8 +81,12 @@ export async function listAgentNotes(
   agentId: string
 ): Promise<AgentNote[]> {
   const rows = await agentNoteChunks(db, tenantId, agentId);
+  const keyResult = contentEncryptionKey();
+  const contentKey = keyResult.ok ? keyResult.val : null;
   const notes = new Map<string, AgentNote>();
   for (const row of rows) {
+    // Each CHUNK is its own ciphertext — decrypt before concatenating.
+    const content = revealContent(row.content, contentKey);
     const baseRef = baseRefOf(row.ref_id);
     const slash = baseRef.indexOf('/');
     const noteId = slash > 0 ? baseRef.slice(slash + 1) : baseRef;
@@ -89,7 +94,7 @@ export async function listAgentNotes(
     if (existing) {
       // Chunks arrive in ref order (zero overlap), so appending rebuilds
       // the exact original.
-      existing.content += row.content;
+      existing.content += content;
       continue;
     }
     const metadata: Record<string, unknown> =
@@ -99,7 +104,7 @@ export async function listAgentNotes(
     notes.set(noteId, {
       noteId,
       title: typeof metadata.title === 'string' ? metadata.title : '(untitled)',
-      content: row.content,
+      content,
       authoredBy: metadata.authoredBy === 'agent' ? 'agent' : 'user',
       sourceAt: row.source_at ? new Date(row.source_at).toISOString() : null,
     });

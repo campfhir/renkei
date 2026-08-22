@@ -10,6 +10,7 @@
 
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
+import { contentEncryptionKey, revealContent } from '@renkei/crypto';
 import { verifyCandidates } from '@renkei/gates';
 import type { AccessVerifier, SourceRef } from '@renkei/gates';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
@@ -183,11 +184,19 @@ function ownerScopeFragment(verifiers: ReadonlyMap<string, AccessVerifier>, user
   return sql`(provider NOT IN (${sql.join(scoped, sql`, `)}) OR ref_id LIKE ${ownPrefix})`;
 }
 
-function toHit(row: CandidateRow): KnowledgeHit {
+/** The content key once per query, null when unconfigured (legacy rows still read). */
+function contentKeyOrNull(): Buffer | null {
+  const keyResult = contentEncryptionKey();
+  return keyResult.ok ? keyResult.val : null;
+}
+
+function toHit(row: CandidateRow, contentKey: Buffer | null): KnowledgeHit {
   return {
     provider: row.provider,
     refId: row.ref_id,
-    content: row.content,
+    // Stored ciphertext (or a legacy plaintext row) → plaintext for the
+    // caller; the row was already ACL-verified before reaching here.
+    content: revealContent(row.content, contentKey),
     metadata:
       typeof row.metadata === 'object' && row.metadata !== null && !Array.isArray(row.metadata)
         ? { ...row.metadata }
@@ -307,8 +316,9 @@ export async function listRecentKnowledge(
         })
       : outcome.allowed.slice(0, options.k);
 
+  const contentKey = contentKeyOrNull();
   return ok({
-    hits: kept.map(toHit),
+    hits: kept.map((row) => toHit(row, contentKey)),
     elided: outcome.elided,
     unverified: outcome.unverified,
   });
@@ -368,8 +378,9 @@ export async function searchKnowledge(
     { budgetMs: options.budgetMs ?? 3_000 }
   );
 
+  const contentKey = contentKeyOrNull();
   return ok({
-    hits: outcome.allowed.slice(0, options.k).map(toHit),
+    hits: outcome.allowed.slice(0, options.k).map((row) => toHit(row, contentKey)),
     elided: outcome.elided,
     unverified: outcome.unverified,
   });
