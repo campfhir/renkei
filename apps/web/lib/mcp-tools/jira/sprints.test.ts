@@ -127,6 +127,59 @@ describe('jira_move_issue_to_sprint', () => {
   });
 });
 
+describe('jira_bulk_move_sprint_issues', () => {
+  it('moves the whole batch into a sprint with ONE request', async () => {
+    serve();
+    const bulk = (await sprintTools()).get('jira_bulk_move_sprint_issues')!;
+
+    const result = await bulk({ issueKeys: ['CAS-1', 'CAS-2', 'CAS-3'], sprintId: '42' });
+
+    expect(written()).toEqual([
+      {
+        url: 'https://api.atlassian.com/ex/jira/cloud-1/rest/agile/1.0/sprint/42/issue',
+        method: 'POST',
+        body: { issues: ['CAS-1', 'CAS-2', 'CAS-3'] },
+      },
+    ]);
+    expect(result.content[0]?.text).toContain('3 issue(s) to sprint 42');
+  });
+
+  it('moves the whole batch to the backlog when sprintId is omitted', async () => {
+    serve();
+    const bulk = (await sprintTools()).get('jira_bulk_move_sprint_issues')!;
+
+    const result = await bulk({ issueKeys: ['CAS-1', 'CAS-2'] });
+
+    expect(written()).toEqual([
+      {
+        url: 'https://api.atlassian.com/ex/jira/cloud-1/rest/agile/1.0/backlog/issue',
+        method: 'POST',
+        body: { issues: ['CAS-1', 'CAS-2'] },
+      },
+    ]);
+    expect(result.content[0]?.text).toContain('2 issue(s) to the backlog');
+  });
+
+  it('deduplicates issue keys before posting', async () => {
+    serve();
+    const bulk = (await sprintTools()).get('jira_bulk_move_sprint_issues')!;
+
+    await bulk({ issueKeys: ['CAS-1', 'CAS-1', 'CAS-2'], sprintId: '42' });
+
+    expect(written()[0]?.body).toEqual({ issues: ['CAS-1', 'CAS-2'] });
+  });
+
+  it('requires issue keys', async () => {
+    serve();
+    const bulk = (await sprintTools()).get('jira_bulk_move_sprint_issues')!;
+
+    const result = await bulk({ issueKeys: [] });
+
+    expect(result.isError).toBe(true);
+    expect(written()).toEqual([]);
+  });
+});
+
 describe('jira_remove_issue_from_sprint', () => {
   it('says there is nothing to remove when the issue is in no sprint', async () => {
     serve({ agileIssue: { fields: { sprint: null, closedSprints: [] } } });

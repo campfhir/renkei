@@ -193,8 +193,9 @@ export async function registerSprintTools(
     {
       title: 'Jira · Act — Move a Jira issue to a sprint',
       description:
-        'Move an issue into a sprint. Uses the Agile API, so it works whether or not the ' +
-        "project's edit screen exposes the Sprint field.",
+        'Move ONE issue into a sprint. Uses the Agile API, so it works whether or not the ' +
+        "project's edit screen exposes the Sprint field. For several issues, use " +
+        'jira_bulk_move_sprint_issues instead of calling this repeatedly.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
@@ -251,8 +252,9 @@ export async function registerSprintTools(
     {
       title: 'Jira · Act — Remove an issue from a sprint',
       description:
-        'Move an issue out of its sprint and back to the backlog. Reports which sprint it left, ' +
-        'and says so plainly when the issue is not in one.',
+        'Move ONE issue out of its sprint and back to the backlog. Reports which sprint it ' +
+        'left, and says so plainly when the issue is not in one. For several issues, use ' +
+        'jira_bulk_move_sprint_issues (omit sprintId) instead of calling this repeatedly.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
@@ -316,6 +318,81 @@ export async function registerSprintTools(
           membership.active.length > 0 ? ` (was in ${membership.active.join(', ')})` : '';
         return {
           content: [{ type: 'text' as const, text: `Moved ${issueKey} to the backlog${left}` }],
+        };
+      } catch (error) {
+        return {
+          content: [
+            { type: 'text' as const, text: error instanceof Error ? error.message : String(error) },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // jira_bulk_move_sprint_issues
+  server.registerTool(
+    'jira_bulk_move_sprint_issues',
+    {
+      title: 'Jira · Act — Move many issues into a sprint or to the backlog',
+      description:
+        'Move up to 50 issues in ONE call: pass sprintId to move them all into that sprint, ' +
+        'omit it to move them all to the backlog (removing them from whatever sprint they are ' +
+        'in). Prefer this over calling jira_move_issue_to_sprint or ' +
+        'jira_remove_issue_from_sprint once per issue — the Agile API takes the whole batch ' +
+        'in a single request.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        issueKeys: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(50)
+          .describe('Issue keys to move, e.g. ["PROJ-1", "PROJ-2"] (max 50 — the API limit)'),
+        sprintId: z
+          .string()
+          .describe('Target sprint ID. Omit to move the issues to the backlog instead.')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.debug('jira_bulk_move_sprint_issues invoked', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
+      try {
+        const issueKeys: string[] = Array.isArray(args.issueKeys)
+          ? args.issueKeys.filter(
+              (key: unknown): key is string => typeof key === 'string' && key !== ''
+            )
+          : [];
+        if (issueKeys.length === 0) return errText('issueKeys is required');
+        const unique = [...new Set(issueKeys)].slice(0, 50);
+        const sprintId = typeof args.sprintId === 'string' && args.sprintId ? args.sprintId : null;
+
+        // Both directions are one Agile API request for the whole batch —
+        // sprint membership is owned by these two endpoints, never by a
+        // `sprint` field PUT (see jira_move_issue_to_sprint's history).
+        const path = sprintId
+          ? `/rest/agile/1.0/sprint/${encodeURIComponent(sprintId)}/issue`
+          : '/rest/agile/1.0/backlog/issue';
+        const response = await auth.fetch(
+          granularJiraScopes('jira_bulk_move_sprint_issues', false),
+          path,
+          { method: 'POST', body: JSON.stringify({ issues: unique }) }
+        );
+        if (!response.ok) return errText(await describeJiraAuthFailure(response));
+
+        const destination = sprintId ? `sprint ${sprintId}` : 'the backlog';
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Moved ${unique.length} issue(s) to ${destination}: ${unique.join(', ')}`,
+            },
+          ],
         };
       } catch (error) {
         return {
