@@ -69,6 +69,7 @@ const BOARD_WRITE_TOOLS = new Set([
   'jira_complete_sprint',
   'jira_move_issue_to_sprint',
   'jira_remove_issue_from_sprint',
+  'jira_bulk_move_sprint_issues',
 ]);
 
 /** Delete tools gate on their own delete:* scope — a separate bundle. */
