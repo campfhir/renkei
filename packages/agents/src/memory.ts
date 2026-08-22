@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
+import { contentEncryptionKey, revealContent } from '@renkei/crypto';
 
 /** One memory entry's ceiling — a note, not a document. */
 export const MEMORY_ENTRY_MAX_CHARS = 500;
@@ -163,6 +164,8 @@ export async function renderAgentKnowledgeNotes(
   tenantId: string,
   agentId: string
 ): Promise<string> {
+  const keyResult = contentEncryptionKey();
+  const contentKey = keyResult.ok ? keyResult.val : null;
   const rows = await db
     .selectFrom('knowledge_chunks')
     .select(['ref_id', 'metadata', 'content', 'source_at'])
@@ -190,7 +193,8 @@ export async function renderAgentKnowledgeNotes(
     const title = typeof metadata.title === 'string' ? metadata.title : '(untitled)';
     const slash = baseRef.indexOf('/');
     const noteId = slash > 0 ? baseRef.slice(slash + 1) : baseRef;
-    const line = `- ${title} [noteId ${noteId}]: ${clip(row.content, 400)}`;
+    // Chunk content is ciphertext at rest (legacy rows pass through).
+    const line = `- ${title} [noteId ${noteId}]: ${clip(revealContent(row.content, contentKey), 400)}`;
     if (spent + line.length + 1 > AGENT_NOTES_INJECT_MAX_CHARS) break;
     lines.push(line);
     spent += line.length + 1;

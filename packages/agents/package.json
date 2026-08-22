@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@campfhir/safe-functions": "^0.1.3",
+    "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
     "@renkei/queue": "workspace:*",
     "@renkei/settings": "workspace:*",

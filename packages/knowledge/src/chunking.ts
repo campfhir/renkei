@@ -256,7 +256,7 @@ export async function ingestObjectChunks(
      */
     precomputed?: { content: string; vector: readonly number[] };
   } = {}
-): Promise<Result<{ chunks: number }, 'EMBEDDING_FAILED' | 'DB_ERROR'>> {
+): Promise<Result<{ chunks: number }, 'EMBEDDING_FAILED' | 'DB_ERROR' | 'ENCRYPTION_FAILED'>> {
   const pieces = chunkText(object.content, options);
 
   const cleared = await deleteObjectChunks(tenantId, object.provider, object.refId);

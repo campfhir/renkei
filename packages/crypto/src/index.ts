@@ -7,3 +7,11 @@
 
 export { encrypt, decrypt, parseEncryptionKey, safeEqual, DecryptionError } from './secretbox';
 export { sha256Hex, generateSecret } from './tokens';
+export {
+  contentEncryptionKey,
+  encryptContent,
+  decryptContent,
+  isEncryptedContent,
+  revealContent,
+  CONTENT_ENVELOPE_PREFIX,
+} from './content';
