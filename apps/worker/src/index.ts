@@ -31,6 +31,7 @@ import { createAgentRunFailedHandler } from './handlers/agent-run-failed';
 import { createMailBulkJobHandler } from './handlers/mail-bulk-jobs';
 import { createMailJobsSweep, MAIL_JOBS_SWEEP_INTERVAL_MS } from './health/mail-jobs';
 import { sweepLogRetention, LOG_RETENTION_SWEEP_INTERVAL_MS } from './health/log-retention';
+import { sweepExpiredGrants, EXPIRED_GRANTS_SWEEP_INTERVAL_MS } from './health/expired-grants';
 import { createUploadSlotsSweep, UPLOAD_SLOTS_SWEEP_INTERVAL_MS } from './health/upload-slots';
 import { createAgentFiringsSweep, AGENT_FIRINGS_SWEEP_INTERVAL_MS } from './health/agent-firings';
 import { withSweepLock } from './health/sweep-lock';
@@ -123,6 +124,14 @@ async function main(): Promise<void> {
       'logs/retention-sweep',
       LOG_RETENTION_SWEEP_INTERVAL_MS,
       withSweepLock('log-retention', sweepLogRetention)
+    ),
+    // Deletes are idempotent, but one runner per pass keeps the log line
+    // per deleted grant single, so the advisory lock rides along.
+    schedulePeriodicSweep(
+      'expired grants',
+      'grants/expiry-sweep',
+      EXPIRED_GRANTS_SWEEP_INTERVAL_MS,
+      withSweepLock('expired-grants', sweepExpiredGrants)
     ),
     ...(() => {
       // Row hygiene: fail stalled mail runs, expire/prune upload slots.

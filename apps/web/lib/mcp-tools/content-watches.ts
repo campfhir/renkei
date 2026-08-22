@@ -116,6 +116,23 @@ export async function upsertWatch(
     return { ok: true, created: !existing.enabled };
   }
 
+  // A fresh row for a scope some OTHER subject already indexed inherits
+  // that row's cursor: the index already holds the scope's history, so
+  // starting this watch from NULL would re-read an entire space to rebuild
+  // what is already there. This is how a watch orphaned by a dead grant
+  // gets picked up by the next person without the costly full re-read.
+  const sibling = await dbResult.val
+    .selectFrom('content_watches')
+    .select('cursor')
+    .where('tenant_id', '=', owner.tenantId)
+    .where('provider', '=', provider)
+    .where('scope_type', '=', scopeType)
+    .where('scope_key', '=', scopeKey)
+    .where('cursor', 'is not', null)
+    .orderBy('updated_at', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+
   await dbResult.val
     .insertInto('content_watches')
     .values({
@@ -127,9 +144,60 @@ export async function upsertWatch(
       scope_type: scopeType,
       scope_key: scopeKey,
       scope_label: scopeLabel,
+      cursor: sibling?.cursor ?? null,
     })
     .execute();
   return { ok: true, created: true };
+}
+
+/**
+ * Rebind a scope's watch rows — whoever owns them — to the CALLER's live
+ * grant, keeping every cursor.
+ *
+ * The stuck case this exists for: a watch whose owner's grant died (left
+ * the org, token revoked, expired-grant sweep) fails every poll forever,
+ * and because the uniqueness key includes the subject, another user
+ * "adding" the same scope creates a SECOND watch with a NULL cursor — a
+ * full re-read of the whole space, which is exactly the costly thing a
+ * repair must avoid. Taking the existing rows over instead resumes
+ * incremental polling from where they stopped.
+ *
+ * Safe to point at someone else's watch because the caller's own access
+ * was just proven against the provider (the route resolves the scope
+ * before calling this), indexing runs under the caller's authority from
+ * here on, and disclosure was never the watch's job — the read-time gate
+ * decides that per reader.
+ */
+export async function repairWatch(
+  owner: WatchOwner,
+  provider: WatchProvider,
+  scopeType: WatchScopeType,
+  scopeKey: string
+): Promise<{ ok: true; repaired: number } | { ok: false; error: string }> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return { ok: false, error: 'Database unavailable.' };
+
+  const result = await dbResult.val
+    .updateTable('content_watches')
+    .set({
+      subject: owner.subject,
+      account_id: owner.accountId,
+      enabled: true,
+      last_error: null,
+      sync_status: 'idle',
+      // NULL puts the row at the head of the sweep's never-synced-first
+      // ordering — "repair" should visibly poll within minutes, not wait
+      // out the org's normal cadence. The cursor is deliberately untouched.
+      last_synced_at: null,
+      updated_at: sql<Date>`NOW()`,
+    })
+    .where('tenant_id', '=', owner.tenantId)
+    .where('provider', '=', provider)
+    .where('scope_type', '=', scopeType)
+    .where('scope_key', '=', scopeKey)
+    .executeTakeFirst();
+
+  return { ok: true, repaired: Number(result.numUpdatedRows ?? 0) };
 }
 
 /**
