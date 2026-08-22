@@ -21,7 +21,9 @@ jest.mock('@renkei/connector-webex', () => ({
 }));
 jest.mock('./webex-linked-user', () => ({ resolveLinkedWebexUserAccess: jest.fn() }));
 
+import { randomBytes } from 'node:crypto';
 import { ok, err } from '@campfhir/safe-functions/helpers';
+import { encryptContent } from '@renkei/crypto';
 import {
   createKnowledgeIngestObjectHandler,
   createKnowledgeIngestEmailHandler,
@@ -30,6 +32,13 @@ import {
   createKnowledgeEnrichItemHandler,
 } from './knowledge-ingest';
 import type { ClaimedEvent } from '../queue';
+
+// The handlers are strict about payload encryption, so the fixtures encrypt
+// the content-bearing fields exactly as enqueue.ts's producer does. Set at
+// module scope so the handlers' key resolution sees it.
+const suiteKey = randomBytes(32);
+process.env.CONTENT_ENCRYPTION_KEY = suiteKey.toString('base64');
+const enc = (text: string): string => encryptContent(text, suiteKey);
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const {
@@ -93,23 +102,32 @@ beforeEach(() => {
 });
 
 describe('ingest.object', () => {
+  const objectContent = 'Meeting: standup\n\nnotes';
   const payload = {
     provider: 'zoom',
     refId: 'host@x.com/uuid/transcript',
-    content: 'Meeting: standup\n\nnotes',
+    content: enc(objectContent),
     metadata: { kind: 'transcript' },
     sourceAt: '2026-08-10T09:00:00Z',
     chunking: { maxChars: 4000, overlap: 400 },
   };
 
-  it('ingests with the payload chunking options', async () => {
+  it('decrypts the payload content and ingests with the payload chunking options', async () => {
     await createKnowledgeIngestObjectHandler()(event('ingest.object', payload));
     expect(mockIngestObjectChunks).toHaveBeenCalledWith(
       'tenant-1',
       expect.anything(),
-      expect.objectContaining({ provider: 'zoom', content: payload.content }),
+      expect.objectContaining({ provider: 'zoom', content: objectContent }),
       { maxChars: 4000, overlap: 400 }
     );
+  });
+
+  it('dead-letters (throws) on a plaintext content payload', async () => {
+    await expect(
+      createKnowledgeIngestObjectHandler()(
+        event('ingest.object', { ...payload, content: objectContent })
+      )
+    ).rejects.toThrow('not encrypted');
   });
 
   it('throws on an embedding failure so the queue retries it', async () => {
@@ -133,18 +151,20 @@ describe('ingest.object', () => {
 });
 
 describe('ingest.email', () => {
+  const rawEmail = {
+    subject: 'Hello',
+    fromName: 'Bob',
+    fromAddress: 'bob@example.com',
+    receivedAt: '2026-08-10T12:00:00Z',
+    body: { content: 'Just checking in.', contentType: 'text' },
+  };
   const payload = {
     provider: 'microsoft',
     refId: 'alice@example.com/msg/msg-1',
     ownerUpn: 'alice@example.com',
     accountId: 'acct-1',
-    raw: {
-      subject: 'Hello',
-      fromName: 'Bob',
-      fromAddress: 'bob@example.com',
-      receivedAt: '2026-08-10T12:00:00Z',
-      body: { content: 'Just checking in.', contentType: 'text' },
-    },
+    // The producer rides the whole RawEmail as one encrypted JSON string.
+    raw: enc(JSON.stringify(rawEmail)),
     metadata: { kind: 'msg', subject: 'Hello' },
     sourceAt: '2026-08-10T12:00:00Z',
   };
@@ -264,7 +284,7 @@ describe('enrich.item', () => {
     itemId: 'item-1',
     provider: 'webex',
     refId: 'room-1:msg-1',
-    query: 'the message text',
+    query: enc('the message text'),
     accessSubject: 'alice@example.com',
   };
 

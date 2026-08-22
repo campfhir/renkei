@@ -184,7 +184,7 @@ function ownerScopeFragment(verifiers: ReadonlyMap<string, AccessVerifier>, user
   return sql`(provider NOT IN (${sql.join(scoped, sql`, `)}) OR ref_id LIKE ${ownPrefix})`;
 }
 
-/** The content key once per query, null when unconfigured (legacy rows still read). */
+/** The content key once per query; null renders every hit as unavailable. */
 function contentKeyOrNull(): Buffer | null {
   const keyResult = contentEncryptionKey();
   return keyResult.ok ? keyResult.val : null;
@@ -194,8 +194,8 @@ function toHit(row: CandidateRow, contentKey: Buffer | null): KnowledgeHit {
   return {
     provider: row.provider,
     refId: row.ref_id,
-    // Stored ciphertext (or a legacy plaintext row) → plaintext for the
-    // caller; the row was already ACL-verified before reaching here.
+    // Stored ciphertext → plaintext for the caller; the row was already
+    // ACL-verified before reaching here.
     content: revealContent(row.content, contentKey),
     metadata:
       typeof row.metadata === 'object' && row.metadata !== null && !Array.isArray(row.metadata)

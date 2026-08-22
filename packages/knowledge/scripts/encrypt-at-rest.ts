@@ -1,16 +1,17 @@
 /**
- * One-off sweep: encrypt every legacy plaintext knowledge_chunks.content in
- * place. New writes are already encrypted at the upsert seam; readers
- * dual-read both eras, so this can run against a LIVE system, in batches,
- * resumable — killing it mid-run loses nothing but progress.
+ * One-off sweep: encrypt every pre-rollout plaintext
+ * knowledge_chunks.content in place. Batched and resumable — killing it
+ * mid-run loses nothing but progress.
+ *
+ * ORDER MATTERS: readers are strict (an unenveloped value renders as
+ * "[content unavailable…]", a plaintext queue payload dead-letters), so
+ * this sweep must complete — and the embedding queue must drain any
+ * pre-encryption payloads — before the strict build serves traffic.
  *
  * Run from packages/knowledge with DATABASE_URL (and the content key —
  * CONTENT_ENCRYPTION_KEY or the TOKEN_ENCRYPTION_KEY fallback) set:
  *
  *   DATABASE_URL=postgres://… pnpm encrypt-at-rest
- *
- * embedding_jobs payloads are deliberately NOT swept: queue rows drain in
- * minutes and the consumer dual-reads, so the backlog converts itself.
  */
 
 import { getDatabase, closeDatabase } from '@renkei/db';
