@@ -48,6 +48,7 @@ import type { GraphAuth } from '../graph/graph-auth';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
 import { registerBulkJobTools } from './bulk-jobs';
 import { createUploadSlot } from '../upload-slots';
+import { extractText } from '@renkei/document-text';
 
 export const OUTLOOK_MCP_CONNECTOR = 'microsoft';
 
@@ -390,12 +391,25 @@ function isTextualContentType(contentType: string): boolean {
 /** Decoded-text ceiling per attachment — matches outlook_get_message's body cap. */
 const ATTACHMENT_TEXT_MAX_CHARS = 60_000;
 /**
- * Ceiling on raw bytes returned as base64. Far below the org's upload
- * limit on purpose: base64 inflates ~1.33x and every byte lands in the
- * model's context, so a 20MB attachment would be ~7M tokens. Past this,
- * the tool reports the size and refuses rather than blowing up the call.
+ * Formats the model can be shown as-is: PDFs (page-rendered by the
+ * provider from a document block) and the raster images vision models
+ * accept. Everything else binary goes through text extraction only.
  */
-const ATTACHMENT_BASE64_MAX_BYTES = 2_000_000;
+const RENDERABLE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+/**
+ * Ceiling on bytes attached as a viewable document/image. These bytes ride
+ * the MCP transport once and become typed content the provider decodes —
+ * never text tokens — but page-rendering is priced per page, so huge files
+ * still fall back to extracted text alone.
+ */
+const ATTACHMENT_DOCUMENT_MAX_BYTES = 10_000_000;
+
+/** Human byte size, mirroring graph/client's — this module predates it. */
+function byteSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function attachmentKindOf(attachment: Record<string, unknown>): string {
   const odataType = str(attachment['@odata.type']);
@@ -960,11 +974,11 @@ export async function registerOutlookTools(
       title: 'Outlook · Read — Download one attachment',
       description:
         'Fetch an attachment’s content. Plain-text formats (txt, csv, json, xml, yaml, source ' +
-        'code) are decoded and returned as readable text. Binary formats (PDF, Word, Excel, ' +
-        'images) are returned base64-encoded only when small enough to be worth putting in ' +
-        'context — otherwise the tool reports the size and declines rather than flooding the ' +
-        'conversation. PDFs/Office files are NOT text-extracted; their base64 is raw container ' +
-        'bytes, so treat this as transport, not parsing.',
+        'code) are decoded and returned as readable text. PDF, Word and Excel files are ' +
+        'TEXT-EXTRACTED server-side and returned as readable text; PDFs and images are ' +
+        'additionally attached as viewable documents where the client supports it, so the ' +
+        'pages themselves (tables, charts, layout) can be looked at. Base64 is never ' +
+        'returned as text.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         messageId: z.string().min(1).describe('Message id the attachment belongs to'),
@@ -1034,17 +1048,77 @@ export async function registerOutlookTools(
         return textResult(`${name} (${contentType}, ${size} bytes):\n\n${capped}`);
       }
 
-      if (size > ATTACHMENT_BASE64_MAX_BYTES) {
-        return errText(
-          `"${name}" is ${size} bytes of ${contentType} — too large to return inline (limit ` +
-            `${ATTACHMENT_BASE64_MAX_BYTES} bytes for binary content). Its text could not be ` +
-            `extracted either, since this tool does not parse binary formats.`
-        );
+      // Binary formats: NEVER base64-as-text — the model cannot decode it
+      // and it burns ~1 token per 2-3 characters saying nothing. Instead:
+      // text is EXTRACTED server-side (the same pipeline the document read
+      // tools use), and formats a model can look at (PDF pages, images)
+      // additionally ride the result's _meta as typed blocks the agent
+      // engine feeds to the model as actual pages. MCP clients that ignore
+      // _meta still get the extracted text.
+      const mediaType = contentType.split(';')[0].trim().toLowerCase();
+      const bytes = Buffer.from(contentBytes, 'base64');
+      const visual =
+        mediaType === 'application/pdf' || RENDERABLE_IMAGE_TYPES.has(mediaType)
+          ? bytes.byteLength <= ATTACHMENT_DOCUMENT_MAX_BYTES
+          : false;
+      const meta = visual
+        ? { renkeiDocuments: [{ mediaType, dataBase64: contentBytes, title: name }] }
+        : undefined;
+
+      if (RENDERABLE_IMAGE_TYPES.has(mediaType)) {
+        // Images carry no text to extract; MCP has a first-class image
+        // content type vision clients render for the model directly.
+        return {
+          content: [
+            { type: 'text' as const, text: `${name} (${mediaType}, ${byteSize(size)}), attached:` },
+            ...(visual
+              ? [{ type: 'image' as const, data: contentBytes, mimeType: mediaType }]
+              : []),
+          ],
+          ...(meta ? { _meta: meta } : {}),
+        };
       }
-      return textResult(
-        `${name} (${contentType}, ${size} bytes), base64-encoded — binary content, not text:\n\n` +
-          contentBytes
-      );
+
+      const extracted = await extractText(bytes, { fileName: name, contentType: mediaType });
+      if (!extracted.ok) {
+        const because: Record<string, string> = {
+          UNSUPPORTED_FORMAT: 'its format cannot be read as text',
+          ENCRYPTED: 'it is password protected',
+          CORRUPT: 'the file appears to be damaged',
+          EMPTY: 'it contains no text',
+          INPUT_TOO_LARGE: 'it is too large to parse here',
+          EXTRACTION_FAILED: 'the text could not be extracted',
+        };
+        const reason = because[extracted.err.type] ?? 'unknown reason';
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text:
+                `Cannot read "${name}" (${mediaType}, ${byteSize(size)}) — ${reason}.` +
+                (meta ? ' The document itself is attached for direct viewing.' : ''),
+            },
+          ],
+          ...(meta ? { _meta: meta } : { isError: true as const }),
+        };
+      }
+
+      const text = extracted.val.text;
+      const capped =
+        text.length > ATTACHMENT_TEXT_MAX_CHARS
+          ? `${text.slice(0, ATTACHMENT_TEXT_MAX_CHARS)}\n\n[…truncated: ${text.length - ATTACHMENT_TEXT_MAX_CHARS} more characters]`
+          : text;
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              `${name} (${mediaType}, ${byteSize(size)}), extracted text` +
+              `${meta ? ' (the document itself is also attached)' : ''}:\n\n${capped}`,
+          },
+        ],
+        ...(meta ? { _meta: meta } : {}),
+      };
     }
   );
 
@@ -3023,7 +3097,8 @@ export async function registerOutlookTools(
       title: 'Outlook · Act — Cancel a previewed event (card only)',
       description:
         'Cancel (or, as a non-organizer, remove) a calendar event the user approved on a ' +
-        'preview card.' + confirmGuard('outlook_cancel_event_preview'),
+        'preview card.' +
+        confirmGuard('outlook_cancel_event_preview'),
       annotations: { readOnlyHint: false },
       _meta: APP_ONLY_META,
       inputSchema: cancelEventSchema,

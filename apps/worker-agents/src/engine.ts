@@ -194,6 +194,47 @@ function textOf(result: McpToolResult): string {
 }
 
 /** The failure code that selects a FailureHandling row. */
+/**
+ * Documents a tool attached for the model to SEE — carried in the MCP
+ * result's `_meta.renkeiDocuments`, never in the text the model reads
+ * (base64-as-text is transport pretending to be information). The engine
+ * turns them into typed document/image content blocks the provider
+ * decodes into actual pages; providers without an equivalent degrade in
+ * their adapter. Only shapes the providers can render are admitted: PDFs
+ * become document blocks, common raster images become image blocks,
+ * anything else is dropped (its extracted text rode the tool result).
+ */
+const IMAGE_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+/** At most this many attachments per attempt, and this much base64 total. */
+const ATTACHMENT_MAX_BLOCKS = 3;
+const ATTACHMENT_MAX_BASE64_CHARS = 14_000_000;
+
+type AttachmentBlock = Extract<LlmContentBlock, { type: 'document' | 'image' }>;
+
+function attachmentBlocksOfMeta(meta: Record<string, unknown>): AttachmentBlock[] {
+  const raw = meta.renkeiDocuments;
+  if (!Array.isArray(raw)) return [];
+  const blocks: AttachmentBlock[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+    const record: { mediaType?: unknown; dataBase64?: unknown; title?: unknown } = entry;
+    if (typeof record.mediaType !== 'string' || typeof record.dataBase64 !== 'string') continue;
+    if (!record.dataBase64) continue;
+    const title = typeof record.title === 'string' && record.title ? record.title : undefined;
+    if (record.mediaType === 'application/pdf') {
+      blocks.push({
+        type: 'document',
+        mediaType: record.mediaType,
+        dataBase64: record.dataBase64,
+        ...(title ? { title } : {}),
+      });
+    } else if (IMAGE_MEDIA_TYPES.has(record.mediaType)) {
+      blocks.push({ type: 'image', mediaType: record.mediaType, dataBase64: record.dataBase64 });
+    }
+  }
+  return blocks;
+}
+
 function classifyFailure(primaryResults: McpToolResult[], declaredCode: string | null): string {
   const lastError = [...primaryResults].reverse().find((result) => result.isError);
   if (lastError) {
@@ -1143,6 +1184,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // handling can route, where insta-failing produced an unroutable 'other'.
     let budgetExhausted = false;
     const primaryResults: McpToolResult[] = [];
+    // Attachment budget for the whole attempt: document/image blocks get
+    // resent with every subsequent turn's messages, so they are priced as
+    // scarce — over-budget attachments are dropped (their extracted text
+    // already rode the tool result), never queued.
+    const attachmentBudget = { blocks: 0, base64Chars: 0 };
     const usage = { inputTokens: 0, outputTokens: 0 };
     const resolvedInstruction = renderInstruction(step.instruction, vars).text;
 
@@ -1218,6 +1264,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
 
       const results: LlmContentBlock[] = [];
+      const attachments: AttachmentBlock[] = [];
       for (const use of toolUses) {
         if (use.name === FINISH_STEP_TOOL) {
           const finish = finishArgsOf(use.input);
@@ -1308,8 +1355,27 @@ export function createAgentRunHandler(deps: EngineDeps) {
           content: clip(textOf(result), PREVIEW_CHARS * 4),
           ...(result.isError ? { isError: true } : {}),
         });
+        for (const block of attachmentBlocksOfMeta(result.meta)) {
+          if (
+            attachmentBudget.blocks >= ATTACHMENT_MAX_BLOCKS ||
+            attachmentBudget.base64Chars + block.dataBase64.length > ATTACHMENT_MAX_BASE64_CHARS
+          ) {
+            logger.debug('attachment block dropped over budget for run {runId}', {
+              component: 'worker-agents/engine',
+              runId: run.id,
+              tool: use.name,
+              mediaType: block.mediaType,
+            });
+            continue;
+          }
+          attachmentBudget.blocks += 1;
+          attachmentBudget.base64Chars += block.dataBase64.length;
+          attachments.push(block);
+        }
       }
-      messages.push({ role: 'user', content: results });
+      // tool_result blocks first (the wire contract), then any documents the
+      // tools attached for the model to see.
+      messages.push({ role: 'user', content: [...results, ...attachments] });
     }
 
     return {

@@ -18,7 +18,17 @@ import type { Result } from '@campfhir/safe-functions/types';
 export type LlmContentBlock =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
-  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean };
+  | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
+  /**
+   * A file the model should SEE, not read about — a PDF page-rendered by
+   * the provider (document) or a picture (image). Bytes ride as base64 in
+   * a typed block the provider decodes; the model never receives base64
+   * text. Anthropic renders documents natively; adapters for providers
+   * without an equivalent degrade to a placeholder, so the engine can
+   * attach these without knowing which provider is behind the run.
+   */
+  | { type: 'document'; mediaType: string; dataBase64: string; title?: string }
+  | { type: 'image'; mediaType: string; dataBase64: string };
 
 export interface LlmMessage {
   role: 'user' | 'assistant';
