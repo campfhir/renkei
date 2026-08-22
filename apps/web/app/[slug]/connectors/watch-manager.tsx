@@ -218,6 +218,38 @@ export default function WatchManager({
     }
   }
 
+  /**
+   * Rebind a failing watch to the caller's own connection, KEEPING the
+   * cursor — polling resumes where it stopped instead of re-reading the
+   * whole scope. The cheap fix for a dead or misaligned grant; re-index
+   * stays available for when the indexed content itself is suspect.
+   */
+  async function repair(watch: Watch) {
+    setBusy(true);
+    setNotice(null);
+    try {
+      const response = await fetch(`/api/tenant/${tenantId}/watches/repair`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, scopeKey: watch.scopeKey }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setNotice(data.error ?? 'Could not repair the watch.');
+        return;
+      }
+      setNotice(
+        `Rebound to your connection. Polling resumes within a few minutes from where it ` +
+          `stopped — nothing is re-fetched.`
+      );
+      await loadWatches();
+    } catch {
+      setNotice('Could not reach the server.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove(watch: Watch) {
     setBusy(true);
     setNotice(null);
@@ -324,6 +356,17 @@ export default function WatchManager({
                   )}{' '}
                   · {relativeTime(watch.lastSyncedAt)}
                 </span>
+                {watch.syncStatus === 'error' && provider !== 'sharepoint' && (
+                  <button
+                    onClick={() => repair(watch)}
+                    disabled={busy}
+                    className="shrink-0 text-amber-600 hover:text-amber-800 disabled:opacity-50 dark:text-amber-500 dark:hover:text-amber-300"
+                    aria-label={`Repair ${watch.scopeLabel || watch.scopeKey}`}
+                    title="Rebind this watch to your connection and resume polling where it stopped — nothing is re-fetched"
+                  >
+                    Repair
+                  </button>
+                )}
                 <button
                   onClick={() => reindex(watch)}
                   disabled={busy}
