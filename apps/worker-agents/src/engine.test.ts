@@ -237,6 +237,50 @@ maybe('agent run engine', () => {
     expect(detail.resolvedInstruction).toContain('jira_get_issue');
   });
 
+  it('feeds a _meta document attachment to the model as a typed block', async () => {
+    const { runId } = await seedRun(singleStep());
+    const seen: LlmRequest[] = [];
+    const llm = stubLlm((request, call) => {
+      seen.push(request);
+      return call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', { saveValue: 'PROJ-42' });
+    });
+    const withDocument: McpToolResult = {
+      content: [{ type: 'text', text: 'report.pdf (application/pdf, 3 B), extracted text: …' }],
+      isError: false,
+      meta: {
+        renkeiDocuments: [
+          { mediaType: 'application/pdf', dataBase64: 'QUJD', title: 'report.pdf' },
+        ],
+      },
+    };
+    const handler = handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => withDocument)
+    );
+    await handler({ payload: { runId } });
+
+    // The follow-up model call carries the tool result — and after it, the
+    // document as a typed block the provider decodes into pages, never as
+    // base64 inside the text the model reads. (The engine mutates one
+    // messages array across turns, so locate the message by its content.)
+    const followUp = seen[1];
+    expect(followUp).toBeDefined();
+    const carrier = followUp.messages.find((message) =>
+      message.content.some((block) => block.type === 'document')
+    );
+    expect(carrier).toBeDefined();
+    expect(carrier?.role).toBe('user');
+    expect(carrier?.content[0]?.type).toBe('tool_result');
+    const documentBlock = carrier?.content.find((block) => block.type === 'document');
+    expect(documentBlock).toMatchObject({
+      mediaType: 'application/pdf',
+      dataBase64: 'QUJD',
+      title: 'report.pdf',
+    });
+  });
+
   it('retries per failure handling and exhausts the TOTAL attempt budget', async () => {
     const { runId } = await seedRun(singleStep({ maxAttempts: 2 }));
     const llm = stubLlm((_request, call) =>

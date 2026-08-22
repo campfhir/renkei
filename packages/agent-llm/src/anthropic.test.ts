@@ -88,6 +88,39 @@ describe('AnthropicProvider.complete', () => {
     });
   });
 
+  it('maps document and image blocks to base64 sources on the wire', async () => {
+    fetchSpy.mockResolvedValue(
+      jsonResponse(200, { content: [], stop_reason: 'end_turn', usage: {} })
+    );
+    await provider.complete({
+      ...request,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              mediaType: 'application/pdf',
+              dataBase64: 'QUJD',
+              title: 'report.pdf',
+            },
+            { type: 'image', mediaType: 'image/png', dataBase64: 'REVG' },
+          ],
+        },
+      ],
+    });
+    const body = JSON.parse(String((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(body.messages[0].content[0]).toEqual({
+      type: 'document',
+      source: { type: 'base64', media_type: 'application/pdf', data: 'QUJD' },
+      title: 'report.pdf',
+    });
+    expect(body.messages[0].content[1]).toEqual({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'REVG' },
+    });
+  });
+
   it('parses tool_use responses and usage', async () => {
     fetchSpy.mockResolvedValue(
       jsonResponse(200, {

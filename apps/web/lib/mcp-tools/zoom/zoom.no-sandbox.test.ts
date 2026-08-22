@@ -70,6 +70,7 @@ const CALLS: { tool: string; args: Record<string, unknown> }[] = [
   { tool: 'zoom_search_notes', args: {} },
   { tool: 'zoom_list_notes', args: { meetingId: '123' } },
   { tool: 'zoom_get_note', args: { noteId: 'note-1' } },
+  { tool: 'zoom_bulk_get_notes', args: { noteIds: ['note-1'] } },
   { tool: 'zoom_get_doc', args: { fileId: 'file-1' } },
   { tool: 'zoom_create_doc', args: { name: 'Doc', markdown: 'hi' } },
   { tool: 'zoom_append_to_doc', args: { fileId: 'file-1', text: 'more' } },

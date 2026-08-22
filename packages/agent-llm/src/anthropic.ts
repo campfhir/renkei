@@ -43,6 +43,20 @@ function toWire(block: LlmContentBlock): Record<string, unknown> {
         content: block.content,
         ...(block.isError ? { is_error: true } : {}),
       };
+    // The platform page-renders documents (image + text layer per page), so
+    // the model reasons over layout, tables and figures — the whole reason
+    // these exist instead of base64-in-text.
+    case 'document':
+      return {
+        type: 'document',
+        source: { type: 'base64', media_type: block.mediaType, data: block.dataBase64 },
+        ...(block.title ? { title: block.title } : {}),
+      };
+    case 'image':
+      return {
+        type: 'image',
+        source: { type: 'base64', media_type: block.mediaType, data: block.dataBase64 },
+      };
   }
 }
 

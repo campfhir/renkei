@@ -197,6 +197,39 @@ describe('OpenAiProvider.complete', () => {
     expect(body.messages[3]).toEqual({ role: 'tool', tool_call_id: 'call_1', content: 'found it' });
   });
 
+  it('sends images as data-URL parts and degrades documents to a placeholder', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(200, okBody));
+    await provider.complete({
+      ...request,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image', mediaType: 'image/png', dataBase64: 'REVG' },
+            {
+              type: 'document',
+              mediaType: 'application/pdf',
+              dataBase64: 'QUJD',
+              title: 'report.pdf',
+            },
+          ],
+        },
+      ],
+    });
+    const body = JSON.parse(String((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body));
+    const [imageMessage, placeholderMessage] = body.messages.slice(-2);
+    expect(imageMessage).toEqual({
+      role: 'user',
+      content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,REVG' } }],
+    });
+    // No PDF part exists in this dialect — a visible placeholder, never
+    // base64 smuggled as text.
+    expect(placeholderMessage.role).toBe('user');
+    expect(placeholderMessage.content).toContain('report.pdf');
+    expect(placeholderMessage.content).toContain('cannot be displayed');
+    expect(placeholderMessage.content).not.toContain('QUJD');
+  });
+
   it('parses tool_calls responses back into tool_use blocks', async () => {
     fetchSpy.mockResolvedValue(
       jsonResponse(200, {

@@ -87,6 +87,26 @@ function toWireMessages(message: LlmMessage): WireMessage[] {
     } else if (block.type === 'tool_result') {
       flushText();
       wire.push({ role: 'tool', tool_call_id: block.toolUseId, content: block.content });
+    } else if (block.type === 'image') {
+      // Vision rides as a data-URL image part in this dialect.
+      flushText();
+      wire.push({
+        role: 'user',
+        content: [
+          {
+            type: 'image_url',
+            image_url: { url: `data:${block.mediaType};base64,${block.dataBase64}` },
+          },
+        ],
+      });
+    } else if (block.type === 'document') {
+      // No PDF part exists in the chat-completions dialect — degrade to a
+      // visible placeholder rather than smuggling base64 as text. The tool
+      // result alongside carries the extracted text either way.
+      pendingText +=
+        (pendingText ? '\n' : '') +
+        `[Attached document${block.title ? ` "${block.title}"` : ''} (${block.mediaType}) ` +
+        'cannot be displayed by this model provider — use the extracted text in the tool result.]';
     }
     // A tool_use in a user message has no wire form; the engine never builds one.
   }

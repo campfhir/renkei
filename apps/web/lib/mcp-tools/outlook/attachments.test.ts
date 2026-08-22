@@ -78,7 +78,11 @@ import { registerOutlookTools } from './index';
 // path is exercised the same way the rest of this suite's fetch mocking is.
 import { oauthGraphAuth } from '../graph/graph-auth';
 
-type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean };
+type ToolResult = {
+  content: { type: string; text?: string; mimeType?: string; data?: string }[];
+  isError?: boolean;
+  _meta?: Record<string, unknown>;
+};
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
 
 /** Response bodies keyed by a substring of the requested URL. */
@@ -217,14 +221,37 @@ describe('outlook_get_attachment', () => {
     expect(textOf(result)).toContain('data.csv');
   });
 
-  it('returns small binary content as base64, labelled as binary', async () => {
+  it('text-extracts a Word attachment instead of returning base64', async () => {
+    const { buildDocx, paragraph } = await import('@renkei/document-text/src/test-support');
+    const docx = buildDocx(paragraph('The vendor agreement renews in March.'));
     routes = [
       {
         match: '/attachments/',
         body: {
           '@odata.type': '#microsoft.graph.fileAttachment',
           id: 'a1',
-          name: 'tiny.pdf',
+          name: 'contract.docx',
+          contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          size: docx.byteLength,
+          contentBytes: Buffer.from(docx).toString('base64'),
+        },
+      },
+    ];
+    const result = await tool('outlook_get_attachment', { messageId: 'm1', attachmentId: 'a1' });
+    expect(textOf(result)).toContain('The vendor agreement renews in March.');
+    expect(textOf(result)).not.toContain('base64');
+    // Word is not page-renderable by the providers, so no document rides along.
+    expect(result._meta).toBeUndefined();
+  });
+
+  it('attaches a PDF as a viewable document in _meta even when unextractable', async () => {
+    routes = [
+      {
+        match: '/attachments/',
+        body: {
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          id: 'a1',
+          name: 'scan.pdf',
           contentType: 'application/pdf',
           size: 4,
           contentBytes: 'AAAA',
@@ -232,11 +259,45 @@ describe('outlook_get_attachment', () => {
       },
     ];
     const result = await tool('outlook_get_attachment', { messageId: 'm1', attachmentId: 'a1' });
-    expect(textOf(result)).toContain('base64');
-    expect(textOf(result)).toContain('binary content, not text');
+    // Extraction of garbage bytes fails, but the document itself still rides
+    // for the agent engine to show the model — so this is NOT an error.
+    expect(result.isError).not.toBe(true);
+    expect(textOf(result)).toContain('attached for direct viewing');
+    const docs = result._meta?.renkeiDocuments;
+    expect(Array.isArray(docs)).toBe(true);
+    if (Array.isArray(docs)) {
+      expect(docs[0]).toMatchObject({
+        mediaType: 'application/pdf',
+        dataBase64: 'AAAA',
+        title: 'scan.pdf',
+      });
+    }
   });
 
-  it('refuses oversized binary rather than flooding the context', async () => {
+  it('returns an image as MCP image content plus the _meta attachment', async () => {
+    const png = Buffer.from('89504e470d0a1a0a', 'hex').toString('base64');
+    routes = [
+      {
+        match: '/attachments/',
+        body: {
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          id: 'a1',
+          name: 'chart.png',
+          contentType: 'image/png',
+          size: 8,
+          contentBytes: png,
+        },
+      },
+    ];
+    const result = await tool('outlook_get_attachment', { messageId: 'm1', attachmentId: 'a1' });
+    const image = result.content.find((block) => block.type === 'image');
+    expect(image).toMatchObject({ mimeType: 'image/png', data: png });
+    expect(Array.isArray(result._meta?.renkeiDocuments)).toBe(true);
+  });
+
+  it('falls back to extraction alone for a PDF over the attach ceiling', async () => {
+    // >10MB of actual bytes: too big to page-render, and too big to parse.
+    const big = Buffer.alloc(11_000_000, 0x41).toString('base64');
     routes = [
       {
         match: '/attachments/',
@@ -245,14 +306,14 @@ describe('outlook_get_attachment', () => {
           id: 'a1',
           name: 'huge.pdf',
           contentType: 'application/pdf',
-          size: 50_000_000,
-          contentBytes: 'AAAA',
+          size: 11_000_000,
+          contentBytes: big,
         },
       },
     ];
     const result = await tool('outlook_get_attachment', { messageId: 'm1', attachmentId: 'a1' });
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('too large to return inline');
+    expect(result._meta).toBeUndefined();
+    expect(textOf(result)).not.toContain(big.slice(0, 100));
   });
 
   it('explains a reference attachment has no bytes to download', async () => {

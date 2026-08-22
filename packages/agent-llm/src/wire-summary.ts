@@ -28,6 +28,20 @@ export function summarizeWireRequest(url: string, body: Record<string, unknown>)
               for (const [field, fieldValue] of Object.entries(shape)) {
                 if (typeof fieldValue === 'string' && fieldValue.length > 40) {
                   shape[field] = `<${fieldValue.length} chars>`;
+                } else if (
+                  typeof fieldValue === 'object' &&
+                  fieldValue !== null &&
+                  !Array.isArray(fieldValue)
+                ) {
+                  // One level deeper for nested sources — a document/image
+                  // block's base64 lives at source.data.
+                  const nested: Record<string, unknown> = { ...fieldValue };
+                  for (const [innerField, innerValue] of Object.entries(nested)) {
+                    if (typeof innerValue === 'string' && innerValue.length > 40) {
+                      nested[innerField] = `<${innerValue.length} chars>`;
+                    }
+                  }
+                  shape[field] = nested;
                 }
               }
               return shape;

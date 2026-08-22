@@ -126,6 +126,12 @@ function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
 }
 
+function clipChars(value: string, max: number): string {
+  return value.length > max
+    ? `${value.slice(0, max)}\n[…truncated: ${value.length - max} more characters]`
+    : value;
+}
+
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -188,6 +194,7 @@ export function zoomScopeFor(toolName: string): string[] {
     case 'zoom_list_notes':
       return ['my_notes:read:note'];
     case 'zoom_get_note':
+    case 'zoom_bulk_get_notes':
       return ['my_notes:read:content'];
     case 'zoom_get_doc':
       return ['docs:read:export'];
@@ -837,6 +844,85 @@ export async function registerZoomTools(
         );
       }
       return textResult(sections.join('\n\n'));
+    }
+  );
+
+  server.registerTool(
+    'zoom_bulk_get_notes',
+    {
+      title: 'Zoom · Read — Get many My Notes notes in one call',
+      description:
+        'The content of up to 50 My Notes notes in a single call — use this instead of one ' +
+        'zoom_get_note per note whenever a request covers several meetings’ notes. Zoom’s API ' +
+        'has no batch endpoint, so this tool fans the fetches out server-side. Per-note content ' +
+        'is capped; pull an individual note with zoom_get_note (which can also include the ' +
+        'transcript) when the full text of one matters.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        noteIds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(50)
+          .describe('Note ids from zoom_list_notes or zoom_search_notes'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const noteIds: string[] = Array.isArray(args.noteIds)
+        ? args.noteIds.filter((id: unknown): id is string => typeof id === 'string' && id !== '')
+        : [];
+      if (noteIds.length === 0) return errText('noteIds is required');
+      const unique = [...new Set(noteIds)].slice(0, 50);
+
+      // Zoom rate-limits per app; a bounded window keeps 50 notes polite
+      // while still finishing in a few round trips.
+      const CONCURRENCY = 4;
+      const PER_NOTE_MAX_CHARS = 8_000;
+      const sections: string[] = new Array<string>(unique.length);
+      let cursor = 0;
+      const fetchOne = async (): Promise<void> => {
+        for (;;) {
+          const index = cursor;
+          cursor += 1;
+          if (index >= unique.length) return;
+          const noteId = unique[index];
+          const result = await zoomGet(
+            auth,
+            zoomScopeFor('zoom_bulk_get_notes'),
+            `/my_notes/notes/${encodeURIComponent(noteId)}/content`
+          );
+          if (!result.ok) {
+            sections[index] = `## ${noteId}\n(Could not fetch: ${result.error})`;
+            continue;
+          }
+          const note = result.body;
+          const parts = [
+            `## ${str(note.note_name) || '(untitled note)'} — id: ${noteId}` +
+              (str(note.note_url) ? `\n[Open in Zoom](${str(note.note_url)})` : ''),
+          ];
+          const manual = str(note.manual_note_content).trim();
+          if (manual) parts.push(`### Your notes\n${clipChars(manual, PER_NOTE_MAX_CHARS)}`);
+          const generated = str(note.generated_note_content).trim();
+          if (generated) {
+            parts.push(`### AI-generated notes\n${clipChars(generated, PER_NOTE_MAX_CHARS)}`);
+          }
+          if (!manual && !generated) parts.push('(The note has no content yet.)');
+          sections[index] = parts.join('\n\n');
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(CONCURRENCY, unique.length) }, () => fetchOne())
+      );
+
+      const failed = sections.filter((section) => section.includes('(Could not fetch:')).length;
+      // Partial failure is a report; TOTAL failure (revoked scope, dead
+      // credential) is an error the caller must see as one.
+      if (failed === unique.length) {
+        return errText(`None of the ${unique.length} note(s) could be fetched:\n\n${sections[0]}`);
+      }
+      return textResult(
+        `${unique.length} note(s)${failed ? ` (${failed} could not be fetched)` : ''}:\n\n` +
+          sections.join('\n\n---\n\n')
+      );
     }
   );
 

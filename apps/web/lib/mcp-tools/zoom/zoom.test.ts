@@ -204,6 +204,57 @@ describe('zoom_get_meeting_summary — the ZoomClient exception path', () => {
   });
 });
 
+describe('zoom_bulk_get_notes', () => {
+  it('fetches every note in one call and renders each as a section', async () => {
+    mockCall.mockImplementation(async (path: string) => {
+      const noteId = decodeURIComponent(path.split('/notes/')[1]?.split('/')[0] ?? '');
+      return jsonResponse({
+        note_name: `Notes for ${noteId}`,
+        manual_note_content: `manual ${noteId}`,
+        generated_note_content: `recap ${noteId}`,
+      });
+    });
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_bulk_get_notes')!({ noteIds: ['n-1', 'n-2', 'n-3'] });
+
+    const text = textOf(result);
+    expect(text).toContain('3 note(s)');
+    for (const id of ['n-1', 'n-2', 'n-3']) {
+      expect(text).toContain(`Notes for ${id}`);
+      expect(text).toContain(`manual ${id}`);
+      expect(text).toContain(`recap ${id}`);
+    }
+    expect(mockCall).toHaveBeenCalledTimes(3);
+  });
+
+  it('reports per-note failures without failing the whole batch', async () => {
+    mockCall.mockImplementation(async (path: string) =>
+      path.includes('n-bad')
+        ? jsonResponse({ message: 'not found' }, 404)
+        : jsonResponse({ note_name: 'Good note', generated_note_content: 'recap' })
+    );
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_bulk_get_notes')!({ noteIds: ['n-ok', 'n-bad'] });
+
+    const text = textOf(result);
+    expect(text).toContain('Good note');
+    expect(text).toContain('1 could not be fetched');
+    expect(text).toContain('Could not fetch');
+    expect(result.isError).not.toBe(true);
+  });
+
+  it('deduplicates ids before fetching', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ note_name: 'One', generated_note_content: 'x' }));
+    const tools = await toolsOf();
+
+    await tools.get('zoom_bulk_get_notes')!({ noteIds: ['n-1', 'n-1', 'n-1'] });
+
+    expect(mockCall).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('zoomScopeFor', () => {
   it('gives each acting tool its own scope, not a shared default', () => {
     expect(zoomScopeFor('zoom_create_meeting')).toEqual(['meeting:write:meeting']);
