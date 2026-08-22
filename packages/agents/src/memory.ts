@@ -193,7 +193,7 @@ export async function renderAgentKnowledgeNotes(
     const title = typeof metadata.title === 'string' ? metadata.title : '(untitled)';
     const slash = baseRef.indexOf('/');
     const noteId = slash > 0 ? baseRef.slice(slash + 1) : baseRef;
-    // Chunk content is ciphertext at rest (legacy rows pass through).
+    // Chunk content is ciphertext at rest.
     const line = `- ${title} [noteId ${noteId}]: ${clip(revealContent(row.content, contentKey), 400)}`;
     if (spent + line.length + 1 > AGENT_NOTES_INJECT_MAX_CHARS) break;
     lines.push(line);

@@ -27,15 +27,14 @@ describe('content envelope', () => {
     if (opened.ok) expect(opened.val).toBe('The escalation policy is…');
   });
 
-  it('passes legacy plaintext through untouched', () => {
+  it('rejects unencrypted values instead of passing them through', () => {
     expect(isEncryptedContent('plain old chunk text')).toBe(false);
     const opened = decryptContent('plain old chunk text', key);
-    expect(opened.ok).toBe(true);
-    if (opened.ok) expect(opened.val).toBe('plain old chunk text');
-    expect(revealContent('plain old chunk text', null)).toBe('plain old chunk text');
+    expect(opened.ok).toBe(false);
+    expect(revealContent('plain old chunk text', key)).toContain('content unavailable');
   });
 
-  it('reveals a marker, not ciphertext, on the failure modes', () => {
+  it('reveals a marker, not the stored bytes, on every failure mode', () => {
     const stored = encryptContent('secret', key);
     expect(revealContent(stored, null)).toContain('content unavailable');
     expect(revealContent(stored, randomBytes(32))).toContain('content unavailable');

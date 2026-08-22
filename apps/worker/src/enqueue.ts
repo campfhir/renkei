@@ -69,7 +69,7 @@ export type KnowledgeEventType =
  * before use. Everything else in the payload is identifiers and routing
  * metadata, which stays plaintext because reindex's discardPending and the
  * fairness lanes match on it. `raw` (a whole RawEmail object) rides as one
- * encrypted JSON string; the consumer dual-reads a legacy record.
+ * encrypted JSON string.
  */
 const CONTENT_FIELDS: Partial<Record<KnowledgeEventType, readonly string[]>> = {
   'ingest.object': ['content'],

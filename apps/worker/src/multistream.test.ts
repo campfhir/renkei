@@ -158,10 +158,19 @@ jest.mock('./domain-events', () => ({
   publishDomainEvent: jest.fn(async () => undefined),
 }));
 
+import { randomBytes } from 'node:crypto';
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { WebexMessage } from '@renkei/connector-webex';
+import { contentEncryptionKey, encryptContent } from '@renkei/crypto';
 import { InMemoryQueue } from '@renkei/queue';
+
+// The knowledge-ingest handlers are strict about payload encryption; give
+// the whole suite a key before any of them run, and encrypt hand-built
+// job payloads with it.
+const suiteContentKey = randomBytes(32);
+process.env.CONTENT_ENCRYPTION_KEY = suiteContentKey.toString('base64');
+const encPayloadContent = (text: string): string => encryptContent(text, suiteContentKey);
 import { createEventLoop, schedulePeriodicSweep } from './loop';
 import type { EventLoop } from './loop';
 import { registerHandler, handlerFor } from './handlers';
@@ -415,6 +424,20 @@ beforeEach(() => {
   stubDb(dbState);
   registerAllHandlers(handled);
   mockEnqueueImpl = async (tenantId, type, payload, orderingKey) => {
+    // Mirrors the real enqueueKnowledgeEvent's payload encryption too — the
+    // consuming handlers are strict and would dead-letter plaintext, which
+    // would read here as a drain failure instead of a crypto one.
+    const keyResult = contentEncryptionKey();
+    if (!keyResult.ok) throw new Error('suite needs a content key');
+    const encrypted: Record<string, unknown> = { ...payload };
+    for (const field of ['content', 'raw', 'query']) {
+      const value = encrypted[field];
+      if (value === undefined) continue;
+      encrypted[field] = encryptContent(
+        typeof value === 'string' ? value : JSON.stringify(value),
+        keyResult.val
+      );
+    }
     await embedding.producer.enqueue({
       tenantId,
       // Mirrors the real enqueueKnowledgeEvent: the provider is a fairness
@@ -423,7 +446,7 @@ beforeEach(() => {
       // dispatch regression on laned messages would sail through it.
       source: typeof payload.provider === 'string' ? `knowledge:${payload.provider}` : 'knowledge',
       type,
-      payload,
+      payload: encrypted,
       orderingKey,
     });
   };
@@ -511,7 +534,11 @@ describe('multi-stream: hung embedding queue (Scenario B)', () => {
       tenantId: 'tenant-1',
       source: 'knowledge',
       type: 'ingest.object',
-      payload: { provider: 'zoom', refId: 'host@example.com/uuid-9/transcript', content: 'x' },
+      payload: {
+        provider: 'zoom',
+        refId: 'host@example.com/uuid-9/transcript',
+        content: encPayloadContent('x'),
+      },
       orderingKey: 'zoom/host@example.com/uuid-9/transcript',
     });
 
@@ -602,7 +629,7 @@ describe('multi-stream: two embedding workers (Scenario C)', () => {
         tenantId: 'tenant-1',
         source: 'knowledge',
         type: 'ingest.object',
-        payload: { provider: 'test', refId, content: refId },
+        payload: { provider: 'test', refId, content: encPayloadContent(refId) },
         orderingKey: 'alpha',
       });
     }
@@ -611,7 +638,7 @@ describe('multi-stream: two embedding workers (Scenario C)', () => {
         tenantId: 'tenant-1',
         source: 'knowledge',
         type: 'ingest.object',
-        payload: { provider: 'test', refId, content: refId },
+        payload: { provider: 'test', refId, content: encPayloadContent(refId) },
         orderingKey: 'beta',
       });
     }
@@ -619,7 +646,7 @@ describe('multi-stream: two embedding workers (Scenario C)', () => {
       tenantId: 'tenant-1',
       source: 'knowledge',
       type: 'ingest.object',
-      payload: { provider: 'test', refId: 'solo/1', content: 'solo' },
+      payload: { provider: 'test', refId: 'solo/1', content: encPayloadContent('solo') },
       orderingKey: null,
     });
 

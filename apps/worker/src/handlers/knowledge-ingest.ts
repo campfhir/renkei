@@ -58,14 +58,17 @@ function required(payload: Record<string, unknown>, key: string): string {
 
 /**
  * A payload field the producer encrypted at rest (enqueue.ts's
- * CONTENT_FIELDS), decrypted right before use. A value without the envelope
- * marker is a legacy plaintext payload from before the rollout and passes
- * through. A missing/bad key throws — retry cannot fix it, and the
- * dead-letter row's last_error says exactly what to configure.
+ * CONTENT_FIELDS), decrypted right before use. Strict: a non-empty value
+ * that is not an envelope throws, like a missing/bad key does — retry
+ * cannot fix any of them, and the dead-letter row's last_error says
+ * exactly what broke.
  */
 function decryptedField(value: unknown, label: string): string {
   const text = str(value);
-  if (!text || !isEncryptedContent(text)) return text;
+  if (!text) return text;
+  if (!isEncryptedContent(text)) {
+    throw new Error(`payload '${label}' is not encrypted — plaintext payloads are not accepted`);
+  }
   const keyResult = contentEncryptionKey();
   if (!keyResult.ok) {
     throw new Error(`cannot decrypt payload '${label}': ${keyResult.err.message}`);
@@ -108,13 +111,9 @@ function rawEmailOfPayload(raw: Record<string, unknown>): RawEmail {
   };
 }
 
-/**
- * `payload.raw` in both eras: an encrypted JSON string from the current
- * producer, a bare record from a payload queued before the rollout.
- */
+/** `payload.raw`: an encrypted JSON string, and nothing else — see decryptedField. */
 function rawRecordOfPayload(value: unknown): Record<string, unknown> {
-  if (isRecord(value)) return value;
-  if (typeof value === 'string' && isEncryptedContent(value)) {
+  if (typeof value === 'string' && value) {
     const parsed: unknown = JSON.parse(decryptedField(value, 'raw'));
     if (isRecord(parsed)) return parsed;
   }
