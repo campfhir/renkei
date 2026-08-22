@@ -222,6 +222,9 @@ describe('zoom_bulk_get_notes', () => {
     expect(text).toContain('3 note(s)');
     for (const id of ['n-1', 'n-2', 'n-3']) {
       expect(text).toContain(`Notes for ${id}`);
+      // Labelled with zoom_get_note's exact parameter name, so a follow-up
+      // single-note call is a copy, not a guess.
+      expect(text).toContain(`noteId: ${id}`);
       expect(text).toContain(`manual ${id}`);
       expect(text).toContain(`recap ${id}`);
     }

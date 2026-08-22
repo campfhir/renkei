@@ -891,12 +891,15 @@ export async function registerZoomTools(
             `/my_notes/notes/${encodeURIComponent(noteId)}/content`
           );
           if (!result.ok) {
-            sections[index] = `## ${noteId}\n(Could not fetch: ${result.error})`;
+            sections[index] = `## noteId: ${noteId}\n(Could not fetch: ${result.error})`;
             continue;
           }
           const note = result.body;
+          // The id is labelled `noteId` — the exact parameter name
+          // zoom_get_note takes — so the follow-up call is a copy, not a
+          // guessing game.
           const parts = [
-            `## ${str(note.note_name) || '(untitled note)'} — id: ${noteId}` +
+            `## ${str(note.note_name) || '(untitled note)'} — noteId: ${noteId}` +
               (str(note.note_url) ? `\n[Open in Zoom](${str(note.note_url)})` : ''),
           ];
           const manual = str(note.manual_note_content).trim();
