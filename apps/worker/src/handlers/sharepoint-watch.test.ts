@@ -1,4 +1,3 @@
- 
 /**
  * Drive polling. Almost every case here is a way drive delta differs from
  * mail delta — the differences are silent when got wrong: deletions that
@@ -56,6 +55,7 @@ const access = (): MicrosoftAccess => ({
   accountId: 'acct-1',
   upn: 'alice@example.com',
   scopes: ['Files.Read.All'],
+  indexing: { mail: false, calendar: false, tasks: false },
 });
 
 const row = (over: Partial<DriveWatchRow> = {}): DriveWatchRow => ({

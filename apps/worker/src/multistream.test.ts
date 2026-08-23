@@ -310,6 +310,7 @@ function microsoftAccess(): MicrosoftAccess {
     accessToken: 'token',
     upn: 'alice@example.com',
     scopes: ['Mail.Read'],
+    indexing: { mail: true, calendar: true, tasks: true },
   };
 }
 

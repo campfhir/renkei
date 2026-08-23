@@ -8,6 +8,7 @@ import { MICROSOFT_PRODUCTS, groupsOfProduct, optionsOfProduct } from '@/lib/mic
 import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
 import SyncProgress from './sync-progress';
 import WatchManager from './watch-manager';
+import OutlookIndexingPrefs from './outlook-indexing-prefs';
 import MicrosoftProductCard from './microsoft-product-card';
 
 /**
@@ -142,6 +143,7 @@ export default function MicrosoftConnector({
   const extras: Record<string, ReactNode> = {
     outlook: connected ? (
       <>
+        <OutlookIndexingPrefs tenantId={tenantId} />
         <div className="mt-3">
           <div className="flex items-center gap-3">
             <button

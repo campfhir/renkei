@@ -754,6 +754,32 @@ async function handleMicrosoftCallback(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
+  // A reconnect replaces the metadata wholesale, and the indexing opt-in
+  // lives there — carry it over, or reconnecting silently turns a user's
+  // indexing off.
+  let carriedIndexing: Record<string, unknown> = {};
+  const dbForPrefs = getDatabase();
+  if (dbForPrefs.ok) {
+    const prior = await dbForPrefs.val
+      .selectFrom('provider_grants')
+      .select('metadata')
+      .where('tenant_id', '=', tenant.id)
+      .where('provider', '=', MICROSOFT)
+      .where('provider_account_id', '=', oid)
+      .executeTakeFirst()
+      .catch(() => undefined);
+    const priorMetadata =
+      typeof prior?.metadata === 'object' &&
+      prior.metadata !== null &&
+      !Array.isArray(prior.metadata)
+        ? prior.metadata
+        : {};
+    const record: Record<string, unknown> = { ...priorMetadata };
+    if (typeof record.indexing === 'object' && record.indexing !== null) {
+      carriedIndexing = { indexing: record.indexing };
+    }
+  }
+
   const stored = await setGrant(
     MICROSOFT,
     tenant.id,
@@ -770,7 +796,7 @@ async function handleMicrosoftCallback(
       grantedScopes: scopesFromAccessToken(accessToken) ?? scopeEcho?.split(/\s+/) ?? null,
       // tid keeps refresh pointed at the right authority; upn/email are what
       // the refIds and the access verifier are built from.
-      metadata: { tid, upn, email: email ?? null },
+      metadata: { tid, upn, email: email ?? null, ...carriedIndexing },
       subject,
     },
     keyResult.val
