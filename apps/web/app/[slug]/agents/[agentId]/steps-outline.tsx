@@ -64,6 +64,36 @@ function NodeList({
                 </div>
               </li>
             );
+          case 'terminal': {
+            const wording =
+              node.result === 'failure'
+                ? 'Fails the run here'
+                : node.result === 'stop'
+                  ? 'Stops the run here — nothing to do'
+                  : 'Finishes the run here';
+            const channels = [
+              ...(node.notifyEmail ? ['emails you'] : []),
+              ...(node.notifyWebex ? ['sends a WebEx note'] : []),
+            ];
+            return (
+              <li
+                key={node.id}
+                className="rounded-md border border-rose-200 p-3 text-sm dark:border-rose-900"
+              >
+                <span className="mr-2 font-semibold">{(ordinals.get(node.id) ?? 0) + 1}.</span>
+                <span className="font-medium">⏹ {node.name}</span>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {wording}
+                  {channels.length > 0 ? ` — ${channels.join(' and ')}` : ''}
+                </p>
+                {node.message.length > 0 ? (
+                  <p className="mt-1 text-gray-600 dark:text-gray-400">
+                    {instructionPreview(node.message)}
+                  </p>
+                ) : null}
+              </li>
+            );
+          }
           case 'action':
           case undefined:
             return (

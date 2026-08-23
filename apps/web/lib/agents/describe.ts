@@ -146,6 +146,24 @@ function nodeLines(
             `${indent}${label} ${node.name} (a group — organizes the steps below; changes nothing about execution)`,
             nodeLines(node.steps, ordinals, `${indent}      `),
           ].join('\n');
+        case 'terminal': {
+          const wording =
+            node.result === 'failure'
+              ? 'the whole run ends here AS A FAILURE (a deliberate failure exit)'
+              : node.result === 'stop'
+                ? 'the whole run ends here gracefully as "nothing to do"'
+                : 'the whole run finishes successfully here';
+          const channels = [
+            ...(node.notifyEmail ? ['an email to the owner'] : []),
+            ...(node.notifyWebex ? ['a WebEx note to the owner'] : []),
+          ];
+          return [
+            `${indent}${label} ${node.name} (an end marker) — when reached, ${wording}`,
+            channels.length > 0
+              ? `${indent}   sends ${channels.join(' and ')} with: ${instructionPreview(node.message)}`
+              : `${indent}   sends no notification`,
+          ].join('\n');
+        }
         default: {
           const unhandled: never = node;
           throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
@@ -175,6 +193,7 @@ function promptOf(name: string, steps: AgentStepsDoc, triggers: TriggerDraft[]):
     '- A failure handled with "stop", an unhandled failure, or exhausted retries STOPS the whole automation immediately — later steps never run, so they can safely assume earlier steps succeeded. Missing "fallbacks" for exhausted retries are not a flaw. A branch\'s failure route (when present) already covers the decision itself erroring.',
     "- The runner checks each step's tool is available before running, and verifies tool errors against the declared success.",
     '- Loop round limits and the collected-list size are engine-enforced ceilings with truncation notes — do not flag them as missing safeguards.',
+    '- An end marker ends the WHOLE run exactly as configured (success, failure, or nothing-to-do) and delivers only its own configured notifications — the editor already prevents steps after it, and a failure ending without notifications is a deliberate choice, not a flaw.',
     '',
     'Reply with JSON only, no code fences: {"summary": "...", "concerns": [{"issue": "...", "fix": "..."}]}.',
     'summary: 2-3 plain sentences telling the OWNER what this agent does, no technical terms, no tool identifiers.',

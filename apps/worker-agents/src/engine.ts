@@ -38,6 +38,7 @@ import {
   type BranchStep,
   type FailureHandling,
   type LoopStep,
+  type TerminalStep,
   type UntilLoopStep,
 } from '@renkei/agents';
 import {
@@ -522,10 +523,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // sequence, so timeline ordering keeps working.
     const ordinals = new Map(walkSteps(nodes).map((entry) => [entry.node.id, entry.ordinal]));
 
-    // The agent may have been disabled between enqueue and claim.
+    // The agent may have been disabled between enqueue and claim. The name
+    // rides along for terminal-node notifications.
     const agentRow = await db
       .selectFrom('agents')
-      .select(['enabled'])
+      .select(['enabled', 'name'])
       .where('id', '=', run.agent_id)
       .executeTakeFirst();
     if (!agentRow) {
@@ -743,6 +745,48 @@ export function createAgentRunHandler(deps: EngineDeps) {
               items,
             });
             continue;
+          }
+          case 'terminal': {
+            // An explicit end marker: the run ends HERE with the configured
+            // result — inside a branch path or loop body too — after the
+            // node's own notifications go out. Deterministic, no LLM.
+            const ended = await executeTerminal(
+              run,
+              node,
+              agentRow.name ?? 'Your agent',
+              mcp,
+              toolsByName,
+              vars,
+              ordinals,
+              iteration
+            );
+            switch (node.result) {
+              case 'failure':
+                // quiet=true: the node's OWN channels are the notification
+                // now — the generic context-free run.failed mail must not
+                // double up on an ending the owner configured explicitly.
+                await finalizeRun(
+                  run,
+                  'failed',
+                  'step_failed',
+                  `The flow ended at "${node.name || 'a failure marker'}"${ended.message ? `: ${clip(ended.message, 300)}` : '.'}`,
+                  vars,
+                  true
+                );
+                return;
+              case 'stop':
+                await finalizeRun(run, 'stopped', null, null, vars, true);
+                return;
+              case 'success':
+                // Not quiet: a successful finish still chains dependent
+                // agents, exactly like reaching the end of the list.
+                await finalizeRun(run, 'succeeded', null, null, vars);
+                return;
+              default: {
+                const unhandled: never = node.result;
+                throw new Error(`unknown terminal result: ${JSON.stringify(unhandled)}`);
+              }
+            }
           }
           case 'action':
           case undefined:
@@ -1285,6 +1329,172 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // action === 'retry' → loop; the budget check at the top decides
       // whether another attempt actually starts.
     }
+  }
+
+  /**
+   * Execute a terminal node: record its attempt row and deliver its
+   * configured notifications through the run's own MCP client — the same
+   * owner-granted tools the steps use (`outlook_send_mail` to the owner's
+   * own address, `webex_note_to_self`), so the message carries the run's
+   * real variable values instead of the old context-free failure mail.
+   *
+   * Deterministic and best-effort: no LLM is involved, and a channel that
+   * is unconnected or errors becomes a note on the attempt row, never a
+   * run failure — the ending itself is what the node is for. Redelivery
+   * replays: an existing terminal row for this iteration means the
+   * notifications already went out, so they are not re-sent.
+   */
+  async function executeTerminal(
+    run: RunRow,
+    node: TerminalStep,
+    agentName: string,
+    mcp: McpClient,
+    toolsByName: Map<string, McpToolInfo>,
+    vars: Record<string, string>,
+    ordinals: Map<string, number>,
+    iteration: number
+  ): Promise<{ message: string }> {
+    const rendered = renderInstruction(node.message, vars);
+    const message = rendered.text.trim();
+
+    // Close a row a crashed worker left open, then replay a finished one.
+    await db
+      .updateTable('agent_run_steps')
+      .set({ status: 'failed', outcome: 'terminal', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
+      .where('run_id', '=', run.id)
+      .where('step_id', '=', node.id)
+      .where('iteration', '=', iteration)
+      .where('status', '=', 'running')
+      .execute();
+    const existing = await db
+      .selectFrom('agent_run_steps')
+      .select('id')
+      .where('run_id', '=', run.id)
+      .where('step_id', '=', node.id)
+      .where('iteration', '=', iteration)
+      .where('status', 'in', ['succeeded', 'failed', 'stopped'])
+      .executeTakeFirst();
+    if (existing) return { message };
+
+    const counted = await db
+      .selectFrom('agent_run_steps')
+      .select(({ fn }) => fn.countAll<string>().as('count'))
+      .where('run_id', '=', run.id)
+      .where('step_id', '=', node.id)
+      .where('iteration', '=', iteration)
+      .executeTakeFirst();
+    const rowId = randomUUID();
+    try {
+      await db
+        .insertInto('agent_run_steps')
+        .values({
+          id: rowId,
+          tenant_id: run.tenant_id,
+          run_id: run.id,
+          step_id: node.id,
+          step_index: ordinals.get(node.id) ?? 0,
+          attempt: Number(counted?.count ?? 0) + 1,
+          iteration,
+          status: 'running',
+          started_at: sql`NOW()`,
+        })
+        .execute();
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('agent_run_steps_attempt')) {
+        throw new TransientFailure('another executor holds this run');
+      }
+      throw error;
+    }
+
+    const resultPhrase =
+      node.result === 'failure'
+        ? 'stopped at a failure marker'
+        : node.result === 'stop'
+          ? 'finished — nothing to do'
+          : 'finished';
+    const heading = `Agent “${agentName}” ${resultPhrase}${node.name.trim() ? `: ${node.name.trim()}` : ''}`;
+    const toolCalls: ToolCallRecord[] = [];
+    const notes: string[] = [];
+    const deliver = async (channel: string, tool: string, args: Record<string, unknown>) => {
+      if (!toolsByName.has(tool)) {
+        notes.push(`${channel} skipped — the "${tool}" skill is not connected.`);
+        return;
+      }
+      const startedAt = Date.now();
+      let result: McpToolResult;
+      try {
+        result = await mcp.callTool(tool, args);
+      } catch (error) {
+        result = {
+          content: [
+            {
+              type: 'text',
+              text: `The tool could not be reached: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
+          isError: true,
+          meta: {},
+        };
+      }
+      toolCalls.push({
+        tool,
+        argsPreview: clip(JSON.stringify(args), PREVIEW_CHARS),
+        resultPreview: clip(textOf(result), PREVIEW_CHARS),
+        isError: result.isError,
+        durationMs: Date.now() - startedAt,
+      });
+      if (result.isError) notes.push(`${channel} could not be delivered.`);
+    };
+
+    const body = message || heading;
+    if (node.notifyEmail) {
+      const email = vars['user.email'];
+      if (!email) {
+        notes.push('Email skipped — no email address is recorded for you.');
+      } else {
+        await deliver('Email', 'outlook_send_mail', {
+          to: [email],
+          subject: heading,
+          body,
+        });
+      }
+    }
+    if (node.notifyWebex) {
+      await deliver('WebEx note', 'webex_note_to_self', {
+        markdown: `**${heading}**\n\n${body}`,
+      });
+    }
+
+    const detail = {
+      llmSummary: [`The flow ended here (${resultPhrase}).`, ...notes].join(' '),
+      declaredOutcome:
+        node.result === 'failure'
+          ? 'failure'
+          : node.result === 'stop'
+            ? 'nothing-to-do'
+            : 'success',
+      terminalResult: node.result,
+      ...(message ? { terminalMessage: clip(message, PREVIEW_CHARS) } : {}),
+      ...(rendered.unbound.length > 0 ? { unboundVariables: rendered.unbound } : {}),
+      toolCalls,
+    };
+    // The row's status mirrors the run's ending, so the timeline never
+    // shows a green pill at the node that failed the run on purpose (the
+    // same reasoning as the stop-quiet failure handling above).
+    await db
+      .updateTable('agent_run_steps')
+      .set({
+        status: node.result === 'failure' ? 'failed' : node.result === 'stop' ? 'stopped' : 'succeeded',
+        outcome: 'terminal',
+        outcome_code: null,
+        tool_call_count: toolCalls.length,
+        detail: clip(JSON.stringify(detail), DETAIL_CHARS),
+        finished_at: sql`NOW()`,
+        updated_at: sql`NOW()`,
+      })
+      .where('id', '=', rowId)
+      .execute();
+    return { message };
   }
 
   /**

@@ -47,6 +47,7 @@ import {
   newGroup,
   newLoop,
   newStep,
+  newTerminal,
   removeNode,
   updateNode,
   type InsertLocation,
@@ -57,6 +58,7 @@ import { StepEditor } from './step-editor';
 import { BranchEditor } from './branch-editor';
 import { LoopEditor } from './loop-editor';
 import { GroupEditor } from './group-editor';
+import { TerminalEditor } from './terminal-editor';
 import { summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
 import { TriggerChooser, TriggerEditor } from './trigger-editor';
 import type { CalendarOption } from './schedule-picker';
@@ -223,6 +225,10 @@ export function AgentBuilder({
           return true;
         case 'group':
           return node.name.trim().length > 0 || node.steps.length > 0;
+        case 'terminal':
+          // An end marker is real config the moment it exists — its result
+          // and notification settings are meaning a redraft would erase.
+          return true;
         case 'action':
         case undefined:
           return node.instruction.length > 0 || node.tool !== null || node.name.trim().length > 0;
@@ -398,6 +404,8 @@ export function AgentBuilder({
             return node.mode === 'until' ? node.condition : [];
           case 'group':
             return [];
+          case 'terminal':
+            return node.message;
           case 'action':
           case undefined:
             return [
@@ -522,6 +530,8 @@ export function AgentBuilder({
           return newLoop();
         case 'group':
           return newGroup();
+        case 'terminal':
+          return newTerminal();
         case 'step':
           return newStep(attemptsCap);
         default: {
@@ -571,6 +581,8 @@ export function AgentBuilder({
           return selectedNode.name.trim() || 'Loop';
         case 'group':
           return selectedNode.name.trim() || 'Group';
+        case 'terminal':
+          return selectedNode.name.trim() || 'End here';
         case 'action':
         case undefined:
           return selectedNode.name.trim() || `Step ${ordinal}`;
@@ -727,6 +739,16 @@ export function AgentBuilder({
                   <GroupEditor
                     group={selectedNode}
                     onChange={(next) => changeNode(selectedNode.id, next)}
+                    issues={issueMap.get(selectedNode.id) ?? []}
+                  />
+                );
+              case 'terminal':
+                return (
+                  <TerminalEditor
+                    terminal={selectedNode}
+                    onChange={(next) => changeNode(selectedNode.id, next)}
+                    variables={variables}
+                    invalidVars={invalidVars}
                     issues={issueMap.get(selectedNode.id) ?? []}
                   />
                 );

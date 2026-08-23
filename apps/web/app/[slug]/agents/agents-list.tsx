@@ -18,7 +18,7 @@ import { useRouter } from 'next/navigation';
 import type { StoredAgent } from '@/lib/agents/store';
 import { sendJsonFull } from '@/lib/fetch-json';
 import { Icon, ICONS } from '@/components/icons';
-import { triggerBadge } from '@/lib/agents/trigger-summary';
+import { triggerBadge, triggerSummary } from '@/lib/agents/trigger-summary';
 
 function IconButton({
   label,
@@ -85,6 +85,64 @@ function Toggle({ on, busy, onToggle }: { on: boolean; busy: boolean; onToggle: 
   );
 }
 
+/**
+ * Trigger chips name WHAT fires the agent ("A meeting transcript is
+ * ready", "Every weekday at 8:00 AM"), not just the trigger kind. Cards
+ * stay one line tall: the first few fit, the rest fold into a "+n" chip
+ * whose hover tooltip lists them and whose click opens the full list.
+ */
+const TRIGGER_CHIP_LIMIT = 2;
+
+function TriggersDialog({ agent, onClose }: { agent: StoredAgent; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Triggers of ${agent.name}`}
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-5 shadow-xl dark:border-gray-800 dark:bg-gray-950"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="font-semibold">Triggers — {agent.name}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          </button>
+        </div>
+        <ul className="mt-3 divide-y divide-gray-100 text-sm dark:divide-gray-900">
+          {agent.triggers.map((trigger) => (
+            <li key={trigger.id} className="flex items-baseline justify-between gap-3 py-2">
+              <span className="break-words">{triggerSummary(trigger.draft)}</span>
+              <span className="shrink-0 text-xs text-gray-500">
+                {triggerBadge(trigger.draft.kind)}
+                {!trigger.enabled ? ' · off' : ''}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export function AgentsList({
   slug,
   tenantId,
@@ -98,6 +156,7 @@ export function AgentsList({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ranNow, setRanNow] = useState<string | null>(null);
+  const [triggersFor, setTriggersFor] = useState<StoredAgent | null>(null);
 
   // Summaries are written after the save response; while any card is still
   // waiting on one, refresh the server-rendered list a few times so the
@@ -220,15 +279,32 @@ export function AgentsList({
             </p>
 
             <div className="mt-3 flex items-center justify-between gap-3">
-              <p className="flex min-w-0 flex-wrap gap-1.5">
-                {agent.triggers.map((trigger) => (
-                  <span
-                    key={trigger.id}
-                    className="rounded-full border border-gray-300 px-2 py-0.5 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-400"
+              <p className="flex min-w-0 flex-wrap items-center gap-1.5">
+                {agent.triggers.slice(0, TRIGGER_CHIP_LIMIT).map((trigger) => {
+                  const summary = triggerSummary(trigger.draft);
+                  return (
+                    <span
+                      key={trigger.id}
+                      title={summary}
+                      className="inline-block max-w-[16rem] truncate rounded-full border border-gray-300 px-2 py-0.5 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-400"
+                    >
+                      {summary}
+                    </span>
+                  );
+                })}
+                {agent.triggers.length > TRIGGER_CHIP_LIMIT ? (
+                  <button
+                    type="button"
+                    onClick={() => setTriggersFor(agent)}
+                    title={agent.triggers
+                      .slice(TRIGGER_CHIP_LIMIT)
+                      .map((trigger) => triggerSummary(trigger.draft))
+                      .join('\n')}
+                    className="rounded-full border border-gray-300 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
                   >
-                    {triggerBadge(trigger.draft.kind)}
-                  </span>
-                ))}
+                    +{agent.triggers.length - TRIGGER_CHIP_LIMIT} more
+                  </button>
+                ) : null}
                 {ranNow === agent.id ? (
                   <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300">
                     Run started
@@ -262,6 +338,9 @@ export function AgentsList({
           </div>
         );
       })}
+      {triggersFor ? (
+        <TriggersDialog agent={triggersFor} onClose={() => setTriggersFor(null)} />
+      ) : null}
     </div>
   );
 }

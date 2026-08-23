@@ -38,6 +38,7 @@ import {
   type InstructionSegment,
   type LoopStep,
   type Recurrence,
+  type TerminalStep,
   type TriggerDraft,
   type Weekday,
 } from '@renkei/agents';
@@ -99,6 +100,18 @@ function currentLinesOf(nodes: AgentStepNode[]): string {
         }
         case 'group':
           return `${indent}s${ordinal + 1}. [group] "${node.name}" — groups the indented steps below`;
+        case 'terminal': {
+          const channels = [
+            ...(node.notifyEmail ? ['email'] : []),
+            ...(node.notifyWebex ? ['webex'] : []),
+          ];
+          return (
+            `${indent}s${ordinal + 1}. [end] "${node.name}" — ends the whole run as ${node.result}` +
+            (channels.length > 0
+              ? `; notifies via ${channels.join('+')} with: ${segmentsToTokens(node.message)}`
+              : '; no notification')
+          );
+        }
         case 'action':
         case undefined:
           return (
@@ -198,6 +211,15 @@ function promptOf(
     '- Only when the user NAMES a phase ("triage", "the cleanup part"), you may wrap steps ' +
       'in a GROUP object: {"kind": "group", "name": the phase name, "steps": [...]}. Groups ' +
       'change nothing about execution — never invent them.',
+    '- When the user wants to be NOTIFIED about how the flow ends ("email me if it fails", ' +
+      '"send me a WebEx note when it\'s done"), or wants a branch path to deliberately end ' +
+      'the whole run, use an END object as the LAST entry of that list: {"kind": "end", ' +
+      '"name": short label, "result": "success" (finished as intended) | "failure" (a ' +
+      'deliberate failure exit) | "stop" (nothing to do — graceful, silent), "message": what ' +
+      'the notification should say (may use {{var:...}} for real context, never {{tool:...}}), ' +
+      '"notify": array of "email" and/or "webex" (empty = no notification). Reaching an end ' +
+      'object ends the WHOLE run — never put steps after one in the same list. Only add one ' +
+      'when the description asks for a notification or an explicit ending.',
     '- Carry the user\'s guardrails into the step that acts (e.g. "if this thread was already ' +
       'handled, do not update the same ticket again — stop instead").',
     '- A step that FAILS stops the automation by default. To handle a specific failure of a ' +
@@ -331,6 +353,16 @@ function promptOf(
     '    "name": string — the phase name, never empty,',
     '    "steps": array of steps — never empty' + (revising ? ',' : ''),
     ...(revising ? ['    "from": string or null — the sN id of the existing group, or null'] : []),
+    '  }',
+    '  Or an end marker (ONLY when the description asks for a notification or an explicit ending):',
+    '  {',
+    '    "kind": "end",',
+    '    "name": string — a short label for the ending, never empty,',
+    '    "result": "success", "failure", or "stop",',
+    '    "message": string or null — the notification text; {{var:...}} allowed,',
+    '      {{tool:...}} forbidden,',
+    '    "notify": array containing "email" and/or "webex", or empty' + (revising ? ',' : ''),
+    ...(revising ? ['    "from": string or null — the sN id of the existing end marker, or null'] : []),
     '  }',
     '}',
     'Every field must be present on every step. Do not add fields not listed here.',
@@ -494,6 +526,15 @@ const GROUP_SHAPE = z.object({
   kind: z.literal('group'),
   name: z.string().trim().min(1, 'is required and must be a non-empty string'),
   steps: z.array(z.unknown()).min(1, 'must contain at least one step'),
+  from: z.string().nullable().optional(),
+});
+
+const END_SHAPE = z.object({
+  kind: z.literal('end'),
+  name: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  result: z.enum(['success', 'failure', 'stop']),
+  message: z.string().nullable().optional(),
+  notify: z.array(z.enum(['email', 'webex'])).optional(),
   from: z.string().nullable().optional(),
 });
 
@@ -698,10 +739,15 @@ function parseTriggerEntries(
   return drafts;
 }
 
-function wireKindOf(entry: unknown): 'branch' | 'loop' | 'group' | 'action' {
+function wireKindOf(entry: unknown): 'branch' | 'loop' | 'group' | 'end' | 'action' {
   if (typeof entry === 'object' && entry !== null) {
     const candidate: { kind?: unknown } = entry;
-    if (candidate.kind === 'branch' || candidate.kind === 'loop' || candidate.kind === 'group') {
+    if (
+      candidate.kind === 'branch' ||
+      candidate.kind === 'loop' ||
+      candidate.kind === 'group' ||
+      candidate.kind === 'end'
+    ) {
       return candidate.kind;
     }
   }
@@ -830,6 +876,7 @@ function parseDraftReply(
         case 'group':
           dedupe(node.steps);
           break;
+        case 'terminal':
         case 'action':
         case undefined:
           break;
@@ -886,6 +933,11 @@ function parseNodeList(
       case 'group': {
         const parsedGroup = parseGroupEntry(entry, label, state, nesting);
         if (parsedGroup) nodes.push(parsedGroup);
+        break;
+      }
+      case 'end': {
+        const parsedEnd = parseEndEntry(entry, label, state);
+        if (parsedEnd) nodes.push(parsedEnd);
         break;
       }
       case 'action': {
@@ -1159,6 +1211,40 @@ function parseGroupEntry(
     kind: 'group',
     name: wire.name.slice(0, 80),
     steps,
+  };
+}
+
+function parseEndEntry(entry: unknown, label: string, state: ParseState): TerminalStep | null {
+  const checked = END_SHAPE.safeParse(entry);
+  if (!checked.success) {
+    state.problems.push(...zodProblems(`${label} (end): `, checked.error));
+    return null;
+  }
+  const wire = checked.data;
+  const messageText = typeof wire.message === 'string' ? wire.message.trim() : '';
+  for (const match of messageText.matchAll(TOKEN_PATTERN)) {
+    const [, kind, rawName] = match;
+    const name = rawName.trim();
+    if (kind === 'var' && !state.knownVars.has(name)) {
+      state.softProblems.push(
+        name.startsWith('trigger.')
+          ? unknownTriggerVarProblem(`${label} (end message)`, name, state.knownVars)
+          : `${label} references {{var:${name}}} in its message, which no earlier step saves and no trigger provides.`
+      );
+    }
+  }
+  const notify = new Set(wire.notify ?? []);
+  const origin = originOf(state, wire.from);
+  const endOrigin = origin && origin.kind === 'terminal' ? origin : undefined;
+  return {
+    id: endOrigin?.id ?? randomUUID(),
+    kind: 'terminal',
+    name: wire.name.slice(0, 80),
+    result: wire.result,
+    // Tool chips never belong in an ending's message — drop even valid ones.
+    message: segmentsOf(messageText, new Set<string>(), state.knownVars),
+    notifyEmail: notify.has('email'),
+    notifyWebex: notify.has('webex'),
   };
 }
 

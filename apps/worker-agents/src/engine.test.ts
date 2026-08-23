@@ -1616,4 +1616,144 @@ maybe('agent run engine', () => {
       [ids.after, 'succeeded'],
     ]);
   });
+
+  it('a terminal failure node ends the run failed AND quiet, delivering its own notifications', async () => {
+    const terminalId = randomUUID();
+    const doc: AgentStepsDoc = {
+      version: 4,
+      steps: [
+        {
+          id: terminalId,
+          kind: 'terminal',
+          name: 'Give up',
+          result: 'failure',
+          message: [
+            { t: 'text', v: 'Could not handle: ' },
+            { t: 'var', name: 'trigger.subject' },
+          ],
+          notifyEmail: true,
+          notifyWebex: true,
+        },
+      ],
+    };
+    const { runId } = await seedRun(doc);
+    const calls: { name: string; args: Record<string, unknown> }[] = [];
+    const mcp: McpClient = {
+      initialize: async () => undefined,
+      listTools: async () =>
+        ['outlook_send_mail', 'webex_note_to_self'].map((name) => ({
+          name,
+          description: name,
+          inputSchema: { type: 'object' },
+        })),
+      callTool: async (name, args) => {
+        calls.push({ name, args });
+        return okToolResult;
+      },
+    };
+    const finalized: unknown[] = [];
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () => mcp,
+      // Terminal nodes are deterministic — the model must never be asked.
+      resolveLlm: async () =>
+        ok(
+          stubLlm(() => {
+            throw new Error('terminal nodes must not call the model');
+          })
+        ),
+      mintToken: async () => 'stub-token',
+      revokeToken: async () => undefined,
+      onFinalized: async (run) => {
+        finalized.push(run);
+      },
+    });
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('failed');
+    expect(run.error_kind).toBe('step_failed');
+    expect(run.error).toContain('Give up');
+    expect(run.error).toContain('PROJ-42 is broken');
+
+    // quiet: the node's own channels are the notification — the generic
+    // run.failed mail must not double up.
+    expect(finalized[0]).toMatchObject({ status: 'failed', quiet: true });
+
+    const rows = await db
+      .selectFrom('agent_run_steps')
+      .selectAll()
+      .where('run_id', '=', runId)
+      .execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('failed');
+    expect(rows[0].outcome).toBe('terminal');
+    expect(rows[0].tool_call_count).toBe(2);
+
+    // Both channels got the RENDERED message — real context, not a generic
+    // "your agent failed".
+    const mail = calls.find((call) => call.name === 'outlook_send_mail');
+    expect(mail?.args).toMatchObject({ to: ['owner@example.com'] });
+    expect(String(mail?.args.body)).toContain('Could not handle: PROJ-42 is broken');
+    const note = calls.find((call) => call.name === 'webex_note_to_self');
+    expect(String(note?.args.markdown)).toContain('Could not handle: PROJ-42 is broken');
+  });
+
+  it('a silent stop terminal ends the run stopped with no delivery', async () => {
+    const doc: AgentStepsDoc = {
+      version: 4,
+      steps: [
+        {
+          id: randomUUID(),
+          kind: 'terminal',
+          name: 'Nothing to do',
+          result: 'stop',
+          message: [],
+          notifyEmail: false,
+          notifyWebex: false,
+        },
+      ],
+    };
+    const { runId } = await seedRun(doc);
+    const calls: string[] = [];
+    const finalized: unknown[] = [];
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () =>
+        stubMcp(['outlook_send_mail', 'webex_note_to_self'], (name) => {
+          calls.push(name);
+          return okToolResult;
+        }),
+      resolveLlm: async () => ok(stubLlm(() => finish('success'))),
+      mintToken: async () => 'stub-token',
+      revokeToken: async () => undefined,
+      onFinalized: async (run) => {
+        finalized.push(run);
+      },
+    });
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('stopped');
+    expect(run.error).toBeNull();
+    expect(calls).toEqual([]);
+    expect(finalized[0]).toMatchObject({ status: 'stopped', quiet: true });
+
+    const rows = await db
+      .selectFrom('agent_run_steps')
+      .select(['status', 'outcome'])
+      .where('run_id', '=', runId)
+      .execute();
+    expect(rows).toEqual([{ status: 'stopped', outcome: 'terminal' }]);
+  });
 });
