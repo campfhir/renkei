@@ -497,6 +497,132 @@ describe('draftAgentFromProse retry loop', () => {
     expect(group.steps).toHaveLength(1);
   });
 
+  it('drafts schedule and event triggers when asked, defaulting an unstated timezone to the user', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'Morning triage',
+        steps: [
+          {
+            name: 'Search',
+            instruction: 'Search with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+          },
+        ],
+        triggers: [
+          { kind: 'schedule', rules: [{ every: 'weekday', at: '09:00' }], timezone: null },
+          { kind: 'event', eventId: 'webex/message.received' },
+        ],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(
+      db,
+      't1',
+      'every weekday morning at 9, and when someone messages me, triage tickets',
+      TOOLS,
+      { suggestTriggers: true }
+    );
+    if ('error' in result) throw new Error(result.error);
+    expect(result.triggers).toEqual([
+      // Timezone '' = "the prose never named one" — the builder fills in
+      // the user's own zone.
+      { kind: 'schedule', recurrences: [{ every: 'weekday', at: '09:00' }], timezone: '' },
+      { kind: 'event', eventId: 'webex/message.received' },
+    ]);
+    // The prompt carried the rules: the catalog, and the no-inventing rule.
+    const prompt = JSON.stringify(requests[0].messages);
+    expect(prompt).toContain('never invent or guess a trigger');
+    expect(prompt).toContain('microsoft/mail.received');
+    expect(requests).toHaveLength(1);
+  });
+
+  it('drops an invented event id and an unknown agent name with corrective feedback', async () => {
+    const inventing = JSON.stringify({
+      name: 'x',
+      steps: [
+        {
+          name: 'Search',
+          instruction: 'Search with {{tool:jira_search_issues}}',
+          tool: 'jira_search_issues',
+        },
+      ],
+      triggers: [
+        { kind: 'event', eventId: 'slack/message.received' },
+        { kind: 'agent', agentName: 'No Such Agent' },
+      ],
+    });
+    replies = [inventing, inventing];
+
+    const result = await draftAgentFromProse(
+      db,
+      't1',
+      'when a slack message arrives, triage',
+      TOOLS,
+      {
+        suggestTriggers: true,
+        otherAgents: [{ id: '11111111-1111-4111-8111-111111111111', name: 'Daily digest' }],
+      }
+    );
+    if ('error' in result) throw new Error(result.error);
+    // Both invented entries dropped; the steps still drafted.
+    expect(result.triggers).toEqual([]);
+    const feedback = JSON.stringify(requests[1].messages);
+    expect(feedback).toContain('slack/message.received');
+    expect(feedback).toContain('webex/message.received');
+    expect(feedback).toContain('No Such Agent');
+    expect(feedback).toContain('Daily digest');
+  });
+
+  it('matches an agent-finished trigger to an owned agent by name', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'x',
+        steps: [{ name: 'Summarize', instruction: 'Summarize the parent run.', tool: null }],
+        triggers: [{ kind: 'agent', agentName: 'daily digest' }],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(
+      db,
+      't1',
+      'after my daily digest finishes, summarize',
+      TOOLS,
+      {
+        suggestTriggers: true,
+        otherAgents: [{ id: '22222222-2222-4222-8222-222222222222', name: 'Daily Digest' }],
+      }
+    );
+    if ('error' in result) throw new Error(result.error);
+    expect(result.triggers).toEqual([
+      { kind: 'agent', callerAgentId: '22222222-2222-4222-8222-222222222222' },
+    ]);
+  });
+
+  it('ignores volunteered triggers when suggestions were not requested', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'x',
+        steps: [{ name: 'S', instruction: 'Do a thing.', tool: null }],
+        triggers: [{ kind: 'schedule', rules: [{ every: 'day', at: '08:00' }], timezone: null }],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'do a thing please', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    expect('triggers' in result).toBe(false);
+    // Without the offer, the prompt never mentions the trigger wire shape.
+    expect(JSON.stringify(requests[0].messages)).not.toContain('never invent or guess a trigger');
+  });
+
+  it('returns an empty triggers array when the prose never says when it runs', async () => {
+    replies = [GOOD_REPLY];
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+      suggestTriggers: true,
+    });
+    if ('error' in result) throw new Error(result.error);
+    expect(result.triggers).toEqual([]);
+  });
+
   it('returns the concrete reason when both attempts are unusable', async () => {
     replies = ['no json here', 'still no json'];
     const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);

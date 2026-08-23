@@ -19,7 +19,10 @@ function parseTriggerVars(value: unknown): TriggerVarInfo[] {
   const parsed: TriggerVarInfo[] = [];
   for (const entry of value) {
     if (typeof entry === 'string' && entry.length <= 128) {
-      parsed.push({ name: entry, description: 'Provided by a trigger when the automation starts.' });
+      parsed.push({
+        name: entry,
+        description: 'Provided by a trigger when the automation starts.',
+      });
     } else if (typeof entry === 'object' && entry !== null) {
       const candidate: { name?: unknown; description?: unknown } = entry;
       if (
@@ -52,8 +55,12 @@ export async function POST(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   const body: unknown = await request.json().catch(() => null);
-  const payload: { text?: unknown; steps?: unknown; triggerVars?: unknown } =
-    typeof body === 'object' && body !== null ? body : {};
+  const payload: {
+    text?: unknown;
+    steps?: unknown;
+    triggerVars?: unknown;
+    suggestTriggers?: unknown;
+  } = typeof body === 'object' && body !== null ? body : {};
   if (typeof payload.text !== 'string' || payload.text.trim().length < 10) {
     return NextResponse.json(
       { error: 'Describe the automation in a sentence or two first.' },
@@ -65,10 +72,26 @@ export async function POST(
   const currentSteps = isAgentStepsDoc(payload.steps) ? payload.steps.steps : [];
   const triggerVars = parseTriggerVars(payload.triggerVars);
 
+  // Agent-finished trigger targets come from the database, not the request:
+  // the drafted callerAgentId ends up saved on a trigger, so the name→id
+  // mapping must only ever cover agents the caller actually owns.
+  const suggestTriggers = payload.suggestTriggers === true;
+  const otherAgents = suggestTriggers
+    ? await dbResult.val
+        .selectFrom('agents')
+        .select(['id', 'name'])
+        .where('tenant_id', '=', tenantId)
+        .where('owner_subject', '=', session.subject)
+        .orderBy('name')
+        .execute()
+    : [];
+
   const tools = await listAvailableTools(tenantId, session.subject);
   const drafted = await draftAgentFromProse(dbResult.val, tenantId, payload.text.trim(), tools, {
     currentSteps,
     triggerVars,
+    suggestTriggers,
+    otherAgents,
   });
   if ('error' in drafted) {
     return NextResponse.json(
