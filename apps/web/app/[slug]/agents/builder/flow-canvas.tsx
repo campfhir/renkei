@@ -41,13 +41,14 @@ import { StepNode } from './step-node';
 import { BranchNode } from './branch-node';
 import { LoopNode } from './loop-node';
 import { GroupNode } from './group-node';
+import { TerminalNode } from './terminal-node';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 
 export type BuilderSelection =
   { type: 'step'; id: string } | { type: 'trigger'; index: number } | { type: 'new-trigger' };
 
-export type InsertKind = 'step' | 'branch' | 'loop' | 'group';
+export type InsertKind = 'step' | 'branch' | 'loop' | 'group' | 'terminal';
 
 interface CanvasHandlers {
   selection: BuilderSelection | null;
@@ -148,6 +149,7 @@ function Connector({
           {allowBranch ? item('Add a branch', 'branch', ICONS.branch, 'text-indigo-500') : null}
           {allowLoop ? item('Add a loop', 'loop', ICONS.loop, 'text-amber-500') : null}
           {item('Add a group', 'group', ICONS.group, 'text-slate-400')}
+          {item('End the run here', 'terminal', ICONS.terminal, 'text-rose-500')}
         </div>
       ) : null}
     </div>
@@ -162,6 +164,8 @@ function nodeNoun(node: AgentStepNode): string {
       return 'loop';
     case 'group':
       return 'group';
+    case 'terminal':
+      return 'ending';
     case 'action':
     case undefined:
       return 'step';
@@ -528,6 +532,16 @@ function NodeBlock({
             onSelect={onSelect}
           />
         );
+      case 'terminal':
+        return (
+          <TerminalNode
+            terminal={node}
+            ordinal={ordinal}
+            selected={selectedId === node.id}
+            issueCount={handlers.issuesFor(node.id)}
+            onSelect={onSelect}
+          />
+        );
       case 'action':
       case undefined:
         return (
@@ -607,6 +621,7 @@ function NodeBlock({
           {header}
         </GroupContainer>
       );
+    case 'terminal':
     case 'action':
     case undefined:
       return header;

@@ -121,11 +121,31 @@ describe('isAgentStepsDoc', () => {
   });
 
   it('rejects unknown versions', () => {
-    expect(isAgentStepsDoc({ version: 4, steps: [] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 5, steps: [] })).toBe(false);
   });
 
   it('accepts an empty version-3 document shell', () => {
     expect(isAgentStepsDoc({ version: 3, steps: [] })).toBe(true);
+  });
+
+  it('admits terminal nodes only at version 4', () => {
+    const terminal = {
+      id: randomUUID(),
+      kind: 'terminal',
+      name: 'Give up',
+      result: 'failure',
+      message: [{ t: 'text', v: 'It broke.' }],
+      notifyEmail: true,
+      notifyWebex: false,
+    };
+    expect(isAgentStepsDoc({ version: 4, steps: [terminal] })).toBe(true);
+    expect(isAgentStepsDoc({ version: 3, steps: [terminal] })).toBe(false);
+    expect(
+      isAgentStepsDoc({ version: 4, steps: [{ ...terminal, result: 'explode' }] })
+    ).toBe(false);
+    expect(
+      isAgentStepsDoc({ version: 4, steps: [{ ...terminal, notifyEmail: 'yes' }] })
+    ).toBe(false);
   });
 });
 

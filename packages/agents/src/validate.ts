@@ -49,6 +49,7 @@ import {
   type GroupStep,
   type InstructionSegment,
   type LoopStep,
+  type TerminalStep,
 } from './steps';
 import { BUILTIN_VARIABLES } from './variables';
 import { validateTriggerDrafts, triggerVariableNames, type TriggerDraft } from './triggers';
@@ -441,6 +442,45 @@ function validateGroupStep(
   return issues;
 }
 
+function validateTerminalStep(
+  terminal: TerminalStep,
+  prefix: string,
+  knownVariables: Set<string>
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (terminal.name.trim().length === 0) {
+    issues.push({ path: `${prefix}.name`, message: 'Give this ending a short name.' });
+  }
+  const notifies = terminal.notifyEmail || terminal.notifyWebex;
+  if (notifies && segmentChars(terminal.message) === 0) {
+    issues.push({
+      path: `${prefix}.message`,
+      message: 'Say what the notification should tell you — that message is the whole point.',
+    });
+  }
+  if (segmentChars(terminal.message) > MAX_INSTRUCTION_CHARS) {
+    issues.push({
+      path: `${prefix}.message`,
+      message: `Keep the message under ${MAX_INSTRUCTION_CHARS.toLocaleString()} characters.`,
+    });
+  }
+  if (toolSegments(terminal.message).length > 0) {
+    issues.push({
+      path: `${prefix}.message`,
+      message: 'An ending can’t use a skill — its message is delivered as-is.',
+    });
+  }
+  for (const name of varSegments(terminal.message)) {
+    if (!knownVariables.has(name)) {
+      issues.push({
+        path: `${prefix}.message`,
+        message: `"${name}" is not something this agent knows — remove or replace the chip.`,
+      });
+    }
+  }
+  return issues;
+}
+
 function validateNode(
   node: AgentStepNode,
   prefix: string,
@@ -457,6 +497,8 @@ function validateNode(
       return validateLoopStep(node, prefix, context, toolsByName, knownVariables);
     case 'group':
       return validateGroupStep(node, prefix, context, toolsByName, knownVariables);
+    case 'terminal':
+      return validateTerminalStep(node, prefix, knownVariables);
     case 'action':
     case undefined:
       return validateActionStep(node, prefix, toolsByName, knownVariables);
@@ -465,6 +507,51 @@ function validateNode(
       throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
     }
   }
+}
+
+/**
+ * A terminal node ends the WHOLE run, so siblings after one can never run.
+ * Flagged on the terminal itself (the node the user just placed) — one
+ * actionable message instead of an echo on every shadowed sibling.
+ */
+function terminalPlacementIssues(nodes: AgentStepNode[], prefix: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  nodes.forEach((node, index) => {
+    const at = `${prefix}.${index}`;
+    switch (node.kind) {
+      case 'terminal':
+        if (index < nodes.length - 1) {
+          issues.push({
+            path: at,
+            message:
+              'Steps below this ending can never run — make it the last step here, or move them above it.',
+          });
+        }
+        break;
+      case 'branch':
+        node.paths.forEach((path, pathIndex) => {
+          issues.push(...terminalPlacementIssues(path.steps, `${at}.paths.${pathIndex}.steps`));
+        });
+        if (node.failurePath) {
+          issues.push(
+            ...terminalPlacementIssues(node.failurePath.steps, `${at}.failurePath.steps`)
+          );
+        }
+        break;
+      case 'loop':
+      case 'group':
+        issues.push(...terminalPlacementIssues(node.steps, `${at}.steps`));
+        break;
+      case 'action':
+      case undefined:
+        break;
+      default: {
+        const unhandled: never = node;
+        throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+      }
+    }
+  });
+  return issues;
 }
 
 function clampAttempts(value: number, cap: number, fallback: number): number {
@@ -528,6 +615,8 @@ function normalizeNode(node: AgentStepNode, cap: number): AgentStepNode {
         name: node.name.trim(),
         steps: node.steps.map((child) => normalizeNode(child, cap)),
       };
+    case 'terminal':
+      return { ...node, name: node.name.trim() };
     case 'action':
     case undefined: {
       // Strip the optional discriminant so linear documents stay
@@ -626,6 +715,7 @@ export function validateAgentDraft(
         ];
       case 'loop':
       case 'group':
+      case 'terminal':
       case 'action':
       case undefined:
         return [node.id];
@@ -675,6 +765,7 @@ export function validateAgentDraft(
   nodes.forEach((node, index) => {
     issues.push(...validateNode(node, `steps.${index}`, TOP_LEVEL, toolsByName, knownVariables));
   });
+  issues.push(...terminalPlacementIssues(nodes, 'steps'));
 
   issues.push(
     ...validateTriggerDrafts(draft.triggers).map((issue) => ({

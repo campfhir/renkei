@@ -19,6 +19,7 @@ import {
   type BranchStep,
   type ForEachLoopStep,
   type GroupStep,
+  type TerminalStep,
   type ValidationIssue,
 } from '@renkei/agents';
 import { randomUUID } from '@/lib/agents/uuid';
@@ -68,6 +69,20 @@ export function newGroup(): GroupStep {
     kind: 'group',
     name: '',
     steps: [],
+  };
+}
+
+export function newTerminal(): TerminalStep {
+  return {
+    id: randomUUID(),
+    kind: 'terminal',
+    name: '',
+    // A fresh end marker reads as "finish here"; the editor flips it to a
+    // failure or nothing-to-do ending when that's what it marks.
+    result: 'success',
+    message: [],
+    notifyEmail: false,
+    notifyWebex: false,
   };
 }
 
@@ -244,6 +259,7 @@ function subtreeMetrics(node: AgentStepNode): SubtreeMetrics {
     case 'group':
       // Depth-neutral, same as the schema's guards.
       return ofList(node.steps);
+    case 'terminal':
     case 'action':
     case undefined:
       return { branchDepth: 0, containerDepth: 0, hasLoop: false };
@@ -295,6 +311,7 @@ function contextOfLocation(
         context.inLoop = true;
         break;
       case 'group':
+      case 'terminal':
       case 'action':
       case undefined:
         break;

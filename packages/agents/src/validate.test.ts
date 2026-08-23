@@ -13,7 +13,7 @@ import {
   type AgentDraft,
   type ToolDescriptorLike,
 } from './validate';
-import type { AgentStep, InstructionSegment } from './steps';
+import type { AgentStep, InstructionSegment, TerminalStep } from './steps';
 
 const TOOLS: ToolDescriptorLike[] = [
   {
@@ -677,5 +677,61 @@ describe('group and n-way validation', () => {
     // Half-configured collect is dropped entirely — the KEY must be absent.
     expect('collectVar' in (loopOut ?? {})).toBe(false);
     expect(normalized.steps.version).toBe(3);
+  });
+});
+
+describe('terminal nodes (version 4)', () => {
+  const terminal = (overrides: Partial<TerminalStep> = {}): TerminalStep => ({
+    id: uuid(),
+    kind: 'terminal',
+    name: 'Give up',
+    result: 'failure',
+    message: [text('The ticket could not be updated.')],
+    notifyEmail: true,
+    notifyWebex: false,
+    ...overrides,
+  });
+
+  it('accepts a well-formed ending as the last node and versions the doc 4', () => {
+    const doc = { version: 4 as const, steps: [step(), terminal()] };
+    expect(validateAgentDraft(draft({ steps: doc }), TOOLS)).toEqual([]);
+    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(4);
+  });
+
+  it('requires a message when a notification channel is on', () => {
+    const issues = validateAgentDraft(
+      draft({ steps: { version: 4, steps: [step(), terminal({ message: [] })] } }),
+      TOOLS
+    );
+    expect(messagesOf(issues).some((message) => message.includes('notification'))).toBe(true);
+  });
+
+  it('allows a silent ending with no message', () => {
+    const silent = terminal({ message: [], notifyEmail: false, notifyWebex: false });
+    expect(
+      validateAgentDraft(draft({ steps: { version: 4, steps: [step(), silent] } }), TOOLS)
+    ).toEqual([]);
+  });
+
+  it('rejects tool chips and unknown var chips in the message', () => {
+    const bad = terminal({
+      message: [toolChip('jira_get_issue'), varChip('nothing saved this')],
+    });
+    const issues = validateAgentDraft(
+      draft({ steps: { version: 4, steps: [step(), bad] } }),
+      TOOLS
+    );
+    expect(messagesOf(issues).some((message) => message.includes('skill'))).toBe(true);
+    expect(messagesOf(issues).some((message) => message.includes('nothing saved this'))).toBe(
+      true
+    );
+  });
+
+  it('flags steps placed after an ending as unreachable', () => {
+    const issues = validateAgentDraft(
+      draft({ steps: { version: 4, steps: [terminal(), step()] } }),
+      TOOLS
+    );
+    expect(messagesOf(issues).some((message) => message.includes('never run'))).toBe(true);
   });
 });

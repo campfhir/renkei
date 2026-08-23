@@ -48,9 +48,19 @@
  *   `saveAs` written inside a body is last-write-wins across iterations;
  *   per-iteration values remain visible in run history.
  *
- * `requiredVersion` is the single version rule: 3 iff any v3 construct is
- * present, else 2 iff a branch exists, else 1 — so every document any
- * older writer could produce keeps its exact old version and bytes.
+ * VERSION 4 adds one construct:
+ *   - `TerminalStep` — an explicit end marker. Reaching it ends the WHOLE
+ *     run (inside a branch path or loop body too) with a configured result
+ *     — success, failure, or a graceful "nothing to do" — and delivers the
+ *     node's own notification (email and/or WebEx, message rendered with
+ *     the run's variables). It is the opt-in replacement for the implicit
+ *     context-free failure mail: the endpoint says what to send and where.
+ *     A leaf: no children, no LLM call, deterministic.
+ *
+ * `requiredVersion` is the single version rule: 4 iff a terminal node is
+ * present, else 3 iff any v3 construct is, else 2 iff a branch exists,
+ * else 1 — so every document any older writer could produce keeps its
+ * exact old version and bytes.
  */
 
 export type InstructionSegment =
@@ -214,11 +224,37 @@ export interface GroupStep {
   steps: AgentStepNode[];
 }
 
-export type AgentStepNode = ActionStep | BranchStep | LoopStep | GroupStep;
+/**
+ * How a terminal node ends the run: 'success' finishes it as intended
+ * (chained agents still fire); 'failure' is the DELIBERATE failure — the
+ * run records as failed with the node's rendered message as the error;
+ * 'stop' is the graceful "nothing to do" ending (run status 'stopped').
+ */
+export type TerminalResult = 'success' | 'failure' | 'stop';
+
+export interface TerminalStep {
+  /** uuid, same doc-wide id space as every node. */
+  id: string;
+  kind: 'terminal';
+  name: string;
+  result: TerminalResult;
+  /**
+   * The notification body — prose + var chips (never tool chips), rendered
+   * with the run's live variables so what lands in the inbox carries real
+   * context. May be empty when no channel is on.
+   */
+  message: InstructionSegment[];
+  /** Email the rendered message to the owner (sent from their own grant). */
+  notifyEmail: boolean;
+  /** Post the rendered message to the owner's WebEx note-to-self space. */
+  notifyWebex: boolean;
+}
+
+export type AgentStepNode = ActionStep | BranchStep | LoopStep | GroupStep | TerminalStep;
 
 export interface AgentStepsDoc {
-  /** See requiredVersion: 3 for v3 constructs, 2 for plain branches, else 1. */
-  version: 1 | 2 | 3;
+  /** See requiredVersion: 4 for terminal nodes, 3 for v3 constructs, 2 for plain branches, else 1. */
+  version: 1 | 2 | 3 | 4;
   /** Array order is execution order; success is linear within a list. */
   steps: AgentStepNode[];
 }
@@ -338,6 +374,10 @@ export function isGroupStep(node: AgentStepNode): node is GroupStep {
   return node.kind === 'group';
 }
 
+export function isTerminalStep(node: AgentStepNode): node is TerminalStep {
+  return node.kind === 'terminal';
+}
+
 /** A node whose `steps`/`paths` contain other nodes. */
 export function isContainerNode(node: AgentStepNode): node is BranchStep | LoopStep | GroupStep {
   return node.kind === 'branch' || node.kind === 'loop' || node.kind === 'group';
@@ -350,7 +390,7 @@ export function isContainerNode(node: AgentStepNode): node is BranchStep | LoopS
  * treats every future kind as an ActionStep, which is exactly how a new
  * construct would misexecute.
  */
-export type NodeKind = 'action' | 'branch' | 'loop' | 'group';
+export type NodeKind = 'action' | 'branch' | 'loop' | 'group' | 'terminal';
 
 export function nodeKind(node: AgentStepNode): NodeKind {
   return node.kind ?? 'action';
@@ -403,9 +443,13 @@ function isNodeV2(value: unknown, depth: number): value is AgentStepNode {
   return isActionStep(value);
 }
 
-/* ---------------- v3 structural arm -------------------------------- */
+/* ---------------- v3/v4 structural arm ------------------------------ */
+/* The container checks are shared between the two arms via the `isNode` */
+/* recursion parameter: v3 recurses with isNodeV3 (terminal nodes are    */
+/* NOT admitted — a doc labeled below the version its constructs demand  */
+/* is invalid), v4 with isNodeV4 (terminal leaves allowed anywhere).     */
 
-/** Containment counters the v3 shape checks thread through the tree. */
+/** Containment counters the v3+ shape checks thread through the tree. */
 interface GuardContext {
   /** Nested branch levels entered so far. */
   branchDepth: number;
@@ -415,15 +459,25 @@ interface GuardContext {
   inLoop: boolean;
 }
 
-function isBranchPathV3(value: unknown, context: GuardContext): value is BranchPath {
+type NodeShapeCheck = (value: unknown, context: GuardContext) => value is AgentStepNode;
+
+function isBranchPathV3(
+  value: unknown,
+  context: GuardContext,
+  isNode: NodeShapeCheck
+): value is BranchPath {
   if (typeof value !== 'object' || value === null) return false;
   const path: { id?: unknown; name?: unknown; steps?: unknown } = value;
   if (typeof path.id !== 'string' || path.id.length === 0) return false;
   if (typeof path.name !== 'string') return false;
-  return Array.isArray(path.steps) && path.steps.every((step) => isNodeV3(step, context));
+  return Array.isArray(path.steps) && path.steps.every((step) => isNode(step, context));
 }
 
-function isBranchStepShapeV3(value: unknown, context: GuardContext): value is BranchStep {
+function isBranchStepShapeV3(
+  value: unknown,
+  context: GuardContext,
+  isNode: NodeShapeCheck
+): value is BranchStep {
   if (typeof value !== 'object' || value === null) return false;
   const step: {
     id?: unknown;
@@ -446,16 +500,22 @@ function isBranchStepShapeV3(value: unknown, context: GuardContext): value is Br
   if (typeof step.name !== 'string') return false;
   if (!Array.isArray(step.condition) || !step.condition.every(isInstructionSegment)) return false;
   if (typeof step.maxAttempts !== 'number') return false;
-  if (step.failurePath !== undefined && !isBranchPathV3(step.failurePath, inner)) return false;
+  if (step.failurePath !== undefined && !isBranchPathV3(step.failurePath, inner, isNode)) {
+    return false;
+  }
   return (
     Array.isArray(step.paths) &&
     step.paths.length >= 2 &&
     step.paths.length <= MAX_BRANCH_PATHS &&
-    step.paths.every((path) => isBranchPathV3(path, inner))
+    step.paths.every((path) => isBranchPathV3(path, inner, isNode))
   );
 }
 
-function isLoopStepShape(value: unknown, context: GuardContext): value is LoopStep {
+function isLoopStepShape(
+  value: unknown,
+  context: GuardContext,
+  isNode: NodeShapeCheck
+): value is LoopStep {
   if (typeof value !== 'object' || value === null) return false;
   const step: {
     id?: unknown;
@@ -495,25 +555,65 @@ function isLoopStepShape(value: unknown, context: GuardContext): value is LoopSt
   } else {
     return false;
   }
-  return Array.isArray(step.steps) && step.steps.every((child) => isNodeV3(child, inner));
+  return Array.isArray(step.steps) && step.steps.every((child) => isNode(child, inner));
 }
 
-function isGroupStepShape(value: unknown, context: GuardContext): value is GroupStep {
+function isGroupStepShape(
+  value: unknown,
+  context: GuardContext,
+  isNode: NodeShapeCheck
+): value is GroupStep {
   if (typeof value !== 'object' || value === null) return false;
   const step: { id?: unknown; kind?: unknown; name?: unknown; steps?: unknown } = value;
   if (step.kind !== 'group') return false;
   if (typeof step.id !== 'string' || step.id.length === 0) return false;
   if (typeof step.name !== 'string') return false;
   // Depth-neutral on purpose: groups exist to organize, not to nest logic.
-  return Array.isArray(step.steps) && step.steps.every((child) => isNodeV3(child, context));
+  return Array.isArray(step.steps) && step.steps.every((child) => isNode(child, context));
+}
+
+function isTerminalStepShape(value: unknown): value is TerminalStep {
+  if (typeof value !== 'object' || value === null) return false;
+  const step: {
+    id?: unknown;
+    kind?: unknown;
+    name?: unknown;
+    result?: unknown;
+    message?: unknown;
+    notifyEmail?: unknown;
+    notifyWebex?: unknown;
+  } = value;
+  if (step.kind !== 'terminal') return false;
+  if (typeof step.id !== 'string' || step.id.length === 0) return false;
+  if (typeof step.name !== 'string') return false;
+  if (step.result !== 'success' && step.result !== 'failure' && step.result !== 'stop') {
+    return false;
+  }
+  if (!Array.isArray(step.message) || !step.message.every(isInstructionSegment)) return false;
+  return typeof step.notifyEmail === 'boolean' && typeof step.notifyWebex === 'boolean';
 }
 
 function isNodeV3(value: unknown, context: GuardContext): value is AgentStepNode {
   if (typeof value === 'object' && value !== null) {
     const candidate: { kind?: unknown } = value;
-    if (candidate.kind === 'branch') return isBranchStepShapeV3(value, context);
-    if (candidate.kind === 'loop') return isLoopStepShape(value, context);
-    if (candidate.kind === 'group') return isGroupStepShape(value, context);
+    if (candidate.kind === 'branch') return isBranchStepShapeV3(value, context, isNodeV3);
+    if (candidate.kind === 'loop') return isLoopStepShape(value, context, isNodeV3);
+    if (candidate.kind === 'group') return isGroupStepShape(value, context, isNodeV3);
+    // A v3-labeled document may not carry v4 constructs.
+    if (candidate.kind === 'terminal') return false;
+  }
+  return isActionStep(value);
+}
+
+/* ---------------- v4 structural arm -------------------------------- */
+
+function isNodeV4(value: unknown, context: GuardContext): value is AgentStepNode {
+  if (typeof value === 'object' && value !== null) {
+    const candidate: { kind?: unknown } = value;
+    if (candidate.kind === 'branch') return isBranchStepShapeV3(value, context, isNodeV4);
+    if (candidate.kind === 'loop') return isLoopStepShape(value, context, isNodeV4);
+    if (candidate.kind === 'group') return isGroupStepShape(value, context, isNodeV4);
+    if (candidate.kind === 'terminal') return isTerminalStepShape(value);
   }
   return isActionStep(value);
 }
@@ -540,6 +640,10 @@ export function isAgentStepsDoc(value: unknown): value is AgentStepsDoc {
   if (doc.version === 3) {
     const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
     return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV3(step, root));
+  }
+  if (doc.version === 4) {
+    const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
+    return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV4(step, root));
   }
   return false;
 }
@@ -598,6 +702,7 @@ export function walkSteps(nodes: AgentStepNode[]): WalkedNode[] {
         case 'group':
           visit(node.steps, `${path}.steps`, depth + 1);
           break;
+        case 'terminal':
         case 'action':
         case undefined:
           break;
@@ -678,6 +783,7 @@ export function findNodeById(nodes: AgentStepNode[], id: string): FoundNode | nu
           if (found) return found;
           break;
         }
+        case 'terminal':
         case 'action':
         case undefined:
           break;
@@ -727,12 +833,18 @@ export function containsV3Feature(nodes: AgentStepNode[]): boolean {
   );
 }
 
+/** Whether the tree contains a terminal node — the version-4 test. */
+export function containsTerminal(nodes: AgentStepNode[]): boolean {
+  return walkSteps(nodes).some(({ node }) => isTerminalStep(node));
+}
+
 /**
  * THE version rule — normalizeAgentDraft is its only writer. Anything an
  * older writer could have produced keeps its exact old version, which is
  * what keeps old snapshots byte-stable.
  */
-export function requiredVersion(nodes: AgentStepNode[]): 1 | 2 | 3 {
+export function requiredVersion(nodes: AgentStepNode[]): 1 | 2 | 3 | 4 {
+  if (containsTerminal(nodes)) return 4;
   if (containsV3Feature(nodes)) return 3;
   return containsBranch(nodes) ? 2 : 1;
 }

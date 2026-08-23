@@ -517,7 +517,7 @@ export default function UsageViewer({
         <Stat
           label="Slowest (p95)"
           value={slowest ? formatMs(slowest.p95Ms) : '—'}
-          hint={slowest?.name}
+          hint={slowest ? friendlyToolName(slowest.name, slowest.title) : undefined}
         />
       </section>
 

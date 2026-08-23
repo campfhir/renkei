@@ -21,6 +21,8 @@ function stepName(run: RunDetail, stepId: string, stepIndex: number): string {
           return `Loop: ${found.node.name}`;
         case 'group':
           return `Group: ${found.node.name}`;
+        case 'terminal':
+          return `End: ${found.node.name}`;
         case 'action':
         case undefined:
           return found.node.name;
@@ -59,6 +61,40 @@ export function StatusPill({ status }: { status: string }) {
   );
 }
 
+/**
+ * Detail strings can be huge and token-dense (saved JSON, id lists) — they
+ * are informative, not the point of the page. Long values render clamped
+ * behind a "Show all" toggle; `break-all` keeps unbroken tokens (ids,
+ * base64) from stretching the page sideways. Pure CSS (`group-open`), so
+ * this stays a server component.
+ */
+const CLAMP_CHARS = 280;
+
+function ClampedText({ label, text }: { label: string; text: string }) {
+  if (text.length <= CLAMP_CHARS) {
+    return (
+      <p className="break-words">
+        {label ? <span className="font-medium">{label}:</span> : null} {text}
+      </p>
+    );
+  }
+  return (
+    <details className="group">
+      <summary className="cursor-pointer list-none">
+        {label ? <span className="font-medium">{label}:</span> : null}{' '}
+        <span className="break-all group-open:hidden">{text.slice(0, CLAMP_CHARS)}…</span>
+        <span className="ml-1 whitespace-nowrap text-blue-600 dark:text-blue-400">
+          <span className="group-open:hidden">
+            Show all ({text.length.toLocaleString()} characters)
+          </span>
+          <span className="hidden group-open:inline">Show less</span>
+        </span>
+      </summary>
+      <p className="mt-0.5 whitespace-pre-wrap break-all">{text}</p>
+    </details>
+  );
+}
+
 interface DetailShape {
   resolvedInstruction?: unknown;
   llmSummary?: unknown;
@@ -66,6 +102,7 @@ interface DetailShape {
   saveValue?: unknown;
   toolCalls?: unknown;
   chosenPathName?: unknown;
+  terminalMessage?: unknown;
 }
 
 function AttemptDetail({ attempt }: { attempt: AttemptView }) {
@@ -89,17 +126,16 @@ function AttemptDetail({ attempt }: { attempt: AttemptView }) {
         </p>
       ) : null}
       {typeof detail.llmSummary === 'string' && detail.llmSummary ? (
-        <p>{detail.llmSummary}</p>
+        <ClampedText label="" text={detail.llmSummary} />
       ) : null}
       {typeof detail.guidanceUsed === 'string' && detail.guidanceUsed ? (
-        <p>
-          <span className="font-medium">Guidance used:</span> {detail.guidanceUsed}
-        </p>
+        <ClampedText label="Guidance used" text={detail.guidanceUsed} />
       ) : null}
       {typeof detail.saveValue === 'string' ? (
-        <p>
-          <span className="font-medium">Saved result:</span> {detail.saveValue}
-        </p>
+        <ClampedText label="Saved result" text={detail.saveValue} />
+      ) : null}
+      {typeof detail.terminalMessage === 'string' && detail.terminalMessage ? (
+        <ClampedText label="Message" text={detail.terminalMessage} />
       ) : null}
       {toolCalls.length > 0 ? (
         <details>

@@ -27,6 +27,8 @@ function stepNameOf(run: RunDetail, stepId: string, stepIndex: number): string {
           return `Loop: ${found.node.name}`;
         case 'group':
           return `Group: ${found.node.name}`;
+        case 'terminal':
+          return `End: ${found.node.name}`;
         case 'action':
         case undefined:
           return found.node.name;
@@ -66,6 +68,25 @@ function snapshotLines(run: RunDetail): string[] {
       case 'group':
         lines.push(`${indent}${ordinal + 1}. Group: ${node.name}`);
         break;
+      case 'terminal': {
+        const wording =
+          node.result === 'failure'
+            ? 'fails the run'
+            : node.result === 'stop'
+              ? 'stops the run (nothing to do)'
+              : 'finishes the run';
+        const channels = [
+          ...(node.notifyEmail ? ['email'] : []),
+          ...(node.notifyWebex ? ['WebEx note'] : []),
+        ];
+        lines.push(
+          `${indent}${ordinal + 1}. End: ${node.name} — ${wording}` +
+            (channels.length > 0 ? `; notifies via ${channels.join(' + ')}` : '')
+        );
+        const message = instructionPreview(node.message);
+        if (message) lines.push(`${indent}   message: ${message}`);
+        break;
+      }
       case 'action':
       case undefined: {
         lines.push(`${indent}${ordinal + 1}. ${node.name}`);
