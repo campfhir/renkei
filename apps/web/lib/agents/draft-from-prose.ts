@@ -21,10 +21,14 @@ import {
   MAX_BRANCH_PATHS,
   MAX_CONTAINER_DEPTH,
   MAX_LOOP_ITERATIONS,
+  MAX_SCHEDULE_RULES,
   LOOP_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
+  TRIGGER_EVENT_CATALOG,
   flattenActionSteps,
   isBranchStep,
+  isValidTimezone,
+  triggerEventById,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
@@ -33,6 +37,9 @@ import {
   type GroupStep,
   type InstructionSegment,
   type LoopStep,
+  type Recurrence,
+  type TriggerDraft,
+  type Weekday,
 } from '@renkei/agents';
 import { resolveAgentLlm, type LlmMessage } from '@renkei/agent-llm';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
@@ -113,11 +120,27 @@ export interface TriggerVarInfo {
   description: string;
 }
 
+/** Another agent the caller owns, offered as an agent-finished trigger target. */
+export interface AgentOption {
+  id: string;
+  name: string;
+}
+
+/**
+ * Present when the builder has NO triggers yet and wants the draft to
+ * propose them from the prose — and only then: with triggers already
+ * configured, proposing more would duplicate what the user set up.
+ */
+interface TriggerOffer {
+  otherAgents: AgentOption[];
+}
+
 function promptOf(
   text: string,
   tools: ToolDescriptor[],
   currentSteps: AgentStepNode[],
-  triggerVars: TriggerVarInfo[]
+  triggerVars: TriggerVarInfo[],
+  triggerOffer: TriggerOffer | null
 ): string {
   const toolLines = tools
     .filter((tool) => !tool.appOnly)
@@ -203,6 +226,36 @@ function promptOf(
     '',
     "Available variables (trigger.* variables describe the event that starts the automation — pass the id-shaped ones to the matching connector tool to act on that item, e.g. reply where a message came from by giving its space/room id variable to that connector's send tool). Use ONLY these variable names. Never invent trigger.* names: if the described automation reacts to an event but no matching trigger.* variable is listed, write the step in plain words instead — the user must attach that trigger in the builder before its data exists:",
     varLines,
+    ...(triggerOffer
+      ? [
+          '',
+          'Triggers — WHEN the automation runs. Include a "triggers" array (at most 3 entries) ' +
+            'ONLY when the description clearly states when it runs ("every weekday at 9", "when ' +
+            'a message is posted", "when called from our script"). If it does not clearly state ' +
+            'one, OMIT the field entirely — never invent or guess a trigger. Each entry is one of:',
+          '  {"kind": "schedule", "rules": array of 1-' +
+            `${MAX_SCHEDULE_RULES}, "timezone": IANA zone ONLY when the ` +
+            'description names one, else null}. Each rule: {"every": "hour"} | {"every": "day", ' +
+            '"at": "HH:MM"} | {"every": "weekday", "at": "HH:MM"} (weekday = Monday-Friday) | ' +
+            '{"every": "week", "weekday": 0-6 (0 = Sunday), "at": "HH:MM"} | {"every": "month", ' +
+            '"day": 1-31, "at": "HH:MM"}. Times are 24-hour.',
+          '  {"kind": "event", "eventId": one of EXACTLY these ids}:',
+          ...TRIGGER_EVENT_CATALOG.map(
+            (event) => `    - ${event.id}: ${event.label} — ${event.description}`
+          ),
+          ...(triggerOffer.otherAgents.length > 0
+            ? [
+                '  {"kind": "agent", "agentName": EXACTLY one of the user\'s other automations} — ' +
+                  'runs after that automation finishes. Their names: ' +
+                  triggerOffer.otherAgents.map((agent) => `"${agent.name}"`).join(', ') +
+                  '.',
+              ]
+            : []),
+          '  {"kind": "api", "inputs": array of {"name": short input name, "label": short ' +
+            'label}} — an external caller starts the automation over the API, passing these ' +
+            'inputs (they become trigger.<name> variables).',
+        ]
+      : []),
     '',
     revising ? 'The user asked for this change:' : 'The user wrote:',
     '"""',
@@ -213,6 +266,12 @@ function promptOf(
     'exactly this structure:',
     '{',
     '  "name": string — a short agent name, at most 60 characters,',
+    ...(triggerOffer
+      ? [
+          '  "triggers": OPTIONAL array as described above — omit it unless the description',
+          '    clearly states when the automation runs,',
+        ]
+      : []),
     '  "steps": array of 1 to 20 objects, in execution order, each:',
     '  {',
     '    "name": string — a short step label, at most 80 characters, never empty,',
@@ -356,6 +415,12 @@ function sanitizeSaveAs(raw: string): string {
 export interface DraftedAgent {
   name: string;
   steps: AgentStepNode[];
+  /**
+   * Proposed triggers, present only when the caller asked for suggestions
+   * (the builder has none yet) — possibly empty when the prose never says
+   * when the automation runs, which is the honest answer, not a failure.
+   */
+  triggers?: TriggerDraft[];
 }
 
 /**
@@ -367,6 +432,7 @@ export interface DraftedAgent {
 const REPLY_ENVELOPE = z.object({
   name: z.string().optional(),
   steps: z.array(z.unknown()).min(1, 'must contain at least one step').max(20),
+  triggers: z.array(z.unknown()).max(3, 'takes at most 3 triggers').optional(),
 });
 
 const STEP_SHAPE = z.object({
@@ -431,6 +497,207 @@ const GROUP_SHAPE = z.object({
   from: z.string().nullable().optional(),
 });
 
+/* ---------------- trigger wire shapes ------------------------------ */
+
+const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const SCHEDULE_RULE_SHAPE = z.object({
+  every: z.enum(['hour', 'day', 'weekday', 'week', 'month']),
+  at: z.string().nullable().optional(),
+  weekday: z.number().int().min(0).max(6).nullable().optional(),
+  day: z.number().int().min(1).max(31).nullable().optional(),
+});
+
+const SCHEDULE_TRIGGER_SHAPE = z.object({
+  kind: z.literal('schedule'),
+  rules: z.array(z.unknown()).min(1, 'needs at least one rule').max(MAX_SCHEDULE_RULES),
+  timezone: z.string().nullable().optional(),
+});
+
+const EVENT_TRIGGER_SHAPE = z.object({
+  kind: z.literal('event'),
+  eventId: z.string().min(1, 'is required'),
+});
+
+const AGENT_TRIGGER_SHAPE = z.object({
+  kind: z.literal('agent'),
+  agentName: z.string().min(1, 'is required'),
+});
+
+const API_TRIGGER_SHAPE = z.object({
+  kind: z.literal('api'),
+  inputs: z
+    .array(z.object({ name: z.string().min(1), label: z.string().nullable().optional() }))
+    .max(10),
+});
+
+function weekdayOf(value: number): Weekday | null {
+  switch (value) {
+    case 0:
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+    case 5:
+    case 6:
+      return value;
+    default:
+      return null;
+  }
+}
+
+/** One schedule rule off the wire → a real Recurrence, or a diagnosis. */
+function recurrenceOf(raw: unknown, label: string, state: ParseState): Recurrence | null {
+  const checked = SCHEDULE_RULE_SHAPE.safeParse(raw);
+  if (!checked.success) {
+    state.softProblems.push(...zodProblems(`${label} schedule rule: `, checked.error));
+    return null;
+  }
+  const rule = checked.data;
+  if (rule.every === 'hour') return { every: 'hour' };
+  const at = typeof rule.at === 'string' ? rule.at : '';
+  if (!TIME_PATTERN.test(at)) {
+    state.softProblems.push(
+      `${label} has a "${rule.every}" schedule rule without a valid "at" — give the time as 24-hour "HH:MM".`
+    );
+    return null;
+  }
+  switch (rule.every) {
+    case 'day':
+      return { every: 'day', at };
+    case 'weekday':
+      return { every: 'weekday', at };
+    case 'week': {
+      const weekday = typeof rule.weekday === 'number' ? weekdayOf(rule.weekday) : null;
+      if (weekday === null) {
+        state.softProblems.push(
+          `${label} has a weekly schedule rule without "weekday" (0-6, 0 = Sunday).`
+        );
+        return null;
+      }
+      return { every: 'week', weekday, at };
+    }
+    case 'month': {
+      if (typeof rule.day !== 'number') {
+        state.softProblems.push(`${label} has a monthly schedule rule without "day" (1-31).`);
+        return null;
+      }
+      return { every: 'month', day: rule.day, at };
+    }
+  }
+}
+
+/**
+ * Parse the reply's proposed triggers. Same philosophy as steps: a broken
+ * entry degrades to quotable feedback and is dropped — an invented event id
+ * or unknown agent name must never reach the builder as a chip the save
+ * would bounce. An empty result is fine: "the prose never said when" is the
+ * honest answer the prompt asked for.
+ */
+function parseTriggerEntries(
+  entries: unknown[],
+  state: ParseState,
+  offer: TriggerOffer
+): TriggerDraft[] {
+  const drafts: TriggerDraft[] = [];
+  for (const [index, entry] of entries.entries()) {
+    const label = `Trigger ${index + 1}`;
+    if (typeof entry !== 'object' || entry === null) {
+      state.softProblems.push(`${label} is not an object.`);
+      continue;
+    }
+    const candidate: { kind?: unknown } = entry;
+    switch (candidate.kind) {
+      case 'schedule': {
+        const checked = SCHEDULE_TRIGGER_SHAPE.safeParse(entry);
+        if (!checked.success) {
+          state.softProblems.push(...zodProblems(`${label} (schedule): `, checked.error));
+          break;
+        }
+        const recurrences = checked.data.rules.flatMap((raw) => {
+          const rule = recurrenceOf(raw, label, state);
+          return rule ? [rule] : [];
+        });
+        if (recurrences.length === 0) break;
+        const given = typeof checked.data.timezone === 'string' ? checked.data.timezone : '';
+        if (given && !isValidTimezone(given)) {
+          state.softProblems.push(
+            `${label} names the timezone "${given}", which is not a recognized IANA zone — it was dropped (the user's own timezone applies).`
+          );
+        }
+        // '' = "the prose named none": the builder fills in the USER'S zone,
+        // which this code cannot know.
+        const timezone = given && isValidTimezone(given) ? given : '';
+        drafts.push({ kind: 'schedule', recurrences, timezone });
+        break;
+      }
+      case 'event': {
+        const checked = EVENT_TRIGGER_SHAPE.safeParse(entry);
+        if (!checked.success) {
+          state.softProblems.push(...zodProblems(`${label} (event): `, checked.error));
+          break;
+        }
+        if (!triggerEventById(checked.data.eventId)) {
+          state.softProblems.push(
+            `${label} uses the event id "${checked.data.eventId}", which is not in the list — the legal ids are: ${TRIGGER_EVENT_CATALOG.map((event) => event.id).join(', ')}.`
+          );
+          break;
+        }
+        drafts.push({ kind: 'event', eventId: checked.data.eventId });
+        break;
+      }
+      case 'agent': {
+        const checked = AGENT_TRIGGER_SHAPE.safeParse(entry);
+        if (!checked.success) {
+          state.softProblems.push(...zodProblems(`${label} (agent): `, checked.error));
+          break;
+        }
+        const wanted = checked.data.agentName.trim().toLowerCase();
+        const match = offer.otherAgents.find((agent) => agent.name.trim().toLowerCase() === wanted);
+        if (!match) {
+          state.softProblems.push(
+            offer.otherAgents.length > 0
+              ? `${label} names the automation "${checked.data.agentName}", which the user does not have — their automations are: ${offer.otherAgents.map((agent) => `"${agent.name}"`).join(', ')}.`
+              : `${label} is an "agent" trigger, but the user has no other automations — drop it.`
+          );
+          break;
+        }
+        drafts.push({ kind: 'agent', callerAgentId: match.id });
+        break;
+      }
+      case 'api': {
+        const checked = API_TRIGGER_SHAPE.safeParse(entry);
+        if (!checked.success) {
+          state.softProblems.push(...zodProblems(`${label} (api): `, checked.error));
+          break;
+        }
+        const seen = new Set<string>();
+        const inputs = checked.data.inputs.flatMap((input) => {
+          const name = sanitizeSaveAs(input.name);
+          if (!name || seen.has(name.toLowerCase())) return [];
+          seen.add(name.toLowerCase());
+          return [
+            {
+              name,
+              label:
+                typeof input.label === 'string' && input.label.trim()
+                  ? input.label.trim().slice(0, 80)
+                  : name,
+            },
+          ];
+        });
+        drafts.push({ kind: 'api', inputs });
+        break;
+      }
+      default:
+        state.softProblems.push(
+          `${label} has the kind ${JSON.stringify(candidate.kind)} — triggers are "schedule", "event", "agent", or "api".`
+        );
+    }
+  }
+  return drafts;
+}
+
 function wireKindOf(entry: unknown): 'branch' | 'loop' | 'group' | 'action' {
   if (typeof entry === 'object' && entry !== null) {
     const candidate: { kind?: unknown } = entry;
@@ -478,7 +745,8 @@ function parseDraftReply(
   currentSteps: AgentStepNode[],
   validTools: Set<string>,
   outcomesByTool: Map<string, Set<string>>,
-  seedVars: Set<string>
+  seedVars: Set<string>,
+  triggerOffer: TriggerOffer | null
 ): { ok: true; draft: DraftedAgent; softProblems: string[] } | { ok: false; problems: string[] } {
   const cleaned = raw.replace(/```(?:json)?/g, '');
   const start = cleaned.indexOf('{');
@@ -518,6 +786,11 @@ function parseDraftReply(
   };
 
   const steps = parseNodeList(parsed.steps, 'Step', state, TOP_NESTING);
+  // Triggers only when the caller offered — a reply volunteering them
+  // anyway (or a revise with triggers already configured) is ignored.
+  const triggers = triggerOffer
+    ? parseTriggerEntries(parsed.triggers ?? [], state, triggerOffer)
+    : null;
   const { problems, softProblems } = state;
 
   if (steps.length === 0) {
@@ -574,6 +847,7 @@ function parseDraftReply(
     draft: {
       name: typeof parsed.name === 'string' ? parsed.name.slice(0, 200) : '',
       steps,
+      ...(triggers !== null ? { triggers } : {}),
     },
     softProblems,
   };
@@ -1048,10 +1322,21 @@ export async function draftAgentFromProse(
     /** trigger.* variables the attached triggers provide (name + what it
      * is), so those chips verify and the prompt can explain them. */
     triggerVars?: TriggerVarInfo[];
+    /**
+     * Ask the model to propose triggers from the prose — set only when the
+     * builder has none configured. The prompt forbids inventing one: prose
+     * that never says when the automation runs yields no triggers.
+     */
+    suggestTriggers?: boolean;
+    /** The caller's other agents, offered as agent-finished trigger targets. */
+    otherAgents?: AgentOption[];
   } = {}
 ): Promise<DraftedAgent | { error: string; detail?: string }> {
   const currentSteps = options.currentSteps ?? [];
   const triggerVars = options.triggerVars ?? [];
+  const triggerOffer: TriggerOffer | null = options.suggestTriggers
+    ? { otherAgents: options.otherAgents ?? [] }
+    : null;
   const llmResult = await resolveAgentLlm(db, tenantId, null);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization yet.' };
@@ -1084,7 +1369,13 @@ export async function draftAgentFromProse(
       content: [
         {
           type: 'text',
-          text: promptOf(text.slice(0, MAX_PROSE_CHARS), tools, currentSteps, triggerVars),
+          text: promptOf(
+            text.slice(0, MAX_PROSE_CHARS),
+            tools,
+            currentSteps,
+            triggerVars,
+            triggerOffer
+          ),
         },
       ],
     },
@@ -1166,7 +1457,14 @@ export async function draftAgentFromProse(
     const raw = completion.val.content
       .flatMap((block) => (block.type === 'text' ? [block.text] : []))
       .join('\n');
-    const parsed = parseDraftReply(raw, currentSteps, validTools, outcomesByTool, seedVars);
+    const parsed = parseDraftReply(
+      raw,
+      currentSteps,
+      validTools,
+      outcomesByTool,
+      seedVars,
+      triggerOffer
+    );
 
     if (parsed.ok) {
       usable = parsed.draft;

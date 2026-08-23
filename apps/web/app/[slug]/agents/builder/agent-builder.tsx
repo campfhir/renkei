@@ -20,6 +20,7 @@ import {
   findNodeById,
   flattenActionSteps,
   isContainerNode,
+  isTriggerDraft,
   requiredVersion,
   triggerVariableDescriptors,
   validateAgentDraft,
@@ -27,6 +28,7 @@ import {
   type AgentStepNode,
   type AgentStepsDoc,
   type InstructionSegment,
+  type TriggerDraft,
   type ValidationIssue,
 } from '@renkei/agents';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
@@ -242,19 +244,23 @@ export function AgentBuilder({
     setDrafting(true);
     setDraftError(null);
     setDraftDetail(null);
-    const result = await sendJsonFull<{ name: string; steps: AgentStepNode[]; detail?: string }>(
-      `/api/tenant/${tenantId}/agents/draft`,
-      'POST',
-      {
-        text: prose,
-        ...(hasRealSteps ? { steps: stepsDoc } : {}),
-        // Names WITH their catalog descriptions, so the drafting model knows
-        // what each trigger variable is and how to use it.
-        triggerVars: triggerVariableDescriptors(triggers.map((trigger) => trigger.draft)).map(
-          ({ name: varName, description }) => ({ name: varName, description })
-        ),
-      }
-    );
+    const result = await sendJsonFull<{
+      name: string;
+      steps: AgentStepNode[];
+      triggers?: TriggerDraft[];
+      detail?: string;
+    }>(`/api/tenant/${tenantId}/agents/draft`, 'POST', {
+      text: prose,
+      ...(hasRealSteps ? { steps: stepsDoc } : {}),
+      // Trigger suggestions only while NONE are configured — the draft
+      // fills an empty slot, it never rewrites what the user set up.
+      ...(triggers.length === 0 ? { suggestTriggers: true } : {}),
+      // Names WITH their catalog descriptions, so the drafting model knows
+      // what each trigger variable is and how to use it.
+      triggerVars: triggerVariableDescriptors(triggers.map((trigger) => trigger.draft)).map(
+        ({ name: varName, description }) => ({ name: varName, description })
+      ),
+    });
     setDrafting(false);
     if (result.error || !result.data?.steps) {
       setDraftError(result.error ?? 'Drafting failed — try again.');
@@ -264,6 +270,24 @@ export function AgentBuilder({
     setSteps(result.data.steps);
     setSelection(null);
     if (!name.trim() && result.data.name) setName(result.data.name);
+    if (triggers.length === 0 && Array.isArray(result.data.triggers)) {
+      // A drafted schedule with no stated timezone means "the prose never
+      // said" — the user's own zone is the only sensible reading, and only
+      // the browser knows it.
+      const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const draftedTriggers = result.data.triggers.filter(isTriggerDraft);
+      if (draftedTriggers.length > 0) {
+        setTriggers(
+          draftedTriggers.map((draftTrigger) => ({
+            draft:
+              draftTrigger.kind === 'schedule' && !draftTrigger.timezone
+                ? { ...draftTrigger, timezone: localTimezone }
+                : draftTrigger,
+            enabled: true,
+          }))
+        );
+      }
+    }
     setDrafted(true);
     setServerIssues([]);
   };
