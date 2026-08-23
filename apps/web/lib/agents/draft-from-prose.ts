@@ -9,6 +9,14 @@
  * never a chip the validator would bounce. The user reviews and edits the
  * result in the builder like anything they typed themselves; nothing is
  * saved by this step.
+ *
+ * Two loops guard quality. The STRUCTURAL loop feeds parse problems back
+ * for one corrective round trip. The GAP-CLOSING loop (refineWithReview)
+ * then runs the save-time critic against the usable draft and hands its
+ * concerns back to the drafting model — which closes what the description
+ * supports and asks the USER (via "questions") for what it does not,
+ * because a wrong guess acted on is worse than a question. Concerns still
+ * open when the rounds or the budget run out ride back on the draft.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -28,10 +36,12 @@ import {
   flattenActionSteps,
   isBranchStep,
   isValidTimezone,
+  requiredVersion,
   triggerEventById,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
+  type AgentStepsDoc,
   type BranchPath,
   type FailureHandling,
   type GroupStep,
@@ -42,9 +52,11 @@ import {
   type TriggerDraft,
   type Weekday,
 } from '@renkei/agents';
-import { resolveAgentLlm, type LlmMessage } from '@renkei/agent-llm';
+import { resolveAgentLlm, type LlmMessage, type ResolvedLlm } from '@renkei/agent-llm';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { friendlyToolName } from '@/lib/tool-name';
+import { buildAgentReviewPrompt, parseAgentReviewReply } from '@/lib/agents/describe';
+import type { ReviewNote } from '@/lib/agents/notes';
 import { logger } from '@/lib/logger';
 
 // Generous on purpose: reasoning models (Foundry deployments especially)
@@ -53,6 +65,15 @@ import { logger } from '@/lib/logger';
 const DRAFT_TIMEOUT_MS = 300_000;
 const MAX_OUTPUT_TOKENS = 4_096;
 const MAX_PROSE_CHARS = 4_000;
+const DRAFT_SYSTEM =
+  'You turn plain-language automation descriptions into structured steps. You reply with strict JSON.';
+
+/** Gap-closing rounds: review → redraft, at most this many redrafts. */
+const MAX_REFINE_ROUNDS = 2;
+/** A redraft needs real time; below this remaining budget, ship what we have. */
+const REFINE_MIN_BUDGET_MS = 60_000;
+/** The reviewer is a small call; give it this much at most. */
+const REVIEW_TIMEOUT_MS = 25_000;
 
 /** Segments → the wire's token syntax, so current steps round-trip exactly. */
 function segmentsToTokens(segments: InstructionSegment[]): string {
@@ -222,6 +243,17 @@ function promptOf(
       'when the description asks for a notification or an explicit ending.',
     '- Carry the user\'s guardrails into the step that acts (e.g. "if this thread was already ' +
       'handled, do not update the same ticket again — stop instead").',
+    '- Think hard about the EDGE CASES of these rules before answering: what happens when the ' +
+      'trigger fires with missing or odd data, a search finds nothing (or far too many), a ' +
+      'tool call fails, the same item was already handled by an earlier run, or a condition ' +
+      'is ambiguous between two paths. Handle the realistic ones IN the steps — empty-result ' +
+      'wording in the instruction, a "failures" entry, a stop-quiet or end-marker exit — and ' +
+      'note what you considered in "edgeCases" so the reasoning is checkable.',
+    '- NEVER invent specifics the description does not give: project keys, board or folder ' +
+      'names, email addresses, room names, thresholds, labels. When a step needs one, add a ' +
+      'short question for the user to "questions" and write the step in plain words around ' +
+      'the gap ("the project the user names") — a wrong guess acted on is worse than a ' +
+      'question.',
     '- A step that FAILS stops the automation by default. To handle a specific failure of a ' +
       'tool step differently, add it to that step\'s "failures" array using one of the tool\'s ' +
       'listed failure codes: {"outcome": code, "action": "stop"} stops deliberately, ' +
@@ -288,6 +320,10 @@ function promptOf(
     'exactly this structure:',
     '{',
     '  "name": string — a short agent name, at most 60 characters,',
+    '  "edgeCases": OPTIONAL array of short strings — the edge cases you considered and how',
+    '    the steps handle them (or why they need no handling),',
+    '  "questions": OPTIONAL array of at most 5 short questions for the user — ONLY for',
+    '    information the description leaves out that you must not guess; omit when none,',
     ...(triggerOffer
       ? [
           '  "triggers": OPTIONAL array as described above — omit it unless the description',
@@ -453,6 +489,19 @@ export interface DraftedAgent {
    * when the automation runs, which is the honest answer, not a failure.
    */
   triggers?: TriggerDraft[];
+  /**
+   * Things the model needs the USER to decide — specifics the description
+   * left out that it must not invent (which project, whose inbox, what
+   * threshold). The builder shows these under the draft; the user answers
+   * in the description box and drafts again.
+   */
+  questions?: string[];
+  /**
+   * Reviewer concerns still open after the gap-closing rounds (see
+   * `refineWithReview`) — the same critic the save-time "Worth checking"
+   * panel runs, surfaced BEFORE saving so the user is not surprised later.
+   */
+  concerns?: ReviewNote[];
 }
 
 /**
@@ -465,6 +514,10 @@ const REPLY_ENVELOPE = z.object({
   name: z.string().optional(),
   steps: z.array(z.unknown()).min(1, 'must contain at least one step').max(20),
   triggers: z.array(z.unknown()).max(3, 'takes at most 3 triggers').optional(),
+  // Open decisions only the user can make; "edgeCases" (the model's own
+  // edge-case notes) also arrives but is working material, not output —
+  // zod strips it with every other undeclared key.
+  questions: z.array(z.unknown()).max(8, 'takes at most 5 questions').optional(),
 });
 
 const STEP_SHAPE = z.object({
@@ -837,6 +890,12 @@ function parseDraftReply(
   const triggers = triggerOffer
     ? parseTriggerEntries(parsed.triggers ?? [], state, triggerOffer)
     : null;
+  // Open decisions the model asked the user about. Trusted as prose (they
+  // are shown, never executed), just bounded.
+  const questions = (parsed.questions ?? [])
+    .flatMap((entry) => (typeof entry === 'string' && entry.trim() ? [entry.trim()] : []))
+    .map((question) => question.slice(0, 300))
+    .slice(0, 5);
   const { problems, softProblems } = state;
 
   if (steps.length === 0) {
@@ -895,6 +954,7 @@ function parseDraftReply(
       name: typeof parsed.name === 'string' ? parsed.name.slice(0, 200) : '',
       steps,
       ...(triggers !== null ? { triggers } : {}),
+      ...(questions.length > 0 ? { questions } : {}),
     },
     softProblems,
   };
@@ -1397,6 +1457,168 @@ function parseActionEntry(
   };
 }
 
+/**
+ * Run the save-time critic (describe.ts's reviewer — the SAME rules the
+ * "Worth checking" panel applies) against a draft that only exists in
+ * memory. Null = the review itself failed or timed out, which silently
+ * skips refinement: the critic is advisory here exactly as it is at save.
+ */
+async function reviewDraftConcerns(
+  llm: ResolvedLlm,
+  tenantId: string,
+  draft: DraftedAgent,
+  budgetMs: number
+): Promise<ReviewNote[] | null> {
+  if (budgetMs < 10_000) return null;
+  const stepsDoc: AgentStepsDoc = { version: requiredVersion(draft.steps), steps: draft.steps };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const outerMs = Math.min(REVIEW_TIMEOUT_MS, budgetMs);
+  const completion = await Promise.race([
+    llm.provider.complete({
+      system:
+        'You summarize user-drafted automations for the person who wrote them. You reply with strict JSON.',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: buildAgentReviewPrompt(
+                draft.name || 'Untitled automation',
+                stepsDoc,
+                draft.triggers ?? []
+              ),
+            },
+          ],
+        },
+      ],
+      tools: [],
+      maxTokens: Math.max(1_024, llm.maxOutputTokens),
+      timeoutMs: Math.max(5_000, outerMs - 2_000),
+    }),
+    new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), outerMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+  if (completion === 'timeout' || !completion.ok) {
+    logger.info('draft review skipped: {reason}', {
+      component: 'agents/draft',
+      tenantId,
+      reason: completion === 'timeout' ? 'timeout' : completion.err.type,
+    });
+    return null;
+  }
+  const text = completion.val.content
+    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+    .join('\n');
+  const parsed = parseAgentReviewReply(text);
+  return parsed ? parsed.concerns : null;
+}
+
+/** The reviewer's findings, phrased as work for the drafting model. */
+function refineFeedbackText(concerns: ReviewNote[]): string {
+  return [
+    'A careful reviewer read your drafted steps and flagged these gaps:',
+    ...concerns
+      .slice(0, 8)
+      .map((note) => `- ${note.issue}${note.fix ? ` (suggested fix: ${note.fix})` : ''}`),
+    '',
+    'Revise the FULL step list to close every gap you can from the description alone — add ' +
+      'the missing step, tighten the instruction, or handle the failure. When a gap needs ' +
+      'information only the user has, do NOT guess or invent specifics: add a short question ' +
+      'to "questions" instead and leave the affected step in plain words. Dismiss a concern ' +
+      'only when the reviewer is wrong about how the steps run. Keep everything already ' +
+      'correct (same instruction tokens, same saveAs names). Reply with ONLY the corrected ' +
+      'JSON object, in exactly the structure described before.',
+  ].join('\n');
+}
+
+/**
+ * The gap-closing loop: review the draft with the save-time critic, hand
+ * the concerns back to the drafting model, and repeat — bounded by rounds
+ * and the shared time budget. Concerns still standing when the loop stops
+ * ride out on the draft, so the builder shows them BEFORE the save that
+ * would otherwise be the first time the user hears about them. Every
+ * failure inside the loop degrades to "return the best draft so far";
+ * refinement never turns a usable draft into an error.
+ */
+async function closeReviewGaps(context: {
+  llm: ResolvedLlm;
+  tenantId: string;
+  deadline: number;
+  /** The drafting conversation so far — refinement continues it. */
+  messages: LlmMessage[];
+  currentSteps: AgentStepNode[];
+  validTools: Set<string>;
+  outcomesByTool: Map<string, Set<string>>;
+  seedVars: Set<string>;
+  triggerOffer: TriggerOffer | null;
+  draft: DraftedAgent;
+  draftRaw: string;
+}): Promise<DraftedAgent> {
+  const { llm, tenantId, deadline, messages } = context;
+  let current = context.draft;
+  let currentRaw = context.draftRaw;
+
+  let concerns = await reviewDraftConcerns(llm, tenantId, current, deadline - Date.now());
+  if (concerns === null) return current;
+
+  for (let round = 1; concerns.length > 0 && round <= MAX_REFINE_ROUNDS; round += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining < REFINE_MIN_BUDGET_MS) break;
+    logger.info('draft refine round {round}: {count} concern(s)', {
+      component: 'agents/draft',
+      tenantId,
+      round,
+      count: concerns.length,
+    });
+
+    messages.push(
+      { role: 'assistant', content: [{ type: 'text', text: currentRaw.slice(0, 8_000) }] },
+      { role: 'user', content: [{ type: 'text', text: refineFeedbackText(concerns) }] }
+    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const completion = await Promise.race([
+      llm.provider.complete({
+        system: DRAFT_SYSTEM,
+        messages,
+        tools: [],
+        maxTokens: Math.max(MAX_OUTPUT_TOKENS, llm.maxOutputTokens),
+        timeoutMs: Math.max(10_000, remaining - 5_000),
+      }),
+      new Promise<'timeout'>((resolve) => {
+        timer = setTimeout(() => resolve('timeout'), remaining);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (completion === 'timeout' || !completion.ok) break;
+
+    const raw = completion.val.content
+      .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+      .join('\n');
+    const parsed = parseDraftReply(
+      raw,
+      context.currentSteps,
+      context.validTools,
+      context.outcomesByTool,
+      context.seedVars,
+      context.triggerOffer
+    );
+    // A refinement that regresses to unparseable loses; the pre-refine
+    // draft (with its concerns attached) beats an error.
+    if (!parsed.ok) break;
+    current = parsed.draft;
+    currentRaw = raw;
+
+    const next = await reviewDraftConcerns(llm, tenantId, current, deadline - Date.now());
+    // Review broke mid-loop: the refined draft stands, with the previous
+    // round's concerns as the honest "still to check" list.
+    if (next === null) break;
+    concerns = next;
+  }
+
+  return concerns.length > 0 ? { ...current, concerns } : current;
+}
+
 export async function draftAgentFromProse(
   db: Kysely<DB>,
   tenantId: string,
@@ -1416,6 +1638,13 @@ export async function draftAgentFromProse(
     suggestTriggers?: boolean;
     /** The caller's other agents, offered as agent-finished trigger targets. */
     otherAgents?: AgentOption[];
+    /**
+     * Run the gap-closing loop on a usable draft: review it with the
+     * save-time critic and hand concerns back to the drafting model until
+     * they close, the rounds run out, or the budget does. Off by default —
+     * the extra model calls are the caller's latency decision.
+     */
+    refineWithReview?: boolean;
   } = {}
 ): Promise<DraftedAgent | { error: string; detail?: string }> {
   const currentSteps = options.currentSteps ?? [];
@@ -1469,8 +1698,10 @@ export async function draftAgentFromProse(
   let lastProblems: string[] = [];
   // A first draft that parsed but had soft problems is kept: if the
   // corrective attempt REGRESSES (hard-fails or times out of budget), the
-  // degraded-but-usable version beats an error.
+  // degraded-but-usable version beats an error. Its raw reply rides along
+  // so the gap-closing loop can continue the conversation from it.
   let usable: DraftedAgent | null = null;
+  let usableRaw = '';
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const remaining = deadline - Date.now();
@@ -1479,8 +1710,7 @@ export async function draftAgentFromProse(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const completion = await Promise.race([
       llm.provider.complete({
-        system:
-          'You turn plain-language automation descriptions into structured steps. You reply with strict JSON.',
+        system: DRAFT_SYSTEM,
         messages,
         tools: [],
         // The model config's own ceiling when it is higher: reasoning
@@ -1554,10 +1784,11 @@ export async function draftAgentFromProse(
 
     if (parsed.ok) {
       usable = parsed.draft;
+      usableRaw = raw;
       if (parsed.softProblems.length === 0 || attempt === 2) {
         // Good — or as good as one correction gets; chips that still don't
         // verify degrade to text for the user to re-chip deliberately.
-        return parsed.draft;
+        break;
       }
     }
 
@@ -1588,7 +1819,22 @@ export async function draftAgentFromProse(
     );
   }
 
-  if (usable) return usable;
+  if (usable) {
+    if (!options.refineWithReview) return usable;
+    return closeReviewGaps({
+      llm,
+      tenantId,
+      deadline,
+      messages,
+      currentSteps,
+      validTools,
+      outcomesByTool,
+      seedVars,
+      triggerOffer,
+      draft: usable,
+      draftRaw: usableRaw,
+    });
+  }
 
   logger.warn('prose draft unusable after retry: {problems}', {
     component: 'agents/draft',

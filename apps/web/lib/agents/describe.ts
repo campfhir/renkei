@@ -173,7 +173,18 @@ function nodeLines(
     .join('\n');
 }
 
-function promptOf(name: string, steps: AgentStepsDoc, triggers: TriggerDraft[]): string {
+/**
+ * The reviewer prompt, exported so prose drafting can run the SAME critic
+ * against a draft before the user ever sees it — the gap-closing loop and
+ * the save-time "Worth checking" panel must judge by one set of rules, or
+ * drafting would polish away concerns the panel then re-raises (or miss
+ * ones it never checks).
+ */
+export function buildAgentReviewPrompt(
+  name: string,
+  steps: AgentStepsDoc,
+  triggers: TriggerDraft[]
+): string {
   const ordinals = new Map(walkSteps(steps.steps).map((entry) => [entry.node.id, entry.ordinal]));
   const stepLines = nodeLines(steps.steps, ordinals, '');
   const triggerLines =
@@ -202,7 +213,9 @@ function promptOf(name: string, steps: AgentStepsDoc, triggers: TriggerDraft[]):
   ].join('\n');
 }
 
-function parseReply(text: string): { summary: string; concerns: ReviewNote[] } | null {
+export function parseAgentReviewReply(
+  text: string
+): { summary: string; concerns: ReviewNote[] } | null {
   // Models fence JSON despite instructions; strip fences before parsing.
   const cleaned = text.replace(/```(?:json)?/g, '').trim();
   const start = cleaned.indexOf('{');
@@ -256,7 +269,9 @@ export async function generateAgentDescription(
       messages: [
         {
           role: 'user',
-          content: [{ type: 'text', text: promptOf(agent.name, agent.steps, agent.triggers) }],
+          content: [
+            { type: 'text', text: buildAgentReviewPrompt(agent.name, agent.steps, agent.triggers) },
+          ],
         },
       ],
       tools: [],
@@ -276,7 +291,7 @@ export async function generateAgentDescription(
   const text = completion.val.content
     .flatMap((block) => (block.type === 'text' ? [block.text] : []))
     .join('\n');
-  const parsed = parseReply(text);
+  const parsed = parseAgentReviewReply(text);
   if (!parsed) return failed('unparseable reply');
 
   await saveDescription(db, tenantId, agent.id, {

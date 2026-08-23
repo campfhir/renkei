@@ -92,6 +92,10 @@ export async function POST(
     triggerVars,
     suggestTriggers,
     otherAgents,
+    // Close the "Worth checking" gaps before the user ever sees the draft;
+    // whatever stays open (and any questions only the user can answer)
+    // rides back on the response for the builder to show.
+    refineWithReview: true,
   });
   if ('error' in drafted) {
     return NextResponse.json(

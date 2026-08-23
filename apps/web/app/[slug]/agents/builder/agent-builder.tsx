@@ -156,6 +156,11 @@ export function AgentBuilder({
   const [draftSeconds, setDraftSeconds] = useState(0);
   const [draftMode, setDraftMode] = useState<'create' | 'revise'>('create');
   const [drafted, setDrafted] = useState(false);
+  // What the drafting loop could not settle on its own: questions only the
+  // user can answer (answered in the description box, then draft again)
+  // and reviewer concerns still open after the gap-closing rounds.
+  const [draftQuestions, setDraftQuestions] = useState<string[]>([]);
+  const [draftConcerns, setDraftConcerns] = useState<ReviewNote[]>([]);
 
   // The summary is written server-side AFTER the save response; poll the
   // agent until its status resolves so the panel can stop showing the
@@ -205,8 +210,8 @@ export function AgentBuilder({
         ? 'Revising your steps — applying the change you described…'
         : 'Splitting it into steps and picking the skills…';
     if (draftSeconds < 60)
-      return `Still thinking (${draftSeconds}s) — matching skills and details…`;
-    return `Still working (${draftSeconds}s) — bigger models can take a few minutes (up to five). Hang tight.`;
+      return `Still thinking (${draftSeconds}s) — matching skills, then reviewing the draft for gaps…`;
+    return `Still working (${draftSeconds}s) — drafting and gap-checking can take a few minutes (up to five). Hang tight.`;
   })();
 
   const draftFromProse = async () => {
@@ -250,10 +255,14 @@ export function AgentBuilder({
     setDrafting(true);
     setDraftError(null);
     setDraftDetail(null);
+    setDraftQuestions([]);
+    setDraftConcerns([]);
     const result = await sendJsonFull<{
       name: string;
       steps: AgentStepNode[];
       triggers?: TriggerDraft[];
+      questions?: unknown;
+      concerns?: unknown;
       detail?: string;
     }>(`/api/tenant/${tenantId}/agents/draft`, 'POST', {
       text: prose,
@@ -275,6 +284,14 @@ export function AgentBuilder({
     }
     setSteps(result.data.steps);
     setSelection(null);
+    setDraftQuestions(
+      Array.isArray(result.data.questions)
+        ? result.data.questions.filter(
+            (question): question is string => typeof question === 'string' && question.length > 0
+          )
+        : []
+    );
+    setDraftConcerns(parseReviewNotes(result.data.concerns));
     if (!name.trim() && result.data.name) setName(result.data.name);
     if (triggers.length === 0 && Array.isArray(result.data.triggers)) {
       // A drafted schedule with no stated timezone means "the prose never
@@ -869,6 +886,47 @@ export function AgentBuilder({
                 {draftDetail}
               </pre>
             </details>
+          ) : null}
+
+          {draftQuestions.length > 0 && !drafting ? (
+            <div className="mt-3 rounded-md border border-blue-300 bg-white p-3 dark:border-blue-800 dark:bg-gray-950">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300">
+                The draft needs your input
+              </h3>
+              <ul className="mt-1.5 list-disc space-y-1 pl-5 text-sm">
+                {draftQuestions.map((question) => (
+                  <li key={question}>{question}</li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                Rather than guessing, the draft left these open. Add the answers to your
+                description above and draft again — or fill them into the steps yourself.
+              </p>
+            </div>
+          ) : null}
+
+          {draftConcerns.length > 0 && !drafting ? (
+            <div className="mt-3 rounded-md border border-amber-300 bg-white p-3 dark:border-amber-800 dark:bg-gray-950">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                Still worth checking
+              </h3>
+              <ul className="mt-1.5 list-disc space-y-1.5 pl-5 text-sm">
+                {draftConcerns.map((note) => (
+                  <li key={note.issue}>
+                    {note.issue}
+                    {note.fix ? (
+                      <p className="mt-0.5 text-xs text-amber-700/80 dark:text-amber-300/70">
+                        Suggestion: {note.fix}
+                      </p>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                The draft was reviewed and revised to close its own gaps; these stayed open —
+                check them in the steps below before saving.
+              </p>
+            </div>
           ) : null}
         </section>
       ) : null}
