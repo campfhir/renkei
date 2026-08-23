@@ -34,6 +34,8 @@ export interface AttemptView {
   stepId: string;
   stepIndex: number;
   attempt: number;
+  /** 0 = not inside a loop; 1-based loop round otherwise. */
+  iteration: number;
   status: string;
   outcome: string | null;
   outcomeCode: string | null;
@@ -149,6 +151,7 @@ async function runDetail(
       'step_id',
       'step_index',
       'attempt',
+      'iteration',
       'status',
       'outcome',
       'outcome_code',
@@ -158,7 +161,11 @@ async function runDetail(
       'finished_at',
     ])
     .where('run_id', '=', runRow.id)
+    // Iteration between index and attempt: a looped step's rounds stay
+    // grouped under its block, in execution order. All-zero iterations
+    // (every pre-v3 run) sort identically to the old query.
     .orderBy('step_index')
+    .orderBy('iteration')
     .orderBy('attempt')
     .execute();
 
@@ -174,6 +181,7 @@ async function runDetail(
         stepId: row.step_id,
         stepIndex: row.step_index,
         attempt: row.attempt,
+        iteration: row.iteration,
         status: row.status,
         outcome: row.outcome,
         outcomeCode: row.outcome_code,

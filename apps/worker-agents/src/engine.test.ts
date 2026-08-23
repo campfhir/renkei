@@ -949,4 +949,671 @@ maybe('agent run engine', () => {
     expect(afterSecond.status).toBe('failed');
     expect(chooseCalls).toBe(1);
   });
+
+  /* ------------------------------------------------------------------ */
+  /* Loops, groups, n-way branches (version 3 documents)                 */
+  /* ------------------------------------------------------------------ */
+
+  const loopDecision = (choice: 'finished' | 'continue'): LlmResponse => ({
+    content: [
+      {
+        type: 'tool_use',
+        id: `tu_${Math.random().toString(36).slice(2)}`,
+        name: 'loop_decision',
+        input: { choice, reason: `decided ${choice}` },
+      },
+    ],
+    stopReason: 'tool_use',
+    usage: { inputTokens: 10, outputTokens: 5 },
+  });
+
+  const plainText: LlmResponse = {
+    content: [{ type: 'text', text: 'hmm, unsure' }],
+    stopReason: 'end_turn',
+    usage: { inputTokens: 10, outputTokens: 5 },
+  };
+
+  const forcedName = (request: LlmRequest): string | null =>
+    typeof request.toolChoice === 'object' && request.toolChoice !== null
+      ? request.toolChoice.name
+      : null;
+
+  const firstText = (request: LlmRequest): string => {
+    for (const message of request.messages) {
+      for (const block of message.content) {
+        if (block.type === 'text') return block.text;
+      }
+    }
+    return '';
+  };
+
+  function foreachDoc(): {
+    doc: AgentStepsDoc;
+    ids: { gather: string; loop: string; work: string; report: string };
+  } {
+    const gather = reasoningStep('gather the items', { saveAs: 'items' });
+    const work = {
+      id: randomUUID(),
+      name: 'work one item',
+      instruction: [
+        { t: 'text' as const, v: 'Handle ' },
+        { t: 'var' as const, name: 'item' },
+      ],
+      tool: null,
+      maxAttempts: 1,
+      failureHandling: [],
+      saveAs: 'note',
+    };
+    const report = {
+      id: randomUUID(),
+      name: 'report',
+      instruction: [
+        { t: 'text' as const, v: 'Report from ' },
+        { t: 'var' as const, name: 'notes' },
+      ],
+      tool: null,
+      maxAttempts: 1,
+      failureHandling: [],
+    };
+    const loopId = randomUUID();
+    const doc = {
+      version: 3,
+      steps: [
+        gather,
+        {
+          id: loopId,
+          kind: 'loop',
+          mode: 'foreach',
+          name: 'work the queue',
+          itemsVar: 'items',
+          itemVar: 'item',
+          maxIterations: 10,
+          collectFrom: 'note',
+          collectVar: 'notes',
+          steps: [work],
+        },
+        report,
+      ],
+    };
+    if (!isAgentStepsDoc(doc)) throw new Error('fixture is not a valid v3 doc');
+    return { doc, ids: { gather: gather.id, loop: loopId, work: work.id, report: report.id } };
+  }
+
+  it('runs a for-each loop per item, rebinding the item variable, and collects filter+expand results', async () => {
+    const { doc, ids } = foreachDoc();
+    const { runId } = await seedRun(doc);
+    const requests: LlmRequest[] = [];
+    // gather saves a 3-item list; iteration 1 saves one value, iteration 2
+    // saves nothing (a filtering round), iteration 3 saves TWO (expanding).
+    const llm = stubLlm((request, call) => {
+      requests.push(request);
+      if (call === 0) return finish('success', { saveItems: ['one', 'two', 'three'] });
+      if (call === 1) return finish('success', { saveValue: 'note-one' });
+      if (call === 2) return finish('success');
+      if (call === 3) return finish('success', { saveItems: ['n3a', 'n3b'] });
+      return finish('success');
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+
+    // Rows in the run views' order: gather, then the body once per round
+    // (iteration 1..3), then the tail — non-loop rows at iteration 0.
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['step_id', 'step_index', 'iteration', 'attempt', 'status'])
+      .where('run_id', '=', runId)
+      .orderBy('step_index')
+      .orderBy('iteration')
+      .orderBy('attempt')
+      .execute();
+    expect(attempts.map((row) => [row.step_id, row.iteration])).toEqual([
+      [ids.gather, 0],
+      [ids.work, 1],
+      [ids.work, 2],
+      [ids.work, 3],
+      [ids.report, 0],
+    ]);
+    expect(attempts.every((row) => row.status === 'succeeded')).toBe(true);
+
+    // The item variable rebound per round: each body prompt names its item.
+    expect(firstText(requests[1])).toContain('Handle one');
+    expect(firstText(requests[2])).toContain('Handle two');
+    expect(firstText(requests[3])).toContain('Handle three');
+    // The collected list holds what each round ACTUALLY saved — one entry,
+    // none, then two: smaller AND larger than the per-round input.
+    expect(firstText(requests[4])).toContain('Report from note-one\nn3a\nn3b');
+  });
+
+  it('skips a for-each loop over an empty list without failing', async () => {
+    const { doc, ids } = foreachDoc();
+    const { runId } = await seedRun(doc);
+    // gather saves NO list at all.
+    const llm = stubLlm(() => finish('success'));
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select('step_id')
+      .where('run_id', '=', runId)
+      .orderBy('step_index')
+      .execute();
+    // The body never ran; the flow continued straight to the tail.
+    expect(attempts.map((row) => row.step_id)).toEqual([ids.gather, ids.report]);
+  });
+
+  function untilDoc(maxIterations: number): {
+    doc: AgentStepsDoc;
+    ids: { loop: string; ping: string };
+  } {
+    const ping = reasoningStep('ping once');
+    const loopId = randomUUID();
+    const doc = {
+      version: 3,
+      steps: [
+        {
+          id: loopId,
+          kind: 'loop',
+          mode: 'until',
+          name: 'page until dry',
+          condition: [{ t: 'text', v: 'Did the last round come back empty?' }],
+          maxAttempts: 2,
+          maxIterations,
+          steps: [ping],
+        },
+      ],
+    };
+    if (!isAgentStepsDoc(doc)) throw new Error('fixture is not a valid v3 doc');
+    return { doc, ids: { loop: loopId, ping: ping.id } };
+  }
+
+  it('runs an until loop per decision and records loop_decided rows per round', async () => {
+    const { doc, ids } = untilDoc(5);
+    const { runId } = await seedRun(doc);
+    let decisions = 0;
+    const llm = stubLlm((request) => {
+      if (forcedName(request) === 'loop_decision') {
+        decisions += 1;
+        return loopDecision(decisions >= 3 ? 'finished' : 'continue');
+      }
+      return finish('success');
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+    expect(decisions).toBe(3);
+
+    const loopRows = await db
+      .selectFrom('agent_run_steps')
+      .select(['iteration', 'outcome', 'detail'])
+      .where('run_id', '=', runId)
+      .where('step_id', '=', ids.loop)
+      .orderBy('iteration')
+      .execute();
+    expect(loopRows.map((row) => row.iteration)).toEqual([1, 2, 3]);
+    expect(loopRows.every((row) => row.outcome === 'loop_decided')).toBe(true);
+    expect(JSON.stringify(loopRows[2].detail)).toContain('finished');
+
+    const pingRows = await db
+      .selectFrom('agent_run_steps')
+      .select('iteration')
+      .where('run_id', '=', runId)
+      .where('step_id', '=', ids.ping)
+      .orderBy('iteration')
+      .execute();
+    expect(pingRows.map((row) => row.iteration)).toEqual([1, 2, 3]);
+  });
+
+  it('fails an until loop that reaches its round limit with the condition unmet', async () => {
+    const { doc } = untilDoc(2);
+    const { runId } = await seedRun(doc);
+    const llm = stubLlm((request) =>
+      forcedName(request) === 'loop_decision' ? loopDecision('continue') : finish('success')
+    );
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('failed');
+    expect(run.error_kind).toBe('step_failed');
+    expect(run.error).toContain('reached its limit of 2');
+  });
+
+  it('fast-forwards a resumed run through recorded iterations with zero model calls', async () => {
+    const { doc, ids } = untilDoc(5);
+    const { runId } = await seedRun(doc);
+    let decisions = 0;
+    const llm = stubLlm((request) => {
+      if (forcedName(request) === 'loop_decision') {
+        decisions += 1;
+        return loopDecision(decisions >= 3 ? 'finished' : 'continue');
+      }
+      return finish('success');
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+    const rowsAfterFirst = await db
+      .selectFrom('agent_run_steps')
+      .select('id')
+      .where('run_id', '=', runId)
+      .execute();
+
+    // Simulate a crash after the last row was written: back to running,
+    // positioned inside the loop. Resume must replay every iteration's
+    // succeeded rows and recorded decisions — rows are the memory — and
+    // re-finalize without ONE model call.
+    await db
+      .updateTable('agent_runs')
+      .set({ status: 'running', current_step_id: ids.ping, finished_at: null })
+      .where('id', '=', runId)
+      .execute();
+    let resumeCalls = 0;
+    const strictLlm = stubLlm(() => {
+      resumeCalls += 1;
+      return finish('success');
+    });
+    const resumeHandler = handlerWith(
+      strictLlm,
+      stubMcp([], () => okToolResult)
+    );
+    await resumeHandler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+    expect(resumeCalls).toBe(0);
+    const rowsAfterResume = await db
+      .selectFrom('agent_run_steps')
+      .select('id')
+      .where('run_id', '=', runId)
+      .execute();
+    expect(rowsAfterResume).toHaveLength(rowsAfterFirst.length);
+  });
+
+  it('fails the run with a guard when the attempt-row budget is exhausted', async () => {
+    const { runId } = await seedRun({ version: 1, steps: [reasoningStep('never runs')] });
+    // 250 pre-existing rows (as if a pathological loop had spent them all).
+    const syntheticStep = randomUUID();
+    const synthetic = Array.from({ length: 250 }, (_, index) => ({
+      id: randomUUID(),
+      tenant_id: tenantId,
+      run_id: runId,
+      step_id: syntheticStep,
+      step_index: 0,
+      attempt: index + 1,
+      iteration: 0,
+      status: 'failed',
+    }));
+    for (let at = 0; at < synthetic.length; at += 50) {
+      await db
+        .insertInto('agent_run_steps')
+        .values(synthetic.slice(at, at + 50))
+        .execute();
+    }
+    const llm = stubLlm(() => finish('success'));
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('failed');
+    expect(run.error_kind).toBe('guard');
+    expect(run.error).toContain('execution budget');
+  });
+
+  it('routes a 3-way branch by number under the router prompt; the 2-way def stays frozen', async () => {
+    const inSecond = reasoningStep('in the second route');
+    const after = reasoningStep('after the router');
+    const threeWay = {
+      version: 3,
+      steps: [
+        {
+          id: randomUUID(),
+          kind: 'branch',
+          name: 'Which kind?',
+          condition: [{ t: 'text', v: 'Bug, question, or something else?' }],
+          paths: [
+            { id: randomUUID(), name: 'A bug', steps: [] },
+            { id: randomUUID(), name: 'A question', steps: [inSecond] },
+            { id: randomUUID(), name: 'Something else', steps: [] },
+          ],
+          maxAttempts: 2,
+        },
+        after,
+      ],
+    };
+    if (!isAgentStepsDoc(threeWay)) throw new Error('fixture is not a valid v3 doc');
+    const { runId } = await seedRun(threeWay);
+    const requests: LlmRequest[] = [];
+    const llm = stubLlm((request) => {
+      requests.push(request);
+      if (forcedName(request) === 'choose_path') {
+        return {
+          content: [
+            {
+              type: 'tool_use',
+              id: `tu_${Math.random().toString(36).slice(2)}`,
+              name: 'choose_path',
+              input: { choice: '2', reason: 'reads like a question' },
+            },
+          ],
+          stopReason: 'tool_use',
+          usage: { inputTokens: 10, outputTokens: 5 },
+        };
+      }
+      return finish('success');
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+
+    // The router request: numbered enum, router framing.
+    const chooseRequest = requests.find((request) => forcedName(request) === 'choose_path');
+    expect(chooseRequest).toBeDefined();
+    expect(chooseRequest!.tools[0].inputSchema).toEqual({
+      type: 'object',
+      properties: {
+        choice: {
+          type: 'string',
+          enum: ['1', '2', '3'],
+          description: expect.stringContaining('3 = Something else'),
+        },
+        reason: {
+          type: 'string',
+          description: 'One or two sentences on why, written for the agent owner.',
+        },
+      },
+      required: ['choice', 'reason'],
+    });
+    expect(chooseRequest!.system).toContain('routing one decision');
+
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['step_id', 'iteration', 'detail'])
+      .where('run_id', '=', runId)
+      .orderBy('step_index')
+      .execute();
+    expect(attempts.map((row) => row.step_id)).toEqual([
+      threeWay.steps[0].id,
+      inSecond.id,
+      after.id,
+    ]);
+    expect(JSON.stringify(attempts[0].detail)).toContain('A question');
+
+    // And the two-path def has not drifted a byte for v2 agents.
+    const { doc } = branchDoc();
+    const { runId: v2RunId } = await seedRun(doc);
+    const v2Requests: LlmRequest[] = [];
+    const v2Llm = stubLlm((request) => {
+      v2Requests.push(request);
+      return forcedName(request) === 'choose_path' ? choosePath('yes') : finish('success');
+    });
+    await handlerWith(
+      v2Llm,
+      stubMcp([], () => okToolResult)
+    )({ payload: { runId: v2RunId } });
+    const v2Choose = v2Requests.find((request) => forcedName(request) === 'choose_path');
+    expect(v2Choose!.tools[0]).toEqual({
+      name: 'choose_path',
+      description: 'Decide which path the automation takes. Call exactly once.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          choice: {
+            type: 'string',
+            enum: ['yes', 'no'],
+            description: 'yes → the condition holds; no → it does not.',
+          },
+          reason: {
+            type: 'string',
+            description: 'One or two sentences on why, written for the agent owner.',
+          },
+        },
+        required: ['choice', 'reason'],
+      },
+    });
+    expect(v2Choose!.system).toContain('yes/no branch');
+    // …and its rows all sit at iteration 0, exactly as before v3.
+    const v2Rows = await db
+      .selectFrom('agent_run_steps')
+      .select('iteration')
+      .where('run_id', '=', v2RunId)
+      .execute();
+    expect(v2Rows.every((row) => row.iteration === 0)).toBe(true);
+  });
+
+  it('decides a branch inside a loop fresh on every iteration', async () => {
+    const actYes = reasoningStep('escalate it');
+    const actNo = reasoningStep('acknowledge it');
+    const gather = reasoningStep('gather', { saveAs: 'items' });
+    const branchId = randomUUID();
+    const doc = {
+      version: 3,
+      steps: [
+        gather,
+        {
+          id: randomUUID(),
+          kind: 'loop',
+          mode: 'foreach',
+          name: 'triage each',
+          itemsVar: 'items',
+          itemVar: 'item',
+          maxIterations: 5,
+          steps: [
+            {
+              id: branchId,
+              kind: 'branch',
+              name: 'Urgent?',
+              condition: [
+                { t: 'text', v: 'Is ' },
+                { t: 'var', name: 'item' },
+                { t: 'text', v: ' urgent?' },
+              ],
+              paths: [
+                { id: randomUUID(), name: 'Yes', steps: [actYes] },
+                { id: randomUUID(), name: 'Otherwise', steps: [actNo] },
+              ],
+              maxAttempts: 2,
+            },
+          ],
+        },
+      ],
+    };
+    if (!isAgentStepsDoc(doc)) throw new Error('fixture is not a valid v3 doc');
+    const { runId } = await seedRun(doc);
+    let chooses = 0;
+    const llm = stubLlm((request, call) => {
+      if (forcedName(request) === 'choose_path') {
+        chooses += 1;
+        return choosePath(chooses === 1 ? 'yes' : 'no');
+      }
+      return call === 0 ? finish('success', { saveItems: ['first', 'second'] }) : finish('success');
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+    // Decided per iteration, not replayed across them.
+    expect(chooses).toBe(2);
+
+    const rows = await db
+      .selectFrom('agent_run_steps')
+      .select(['step_id', 'iteration'])
+      .where('run_id', '=', runId)
+      .orderBy('iteration')
+      .orderBy('step_index')
+      .execute();
+    expect(rows.filter((row) => row.step_id === branchId).map((row) => row.iteration)).toEqual([
+      1, 2,
+    ]);
+    expect(rows.filter((row) => row.step_id === actYes.id).map((row) => row.iteration)).toEqual([
+      1,
+    ]);
+    expect(rows.filter((row) => row.step_id === actNo.id).map((row) => row.iteration)).toEqual([2]);
+  });
+
+  function failureRouteDoc(failureSteps: ReturnType<typeof reasoningStep>[] | undefined): {
+    doc: AgentStepsDoc;
+    ids: { branch: string; after: string; cleanup: string | null };
+  } {
+    const after = reasoningStep('after the branch');
+    const cleanup = failureSteps?.[0] ?? null;
+    const branchId = randomUUID();
+    const doc = {
+      version: 3,
+      steps: [
+        {
+          id: branchId,
+          kind: 'branch',
+          name: 'Decides badly',
+          condition: [{ t: 'text', v: 'Is it so?' }],
+          paths: [
+            { id: randomUUID(), name: 'Yes', steps: [] },
+            { id: randomUUID(), name: 'Otherwise', steps: [] },
+          ],
+          ...(failureSteps !== undefined
+            ? {
+                failurePath: { id: randomUUID(), name: 'On failure', steps: failureSteps },
+              }
+            : {}),
+          maxAttempts: 1,
+        },
+        after,
+      ],
+    };
+    if (!isAgentStepsDoc(doc)) throw new Error('fixture is not a valid v3 doc');
+    return {
+      doc,
+      ids: { branch: branchId, after: after.id, cleanup: cleanup?.id ?? null },
+    };
+  }
+
+  it('takes the failure route when branch evaluation exhausts its attempts', async () => {
+    const cleanup = reasoningStep('clean up the mess');
+    const { doc, ids } = failureRouteDoc([cleanup]);
+    const { runId } = await seedRun(doc);
+    // choose_path never answers usably; everything else succeeds.
+    const llm = stubLlm((request) =>
+      forcedName(request) === 'choose_path' ? plainText : finish('success')
+    );
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    // The failure route absorbed the evaluator's failure — the run went on.
+    expect(run.status).toBe('succeeded');
+
+    const rows = await db
+      .selectFrom('agent_run_steps')
+      .select(['step_id', 'status'])
+      .where('run_id', '=', runId)
+      .orderBy('step_index')
+      .execute();
+    expect(rows.map((row) => [row.step_id, row.status])).toEqual([
+      [ids.branch, 'failed'],
+      [ids.cleanup, 'succeeded'],
+      [ids.after, 'succeeded'],
+    ]);
+  });
+
+  it('swallows the failure and continues when the failure route is empty', async () => {
+    const { doc, ids } = failureRouteDoc([]);
+    const { runId } = await seedRun(doc);
+    const llm = stubLlm((request) =>
+      forcedName(request) === 'choose_path' ? plainText : finish('success')
+    );
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+    const rows = await db
+      .selectFrom('agent_run_steps')
+      .select(['step_id', 'status'])
+      .where('run_id', '=', runId)
+      .orderBy('step_index')
+      .execute();
+    expect(rows.map((row) => [row.step_id, row.status])).toEqual([
+      [ids.branch, 'failed'],
+      [ids.after, 'succeeded'],
+    ]);
+  });
 });

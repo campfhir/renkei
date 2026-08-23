@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   instructionPreview,
-  isBranchStep,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
@@ -28,13 +27,54 @@ function NodeList({
 }): React.ReactNode {
   return (
     <ol className="space-y-2">
-      {nodes.map((node) =>
-        isBranchStep(node) ? (
-          <BranchCard key={node.id} branch={node} ordinals={ordinals} />
-        ) : (
-          <StepCard key={node.id} step={node} ordinal={(ordinals.get(node.id) ?? 0) + 1} />
-        )
-      )}
+      {nodes.map((node) => {
+        switch (node.kind) {
+          case 'branch':
+            return <BranchCard key={node.id} branch={node} ordinals={ordinals} />;
+          case 'loop':
+            return (
+              <li
+                key={node.id}
+                className="rounded-md border border-amber-200 p-3 text-sm dark:border-amber-900"
+              >
+                <span className="mr-2 font-semibold">{(ordinals.get(node.id) ?? 0) + 1}.</span>
+                <span className="font-medium">↻ {node.name}</span>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {node.mode === 'foreach'
+                    ? `For each ${node.itemVar} in ${node.itemsVar}`
+                    : 'Repeats until its condition holds'}
+                  {` — up to ${node.maxIterations}×`}
+                  {node.collectVar ? ` — collects into "${node.collectVar}"` : ''}
+                </p>
+                <div className="mt-2 border-l-2 border-amber-200 pl-3 dark:border-amber-900">
+                  <NodeList nodes={node.steps} ordinals={ordinals} />
+                </div>
+              </li>
+            );
+          case 'group':
+            return (
+              <li
+                key={node.id}
+                className="rounded-md border border-gray-300 p-3 text-sm dark:border-gray-700"
+              >
+                <span className="mr-2 font-semibold">{(ordinals.get(node.id) ?? 0) + 1}.</span>
+                <span className="font-medium">▣ {node.name}</span>
+                <div className="mt-2 border-l-2 border-gray-200 pl-3 dark:border-gray-800">
+                  <NodeList nodes={node.steps} ordinals={ordinals} />
+                </div>
+              </li>
+            );
+          case 'action':
+          case undefined:
+            return (
+              <StepCard key={node.id} step={node} ordinal={(ordinals.get(node.id) ?? 0) + 1} />
+            );
+          default: {
+            const unhandled: never = node;
+            throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+          }
+        }
+      })}
     </ol>
   );
 }

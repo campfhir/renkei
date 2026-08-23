@@ -14,7 +14,6 @@ import type { DB } from '@renkei/db';
 import {
   describeSchedule,
   instructionPreview,
-  isBranchStep,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
@@ -58,6 +57,13 @@ function actionStepLines(step: ActionStep, label: string, indent: string): strin
     `${indent}   does: ${instructionPreview(step.instruction)}`,
     step.tool ? `${indent}   tool: ${step.tool}` : `${indent}   tool: none (reasoning only)`,
     step.saveAs ? `${indent}   saves result as: ${step.saveAs}` : null,
+    // Without this line the reviewer flags "nothing ends the run" on
+    // agents that DO end deliberately.
+    step.onSuccess === 'stop'
+      ? `${indent}   on success: the whole automation ends here`
+      : step.onSuccess === 'stop-quiet'
+        ? `${indent}   on success: the automation ends here silently (no reply, no follow-up)`
+        : null,
     failure
       ? `${indent}   failure handling: ${failure}`
       : `${indent}   failure handling: stop on any failure`,
@@ -81,21 +87,70 @@ function nodeLines(
   return nodes
     .map((node) => {
       const label = `Step ${(ordinals.get(node.id) ?? 0) + 1}:`;
-      if (!isBranchStep(node)) return actionStepLines(node, label, indent);
-      const pathBlock = (pathIndex: 0 | 1, heading: string) => {
-        const path = node.paths[pathIndex];
-        const body = path.steps.length
-          ? nodeLines(path.steps, ordinals, `${indent}      `)
-          : `${indent}      (nothing — continues after the branch)`;
-        return `${indent}   ${heading} "${path.name}":\n${body}`;
-      };
-      return [
-        `${indent}${label} ${node.name} (a branch)`,
-        `${indent}   decides: ${instructionPreview(node.condition)}`,
-        pathBlock(0, 'if yes, path'),
-        pathBlock(1, 'otherwise, path'),
-        `${indent}   after either path finishes, the automation continues below the branch`,
-      ].join('\n');
+      switch (node.kind) {
+        case 'action':
+        case undefined:
+          return actionStepLines(node, label, indent);
+        case 'branch': {
+          const pathBlock = (path: (typeof node.paths)[number], heading: string) => {
+            const body = path.steps.length
+              ? nodeLines(path.steps, ordinals, `${indent}      `)
+              : `${indent}      (nothing — continues after the branch)`;
+            return `${indent}   ${heading} "${path.name}":\n${body}`;
+          };
+          const twoWay = node.paths.length === 2;
+          return [
+            `${indent}${label} ${node.name} (a branch)`,
+            `${indent}   decides: ${instructionPreview(node.condition)}`,
+            ...node.paths.map((path, index) =>
+              pathBlock(
+                path,
+                twoWay
+                  ? index === 0
+                    ? 'if yes, path'
+                    : 'otherwise, path'
+                  : index === node.paths.length - 1
+                    ? `otherwise (the fallback), path`
+                    : `path ${index + 1} of ${node.paths.length},`
+              )
+            ),
+            ...(node.failurePath
+              ? [
+                  pathBlock(
+                    node.failurePath,
+                    'if the DECISION ITSELF keeps failing (never chosen by the agent), failure route'
+                  ),
+                ]
+              : []),
+            `${indent}   after a path finishes, the automation continues below the branch`,
+          ].join('\n');
+        }
+        case 'loop': {
+          const heading =
+            node.mode === 'foreach'
+              ? `${indent}   repeats its steps once per item of [${node.itemsVar}] (the current item is [${node.itemVar}]), at most ${node.maxIterations} rounds`
+              : `${indent}   repeats its steps until: ${instructionPreview(node.condition)} (checked after each round; at most ${node.maxIterations} rounds — if still untrue then, the run fails)`;
+          return [
+            `${indent}${label} ${node.name} (a loop)`,
+            heading,
+            node.collectVar
+              ? `${indent}   each round, what "${node.collectFrom}" saved is added to the list [${node.collectVar}] — rounds that save nothing add nothing`
+              : null,
+            nodeLines(node.steps, ordinals, `${indent}      `),
+          ]
+            .filter((line): line is string => line !== null)
+            .join('\n');
+        }
+        case 'group':
+          return [
+            `${indent}${label} ${node.name} (a group — organizes the steps below; changes nothing about execution)`,
+            nodeLines(node.steps, ordinals, `${indent}      `),
+          ].join('\n');
+        default: {
+          const unhandled: never = node;
+          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+        }
+      }
     })
     .join('\n');
 }
@@ -115,9 +170,11 @@ function promptOf(name: string, steps: AgentStepsDoc, triggers: TriggerDraft[]):
     stepLines,
     '',
     'How the engine behaves — take this as given, and never raise a concern the engine already prevents:',
-    '- Steps run strictly in order; a later step runs ONLY if every earlier step succeeded.',
-    '- A failure handled with "stop", an unhandled failure, or exhausted retries STOPS the whole automation immediately — later steps never run, so they can safely assume earlier steps succeeded. Missing "fallbacks" for exhausted retries are not a flaw.',
+    '- Steps run in document order. Inside a branch, exactly ONE path runs (the engine forces a choice; the last path is the fallback). A loop repeats its body up to its stated round limit; a for-each loop over an empty list simply skips. After a branch or loop finishes, execution continues below it.',
+    '- A later step runs ONLY if everything before it on its route succeeded.',
+    '- A failure handled with "stop", an unhandled failure, or exhausted retries STOPS the whole automation immediately — later steps never run, so they can safely assume earlier steps succeeded. Missing "fallbacks" for exhausted retries are not a flaw. A branch\'s failure route (when present) already covers the decision itself erroring.',
     "- The runner checks each step's tool is available before running, and verifies tool errors against the declared success.",
+    '- Loop round limits and the collected-list size are engine-enforced ceilings with truncation notes — do not flag them as missing safeguards.',
     '',
     'Reply with JSON only, no code fences: {"summary": "...", "concerns": [{"issue": "...", "fix": "..."}]}.',
     'summary: 2-3 plain sentences telling the OWNER what this agent does, no technical terms, no tool identifiers.',

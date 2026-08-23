@@ -25,15 +25,19 @@
 
 import {
   BRANCH_DEFAULT_ATTEMPTS,
-  MAX_BRANCH_DEPTH,
+  LOOP_DEFAULT_ATTEMPTS,
+  LOOP_DEFAULT_ITERATIONS,
+  MAX_BRANCH_DEPTH_V3,
+  MAX_BRANCH_PATHS,
+  MAX_CONTAINER_DEPTH,
   MAX_INSTRUCTION_CHARS,
+  MAX_LOOP_ITERATIONS,
   MAX_STEP_ATTEMPTS,
   MAX_STEPS,
   VARIABLE_NAME_PATTERN,
-  containsBranch,
   countNodes,
   flattenActionSteps,
-  isBranchStep,
+  requiredVersion,
   toolSegments,
   varSegments,
   walkSteps,
@@ -42,7 +46,9 @@ import {
   type AgentStepsDoc,
   type BranchPath,
   type BranchStep,
+  type GroupStep,
   type InstructionSegment,
+  type LoopStep,
 } from './steps';
 import { BUILTIN_VARIABLES } from './variables';
 import { validateTriggerDrafts, triggerVariableNames, type TriggerDraft } from './triggers';
@@ -188,47 +194,89 @@ function validateActionStep(
   return issues;
 }
 
+/**
+ * The containment counters threaded through the recursive validation.
+ * Branches and loops each consume a level; groups do not — they exist to
+ * organize, not to nest logic.
+ */
+interface NestingContext {
+  branchDepth: number;
+  containerDepth: number;
+  inLoop: boolean;
+}
+
+const TOP_LEVEL: NestingContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
+
+function conditionIssues(
+  condition: InstructionSegment[],
+  prefix: string,
+  knownVariables: Set<string>,
+  what: 'condition' | 'stop condition'
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  const at = `${prefix}.condition`;
+  if (condition.length === 0 || segmentChars(condition) === 0) {
+    issues.push({ path: at, message: `Describe the ${what} to check.` });
+  }
+  if (segmentChars(condition) > MAX_INSTRUCTION_CHARS) {
+    issues.push({
+      path: at,
+      message: `Keep the ${what} under ${MAX_INSTRUCTION_CHARS.toLocaleString()} characters.`,
+    });
+  }
+  if (toolSegments(condition).length > 0) {
+    issues.push({
+      path: at,
+      message: `A ${what} can’t use a skill — do that work in a step above, save the result, and decide on it.`,
+    });
+  }
+  for (const name of varSegments(condition)) {
+    if (!knownVariables.has(name)) {
+      issues.push({
+        path: at,
+        message: `"${name}" is not something this agent knows — remove or replace the chip.`,
+      });
+    }
+  }
+  return issues;
+}
+
 function validateBranchStep(
   branch: BranchStep,
   prefix: string,
-  depth: number,
+  context: NestingContext,
   toolsByName: Map<string, ToolDescriptorLike>,
   knownVariables: Set<string>
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
+  const inner: NestingContext = {
+    branchDepth: context.branchDepth + 1,
+    containerDepth: context.containerDepth + 1,
+    inLoop: context.inLoop,
+  };
 
-  if (depth > MAX_BRANCH_DEPTH) {
+  if (inner.branchDepth > MAX_BRANCH_DEPTH_V3) {
     issues.push({
       path: prefix,
-      message: 'Branches can only nest one level deep — move this one up.',
+      message: `Conditions can nest ${MAX_BRANCH_DEPTH_V3} levels deep — move this one up.`,
+    });
+  }
+  if (inner.containerDepth > MAX_CONTAINER_DEPTH) {
+    issues.push({
+      path: prefix,
+      message: 'Steps are nested too deeply here — move this up a level.',
     });
   }
   if (branch.name.trim().length === 0) {
     issues.push({ path: `${prefix}.name`, message: 'Give this branch a short name.' });
   }
-  if (branch.condition.length === 0 || segmentChars(branch.condition) === 0) {
-    issues.push({ path: `${prefix}.condition`, message: 'Describe the condition to check.' });
-  }
-  if (segmentChars(branch.condition) > MAX_INSTRUCTION_CHARS) {
+  issues.push(...conditionIssues(branch.condition, prefix, knownVariables, 'condition'));
+
+  if (branch.paths.length < 2 || branch.paths.length > MAX_BRANCH_PATHS) {
     issues.push({
-      path: `${prefix}.condition`,
-      message: `Keep the condition under ${MAX_INSTRUCTION_CHARS.toLocaleString()} characters.`,
+      path: prefix,
+      message: `A branch routes between 2 and ${MAX_BRANCH_PATHS} paths.`,
     });
-  }
-  if (toolSegments(branch.condition).length > 0) {
-    issues.push({
-      path: `${prefix}.condition`,
-      message:
-        'A branch can’t use a skill — do that work in a step above, save the result, and branch on it.',
-    });
-  }
-  for (const name of varSegments(branch.condition)) {
-    if (!knownVariables.has(name)) {
-      issues.push({
-        path: `${prefix}.condition`,
-        message: `"${name}" is not something this agent knows — remove or replace the chip.`,
-      });
-    }
   }
   branch.paths.forEach((path, pathIndex) => {
     if (path.name.trim().length === 0) {
@@ -239,13 +287,31 @@ function validateBranchStep(
         ...validateNode(
           node,
           `${prefix}.paths.${pathIndex}.steps.${nodeIndex}`,
-          depth + 1,
+          inner,
           toolsByName,
           knownVariables
         )
       );
     });
   });
+  if (branch.failurePath) {
+    // An empty failure path is legal on purpose: it means "swallow an
+    // evaluation failure and continue after the branch."
+    if (branch.failurePath.name.trim().length === 0) {
+      issues.push({ path: `${prefix}.failurePath.name`, message: 'Name this path.' });
+    }
+    branch.failurePath.steps.forEach((node, nodeIndex) => {
+      issues.push(
+        ...validateNode(
+          node,
+          `${prefix}.failurePath.steps.${nodeIndex}`,
+          inner,
+          toolsByName,
+          knownVariables
+        )
+      );
+    });
+  }
   if (branch.paths.every((path) => path.steps.length === 0)) {
     issues.push({
       path: prefix,
@@ -256,51 +322,231 @@ function validateBranchStep(
   return issues;
 }
 
-function validateNode(
-  node: AgentStepNode,
+function validateLoopStep(
+  loop: LoopStep,
   prefix: string,
-  depth: number,
+  context: NestingContext,
   toolsByName: Map<string, ToolDescriptorLike>,
   knownVariables: Set<string>
 ): ValidationIssue[] {
-  return isBranchStep(node)
-    ? validateBranchStep(node, prefix, depth, toolsByName, knownVariables)
-    : validateActionStep(node, prefix, toolsByName, knownVariables);
+  const issues: ValidationIssue[] = [];
+  const inner: NestingContext = {
+    branchDepth: context.branchDepth,
+    containerDepth: context.containerDepth + 1,
+    inLoop: true,
+  };
+
+  if (context.inLoop) {
+    issues.push({
+      path: prefix,
+      message: 'Loops can’t contain other loops — move this one out.',
+    });
+  }
+  if (inner.containerDepth > MAX_CONTAINER_DEPTH) {
+    issues.push({
+      path: prefix,
+      message: 'Steps are nested too deeply here — move this up a level.',
+    });
+  }
+  if (loop.name.trim().length === 0) {
+    issues.push({ path: `${prefix}.name`, message: 'Give this loop a short name.' });
+  }
+  if (loop.steps.length === 0) {
+    issues.push({
+      path: prefix,
+      message: 'This loop does nothing — add a step inside it or remove it.',
+    });
+  }
+
+  if (loop.mode === 'foreach') {
+    if (!knownVariables.has(loop.itemsVar)) {
+      issues.push({
+        path: `${prefix}.itemsVar`,
+        message: `"${loop.itemsVar}" is not something this agent knows — pick a saved result or trigger input.`,
+      });
+    }
+    if (!VARIABLE_NAME_PATTERN.test(loop.itemVar)) {
+      issues.push({
+        path: `${prefix}.itemVar`,
+        message:
+          'Item names start with a letter and use letters, numbers, spaces, ".", "-" or "_" (64 characters max).',
+      });
+    }
+  } else {
+    issues.push(...conditionIssues(loop.condition, prefix, knownVariables, 'stop condition'));
+  }
+
+  // Collect is both-or-neither, and the source must live INSIDE this body:
+  // collecting from a step outside the loop would append the same value
+  // every iteration.
+  const hasFrom = loop.collectFrom !== undefined && loop.collectFrom !== '';
+  const hasVar = loop.collectVar !== undefined && loop.collectVar !== '';
+  if (hasFrom !== hasVar) {
+    issues.push({
+      path: prefix,
+      message: 'Collecting results needs both a source step result and a name for the list.',
+    });
+  }
+  if (hasFrom) {
+    const bodySaves = new Set(
+      flattenActionSteps(loop.steps).flatMap((step) => (step.saveAs ? [step.saveAs] : []))
+    );
+    if (!bodySaves.has(loop.collectFrom ?? '')) {
+      issues.push({
+        path: `${prefix}.collectFrom`,
+        message: 'Collect from a result that a step INSIDE this loop saves.',
+      });
+    }
+  }
+  if (hasVar && !VARIABLE_NAME_PATTERN.test(loop.collectVar ?? '')) {
+    issues.push({
+      path: `${prefix}.collectVar`,
+      message:
+        'List names start with a letter and use letters, numbers, spaces, ".", "-" or "_" (64 characters max).',
+    });
+  }
+
+  loop.steps.forEach((node, nodeIndex) => {
+    issues.push(
+      ...validateNode(node, `${prefix}.steps.${nodeIndex}`, inner, toolsByName, knownVariables)
+    );
+  });
+
+  return issues;
+}
+
+function validateGroupStep(
+  group: GroupStep,
+  prefix: string,
+  context: NestingContext,
+  toolsByName: Map<string, ToolDescriptorLike>,
+  knownVariables: Set<string>
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (group.name.trim().length === 0) {
+    issues.push({ path: `${prefix}.name`, message: 'Give this group a short name.' });
+  }
+  if (group.steps.length === 0) {
+    issues.push({
+      path: prefix,
+      message: 'This group is empty — add a step inside it or remove it.',
+    });
+  }
+  // Depth-neutral: the same context flows through.
+  group.steps.forEach((node, nodeIndex) => {
+    issues.push(
+      ...validateNode(node, `${prefix}.steps.${nodeIndex}`, context, toolsByName, knownVariables)
+    );
+  });
+  return issues;
+}
+
+function validateNode(
+  node: AgentStepNode,
+  prefix: string,
+  context: NestingContext,
+  toolsByName: Map<string, ToolDescriptorLike>,
+  knownVariables: Set<string>
+): ValidationIssue[] {
+  // Exhaustive on purpose: a node kind with no arm here is a compile
+  // error, never an action-step validation of something that isn't one.
+  switch (node.kind) {
+    case 'branch':
+      return validateBranchStep(node, prefix, context, toolsByName, knownVariables);
+    case 'loop':
+      return validateLoopStep(node, prefix, context, toolsByName, knownVariables);
+    case 'group':
+      return validateGroupStep(node, prefix, context, toolsByName, knownVariables);
+    case 'action':
+    case undefined:
+      return validateActionStep(node, prefix, toolsByName, knownVariables);
+    default: {
+      const unhandled: never = node;
+      throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+    }
+  }
 }
 
 function clampAttempts(value: number, cap: number, fallback: number): number {
   return Math.min(cap, Math.max(1, Math.round(Number.isFinite(value) ? value : fallback)));
 }
 
+function clampIterations(value: number): number {
+  return Math.min(
+    MAX_LOOP_ITERATIONS,
+    Math.max(1, Math.round(Number.isFinite(value) ? value : LOOP_DEFAULT_ITERATIONS))
+  );
+}
+
 function normalizeNode(node: AgentStepNode, cap: number): AgentStepNode {
-  if (isBranchStep(node)) {
-    const normalizePath = (path: BranchPath): BranchPath => ({
-      ...path,
-      name: path.name.trim(),
-      steps: path.steps.map((child) => normalizeNode(child, cap)),
-    });
-    const paths: [BranchPath, BranchPath] = [
-      normalizePath(node.paths[0]),
-      normalizePath(node.paths[1]),
-    ];
-    return {
-      ...node,
-      name: node.name.trim(),
-      maxAttempts: clampAttempts(node.maxAttempts, cap, BRANCH_DEFAULT_ATTEMPTS),
-      paths,
-    };
+  switch (node.kind) {
+    case 'branch': {
+      const normalizePath = (path: BranchPath): BranchPath => ({
+        ...path,
+        name: path.name.trim(),
+        steps: path.steps.map((child) => normalizeNode(child, cap)),
+      });
+      return {
+        ...node,
+        name: node.name.trim(),
+        maxAttempts: clampAttempts(node.maxAttempts, cap, BRANCH_DEFAULT_ATTEMPTS),
+        paths: node.paths.map(normalizePath),
+        ...(node.failurePath !== undefined ? { failurePath: normalizePath(node.failurePath) } : {}),
+      };
+    }
+    case 'loop': {
+      const collect =
+        node.collectFrom?.trim() && node.collectVar?.trim()
+          ? { collectFrom: node.collectFrom.trim(), collectVar: node.collectVar.trim() }
+          : {};
+      const steps = node.steps.map((child) => normalizeNode(child, cap));
+      if (node.mode === 'foreach') {
+        const { collectFrom: _f, collectVar: _v, ...rest } = node;
+        return {
+          ...rest,
+          ...collect,
+          name: node.name.trim(),
+          itemsVar: node.itemsVar.trim(),
+          itemVar: node.itemVar.trim(),
+          maxIterations: clampIterations(node.maxIterations),
+          steps,
+        };
+      }
+      const { collectFrom: _f, collectVar: _v, ...rest } = node;
+      return {
+        ...rest,
+        ...collect,
+        name: node.name.trim(),
+        maxAttempts: clampAttempts(node.maxAttempts, cap, LOOP_DEFAULT_ATTEMPTS),
+        maxIterations: clampIterations(node.maxIterations),
+        steps,
+      };
+    }
+    case 'group':
+      return {
+        ...node,
+        name: node.name.trim(),
+        steps: node.steps.map((child) => normalizeNode(child, cap)),
+      };
+    case 'action':
+    case undefined: {
+      // Strip the optional discriminant so linear documents stay
+      // byte-identical with what pre-branch builds wrote.
+      const { kind: _kind, ...step } = node;
+      return {
+        ...step,
+        name: step.name.trim(),
+        // Spaces are legal INSIDE a result name; the edges are trimmed so
+        // the pattern (and every later lookup) never meets stray whitespace.
+        ...(step.saveAs !== undefined ? { saveAs: step.saveAs.trim() || undefined } : {}),
+        maxAttempts: clampAttempts(step.maxAttempts, cap, 1),
+      };
+    }
+    default: {
+      const unhandled: never = node;
+      throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+    }
   }
-  // Strip the optional discriminant so linear documents stay byte-identical
-  // with what pre-branch builds wrote.
-  const { kind: _kind, ...step } = node;
-  return {
-    ...step,
-    name: step.name.trim(),
-    // Spaces are legal INSIDE a result name; the edges are trimmed so
-    // the pattern (and every later lookup) never meets stray whitespace.
-    ...(step.saveAs !== undefined ? { saveAs: step.saveAs.trim() || undefined } : {}),
-    maxAttempts: clampAttempts(step.maxAttempts, cap, 1),
-  };
 }
 
 /**
@@ -320,9 +566,10 @@ export function normalizeAgentDraft(
     ...draft,
     name: draft.name.trim(),
     steps: {
-      // The SERVER owns the version rule: 2 iff a branch exists, so linear
-      // agents stay runnable by workers that predate branching.
-      version: containsBranch(steps) ? 2 : 1,
+      // The SERVER owns the version rule (requiredVersion): a document any
+      // older writer could produce keeps its exact old version, so linear
+      // and plain-branch agents stay runnable by older workers.
+      version: requiredVersion(steps),
       steps,
     },
   };
@@ -336,7 +583,7 @@ export function normalizeAgentDraft(
 export function savesByPathCoverage(nodes: AgentStepNode[]): Map<string, 'always' | 'conditional'> {
   const out = new Map<string, 'always' | 'conditional'>();
   for (const { node, depth } of walkSteps(nodes)) {
-    if (!isBranchStep(node) && node.saveAs) {
+    if ((node.kind === undefined || node.kind === 'action') && node.saveAs) {
       out.set(node.saveAs, depth === 1 ? 'always' : 'conditional');
     }
   }
@@ -366,37 +613,67 @@ export function validateAgentDraft(
     issues.push({ path: 'steps', message: `Keep the agent to ${MAX_STEPS} steps or fewer.` });
   }
 
-  // Doc-wide id uniqueness — node ids AND branch-path ids share the space:
-  // run records reference node ids and resume walks the tree by them.
-  const allIds = walked.flatMap(({ node }) =>
-    isBranchStep(node) ? [node.id, node.paths[0].id, node.paths[1].id] : [node.id]
-  );
+  // Doc-wide id uniqueness — node ids AND branch-path ids (failure path
+  // included) share the space: run records reference node ids and resume
+  // walks the tree by them.
+  const allIds = walked.flatMap(({ node }) => {
+    switch (node.kind) {
+      case 'branch':
+        return [
+          node.id,
+          ...node.paths.map((path) => path.id),
+          ...(node.failurePath ? [node.failurePath.id] : []),
+        ];
+      case 'loop':
+      case 'group':
+      case 'action':
+      case undefined:
+        return [node.id];
+      default: {
+        const unhandled: never = node;
+        throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+      }
+    }
+  });
   if (new Set(allIds).size !== allIds.length) {
     issues.push({ path: 'steps', message: 'Two steps share an id — reload and try again.' });
   }
 
-  // saveAs names must be unique: a later rebinding would silently change
+  // Every name that BINDS a value shares one namespace: saveAs results,
+  // loop item names, and collected lists. A collision would silently change
   // what earlier chips meant.
   const actionSteps = flattenActionSteps(nodes);
   const saveAsNames = actionSteps.flatMap((step) => (step.saveAs ? [step.saveAs] : []));
-  if (new Set(saveAsNames).size !== saveAsNames.length) {
-    issues.push({ path: 'steps', message: 'Two steps save their result under the same name.' });
+  const loopBindings = walked.flatMap(({ node }) => {
+    if (node.kind !== 'loop') return [];
+    return [
+      ...(node.mode === 'foreach' ? [node.itemVar] : []),
+      ...(node.collectVar ? [node.collectVar] : []),
+    ];
+  });
+  const boundNames = [...saveAsNames, ...loopBindings];
+  if (new Set(boundNames).size !== boundNames.length) {
+    issues.push({
+      path: 'steps',
+      message: 'Two steps bind a result, item, or list under the same name.',
+    });
   }
 
-  // The variable namespace: builtins ∪ trigger-provided ∪ every saveAs.
-  // Deliberately not order-sensitive, and PERMISSIVE across branch paths —
-  // a save inside one path is referenceable after the branch (the runtime
-  // renders an unset var as `(unknown: name)` and reports it, so a wiring
-  // miss is visible, not silent). The builder may hint via
-  // savesByPathCoverage; the validator only rejects names bound nowhere.
+  // The variable namespace: builtins ∪ trigger-provided ∪ every binding.
+  // Deliberately not order-sensitive, and PERMISSIVE across branch paths
+  // and loop bodies — a save inside one path is referenceable after the
+  // branch (the runtime renders an unset var as `(unknown: name)` and
+  // reports it, so a wiring miss is visible, not silent). The builder may
+  // hint via savesByPathCoverage; the validator only rejects names bound
+  // nowhere.
   const knownVariables = new Set<string>([
     ...BUILTIN_VARIABLES.map((variable) => variable.name),
     ...triggerVariableNames(draft.triggers),
-    ...saveAsNames,
+    ...boundNames,
   ]);
 
   nodes.forEach((node, index) => {
-    issues.push(...validateNode(node, `steps.${index}`, 1, toolsByName, knownVariables));
+    issues.push(...validateNode(node, `steps.${index}`, TOP_LEVEL, toolsByName, knownVariables));
   });
 
   issues.push(

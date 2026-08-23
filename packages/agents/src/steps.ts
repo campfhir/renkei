@@ -27,6 +27,30 @@
  * document contains a branch (normalizeAgentDraft recomputes it), so a
  * linear agent saved by new code stays byte-identical version 1 and old
  * workers refuse only what they genuinely cannot run.
+ *
+ * VERSION 3 adds three constructs, still structured blocks:
+ *   - `LoopStep` — a body repeated per item of a saved list (`foreach`) or
+ *     until an LLM-evaluated condition holds (`until`), always bounded by
+ *     `maxIterations`. Loops never nest. Optional `collectFrom`/`collectVar`
+ *     turn the loop into a map/filter: whatever the named body step saved
+ *     each iteration (nothing, one value, or a saveItems list — the output
+ *     set may be smaller or larger than the input) is appended to a new
+ *     list variable a later step or loop can consume.
+ *   - `GroupStep` — pure structure for readability: executes exactly as if
+ *     its steps were inlined; no attempt row, no LLM call, no depth cost.
+ *   - N-way branches — `paths` grows from a fixed pair to 2..5 labeled
+ *     routes (the LAST is the fallback by convention), plus at most one
+ *     optional `failurePath`: the structural exit taken when the branch
+ *     EVALUATION itself exhausts its attempts, never a choice offered to
+ *     the model. An empty failurePath swallows the failure and continues.
+ *   Inside a loop body, `onSuccess: 'stop'`/`'stop-quiet'` and a
+ *   `stop-quiet` failure handling end the WHOLE run, not the iteration.
+ *   `saveAs` written inside a body is last-write-wins across iterations;
+ *   per-iteration values remain visible in run history.
+ *
+ * `requiredVersion` is the single version rule: 3 iff any v3 construct is
+ * present, else 2 iff a branch exists, else 1 — so every document any
+ * older writer could produce keeps its exact old version and bytes.
  */
 
 export type InstructionSegment =
@@ -104,21 +128,97 @@ export interface BranchStep {
   kind: 'branch';
   name: string;
   /**
-   * The LLM-evaluated yes/no condition. Prose plus var chips; tool chips
-   * are rejected by the validator — the evaluator offers no tools.
+   * The LLM-evaluated condition. Prose plus var chips; tool chips are
+   * rejected by the validator — the evaluator offers no tools. With two
+   * paths it reads as yes/no; with more it asks "which of these applies?"
    */
   condition: InstructionSegment[];
-  /** Exactly two, ordered: paths[0] = condition holds, paths[1] = else. */
-  paths: [BranchPath, BranchPath];
+  /**
+   * 2..MAX_BRANCH_PATHS, ordered. Two-path branches keep the v2 reading
+   * (paths[0] = condition holds, paths[1] = else). For more, the LAST path
+   * is the fallback by convention — the evaluator is told to pick it when
+   * nothing clearly applies; no schema flag exists because the engine
+   * forces exactly one choice either way.
+   */
+  paths: BranchPath[];
+  /**
+   * The structural exit (version 3): taken when the branch EVALUATION
+   * exhausts its attempts — model errors, not a decision. Never offered as
+   * a choice. Empty steps = swallow the failure and continue after the
+   * branch. Absent = evaluation failure fails the run (the v2 behavior).
+   */
+  failurePath?: BranchPath;
   /** Attempt budget for the condition evaluation itself. */
   maxAttempts: number;
 }
 
-export type AgentStepNode = ActionStep | BranchStep;
+export interface ForEachLoopStep {
+  /** uuid, same doc-wide id space as every node. */
+  id: string;
+  kind: 'loop';
+  mode: 'foreach';
+  name: string;
+  /** The list to iterate: a saveAs/collectVar name or list-valued trigger input. */
+  itemsVar: string;
+  /** The per-iteration binding the body references as a var chip. */
+  itemVar: string;
+  /** Iteration ceiling, 1..MAX_LOOP_ITERATIONS; extra items are skipped with a note. */
+  maxIterations: number;
+  /** Appended per iteration when set — see collectVar. */
+  collectFrom?: string;
+  /**
+   * The list variable this loop builds: each iteration appends whatever
+   * the body step named by `collectFrom` actually saved (nothing, one
+   * value, or its saveItems list) — the output set may be smaller or
+   * larger than the input.
+   */
+  collectVar?: string;
+  /** Child key is `steps`, keeping the issue-path grammar uniform. */
+  steps: AgentStepNode[];
+}
+
+export interface UntilLoopStep {
+  id: string;
+  kind: 'loop';
+  mode: 'until';
+  name: string;
+  /**
+   * The LLM-evaluated stop condition — same grammar and rules as a branch
+   * condition (prose + var chips, no tools). Evaluated AFTER each
+   * iteration: the body always runs at least once.
+   */
+  condition: InstructionSegment[];
+  /** Attempt budget per condition evaluation, like BranchStep.maxAttempts. */
+  maxAttempts: number;
+  /**
+   * REQUIRED, 1..MAX_LOOP_ITERATIONS. Reaching it with the condition still
+   * unmet FAILS the run — the guard is a tripwire for a premise that never
+   * came true, not a quiet exit.
+   */
+  maxIterations: number;
+  collectFrom?: string;
+  collectVar?: string;
+  steps: AgentStepNode[];
+}
+
+export type LoopStep = ForEachLoopStep | UntilLoopStep;
+
+export interface GroupStep {
+  id: string;
+  kind: 'group';
+  name: string;
+  /**
+   * Pure grouping: executes exactly as if inlined — no attempt row, no LLM
+   * call, and no nesting-depth cost. Exists so a busy flow can fold.
+   */
+  steps: AgentStepNode[];
+}
+
+export type AgentStepNode = ActionStep | BranchStep | LoopStep | GroupStep;
 
 export interface AgentStepsDoc {
-  /** 2 iff the document contains a branch; 1 otherwise. */
-  version: 1 | 2;
+  /** See requiredVersion: 3 for v3 constructs, 2 for plain branches, else 1. */
+  version: 1 | 2 | 3;
   /** Array order is execution order; success is linear within a list. */
   steps: AgentStepNode[];
 }
@@ -131,10 +231,32 @@ export interface AgentStepsDoc {
 export const MAX_STEP_ATTEMPTS = 10;
 export const MAX_STEPS = 20;
 export const MAX_INSTRUCTION_CHARS = 4_000;
-/** A branch inside a branch is allowed; deeper nesting is not. */
+/**
+ * The FROZEN v2 limit — a branch inside a branch, nothing deeper. Only the
+ * v2 structural arm still reads this; new documents live under the v3
+ * limits below.
+ */
 export const MAX_BRANCH_DEPTH = 2;
+/** Version 3: conditionals may nest three deep. */
+export const MAX_BRANCH_DEPTH_V3 = 3;
+/**
+ * Version 3's combined containment ceiling: branch and loop levels count,
+ * groups do not — a loop wrapped around three nested branches is legal and
+ * is the deepest legal shape.
+ */
+export const MAX_CONTAINER_DEPTH = 4;
+/** Version 3: a branch routes between 2 and this many labeled paths. */
+export const MAX_BRANCH_PATHS = 5;
+/** Iteration ceiling every loop must declare within. */
+export const MAX_LOOP_ITERATIONS = 25;
+/** Ceiling on entries a loop's collectVar may accumulate. */
+export const MAX_COLLECTED_ITEMS = 100;
 /** Default attempt budget for a branch's condition evaluation. */
 export const BRANCH_DEFAULT_ATTEMPTS = 2;
+/** Default attempt budget for an until-loop's condition evaluation. */
+export const LOOP_DEFAULT_ATTEMPTS = 2;
+/** Default iteration ceiling the editors seed. */
+export const LOOP_DEFAULT_ITERATIONS = 10;
 
 /**
  * `saveAs` names and API-trigger input names share this shape. Spaces are
@@ -208,15 +330,45 @@ export function isBranchStep(node: AgentStepNode): node is BranchStep {
   return node.kind === 'branch';
 }
 
-function isBranchPath(value: unknown, depth: number): value is BranchPath {
+export function isLoopStep(node: AgentStepNode): node is LoopStep {
+  return node.kind === 'loop';
+}
+
+export function isGroupStep(node: AgentStepNode): node is GroupStep {
+  return node.kind === 'group';
+}
+
+/** A node whose `steps`/`paths` contain other nodes. */
+export function isContainerNode(node: AgentStepNode): node is BranchStep | LoopStep | GroupStep {
+  return node.kind === 'branch' || node.kind === 'loop' || node.kind === 'group';
+}
+
+/**
+ * The node's kind with the action default made explicit. Dispatch on THIS
+ * (or on `node.kind` directly) with an exhaustive switch and a `never`
+ * default, not on binary `isBranchStep` ternaries: a ternary silently
+ * treats every future kind as an ActionStep, which is exactly how a new
+ * construct would misexecute.
+ */
+export type NodeKind = 'action' | 'branch' | 'loop' | 'group';
+
+export function nodeKind(node: AgentStepNode): NodeKind {
+  return node.kind ?? 'action';
+}
+
+/* ---------------- FROZEN v2 structural arm ------------------------- */
+/* Byte-for-byte the pre-v3 checks: two-path branches, depth ≤ 2, no    */
+/* loops or groups. v2 snapshots must parse forever exactly as they did. */
+
+function isBranchPathV2(value: unknown, depth: number): value is BranchPath {
   if (typeof value !== 'object' || value === null) return false;
   const path: { id?: unknown; name?: unknown; steps?: unknown } = value;
   if (typeof path.id !== 'string' || path.id.length === 0) return false;
   if (typeof path.name !== 'string') return false;
-  return Array.isArray(path.steps) && path.steps.every((step) => isNode(step, depth));
+  return Array.isArray(path.steps) && path.steps.every((step) => isNodeV2(step, depth));
 }
 
-function isBranchStepShape(value: unknown, depth: number): value is BranchStep {
+function isBranchStepShapeV2(value: unknown, depth: number): value is BranchStep {
   if (typeof value !== 'object' || value === null) return false;
   const step: {
     id?: unknown;
@@ -224,11 +376,13 @@ function isBranchStepShape(value: unknown, depth: number): value is BranchStep {
     name?: unknown;
     condition?: unknown;
     paths?: unknown;
+    failurePath?: unknown;
     maxAttempts?: unknown;
   } = value;
   if (step.kind !== 'branch') return false;
-  // Defensive vs pathological jsonb: reject nesting the engine won't run.
+  // Defensive vs pathological jsonb: reject nesting the v2 engine won't run.
   if (depth > MAX_BRANCH_DEPTH) return false;
+  if (step.failurePath !== undefined) return false;
   if (typeof step.id !== 'string' || step.id.length === 0) return false;
   if (typeof step.name !== 'string') return false;
   if (!Array.isArray(step.condition) || !step.condition.every(isInstructionSegment)) return false;
@@ -236,14 +390,130 @@ function isBranchStepShape(value: unknown, depth: number): value is BranchStep {
   return (
     Array.isArray(step.paths) &&
     step.paths.length === 2 &&
-    step.paths.every((path) => isBranchPath(path, depth + 1))
+    step.paths.every((path) => isBranchPathV2(path, depth + 1))
   );
 }
 
-function isNode(value: unknown, depth: number): value is AgentStepNode {
+function isNodeV2(value: unknown, depth: number): value is AgentStepNode {
   if (typeof value === 'object' && value !== null) {
     const candidate: { kind?: unknown } = value;
-    if (candidate.kind === 'branch') return isBranchStepShape(value, depth);
+    if (candidate.kind === 'branch') return isBranchStepShapeV2(value, depth);
+    if (candidate.kind === 'loop' || candidate.kind === 'group') return false;
+  }
+  return isActionStep(value);
+}
+
+/* ---------------- v3 structural arm -------------------------------- */
+
+/** Containment counters the v3 shape checks thread through the tree. */
+interface GuardContext {
+  /** Nested branch levels entered so far. */
+  branchDepth: number;
+  /** Branch + loop levels entered so far (groups are free). */
+  containerDepth: number;
+  /** Loops never nest. */
+  inLoop: boolean;
+}
+
+function isBranchPathV3(value: unknown, context: GuardContext): value is BranchPath {
+  if (typeof value !== 'object' || value === null) return false;
+  const path: { id?: unknown; name?: unknown; steps?: unknown } = value;
+  if (typeof path.id !== 'string' || path.id.length === 0) return false;
+  if (typeof path.name !== 'string') return false;
+  return Array.isArray(path.steps) && path.steps.every((step) => isNodeV3(step, context));
+}
+
+function isBranchStepShapeV3(value: unknown, context: GuardContext): value is BranchStep {
+  if (typeof value !== 'object' || value === null) return false;
+  const step: {
+    id?: unknown;
+    kind?: unknown;
+    name?: unknown;
+    condition?: unknown;
+    paths?: unknown;
+    failurePath?: unknown;
+    maxAttempts?: unknown;
+  } = value;
+  if (step.kind !== 'branch') return false;
+  const inner: GuardContext = {
+    branchDepth: context.branchDepth + 1,
+    containerDepth: context.containerDepth + 1,
+    inLoop: context.inLoop,
+  };
+  if (inner.branchDepth > MAX_BRANCH_DEPTH_V3) return false;
+  if (inner.containerDepth > MAX_CONTAINER_DEPTH) return false;
+  if (typeof step.id !== 'string' || step.id.length === 0) return false;
+  if (typeof step.name !== 'string') return false;
+  if (!Array.isArray(step.condition) || !step.condition.every(isInstructionSegment)) return false;
+  if (typeof step.maxAttempts !== 'number') return false;
+  if (step.failurePath !== undefined && !isBranchPathV3(step.failurePath, inner)) return false;
+  return (
+    Array.isArray(step.paths) &&
+    step.paths.length >= 2 &&
+    step.paths.length <= MAX_BRANCH_PATHS &&
+    step.paths.every((path) => isBranchPathV3(path, inner))
+  );
+}
+
+function isLoopStepShape(value: unknown, context: GuardContext): value is LoopStep {
+  if (typeof value !== 'object' || value === null) return false;
+  const step: {
+    id?: unknown;
+    kind?: unknown;
+    mode?: unknown;
+    name?: unknown;
+    itemsVar?: unknown;
+    itemVar?: unknown;
+    condition?: unknown;
+    maxAttempts?: unknown;
+    maxIterations?: unknown;
+    collectFrom?: unknown;
+    collectVar?: unknown;
+    steps?: unknown;
+  } = value;
+  if (step.kind !== 'loop') return false;
+  if (context.inLoop) return false;
+  const inner: GuardContext = {
+    branchDepth: context.branchDepth,
+    containerDepth: context.containerDepth + 1,
+    inLoop: true,
+  };
+  if (inner.containerDepth > MAX_CONTAINER_DEPTH) return false;
+  if (typeof step.id !== 'string' || step.id.length === 0) return false;
+  if (typeof step.name !== 'string') return false;
+  if (typeof step.maxIterations !== 'number') return false;
+  if (step.collectFrom !== undefined && typeof step.collectFrom !== 'string') return false;
+  if (step.collectVar !== undefined && typeof step.collectVar !== 'string') return false;
+  if (step.mode === 'foreach') {
+    if (typeof step.itemsVar !== 'string' || step.itemsVar.length === 0) return false;
+    if (typeof step.itemVar !== 'string' || step.itemVar.length === 0) return false;
+  } else if (step.mode === 'until') {
+    if (!Array.isArray(step.condition) || !step.condition.every(isInstructionSegment)) {
+      return false;
+    }
+    if (typeof step.maxAttempts !== 'number') return false;
+  } else {
+    return false;
+  }
+  return Array.isArray(step.steps) && step.steps.every((child) => isNodeV3(child, inner));
+}
+
+function isGroupStepShape(value: unknown, context: GuardContext): value is GroupStep {
+  if (typeof value !== 'object' || value === null) return false;
+  const step: { id?: unknown; kind?: unknown; name?: unknown; steps?: unknown } = value;
+  if (step.kind !== 'group') return false;
+  if (typeof step.id !== 'string' || step.id.length === 0) return false;
+  if (typeof step.name !== 'string') return false;
+  // Depth-neutral on purpose: groups exist to organize, not to nest logic.
+  return Array.isArray(step.steps) && step.steps.every((child) => isNodeV3(child, context));
+}
+
+function isNodeV3(value: unknown, context: GuardContext): value is AgentStepNode {
+  if (typeof value === 'object' && value !== null) {
+    const candidate: { kind?: unknown } = value;
+    if (candidate.kind === 'branch') return isBranchStepShapeV3(value, context);
+    if (candidate.kind === 'loop') return isLoopStepShape(value, context);
+    if (candidate.kind === 'group') return isGroupStepShape(value, context);
   }
   return isActionStep(value);
 }
@@ -254,8 +524,9 @@ function isNode(value: unknown, depth: number): value is AgentStepNode {
  * binding) are the validator's job on the way IN; this guards the way OUT,
  * where the value has already been through it.
  *
- * The version-1 arm is exactly the pre-branch check: old snapshots parse
- * unchanged, and a v1 doc containing a branch is NOT a valid document.
+ * The version-1 arm is exactly the pre-branch check and the version-2 arm
+ * exactly the pre-v3 check: old snapshots parse unchanged forever, and a
+ * doc labeled below the version its constructs demand is NOT valid.
  */
 export function isAgentStepsDoc(value: unknown): value is AgentStepsDoc {
   if (typeof value !== 'object' || value === null) return false;
@@ -264,7 +535,11 @@ export function isAgentStepsDoc(value: unknown): value is AgentStepsDoc {
     return Array.isArray(doc.steps) && doc.steps.every(isActionStep);
   }
   if (doc.version === 2) {
-    return Array.isArray(doc.steps) && doc.steps.every((step) => isNode(step, 1));
+    return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV2(step, 1));
+  }
+  if (doc.version === 3) {
+    const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
+    return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV3(step, root));
   }
   return false;
 }
@@ -301,7 +576,7 @@ export interface WalkedNode {
   ordinal: number;
 }
 
-/** Depth-first pre-order over every node, branches included. */
+/** Depth-first pre-order over every node, containers included. */
 export function walkSteps(nodes: AgentStepNode[]): WalkedNode[] {
   const out: WalkedNode[] = [];
   let ordinal = 0;
@@ -310,10 +585,26 @@ export function walkSteps(nodes: AgentStepNode[]): WalkedNode[] {
       const path = `${prefix}.${index}`;
       out.push({ node, path, depth, ordinal });
       ordinal += 1;
-      if (isBranchStep(node)) {
-        node.paths.forEach((branchPath, pathIndex) => {
-          visit(branchPath.steps, `${path}.paths.${pathIndex}.steps`, depth + 1);
-        });
+      switch (node.kind) {
+        case 'branch':
+          node.paths.forEach((branchPath, pathIndex) => {
+            visit(branchPath.steps, `${path}.paths.${pathIndex}.steps`, depth + 1);
+          });
+          if (node.failurePath) {
+            visit(node.failurePath.steps, `${path}.failurePath.steps`, depth + 1);
+          }
+          break;
+        case 'loop':
+        case 'group':
+          visit(node.steps, `${path}.steps`, depth + 1);
+          break;
+        case 'action':
+        case undefined:
+          break;
+        default: {
+          const unhandled: never = node;
+          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+        }
       }
     });
   };
@@ -323,22 +614,31 @@ export function walkSteps(nodes: AgentStepNode[]): WalkedNode[] {
 
 /** Every action step in pre-order — for saved-var recovery and previews. */
 export function flattenActionSteps(nodes: AgentStepNode[]): ActionStep[] {
-  return walkSteps(nodes).flatMap(({ node }) => (isBranchStep(node) ? [] : [node]));
+  return walkSteps(nodes).flatMap(({ node }) =>
+    node.kind === undefined || node.kind === 'action' ? [node] : []
+  );
 }
 
-/** Total node count — branch nodes count 1 (their evaluation costs a step). */
+/** Total node count — container nodes count 1 (their evaluation/structure costs a step). */
 export function countNodes(nodes: AgentStepNode[]): number {
   return walkSteps(nodes).length;
 }
 
+/** One enclosing container of a found node, outermost first. */
+export type FoundAncestor =
+  | { kind: 'branch'; branch: BranchStep; path: BranchPath; isFailurePath: boolean }
+  | { kind: 'loop'; loop: LoopStep }
+  | { kind: 'group'; group: GroupStep };
+
 export interface FoundNode {
   node: AgentStepNode;
   /**
-   * Branches enclosing the node, outermost first, each with the path the
-   * node sits in. Because ids are doc-unique, the chain fully determines
-   * where execution was — resume needs no persisted path context.
+   * Containers enclosing the node, outermost first. Because ids are
+   * doc-unique, the chain fully determines where execution was — resume
+   * needs no persisted path context (loops add an iteration counter, which
+   * lives in run rows, not here).
    */
-  ancestors: { branch: BranchStep; path: BranchPath }[];
+  ancestors: FoundAncestor[];
   /** The sibling list the node sits in, and its index there. */
   siblings: AgentStepNode[];
   index: number;
@@ -346,17 +646,44 @@ export interface FoundNode {
 
 /** Tree search by node id. */
 export function findNodeById(nodes: AgentStepNode[], id: string): FoundNode | null {
-  const search = (
-    list: AgentStepNode[],
-    ancestors: { branch: BranchStep; path: BranchPath }[]
-  ): FoundNode | null => {
+  const search = (list: AgentStepNode[], ancestors: FoundAncestor[]): FoundNode | null => {
     for (let index = 0; index < list.length; index += 1) {
       const node = list[index];
       if (node.id === id) return { node, ancestors, siblings: list, index };
-      if (isBranchStep(node)) {
-        for (const path of node.paths) {
-          const found = search(path.steps, [...ancestors, { branch: node, path }]);
+      switch (node.kind) {
+        case 'branch': {
+          for (const path of node.paths) {
+            const found = search(path.steps, [
+              ...ancestors,
+              { kind: 'branch', branch: node, path, isFailurePath: false },
+            ]);
+            if (found) return found;
+          }
+          if (node.failurePath) {
+            const found = search(node.failurePath.steps, [
+              ...ancestors,
+              { kind: 'branch', branch: node, path: node.failurePath, isFailurePath: true },
+            ]);
+            if (found) return found;
+          }
+          break;
+        }
+        case 'loop': {
+          const found = search(node.steps, [...ancestors, { kind: 'loop', loop: node }]);
           if (found) return found;
+          break;
+        }
+        case 'group': {
+          const found = search(node.steps, [...ancestors, { kind: 'group', group: node }]);
+          if (found) return found;
+          break;
+        }
+        case 'action':
+        case undefined:
+          break;
+        default: {
+          const unhandled: never = node;
+          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
         }
       }
     }
@@ -368,4 +695,44 @@ export function findNodeById(nodes: AgentStepNode[], id: string): FoundNode | nu
 /** Whether any node in the tree is a branch — the version-2 test. */
 export function containsBranch(nodes: AgentStepNode[]): boolean {
   return walkSteps(nodes).some(({ node }) => isBranchStep(node));
+}
+
+/**
+ * Whether the tree uses anything only a version-3 reader understands:
+ * loops, groups, branches with more than two paths or a failure path, or
+ * conditionals nested past the frozen v2 depth.
+ */
+export function containsV3Feature(nodes: AgentStepNode[]): boolean {
+  let branchTooDeep = false;
+  const visitBranchDepth = (list: AgentStepNode[], branchDepth: number) => {
+    for (const node of list) {
+      if (node.kind === 'branch') {
+        if (branchDepth + 1 > MAX_BRANCH_DEPTH) branchTooDeep = true;
+        for (const path of node.paths) visitBranchDepth(path.steps, branchDepth + 1);
+        if (node.failurePath) visitBranchDepth(node.failurePath.steps, branchDepth + 1);
+      } else if (node.kind === 'loop' || node.kind === 'group') {
+        visitBranchDepth(node.steps, branchDepth);
+      }
+    }
+  };
+  visitBranchDepth(nodes, 0);
+  return (
+    branchTooDeep ||
+    walkSteps(nodes).some(
+      ({ node }) =>
+        node.kind === 'loop' ||
+        node.kind === 'group' ||
+        (node.kind === 'branch' && (node.paths.length !== 2 || node.failurePath !== undefined))
+    )
+  );
+}
+
+/**
+ * THE version rule — normalizeAgentDraft is its only writer. Anything an
+ * older writer could have produced keeps its exact old version, which is
+ * what keeps old snapshots byte-stable.
+ */
+export function requiredVersion(nodes: AgentStepNode[]): 1 | 2 | 3 {
+  if (containsV3Feature(nodes)) return 3;
+  return containsBranch(nodes) ? 2 : 1;
 }

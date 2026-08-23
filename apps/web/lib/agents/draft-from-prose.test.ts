@@ -39,12 +39,30 @@ jest.mock('@renkei/agent-llm', () => ({
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
-import { isBranchStep, type ActionStep, type AgentStepNode } from '@renkei/agents';
+import {
+  isBranchStep,
+  type ActionStep,
+  type AgentStepNode,
+  type BranchStep,
+  type LoopStep,
+} from '@renkei/agents';
 import { draftAgentFromProse } from './draft-from-prose';
 
-/** Narrow a drafted node to an action step — branches fail the test loudly. */
+/** Narrow a drafted node to an action step — containers fail the test loudly. */
 function actionOf(node: AgentStepNode | undefined): ActionStep {
-  if (!node || isBranchStep(node)) throw new Error('expected an action step');
+  if (!node || (node.kind !== undefined && node.kind !== 'action')) {
+    throw new Error('expected an action step');
+  }
+  return node;
+}
+
+function branchOf(node: AgentStepNode | undefined): BranchStep {
+  if (!node || !isBranchStep(node)) throw new Error('expected a branch');
+  return node;
+}
+
+function loopOf(node: AgentStepNode | undefined): LoopStep {
+  if (!node || node.kind !== 'loop') throw new Error('expected a loop');
   return node;
 }
 
@@ -245,6 +263,238 @@ describe('draftAgentFromProse retry loop', () => {
     expect(actionOf(result.steps[1]).saveAs).toBe('the result 2');
     // The feedback named the duplicate.
     expect(JSON.stringify(requests[1].messages)).toContain('reuses the result name');
+  });
+
+  it('drafts a two-way branch from the legacy ifSteps/elseSteps wire shape', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'Comment or create',
+        steps: [
+          {
+            name: 'Search',
+            instruction: 'Search with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+            saveAs: 'the search',
+          },
+          {
+            kind: 'branch',
+            name: 'Was a ticket found?',
+            condition: 'Did {{var:the search}} find a ticket?',
+            ifLabel: 'A ticket exists',
+            elseLabel: 'Otherwise',
+            ifSteps: [{ name: 'Note it', instruction: 'Note the ticket key.', tool: null }],
+            elseSteps: [],
+          },
+        ],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'comment or create a ticket', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const branch = branchOf(result.steps[1]);
+    expect(branch.paths).toHaveLength(2);
+    expect(branch.paths[0].name).toBe('A ticket exists');
+    expect(branch.paths[1].name).toBe('Otherwise');
+    expect(branch.paths[0].steps).toHaveLength(1);
+    expect(branch.paths[1].steps).toHaveLength(0);
+    expect(branch.condition).toEqual(expect.arrayContaining([{ t: 'var', name: 'the search' }]));
+    // No soft problems → no corrective round trip spent.
+    expect(requests).toHaveLength(1);
+  });
+
+  it('drafts an n-way branch from the paths array wire shape', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'Route it',
+        steps: [
+          {
+            name: 'Search',
+            instruction: 'Search with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+            saveAs: 'the search',
+          },
+          {
+            kind: 'branch',
+            name: 'What kind of request?',
+            condition: 'Judge {{var:the search}}: bug, question, or something else?',
+            paths: [
+              {
+                label: 'A bug',
+                steps: [{ name: 'Note bug', instruction: 'Note it.', tool: null }],
+              },
+              { label: 'A question', steps: [] },
+              { label: 'Something else', steps: [] },
+            ],
+          },
+        ],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'route requests by kind', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const branch = branchOf(result.steps[1]);
+    expect(branch.paths.map((path) => path.name)).toEqual([
+      'A bug',
+      'A question',
+      'Something else',
+    ]);
+    expect(branch.paths[0].steps).toHaveLength(1);
+    expect(requests).toHaveLength(1);
+  });
+
+  it('drafts a for-each loop with a collected list and scoped item variable', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'Summarize tickets',
+        steps: [
+          {
+            name: 'Search',
+            instruction: 'Search with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+            saveAs: 'the tickets',
+          },
+          {
+            kind: 'loop',
+            name: 'Summarize each',
+            over: 'the tickets',
+            itemName: 'ticket',
+            maxIterations: 5,
+            collectFrom: 'summary',
+            collectVar: 'summaries',
+            steps: [
+              {
+                name: 'Summarize',
+                instruction: 'Summarize {{var:ticket}} briefly.',
+                tool: null,
+                saveAs: 'summary',
+              },
+            ],
+          },
+          {
+            name: 'Report',
+            instruction: 'Report using {{var:summaries}}.',
+            tool: null,
+          },
+        ],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'summarize each ticket found', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const loop = loopOf(result.steps[1]);
+    expect(loop.mode).toBe('foreach');
+    if (loop.mode !== 'foreach') throw new Error('unreachable');
+    expect(loop.itemsVar).toBe('the tickets');
+    expect(loop.itemVar).toBe('ticket');
+    expect(loop.maxIterations).toBe(5);
+    expect(loop.collectFrom).toBe('summary');
+    expect(loop.collectVar).toBe('summaries');
+    // The {{var:ticket}} chip inside the body verified (scoped item name).
+    expect(actionOf(loop.steps[0]).instruction).toEqual(
+      expect.arrayContaining([{ t: 'var', name: 'ticket' }])
+    );
+    // ...and {{var:summaries}} verified for the step after the loop.
+    expect(actionOf(result.steps[2]).instruction).toEqual(
+      expect.arrayContaining([{ t: 'var', name: 'summaries' }])
+    );
+    expect(requests).toHaveLength(1);
+  });
+
+  it('drafts an until loop and drops a collect whose source is outside the body', async () => {
+    const withBadCollect = JSON.stringify({
+      name: 'Page it all',
+      steps: [
+        {
+          kind: 'loop',
+          name: 'Keep paging',
+          until: 'The last search returned nothing new.',
+          maxIterations: 10,
+          collectFrom: 'not inside',
+          collectVar: 'pages',
+          steps: [
+            {
+              name: 'Page',
+              instruction: 'Fetch the next page with {{tool:jira_search_issues}}.',
+              tool: 'jira_search_issues',
+              saveAs: 'the page',
+            },
+          ],
+        },
+      ],
+    });
+    replies = [withBadCollect, withBadCollect];
+
+    const result = await draftAgentFromProse(db, 't1', 'page until done', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const loop = loopOf(result.steps[0]);
+    expect(loop.mode).toBe('until');
+    expect('collectVar' in loop).toBe(false);
+    expect(JSON.stringify(requests[1].messages)).toContain('no step INSIDE the loop');
+  });
+
+  it('rejects a loop inside a loop with corrective feedback', async () => {
+    const nested = JSON.stringify({
+      name: 'x',
+      steps: [
+        {
+          name: 'Search',
+          instruction: 'Search with {{tool:jira_search_issues}}',
+          tool: 'jira_search_issues',
+          saveAs: 'the tickets',
+        },
+        {
+          kind: 'loop',
+          name: 'Outer',
+          over: 'the tickets',
+          itemName: 'ticket',
+          steps: [
+            {
+              kind: 'loop',
+              name: 'Inner',
+              until: 'Done.',
+              steps: [{ name: 'S', instruction: 'Do a thing.', tool: null }],
+            },
+            { name: 'Act', instruction: 'Act on {{var:ticket}}.', tool: null },
+          ],
+        },
+      ],
+    });
+    replies = [nested, nested];
+
+    const result = await draftAgentFromProse(db, 't1', 'loop the loops', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const loop = loopOf(result.steps[1]);
+    // The inner loop was refused; the rest of the body survived.
+    expect(loop.steps).toHaveLength(1);
+    expect(JSON.stringify(requests[1].messages)).toContain('loops never nest');
+  });
+
+  it('drafts a named group whose steps run as if inlined', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'x',
+        steps: [
+          {
+            kind: 'group',
+            name: 'Triage',
+            steps: [
+              {
+                name: 'Search',
+                instruction: 'Search with {{tool:jira_search_issues}}',
+                tool: 'jira_search_issues',
+              },
+            ],
+          },
+        ],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'the triage phase searches', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const group = result.steps[0];
+    if (group?.kind !== 'group') throw new Error('expected a group');
+    expect(group.name).toBe('Triage');
+    expect(group.steps).toHaveLength(1);
   });
 
   it('returns the concrete reason when both attempts are unusable', async () => {

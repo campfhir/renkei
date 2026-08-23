@@ -74,7 +74,8 @@ describe('normalizeAgentDraft', () => {
     const normalized = normalizeAgentDraft(
       draft({ steps: { version: 1, steps: [step({ maxAttempts: 99 })] } })
     );
-    expect(normalized.steps.steps[0]?.maxAttempts).toBe(10);
+    const first = normalized.steps.steps[0];
+    expect(first && 'maxAttempts' in first ? first.maxAttempts : null).toBe(10);
   });
 
   it('floors attempts at one and rounds fractions', () => {
@@ -86,7 +87,9 @@ describe('normalizeAgentDraft', () => {
         },
       })
     );
-    expect(normalized.steps.steps.map((s) => s.maxAttempts)).toEqual([1, 3, 1]);
+    expect(normalized.steps.steps.map((s) => ('maxAttempts' in s ? s.maxAttempts : null))).toEqual([
+      1, 3, 1,
+    ]);
   });
 });
 
@@ -217,7 +220,9 @@ describe('validateAgentDraft', () => {
     const a = step({ saveAs: 'result' });
     const b = step({ saveAs: 'result' });
     const issues = validateAgentDraft(draft({ steps: { version: 1, steps: [a, b] } }), TOOLS);
-    expect(messagesOf(issues)).toContain('Two steps save their result under the same name.');
+    expect(messagesOf(issues)).toContain(
+      'Two steps bind a result, item, or list under the same name.'
+    );
   });
 });
 
@@ -264,7 +269,7 @@ describe('branch validation', () => {
       TOOLS
     );
     expect(messagesOf(issues)).toContain(
-      'A branch can’t use a skill — do that work in a step above, save the result, and branch on it.'
+      'A condition can’t use a skill — do that work in a step above, save the result, and decide on it.'
     );
   });
 
@@ -311,8 +316,8 @@ describe('branch validation', () => {
     expect(issues.some((issue) => issue.path === 'steps.0.paths.0.steps.0.name')).toBe(true);
   });
 
-  it('rejects nesting beyond one branch inside a branch', () => {
-    const tooDeep = branchNode({
+  it('allows three nested conditionals and rejects a fourth', () => {
+    const threeDeep = branchNode({
       paths: [
         {
           id: uuid(),
@@ -329,10 +334,44 @@ describe('branch validation', () => {
         { id: uuid(), name: 'No', steps: [] },
       ],
     });
-    const issues = validateAgentDraft(draft({ steps: { version: 2, steps: [tooDeep] } }), TOOLS);
-    expect(messagesOf(issues)).toContain(
-      'Branches can only nest one level deep — move this one up.'
+    const okIssues = validateAgentDraft(
+      draft({ steps: { version: 3, steps: [threeDeep] } }),
+      TOOLS
     );
+    expect(messagesOf(okIssues)).not.toContain(
+      'Conditions can nest 3 levels deep — move this one up.'
+    );
+
+    const fourDeep = branchNode({
+      paths: [
+        {
+          id: uuid(),
+          name: 'Yes',
+          steps: [
+            branchNode({
+              paths: [
+                {
+                  id: uuid(),
+                  name: 'Deeper',
+                  steps: [
+                    branchNode({
+                      paths: [
+                        { id: uuid(), name: 'Deepest', steps: [branchNode()] },
+                        { id: uuid(), name: 'No', steps: [] },
+                      ],
+                    }),
+                  ],
+                },
+                { id: uuid(), name: 'No', steps: [] },
+              ],
+            }),
+          ],
+        },
+        { id: uuid(), name: 'No', steps: [] },
+      ],
+    });
+    const issues = validateAgentDraft(draft({ steps: { version: 3, steps: [fourDeep] } }), TOOLS);
+    expect(messagesOf(issues)).toContain('Conditions can nest 3 levels deep — move this one up.');
   });
 
   it('lets a save inside one path be referenced after the branch (permissive scope)', () => {
@@ -393,5 +432,250 @@ describe('normalizeAgentDraft with branches', () => {
     expect(out.name).toBe('If urgent');
     expect(out.maxAttempts).toBe(10);
     expect(out.paths[0].name).toBe('Yes');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Version 3: loops, groups, n-way branches                            */
+/* ------------------------------------------------------------------ */
+import type { ForEachLoopStep, GroupStep, UntilLoopStep } from './steps';
+
+function foreachLoop(overrides: Partial<ForEachLoopStep> = {}): ForEachLoopStep {
+  return {
+    id: uuid(),
+    kind: 'loop',
+    mode: 'foreach',
+    name: 'For each ticket',
+    itemsVar: 'found tickets',
+    itemVar: 'ticket',
+    maxIterations: 10,
+    steps: [step({ name: 'Handle one', saveAs: 'handled ticket' })],
+    ...overrides,
+  };
+}
+
+function untilLoop(overrides: Partial<UntilLoopStep> = {}): UntilLoopStep {
+  return {
+    id: uuid(),
+    kind: 'loop',
+    mode: 'until',
+    name: 'Page until done',
+    condition: [text('Did the last page come back empty?')],
+    maxAttempts: 2,
+    maxIterations: 10,
+    steps: [step({ name: 'Fetch a page' })],
+    ...overrides,
+  };
+}
+
+function groupNode(overrides: Partial<GroupStep> = {}): GroupStep {
+  return { id: uuid(), kind: 'group', name: 'Triage', steps: [step()], ...overrides };
+}
+
+describe('loop validation', () => {
+  const savingStep = step({ name: 'List them', saveAs: 'found tickets' });
+
+  it('accepts a well-formed foreach fed by a saved result', () => {
+    const issues = validateAgentDraft(
+      draft({ steps: { version: 3, steps: [savingStep, foreachLoop()] } }),
+      TOOLS
+    );
+    expect(issues).toEqual([]);
+  });
+
+  it('rejects iterating a variable nothing binds', () => {
+    const issues = validateAgentDraft(
+      draft({ steps: { version: 3, steps: [foreachLoop({ itemsVar: 'nothing' })] } }),
+      TOOLS
+    );
+    expect(issues.some((issue) => issue.path.endsWith('.itemsVar'))).toBe(true);
+  });
+
+  it('rejects an empty loop body and a loop inside a loop', () => {
+    const emptyIssues = validateAgentDraft(
+      draft({ steps: { version: 3, steps: [savingStep, foreachLoop({ steps: [] })] } }),
+      TOOLS
+    );
+    expect(messagesOf(emptyIssues)).toContain(
+      'This loop does nothing — add a step inside it or remove it.'
+    );
+
+    const nestedIssues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 3,
+          steps: [savingStep, foreachLoop({ steps: [untilLoop()] })],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(nestedIssues)).toContain(
+      'Loops can’t contain other loops — move this one out.'
+    );
+  });
+
+  it('collect needs both halves and an inside-the-body source', () => {
+    const half = validateAgentDraft(
+      draft({
+        steps: { version: 3, steps: [savingStep, foreachLoop({ collectVar: 'mapped' })] },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(half)).toContain(
+      'Collecting results needs both a source step result and a name for the list.'
+    );
+
+    const outside = validateAgentDraft(
+      draft({
+        steps: {
+          version: 3,
+          steps: [savingStep, foreachLoop({ collectFrom: 'found tickets', collectVar: 'mapped' })],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(outside)).toContain(
+      'Collect from a result that a step INSIDE this loop saves.'
+    );
+
+    const good = validateAgentDraft(
+      draft({
+        steps: {
+          version: 3,
+          steps: [savingStep, foreachLoop({ collectFrom: 'handled ticket', collectVar: 'mapped' })],
+        },
+      }),
+      TOOLS
+    );
+    expect(good).toEqual([]);
+  });
+
+  it('a collected list feeds a later foreach', () => {
+    const first = foreachLoop({ collectFrom: 'handled ticket', collectVar: 'mapped' });
+    const second = foreachLoop({
+      name: 'Second pass',
+      itemsVar: 'mapped',
+      itemVar: 'mapped item',
+      steps: [step({ name: 'Use mapped' })],
+    });
+    const issues = validateAgentDraft(
+      draft({ steps: { version: 3, steps: [savingStep, first, second] } }),
+      TOOLS
+    );
+    expect(issues).toEqual([]);
+  });
+
+  it('until-loop conditions follow branch-condition rules', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 3,
+          steps: [untilLoop({ condition: [toolChip('jira_get_issue')] })],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues).some((message) => message.includes('can’t use a skill'))).toBe(true);
+  });
+
+  it('binding names collide across saveAs, itemVar and collectVar', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 3,
+          steps: [savingStep, foreachLoop({ itemVar: 'found tickets' })],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues)).toContain(
+      'Two steps bind a result, item, or list under the same name.'
+    );
+  });
+});
+
+describe('group and n-way validation', () => {
+  it('rejects an empty group and accepts a named one', () => {
+    const empty = validateAgentDraft(
+      draft({ steps: { version: 3, steps: [groupNode({ steps: [] })] } }),
+      TOOLS
+    );
+    expect(messagesOf(empty)).toContain('This group is empty — add a step inside it or remove it.');
+    expect(
+      validateAgentDraft(draft({ steps: { version: 3, steps: [groupNode()] } }), TOOLS)
+    ).toEqual([]);
+  });
+
+  it('groups do not consume nesting depth', () => {
+    // group > branch > branch > branch — legal because the group is free.
+    const doc = groupNode({
+      steps: [
+        branchNode({
+          paths: [
+            {
+              id: uuid(),
+              name: 'Yes',
+              steps: [
+                branchNode({
+                  paths: [
+                    { id: uuid(), name: 'Deeper', steps: [branchNode()] },
+                    { id: uuid(), name: 'No', steps: [] },
+                  ],
+                }),
+              ],
+            },
+            { id: uuid(), name: 'No', steps: [] },
+          ],
+        }),
+      ],
+    });
+    const issues = validateAgentDraft(draft({ steps: { version: 3, steps: [doc] } }), TOOLS);
+    expect(messagesOf(issues)).not.toContain(
+      'Conditions can nest 3 levels deep — move this one up.'
+    );
+  });
+
+  it('validates n-way paths and the failure path', () => {
+    const fiveWay = branchNode({
+      paths: [
+        { id: uuid(), name: 'Bug', steps: [step({ name: 'File bug' })] },
+        { id: uuid(), name: 'Feature', steps: [] },
+        { id: uuid(), name: 'Question', steps: [] },
+        { id: uuid(), name: 'Praise', steps: [] },
+        { id: uuid(), name: 'Otherwise', steps: [] },
+      ],
+      failurePath: { id: uuid(), name: 'On failure', steps: [step({ name: 'Tell someone' })] },
+    });
+    expect(validateAgentDraft(draft({ steps: { version: 3, steps: [fiveWay] } }), TOOLS)).toEqual(
+      []
+    );
+
+    const unnamedFailure = branchNode({
+      failurePath: { id: uuid(), name: '', steps: [] },
+    });
+    const issues = validateAgentDraft(
+      draft({ steps: { version: 3, steps: [unnamedFailure] } }),
+      TOOLS
+    );
+    expect(issues.some((issue) => issue.path.endsWith('.failurePath.name'))).toBe(true);
+  });
+
+  it('normalizes loops: clamps iterations, drops half-configured collect', () => {
+    const normalized = normalizeAgentDraft(
+      draft({
+        steps: {
+          version: 3,
+          steps: [
+            step({ saveAs: 'found tickets' }),
+            foreachLoop({ maxIterations: 999, collectVar: 'mapped' }),
+          ],
+        },
+      })
+    );
+    const loopOut = normalized.steps.steps[1];
+    expect(loopOut && 'maxIterations' in loopOut ? loopOut.maxIterations : null).toBe(25);
+    // Half-configured collect is dropped entirely — the KEY must be absent.
+    expect('collectVar' in (loopOut ?? {})).toBe(false);
+    expect(normalized.steps.version).toBe(3);
   });
 });

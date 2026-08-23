@@ -8,7 +8,12 @@
  * inputs, earlier steps' saved results), not as the plan.
  */
 
-import { renderInstruction, type AgentStep, type BranchStep } from '@renkei/agents';
+import {
+  renderInstruction,
+  type AgentStep,
+  type BranchStep,
+  type UntilLoopStep,
+} from '@renkei/agents';
 import type { LlmMessage, LlmToolDef } from '@renkei/agent-llm';
 
 export const FINISH_STEP_TOOL = 'finish_step';
@@ -42,6 +47,14 @@ export const FINISH_STEP_DEF: LlmToolDef = {
         type: 'string',
         description:
           'If this step was asked to save its result, the value to save (an ID, a key, a short text). Omit otherwise.',
+      },
+      saveItems: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'When the step was asked to save a LIST — items a later part of the automation ' +
+          'iterates one by one — the items, one string per entry (an id, a key, a short ' +
+          'line each). At most 25. Use INSTEAD of cramming a list into saveValue.',
       },
       stop: {
         type: 'boolean',
@@ -80,6 +93,10 @@ export const SYSTEM_PROMPT = [
 
 export const CHOOSE_PATH_TOOL = 'choose_path';
 
+/**
+ * The two-path def, FROZEN byte-for-byte: every v2 agent's branch prompt
+ * must not drift. N-way branches get their own def via buildChoosePathDef.
+ */
 export const CHOOSE_PATH_DEF: LlmToolDef = {
   name: CHOOSE_PATH_TOOL,
   description: 'Decide which path the automation takes. Call exactly once.',
@@ -100,9 +117,37 @@ export const CHOOSE_PATH_DEF: LlmToolDef = {
   },
 };
 
+/** The branch's choose_path def: the frozen yes/no pair, or a numbered route enum. */
+export function buildChoosePathDef(branch: BranchStep): LlmToolDef {
+  if (branch.paths.length === 2) return CHOOSE_PATH_DEF;
+  const listing = branch.paths
+    .map((path, index) => `${index + 1} = ${path.name || `path ${index + 1}`}`)
+    .join('; ');
+  return {
+    name: CHOOSE_PATH_TOOL,
+    description: 'Decide which path the automation takes. Call exactly once.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        choice: {
+          type: 'string',
+          enum: branch.paths.map((_, index) => String(index + 1)),
+          description: `${listing}. Choose ${branch.paths.length} when none of the others clearly applies.`,
+        },
+        reason: {
+          type: 'string',
+          description: 'One or two sentences on why, written for the agent owner.',
+        },
+      },
+      required: ['choice', 'reason'],
+    },
+  };
+}
+
 /**
  * The condition evaluator's frame: judgment only, no tools, no invention.
  * Mirrors finish_step's forced-call pattern — one declared verdict.
+ * FROZEN for two-path branches; routers get ROUTER_SYSTEM_PROMPT.
  */
 export const BRANCH_SYSTEM_PROMPT = [
   'You are deciding one yes/no branch of an automated workflow that a person drafted.',
@@ -110,6 +155,94 @@ export const BRANCH_SYSTEM_PROMPT = [
   'When the information given does not settle the condition, choose the answer the condition’s wording treats as the default ("no" for "did anything happen?" style conditions).',
   'Call choose_path exactly once.',
 ].join(' ');
+
+/** The N-way sibling of BRANCH_SYSTEM_PROMPT. */
+export const ROUTER_SYSTEM_PROMPT = [
+  'You are routing one decision of an automated workflow that a person drafted, between several labeled paths.',
+  'Judge only from the information given — you have no tools and must not invent facts.',
+  'Pick the single path that best matches. When the information given does not clearly match any path, pick the LAST one — it is the fallback.',
+  'Call choose_path exactly once.',
+].join(' ');
+
+export const LOOP_DECISION_TOOL = 'loop_decision';
+
+export const LOOP_DECISION_DEF: LlmToolDef = {
+  name: LOOP_DECISION_TOOL,
+  description: 'Decide whether the loop is finished. Call exactly once.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      choice: {
+        type: 'string',
+        enum: ['finished', 'continue'],
+        description:
+          "'finished' → the stop condition holds and the automation moves on; " +
+          "'continue' → it does not hold yet and the loop runs another round.",
+      },
+      reason: {
+        type: 'string',
+        description: 'One or two sentences on why, written for the agent owner.',
+      },
+    },
+    required: ['choice', 'reason'],
+  },
+};
+
+/** The until-loop evaluator's frame — judgment only, like a branch. */
+export const LOOP_SYSTEM_PROMPT = [
+  'You are deciding whether a repeating part of an automated workflow is finished.',
+  'The loop’s body has just run; judge only from the information given — you have no tools and must not invent facts.',
+  'When the information given does not settle it, choose "continue" — the loop has a hard round limit either way.',
+  'Call loop_decision exactly once.',
+].join(' ');
+
+export interface LoopPromptInput {
+  loop: UntilLoopStep;
+  iteration: number;
+  variables: Record<string, string>;
+  attempt: number;
+  /** One-paragraph summary of the previous evaluation attempt's failure. */
+  previousFailure?: string;
+  /** Rendered agent memory (summary + recent entries), already bounded. */
+  memoryText?: string;
+  /** Rendered agent knowledge notes, already bounded. */
+  knowledgeText?: string;
+}
+
+export function buildLoopConditionMessages(input: LoopPromptInput): {
+  messages: LlmMessage[];
+  unbound: string[];
+} {
+  const rendered = renderInstruction(input.loop.condition, input.variables);
+  const variableLines = Object.entries(input.variables)
+    .map(([name, value]) => `- ${name}: ${value}`)
+    .join('\n');
+
+  const parts = [
+    `Loop: ${input.loop.name}`,
+    `Round ${input.iteration} of at most ${input.loop.maxIterations} has just finished.`,
+    `Stop condition to decide: ${rendered.text}`,
+    'If it HOLDS (choice: "finished") the automation continues after the loop. If it does NOT hold yet (choice: "continue") the loop runs another round.',
+    ...(variableLines ? [`Known information:\n${variableLines}`] : []),
+    ...(input.memoryText
+      ? [`What you remember (notes from this agent’s earlier runs):\n${input.memoryText}`]
+      : []),
+    ...(input.knowledgeText
+      ? [`Your knowledge notes (reference material this agent keeps):\n${input.knowledgeText}`]
+      : []),
+    ...(input.attempt > 1
+      ? [
+          `This is attempt ${input.attempt} of ${input.loop.maxAttempts}.`,
+          ...(input.previousFailure ? [`Previous attempt: ${input.previousFailure}`] : []),
+        ]
+      : []),
+  ];
+
+  return {
+    messages: [{ role: 'user', content: [{ type: 'text', text: parts.join('\n\n') }] }],
+    unbound: rendered.unbound,
+  };
+}
 
 export interface BranchPromptInput {
   branch: BranchStep;
@@ -132,11 +265,24 @@ export function buildBranchMessages(input: BranchPromptInput): {
     .map(([name, value]) => `- ${name}: ${value}`)
     .join('\n');
 
+  // Two-path prose is FROZEN (v2 agents must not drift); routers list
+  // their numbered choices with the last-path fallback stated.
+  const routing =
+    input.branch.paths.length === 2
+      ? `If YES (choice: "yes") the automation takes the path "${input.branch.paths[0].name}". ` +
+        `If NO (choice: "no") it takes the path "${input.branch.paths[1].name}".`
+      : [
+          'The paths, by number:',
+          ...input.branch.paths.map(
+            (path, index) => `${index + 1}. "${path.name || `path ${index + 1}`}"`
+          ),
+          `Pick the single best match; when nothing clearly applies, pick ${input.branch.paths.length} — it is the fallback.`,
+        ].join('\n');
+
   const parts = [
     `Branch: ${input.branch.name}`,
     `Condition to decide: ${rendered.text}`,
-    `If YES (choice: "yes") the automation takes the path "${input.branch.paths[0].name}". ` +
-      `If NO (choice: "no") it takes the path "${input.branch.paths[1].name}".`,
+    routing,
     ...(variableLines ? [`Known information:\n${variableLines}`] : []),
     ...(input.memoryText
       ? [`What you remember (notes from this agent’s earlier runs):\n${input.memoryText}`]
@@ -177,6 +323,8 @@ export interface AttemptPromptInput {
   memoryText?: string;
   /** Rendered agent knowledge notes, already bounded. */
   knowledgeText?: string;
+  /** True when this step's saveAs is a loop's items source — nudge saveItems. */
+  savesItemsForLoop?: boolean;
 }
 
 export function buildAttemptMessages(input: AttemptPromptInput): {
@@ -197,7 +345,9 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
       'budget runs out you will be asked to declare the outcome from what you have already seen.',
     ...(input.step.saveAs
       ? [
-          `When you succeed, include saveValue in finish_step — it becomes "${input.step.saveAs}" for later use.`,
+          input.savesItemsForLoop
+            ? `When you succeed, include saveItems in finish_step (one string per item) — the list becomes "${input.step.saveAs}", and a later part of the automation handles the items one by one.`
+            : `When you succeed, include saveValue in finish_step — it becomes "${input.step.saveAs}" for later use.`,
         ]
       : []),
     ...(variableLines ? [`Known information:\n${variableLines}`] : []),

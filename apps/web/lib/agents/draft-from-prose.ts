@@ -17,7 +17,12 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import {
   BUILTIN_VARIABLES,
-  MAX_BRANCH_DEPTH,
+  MAX_BRANCH_DEPTH_V3,
+  MAX_BRANCH_PATHS,
+  MAX_CONTAINER_DEPTH,
+  MAX_LOOP_ITERATIONS,
+  LOOP_DEFAULT_ATTEMPTS,
+  LOOP_DEFAULT_ITERATIONS,
   flattenActionSteps,
   isBranchStep,
   walkSteps,
@@ -25,7 +30,9 @@ import {
   type AgentStepNode,
   type BranchPath,
   type FailureHandling,
+  type GroupStep,
   type InstructionSegment,
+  type LoopStep,
 } from '@renkei/agents';
 import { resolveAgentLlm, type LlmMessage } from '@renkei/agent-llm';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
@@ -63,16 +70,39 @@ function currentLinesOf(nodes: AgentStepNode[]): string {
   return walkSteps(nodes)
     .map(({ node, ordinal, depth }) => {
       const indent = '  '.repeat(depth - 1);
-      if (isBranchStep(node)) {
-        return (
-          `${indent}s${ordinal + 1}. [branch] "${node.name}" — decides: ${segmentsToTokens(node.condition)}` +
-          ` (if yes → "${node.paths[0].name}", otherwise → "${node.paths[1].name}"; the indented steps below belong to those paths)`
-        );
+      switch (node.kind) {
+        case 'branch': {
+          const routes = node.paths.map((path) => `"${path.name}"`).join(' | ');
+          return (
+            `${indent}s${ordinal + 1}. [branch] "${node.name}" — decides: ${segmentsToTokens(node.condition)}` +
+            ` (paths: ${routes}; the last is the fallback; the indented steps below belong to those paths` +
+            (node.failurePath
+              ? `; a failure route "${node.failurePath.name}" runs only if the decision itself fails`
+              : '') +
+            ')'
+          );
+        }
+        case 'loop': {
+          const collects = node.collectVar
+            ? `; collects "${node.collectFrom}" into "${node.collectVar}"`
+            : '';
+          return node.mode === 'foreach'
+            ? `${indent}s${ordinal + 1}. [loop] "${node.name}" — for each {{var:${node.itemVar}}} in {{var:${node.itemsVar}}} (at most ${node.maxIterations} rounds${collects}; the indented steps below are its body)`
+            : `${indent}s${ordinal + 1}. [loop] "${node.name}" — repeats until: ${segmentsToTokens(node.condition)} (at most ${node.maxIterations} rounds${collects}; the indented steps below are its body)`;
+        }
+        case 'group':
+          return `${indent}s${ordinal + 1}. [group] "${node.name}" — groups the indented steps below`;
+        case 'action':
+        case undefined:
+          return (
+            `${indent}s${ordinal + 1}. "${node.name}" — ${segmentsToTokens(node.instruction)}` +
+            (node.saveAs ? ` (saves result as "${node.saveAs}")` : '')
+          );
+        default: {
+          const unhandled: never = node;
+          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+        }
       }
-      return (
-        `${indent}s${ordinal + 1}. "${node.name}" — ${segmentsToTokens(node.instruction)}` +
-        (node.saveAs ? ` (saves result as "${node.saveAs}")` : '')
-      );
     })
     .join('\n');
 }
@@ -121,15 +151,30 @@ function promptOf(
       'context first, look things up, then act on what was found.',
     '- When the description forks on a condition ("if a ticket exists, comment on it; ' +
       'otherwise create one"), use a BRANCH object in the steps array: {"kind": "branch", ' +
-      '"name": short label, "condition": a yes/no question in plain words (may use ' +
+      '"name": short label, "condition": the deciding question in plain words (may use ' +
       '{{var:...}}, NEVER {{tool:...}} — do any tool work in a step BEFORE the branch and ' +
-      'save the result), "ifLabel"/"elseLabel": short path names, "ifSteps"/"elseSteps": ' +
-      'arrays of steps (same shape as top-level steps; either may be empty — an empty ' +
-      'elseSteps just continues). After either path finishes, the automation continues with ' +
-      'the steps AFTER the branch. A branch may contain one more level of branch inside its ' +
-      "paths, never deeper. Small conditions that only tweak wording stay INSIDE a step's " +
-      'instruction ("If nothing was found, say so briefly"); use a branch when the two ' +
-      'outcomes need DIFFERENT steps or tools. Never invent jump-to-step logic.',
+      `save the result), "paths": 2 to ${MAX_BRANCH_PATHS} routes, each {"label": short path name, ` +
+      '"steps": array of steps (same shape as top-level steps; may be empty — an empty path ' +
+      'just continues)}. The LAST path is the fallback taken when nothing else clearly ' +
+      'applies. After a path finishes, the automation continues with the steps AFTER the ' +
+      `branch. Branches may nest at most ${MAX_BRANCH_DEPTH_V3} levels deep. Small conditions that only ` +
+      'tweak wording stay INSIDE a step\'s instruction ("If nothing was found, say so ' +
+      'briefly"); use a branch when the outcomes need DIFFERENT steps or tools. Never invent ' +
+      'jump-to-step logic.',
+    '- When the description repeats work per item ("for each ticket found, do X") or until ' +
+      'a condition holds ("keep paging until nothing new"), use a LOOP object: {"kind": ' +
+      '"loop", "name": short label, EITHER "over": the name of a saved LIST variable with ' +
+      '"itemName": a short name for the current item (steps inside reference it as ' +
+      '{{var:itemName}}) OR "until": the stop condition in plain words (checked AFTER each ' +
+      `round; may use {{var:...}}, never {{tool:...}}), "maxIterations": 1-${MAX_LOOP_ITERATIONS} rounds, and ` +
+      '"steps": the body. To carry results out of the loop, add "collectFrom": the saveAs ' +
+      'name of a step INSIDE the body and "collectVar": a new list name — each round appends ' +
+      'what that step saved, and later steps (or a later loop\'s "over") can use the list. ' +
+      'Loops never contain other loops. Prefer ONE bulk tool call over a loop whenever a ' +
+      'bulk tool covers the need — loops are for genuinely per-item reasoning or acting.',
+    '- Only when the user NAMES a phase ("triage", "the cleanup part"), you may wrap steps ' +
+      'in a GROUP object: {"kind": "group", "name": the phase name, "steps": [...]}. Groups ' +
+      'change nothing about execution — never invent them.',
     '- Carry the user\'s guardrails into the step that acts (e.g. "if this thread was already ' +
       'handled, do not update the same ticket again — stop instead").',
     '- A step that FAILS stops the automation by default. To handle a specific failure of a ' +
@@ -198,13 +243,35 @@ function promptOf(
     '  {',
     '    "kind": "branch",',
     '    "name": string — a short label for the decision, never empty,',
-    '    "condition": string — a yes/no question in plain words; {{var:...}} allowed,',
+    '    "condition": string — the deciding question in plain words; {{var:...}} allowed,',
     '      {{tool:...}} forbidden,',
-    '    "ifLabel": string — short name for the yes path (e.g. "A ticket exists"),',
-    '    "elseLabel": string — short name for the no path (e.g. "Otherwise"),',
-    '    "ifSteps": array of steps (may be empty),',
-    '    "elseSteps": array of steps (may be empty; not both empty)' + (revising ? ',' : ''),
+    `    "paths": array of 2 to ${MAX_BRANCH_PATHS} routes, in order, the LAST being the fallback;`,
+    '      each { "label": string — short path name (e.g. "A ticket exists"),',
+    '             "steps": array of steps (may be empty — an empty path just continues) }' +
+      (revising ? ',' : ''),
     ...(revising ? ['    "from": string or null — the sN id of the existing branch, or null'] : []),
+    '  }',
+    '  Or a loop:',
+    '  {',
+    '    "kind": "loop",',
+    '    "name": string — a short label, never empty,',
+    '    "over": string or null — the name of a saved LIST variable to go through,',
+    '    "itemName": string or null — required with "over": what to call the current item,',
+    '    "until": string or null — INSTEAD of "over": the stop condition in plain words,',
+    '      checked after each round; {{var:...}} allowed, {{tool:...}} forbidden,',
+    `    "maxIterations": integer 1-${MAX_LOOP_ITERATIONS} — the round ceiling,`,
+    '    "collectFrom": string or null — the saveAs name of a step INSIDE the body whose',
+    '      result each round appends,',
+    '    "collectVar": string or null — required with collectFrom: the new list\'s name,',
+    '    "steps": array of steps — the body, never empty' + (revising ? ',' : ''),
+    ...(revising ? ['    "from": string or null — the sN id of the existing loop, or null'] : []),
+    '  }',
+    '  Or a group (ONLY when the user names a phase):',
+    '  {',
+    '    "kind": "group",',
+    '    "name": string — the phase name, never empty,',
+    '    "steps": array of steps — never empty' + (revising ? ',' : ''),
+    ...(revising ? ['    "from": string or null — the sN id of the existing group, or null'] : []),
     '  }',
     '}',
     'Every field must be present on every step. Do not add fields not listed here.',
@@ -324,23 +391,54 @@ const STEP_SHAPE = z.object({
 /**
  * The branch wire shape. Its path arrays stay unknown[] here — each entry
  * is checked individually by the recursive parse, so one malformed nested
- * step degrades to feedback instead of voiding the whole branch.
+ * step degrades to feedback instead of voiding the whole branch. Both the
+ * v3 `paths` array and the legacy `ifSteps`/`elseSteps` pair parse — older
+ * fine-tuned habits die hard, and both mean the same two-path branch.
  */
 const BRANCH_SHAPE = z.object({
   kind: z.literal('branch'),
   name: z.string().trim().min(1, 'is required and must be a non-empty string'),
   condition: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  paths: z
+    .array(z.object({ label: z.string().optional(), steps: z.array(z.unknown()) }))
+    .min(2, 'needs at least 2 paths')
+    .max(MAX_BRANCH_PATHS, `takes at most ${MAX_BRANCH_PATHS} paths`)
+    .optional(),
   ifLabel: z.string().optional(),
   elseLabel: z.string().optional(),
-  ifSteps: z.array(z.unknown()),
-  elseSteps: z.array(z.unknown()),
+  ifSteps: z.array(z.unknown()).optional(),
+  elseSteps: z.array(z.unknown()).optional(),
   from: z.string().nullable().optional(),
 });
 
-function isBranchWire(entry: unknown): boolean {
-  if (typeof entry !== 'object' || entry === null) return false;
-  const candidate: { kind?: unknown } = entry;
-  return candidate.kind === 'branch';
+const LOOP_SHAPE = z.object({
+  kind: z.literal('loop'),
+  name: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  over: z.string().nullable().optional(),
+  itemName: z.string().nullable().optional(),
+  until: z.string().nullable().optional(),
+  maxIterations: z.number().int().min(1).max(MAX_LOOP_ITERATIONS).optional(),
+  collectFrom: z.string().nullable().optional(),
+  collectVar: z.string().nullable().optional(),
+  steps: z.array(z.unknown()).min(1, 'must contain at least one step'),
+  from: z.string().nullable().optional(),
+});
+
+const GROUP_SHAPE = z.object({
+  kind: z.literal('group'),
+  name: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  steps: z.array(z.unknown()).min(1, 'must contain at least one step'),
+  from: z.string().nullable().optional(),
+});
+
+function wireKindOf(entry: unknown): 'branch' | 'loop' | 'group' | 'action' {
+  if (typeof entry === 'object' && entry !== null) {
+    const candidate: { kind?: unknown } = entry;
+    if (candidate.kind === 'branch' || candidate.kind === 'loop' || candidate.kind === 'group') {
+      return candidate.kind;
+    }
+  }
+  return 'action';
 }
 
 /** zod issues → the quotable one-liners the retry feedback is built from. */
@@ -419,7 +517,7 @@ function parseDraftReply(
     ),
   };
 
-  const steps = parseNodeList(parsed.steps, 'Step', state, 1);
+  const steps = parseNodeList(parsed.steps, 'Step', state, TOP_NESTING);
   const { problems, softProblems } = state;
 
   if (steps.length === 0) {
@@ -444,10 +542,27 @@ function parseDraftReply(
   const dedupe = (nodes: AgentStepNode[]): void => {
     for (const node of nodes) {
       node.id = claimId(node.id);
-      if (isBranchStep(node)) {
-        for (const path of node.paths) {
-          path.id = claimId(path.id);
-          dedupe(path.steps);
+      switch (node.kind) {
+        case 'branch':
+          for (const path of node.paths) {
+            path.id = claimId(path.id);
+            dedupe(path.steps);
+          }
+          if (node.failurePath) {
+            node.failurePath.id = claimId(node.failurePath.id);
+            dedupe(node.failurePath.steps);
+          }
+          break;
+        case 'loop':
+        case 'group':
+          dedupe(node.steps);
+          break;
+        case 'action':
+        case undefined:
+          break;
+        default: {
+          const unhandled: never = node;
+          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
         }
       }
     }
@@ -464,56 +579,67 @@ function parseDraftReply(
   };
 }
 
-/** Parse a wire steps array — branch entries recurse, broken ones diagnose. */
+/** Containment counters threaded through the recursive parse. */
+interface WireNesting {
+  branchDepth: number;
+  containerDepth: number;
+  inLoop: boolean;
+}
+
+const TOP_NESTING: WireNesting = { branchDepth: 0, containerDepth: 0, inLoop: false };
+
+/** Parse a wire steps array — container entries recurse, broken ones diagnose. */
 function parseNodeList(
   entries: unknown[],
   labelPrefix: string,
   state: ParseState,
-  depth: number
+  nesting: WireNesting
 ): AgentStepNode[] {
   const nodes: AgentStepNode[] = [];
   for (const [index, entry] of entries.entries()) {
     const label = `${labelPrefix} ${index + 1}`;
-    if (isBranchWire(entry)) {
-      const parsedBranch = parseBranchEntry(entry, label, state, depth);
-      if (parsedBranch) nodes.push(parsedBranch);
-      continue;
+    switch (wireKindOf(entry)) {
+      case 'branch': {
+        const parsedBranch = parseBranchEntry(entry, label, state, nesting);
+        if (parsedBranch) nodes.push(parsedBranch);
+        break;
+      }
+      case 'loop': {
+        const parsedLoop = parseLoopEntry(entry, label, state, nesting);
+        if (parsedLoop) nodes.push(parsedLoop);
+        break;
+      }
+      case 'group': {
+        const parsedGroup = parseGroupEntry(entry, label, state, nesting);
+        if (parsedGroup) nodes.push(parsedGroup);
+        break;
+      }
+      case 'action': {
+        const checked = STEP_SHAPE.safeParse(entry);
+        if (!checked.success) {
+          state.problems.push(...zodProblems(`${label}: `, checked.error));
+          break;
+        }
+        nodes.push(parseActionEntry(checked.data, label, state));
+        break;
+      }
     }
-    const checked = STEP_SHAPE.safeParse(entry);
-    if (!checked.success) {
-      state.problems.push(...zodProblems(`${label}: `, checked.error));
-      continue;
-    }
-    nodes.push(parseActionEntry(checked.data, label, state));
   }
   return nodes;
 }
 
-function parseBranchEntry(
-  entry: unknown,
+/** Diagnose a plain-words condition's chips (branch or until-loop). */
+function conditionSegments(
+  condition: string,
   label: string,
-  state: ParseState,
-  depth: number
-): AgentStepNode | null {
-  const checked = BRANCH_SHAPE.safeParse(entry);
-  if (!checked.success) {
-    state.problems.push(...zodProblems(`${label} (branch): `, checked.error));
-    return null;
-  }
-  const wire = checked.data;
-
-  if (depth >= MAX_BRANCH_DEPTH) {
+  state: ParseState
+): InstructionSegment[] {
+  if (/\{\{tool:/.test(condition)) {
     state.softProblems.push(
-      `${label} nests a branch deeper than one level — restructure so branches sit at most one inside another.`
-    );
-    return null;
-  }
-  if (/\{\{tool:/.test(wire.condition)) {
-    state.softProblems.push(
-      `${label} puts a {{tool:...}} token in a branch condition — do that work in a step before the branch and save the result; the tool token was dropped.`
+      `${label} puts a {{tool:...}} token in a condition — do that work in a step before it and save the result; the tool token was dropped.`
     );
   }
-  for (const match of wire.condition.matchAll(TOKEN_PATTERN)) {
+  for (const match of condition.matchAll(TOKEN_PATTERN)) {
     const [, kind, rawName] = match;
     const name = rawName.trim();
     if (kind === 'var' && !state.knownVars.has(name)) {
@@ -525,32 +651,240 @@ function parseBranchEntry(
     }
   }
   // No tool chips in a condition ever — drop even valid ones.
-  const condition = segmentsOf(wire.condition, new Set<string>(), state.knownVars);
+  return segmentsOf(condition, new Set<string>(), state.knownVars);
+}
+
+/** Claim a model-authored bound name (itemName/collectVar) into the namespace. */
+function claimBoundName(raw: string, label: string, what: string, state: ParseState): string {
+  let name = sanitizeSaveAs(raw);
+  if (name !== raw.trim()) {
+    state.softProblems.push(
+      `${label} names its ${what} "${raw}", which is not a usable name — start with a letter, then letters, numbers, spaces, ".", "-" or "_" (64 characters max).` +
+        (name ? ` It was renamed to "${name}".` : ' The name was dropped.')
+    );
+  }
+  if (name && state.usedSaveAs.has(name.toLowerCase())) {
+    state.softProblems.push(
+      `${label} reuses the name "${name}" for its ${what} — every bound name must be unique across steps.`
+    );
+    let suffix = 2;
+    let candidate = `${name} ${suffix}`;
+    while (state.usedSaveAs.has(candidate.toLowerCase())) {
+      suffix += 1;
+      candidate = `${name} ${suffix}`;
+    }
+    name = candidate.slice(0, 64);
+  }
+  if (name) {
+    state.usedSaveAs.add(name.toLowerCase());
+    state.knownVars.add(name);
+  }
+  return name;
+}
+
+function parseBranchEntry(
+  entry: unknown,
+  label: string,
+  state: ParseState,
+  nesting: WireNesting
+): AgentStepNode | null {
+  const checked = BRANCH_SHAPE.safeParse(entry);
+  if (!checked.success) {
+    state.problems.push(...zodProblems(`${label} (branch): `, checked.error));
+    return null;
+  }
+  const wire = checked.data;
+
+  const inner: WireNesting = {
+    branchDepth: nesting.branchDepth + 1,
+    containerDepth: nesting.containerDepth + 1,
+    inLoop: nesting.inLoop,
+  };
+  if (inner.branchDepth > MAX_BRANCH_DEPTH_V3 || inner.containerDepth > MAX_CONTAINER_DEPTH) {
+    state.softProblems.push(
+      `${label} nests a branch deeper than the limit (${MAX_BRANCH_DEPTH_V3} branch levels, ${MAX_CONTAINER_DEPTH} container levels) — restructure with fewer nested conditions.`
+    );
+    return null;
+  }
+
+  // Either wire dialect: the v3 paths array, or the legacy if/else pair.
+  const wirePaths: { label: string | undefined; steps: unknown[]; fallback: string }[] =
+    wire.paths && wire.paths.length > 0
+      ? wire.paths.map((path, index) => ({
+          label: path.label,
+          steps: path.steps,
+          fallback: index === wire.paths!.length - 1 ? 'Otherwise' : `Path ${index + 1}`,
+        }))
+      : wire.ifSteps || wire.elseSteps
+        ? [
+            { label: wire.ifLabel, steps: wire.ifSteps ?? [], fallback: 'If so' },
+            { label: wire.elseLabel, steps: wire.elseSteps ?? [], fallback: 'Otherwise' },
+          ]
+        : [];
+  if (wirePaths.length < 2) {
+    state.problems.push(`${label} (branch): needs a "paths" array of at least 2 routes.`);
+    return null;
+  }
+
+  const condition = conditionSegments(wire.condition, label, state);
 
   const origin = originOf(state, wire.from);
   const branchOrigin = origin && isBranchStep(origin) ? origin : undefined;
 
-  const path = (
-    pathIndex: 0 | 1,
-    labelText: string | undefined,
-    fallback: string,
-    steps: unknown[]
-  ): BranchPath => ({
-    id: branchOrigin?.paths[pathIndex].id ?? randomUUID(),
-    name: (labelText ?? '').trim().slice(0, 80) || fallback,
-    steps: parseNodeList(steps, `${label}.${pathIndex === 0 ? 'if' : 'else'}`, state, depth + 1),
-  });
+  const paths: BranchPath[] = wirePaths.map((wirePath, index) => ({
+    id: branchOrigin?.paths[index]?.id ?? randomUUID(),
+    name: (wirePath.label ?? '').trim().slice(0, 80) || wirePath.fallback,
+    steps: parseNodeList(wirePath.steps, `${label}.path${index + 1}`, state, inner),
+  }));
 
   return {
     id: branchOrigin?.id ?? randomUUID(),
     kind: 'branch',
     name: wire.name.slice(0, 80),
     condition,
-    paths: [
-      path(0, wire.ifLabel, 'If so', wire.ifSteps),
-      path(1, wire.elseLabel, 'Otherwise', wire.elseSteps),
-    ],
+    paths,
+    // The failure route is builder-authored, never drafted — a revision
+    // that echoes this branch keeps the one the owner configured.
+    ...(branchOrigin?.failurePath
+      ? { failurePath: structuredClone(branchOrigin.failurePath) }
+      : {}),
     maxAttempts: branchOrigin?.maxAttempts ?? 2,
+  };
+}
+
+function parseLoopEntry(
+  entry: unknown,
+  label: string,
+  state: ParseState,
+  nesting: WireNesting
+): AgentStepNode | null {
+  const checked = LOOP_SHAPE.safeParse(entry);
+  if (!checked.success) {
+    state.problems.push(...zodProblems(`${label} (loop): `, checked.error));
+    return null;
+  }
+  const wire = checked.data;
+
+  if (nesting.inLoop) {
+    state.softProblems.push(
+      `${label} nests a loop inside a loop — loops never nest; restructure (e.g. collect results in the first loop and run a second one after it).`
+    );
+    return null;
+  }
+  const inner: WireNesting = {
+    branchDepth: nesting.branchDepth,
+    containerDepth: nesting.containerDepth + 1,
+    inLoop: true,
+  };
+  if (inner.containerDepth > MAX_CONTAINER_DEPTH) {
+    state.softProblems.push(
+      `${label} nests a loop deeper than the container limit (${MAX_CONTAINER_DEPTH}) — move it up a level.`
+    );
+    return null;
+  }
+
+  const over = typeof wire.over === 'string' ? wire.over.trim() : '';
+  const until = typeof wire.until === 'string' ? wire.until.trim() : '';
+  if (!over && !until) {
+    state.problems.push(
+      `${label} (loop): needs either "over" (a saved list variable) or "until" (a stop condition).`
+    );
+    return null;
+  }
+
+  const origin = originOf(state, wire.from);
+  const loopOrigin = origin && origin.kind === 'loop' ? origin : undefined;
+  const maxIterations = wire.maxIterations ?? loopOrigin?.maxIterations ?? LOOP_DEFAULT_ITERATIONS;
+
+  let head:
+    | Pick<Extract<LoopStep, { mode: 'foreach' }>, 'mode' | 'itemsVar' | 'itemVar'>
+    | Pick<Extract<LoopStep, { mode: 'until' }>, 'mode' | 'condition' | 'maxAttempts'>;
+  if (over) {
+    if (!state.knownVars.has(over)) {
+      state.softProblems.push(
+        `${label} loops over {{var:${over}}}, which no earlier step saves and no trigger provides — save the list first (or fix the name).`
+      );
+    }
+    const itemVar =
+      claimBoundName(
+        typeof wire.itemName === 'string' && wire.itemName.trim() ? wire.itemName : 'item',
+        label,
+        'loop item',
+        state
+      ) || 'item';
+    head = { mode: 'foreach', itemsVar: over, itemVar };
+  } else {
+    head = {
+      mode: 'until',
+      condition: conditionSegments(until, label, state),
+      maxAttempts: loopOrigin?.mode === 'until' ? loopOrigin.maxAttempts : LOOP_DEFAULT_ATTEMPTS,
+    };
+  }
+
+  const steps = parseNodeList(wire.steps, `${label}.body`, state, inner);
+  if (steps.length === 0) {
+    state.problems.push(`${label} (loop): its body had no usable steps.`);
+    return null;
+  }
+
+  // Collect is both-or-neither, and the source must be saved INSIDE the body.
+  const collectFrom = typeof wire.collectFrom === 'string' ? wire.collectFrom.trim() : '';
+  const collectVarRaw = typeof wire.collectVar === 'string' ? wire.collectVar.trim() : '';
+  let collect: { collectFrom: string; collectVar: string } | undefined;
+  if (collectFrom || collectVarRaw) {
+    const bodySaves = new Set(
+      flattenActionSteps(steps).flatMap((step) => (step.saveAs ? [step.saveAs] : []))
+    );
+    if (!collectFrom || !collectVarRaw) {
+      state.softProblems.push(
+        `${label} sets only one of "collectFrom"/"collectVar" — both are needed; the collect was dropped.`
+      );
+    } else if (!bodySaves.has(collectFrom)) {
+      state.softProblems.push(
+        `${label} collects from "${collectFrom}", but no step INSIDE the loop saves that name — the collect was dropped.`
+      );
+    } else {
+      const collectVar = claimBoundName(collectVarRaw, label, 'collected list', state);
+      if (collectVar) collect = { collectFrom, collectVar };
+    }
+  }
+
+  return {
+    id: loopOrigin?.id ?? randomUUID(),
+    kind: 'loop',
+    name: wire.name.slice(0, 80),
+    ...head,
+    maxIterations,
+    ...(collect ?? {}),
+    steps,
+  };
+}
+
+function parseGroupEntry(
+  entry: unknown,
+  label: string,
+  state: ParseState,
+  nesting: WireNesting
+): GroupStep | null {
+  const checked = GROUP_SHAPE.safeParse(entry);
+  if (!checked.success) {
+    state.problems.push(...zodProblems(`${label} (group): `, checked.error));
+    return null;
+  }
+  const wire = checked.data;
+  const origin = originOf(state, wire.from);
+  const groupOrigin = origin && origin.kind === 'group' ? origin : undefined;
+  // Groups are depth-neutral — same nesting inside.
+  const steps = parseNodeList(wire.steps, `${label}.body`, state, nesting);
+  if (steps.length === 0) {
+    state.problems.push(`${label} (group): its body had no usable steps.`);
+    return null;
+  }
+  return {
+    id: groupOrigin?.id ?? randomUUID(),
+    kind: 'group',
+    name: wire.name.slice(0, 80),
+    steps,
   };
 }
 
@@ -598,7 +932,10 @@ function parseActionEntry(
   // attempt budget, and — when the tool didn't change — failure handling
   // survive the revision; the model only authors words and chips.
   const foundOrigin = originOf(state, step.from);
-  const origin = foundOrigin && !isBranchStep(foundOrigin) ? foundOrigin : undefined;
+  const origin =
+    foundOrigin && (foundOrigin.kind === undefined || foundOrigin.kind === 'action')
+      ? foundOrigin
+      : undefined;
   const sameTool = origin !== undefined && origin.tool === (tool?.name ?? null);
 
   let saveAs =

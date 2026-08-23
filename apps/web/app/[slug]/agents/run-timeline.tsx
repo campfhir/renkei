@@ -6,7 +6,7 @@
  * query seam.
  */
 
-import { findNodeById, isAgentStepsDoc, isBranchStep } from '@renkei/agents';
+import { findNodeById, isAgentStepsDoc } from '@renkei/agents';
 import { statusLabel, outcomeCodeLabel } from '@/lib/agents/run-labels';
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
 
@@ -14,7 +14,21 @@ function stepName(run: RunDetail, stepId: string, stepIndex: number): string {
   if (isAgentStepsDoc(run.stepsSnapshot)) {
     const found = findNodeById(run.stepsSnapshot.steps, stepId);
     if (found?.node.name) {
-      return isBranchStep(found.node) ? `Branch: ${found.node.name}` : found.node.name;
+      switch (found.node.kind) {
+        case 'branch':
+          return `Branch: ${found.node.name}`;
+        case 'loop':
+          return `Loop: ${found.node.name}`;
+        case 'group':
+          return `Group: ${found.node.name}`;
+        case 'action':
+        case undefined:
+          return found.node.name;
+        default: {
+          const unhandled: never = found.node;
+          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+        }
+      }
     }
   }
   return `Step ${stepIndex + 1}`;
@@ -144,11 +158,20 @@ export function RunTimeline({ run }: { run: RunDetail }) {
             {stepName(run, stepId, attempts[0]?.stepIndex ?? 0)}
           </p>
           <ul className="mt-2 space-y-2">
-            {attempts.map((attempt) => (
+            {attempts.map((attempt, position) => (
               <li
-                key={attempt.attempt}
+                key={`${attempt.iteration}-${attempt.attempt}`}
                 className="border-l-2 border-gray-200 pl-3 dark:border-gray-700"
               >
+                {/* Iteration sub-headers: shown when this attempt starts a
+                    new loop round. Old runs (iteration 0 throughout) render
+                    exactly as before. */}
+                {attempt.iteration > 0 &&
+                attempts[position - 1]?.iteration !== attempt.iteration ? (
+                  <p className="mb-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                    Iteration {attempt.iteration}
+                  </p>
+                ) : null}
                 <p className="flex flex-wrap items-center gap-2 text-xs">
                   <span className="text-gray-500">Attempt {attempt.attempt}</span>
                   <StatusPill status={attempt.status} />

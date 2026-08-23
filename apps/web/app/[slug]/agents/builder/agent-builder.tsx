@@ -17,15 +17,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   BUILTIN_VARIABLES,
-  containsBranch,
   findNodeById,
   flattenActionSteps,
-  isBranchStep,
+  isContainerNode,
+  requiredVersion,
   triggerVariableDescriptors,
   validateAgentDraft,
   walkSteps,
   type AgentStepNode,
   type AgentStepsDoc,
+  type InstructionSegment,
   type ValidationIssue,
 } from '@renkei/agents';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
@@ -33,12 +34,16 @@ import type { MintedApiKey, StoredAgent } from '@/lib/agents/store';
 import { parseReviewNotes, type ReviewNote } from '@/lib/agents/notes';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { toToolOptions, toVariableOptions, type VariableOption } from './options';
-import { FlowCanvas, type BuilderSelection } from './flow-canvas';
+import { FlowCanvas, type BuilderSelection, type InsertKind } from './flow-canvas';
 import {
   insertNode,
   issuesByNode,
+  moveNodeTo,
   moveSibling,
+  moveTargets,
   newBranch,
+  newGroup,
+  newLoop,
   newStep,
   removeNode,
   updateNode,
@@ -48,6 +53,8 @@ import { EditorPanel } from './editor-panel';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { StepEditor } from './step-editor';
 import { BranchEditor } from './branch-editor';
+import { LoopEditor } from './loop-editor';
+import { GroupEditor } from './group-editor';
 import { summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
 import { TriggerChooser, TriggerEditor } from './trigger-editor';
 import type { CalendarOption } from './schedule-picker';
@@ -204,11 +211,25 @@ export function AgentBuilder({
     // along as context, the model applies the described change, and
     // untouched steps keep their retry settings. Still confirmed — it
     // rewrites what's on screen.
-    const hasRealSteps = walkSteps(steps).some(({ node }) =>
-      isBranchStep(node)
-        ? node.condition.length > 0 || node.name.trim().length > 0
-        : node.instruction.length > 0 || node.tool !== null || node.name.trim().length > 0
-    );
+    const hasRealSteps = walkSteps(steps).some(({ node }) => {
+      switch (node.kind) {
+        case 'branch':
+          return node.condition.length > 0 || node.name.trim().length > 0;
+        case 'loop':
+          // A loop is real config the moment it exists — its mode and
+          // bounds are meaning a redraft would erase.
+          return true;
+        case 'group':
+          return node.name.trim().length > 0 || node.steps.length > 0;
+        case 'action':
+        case undefined:
+          return node.instruction.length > 0 || node.tool !== null || node.name.trim().length > 0;
+        default: {
+          const unhandled: never = node;
+          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+        }
+      }
+    });
     if (
       hasRealSteps &&
       !window.confirm(
@@ -279,7 +300,7 @@ export function AgentBuilder({
   const stepsDoc: AgentStepsDoc = useMemo(
     // The server recomputes the version on save; matching its rule here
     // keeps the client draft identical to what will persist.
-    () => ({ version: containsBranch(steps) ? 2 : 1, steps }),
+    () => ({ version: requiredVersion(steps), steps }),
     [steps]
   );
   const ordinals = useMemo(
@@ -311,16 +332,60 @@ export function AgentBuilder({
           ]
         : []
     );
-    return toVariableOptions([...BUILTIN_VARIABLES, ...fromTriggers, ...fromSteps]);
+    // Loops bind names too: the per-round item and the collected list.
+    const fromLoops = walkSteps(steps).flatMap(({ node }) => {
+      if (node.kind !== 'loop') return [];
+      const loopName = node.name.trim() || 'unnamed';
+      return [
+        ...(node.mode === 'foreach' && node.itemVar
+          ? [
+              {
+                name: node.itemVar,
+                label: node.itemVar,
+                description: `The current item of “${node.itemsVar}” in the loop “${loopName}”.`,
+                source: 'step' as const,
+              },
+            ]
+          : []),
+        ...(node.collectVar
+          ? [
+              {
+                name: node.collectVar,
+                label: node.collectVar,
+                description: `The list collected by the loop “${loopName}”.`,
+                source: 'step' as const,
+              },
+            ]
+          : []),
+      ];
+    });
+    return toVariableOptions([...BUILTIN_VARIABLES, ...fromTriggers, ...fromSteps, ...fromLoops]);
   }, [draft.triggers, steps]);
 
   const knownVarNames = useMemo(() => new Set(variables.map((v) => v.name)), [variables]);
   const invalidVars = useMemo(() => {
     const used = new Set<string>();
     for (const { node } of walkSteps(steps)) {
-      const segments = isBranchStep(node)
-        ? node.condition
-        : [...node.instruction, ...node.failureHandling.flatMap((h) => h.guidance ?? [])];
+      const segments: InstructionSegment[] = (() => {
+        switch (node.kind) {
+          case 'branch':
+            return node.condition;
+          case 'loop':
+            return node.mode === 'until' ? node.condition : [];
+          case 'group':
+            return [];
+          case 'action':
+          case undefined:
+            return [
+              ...node.instruction,
+              ...node.failureHandling.flatMap((entry) => entry.guidance ?? []),
+            ];
+          default: {
+            const unhandled: never = node;
+            throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+          }
+        }
+      })();
       for (const segment of segments) {
         if (segment.t === 'var' && !knownVarNames.has(segment.name)) used.add(segment.name);
       }
@@ -424,8 +489,23 @@ export function AgentBuilder({
     setSteps((current) => updateNode(current, id, () => next));
   };
 
-  const insertAt = (location: InsertLocation, kind: 'step' | 'branch') => {
-    const node = kind === 'branch' ? newBranch() : newStep(attemptsCap);
+  const insertAt = (location: InsertLocation, kind: InsertKind) => {
+    const node = (() => {
+      switch (kind) {
+        case 'branch':
+          return newBranch();
+        case 'loop':
+          return newLoop();
+        case 'group':
+          return newGroup();
+        case 'step':
+          return newStep(attemptsCap);
+        default: {
+          const unhandled: never = kind;
+          throw new Error(`unknown insert kind: ${JSON.stringify(unhandled)}`);
+        }
+      }
+    })();
     setSteps((current) => insertNode(current, location, node));
     setSelection({ type: 'step', id: node.id });
     setServerIssues([]);
@@ -435,13 +515,19 @@ export function AgentBuilder({
     setSteps((current) => moveSibling(current, id, direction));
   };
 
+  const moveNodeToList = (id: string, location: InsertLocation) => {
+    setSteps((current) => moveNodeTo(current, id, location));
+  };
+
   const deleteNode = (id: string) => {
     const found = findNodeById(steps, id);
+    // A container with anything inside is more than one node — confirm
+    // before its whole subtree goes.
     if (
       found &&
-      isBranchStep(found.node) &&
-      found.node.paths.some((path) => path.steps.length > 0) &&
-      !window.confirm('Delete this branch and every step inside its paths?')
+      isContainerNode(found.node) &&
+      walkSteps([found.node]).length > 1 &&
+      !window.confirm('Delete this and every step inside it?')
     ) {
       return;
     }
@@ -454,8 +540,21 @@ export function AgentBuilder({
     if (selectedTrigger) return summaryOf(selectedTrigger.draft, otherAgents);
     if (selectedNode) {
       const ordinal = (ordinals.get(selectedNode.id) ?? 0) + 1;
-      if (isBranchStep(selectedNode)) return selectedNode.name.trim() || 'Branch';
-      return selectedNode.name.trim() || `Step ${ordinal}`;
+      switch (selectedNode.kind) {
+        case 'branch':
+          return selectedNode.name.trim() || 'Branch';
+        case 'loop':
+          return selectedNode.name.trim() || 'Loop';
+        case 'group':
+          return selectedNode.name.trim() || 'Group';
+        case 'action':
+        case undefined:
+          return selectedNode.name.trim() || `Step ${ordinal}`;
+        default: {
+          const unhandled: never = selectedNode;
+          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+        }
+      }
     }
     return '';
   })();
@@ -523,55 +622,111 @@ export function AgentBuilder({
           // deleting closes the modal because deleteNode clears the selection.
           footer={
             !isDesktop && selectedFound ? (
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={selectedFound.index === 0}
-                  onClick={() => moveNode(selectedNode.id, -1)}
-                  className="rounded-md border border-gray-200 px-3 py-1.5 text-sm text-gray-600 disabled:opacity-30 dark:border-gray-800 dark:text-gray-300"
-                >
-                  ↑ Move up
-                </button>
-                <button
-                  type="button"
-                  disabled={selectedFound.index === selectedFound.siblings.length - 1}
-                  onClick={() => moveNode(selectedNode.id, 1)}
-                  className="rounded-md border border-gray-200 px-3 py-1.5 text-sm text-gray-600 disabled:opacity-30 dark:border-gray-800 dark:text-gray-300"
-                >
-                  ↓ Move down
-                </button>
-                <button
-                  type="button"
-                  onClick={() => deleteNode(selectedNode.id)}
-                  className="ml-auto rounded-md px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
-                >
-                  {isBranchStep(selectedNode) ? 'Delete branch' : 'Delete step'}
-                </button>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={selectedFound.index === 0}
+                    onClick={() => moveNode(selectedNode.id, -1)}
+                    className="rounded-md border border-gray-200 px-3 py-1.5 text-sm text-gray-600 disabled:opacity-30 dark:border-gray-800 dark:text-gray-300"
+                  >
+                    ↑ Move up
+                  </button>
+                  <button
+                    type="button"
+                    disabled={selectedFound.index === selectedFound.siblings.length - 1}
+                    onClick={() => moveNode(selectedNode.id, 1)}
+                    className="rounded-md border border-gray-200 px-3 py-1.5 text-sm text-gray-600 disabled:opacity-30 dark:border-gray-800 dark:text-gray-300"
+                  >
+                    ↓ Move down
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteNode(selectedNode.id)}
+                    className="ml-auto rounded-md px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+                  >
+                    Delete
+                  </button>
+                </div>
+                {(() => {
+                  const targets = moveTargets(steps, selectedNode.id);
+                  if (targets.length === 0) return null;
+                  return (
+                    <select
+                      aria-label="Move to another list"
+                      value=""
+                      onChange={(event) => {
+                        const target = targets[Number(event.target.value)];
+                        if (target) moveNodeToList(selectedNode.id, target.location);
+                      }}
+                      className="w-full rounded-md border border-gray-200 bg-white px-2 py-1.5 text-sm text-gray-600 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300"
+                    >
+                      <option value="" disabled>
+                        Move to…
+                      </option>
+                      {targets.map((target, index) => (
+                        <option key={target.label} value={index}>
+                          {target.label}
+                        </option>
+                      ))}
+                    </select>
+                  );
+                })()}
               </div>
             ) : undefined
           }
         >
-          {isBranchStep(selectedNode) ? (
-            <BranchEditor
-              branch={selectedNode}
-              onChange={(next) => changeNode(selectedNode.id, next)}
-              variables={variables}
-              invalidVars={invalidVars}
-              issues={issueMap.get(selectedNode.id) ?? []}
-            />
-          ) : (
-            <StepEditor
-              step={selectedNode}
-              ordinal={(ordinals.get(selectedNode.id) ?? 0) + 1}
-              attemptsCap={attemptsCap}
-              onChange={(next) => changeNode(selectedNode.id, next)}
-              tools={toolOptions}
-              toolDescriptors={toolDescriptors}
-              variables={variables}
-              invalidVars={invalidVars}
-              issues={issueMap.get(selectedNode.id) ?? []}
-            />
-          )}
+          {(() => {
+            switch (selectedNode.kind) {
+              case 'branch':
+                return (
+                  <BranchEditor
+                    branch={selectedNode}
+                    onChange={(next) => changeNode(selectedNode.id, next)}
+                    variables={variables}
+                    invalidVars={invalidVars}
+                    issues={issueMap.get(selectedNode.id) ?? []}
+                  />
+                );
+              case 'loop':
+                return (
+                  <LoopEditor
+                    loop={selectedNode}
+                    onChange={(next) => changeNode(selectedNode.id, next)}
+                    variables={variables}
+                    invalidVars={invalidVars}
+                    issues={issueMap.get(selectedNode.id) ?? []}
+                  />
+                );
+              case 'group':
+                return (
+                  <GroupEditor
+                    group={selectedNode}
+                    onChange={(next) => changeNode(selectedNode.id, next)}
+                    issues={issueMap.get(selectedNode.id) ?? []}
+                  />
+                );
+              case 'action':
+              case undefined:
+                return (
+                  <StepEditor
+                    step={selectedNode}
+                    ordinal={(ordinals.get(selectedNode.id) ?? 0) + 1}
+                    attemptsCap={attemptsCap}
+                    onChange={(next) => changeNode(selectedNode.id, next)}
+                    tools={toolOptions}
+                    toolDescriptors={toolDescriptors}
+                    variables={variables}
+                    invalidVars={invalidVars}
+                    issues={issueMap.get(selectedNode.id) ?? []}
+                  />
+                );
+              default: {
+                const unhandled: never = selectedNode;
+                throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+              }
+            }
+          })()}
         </EditorPanel>
       ) : null}
     </>
@@ -848,6 +1003,8 @@ export function AgentBuilder({
               onInsert={insertAt}
               onMove={moveNode}
               onDelete={deleteNode}
+              moveTargetsFor={(id) => moveTargets(steps, id)}
+              onMoveTo={moveNodeToList}
             />
           </section>
         </div>

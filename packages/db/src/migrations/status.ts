@@ -81,6 +81,7 @@ export const EXPECTED_MIGRATIONS = [
   '048-agent-trigger-firings',
   '049-agent-run-counters',
   '050-agent-run-failure-counters',
+  '051-agent-run-step-iterations',
 ];
 
 export interface MigrationStatus {

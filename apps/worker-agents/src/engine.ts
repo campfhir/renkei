@@ -25,10 +25,10 @@ import { sql } from 'kysely';
 import { randomUUID } from 'node:crypto';
 import type { DB, Json } from '@renkei/db';
 import {
+  MAX_COLLECTED_ITEMS,
   findNodeById,
   flattenActionSteps,
   isAgentStepsDoc,
-  isBranchStep,
   renderInstruction,
   toolSegments,
   walkSteps,
@@ -37,6 +37,8 @@ import {
   type BranchPath,
   type BranchStep,
   type FailureHandling,
+  type LoopStep,
+  type UntilLoopStep,
 } from '@renkei/agents';
 import {
   resolveAgentLlm,
@@ -58,12 +60,17 @@ import {
 import { recordAgentRunFailure } from '@renkei/agents/runs';
 import {
   BRANCH_SYSTEM_PROMPT,
+  ROUTER_SYSTEM_PROMPT,
+  LOOP_SYSTEM_PROMPT,
   buildAttemptMessages,
   buildBranchMessages,
-  CHOOSE_PATH_DEF,
+  buildChoosePathDef,
+  buildLoopConditionMessages,
   CHOOSE_PATH_TOOL,
   FINISH_STEP_DEF,
   FINISH_STEP_TOOL,
+  LOOP_DECISION_DEF,
+  LOOP_DECISION_TOOL,
   SYSTEM_PROMPT,
 } from './prompt';
 import { logger } from './logger';
@@ -74,6 +81,21 @@ const MAX_LLM_TURNS = 10;
 const PREVIEW_CHARS = 2_000;
 const DETAIL_CHARS = 60_000;
 const TOKEN_SLACK_SECONDS = 15 * 60;
+/** Per-entry cap on saveItems / collected list entries. */
+const SAVE_ITEM_CHARS = 500;
+/** Max saveItems entries one finish_step may return. */
+const SAVE_ITEMS_MAX = 25;
+/**
+ * The run-wide execution budget: total attempt rows a run may create.
+ * MAX_STEPS bounds the static plan; this bounds the RUNTIME (a loop's body
+ * runs many times), together with per-loop maxIterations and the deadline.
+ */
+const MAX_RUN_ATTEMPT_ROWS = 250;
+// Module scope on purpose: the factory returns its handler BEFORE its tail
+// statements run, so hoisted functions inside it may only reference consts
+// declared out here (a factory-scope const after the return stays in its
+// temporal dead zone forever).
+const RUN_BUDGET_ERROR = `The run exceeded its execution budget (${MAX_RUN_ATTEMPT_ROWS} step attempts).`;
 
 export interface FinalizedRun {
   runId: string;
@@ -124,6 +146,7 @@ interface AttemptRecord {
   attempt: number;
   status: string;
   detail: Json | null;
+  iteration: number;
 }
 
 interface ToolCallRecord {
@@ -146,6 +169,8 @@ interface AttemptOutcome {
   outcomeCode: string | null;
   summary: string;
   saveValue: string | null;
+  /** finish_step's saveItems, when the step saved a LIST. */
+  saveItems: string[] | null;
   /** A note finish_step asked to carry into future runs (agent memory). */
   remember: string | null;
   toolCalls: ToolCallRecord[];
@@ -253,41 +278,116 @@ function handlingFor(step: ActionStep, code: string): FailureHandling | undefine
   );
 }
 
-function chooseArgsOf(input: unknown): { choice: 'yes' | 'no'; reason: string } | null {
+/**
+ * The chosen path INDEX from a choose_path call: 'yes'/'no' on two-path
+ * branches (frozen v2 wire), a 1-based number on routers. Null = not a
+ * valid choice for this branch.
+ */
+function chosenPathIndexOf(
+  input: unknown,
+  pathCount: number
+): { index: number; reason: string } | null {
   if (typeof input !== 'object' || input === null) return null;
   const args: { choice?: unknown; reason?: unknown } = input;
-  if (args.choice !== 'yes' && args.choice !== 'no') return null;
+  const reason = typeof args.reason === 'string' ? args.reason : '';
+  if (pathCount === 2) {
+    if (args.choice === 'yes') return { index: 0, reason };
+    if (args.choice === 'no') return { index: 1, reason };
+    return null;
+  }
+  if (typeof args.choice !== 'string' || !/^\d+$/.test(args.choice)) return null;
+  const index = Number(args.choice) - 1;
+  if (index < 0 || index >= pathCount) return null;
+  return { index, reason };
+}
+
+function loopArgsOf(input: unknown): { choice: 'finished' | 'continue'; reason: string } | null {
+  if (typeof input !== 'object' || input === null) return null;
+  const args: { choice?: unknown; reason?: unknown } = input;
+  if (args.choice !== 'finished' && args.choice !== 'continue') return null;
   return { choice: args.choice, reason: typeof args.reason === 'string' ? args.reason : '' };
 }
 
 /**
  * One executable frame: a sibling list and the position within it. The
  * stack of frames IS the program counter — popping an exhausted frame
- * lands execution after the branch block that pushed it.
+ * lands execution after the container block that pushed it. Loop frames
+ * additionally carry the live iteration counter and (foreach) the resolved
+ * item list; NOTHING here is persisted — attempt rows are the memory, and
+ * a resumed run rebuilds this by fast-forwarding.
  */
-interface Frame {
+interface SeqFrame {
+  kind: 'seq';
   nodes: AgentStepNode[];
   index: number;
+}
+
+interface LoopFrame {
+  kind: 'loop';
+  loop: LoopStep;
+  nodes: AgentStepNode[];
+  index: number;
+  /** 1-based. */
+  iteration: number;
+  /** foreach: resolved once at entry (bounded by maxIterations); until: null. */
+  items: string[] | null;
+}
+
+type Frame = SeqFrame | LoopFrame;
+
+/** The innermost loop's iteration, or 0 outside any loop. */
+function currentIteration(stack: Frame[]): number {
+  for (let i = stack.length - 1; i >= 0; i -= 1) {
+    const frame = stack[i];
+    if (frame.kind === 'loop') return frame.iteration;
+  }
+  return 0;
 }
 
 /**
  * The frame stack that puts `startId` on top, derived purely from where the
  * id lives in the tree — ids are doc-unique, so the ancestor chain IS the
  * record of which paths the run took. Unknown/absent id → start at the top.
+ *
+ * LOOPS TRUNCATE THE DESCENT: iteration counters are not persisted, so the
+ * stack stops AT the first loop ancestor and execution re-enters it from
+ * iteration 1 — completed iterations fast-forward through their succeeded
+ * rows and recorded decisions with zero model calls, landing exactly where
+ * the run stopped.
  */
 function buildResumeStack(nodes: AgentStepNode[], startId: string | null): Frame[] {
-  if (!startId) return [{ nodes, index: 0 }];
+  if (!startId) return [{ kind: 'seq', nodes, index: 0 }];
   const found = findNodeById(nodes, startId);
-  if (!found) return [{ nodes, index: 0 }];
+  if (!found) return [{ kind: 'seq', nodes, index: 0 }];
   const stack: Frame[] = [];
   let container = nodes;
   for (const ancestor of found.ancestors) {
-    const branchIndex = container.indexOf(ancestor.branch);
-    // Past the branch, so popping this frame continues AFTER the block.
-    stack.push({ nodes: container, index: Math.max(0, branchIndex) + 1 });
-    container = ancestor.path.steps;
+    switch (ancestor.kind) {
+      case 'branch': {
+        const branchIndex = container.indexOf(ancestor.branch);
+        // Past the branch, so popping this frame continues AFTER the block.
+        stack.push({ kind: 'seq', nodes: container, index: Math.max(0, branchIndex) + 1 });
+        container = ancestor.path.steps;
+        break;
+      }
+      case 'group': {
+        const groupIndex = container.indexOf(ancestor.group);
+        stack.push({ kind: 'seq', nodes: container, index: Math.max(0, groupIndex) + 1 });
+        container = ancestor.group.steps;
+        break;
+      }
+      case 'loop': {
+        const loopIndex = container.indexOf(ancestor.loop);
+        stack.push({ kind: 'seq', nodes: container, index: Math.max(0, loopIndex) });
+        return stack;
+      }
+      default: {
+        const unhandled: never = ancestor;
+        throw new Error(`unknown ancestor kind: ${JSON.stringify(unhandled)}`);
+      }
+    }
   }
-  stack.push({ nodes: found.siblings, index: found.index });
+  stack.push({ kind: 'seq', nodes: found.siblings, index: found.index });
   return stack;
 }
 
@@ -296,6 +396,7 @@ function finishArgsOf(input: unknown): {
   code: string | null;
   summary: string;
   saveValue: string | null;
+  saveItems: string[] | null;
   stop: boolean;
   quiet: boolean;
   remember: string | null;
@@ -306,6 +407,7 @@ function finishArgsOf(input: unknown): {
     code?: unknown;
     summary?: unknown;
     saveValue?: unknown;
+    saveItems?: unknown;
     stop?: unknown;
     quiet?: unknown;
     remember?: unknown;
@@ -317,11 +419,18 @@ function finishArgsOf(input: unknown): {
   ) {
     return null;
   }
+  const saveItems = Array.isArray(args.saveItems)
+    ? args.saveItems
+        .flatMap((entry) => (typeof entry === 'string' && entry ? [entry] : []))
+        .slice(0, SAVE_ITEMS_MAX)
+        .map((entry) => clip(entry, SAVE_ITEM_CHARS))
+    : null;
   return {
     outcome: args.outcome,
     code: typeof args.code === 'string' ? args.code : null,
     summary: typeof args.summary === 'string' ? args.summary : '',
     saveValue: typeof args.saveValue === 'string' ? args.saveValue : null,
+    saveItems: saveItems && saveItems.length > 0 ? saveItems : null,
     stop: args.stop === true,
     quiet: args.quiet === true,
     remember:
@@ -479,12 +588,21 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // saveAs bindings recorded on succeeded attempts.
       const priorAttempts = await db
         .selectFrom('agent_run_steps')
-        .select(['step_id', 'attempt', 'status', 'detail'])
+        .select(['step_id', 'attempt', 'status', 'detail', 'iteration'])
         .where('run_id', '=', runId)
+        // Iteration-major so a looped step's LATEST iteration wins the
+        // recovered binding, matching live last-write-wins.
+        .orderBy('iteration')
         .orderBy('attempt')
         .execute();
-      const vars = await baseVariables(run);
-      recoverSavedVars(nodes, priorAttempts, vars);
+      const { vars, lists } = await baseVariables(run);
+      recoverSavedVars(nodes, priorAttempts, vars, lists);
+      // Steps whose saveAs feeds a loop get nudged toward saveItems.
+      const loopSourceVars = new Set(
+        walkSteps(nodes).flatMap(({ node }) =>
+          node.kind === 'loop' && node.mode === 'foreach' ? [node.itemsVar] : []
+        )
+      );
 
       // The agent's carried context: memory (earlier runs' breadcrumbs)
       // and its own knowledge notes, both bounded at render time — the
@@ -500,38 +618,139 @@ export function createAgentRunHandler(deps: EngineDeps) {
       while (stack.length > 0) {
         const frame = stack[stack.length - 1];
         if (frame.index >= frame.nodes.length) {
+          if (frame.kind === 'loop') {
+            // ITERATION BOUNDARY: the body just finished a round. Collect
+            // what this iteration saved (if configured), then decide
+            // whether another round runs.
+            await collectIteration(run, frame, vars, lists);
+            const boundary = await loopBoundary(
+              run,
+              frame,
+              llm,
+              vars,
+              context,
+              deadline,
+              settings.agentMaxStepAttempts,
+              ordinals
+            );
+            if (boundary.kind === 'fail') {
+              await finalizeRun(run, 'failed', boundary.errorKind, boundary.error, vars);
+              return;
+            }
+            if (boundary.kind === 'next') {
+              frame.iteration += 1;
+              frame.index = 0;
+              if (frame.loop.mode === 'foreach' && frame.items) {
+                vars[frame.loop.itemVar] = frame.items[frame.iteration - 1] ?? '';
+              }
+              continue;
+            }
+            stack.pop();
+            continue;
+          }
           // This sibling list is done — resume the enclosing one, which is
-          // already positioned after its branch block.
+          // already positioned after its container block.
           stack.pop();
           continue;
         }
         const node = frame.nodes[frame.index];
+        const iteration = currentIteration(stack);
         await db
           .updateTable('agent_runs')
           .set({ current_step_id: node.id, updated_at: sql`NOW()` })
           .where('id', '=', runId)
           .execute();
 
-        if (isBranchStep(node)) {
-          const decided = await evaluateBranch(
-            run,
-            node,
-            llm,
-            vars,
-            context,
-            deadline,
-            settings.agentMaxStepAttempts,
-            ordinals
-          );
-          if (decided.kind === 'fail') {
-            await finalizeRun(run, 'failed', decided.errorKind, decided.error, vars);
-            return;
+        // Exhaustive dispatch on the node kind: a kind this switch does not
+        // handle is a compile error, never a silent fall-through into the
+        // action path.
+        switch (node.kind) {
+          case 'branch': {
+            const decided = await evaluateBranch(
+              run,
+              node,
+              llm,
+              vars,
+              context,
+              deadline,
+              settings.agentMaxStepAttempts,
+              ordinals,
+              iteration
+            );
+            if (decided.kind === 'fail') {
+              await finalizeRun(run, 'failed', decided.errorKind, decided.error, vars);
+              return;
+            }
+            if (decided.viaFailurePath) {
+              logger.warn('branch {branchId} took its failure path in run {runId}', {
+                component: 'worker-agents/engine',
+                runId,
+                tenantId,
+                branchId: node.id,
+              });
+            }
+            // Advance past the branch FIRST, then descend — popping the path
+            // frame later lands exactly after the block.
+            frame.index += 1;
+            stack.push({ kind: 'seq', nodes: decided.path.steps, index: 0 });
+            continue;
           }
-          // Advance past the branch FIRST, then descend — popping the path
-          // frame later lands exactly after the block.
-          frame.index += 1;
-          stack.push({ nodes: decided.path.steps, index: 0 });
-          continue;
+          case 'group': {
+            // Pure structure: no attempt row, no model call — as if inlined.
+            frame.index += 1;
+            stack.push({ kind: 'seq', nodes: node.steps, index: 0 });
+            continue;
+          }
+          case 'loop': {
+            frame.index += 1;
+            let items: string[] | null = null;
+            if (node.mode === 'foreach') {
+              items = resolveItems(node.itemsVar, vars, lists);
+              if (!items || items.length === 0) {
+                // Nothing to iterate is not a failure — the loop just
+                // doesn't run, exactly like an empty else-path.
+                logger.info('loop {loopId} skipped: "{itemsVar}" is empty in run {runId}', {
+                  component: 'worker-agents/engine',
+                  runId,
+                  tenantId,
+                  loopId: node.id,
+                  itemsVar: node.itemsVar,
+                });
+                continue;
+              }
+              if (items.length > node.maxIterations) {
+                logger.warn(
+                  'loop {loopId} truncated: {total} item(s), processing first {cap} in run {runId}',
+                  {
+                    component: 'worker-agents/engine',
+                    runId,
+                    tenantId,
+                    loopId: node.id,
+                    total: items.length,
+                    cap: node.maxIterations,
+                  }
+                );
+                items = items.slice(0, node.maxIterations);
+              }
+              vars[node.itemVar] = items[0] ?? '';
+            }
+            stack.push({
+              kind: 'loop',
+              loop: node,
+              nodes: node.steps,
+              index: 0,
+              iteration: 1,
+              items,
+            });
+            continue;
+          }
+          case 'action':
+          case undefined:
+            break;
+          default: {
+            const unhandled: never = node;
+            throw new Error(`unknown step kind in snapshot: ${JSON.stringify(unhandled)}`);
+          }
         }
 
         const result = await executeStep(
@@ -541,10 +760,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
           llm,
           mcp,
           vars,
+          lists,
+          loopSourceVars,
           context,
           deadline,
           settings.agentMaxStepAttempts,
-          ordinals
+          ordinals,
+          iteration
         );
         if (result.kind === 'advance') {
           frame.index += 1;
@@ -600,11 +822,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
     return { memoryText, knowledgeText };
   }
 
-  /** Builtins + trigger.* from initial_state. */
-  async function baseVariables(run: RunRow): Promise<Record<string, string>> {
+  /** Builtins + trigger.* from initial_state; list-valued inputs also land in `lists`. */
+  async function baseVariables(
+    run: RunRow
+  ): Promise<{ vars: Record<string, string>; lists: Record<string, string[]> }> {
     const vars: Record<string, string> = {
       today: new Date().toISOString().slice(0, 10),
     };
+    const lists: Record<string, string[]> = {};
     const identity = await db
       .selectFrom('identities')
       .select(['email', 'display_name'])
@@ -623,15 +848,19 @@ export function createAgentRunHandler(deps: EngineDeps) {
         if (value === null || value === undefined) continue;
         vars[`trigger.${key}`] =
           typeof value === 'string' ? value : clip(JSON.stringify(value), PREVIEW_CHARS);
+        if (Array.isArray(value) && value.every((entry) => typeof entry === 'string')) {
+          lists[`trigger.${key}`] = value.map((entry) => clip(entry, SAVE_ITEM_CHARS));
+        }
       }
     }
-    return vars;
+    return { vars, lists };
   }
 
   function recoverSavedVars(
     nodes: AgentStepNode[],
     prior: AttemptRecord[],
-    vars: Record<string, string>
+    vars: Record<string, string>,
+    lists: Record<string, string[]>
   ): void {
     const saveAsByStep = new Map(
       flattenActionSteps(nodes).flatMap((step) =>
@@ -642,14 +871,154 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (attempt.status !== 'succeeded') continue;
       const name = saveAsByStep.get(attempt.step_id);
       if (!name) continue;
-      const detail: { saveValue?: unknown } =
+      const detail: { saveValue?: unknown; saveItems?: unknown } =
         typeof attempt.detail === 'object' &&
         attempt.detail !== null &&
         !Array.isArray(attempt.detail)
           ? attempt.detail
           : {};
-      if (typeof detail.saveValue === 'string') vars[name] = detail.saveValue;
+      if (Array.isArray(detail.saveItems) && detail.saveItems.every((e) => typeof e === 'string')) {
+        lists[name] = detail.saveItems;
+        vars[name] = detail.saveItems.join('\n');
+      } else if (typeof detail.saveValue === 'string') {
+        vars[name] = detail.saveValue;
+      }
     }
+  }
+
+  /** The foreach source list: a saved list, or a JSON-array string fallback. */
+  function resolveItems(
+    itemsVar: string,
+    vars: Record<string, string>,
+    lists: Record<string, string[]>
+  ): string[] | null {
+    const direct = lists[itemsVar];
+    if (direct) return [...direct];
+    const raw = vars[itemsVar];
+    if (!raw) return null;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.every((entry) => typeof entry === 'string')) {
+        return parsed.map((entry) => clip(entry, SAVE_ITEM_CHARS));
+      }
+    } catch {
+      // Not JSON — fall through.
+    }
+    return null;
+  }
+
+  /**
+   * Append what THIS iteration's collectFrom step actually saved to the
+   * loop's collected list — nothing (a filtering iteration), one saveValue,
+   * or every saveItems entry (an expanding one). Read from the iteration's
+   * attempt row, never from the flat vars record, so a skipped iteration
+   * can't smuggle in a stale value. Rows are the memory: a resumed run
+   * rebuilds the whole collection by crossing these boundaries again.
+   */
+  async function collectIteration(
+    run: RunRow,
+    frame: LoopFrame,
+    vars: Record<string, string>,
+    lists: Record<string, string[]>
+  ): Promise<void> {
+    const { collectFrom, collectVar } = frame.loop;
+    if (!collectFrom || !collectVar) return;
+    const source = flattenActionSteps(frame.loop.steps).find((step) => step.saveAs === collectFrom);
+    if (!source) return;
+
+    const row = await db
+      .selectFrom('agent_run_steps')
+      .select('detail')
+      .where('run_id', '=', run.id)
+      .where('step_id', '=', source.id)
+      .where('iteration', '=', frame.iteration)
+      .where('status', '=', 'succeeded')
+      .executeTakeFirst();
+    if (!row) return;
+    const detail: { saveValue?: unknown; saveItems?: unknown } =
+      typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
+        ? row.detail
+        : {};
+    const additions = Array.isArray(detail.saveItems)
+      ? detail.saveItems.flatMap((entry) => (typeof entry === 'string' ? [entry] : []))
+      : typeof detail.saveValue === 'string'
+        ? [detail.saveValue]
+        : [];
+    if (additions.length === 0) return;
+
+    const current = lists[collectVar] ?? [];
+    const room = MAX_COLLECTED_ITEMS - current.length;
+    if (room <= 0) return;
+    if (additions.length > room) {
+      logger.warn('collected list "{collectVar}" truncated at {cap} entries in run {runId}', {
+        component: 'worker-agents/engine',
+        runId: run.id,
+        tenantId: run.tenant_id,
+        collectVar,
+        cap: MAX_COLLECTED_ITEMS,
+      });
+    }
+    lists[collectVar] = [
+      ...current,
+      ...additions.slice(0, room).map((entry) => clip(entry, SAVE_ITEM_CHARS)),
+    ];
+    vars[collectVar] = lists[collectVar].join('\n');
+  }
+
+  /**
+   * What happens after an iteration finishes: foreach counts items; until
+   * asks the model (via evaluateLoopCondition, with per-iteration decision
+   * rows and replay). 'next' = run another round; 'done' = continue after
+   * the loop; reaching maxIterations with an unmet until-condition FAILS
+   * the run — the guard is a tripwire for a premise that never came true.
+   */
+  async function loopBoundary(
+    run: RunRow,
+    frame: LoopFrame,
+    llm: ResolvedLlm,
+    vars: Record<string, string>,
+    context: RunContextText,
+    deadline: number,
+    orgAttemptCap: number,
+    ordinals: Map<string, number>
+  ): Promise<
+    { kind: 'next' } | { kind: 'done' } | { kind: 'fail'; errorKind: string; error: string }
+  > {
+    if (frame.loop.mode === 'foreach') {
+      const total = frame.items?.length ?? 0;
+      return frame.iteration >= total ? { kind: 'done' } : { kind: 'next' };
+    }
+    const decided = await evaluateLoopCondition(
+      run,
+      frame.loop,
+      frame.iteration,
+      llm,
+      vars,
+      context,
+      deadline,
+      orgAttemptCap,
+      ordinals
+    );
+    if (decided.kind === 'fail') return decided;
+    if (decided.choice === 'finished') return { kind: 'done' };
+    if (frame.iteration >= frame.loop.maxIterations) {
+      return {
+        kind: 'fail',
+        errorKind: 'step_failed',
+        error: `Loop "${frame.loop.name}" reached its limit of ${frame.loop.maxIterations} round${frame.loop.maxIterations === 1 ? '' : 's'} before its stop condition was met.`,
+      };
+    }
+    return { kind: 'next' };
+  }
+
+  /** The run-wide execution budget check, before each attempt-row insert. */
+  async function runBudgetExceeded(runId: string): Promise<boolean> {
+    const counted = await db
+      .selectFrom('agent_run_steps')
+      .select(({ fn }) => fn.countAll<string>().as('count'))
+      .where('run_id', '=', runId)
+      .executeTakeFirst();
+    return Number(counted?.count ?? 0) >= MAX_RUN_ATTEMPT_ROWS;
   }
 
   async function executeStep(
@@ -659,10 +1028,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
     llm: ResolvedLlm,
     mcp: McpClient,
     vars: Record<string, string>,
+    lists: Record<string, string[]>,
+    loopSourceVars: ReadonlySet<string>,
     context: RunContextText,
     deadline: number,
     orgAttemptCap: number,
-    ordinals: Map<string, number>
+    ordinals: Map<string, number>,
+    iteration: number
   ): Promise<
     | { kind: 'advance' }
     | { kind: 'finish'; quiet: boolean }
@@ -688,7 +1060,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
     let lastFailureCode: string | null = null;
 
     for (;;) {
-      // Close an attempt a crashed worker left open, then recount.
+      // Close an attempt a crashed worker left open, then recount. All
+      // bookkeeping is scoped to THIS iteration — a looped step's budget
+      // and its succeeded-short-circuit are per round, or a loop would
+      // run its body once and skip every later round.
       await db
         .updateTable('agent_run_steps')
         .set({
@@ -700,6 +1075,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         })
         .where('run_id', '=', run.id)
         .where('step_id', '=', step.id)
+        .where('iteration', '=', iteration)
         .where('status', '=', 'running')
         .execute();
 
@@ -708,28 +1084,34 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .select(({ fn }) => fn.countAll<string>().as('count'))
         .where('run_id', '=', run.id)
         .where('step_id', '=', step.id)
+        .where('iteration', '=', iteration)
         .executeTakeFirst();
       const attemptsUsed = Number(counted?.count ?? 0);
 
-      // Advance past a step that already succeeded (resume case).
+      // Advance past a step that already succeeded (resume/fast-forward).
       const succeeded = await db
         .selectFrom('agent_run_steps')
         .select('id')
         .where('run_id', '=', run.id)
         .where('step_id', '=', step.id)
+        .where('iteration', '=', iteration)
         .where('status', '=', 'succeeded')
         .executeTakeFirst();
       if (succeeded) return { kind: 'advance' };
 
+      const onIteration = iteration > 0 ? ` on round ${iteration}` : '';
       if (attemptsUsed >= budget) {
         return {
           kind: 'fail',
           errorKind: 'step_failed',
-          error: `Step "${step.name}" failed after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}${lastFailureCode ? ` (${lastFailureCode})` : ''}.`,
+          error: `Step "${step.name}" failed after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}${onIteration}${lastFailureCode ? ` (${lastFailureCode})` : ''}.`,
         };
       }
       if (Date.now() > deadline) {
         return { kind: 'fail', errorKind: 'timeout', error: 'The run exceeded its time budget.' };
+      }
+      if (await runBudgetExceeded(run.id)) {
+        return { kind: 'fail', errorKind: 'guard', error: RUN_BUDGET_ERROR };
       }
 
       const attempt = attemptsUsed + 1;
@@ -749,6 +1131,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             step_id: step.id,
             step_index: ordinals.get(step.id) ?? 0,
             attempt,
+            iteration,
             status: 'running',
             started_at: sql`NOW()`,
           })
@@ -771,7 +1154,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
           llm,
           mcp,
           vars,
-          context
+          context,
+          iteration,
+          Boolean(step.saveAs && loopSourceVars.has(step.saveAs))
         );
       } catch (error) {
         if (error instanceof TransientFailure) {
@@ -799,6 +1184,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         ...(outcome.saveValue !== null
           ? { saveValue: clip(outcome.saveValue, PREVIEW_CHARS) }
           : {}),
+        ...(outcome.saveItems !== null ? { saveItems: outcome.saveItems } : {}),
         ...(outcome.unbound.length > 0 ? { unboundVariables: outcome.unbound } : {}),
         ...(guidance
           ? { guidanceUsed: clip(renderInstruction(guidance, vars).text, PREVIEW_CHARS) }
@@ -848,7 +1234,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
         if (outcome.stopRun === 'nothing') {
           return { kind: 'stop', reason: clip(outcome.summary, 300) };
         }
-        if (step.saveAs && outcome.saveValue !== null) vars[step.saveAs] = outcome.saveValue;
+        if (step.saveAs && outcome.saveItems !== null) {
+          // A saved LIST: bind both representations — the list for loops,
+          // the joined text for var chips.
+          lists[step.saveAs] = outcome.saveItems;
+          vars[step.saveAs] = outcome.saveItems.join('\n');
+        } else if (step.saveAs && outcome.saveValue !== null) {
+          vars[step.saveAs] = outcome.saveValue;
+        }
         // A stop can be declared at runtime (the instruction's own "…and
         // stop here", via finish_step) or configured statically on the
         // step; the runtime declaration wins because it saw the condition.
@@ -910,13 +1303,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
     context: RunContextText,
     deadline: number,
     orgAttemptCap: number,
-    ordinals: Map<string, number>
+    ordinals: Map<string, number>,
+    iteration: number
   ): Promise<
-    { kind: 'path'; path: BranchPath } | { kind: 'fail'; errorKind: string; error: string }
+    | { kind: 'path'; path: BranchPath; viaFailurePath?: boolean }
+    | { kind: 'fail'; errorKind: string; error: string }
   > {
     const pathById = (id: string | undefined): BranchPath | null => {
-      if (branch.paths[0].id === id) return branch.paths[0];
-      if (branch.paths[1].id === id) return branch.paths[1];
+      for (const path of branch.paths) if (path.id === id) return path;
+      if (branch.failurePath && branch.failurePath.id === id) return branch.failurePath;
       return null;
     };
 
@@ -924,7 +1319,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
     let lastFailureSummary: string | undefined;
 
     for (;;) {
-      // Close an evaluation a crashed worker left open, then recount.
+      // Close an evaluation a crashed worker left open, then recount —
+      // scoped to this iteration, so a branch inside a loop decides FRESH
+      // each round while redelivery within a round still replays.
       await db
         .updateTable('agent_run_steps')
         .set({
@@ -936,6 +1333,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         })
         .where('run_id', '=', run.id)
         .where('step_id', '=', branch.id)
+        .where('iteration', '=', iteration)
         .where('status', '=', 'running')
         .execute();
 
@@ -945,10 +1343,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .select('detail')
         .where('run_id', '=', run.id)
         .where('step_id', '=', branch.id)
+        .where('iteration', '=', iteration)
         .where('status', '=', 'succeeded')
         .executeTakeFirst();
       if (succeeded) {
-        const detail: { chosenPathId?: unknown } =
+        const detail: { chosenPathId?: unknown; viaFailurePath?: unknown } =
           typeof succeeded.detail === 'object' &&
           succeeded.detail !== null &&
           !Array.isArray(succeeded.detail)
@@ -956,7 +1355,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
             : {};
         const chosen =
           typeof detail.chosenPathId === 'string' ? pathById(detail.chosenPathId) : null;
-        if (chosen) return { kind: 'path', path: chosen };
+        if (chosen) {
+          return {
+            kind: 'path',
+            path: chosen,
+            ...(detail.viaFailurePath === true ? { viaFailurePath: true } : {}),
+          };
+        }
         // Unreadable choice: fall through and re-evaluate under whatever
         // budget the counted rows leave.
       }
@@ -966,10 +1371,25 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .select(({ fn }) => fn.countAll<string>().as('count'))
         .where('run_id', '=', run.id)
         .where('step_id', '=', branch.id)
+        .where('iteration', '=', iteration)
         .executeTakeFirst();
       const attemptsUsed = Number(counted?.count ?? 0);
 
       if (attemptsUsed >= budget) {
+        // Evaluation exhausted its attempts. With a failure path configured
+        // this is the STRUCTURAL exit, not a run failure: the automation
+        // routes there instead (an empty failure path just continues after
+        // the branch). Deterministic on resume too — re-counting lands
+        // here again.
+        if (branch.failurePath) {
+          logger.warn('branch {branchId} evaluation exhausted; taking failure path', {
+            component: 'worker-agents/engine',
+            runId: run.id,
+            tenantId: run.tenant_id,
+            branchId: branch.id,
+          });
+          return { kind: 'path', path: branch.failurePath, viaFailurePath: true };
+        }
         return {
           kind: 'fail',
           errorKind: 'step_failed',
@@ -978,6 +1398,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
       if (Date.now() > deadline) {
         return { kind: 'fail', errorKind: 'timeout', error: 'The run exceeded its time budget.' };
+      }
+      if (await runBudgetExceeded(run.id)) {
+        return { kind: 'fail', errorKind: 'guard', error: RUN_BUDGET_ERROR };
       }
 
       const attempt = attemptsUsed + 1;
@@ -992,6 +1415,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             step_id: branch.id,
             step_index: ordinals.get(branch.id) ?? 0,
             attempt,
+            iteration,
             status: 'running',
             started_at: sql`NOW()`,
           })
@@ -1018,13 +1442,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       let decidedPath: BranchPath | null = null;
       let decidedReason = '';
+      const choosePathDef = buildChoosePathDef(branch);
+      const branchSystem = branch.paths.length === 2 ? BRANCH_SYSTEM_PROMPT : ROUTER_SYSTEM_PROMPT;
       // A short turn cap: forced choose_path should answer immediately; one
       // nudge covers a model that answered in prose first.
       for (let turn = 0; turn < 3 && !decidedPath; turn += 1) {
         const completion = await llm.provider.complete({
-          system: BRANCH_SYSTEM_PROMPT,
+          system: branchSystem,
           messages,
-          tools: [CHOOSE_PATH_DEF],
+          tools: [choosePathDef],
           toolChoice: { name: CHOOSE_PATH_TOOL },
           maxTokens: llm.maxOutputTokens,
           ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
@@ -1065,9 +1491,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
             block.type === 'tool_use'
         );
         const chooseUse = toolUses.find((use) => use.name === CHOOSE_PATH_TOOL);
-        const choice = chooseUse ? chooseArgsOf(chooseUse.input) : null;
+        const choice = chooseUse ? chosenPathIndexOf(chooseUse.input, branch.paths.length) : null;
         if (chooseUse && choice) {
-          decidedPath = choice.choice === 'yes' ? branch.paths[0] : branch.paths[1];
+          decidedPath = branch.paths[choice.index];
           decidedReason = choice.reason;
           break;
         }
@@ -1076,7 +1502,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
           content: [
             {
               type: 'text',
-              text: 'Call choose_path exactly once with {choice: "yes" | "no", reason}.',
+              text:
+                branch.paths.length === 2
+                  ? 'Call choose_path exactly once with {choice: "yes" | "no", reason}.'
+                  : `Call choose_path exactly once with {choice: "1"–"${branch.paths.length}", reason}.`,
             },
           ],
         });
@@ -1133,6 +1562,239 @@ export function createAgentRunHandler(deps: EngineDeps) {
     }
   }
 
+  /**
+   * Decide an until-loop's stop condition after an iteration — the loop
+   * sibling of evaluateBranch, with identical bookkeeping: per-iteration
+   * attempt rows keyed on the LOOP's id, budget by counting rows, the
+   * unique-constraint tripwire, deadline, and decision replay (a decided
+   * iteration is never re-asked).
+   */
+  async function evaluateLoopCondition(
+    run: RunRow,
+    loop: UntilLoopStep,
+    iteration: number,
+    llm: ResolvedLlm,
+    vars: Record<string, string>,
+    context: RunContextText,
+    deadline: number,
+    orgAttemptCap: number,
+    ordinals: Map<string, number>
+  ): Promise<
+    | { kind: 'decided'; choice: 'finished' | 'continue' }
+    | { kind: 'fail'; errorKind: string; error: string }
+  > {
+    const budget = Math.min(loop.maxAttempts, Math.max(1, orgAttemptCap));
+    let lastFailureSummary: string | undefined;
+
+    for (;;) {
+      await db
+        .updateTable('agent_run_steps')
+        .set({
+          status: 'failed',
+          outcome: 'llm_error',
+          outcome_code: 'other',
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+        })
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', loop.id)
+        .where('iteration', '=', iteration)
+        .where('status', '=', 'running')
+        .execute();
+
+      // Replay: this iteration's decision, if already made.
+      const succeeded = await db
+        .selectFrom('agent_run_steps')
+        .select('detail')
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', loop.id)
+        .where('iteration', '=', iteration)
+        .where('status', '=', 'succeeded')
+        .executeTakeFirst();
+      if (succeeded) {
+        const detail: { loopDecision?: unknown } =
+          typeof succeeded.detail === 'object' &&
+          succeeded.detail !== null &&
+          !Array.isArray(succeeded.detail)
+            ? succeeded.detail
+            : {};
+        if (detail.loopDecision === 'finished' || detail.loopDecision === 'continue') {
+          return { kind: 'decided', choice: detail.loopDecision };
+        }
+      }
+
+      const counted = await db
+        .selectFrom('agent_run_steps')
+        .select(({ fn }) => fn.countAll<string>().as('count'))
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', loop.id)
+        .where('iteration', '=', iteration)
+        .executeTakeFirst();
+      const attemptsUsed = Number(counted?.count ?? 0);
+
+      if (attemptsUsed >= budget) {
+        return {
+          kind: 'fail',
+          errorKind: 'step_failed',
+          error: `Loop "${loop.name}" could not decide its stop condition after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'} on round ${iteration}${lastFailureSummary ? `: ${clip(lastFailureSummary, 300)}` : '.'}`,
+        };
+      }
+      if (Date.now() > deadline) {
+        return { kind: 'fail', errorKind: 'timeout', error: 'The run exceeded its time budget.' };
+      }
+      if (await runBudgetExceeded(run.id)) {
+        return { kind: 'fail', errorKind: 'guard', error: RUN_BUDGET_ERROR };
+      }
+
+      const attempt = attemptsUsed + 1;
+      const rowId = randomUUID();
+      try {
+        await db
+          .insertInto('agent_run_steps')
+          .values({
+            id: rowId,
+            tenant_id: run.tenant_id,
+            run_id: run.id,
+            step_id: loop.id,
+            step_index: ordinals.get(loop.id) ?? 0,
+            attempt,
+            iteration,
+            status: 'running',
+            started_at: sql`NOW()`,
+          })
+          .execute();
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('agent_run_steps_attempt')) {
+          throw new TransientFailure('another executor holds this run');
+        }
+        throw error;
+      }
+
+      const built = buildLoopConditionMessages({
+        loop,
+        iteration,
+        variables: vars,
+        attempt,
+        ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
+        ...(context.memoryText ? { memoryText: context.memoryText } : {}),
+        ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
+      });
+      const resolvedInstruction = renderInstruction(loop.condition, vars).text;
+      const messages: LlmMessage[] = [...built.messages];
+      const usage = { inputTokens: 0, outputTokens: 0 };
+      let failureSummary = 'The model never decided the loop.';
+
+      let decided: 'finished' | 'continue' | null = null;
+      let decidedReason = '';
+      for (let turn = 0; turn < 3 && !decided; turn += 1) {
+        const completion = await llm.provider.complete({
+          system: LOOP_SYSTEM_PROMPT,
+          messages,
+          tools: [LOOP_DECISION_DEF],
+          toolChoice: { name: LOOP_DECISION_TOOL },
+          maxTokens: llm.maxOutputTokens,
+          ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
+        });
+        if (!completion.ok) {
+          const kind = completion.err.type;
+          if (kind === 'auth') {
+            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
+            return {
+              kind: 'fail',
+              errorKind: 'llm_auth',
+              error: 'The model rejected the API key.',
+            };
+          }
+          if (kind === 'invalid_request') {
+            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
+            return {
+              kind: 'fail',
+              errorKind: 'llm_error',
+              error: completion.err.message ?? 'The model rejected the request.',
+            };
+          }
+          if (kind === 'rate_limit' || kind === 'overloaded' || kind === 'network') {
+            await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
+            throw new TransientFailure(`model ${kind}`);
+          }
+          failureSummary = completion.err.message ?? `The model failed (${kind}).`;
+          break;
+        }
+
+        usage.inputTokens += completion.val.usage.inputTokens;
+        usage.outputTokens += completion.val.usage.outputTokens;
+        messages.push({ role: 'assistant', content: completion.val.content });
+
+        const toolUses = completion.val.content.filter(
+          (block): block is Extract<LlmContentBlock, { type: 'tool_use' }> =>
+            block.type === 'tool_use'
+        );
+        const decisionUse = toolUses.find((use) => use.name === LOOP_DECISION_TOOL);
+        const choice = decisionUse ? loopArgsOf(decisionUse.input) : null;
+        if (decisionUse && choice) {
+          decided = choice.choice;
+          decidedReason = choice.reason;
+          break;
+        }
+        messages.push({
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'Call loop_decision exactly once with {choice: "finished" | "continue", reason}.',
+            },
+          ],
+        });
+      }
+
+      if (decided) {
+        const detail = {
+          resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+          llmSummary: clip(decidedReason, PREVIEW_CHARS),
+          declaredOutcome: 'success',
+          loopDecision: decided,
+          ...(built.unbound.length > 0 ? { unboundVariables: built.unbound } : {}),
+          usage,
+        };
+        await db
+          .updateTable('agent_run_steps')
+          .set({
+            status: 'succeeded',
+            outcome: 'loop_decided',
+            outcome_code: null,
+            tool_call_count: 0,
+            detail: clip(JSON.stringify(detail), DETAIL_CHARS),
+            finished_at: sql`NOW()`,
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', rowId)
+          .execute();
+        return { kind: 'decided', choice: decided };
+      }
+
+      lastFailureSummary = failureSummary;
+      const detail = {
+        resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+        llmSummary: clip(failureSummary, PREVIEW_CHARS),
+        declaredOutcome: 'failure',
+        usage,
+      };
+      await db
+        .updateTable('agent_run_steps')
+        .set({
+          status: 'failed',
+          outcome: 'llm_error',
+          outcome_code: 'other',
+          tool_call_count: 0,
+          detail: clip(JSON.stringify(detail), DETAIL_CHARS),
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', rowId)
+        .execute();
+    }
+  }
+
   async function runAttempt(
     run: RunRow,
     step: ActionStep,
@@ -1142,10 +1804,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
     llm: ResolvedLlm,
     mcp: McpClient,
     vars: Record<string, string>,
-    context: RunContextText
+    context: RunContextText,
+    iteration: number,
+    savesItemsForLoop: boolean
   ): Promise<AttemptOutcome> {
     const guidanceText = guidance ? renderInstruction(guidance, vars).text : undefined;
-    const previousFailure = attempt > 1 ? await lastFailureText(run.id, step.id) : undefined;
+    const previousFailure =
+      attempt > 1 ? await lastFailureText(run.id, step.id, iteration) : undefined;
     const toolCap = attempt > 1 ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
     const built = buildAttemptMessages({
       step,
@@ -1154,6 +1819,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       toolBudget: toolCap,
       guidanceText,
       previousFailure,
+      savesItemsForLoop,
       ...(context.memoryText ? { memoryText: context.memoryText } : {}),
       ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
     });
@@ -1228,6 +1894,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcomeCode: 'service-unavailable',
             summary: `The model became unavailable mid-attempt (${kind}).`,
             saveValue: null,
+            saveItems: null,
           };
         }
         return {
@@ -1237,6 +1904,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcomeCode: 'other',
           summary: completion.err.message ?? `The model failed (${kind}).`,
           saveValue: null,
+          saveItems: null,
         };
       }
 
@@ -1385,6 +2053,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       outcomeCode: 'other',
       summary: 'The model never declared an outcome for this step.',
       saveValue: null,
+      saveItems: null,
     };
   }
 
@@ -1395,6 +2064,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       code: string | null;
       summary: string;
       saveValue: string | null;
+      saveItems: string[] | null;
       stop: boolean;
       quiet: boolean;
       remember: string | null;
@@ -1417,6 +2087,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         outcomeCode: null,
         summary: finish.summary,
         saveValue: null,
+        saveItems: null,
         remember: finish.remember,
       };
     }
@@ -1435,6 +2106,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcomeCode: classifyFailure(primaryResults, finish.code),
           summary: finish.summary || 'The tool reported errors on every call.',
           saveValue: null,
+          saveItems: null,
           remember: finish.remember,
         };
       }
@@ -1446,6 +2118,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         outcomeCode: null,
         summary: finish.summary,
         saveValue: finish.saveValue,
+        saveItems: finish.saveItems,
         remember: finish.remember,
       };
     }
@@ -1456,18 +2129,24 @@ export function createAgentRunHandler(deps: EngineDeps) {
       outcomeCode: classifyFailure(primaryResults, finish.code),
       summary: finish.summary,
       saveValue: null,
+      saveItems: null,
       // A declared failure may still be worth remembering ("ticket X is
       // locked, skip it") — the model asked, keep it.
       remember: finish.remember,
     };
   }
 
-  async function lastFailureText(runId: string, stepId: string): Promise<string | undefined> {
+  async function lastFailureText(
+    runId: string,
+    stepId: string,
+    iteration: number
+  ): Promise<string | undefined> {
     const row = await db
       .selectFrom('agent_run_steps')
       .select('detail')
       .where('run_id', '=', runId)
       .where('step_id', '=', stepId)
+      .where('iteration', '=', iteration)
       .where('status', '=', 'failed')
       .orderBy('attempt', 'desc')
       .limit(1)
