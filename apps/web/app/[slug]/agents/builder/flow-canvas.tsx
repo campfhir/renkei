@@ -496,7 +496,11 @@ function LoopContainer({
   /** The header card + selected-node controls, rendered by the caller. */
   children: ReactNode;
 }) {
-  const defaultExpanded = nesting.display < 2;
+  // Selection expands: a just-inserted (auto-selected) or clicked container
+  // must show its inside immediately, wherever it sits. An explicit Collapse
+  // still wins — it writes an override.
+  const selected = handlers.selection?.type === 'step' && handlers.selection.id === loop.id;
+  const defaultExpanded = nesting.display < 2 || selected;
   const expanded = forceExpanded || handlers.isExpanded(loop.id, defaultExpanded);
   const inner: Nesting = {
     branchDepth: nesting.branchDepth,
@@ -555,8 +559,11 @@ function GroupContainer({
   forceExpanded?: boolean;
   children: ReactNode;
 }) {
-  // Groups exist to fold — collapsed by default at every depth.
-  const expanded = forceExpanded || handlers.isExpanded(group.id, false);
+  // Groups exist to fold — collapsed by default at every depth, except
+  // while selected (a just-inserted group is selected, and an empty closed
+  // box would hide the very list the user is about to fill).
+  const selected = handlers.selection?.type === 'step' && handlers.selection.id === group.id;
+  const expanded = forceExpanded || handlers.isExpanded(group.id, selected);
   const inner: Nesting = { ...nesting, display: nesting.display + 1 };
   return (
     <div className="flex w-max flex-col items-center rounded-xl border-2 border-slate-200 bg-slate-50/40 p-2 dark:border-slate-800 dark:bg-slate-900/20">
@@ -567,7 +574,7 @@ function GroupContainer({
           name={group.name}
           noun="group"
           expanded={expanded}
-          defaultExpanded={false}
+          defaultExpanded={selected}
           childCount={group.steps.length}
           handlers={handlers}
         />
@@ -668,7 +675,10 @@ function NodeBlock({
       // a two-path branch on the spine, no failure route, a wide screen.
       const fanOut =
         branchIsFanOut(node) && nesting.branchDepth === 0 && handlers.isWide && !forceExpanded;
-      const defaultExpanded = nesting.display < 2;
+      // Selection expands: a just-inserted branch is auto-selected, and its
+      // routes must be visible right away wherever it sits. Collapse (an
+      // explicit override) still wins.
+      const defaultExpanded = nesting.display < 2 || selectedId === node.id;
       const expanded = forceExpanded || fanOut || handlers.isExpanded(node.id, defaultExpanded);
       return (
         <>
