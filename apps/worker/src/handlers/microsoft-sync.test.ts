@@ -12,6 +12,7 @@ jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
 jest.mock('@renkei/connector-microsoft', () => ({
   createGraphSubscription: jest.fn(),
   renewGraphSubscription: jest.fn(),
+  deleteGraphSubscription: jest.fn(),
   runDeltaRound: jest.fn(),
   initialDeltaUrl: jest.fn(() => 'https://graph.microsoft.com/v1.0/delta'),
   microsoftRefId: (upn: string, kind: string, id: string) => `${upn}/${kind}/${id}`,
@@ -55,6 +56,7 @@ function access(): MicrosoftAccess {
     accessToken: 'token',
     upn: 'alice@example.com',
     scopes: ['Mail.Read'],
+    indexing: { mail: true, calendar: true, tasks: true },
   };
 }
 

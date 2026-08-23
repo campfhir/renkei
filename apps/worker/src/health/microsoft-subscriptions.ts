@@ -77,6 +77,9 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
     try {
       const access = await resolveMicrosoftAccess(tenantId, accountId);
       const rows = await ensureMicrosoftSubscriptions(tenantId, access, baseUrl);
+      // ensure returns only rows the user opted into — catching up on a
+      // row it withheld would index a category the user turned off.
+      const desiredIds = new Set(rows.map((row) => row.id));
 
       const staleBefore = Date.now() - STALE_SYNC_MS;
       const stale = await db
@@ -88,6 +91,7 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
         .where('updated_at', '<', new Date(staleBefore))
         .execute();
       for (const row of stale) {
+        if (!desiredIds.has(row.id)) continue;
         const synced = await runSubscriptionSync(tenantId, access, row);
         if (synced.changed > 0 || synced.removed > 0) {
           // Loud on purpose: catch-up finding changes means notifications
@@ -101,8 +105,6 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
           });
         }
       }
-
-      void rows;
     } catch (error) {
       logger.warn('sweep skipped grant {accountId}: {error}', {
         component: COMPONENT,

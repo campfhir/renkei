@@ -11,7 +11,14 @@
 
 import { parseEncryptionKey } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
-import { getGrant, refreshGrantTokens, MICROSOFT, MicrosoftAdapter } from '@renkei/provider-grants';
+import {
+  getGrant,
+  refreshGrantTokens,
+  MICROSOFT,
+  MicrosoftAdapter,
+  outlookIndexingOf,
+  type OutlookIndexingPrefs,
+} from '@renkei/provider-grants';
 import { logger } from '../logger';
 
 /** Refresh when the token is inside this window of expiry. */
@@ -24,6 +31,8 @@ export interface MicrosoftAccess {
   upn: string;
   /** granted ?? requested: what tools and subscriptions may cover. */
   scopes: string[];
+  /** What the user opted into indexing; scope ∧ preference gates each category. */
+  indexing: OutlookIndexingPrefs;
 }
 
 export async function resolveMicrosoftAccess(
@@ -84,5 +93,6 @@ export async function resolveMicrosoftAccess(
     accountId,
     upn,
     scopes: grant.grantedScopes ?? grant.requestedScopes ?? [],
+    indexing: outlookIndexingOf(grant.metadata),
   };
 }

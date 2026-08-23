@@ -31,3 +31,8 @@ export {
 export { WEBEX_USER, WebexUserAdapter } from './webex';
 export { ZOOM, ZoomAdapter } from './zoom';
 export { MICROSOFT, MicrosoftAdapter } from './microsoft';
+export {
+  outlookIndexingOf,
+  OUTLOOK_INDEXING_CATEGORIES,
+  type OutlookIndexingPrefs,
+} from './outlook-indexing';

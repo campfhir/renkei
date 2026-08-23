@@ -20,6 +20,7 @@ import { getDatabase } from '@renkei/db';
 import {
   createGraphSubscription,
   renewGraphSubscription,
+  deleteGraphSubscription,
   runDeltaRound,
   initialDeltaUrl,
   microsoftRefId,
@@ -61,16 +62,31 @@ function rec(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
 }
 
-/** Which resources this grant's scopes entitle it to have subscribed. */
+/**
+ * Which resources this grant should have subscribed: scope AND the user's
+ * explicit opt-in per category. Scopes alone are not consent — they exist
+ * for the interactive tools too, and granting Calendars.Read to use the
+ * calendar tools must not silently index the calendar. Nothing opted in
+ * (the default) means nothing is indexed.
+ */
 async function desiredResources(access: MicrosoftAccess): Promise<string[]> {
   const resources: string[] = [];
-  if (access.scopes.includes('Mail.Read') || access.scopes.includes('Mail.ReadWrite')) {
+  if (
+    access.indexing.mail &&
+    (access.scopes.includes('Mail.Read') || access.scopes.includes('Mail.ReadWrite'))
+  ) {
     resources.push("me/mailFolders('inbox')/messages");
   }
-  if (access.scopes.includes('Calendars.Read') || access.scopes.includes('Calendars.ReadWrite')) {
+  if (
+    access.indexing.calendar &&
+    (access.scopes.includes('Calendars.Read') || access.scopes.includes('Calendars.ReadWrite'))
+  ) {
     resources.push('me/events');
   }
-  if (access.scopes.includes('Tasks.Read') || access.scopes.includes('Tasks.ReadWrite')) {
+  if (
+    access.indexing.tasks &&
+    (access.scopes.includes('Tasks.Read') || access.scopes.includes('Tasks.ReadWrite'))
+  ) {
     // To Do subscriptions are per list; enumerate them live. Lists created
     // later are picked up by the sweep's next ensure pass.
     const lists = await graphRequest(access.accessToken, '/me/todo/lists');
@@ -111,8 +127,12 @@ const RENEW_WITHIN_MS = 24 * 60 * 60 * 1000;
 /**
  * Idempotent reconciliation of one grant's subscriptions toward the desired
  * set: missing rows are inserted, unacknowledged or lapsed subscriptions
- * are (re)created at Graph, near-expiry ones are renewed. Safe to run from
- * the connect bootstrap and every sweep alike.
+ * are (re)created at Graph, near-expiry ones are renewed — and rows the
+ * user OPTED OUT of get their Graph subscription torn down while the row
+ * (and its delta_link) stays, so re-enabling later resumes incrementally
+ * instead of re-reading a whole mailbox. Returns only the DESIRED rows;
+ * callers must not delta-poll what is not returned. Safe to run from the
+ * connect bootstrap and every sweep alike.
  */
 export async function ensureMicrosoftSubscriptions(
   tenantId: string,
@@ -153,7 +173,31 @@ export async function ensureMicrosoftSubscriptions(
     .where('account_id', '=', access.accountId)
     .execute();
 
+  const wanted = new Set(resources);
+  const desired: SubscriptionRow[] = [];
   for (const row of rows) {
+    if (!wanted.has(row.resource)) {
+      // Opted out (or scope lost): stop Graph from notifying, but KEEP the
+      // row — its delta_link is the cursor that makes a later re-enable
+      // incremental. Already-indexed content stays, gated per read as ever.
+      if (row.subscription_id !== null) {
+        const removed = await deleteGraphSubscription(access.accessToken, row.subscription_id);
+        if (!removed.ok) {
+          logger.warn('could not delete Graph subscription for {resource}', {
+            component: COMPONENT,
+            tenantId,
+            resource: row.resource,
+          });
+        }
+        await db
+          .updateTable('webhook_subscriptions')
+          .set({ subscription_id: null, expires_at: null, updated_at: sql`NOW()` })
+          .where('id', '=', row.id)
+          .execute();
+      }
+      continue;
+    }
+    desired.push(row);
     const needsCreate =
       row.subscription_id === null ||
       row.expires_at === null ||
@@ -223,7 +267,7 @@ export async function ensureMicrosoftSubscriptions(
     }
   }
 
-  return rows;
+  return desired;
 }
 
 /** A Graph message record as the connector-agnostic shape the sanitizer expects. */
