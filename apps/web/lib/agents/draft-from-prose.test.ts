@@ -688,3 +688,130 @@ describe('draftAgentFromProse retry loop', () => {
     expect(prompt).toContain('trigger.roomId: Pass it to webex_send_message to reply.');
   });
 });
+
+describe('gap-closing review loop (refineWithReview)', () => {
+  const REVIEW_CONCERN = JSON.stringify({
+    summary: 'It searches for tickets.',
+    concerns: [
+      { issue: 'Nothing tells the user what was found.', fix: 'Add a step that replies.' },
+    ],
+  });
+  const REVIEW_CLEAN = JSON.stringify({ summary: 'It searches and replies.', concerns: [] });
+  const REFINED_REPLY = JSON.stringify({
+    name: 'Find tickets',
+    steps: [
+      {
+        name: 'Search',
+        instruction: 'Search with {{tool:jira_search_issues}}',
+        tool: 'jira_search_issues',
+        saveAs: 'the search',
+      },
+      {
+        name: 'Reply',
+        instruction: 'Tell the user what was found: {{var:the search}}',
+        tool: null,
+        saveAs: null,
+      },
+    ],
+  });
+
+  it('feeds reviewer concerns back and returns the refined, clean draft', async () => {
+    replies = [GOOD_REPLY, REVIEW_CONCERN, REFINED_REPLY, REVIEW_CLEAN];
+
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+      refineWithReview: true,
+    });
+    if ('error' in result) throw new Error(result.error);
+    // draft → review → redraft → review, in that order.
+    expect(requests).toHaveLength(4);
+    expect(result.steps).toHaveLength(2);
+    expect(actionOf(result.steps[1]).name).toBe('Reply');
+    expect(result.concerns).toBeUndefined();
+
+    // The redraft request carried the reviewer's finding and the rule about
+    // asking the user instead of guessing.
+    const feedback = JSON.stringify(requests[2].messages);
+    expect(feedback).toContain('flagged these gaps');
+    expect(feedback).toContain('Nothing tells the user what was found.');
+    expect(feedback).toContain('questions');
+  });
+
+  it('keeps the pre-refine draft, concerns attached, when the redraft regresses', async () => {
+    replies = [GOOD_REPLY, REVIEW_CONCERN, 'not json at all'];
+
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+      refineWithReview: true,
+    });
+    if ('error' in result) throw new Error(result.error);
+    expect(result.steps).toHaveLength(1);
+    expect(result.concerns).toEqual([
+      { issue: 'Nothing tells the user what was found.', fix: 'Add a step that replies.' },
+    ]);
+  });
+
+  it('returns the draft untouched when the review itself is unusable', async () => {
+    replies = [GOOD_REPLY, 'total garbage'];
+
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+      refineWithReview: true,
+    });
+    if ('error' in result) throw new Error(result.error);
+    expect(requests).toHaveLength(2);
+    expect(result.steps).toHaveLength(1);
+    expect(result.concerns).toBeUndefined();
+  });
+
+  it('stops after the round limit and reports the still-open concerns', async () => {
+    replies = [
+      GOOD_REPLY,
+      REVIEW_CONCERN,
+      REFINED_REPLY,
+      REVIEW_CONCERN,
+      REFINED_REPLY,
+      REVIEW_CONCERN,
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS, {
+      refineWithReview: true,
+    });
+    if ('error' in result) throw new Error(result.error);
+    // 1 draft + 3 reviews + 2 redrafts — the loop is bounded.
+    expect(requests).toHaveLength(6);
+    expect(result.concerns).toHaveLength(1);
+  });
+});
+
+describe('questions and edge-case reasoning', () => {
+  it('surfaces the model’s questions for the user', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'Find tickets',
+        steps: [
+          {
+            name: 'Search',
+            instruction: 'Search the project the user names with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+          },
+        ],
+        questions: ['Which Jira project should be searched?', 42, '   '],
+        edgeCases: ['Empty search results are reported, not treated as failure.'],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    // Non-strings and blanks drop; the real question survives.
+    expect(result.questions).toEqual(['Which Jira project should be searched?']);
+  });
+
+  it('asks the model to think through edge cases and to ask instead of guessing', async () => {
+    replies = [GOOD_REPLY];
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const prompt = JSON.stringify(requests[0].messages);
+    expect(prompt).toContain('EDGE CASES');
+    expect(prompt).toContain('edgeCases');
+    expect(prompt).toContain('NEVER invent specifics');
+    expect(prompt).toContain('questions');
+  });
+});
