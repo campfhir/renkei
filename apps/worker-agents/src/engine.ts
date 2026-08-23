@@ -28,7 +28,6 @@ import {
   findNodeById,
   flattenActionSteps,
   isAgentStepsDoc,
-  isBranchStep,
   renderInstruction,
   toolSegments,
   walkSteps,
@@ -512,26 +511,38 @@ export function createAgentRunHandler(deps: EngineDeps) {
           .where('id', '=', runId)
           .execute();
 
-        if (isBranchStep(node)) {
-          const decided = await evaluateBranch(
-            run,
-            node,
-            llm,
-            vars,
-            context,
-            deadline,
-            settings.agentMaxStepAttempts,
-            ordinals
-          );
-          if (decided.kind === 'fail') {
-            await finalizeRun(run, 'failed', decided.errorKind, decided.error, vars);
-            return;
+        // Exhaustive dispatch on the node kind: a kind this switch does not
+        // handle is a compile error, never a silent fall-through into the
+        // action path.
+        switch (node.kind) {
+          case 'branch': {
+            const decided = await evaluateBranch(
+              run,
+              node,
+              llm,
+              vars,
+              context,
+              deadline,
+              settings.agentMaxStepAttempts,
+              ordinals
+            );
+            if (decided.kind === 'fail') {
+              await finalizeRun(run, 'failed', decided.errorKind, decided.error, vars);
+              return;
+            }
+            // Advance past the branch FIRST, then descend — popping the path
+            // frame later lands exactly after the block.
+            frame.index += 1;
+            stack.push({ nodes: decided.path.steps, index: 0 });
+            continue;
           }
-          // Advance past the branch FIRST, then descend — popping the path
-          // frame later lands exactly after the block.
-          frame.index += 1;
-          stack.push({ nodes: decided.path.steps, index: 0 });
-          continue;
+          case 'action':
+          case undefined:
+            break;
+          default: {
+            const unhandled: never = node;
+            throw new Error(`unknown step kind in snapshot: ${JSON.stringify(unhandled)}`);
+          }
         }
 
         const result = await executeStep(

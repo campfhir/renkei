@@ -208,6 +208,18 @@ export function isBranchStep(node: AgentStepNode): node is BranchStep {
   return node.kind === 'branch';
 }
 
+/**
+ * The node's kind with the action default made explicit. Dispatch on THIS
+ * with an exhaustive switch (and a `never` default), not on binary
+ * `isBranchStep` ternaries: a ternary silently treats every future kind as
+ * an ActionStep, which is exactly how a new construct would misexecute.
+ */
+export type NodeKind = 'action' | 'branch';
+
+export function nodeKind(node: AgentStepNode): NodeKind {
+  return node.kind ?? 'action';
+}
+
 function isBranchPath(value: unknown, depth: number): value is BranchPath {
   if (typeof value !== 'object' || value === null) return false;
   const path: { id?: unknown; name?: unknown; steps?: unknown } = value;

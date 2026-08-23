@@ -8,13 +8,7 @@
  * withheld content for is copied as hidden, not resurrected here.
  */
 
-import {
-  findNodeById,
-  instructionPreview,
-  isAgentStepsDoc,
-  isBranchStep,
-  walkSteps,
-} from '@renkei/agents';
+import { findNodeById, instructionPreview, isAgentStepsDoc, walkSteps } from '@renkei/agents';
 import { statusLabel, outcomeCodeLabel } from '@/lib/agents/run-labels';
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
 
@@ -26,7 +20,17 @@ function stepNameOf(run: RunDetail, stepId: string, stepIndex: number): string {
   if (isAgentStepsDoc(run.stepsSnapshot)) {
     const found = findNodeById(run.stepsSnapshot.steps, stepId);
     if (found?.node.name) {
-      return isBranchStep(found.node) ? `Branch: ${found.node.name}` : found.node.name;
+      switch (found.node.kind) {
+        case 'branch':
+          return `Branch: ${found.node.name}`;
+        case 'action':
+        case undefined:
+          return found.node.name;
+        default: {
+          const unhandled: never = found.node;
+          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+        }
+      }
     }
   }
   return `Step ${stepIndex + 1}`;
@@ -38,16 +42,25 @@ function snapshotLines(run: RunDetail): string[] {
   const lines: string[] = ['## Agent steps (as snapshotted for this run)', ''];
   for (const { node, ordinal, depth } of walkSteps(run.stepsSnapshot.steps)) {
     const indent = '  '.repeat(depth - 1);
-    if (isBranchStep(node)) {
-      lines.push(
-        `${indent}${ordinal + 1}. Branch: ${node.name} — condition: ` +
-          instructionPreview(node.condition)
-      );
-    } else {
-      lines.push(`${indent}${ordinal + 1}. ${node.name}`);
-      const instruction = instructionPreview(node.instruction);
-      if (instruction) lines.push(`${indent}   instruction: ${instruction}`);
-      if (node.saveAs) lines.push(`${indent}   saves result as: ${node.saveAs}`);
+    switch (node.kind) {
+      case 'branch':
+        lines.push(
+          `${indent}${ordinal + 1}. Branch: ${node.name} — condition: ` +
+            instructionPreview(node.condition)
+        );
+        break;
+      case 'action':
+      case undefined: {
+        lines.push(`${indent}${ordinal + 1}. ${node.name}`);
+        const instruction = instructionPreview(node.instruction);
+        if (instruction) lines.push(`${indent}   instruction: ${instruction}`);
+        if (node.saveAs) lines.push(`${indent}   saves result as: ${node.saveAs}`);
+        break;
+      }
+      default: {
+        const unhandled: never = node;
+        throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+      }
     }
   }
   lines.push('');

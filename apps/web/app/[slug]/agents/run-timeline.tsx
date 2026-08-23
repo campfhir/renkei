@@ -6,7 +6,7 @@
  * query seam.
  */
 
-import { findNodeById, isAgentStepsDoc, isBranchStep } from '@renkei/agents';
+import { findNodeById, isAgentStepsDoc } from '@renkei/agents';
 import { statusLabel, outcomeCodeLabel } from '@/lib/agents/run-labels';
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
 
@@ -14,7 +14,17 @@ function stepName(run: RunDetail, stepId: string, stepIndex: number): string {
   if (isAgentStepsDoc(run.stepsSnapshot)) {
     const found = findNodeById(run.stepsSnapshot.steps, stepId);
     if (found?.node.name) {
-      return isBranchStep(found.node) ? `Branch: ${found.node.name}` : found.node.name;
+      switch (found.node.kind) {
+        case 'branch':
+          return `Branch: ${found.node.name}`;
+        case 'action':
+        case undefined:
+          return found.node.name;
+        default: {
+          const unhandled: never = found.node;
+          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+        }
+      }
     }
   }
   return `Step ${stepIndex + 1}`;

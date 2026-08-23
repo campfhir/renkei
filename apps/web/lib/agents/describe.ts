@@ -14,7 +14,6 @@ import type { DB } from '@renkei/db';
 import {
   describeSchedule,
   instructionPreview,
-  isBranchStep,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
@@ -81,21 +80,31 @@ function nodeLines(
   return nodes
     .map((node) => {
       const label = `Step ${(ordinals.get(node.id) ?? 0) + 1}:`;
-      if (!isBranchStep(node)) return actionStepLines(node, label, indent);
-      const pathBlock = (pathIndex: 0 | 1, heading: string) => {
-        const path = node.paths[pathIndex];
-        const body = path.steps.length
-          ? nodeLines(path.steps, ordinals, `${indent}      `)
-          : `${indent}      (nothing — continues after the branch)`;
-        return `${indent}   ${heading} "${path.name}":\n${body}`;
-      };
-      return [
-        `${indent}${label} ${node.name} (a branch)`,
-        `${indent}   decides: ${instructionPreview(node.condition)}`,
-        pathBlock(0, 'if yes, path'),
-        pathBlock(1, 'otherwise, path'),
-        `${indent}   after either path finishes, the automation continues below the branch`,
-      ].join('\n');
+      switch (node.kind) {
+        case 'action':
+        case undefined:
+          return actionStepLines(node, label, indent);
+        case 'branch': {
+          const pathBlock = (pathIndex: 0 | 1, heading: string) => {
+            const path = node.paths[pathIndex];
+            const body = path.steps.length
+              ? nodeLines(path.steps, ordinals, `${indent}      `)
+              : `${indent}      (nothing — continues after the branch)`;
+            return `${indent}   ${heading} "${path.name}":\n${body}`;
+          };
+          return [
+            `${indent}${label} ${node.name} (a branch)`,
+            `${indent}   decides: ${instructionPreview(node.condition)}`,
+            pathBlock(0, 'if yes, path'),
+            pathBlock(1, 'otherwise, path'),
+            `${indent}   after either path finishes, the automation continues below the branch`,
+          ].join('\n');
+        }
+        default: {
+          const unhandled: never = node;
+          throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+        }
+      }
     })
     .join('\n');
 }

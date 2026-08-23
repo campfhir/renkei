@@ -263,9 +263,19 @@ function validateNode(
   toolsByName: Map<string, ToolDescriptorLike>,
   knownVariables: Set<string>
 ): ValidationIssue[] {
-  return isBranchStep(node)
-    ? validateBranchStep(node, prefix, depth, toolsByName, knownVariables)
-    : validateActionStep(node, prefix, toolsByName, knownVariables);
+  // Exhaustive on purpose: a node kind with no arm here is a compile
+  // error, never an action-step validation of something that isn't one.
+  switch (node.kind) {
+    case 'branch':
+      return validateBranchStep(node, prefix, depth, toolsByName, knownVariables);
+    case 'action':
+    case undefined:
+      return validateActionStep(node, prefix, toolsByName, knownVariables);
+    default: {
+      const unhandled: never = node;
+      throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+    }
+  }
 }
 
 function clampAttempts(value: number, cap: number, fallback: number): number {
@@ -273,34 +283,43 @@ function clampAttempts(value: number, cap: number, fallback: number): number {
 }
 
 function normalizeNode(node: AgentStepNode, cap: number): AgentStepNode {
-  if (isBranchStep(node)) {
-    const normalizePath = (path: BranchPath): BranchPath => ({
-      ...path,
-      name: path.name.trim(),
-      steps: path.steps.map((child) => normalizeNode(child, cap)),
-    });
-    const paths: [BranchPath, BranchPath] = [
-      normalizePath(node.paths[0]),
-      normalizePath(node.paths[1]),
-    ];
-    return {
-      ...node,
-      name: node.name.trim(),
-      maxAttempts: clampAttempts(node.maxAttempts, cap, BRANCH_DEFAULT_ATTEMPTS),
-      paths,
-    };
+  switch (node.kind) {
+    case 'branch': {
+      const normalizePath = (path: BranchPath): BranchPath => ({
+        ...path,
+        name: path.name.trim(),
+        steps: path.steps.map((child) => normalizeNode(child, cap)),
+      });
+      const paths: [BranchPath, BranchPath] = [
+        normalizePath(node.paths[0]),
+        normalizePath(node.paths[1]),
+      ];
+      return {
+        ...node,
+        name: node.name.trim(),
+        maxAttempts: clampAttempts(node.maxAttempts, cap, BRANCH_DEFAULT_ATTEMPTS),
+        paths,
+      };
+    }
+    case 'action':
+    case undefined: {
+      // Strip the optional discriminant so linear documents stay
+      // byte-identical with what pre-branch builds wrote.
+      const { kind: _kind, ...step } = node;
+      return {
+        ...step,
+        name: step.name.trim(),
+        // Spaces are legal INSIDE a result name; the edges are trimmed so
+        // the pattern (and every later lookup) never meets stray whitespace.
+        ...(step.saveAs !== undefined ? { saveAs: step.saveAs.trim() || undefined } : {}),
+        maxAttempts: clampAttempts(step.maxAttempts, cap, 1),
+      };
+    }
+    default: {
+      const unhandled: never = node;
+      throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+    }
   }
-  // Strip the optional discriminant so linear documents stay byte-identical
-  // with what pre-branch builds wrote.
-  const { kind: _kind, ...step } = node;
-  return {
-    ...step,
-    name: step.name.trim(),
-    // Spaces are legal INSIDE a result name; the edges are trimmed so
-    // the pattern (and every later lookup) never meets stray whitespace.
-    ...(step.saveAs !== undefined ? { saveAs: step.saveAs.trim() || undefined } : {}),
-    maxAttempts: clampAttempts(step.maxAttempts, cap, 1),
-  };
 }
 
 /**

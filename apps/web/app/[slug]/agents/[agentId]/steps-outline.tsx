@@ -1,7 +1,6 @@
 import React from 'react';
 import {
   instructionPreview,
-  isBranchStep,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
@@ -28,13 +27,21 @@ function NodeList({
 }): React.ReactNode {
   return (
     <ol className="space-y-2">
-      {nodes.map((node) =>
-        isBranchStep(node) ? (
-          <BranchCard key={node.id} branch={node} ordinals={ordinals} />
-        ) : (
-          <StepCard key={node.id} step={node} ordinal={(ordinals.get(node.id) ?? 0) + 1} />
-        )
-      )}
+      {nodes.map((node) => {
+        switch (node.kind) {
+          case 'branch':
+            return <BranchCard key={node.id} branch={node} ordinals={ordinals} />;
+          case 'action':
+          case undefined:
+            return (
+              <StepCard key={node.id} step={node} ordinal={(ordinals.get(node.id) ?? 0) + 1} />
+            );
+          default: {
+            const unhandled: never = node;
+            throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+          }
+        }
+      })}
     </ol>
   );
 }
