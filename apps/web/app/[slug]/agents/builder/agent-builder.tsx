@@ -950,7 +950,10 @@ export function AgentBuilder({
           className={`lg:order-last ${railWide ? 'lg:w-[36rem]' : 'lg:w-[26rem]'} lg:sticky lg:top-4 lg:flex lg:max-h-[calc(100vh-7rem)] lg:shrink-0 lg:flex-col lg:self-start lg:rounded-lg lg:border lg:border-gray-200 lg:bg-white lg:dark:border-gray-800 lg:dark:bg-gray-950`}
         >
           <div className="lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:p-4">
-            <div className={`space-y-4 ${selection ? 'lg:hidden' : ''}`}>
+            {/* Wider gaps on mobile, where this is one tall stacked column
+                rather than a compact rail — the Worth checking panel in
+                particular reads as its own section and needs air. */}
+            <div className={`space-y-6 lg:space-y-4 ${selection ? 'lg:hidden' : ''}`}>
               {models.length > 0 ? (
                 <div>
                   <label
@@ -1002,7 +1005,7 @@ export function AgentBuilder({
               {prosePanel}
 
               {agentId ? (
-                <div className="rounded-md border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900 dark:bg-amber-950/40">
+                <div className="rounded-md border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/40">
                   <div className="flex items-center justify-between gap-2">
                     <h2 className="text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
                       Worth checking
@@ -1027,7 +1030,7 @@ export function AgentBuilder({
                     </button>
                   </div>
                   {checkNotes.length > 0 ? (
-                    <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-amber-900 dark:text-amber-200">
+                    <ul className="mt-3 list-disc space-y-3 pl-5 text-sm text-amber-900 dark:text-amber-200">
                       {checkNotes.map((note) => (
                         <li key={note.issue}>
                           {note.issue}
@@ -1044,7 +1047,7 @@ export function AgentBuilder({
                       Nothing flagged on the last check.
                     </p>
                   )}
-                  <p className="mt-2 text-xs text-amber-700/60 dark:text-amber-300/50">
+                  <p className="mt-3 text-xs text-amber-700/60 dark:text-amber-300/50">
                     These look at the last saved version — save your edits, then re-check.
                   </p>
                 </div>
@@ -1090,7 +1093,10 @@ export function AgentBuilder({
           </div>
         </div>
 
-        <div className="min-w-0 flex-1 space-y-6">
+        {/* mt: on mobile the rail stacks directly above this with no flex
+            gap — without it the flow chart butts up against the Worth
+            checking panel. */}
+        <div className="mt-8 min-w-0 flex-1 space-y-6 lg:mt-0">
           <section>
             <FlowCanvas
               nodes={steps}
