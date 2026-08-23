@@ -121,7 +121,11 @@ describe('isAgentStepsDoc', () => {
   });
 
   it('rejects unknown versions', () => {
-    expect(isAgentStepsDoc({ version: 3, steps: [] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 4, steps: [] })).toBe(false);
+  });
+
+  it('accepts an empty version-3 document shell', () => {
+    expect(isAgentStepsDoc({ version: 3, steps: [] })).toBe(true);
   });
 });
 
@@ -174,8 +178,12 @@ describe('findNodeById', () => {
 
     expect(found?.node).toBe(target);
     expect(found?.ancestors).toHaveLength(1);
-    expect(found?.ancestors[0].branch).toBe(fork);
-    expect(found?.ancestors[0].path.name).toBe('Yes');
+    const ancestor = found?.ancestors[0];
+    expect(ancestor?.kind).toBe('branch');
+    if (ancestor?.kind === 'branch') {
+      expect(ancestor.branch).toBe(fork);
+      expect(ancestor.path.name).toBe('Yes');
+    }
     expect(found?.index).toBe(0);
   });
 
@@ -188,6 +196,152 @@ describe('findNodeById', () => {
 
   it('returns null for an unknown id', () => {
     expect(findNodeById([action()], 'nope')).toBeNull();
+  });
+});
+
+function loop(overrides: Partial<import('./steps').ForEachLoopStep> = {}) {
+  const node: import('./steps').ForEachLoopStep = {
+    id: randomUUID(),
+    kind: 'loop',
+    mode: 'foreach',
+    name: 'For each ticket',
+    itemsVar: 'found tickets',
+    itemVar: 'ticket',
+    maxIterations: 10,
+    steps: [action({ name: 'Handle one' })],
+    ...overrides,
+  };
+  return node;
+}
+
+function group(overrides: Partial<import('./steps').GroupStep> = {}) {
+  const node: import('./steps').GroupStep = {
+    id: randomUUID(),
+    kind: 'group',
+    name: 'Triage',
+    steps: [action({ name: 'grouped' })],
+    ...overrides,
+  };
+  return node;
+}
+
+describe('version 3 structures', () => {
+  it('walks loop and group children with uniform paths and depth', () => {
+    const inner = action({ name: 'inner' });
+    const looped = loop({ steps: [inner] });
+    const grouped = group({ steps: [action({ name: 'in group' })] });
+    const walked = walkSteps([looped, grouped]);
+
+    expect(walked.map((entry) => entry.node.name)).toEqual([
+      'For each ticket',
+      'inner',
+      'Triage',
+      'in group',
+    ]);
+    expect(walked[1].path).toBe('steps.0.steps.0');
+    expect(walked[3].path).toBe('steps.1.steps.0');
+    expect(walked[1].depth).toBe(2);
+  });
+
+  it('walks a branch failurePath and finds nodes inside it', () => {
+    const rescue = action({ name: 'rescue' });
+    const fork = branch({
+      failurePath: { id: randomUUID(), name: 'On failure', steps: [rescue] },
+    });
+    const walked = walkSteps([fork]);
+    expect(walked.map((e) => e.node.name)).toContain('rescue');
+    expect(walked.find((e) => e.node.name === 'rescue')?.path).toBe('steps.0.failurePath.steps.0');
+
+    const found = findNodeById([fork], rescue.id);
+    expect(found?.ancestors[0]?.kind).toBe('branch');
+    if (found?.ancestors[0]?.kind === 'branch') {
+      expect(found.ancestors[0].isFailurePath).toBe(true);
+    }
+  });
+
+  it('findNodeById reports loop and group ancestors', () => {
+    const inner = action({ name: 'inner' });
+    const doc = [group({ steps: [loop({ steps: [inner] })] })];
+    const found = findNodeById(doc, inner.id);
+    expect(found?.ancestors.map((a) => a.kind)).toEqual(['group', 'loop']);
+  });
+
+  it('requiredVersion: v1/v2 stay put, every v3 trigger bumps', () => {
+    const { requiredVersion } = jest.requireActual<typeof import('./steps')>('./steps');
+    expect(requiredVersion([action()])).toBe(1);
+    expect(requiredVersion([branch()])).toBe(2);
+    expect(requiredVersion([loop()])).toBe(3);
+    expect(requiredVersion([group()])).toBe(3);
+    expect(
+      requiredVersion([
+        branch({
+          paths: [
+            { id: randomUUID(), name: 'A', steps: [] },
+            { id: randomUUID(), name: 'B', steps: [] },
+            { id: randomUUID(), name: 'C', steps: [action()] },
+          ],
+        }),
+      ])
+    ).toBe(3);
+    expect(
+      requiredVersion([
+        branch({ failurePath: { id: randomUUID(), name: 'On failure', steps: [] } }),
+      ])
+    ).toBe(3);
+    // Three nested all-binary branches: no new constructs, but past the
+    // frozen v2 depth — must be v3 or the v2 reader would reject it.
+    const threeDeep = branch({
+      paths: [
+        {
+          id: randomUUID(),
+          name: 'Yes',
+          steps: [
+            branch({
+              paths: [
+                { id: randomUUID(), name: 'Deeper', steps: [branch()] },
+                { id: randomUUID(), name: 'No', steps: [] },
+              ],
+            }),
+          ],
+        },
+        { id: randomUUID(), name: 'No', steps: [] },
+      ],
+    });
+    expect(requiredVersion([threeDeep])).toBe(3);
+  });
+
+  it('the frozen v2 arm rejects every v3 construct', () => {
+    expect(isAgentStepsDoc({ version: 2, steps: [loop()] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 2, steps: [group()] })).toBe(false);
+    expect(
+      isAgentStepsDoc({
+        version: 2,
+        steps: [branch({ failurePath: { id: randomUUID(), name: 'F', steps: [] } })],
+      })
+    ).toBe(false);
+  });
+
+  it('the v3 arm accepts the new constructs and enforces its own limits', () => {
+    expect(isAgentStepsDoc({ version: 3, steps: [loop(), group(), branch()] })).toBe(true);
+    // No nested loops.
+    expect(isAgentStepsDoc({ version: 3, steps: [loop({ steps: [loop()] })] })).toBe(false);
+    // Path count bounds.
+    const sixPaths = branch({
+      paths: Array.from({ length: 6 }, (_, i) => ({
+        id: randomUUID(),
+        name: `P${i}`,
+        steps: [],
+      })),
+    });
+    expect(isAgentStepsDoc({ version: 3, steps: [sixPaths] })).toBe(false);
+    const fivePaths = branch({
+      paths: Array.from({ length: 5 }, (_, i) => ({
+        id: randomUUID(),
+        name: `P${i}`,
+        steps: [],
+      })),
+    });
+    expect(isAgentStepsDoc({ version: 3, steps: [fivePaths] })).toBe(true);
   });
 });
 

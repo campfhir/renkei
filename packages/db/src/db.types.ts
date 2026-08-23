@@ -126,6 +126,8 @@ export interface AgentRunSteps {
   detail: Json | null;
   finished_at: Timestamp | null;
   id: string;
+  /** 0 = not inside a loop (all pre-v3 rows); 1-based inside a loop. */
+  iteration: Generated<number>;
   outcome: string | null;
   outcome_code: string | null;
   run_id: string;
