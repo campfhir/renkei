@@ -68,6 +68,18 @@ describe('chunkRefId', () => {
 });
 
 describe('ingestObjectChunks — embedding batches', () => {
+  // Content is encrypted at rest, so the upsert path needs a key even
+  // against a stub db — without one every ingest is ENCRYPTION_FAILED
+  // (which is exactly how CI, with no env, caught this).
+  const savedContentKey = process.env.CONTENT_ENCRYPTION_KEY;
+  beforeAll(() => {
+    process.env.CONTENT_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+  });
+  afterAll(() => {
+    if (savedContentKey === undefined) delete process.env.CONTENT_ENCRYPTION_KEY;
+    else process.env.CONTENT_ENCRYPTION_KEY = savedContentKey;
+  });
+
   /** A db stub whose delete and insert chains both succeed silently. */
   function stubDb(): void {
     mockGetDatabase.mockReturnValue({
