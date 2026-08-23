@@ -91,6 +91,11 @@ const SAVE_ITEMS_MAX = 25;
  * runs many times), together with per-loop maxIterations and the deadline.
  */
 const MAX_RUN_ATTEMPT_ROWS = 250;
+// Module scope on purpose: the factory returns its handler BEFORE its tail
+// statements run, so hoisted functions inside it may only reference consts
+// declared out here (a factory-scope const after the return stays in its
+// temporal dead zone forever).
+const RUN_BUDGET_ERROR = `The run exceeded its execution budget (${MAX_RUN_ATTEMPT_ROWS} step attempts).`;
 
 export interface FinalizedRun {
   runId: string;
@@ -1015,8 +1020,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       .executeTakeFirst();
     return Number(counted?.count ?? 0) >= MAX_RUN_ATTEMPT_ROWS;
   }
-
-  const RUN_BUDGET_ERROR = `The run exceeded its execution budget (${MAX_RUN_ATTEMPT_ROWS} step attempts).`;
 
   async function executeStep(
     run: RunRow,

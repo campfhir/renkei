@@ -23,6 +23,10 @@ function stepNameOf(run: RunDetail, stepId: string, stepIndex: number): string {
       switch (found.node.kind) {
         case 'branch':
           return `Branch: ${found.node.name}`;
+        case 'loop':
+          return `Loop: ${found.node.name}`;
+        case 'group':
+          return `Group: ${found.node.name}`;
         case 'action':
         case undefined:
           return found.node.name;
@@ -49,6 +53,19 @@ function snapshotLines(run: RunDetail): string[] {
             instructionPreview(node.condition)
         );
         break;
+      case 'loop':
+        lines.push(
+          node.mode === 'foreach'
+            ? `${indent}${ordinal + 1}. Loop: ${node.name} — for each ${node.itemVar} in ${node.itemsVar} (max ${node.maxIterations})`
+            : `${indent}${ordinal + 1}. Loop: ${node.name} — until: ${instructionPreview(node.condition)} (max ${node.maxIterations})`
+        );
+        if (node.collectVar) {
+          lines.push(`${indent}   collects "${node.collectFrom}" into: ${node.collectVar}`);
+        }
+        break;
+      case 'group':
+        lines.push(`${indent}${ordinal + 1}. Group: ${node.name}`);
+        break;
       case 'action':
       case undefined: {
         lines.push(`${indent}${ordinal + 1}. ${node.name}`);
@@ -69,7 +86,7 @@ function snapshotLines(run: RunDetail): string[] {
 
 function attemptLines(attempt: AttemptView): string[] {
   const heading =
-    `- Attempt ${attempt.attempt}: ${statusLabel(attempt.status)}` +
+    `- ${attempt.iteration > 0 ? `Iteration ${attempt.iteration}, attempt` : 'Attempt'} ${attempt.attempt}: ${statusLabel(attempt.status)}` +
     (attempt.outcomeCode ? ` (${outcomeCodeLabel(attempt.outcomeCode)})` : '') +
     (attempt.toolCallCount > 0 ? ` — ${attempt.toolCallCount} tool call(s)` : '');
   if (attempt.redacted) return [heading, '  (details hidden for this audience)'];

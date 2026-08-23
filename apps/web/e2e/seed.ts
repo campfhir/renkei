@@ -28,11 +28,13 @@ export const E2E_SUBJECT = 'e2e-user@example.com';
 
 export const AGENT_RICH_ID = '33333333-3333-4333-8333-333333333333';
 export const AGENT_PLAIN_ID = '44444444-4444-4444-8444-444444444444';
+export const AGENT_DEEP_ID = '99999999-9999-4999-8999-999999999999';
 
 export const RUN_SUCCEEDED_ID = '66666666-6666-4666-8666-666666666661';
 export const RUN_STEP_FAILED_ID = '66666666-6666-4666-8666-666666666662';
 export const RUN_TIMEOUT_ID = '66666666-6666-4666-8666-666666666663';
 export const RUN_RUNNING_ID = '66666666-6666-4666-8666-666666666664';
+export const RUN_ITERATIONS_ID = '66666666-6666-4666-8666-666666666665';
 
 const STEP_COLLECT = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
 const STEP_RANK = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
@@ -130,6 +132,164 @@ const RICH_STEPS = {
       name: 'Note the outcome',
       instruction: [
         { t: 'text', v: 'Write one line summarizing what was filed (or that nothing was needed).' },
+      ],
+      tool: null,
+      maxAttempts: 1,
+      failureHandling: [],
+    },
+  ],
+};
+
+/* The deep agent's node ids — referenced by the iterated run's rows. */
+const DEEP_COLLECT = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd1';
+const DEEP_LOOP = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd2';
+const DEEP_ASSESS = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd3';
+const DEEP_BRANCH = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd4';
+const DEEP_GROUP = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd5';
+const DEEP_ESCALATE = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd6';
+const DEEP_ROUTINE = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd7';
+const DEEP_NOTE = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd8';
+const DEEP_SUMMARY = 'dddddddd-dddd-4ddd-8ddd-ddddddddddd9';
+const DEEP_PATH_CRITICAL = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
+const DEEP_PATH_ROUTINE = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2';
+const DEEP_PATH_IGNORE = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3';
+const DEEP_PATH_FAILURE = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee4';
+export const DEEP_LOOP_NAME = 'Work the queue';
+export const DEEP_BRANCH_NAME = 'How urgent is it?';
+
+/**
+ * The deep agent's steps — a v3 doc: a for-each loop whose body holds a
+ * 3-way branch (with a failure route) with a group inside its first path.
+ * Exercises the loop container, the vertical RouterBlock, drill-in, and
+ * the iterated run timeline.
+ *
+ * Pre-order ordinals (= step_index): collect 0, loop 1, assess 2, branch 3,
+ * group 4, escalate 5, routine 6, note 7, summary 8.
+ */
+const DEEP_STEPS = {
+  version: 3,
+  steps: [
+    {
+      id: DEEP_COLLECT,
+      name: 'Collect the queue',
+      instruction: [
+        { t: 'text', v: 'Search for open requests with ' },
+        { t: 'tool', name: 'jira_search_issues' },
+        { t: 'text', v: ' and save each request as its own item.' },
+      ],
+      tool: 'jira_search_issues',
+      maxAttempts: 2,
+      saveAs: 'the queue',
+      failureHandling: [],
+    },
+    {
+      id: DEEP_LOOP,
+      kind: 'loop',
+      mode: 'foreach',
+      name: DEEP_LOOP_NAME,
+      itemsVar: 'the queue',
+      itemVar: 'ticket',
+      maxIterations: 10,
+      collectFrom: 'triage note',
+      collectVar: 'triage notes',
+      steps: [
+        {
+          id: DEEP_ASSESS,
+          name: 'Assess the ticket',
+          instruction: [
+            { t: 'text', v: 'Judge how urgent ' },
+            { t: 'var', name: 'ticket' },
+            { t: 'text', v: ' is and say why in one line.' },
+          ],
+          tool: null,
+          maxAttempts: 1,
+          saveAs: 'assessment',
+          failureHandling: [],
+        },
+        {
+          id: DEEP_BRANCH,
+          kind: 'branch',
+          name: DEEP_BRANCH_NAME,
+          condition: [
+            { t: 'text', v: 'Given ' },
+            { t: 'var', name: 'assessment' },
+            { t: 'text', v: ': is this critical, routine, or ignorable?' },
+          ],
+          paths: [
+            {
+              id: DEEP_PATH_CRITICAL,
+              name: 'Critical',
+              steps: [
+                {
+                  id: DEEP_GROUP,
+                  kind: 'group',
+                  name: 'Escalate',
+                  steps: [
+                    {
+                      id: DEEP_ESCALATE,
+                      name: 'Flag it loudly',
+                      instruction: [
+                        { t: 'text', v: 'Comment on ' },
+                        { t: 'var', name: 'ticket' },
+                        { t: 'text', v: ' with ' },
+                        { t: 'tool', name: 'jira_add_comment' },
+                        { t: 'text', v: ' asking for immediate attention.' },
+                      ],
+                      tool: 'jira_add_comment',
+                      maxAttempts: 2,
+                      failureHandling: [],
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              id: DEEP_PATH_ROUTINE,
+              name: 'Routine',
+              steps: [
+                {
+                  id: DEEP_ROUTINE,
+                  name: 'Acknowledge it',
+                  instruction: [
+                    { t: 'text', v: 'Leave a short acknowledgment on ' },
+                    { t: 'var', name: 'ticket' },
+                    { t: 'text', v: ' with ' },
+                    { t: 'tool', name: 'jira_add_comment' },
+                    { t: 'text', v: '.' },
+                  ],
+                  tool: 'jira_add_comment',
+                  maxAttempts: 2,
+                  failureHandling: [],
+                },
+              ],
+            },
+            { id: DEEP_PATH_IGNORE, name: 'Not worth acting on', steps: [] },
+          ],
+          failurePath: { id: DEEP_PATH_FAILURE, name: 'If triage fails', steps: [] },
+          maxAttempts: 2,
+        },
+        {
+          id: DEEP_NOTE,
+          name: 'Write the triage note',
+          instruction: [
+            { t: 'text', v: 'Write one line on what was done for ' },
+            { t: 'var', name: 'ticket' },
+            { t: 'text', v: '.' },
+          ],
+          tool: null,
+          maxAttempts: 1,
+          saveAs: 'triage note',
+          failureHandling: [],
+        },
+      ],
+    },
+    {
+      id: DEEP_SUMMARY,
+      name: 'Summarize the sweep',
+      instruction: [
+        { t: 'text', v: 'Summarize the sweep from ' },
+        { t: 'var', name: 'triage notes' },
+        { t: 'text', v: ' in three lines.' },
       ],
       tool: null,
       maxAttempts: 1,
@@ -274,6 +434,20 @@ export async function seed(client: Client): Promise<void> {
     ]
   );
 
+  await client.query(
+    `INSERT INTO agents
+       (id, tenant_id, owner_subject, name, description, description_status, steps, enabled)
+     VALUES ($1, $2, $3, $4, $5, 'ready', $6, false)`,
+    [
+      AGENT_DEEP_ID,
+      E2E_TENANT_ID,
+      E2E_SUBJECT,
+      'Sweep the request queue',
+      'Goes through every open request, escalates the critical ones, acknowledges the routine ones, and writes a note per request.',
+      JSON.stringify(DEEP_STEPS),
+    ]
+  );
+
   const scheduleConfig = JSON.stringify({
     recurrences: [{ every: 'weekday', at: '09:00' }],
     timezone: 'UTC',
@@ -363,13 +537,32 @@ export async function seed(client: Client): Promise<void> {
     );
   }
 
-  // Attempt rows. UNIQUE (run_id, step_id, attempt) — one insert per row.
+  // The deep agent's iterated run — the timeline's per-iteration rendering.
+  await client.query(
+    `INSERT INTO agent_runs
+       (id, tenant_id, agent_id, owner_subject, trigger_kind, steps_snapshot,
+        status, started_at, finished_at, created_at)
+     VALUES ($1, $2, $3, $4, 'manual', $5, 'succeeded', $6, $7, $6)`,
+    [
+      RUN_ITERATIONS_ID,
+      E2E_TENANT_ID,
+      AGENT_DEEP_ID,
+      E2E_SUBJECT,
+      JSON.stringify(DEEP_STEPS),
+      hoursAgo(5),
+      hoursAgo(4.9),
+    ]
+  );
+
+  // Attempt rows. UNIQUE (run_id, step_id, iteration, attempt) — one insert
+  // per row; iteration 0 = outside any loop (every pre-v3 run).
   const stepRows: {
     id: string;
     runId: string;
     stepId: string;
     stepIndex: number;
     attempt: number;
+    iteration?: number;
     status: string;
     outcome: string | null;
     outcomeCode: string | null;
@@ -377,6 +570,207 @@ export async function seed(client: Client): Promise<void> {
     detail: string | null;
     at: Date;
   }[] = [
+    {
+      id: '88888888-8888-4888-8888-888888888841',
+      runId: RUN_ITERATIONS_ID,
+      stepId: DEEP_COLLECT,
+      stepIndex: 0,
+      attempt: 1,
+      status: 'succeeded',
+      outcome: 'tool_ok',
+      outcomeCode: null,
+      toolCallCount: 1,
+      detail: attemptDetail({
+        resolvedInstruction: 'Search for open requests…',
+        llmSummary: 'Two open requests: the VPN outage and a laptop request.',
+        toolCalls: [
+          {
+            tool: 'jira_search_issues',
+            argsPreview: '{"jql":"status = Open"}',
+            resultPreview: '2 items',
+            durationMs: 733,
+          },
+        ],
+        saveValue: 'OPS-301 (VPN outage)\nOPS-302 (laptop request)',
+      }),
+      at: hoursAgo(5),
+    },
+    {
+      id: '88888888-8888-4888-8888-888888888842',
+      runId: RUN_ITERATIONS_ID,
+      stepId: DEEP_ASSESS,
+      stepIndex: 2,
+      attempt: 1,
+      iteration: 1,
+      status: 'succeeded',
+      outcome: 'llm_declared',
+      outcomeCode: null,
+      toolCallCount: 0,
+      detail: attemptDetail({
+        resolvedInstruction: 'Judge how urgent OPS-301 is…',
+        llmSummary: 'A building-wide outage — clearly critical.',
+        saveValue: 'critical: VPN down for building B',
+      }),
+      at: hoursAgo(4.98),
+    },
+    {
+      id: '88888888-8888-4888-8888-888888888843',
+      runId: RUN_ITERATIONS_ID,
+      stepId: DEEP_BRANCH,
+      stepIndex: 3,
+      attempt: 1,
+      iteration: 1,
+      status: 'succeeded',
+      outcome: 'path_chosen',
+      outcomeCode: null,
+      toolCallCount: 0,
+      detail: attemptDetail({
+        resolvedInstruction: 'Given (assessment): is this critical, routine, or ignorable?',
+        llmSummary: 'An outage affecting a whole building is critical.',
+        chosenPathId: DEEP_PATH_CRITICAL,
+        chosenPathName: 'Critical',
+      }),
+      at: hoursAgo(4.97),
+    },
+    {
+      id: '88888888-8888-4888-8888-888888888844',
+      runId: RUN_ITERATIONS_ID,
+      stepId: DEEP_ESCALATE,
+      stepIndex: 5,
+      attempt: 1,
+      iteration: 1,
+      status: 'succeeded',
+      outcome: 'tool_ok',
+      outcomeCode: null,
+      toolCallCount: 1,
+      detail: attemptDetail({
+        resolvedInstruction: 'Comment on OPS-301 asking for immediate attention…',
+        llmSummary: 'Escalation comment posted on OPS-301.',
+        toolCalls: [
+          {
+            tool: 'jira_add_comment',
+            argsPreview: '{"issue":"OPS-301"}',
+            resultPreview: 'Comment added',
+            durationMs: 512,
+          },
+        ],
+      }),
+      at: hoursAgo(4.96),
+    },
+    {
+      id: '88888888-8888-4888-8888-888888888845',
+      runId: RUN_ITERATIONS_ID,
+      stepId: DEEP_NOTE,
+      stepIndex: 7,
+      attempt: 1,
+      iteration: 1,
+      status: 'succeeded',
+      outcome: 'llm_declared',
+      outcomeCode: null,
+      toolCallCount: 0,
+      detail: attemptDetail({
+        resolvedInstruction: 'Write one line on what was done for OPS-301…',
+        llmSummary: 'Noted the escalation.',
+        saveValue: 'OPS-301 escalated as critical',
+      }),
+      at: hoursAgo(4.95),
+    },
+    {
+      id: '88888888-8888-4888-8888-888888888846',
+      runId: RUN_ITERATIONS_ID,
+      stepId: DEEP_ASSESS,
+      stepIndex: 2,
+      attempt: 1,
+      iteration: 2,
+      status: 'succeeded',
+      outcome: 'llm_declared',
+      outcomeCode: null,
+      toolCallCount: 0,
+      detail: attemptDetail({
+        resolvedInstruction: 'Judge how urgent OPS-302 is…',
+        llmSummary: 'A standard hardware request — routine.',
+        saveValue: 'routine: replacement laptop',
+      }),
+      at: hoursAgo(4.94),
+    },
+    {
+      id: '88888888-8888-4888-8888-888888888847',
+      runId: RUN_ITERATIONS_ID,
+      stepId: DEEP_BRANCH,
+      stepIndex: 3,
+      attempt: 1,
+      iteration: 2,
+      status: 'succeeded',
+      outcome: 'path_chosen',
+      outcomeCode: null,
+      toolCallCount: 0,
+      detail: attemptDetail({
+        resolvedInstruction: 'Given (assessment): is this critical, routine, or ignorable?',
+        llmSummary: 'Hardware requests follow the routine path.',
+        chosenPathId: DEEP_PATH_ROUTINE,
+        chosenPathName: 'Routine',
+      }),
+      at: hoursAgo(4.93),
+    },
+    {
+      id: '88888888-8888-4888-8888-888888888848',
+      runId: RUN_ITERATIONS_ID,
+      stepId: DEEP_ROUTINE,
+      stepIndex: 6,
+      attempt: 1,
+      iteration: 2,
+      status: 'succeeded',
+      outcome: 'tool_ok',
+      outcomeCode: null,
+      toolCallCount: 1,
+      detail: attemptDetail({
+        resolvedInstruction: 'Leave a short acknowledgment on OPS-302…',
+        llmSummary: 'Acknowledged OPS-302.',
+        toolCalls: [
+          {
+            tool: 'jira_add_comment',
+            argsPreview: '{"issue":"OPS-302"}',
+            resultPreview: 'Comment added',
+            durationMs: 468,
+          },
+        ],
+      }),
+      at: hoursAgo(4.92),
+    },
+    {
+      id: '88888888-8888-4888-8888-888888888849',
+      runId: RUN_ITERATIONS_ID,
+      stepId: DEEP_NOTE,
+      stepIndex: 7,
+      attempt: 1,
+      iteration: 2,
+      status: 'succeeded',
+      outcome: 'llm_declared',
+      outcomeCode: null,
+      toolCallCount: 0,
+      detail: attemptDetail({
+        resolvedInstruction: 'Write one line on what was done for OPS-302…',
+        llmSummary: 'Noted the acknowledgment.',
+        saveValue: 'OPS-302 acknowledged, routine',
+      }),
+      at: hoursAgo(4.91),
+    },
+    {
+      id: '88888888-8888-4888-8888-888888888850',
+      runId: RUN_ITERATIONS_ID,
+      stepId: DEEP_SUMMARY,
+      stepIndex: 8,
+      attempt: 1,
+      status: 'succeeded',
+      outcome: 'llm_declared',
+      outcomeCode: null,
+      toolCallCount: 0,
+      detail: attemptDetail({
+        resolvedInstruction: 'Summarize the sweep from (triage notes)…',
+        llmSummary: 'Two requests handled: one escalated, one acknowledged.',
+      }),
+      at: hoursAgo(4.9),
+    },
     {
       id: '88888888-8888-4888-8888-888888888801',
       runId: RUN_SUCCEEDED_ID,
@@ -631,9 +1025,9 @@ export async function seed(client: Client): Promise<void> {
   for (const row of stepRows) {
     await client.query(
       `INSERT INTO agent_run_steps
-         (id, tenant_id, run_id, step_id, step_index, attempt, status,
+         (id, tenant_id, run_id, step_id, step_index, attempt, iteration, status,
           outcome, outcome_code, tool_call_count, detail, started_at, finished_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [
         row.id,
         E2E_TENANT_ID,
@@ -641,6 +1035,7 @@ export async function seed(client: Client): Promise<void> {
         row.stepId,
         row.stepIndex,
         row.attempt,
+        row.iteration ?? 0,
         row.status,
         row.outcome,
         row.outcomeCode,

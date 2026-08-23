@@ -8,7 +8,16 @@
 
 import path from 'node:path';
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { E2E_SLUG, AGENT_RICH_ID, AGENT_PLAIN_ID, RUN_STEP_FAILED_ID } from './seed';
+import {
+  E2E_SLUG,
+  AGENT_RICH_ID,
+  AGENT_PLAIN_ID,
+  AGENT_DEEP_ID,
+  RUN_STEP_FAILED_ID,
+  RUN_ITERATIONS_ID,
+  DEEP_LOOP_NAME,
+  DEEP_BRANCH_NAME,
+} from './seed';
 
 async function shot(
   page: Page,
@@ -142,7 +151,8 @@ test('builder — branch editor open', async ({ page }, testInfo) => {
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.getByRole('button', { name: /Edit branch: Anything actionable/ }).click();
   await expect(page.getByLabel('Branch name')).toBeVisible();
-  await expect(page.getByLabel('If yes, path')).toBeVisible();
+  await expect(page.getByLabel('Name of path 1')).toBeVisible();
+  await expect(page.getByText('If this decision fails, take a failure route')).toBeVisible();
   await shot(page, testInfo, 'builder-branch-editor');
 });
 
@@ -158,4 +168,70 @@ test('builder — edit plain agent', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/agents/${AGENT_PLAIN_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await shot(page, testInfo, 'builder-edit-plain');
+});
+
+/* ------------------------- v3 deep agent shots ---------------------- */
+
+test('builder — edit deep agent (loop container)', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  // The loop container is expanded by default at depth 1 — its body and
+  // the decorative back-edge are on screen.
+  await expect(page.getByRole('button', { name: `Edit loop: ${DEEP_LOOP_NAME}` })).toBeVisible();
+  await expect(page.getByText(/repeats up to 10×/)).toBeVisible();
+  await shot(page, testInfo, 'builder-edit-deep');
+});
+
+test('builder — loop editor open', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await page.getByRole('button', { name: `Edit loop: ${DEEP_LOOP_NAME}` }).click();
+  await expect(page.getByLabel('The list to go through')).toBeVisible();
+  await expect(page.getByText('Collect results into a list')).toBeVisible();
+  await shot(page, testInfo, 'builder-loop-editor');
+});
+
+test('builder — three-way router expanded', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  // The branch sits at display depth 2 (inside the loop), so it folds by
+  // default — expand it for the shot of the vertical route rows.
+  await page.getByRole('button', { name: `Expand branch: ${DEEP_BRANCH_NAME}` }).click();
+  await expect(page.getByText('Route 1: Critical')).toBeVisible();
+  await expect(page.getByText('Otherwise: Not worth acting on')).toBeVisible();
+  await expect(page.getByText('If this decision fails: If triage fails')).toBeVisible();
+  await shot(page, testInfo, 'builder-router-3way');
+});
+
+test('builder — drill into the loop', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await page.getByRole('button', { name: `Open loop: ${DEEP_LOOP_NAME}` }).click();
+  await expect(page.getByRole('navigation', { name: 'Flow breadcrumb' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Whole flow' })).toBeVisible();
+  await shot(page, testInfo, 'builder-drill-in');
+});
+
+test('builder — move-to menu', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/edit`);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await page.getByRole('button', { name: /Edit step 1: Collect the queue/ }).click();
+  if (testInfo.project.name === 'mobile') {
+    // On phones the selected node's controls ride in the editor modal's
+    // footer as a Move to… select.
+    await expect(page.getByLabel('Move to another list')).toBeVisible();
+  } else {
+    await page.getByRole('button', { name: 'Move step to another list' }).click();
+    await expect(page.getByRole('button', { name: `Loop "${DEEP_LOOP_NAME}"` })).toBeVisible();
+  }
+  await shot(page, testInfo, 'builder-move-to-menu', { fullPage: false });
+});
+
+test('run timeline with iterations', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/agents/${AGENT_DEEP_ID}/runs/${RUN_ITERATIONS_ID}`);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  // Looped steps group their rounds under amber iteration sub-headers.
+  await expect(page.getByText('Iteration 1').first()).toBeVisible();
+  await expect(page.getByText('Iteration 2').first()).toBeVisible();
+  await shot(page, testInfo, 'run-timeline-iterations');
 });

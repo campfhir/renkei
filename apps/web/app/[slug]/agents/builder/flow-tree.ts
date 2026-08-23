@@ -7,6 +7,9 @@
 
 import {
   BRANCH_DEFAULT_ATTEMPTS,
+  LOOP_DEFAULT_ITERATIONS,
+  MAX_BRANCH_DEPTH_V3,
+  MAX_CONTAINER_DEPTH,
   findNodeById,
   isBranchStep,
   walkSteps,
@@ -14,6 +17,8 @@ import {
   type AgentStepNode,
   type BranchPath,
   type BranchStep,
+  type ForEachLoopStep,
+  type GroupStep,
   type ValidationIssue,
 } from '@renkei/agents';
 import { randomUUID } from '@/lib/agents/uuid';
@@ -44,28 +49,84 @@ export function newBranch(): BranchStep {
   };
 }
 
+export function newLoop(): ForEachLoopStep {
+  return {
+    id: randomUUID(),
+    kind: 'loop',
+    mode: 'foreach',
+    name: '',
+    itemsVar: '',
+    itemVar: 'item',
+    maxIterations: LOOP_DEFAULT_ITERATIONS,
+    steps: [],
+  };
+}
+
+export function newGroup(): GroupStep {
+  return {
+    id: randomUUID(),
+    kind: 'group',
+    name: '',
+    steps: [],
+  };
+}
+
 /**
- * Where a node can be inserted: a position in the top-level list
- * (pathId null) or in a named branch path.
+ * Where a node can be inserted. Three list kinds exist in a v3 document:
+ * the top level (`containerId: null`), a branch path — logical or failure,
+ * both are BranchPath objects with doc-unique ids (`slot: 'path'`,
+ * containerId = the PATH's id) — and a loop/group body (`slot: 'body'`,
+ * containerId = the container NODE's id).
  */
-export interface InsertLocation {
-  pathId: string | null;
-  index: number;
+export type InsertLocation =
+  | { containerId: null; slot: null; index: number }
+  | { containerId: string; slot: 'path' | 'body'; index: number };
+
+export function topLocation(index: number): InsertLocation {
+  return { containerId: null, slot: null, index };
+}
+
+export function pathLocation(pathId: string, index: number): InsertLocation {
+  return { containerId: pathId, slot: 'path', index };
+}
+
+export function bodyLocation(containerId: string, index: number): InsertLocation {
+  return { containerId, slot: 'body', index };
 }
 
 function clone(nodes: AgentStepNode[]): AgentStepNode[] {
   return structuredClone(nodes);
 }
 
-function listAt(nodes: AgentStepNode[], pathId: string | null): AgentStepNode[] | null {
-  if (pathId === null) return nodes;
+/** Every BranchPath in the tree (logical and failure), with its branch. */
+function allPaths(
+  nodes: AgentStepNode[]
+): { branch: BranchStep; path: BranchPath; isFailurePath: boolean }[] {
+  const out: { branch: BranchStep; path: BranchPath; isFailurePath: boolean }[] = [];
   for (const { node } of walkSteps(nodes)) {
     if (!isBranchStep(node)) continue;
-    for (const path of node.paths) {
-      if (path.id === pathId) return path.steps;
+    for (const path of node.paths) out.push({ branch: node, path, isFailurePath: false });
+    if (node.failurePath) {
+      out.push({ branch: node, path: node.failurePath, isFailurePath: true });
     }
   }
-  return null;
+  return out;
+}
+
+/** The mutable child list a location points into, or null if it's gone. */
+export function listAtLocation(
+  nodes: AgentStepNode[],
+  location: InsertLocation
+): AgentStepNode[] | null {
+  if (location.containerId === null) return nodes;
+  if (location.slot === 'path') {
+    const owner = allPaths(nodes).find(({ path }) => path.id === location.containerId);
+    return owner ? owner.path.steps : null;
+  }
+  const found = findNodeById(nodes, location.containerId);
+  if (!found) return null;
+  const node = found.node;
+  return node.kind === 'loop' || node.kind === 'group' ? node.steps : null;
 }
 
 export function insertNode(
@@ -74,7 +135,7 @@ export function insertNode(
   node: AgentStepNode
 ): AgentStepNode[] {
   const next = clone(nodes);
-  const list = listAt(next, location.pathId);
+  const list = listAtLocation(next, location);
   if (!list) return next;
   list.splice(Math.max(0, Math.min(location.index, list.length)), 0, node);
   return next;
@@ -122,14 +183,241 @@ export function moveSibling(
 export function pathOf(
   nodes: AgentStepNode[],
   pathId: string
-): { branch: BranchStep; path: BranchPath } | null {
-  for (const { node } of walkSteps(nodes)) {
-    if (!isBranchStep(node)) continue;
-    for (const path of node.paths) {
-      if (path.id === pathId) return { branch: node, path };
+): { branch: BranchStep; path: BranchPath; isFailurePath: boolean } | null {
+  return allPaths(nodes).find(({ path }) => path.id === pathId) ?? null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Move-to: relocating a node across lists, with the same structural  */
+/* guards the schema enforces so the menu can never build an invalid  */
+/* document.                                                          */
+/* ------------------------------------------------------------------ */
+
+/** What the moved subtree itself contributes to nesting budgets. */
+interface SubtreeMetrics {
+  /** Deepest chain of branches inside (counting the node itself). */
+  branchDepth: number;
+  /** Deepest chain of branch+loop containers inside (groups free). */
+  containerDepth: number;
+  hasLoop: boolean;
+}
+
+function subtreeMetrics(node: AgentStepNode): SubtreeMetrics {
+  const ofList = (list: AgentStepNode[]): SubtreeMetrics => {
+    let branchDepth = 0;
+    let containerDepth = 0;
+    let hasLoop = false;
+    for (const child of list) {
+      const m = subtreeMetrics(child);
+      branchDepth = Math.max(branchDepth, m.branchDepth);
+      containerDepth = Math.max(containerDepth, m.containerDepth);
+      hasLoop = hasLoop || m.hasLoop;
+    }
+    return { branchDepth, containerDepth, hasLoop };
+  };
+  switch (node.kind) {
+    case 'branch': {
+      const lists = [...node.paths.map((path) => path.steps)];
+      if (node.failurePath) lists.push(node.failurePath.steps);
+      const inner = lists.map(ofList).reduce(
+        (a, b) => ({
+          branchDepth: Math.max(a.branchDepth, b.branchDepth),
+          containerDepth: Math.max(a.containerDepth, b.containerDepth),
+          hasLoop: a.hasLoop || b.hasLoop,
+        }),
+        { branchDepth: 0, containerDepth: 0, hasLoop: false }
+      );
+      return {
+        branchDepth: inner.branchDepth + 1,
+        containerDepth: inner.containerDepth + 1,
+        hasLoop: inner.hasLoop,
+      };
+    }
+    case 'loop': {
+      const inner = ofList(node.steps);
+      return {
+        branchDepth: inner.branchDepth,
+        containerDepth: inner.containerDepth + 1,
+        hasLoop: true,
+      };
+    }
+    case 'group':
+      // Depth-neutral, same as the schema's guards.
+      return ofList(node.steps);
+    case 'action':
+    case undefined:
+      return { branchDepth: 0, containerDepth: 0, hasLoop: false };
+    default: {
+      const unhandled: never = node;
+      throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
     }
   }
-  return null;
+}
+
+/** Nesting already surrounding a location's list. */
+interface LocationContext {
+  branchDepth: number;
+  containerDepth: number;
+  inLoop: boolean;
+  /** Node ids on the way down — a location inside X has X's id here. */
+  ancestorIds: string[];
+}
+
+function contextOfLocation(
+  nodes: AgentStepNode[],
+  location: InsertLocation
+): LocationContext | null {
+  if (location.containerId === null) {
+    return { branchDepth: 0, containerDepth: 0, inLoop: false, ancestorIds: [] };
+  }
+  const ownerId =
+    location.slot === 'path'
+      ? (pathOf(nodes, location.containerId)?.branch.id ?? null)
+      : location.containerId;
+  if (ownerId === null) return null;
+  const found = findNodeById(nodes, ownerId);
+  if (!found) return null;
+  const context: LocationContext = {
+    branchDepth: 0,
+    containerDepth: 0,
+    inLoop: false,
+    ancestorIds: [],
+  };
+  const enter = (node: AgentStepNode) => {
+    context.ancestorIds.push(node.id);
+    switch (node.kind) {
+      case 'branch':
+        context.branchDepth += 1;
+        context.containerDepth += 1;
+        break;
+      case 'loop':
+        context.containerDepth += 1;
+        context.inLoop = true;
+        break;
+      case 'group':
+      case 'action':
+      case undefined:
+        break;
+      default: {
+        const unhandled: never = node;
+        throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+      }
+    }
+  };
+  for (const ancestor of found.ancestors) {
+    switch (ancestor.kind) {
+      case 'branch':
+        enter(ancestor.branch);
+        break;
+      case 'loop':
+        enter(ancestor.loop);
+        break;
+      case 'group':
+        enter(ancestor.group);
+        break;
+      default: {
+        const unhandled: never = ancestor;
+        throw new Error(`unknown ancestor kind: ${JSON.stringify(unhandled)}`);
+      }
+    }
+  }
+  // The list is INSIDE the owning container, so the owner counts too.
+  enter(found.node);
+  return context;
+}
+
+function moveIsLegal(
+  nodes: AgentStepNode[],
+  node: AgentStepNode,
+  location: InsertLocation
+): boolean {
+  const context = contextOfLocation(nodes, location);
+  if (!context) return false;
+  // Cycle guard: a location inside the moved subtree lists the node itself
+  // among its ancestors.
+  if (context.ancestorIds.includes(node.id)) return false;
+  const metrics = subtreeMetrics(node);
+  if (context.branchDepth + metrics.branchDepth > MAX_BRANCH_DEPTH_V3) return false;
+  if (context.containerDepth + metrics.containerDepth > MAX_CONTAINER_DEPTH) return false;
+  if (context.inLoop && metrics.hasLoop) return false;
+  return true;
+}
+
+/**
+ * Move a node to another list. Returns the ORIGINAL array when the move is
+ * illegal (cycle, depth budget, loop-in-loop) or the location has vanished,
+ * so callers can treat identity as "nothing happened". The index is clamped
+ * after removal — moveTargets hands out end-of-list indices, which stay
+ * correct whichever list the node left.
+ */
+export function moveNodeTo(
+  nodes: AgentStepNode[],
+  id: string,
+  location: InsertLocation
+): AgentStepNode[] {
+  const source = findNodeById(nodes, id);
+  if (!source) return nodes;
+  if (!moveIsLegal(nodes, source.node, location)) return nodes;
+  const next = clone(nodes);
+  const found = findNodeById(next, id);
+  if (!found) return nodes;
+  const [node] = found.siblings.splice(found.index, 1);
+  const list = listAtLocation(next, location);
+  if (!list) return nodes;
+  list.splice(Math.max(0, Math.min(location.index, list.length)), 0, node);
+  return next;
+}
+
+export interface MoveTarget {
+  location: InsertLocation;
+  /** Menu label, e.g. `Path "A ticket exists" of "Triage"`. */
+  label: string;
+}
+
+function displayName(name: string, fallback: string): string {
+  return name.trim() || fallback;
+}
+
+/**
+ * Every list the node may legally move to, current list excluded (ordering
+ * within a list is the Up/Down buttons' job). Indices point at the end of
+ * each target list.
+ */
+export function moveTargets(nodes: AgentStepNode[], id: string): MoveTarget[] {
+  const found = findNodeById(nodes, id);
+  if (!found) return [];
+  const candidates: { location: InsertLocation; label: string; list: AgentStepNode[] }[] = [
+    { location: topLocation(nodes.length), label: 'Top level', list: nodes },
+  ];
+  for (const { branch, path, isFailurePath } of allPaths(nodes)) {
+    const branchName = displayName(branch.name, 'branch');
+    candidates.push({
+      location: pathLocation(path.id, path.steps.length),
+      label: isFailurePath
+        ? `Failure path of "${branchName}"`
+        : `Path "${displayName(path.name, 'path')}" of "${branchName}"`,
+      list: path.steps,
+    });
+  }
+  for (const { node } of walkSteps(nodes)) {
+    if (node.kind === 'loop') {
+      candidates.push({
+        location: bodyLocation(node.id, node.steps.length),
+        label: `Loop "${displayName(node.name, 'loop')}"`,
+        list: node.steps,
+      });
+    } else if (node.kind === 'group') {
+      candidates.push({
+        location: bodyLocation(node.id, node.steps.length),
+        label: `Group "${displayName(node.name, 'group')}"`,
+        list: node.steps,
+      });
+    }
+  }
+  return candidates
+    .filter(({ list }) => list !== found.siblings)
+    .filter(({ location }) => moveIsLegal(nodes, found.node, location))
+    .map(({ location, label }) => ({ location, label }));
 }
 
 /**

@@ -15,6 +15,8 @@ export const ICONS = {
   close: 'M6 6l12 12M18 6L6 18',
   step: 'M5 5h14v14H5z',
   branch: 'M12 2v6M12 8c0 3-6 2-6 6v6M12 8c0 3 6 2 6 6v6',
+  loop: 'M17 4l3 3-3 3M20 7H9a5 5 0 0 0 0 10h2M7 20l-3-3 3-3M4 17h11',
+  group: 'M4 8V5h3M20 8V5h-3M4 16v3h3M20 16v3h-3',
 };
 
 export function Icon({ path, className }: { path: string; className?: string }) {
