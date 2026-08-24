@@ -72,7 +72,7 @@ import {
   FINISH_STEP_TOOL,
   LOOP_DECISION_DEF,
   LOOP_DECISION_TOOL,
-  SYSTEM_PROMPT,
+  systemPromptWith,
 } from './prompt';
 import { logger } from './logger';
 
@@ -184,6 +184,20 @@ interface AttemptOutcome {
 interface RunContextText {
   memoryText: string;
   knowledgeText: string;
+  /**
+   * The agent's standing guardrails, live-read from the agents row (never
+   * snapshotted — tightening a rule must bite in-flight runs immediately)
+   * and injected IN FULL into every model call. '' = none.
+   */
+  guardrailsText: string;
+}
+
+/** agents.blocked_tools jsonb → the runtime's refusal set. */
+function blockedToolsOf(value: unknown): Set<string> {
+  if (!Array.isArray(value)) return new Set();
+  return new Set(
+    value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+  );
 }
 
 /** A run-level abort that retrying attempts cannot fix. */
@@ -524,10 +538,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const ordinals = new Map(walkSteps(nodes).map((entry) => [entry.node.id, entry.ordinal]));
 
     // The agent may have been disabled between enqueue and claim. The name
-    // rides along for terminal-node notifications.
+    // rides along for terminal-node notifications; guardrails and the
+    // blocked-tool set are LIVE-READ here on purpose (see RunContextText).
     const agentRow = await db
       .selectFrom('agents')
-      .select(['enabled', 'name'])
+      .select(['enabled', 'name', 'guardrails', 'blocked_tools'])
       .where('id', '=', run.agent_id)
       .executeTakeFirst();
     if (!agentRow) {
@@ -610,8 +625,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // and its own knowledge notes, both bounded at render time — the
       // read-side budget is what keeps prompts safe however large either
       // store grows. Best-effort: an unreadable memory degrades the run to
-      // amnesiac, it never fails it.
+      // amnesiac, it never fails it. Guardrails ride in from the agents
+      // row read above — deliberately unbounded (see RunContextText).
       const context = await loadRunContext(run);
+      context.guardrailsText = agentRow.guardrails ?? '';
+      const blockedTools = blockedToolsOf(agentRow.blocked_tools);
 
       // Crash-resume rebuilds the frame stack from where current_step_id
       // sits in the tree; a fresh run starts one frame at the top.
@@ -807,6 +825,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           lists,
           loopSourceVars,
           context,
+          blockedTools,
           deadline,
           settings.agentMaxStepAttempts,
           ordinals,
@@ -863,7 +882,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
         error: error instanceof Error ? error.message : String(error),
       });
     }
-    return { memoryText, knowledgeText };
+    // guardrailsText is filled by the caller from the agents row it
+    // already read — one query, not two.
+    return { memoryText, knowledgeText, guardrailsText: '' };
   }
 
   /** Builtins + trigger.* from initial_state; list-valued inputs also land in `lists`. */
@@ -1075,6 +1096,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     lists: Record<string, string[]>,
     loopSourceVars: ReadonlySet<string>,
     context: RunContextText,
+    blockedTools: ReadonlySet<string>,
     deadline: number,
     orgAttemptCap: number,
     ordinals: Map<string, number>,
@@ -1092,6 +1114,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
         kind: 'fail',
         errorKind: 'config',
         error: `The skill "${step.tool}" is not available to this agent's owner right now.`,
+      };
+    }
+    // Guardrails' mechanical arm: a blocked skill fails the run as a guard
+    // stop, live — a rule added mid-flight bites the very next step. The
+    // validator catches this at save; runtime is the backstop.
+    if (step.tool && blockedTools.has(step.tool)) {
+      return {
+        kind: 'fail',
+        errorKind: 'guard',
+        error: `The skill "${step.tool}" is blocked by this agent's guardrails.`,
       };
     }
 
@@ -1199,6 +1231,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           mcp,
           vars,
           context,
+          blockedTools,
           iteration,
           Boolean(step.saveAs && loopSourceVars.has(step.saveAs))
         );
@@ -1644,6 +1677,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
         ...(context.memoryText ? { memoryText: context.memoryText } : {}),
         ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
+        ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
       });
       const resolvedInstruction = renderInstruction(branch.condition, vars).text;
       const messages: LlmMessage[] = [...built.messages];
@@ -1888,6 +1922,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         ...(lastFailureSummary ? { previousFailure: lastFailureSummary } : {}),
         ...(context.memoryText ? { memoryText: context.memoryText } : {}),
         ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
+        ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
       });
       const resolvedInstruction = renderInstruction(loop.condition, vars).text;
       const messages: LlmMessage[] = [...built.messages];
@@ -2015,6 +2050,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     mcp: McpClient,
     vars: Record<string, string>,
     context: RunContextText,
+    blockedTools: ReadonlySet<string>,
     iteration: number,
     savesItemsForLoop: boolean
   ): Promise<AttemptOutcome> {
@@ -2032,14 +2068,18 @@ export function createAgentRunHandler(deps: EngineDeps) {
       savesItemsForLoop,
       ...(context.memoryText ? { memoryText: context.memoryText } : {}),
       ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
+      ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
     });
 
     // The step's one tool, plus (on corrective attempts) the guidance's
-    // chips — the deliberately laxer set for fixing a failure.
+    // chips — the deliberately laxer set for fixing a failure. Blocked
+    // skills never enter the offer, so guidance chips can't smuggle one
+    // past the guardrails.
     const offered: LlmToolDef[] = [FINISH_STEP_DEF];
     const primaryTool = step.tool;
     const offeredNames = new Set<string>([FINISH_STEP_TOOL]);
     const offer = (name: string) => {
+      if (blockedTools.has(name)) return;
       const info = toolsByName.get(name);
       if (!info || offeredNames.has(name)) return;
       offeredNames.add(name);
@@ -2079,7 +2119,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
     for (let turn = 0; turn < MAX_LLM_TURNS; turn += 1) {
       const completion = await llm.provider.complete({
-        system: SYSTEM_PROMPT,
+        system: systemPromptWith(context.guardrailsText || undefined),
         messages,
         tools: budgetExhausted ? [FINISH_STEP_DEF] : offered,
         toolChoice: budgetExhausted ? { name: FINISH_STEP_TOOL } : 'any',

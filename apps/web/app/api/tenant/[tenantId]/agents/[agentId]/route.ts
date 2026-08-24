@@ -131,6 +131,7 @@ export async function PUT(
         steps: normalized.steps,
         triggers: normalized.triggers,
         llmModelId: parsed.input.llmModelId,
+        guardrails: normalized.guardrails,
       })
     );
   }

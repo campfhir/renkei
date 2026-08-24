@@ -266,9 +266,13 @@ export function AgentBuilder({
       triggers?: TriggerDraft[];
       questions?: unknown;
       concerns?: unknown;
+      guardrails?: unknown;
       detail?: string;
     }>(`/api/tenant/${tenantId}/agents/draft`, 'POST', {
       text: prose,
+      // Existing guardrails constrain the draft; an empty slot invites the
+      // model to propose some from the description.
+      guardrails: guardrails.trim() ? guardrails : null,
       ...(hasRealSteps ? { steps: stepsDoc } : {}),
       // Trigger suggestions only while NONE are configured — the draft
       // fills an empty slot, it never rewrites what the user set up.
@@ -295,6 +299,11 @@ export function AgentBuilder({
         : []
     );
     setDraftConcerns(parseReviewNotes(result.data.concerns));
+    // A proposed guardrails doc only ever fills an empty panel — the model
+    // never rewrites rules the owner wrote.
+    if (!guardrails.trim() && typeof result.data.guardrails === 'string') {
+      setGuardrails(result.data.guardrails);
+    }
     if (!name.trim() && result.data.name) setName(result.data.name);
     if (triggers.length === 0 && Array.isArray(result.data.triggers)) {
       // A drafted schedule with no stated timezone means "the prose never

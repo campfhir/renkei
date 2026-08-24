@@ -46,6 +46,7 @@ export async function POST(
       steps: agent.steps,
       triggers: agent.triggers.map((trigger) => trigger.draft),
       llmModelId: agent.llmModelId,
+      guardrails: agent.guardrails,
     })
   );
 

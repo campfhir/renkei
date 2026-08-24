@@ -1756,4 +1756,62 @@ maybe('agent run engine', () => {
       .execute();
     expect(rows).toEqual([{ status: 'stopped', outcome: 'terminal' }]);
   });
+
+  it('injects guardrails into the system and step prompts, in full', async () => {
+    const { runId, agentId } = await seedRun(singleStep());
+    const guardrails = 'Never fabricate numbers. Draft only — never send anything.';
+    await db
+      .updateTable('agents')
+      .set({ guardrails })
+      .where('id', '=', agentId)
+      .execute();
+
+    const seen: LlmRequest[] = [];
+    const llm = stubLlm((request, call) => {
+      seen.push(request);
+      return call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-42' })
+        : finish('success', { saveValue: 'PROJ-42' });
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    expect(seen.length).toBeGreaterThan(0);
+    // The system prompt carries the override framing ONLY for agents with
+    // guardrails; the user message carries the document itself, unclipped.
+    expect(seen[0].system).toContain('the guardrails win');
+    const firstUser = JSON.stringify(seen[0].messages);
+    expect(firstUser).toContain('Standing guardrails');
+    expect(firstUser).toContain('Never fabricate numbers.');
+  });
+
+  it('fails the run as a guard stop when a step uses a blocked skill', async () => {
+    const { runId, agentId } = await seedRun(singleStep());
+    await db
+      .updateTable('agents')
+      .set({ blocked_tools: JSON.stringify(['jira_get_issue']) })
+      .where('id', '=', agentId)
+      .execute();
+
+    const llm = stubLlm(() => {
+      throw new Error('a blocked step must fail before any model call');
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('failed');
+    expect(run.error_kind).toBe('guard');
+    expect(run.error).toContain('blocked');
+  });
 });

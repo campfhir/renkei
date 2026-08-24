@@ -93,6 +93,7 @@ export async function POST(
       steps: normalized.steps,
       triggers: normalized.triggers,
       llmModelId: parsed.input.llmModelId,
+      guardrails: normalized.guardrails,
     })
   );
 

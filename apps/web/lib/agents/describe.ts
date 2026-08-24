@@ -183,7 +183,8 @@ function nodeLines(
 export function buildAgentReviewPrompt(
   name: string,
   steps: AgentStepsDoc,
-  triggers: TriggerDraft[]
+  triggers: TriggerDraft[],
+  guardrails?: string | null
 ): string {
   const ordinals = new Map(walkSteps(steps.steps).map((entry) => [entry.node.id, entry.ordinal]));
   const stepLines = nodeLines(steps.steps, ordinals, '');
@@ -195,6 +196,13 @@ export function buildAgentReviewPrompt(
   return [
     `An end user drafted this automation, named "${name}". It runs ${triggerLines}.`,
     '',
+    ...(guardrails?.trim()
+      ? [
+          'The owner wrote these STANDING GUARDRAILS — every step must obey them at run time, and a step that plainly conflicts with them is a top-priority concern:',
+          guardrails.trim(),
+          '',
+        ]
+      : []),
     'Steps (variables appear as [name], tools as [tool_name]):',
     stepLines,
     '',
@@ -208,7 +216,7 @@ export function buildAgentReviewPrompt(
     '',
     'Reply with JSON only, no code fences: {"summary": "...", "concerns": [{"issue": "...", "fix": "..."}]}.',
     'summary: 2-3 plain sentences telling the OWNER what this agent does, no technical terms, no tool identifiers.',
-    'concerns: 0-5 REAL logic problems a reviewer should check: an instruction promising work no step or tool performs, a step needing information nothing provides, contradictory failure handling, a saved result nothing uses. Each carries "issue" (what is wrong, one sentence) and "fix" (the concrete edit the owner should make, one sentence, e.g. which step to add or how to reword an instruction). Empty array if none.',
+    'concerns: 0-5 REAL logic problems a reviewer should check: an instruction promising work no step or tool performs, a step needing information nothing provides, contradictory failure handling, a saved result nothing uses, or a step that conflicts with the standing guardrails above (e.g. a sending step under a "draft only" rule). Each carries "issue" (what is wrong, one sentence) and "fix" (the concrete edit the owner should make, one sentence, e.g. which step to add or how to reword an instruction). Empty array if none.',
     'When naming a step, use its number EXACTLY as labeled above ("Step 7") — the owner sees these same numbers in the editor. Never invent dotted numbering like "Step 5.1.2".',
   ].join('\n');
 }
@@ -245,6 +253,7 @@ export async function generateAgentDescription(
     steps: AgentStepsDoc;
     triggers: TriggerDraft[];
     llmModelId: string | null;
+    guardrails?: string | null;
   }
 ): Promise<{ description: string | null; reviewNotes: ReviewNote[] }> {
   const failed = async (reason: string) => {
@@ -270,7 +279,15 @@ export async function generateAgentDescription(
         {
           role: 'user',
           content: [
-            { type: 'text', text: buildAgentReviewPrompt(agent.name, agent.steps, agent.triggers) },
+            {
+              type: 'text',
+              text: buildAgentReviewPrompt(
+                agent.name,
+                agent.steps,
+                agent.triggers,
+                agent.guardrails
+              ),
+            },
           ],
         },
       ],
