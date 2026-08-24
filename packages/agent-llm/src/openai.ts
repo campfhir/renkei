@@ -19,6 +19,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import { summarizeWireRequest } from './wire-summary';
+import { looksLikeCredentialFailure } from './contract';
 import type { Result } from '@campfhir/safe-functions/types';
 import type {
   LlmContentBlock,
@@ -121,7 +122,11 @@ function toolChoiceOf(request: LlmRequest): unknown {
   return { type: 'function', function: { name: request.toolChoice.name } };
 }
 
-function errorKindOf(status: number): LlmErrorKind {
+function errorKindOf(status: number, body = ''): LlmErrorKind {
+  // See looksLikeCredentialFailure: a gateway in front of the model answers
+  // a rejected upstream credential with 503, and retrying a dead key never
+  // helps. The body is the honest signal; the status is not.
+  if (looksLikeCredentialFailure(body)) return 'auth';
   if (status === 401 || status === 403) return 'auth';
   if (status === 429) return 'rate_limit';
   if (status === 400 || status === 404 || status === 413 || status === 422) {
@@ -235,7 +240,7 @@ export class OpenAiProvider implements LlmProvider {
           this.legacyMaxTokens = true;
           continue;
         }
-        return err(errorKindOf(response.status), {
+        return err(errorKindOf(response.status, text), {
           message: `OpenAI-compatible endpoint ${response.status}: ${text.slice(0, 500)}`,
           // The redacted request shape, for "what did we actually send"
           // troubleshooting — content replaced by lengths.

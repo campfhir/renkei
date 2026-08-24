@@ -150,12 +150,41 @@ describe('AnthropicProvider.complete', () => {
     [400, 'invalid_request'],
     [413, 'invalid_request'],
     [529, 'overloaded'],
+    // A gateway between us and the model (Azure, a proxy) speaks these, and
+    // they mean the same thing 529 does: try again shortly.
+    [502, 'overloaded'],
+    [503, 'overloaded'],
+    [504, 'overloaded'],
     [500, 'provider_error'],
   ])('maps HTTP %i to %s', async (status, kind) => {
     fetchSpy.mockResolvedValue(jsonResponse(status, { error: { message: 'nope' } }));
     const result = await provider.complete(request);
     if (result.ok) throw new Error('expected error');
     expect(result.err.type).toBe(kind);
+  });
+
+  it('reads a credential failure as auth even when dressed as a 503', async () => {
+    // The real shape of a broken org API key behind a gateway: the status
+    // says "retry me", the body says the key is no good. Retrying a dead
+    // credential burns one run per triggering event forever, and the run
+    // blames the agent's step rather than the org's model settings.
+    fetchSpy.mockResolvedValue(
+      jsonResponse(503, { error: { message: 'credential validation failed' } })
+    );
+    const result = await provider.complete(request);
+    if (result.ok) throw new Error('expected error');
+    expect(result.err.type).toBe('auth');
+  });
+
+  it('still treats a plain 503 as retryable — the sniff is narrow on purpose', async () => {
+    // The inverse mistake matters just as much: calling a transient fault
+    // "auth" would abort runs that should have been retried.
+    fetchSpy.mockResolvedValue(
+      jsonResponse(503, { error: { message: 'upstream temporarily unavailable' } })
+    );
+    const result = await provider.complete(request);
+    if (result.ok) throw new Error('expected error');
+    expect(result.err.type).toBe('overloaded');
   });
 
   it('maps an aborted request to timeout and a refused one to network', async () => {

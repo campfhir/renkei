@@ -82,3 +82,38 @@ export type LlmErrorKind =
 export interface LlmProvider {
   complete(request: LlmRequest): Promise<Result<LlmResponse, LlmErrorKind>>;
 }
+
+/**
+ * Whether an error body is a provider saying "your credential is no good",
+ * whatever status it chose to say it with.
+ *
+ * This exists because the status alone lies in a case that matters: a
+ * gateway sitting in front of the model (Azure, a corporate proxy, a load
+ * balancer) answers a rejected upstream credential with 503, and 503
+ * otherwise means "transient, retry me". Retrying is exactly wrong for a
+ * dead API key — it can never come true, and meanwhile every triggering
+ * event burns a run whose error blames the agent's step instead of the
+ * org's model settings.
+ *
+ * Deliberately narrow: phrases that only appear when a credential is being
+ * refused. A body merely containing the word "key" (a JSON parse complaint,
+ * a schema error naming a field) must NOT land here — misclassifying a
+ * transient fault as auth would abort runs that should have been retried,
+ * which is the same bug pointing the other way.
+ */
+const CREDENTIAL_FAILURE_PHRASES = [
+  'credential validation failed',
+  'invalid api key',
+  'invalid_api_key',
+  'incorrect api key',
+  'authentication_error',
+  'authentication failed',
+  'unauthorized',
+  'permission_error',
+];
+
+export function looksLikeCredentialFailure(body: string): boolean {
+  if (!body) return false;
+  const haystack = body.toLowerCase();
+  return CREDENTIAL_FAILURE_PHRASES.some((phrase) => haystack.includes(phrase));
+}
