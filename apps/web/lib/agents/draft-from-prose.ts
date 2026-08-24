@@ -33,6 +33,7 @@ import {
   LOOP_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
   TRIGGER_EVENT_CATALOG,
+  approvalPathsOf,
   flattenActionSteps,
   isBranchStep,
   isValidTimezone,
@@ -133,6 +134,14 @@ function currentLinesOf(nodes: AgentStepNode[]): string {
               : '; no notification')
           );
         }
+        case 'approval':
+          return (
+            `${indent}s${ordinal + 1}. [ask] "${node.name}" — pauses for the owner ` +
+            `(${node.mode === 'input' ? 'typed answer' : 'approve/decline'}, up to ${node.timeoutHours}h)` +
+            (node.saveAs ? `, saves the answer as "${node.saveAs}"` : '') +
+            ` — asks: ${segmentsToTokens(node.message)} (the indented steps below belong to its ` +
+            'approved/declined/timed-out paths)'
+          );
         case 'action':
         case undefined:
           return (
@@ -174,7 +183,9 @@ function promptOf(
   tools: ToolDescriptor[],
   currentSteps: AgentStepNode[],
   triggerVars: TriggerVarInfo[],
-  triggerOffer: TriggerOffer | null
+  triggerOffer: TriggerOffer | null,
+  guardrails: string | null,
+  offerGuardrails: boolean
 ): string {
   const toolLines = tools
     .filter((tool) => !tool.appOnly)
@@ -196,6 +207,19 @@ function promptOf(
     revising
       ? 'A user wants to CHANGE an existing automation. Apply exactly the change they describe — add, remove, reorder, or tweak steps as asked — and return the FULL revised step list. Echo steps the change does not touch VERBATIM (same instruction tokens, same saveAs).'
       : 'A user described an automation in plain words. Split it into ordered steps for a step-runner.',
+    ...(guardrails
+      ? [
+          '',
+          'The automation carries these STANDING GUARDRAILS the owner wrote — every run obeys ' +
+            'them, and every drafted step must respect them. Never draft a step that violates ' +
+            'one; when the description asks for something they forbid, add a question to ' +
+            '"questions" instead of drafting the violation:',
+          '"""',
+          guardrails,
+          '"""',
+          '',
+        ]
+      : []),
     'Rules:',
     '- Each step does ONE thing and may use AT MOST ONE tool from the list below (a step may also be pure reasoning with no tool).',
     '- When a step covers MANY items (a sprint of issues, a folder of mail, a search result set), choose the bulk tool (named *_bulk_*) or a single search over per-item tools — one step, one call, never one step per item.',
@@ -232,6 +256,15 @@ function promptOf(
     '- Only when the user NAMES a phase ("triage", "the cleanup part"), you may wrap steps ' +
       'in a GROUP object: {"kind": "group", "name": the phase name, "steps": [...]}. Groups ' +
       'change nothing about execution — never invent them.',
+    '- When the user wants a HUMAN DECISION mid-flow ("ask me before sending", "wait for my ' +
+      'approval", "let me pick the wording"), use an ASK object: {"kind": "ask", "name": short ' +
+      'label, "message": what to ask (may use {{var:...}} for context, never {{tool:...}}), ' +
+      '"mode": "approve" (approve/decline buttons) | "input" (the user types an answer, saved ' +
+      'under "saveAs" for later steps), "timeoutHours": how long to wait (default 72), ' +
+      '"notify": array of "email"/"webex" to alert the user with a link, and OPTIONAL ' +
+      '"onApproved"/"onDeclined"/"onTimeout": step arrays for each outcome (empty/omitted = ' +
+      'just continue). The run PAUSES at an ask until the user acts or the wait expires. Only ' +
+      'add one when the description asks for human sign-off or input.',
     '- When the user wants to be NOTIFIED about how the flow ends ("email me if it fails", ' +
       '"send me a WebEx note when it\'s done"), or wants a branch path to deliberately end ' +
       'the whole run, use an END object as the LAST entry of that list: {"kind": "end", ' +
@@ -324,6 +357,15 @@ function promptOf(
     '    the steps handle them (or why they need no handling),',
     '  "questions": OPTIONAL array of at most 5 short questions for the user — ONLY for',
     '    information the description leaves out that you must not guess; omit when none,',
+    ...(offerGuardrails
+      ? [
+          '  "guardrails": OPTIONAL string — ONLY when the description states STANDING RULES',
+          '    that apply to every run (e.g. "always draft, never send without approval",',
+          '    "never invent numbers", sources of truth and their precedence, privacy rules),',
+          '    collect them into one short plain-text document. Never restate the steps as',
+          '    guardrails; omit when the description states none,',
+        ]
+      : []),
     ...(triggerOffer
       ? [
           '  "triggers": OPTIONAL array as described above — omit it unless the description',
@@ -389,6 +431,21 @@ function promptOf(
     '    "name": string — the phase name, never empty,',
     '    "steps": array of steps — never empty' + (revising ? ',' : ''),
     ...(revising ? ['    "from": string or null — the sN id of the existing group, or null'] : []),
+    '  }',
+    '  Or an ask (ONLY when the description wants a human decision mid-flow):',
+    '  {',
+    '    "kind": "ask",',
+    '    "name": string — a short label, never empty,',
+    '    "message": string — what to ask the user; {{var:...}} allowed, {{tool:...}} forbidden,',
+    '    "mode": "approve" (buttons) or "input" (typed answer),',
+    '    "saveAs": string — required for "input": the answer\'s name for later steps,',
+    '    "timeoutHours": integer — how long to wait before the timed-out path (default 72),',
+    '    "notify": array containing "email" and/or "webex", or empty,',
+    '    "onApproved": array of steps or omitted — runs when approved/answered,',
+    '    "onDeclined": array of steps or omitted — runs when declined,',
+    '    "onTimeout": array of steps or omitted — runs when nobody acts in time' +
+      (revising ? ',' : ''),
+    ...(revising ? ['    "from": string or null — the sN id of the existing ask, or null'] : []),
     '  }',
     '  Or an end marker (ONLY when the description asks for a notification or an explicit ending):',
     '  {',
@@ -502,6 +559,13 @@ export interface DraftedAgent {
    * panel runs, surfaced BEFORE saving so the user is not surprised later.
    */
   concerns?: ReviewNote[];
+  /**
+   * Standing rules the model extracted from the prose ("draft only, never
+   * send", "never invent numbers") — proposed only when the agent has no
+   * guardrails yet; the builder fills its Guardrails panel with them for
+   * the owner to review.
+   */
+  guardrails?: string;
 }
 
 /**
@@ -518,6 +582,9 @@ const REPLY_ENVELOPE = z.object({
   // edge-case notes) also arrives but is working material, not output —
   // zod strips it with every other undeclared key.
   questions: z.array(z.unknown()).max(8, 'takes at most 5 questions').optional(),
+  // Proposed standing rules — honored only when the caller offered (the
+  // agent has none yet); a volunteered one is ignored otherwise.
+  guardrails: z.string().optional(),
 });
 
 const STEP_SHAPE = z.object({
@@ -588,6 +655,20 @@ const END_SHAPE = z.object({
   result: z.enum(['success', 'failure', 'stop']),
   message: z.string().nullable().optional(),
   notify: z.array(z.enum(['email', 'webex'])).optional(),
+  from: z.string().nullable().optional(),
+});
+
+const ASK_SHAPE = z.object({
+  kind: z.literal('ask'),
+  name: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  message: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  mode: z.enum(['approve', 'input']).optional(),
+  saveAs: z.string().nullable().optional(),
+  timeoutHours: z.number().int().min(1).optional(),
+  notify: z.array(z.enum(['email', 'webex'])).optional(),
+  onApproved: z.array(z.unknown()).optional(),
+  onDeclined: z.array(z.unknown()).optional(),
+  onTimeout: z.array(z.unknown()).optional(),
   from: z.string().nullable().optional(),
 });
 
@@ -792,14 +873,15 @@ function parseTriggerEntries(
   return drafts;
 }
 
-function wireKindOf(entry: unknown): 'branch' | 'loop' | 'group' | 'end' | 'action' {
+function wireKindOf(entry: unknown): 'branch' | 'loop' | 'group' | 'end' | 'ask' | 'action' {
   if (typeof entry === 'object' && entry !== null) {
     const candidate: { kind?: unknown } = entry;
     if (
       candidate.kind === 'branch' ||
       candidate.kind === 'loop' ||
       candidate.kind === 'group' ||
-      candidate.kind === 'end'
+      candidate.kind === 'end' ||
+      candidate.kind === 'ask'
     ) {
       return candidate.kind;
     }
@@ -845,7 +927,8 @@ function parseDraftReply(
   validTools: Set<string>,
   outcomesByTool: Map<string, Set<string>>,
   seedVars: Set<string>,
-  triggerOffer: TriggerOffer | null
+  triggerOffer: TriggerOffer | null,
+  offerGuardrails = false
 ): { ok: true; draft: DraftedAgent; softProblems: string[] } | { ok: false; problems: string[] } {
   const cleaned = raw.replace(/```(?:json)?/g, '');
   const start = cleaned.indexOf('{');
@@ -935,6 +1018,12 @@ function parseDraftReply(
         case 'group':
           dedupe(node.steps);
           break;
+        case 'approval':
+          for (const { path } of approvalPathsOf(node)) {
+            path.id = claimId(path.id);
+            dedupe(path.steps);
+          }
+          break;
         case 'terminal':
         case 'action':
         case undefined:
@@ -948,6 +1037,11 @@ function parseDraftReply(
   };
   dedupe(steps);
 
+  const proposedGuardrails =
+    offerGuardrails && typeof parsed.guardrails === 'string' && parsed.guardrails.trim()
+      ? parsed.guardrails.trim()
+      : null;
+
   return {
     ok: true,
     draft: {
@@ -955,6 +1049,7 @@ function parseDraftReply(
       steps,
       ...(triggers !== null ? { triggers } : {}),
       ...(questions.length > 0 ? { questions } : {}),
+      ...(proposedGuardrails ? { guardrails: proposedGuardrails } : {}),
     },
     softProblems,
   };
@@ -998,6 +1093,11 @@ function parseNodeList(
       case 'end': {
         const parsedEnd = parseEndEntry(entry, label, state);
         if (parsedEnd) nodes.push(parsedEnd);
+        break;
+      }
+      case 'ask': {
+        const parsedAsk = parseAskEntry(entry, label, state, nesting);
+        if (parsedAsk) nodes.push(parsedAsk);
         break;
       }
       case 'action': {
@@ -1308,6 +1408,88 @@ function parseEndEntry(entry: unknown, label: string, state: ParseState): Termin
   };
 }
 
+function parseAskEntry(
+  entry: unknown,
+  label: string,
+  state: ParseState,
+  nesting: WireNesting
+): AgentStepNode | null {
+  const checked = ASK_SHAPE.safeParse(entry);
+  if (!checked.success) {
+    state.problems.push(...zodProblems(`${label} (ask): `, checked.error));
+    return null;
+  }
+  const wire = checked.data;
+
+  // Branch-like containment, same budgets as a branch entry.
+  const inner: WireNesting = {
+    branchDepth: nesting.branchDepth + 1,
+    containerDepth: nesting.containerDepth + 1,
+    inLoop: nesting.inLoop,
+  };
+  if (inner.branchDepth > MAX_BRANCH_DEPTH_V3 || inner.containerDepth > MAX_CONTAINER_DEPTH) {
+    state.softProblems.push(
+      `${label} nests an ask deeper than the limit (${MAX_BRANCH_DEPTH_V3} branch levels, ${MAX_CONTAINER_DEPTH} container levels) — move it up.`
+    );
+    return null;
+  }
+
+  const mode = wire.mode ?? 'approve';
+  let saveAs = '';
+  if (mode === 'input') {
+    saveAs = claimBoundName(
+      typeof wire.saveAs === 'string' && wire.saveAs.trim() ? wire.saveAs : 'the answer',
+      label,
+      'answer',
+      state
+    );
+    if (!saveAs) {
+      state.problems.push(`${label} (ask): input mode needs a usable "saveAs" name.`);
+      return null;
+    }
+  }
+  for (const match of wire.message.matchAll(TOKEN_PATTERN)) {
+    const [, kind, rawName] = match;
+    const name = rawName.trim();
+    if (kind === 'var' && !state.knownVars.has(name)) {
+      state.softProblems.push(
+        name.startsWith('trigger.')
+          ? unknownTriggerVarProblem(`${label} (ask message)`, name, state.knownVars)
+          : `${label} references {{var:${name}}} in its message, which no earlier step saves and no trigger provides.`
+      );
+    }
+  }
+
+  const origin = originOf(state, wire.from);
+  const askOrigin = origin && origin.kind === 'approval' ? origin : undefined;
+  const notify = new Set(wire.notify ?? []);
+  const pathOf = (
+    key: 'onApproved' | 'onDeclined' | 'onTimeout',
+    fallbackName: string,
+    steps: unknown[] | undefined
+  ) => ({
+    id: askOrigin?.[key]?.id ?? randomUUID(),
+    name: fallbackName,
+    steps: steps ? parseNodeList(steps, `${label}.${key}`, state, inner) : [],
+  });
+
+  return {
+    id: askOrigin?.id ?? randomUUID(),
+    kind: 'approval',
+    name: wire.name.slice(0, 80),
+    // Tool chips never belong in an ask's message.
+    message: segmentsOf(wire.message, new Set<string>(), state.knownVars),
+    mode,
+    ...(saveAs ? { saveAs } : {}),
+    timeoutHours: wire.timeoutHours ?? askOrigin?.timeoutHours ?? 72,
+    notifyEmail: notify.has('email'),
+    notifyWebex: notify.has('webex'),
+    onApproved: pathOf('onApproved', mode === 'input' ? 'Answered' : 'Approved', wire.onApproved),
+    onDeclined: pathOf('onDeclined', 'Declined', wire.onDeclined),
+    onTimeout: pathOf('onTimeout', 'No answer in time', wire.onTimeout),
+  };
+}
+
 function parseActionEntry(
   step: z.infer<typeof STEP_SHAPE>,
   label: string,
@@ -1467,6 +1649,7 @@ async function reviewDraftConcerns(
   llm: ResolvedLlm,
   tenantId: string,
   draft: DraftedAgent,
+  guardrails: string | null,
   budgetMs: number
 ): Promise<ReviewNote[] | null> {
   if (budgetMs < 10_000) return null;
@@ -1486,7 +1669,8 @@ async function reviewDraftConcerns(
               text: buildAgentReviewPrompt(
                 draft.name || 'Untitled automation',
                 stepsDoc,
-                draft.triggers ?? []
+                draft.triggers ?? [],
+                guardrails
               ),
             },
           ],
@@ -1553,14 +1737,27 @@ async function closeReviewGaps(context: {
   outcomesByTool: Map<string, Set<string>>;
   seedVars: Set<string>;
   triggerOffer: TriggerOffer | null;
+  /** The agent's existing guardrails; null = none configured. */
+  guardrails: string | null;
+  /** Whether the reply may propose guardrails (only when none exist). */
+  offerGuardrails: boolean;
   draft: DraftedAgent;
   draftRaw: string;
 }): Promise<DraftedAgent> {
   const { llm, tenantId, deadline, messages } = context;
   let current = context.draft;
   let currentRaw = context.draftRaw;
+  // The critic judges against the EFFECTIVE rules: the configured ones, or
+  // the ones this very draft proposed.
+  const effectiveGuardrails = () => context.guardrails ?? current.guardrails ?? null;
 
-  let concerns = await reviewDraftConcerns(llm, tenantId, current, deadline - Date.now());
+  let concerns = await reviewDraftConcerns(
+    llm,
+    tenantId,
+    current,
+    effectiveGuardrails(),
+    deadline - Date.now()
+  );
   if (concerns === null) return current;
 
   for (let round = 1; concerns.length > 0 && round <= MAX_REFINE_ROUNDS; round += 1) {
@@ -1601,7 +1798,8 @@ async function closeReviewGaps(context: {
       context.validTools,
       context.outcomesByTool,
       context.seedVars,
-      context.triggerOffer
+      context.triggerOffer,
+      context.offerGuardrails
     );
     // A refinement that regresses to unparseable loses; the pre-refine
     // draft (with its concerns attached) beats an error.
@@ -1609,7 +1807,13 @@ async function closeReviewGaps(context: {
     current = parsed.draft;
     currentRaw = raw;
 
-    const next = await reviewDraftConcerns(llm, tenantId, current, deadline - Date.now());
+    const next = await reviewDraftConcerns(
+      llm,
+      tenantId,
+      current,
+      effectiveGuardrails(),
+      deadline - Date.now()
+    );
     // Review broke mid-loop: the refined draft stands, with the previous
     // round's concerns as the honest "still to check" list.
     if (next === null) break;
@@ -1639,6 +1843,12 @@ export async function draftAgentFromProse(
     /** The caller's other agents, offered as agent-finished trigger targets. */
     otherAgents?: AgentOption[];
     /**
+     * The agent's existing guardrails: drafted steps must respect them,
+     * and the critic judges against them. When absent, the reply may
+     * PROPOSE guardrails extracted from the prose.
+     */
+    guardrails?: string | null;
+    /**
      * Run the gap-closing loop on a usable draft: review it with the
      * save-time critic and hand concerns back to the drafting model until
      * they close, the rounds run out, or the budget does. Off by default —
@@ -1652,6 +1862,10 @@ export async function draftAgentFromProse(
   const triggerOffer: TriggerOffer | null = options.suggestTriggers
     ? { otherAgents: options.otherAgents ?? [] }
     : null;
+  const guardrails = options.guardrails?.trim() || null;
+  // Guardrails proposals only fill an empty slot — the draft never
+  // rewrites rules the owner already wrote (same posture as triggers).
+  const offerGuardrails = guardrails === null;
   const llmResult = await resolveAgentLlm(db, tenantId, null);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization yet.' };
@@ -1689,7 +1903,9 @@ export async function draftAgentFromProse(
             tools,
             currentSteps,
             triggerVars,
-            triggerOffer
+            triggerOffer,
+            guardrails,
+            offerGuardrails
           ),
         },
       ],
@@ -1779,7 +1995,8 @@ export async function draftAgentFromProse(
       validTools,
       outcomesByTool,
       seedVars,
-      triggerOffer
+      triggerOffer,
+      offerGuardrails
     );
 
     if (parsed.ok) {
@@ -1831,6 +2048,8 @@ export async function draftAgentFromProse(
       outcomesByTool,
       seedVars,
       triggerOffer,
+      guardrails,
+      offerGuardrails,
       draft: usable,
       draftRaw: usableRaw,
     });

@@ -18,6 +18,7 @@ import {
   type ActionStep,
   type AgentStepNode,
   type AgentStepsDoc,
+  type BranchPath,
   type TriggerDraft,
 } from '@renkei/agents';
 import { resolveAgentLlm } from '@renkei/agent-llm';
@@ -146,6 +147,29 @@ function nodeLines(
             `${indent}${label} ${node.name} (a group — organizes the steps below; changes nothing about execution)`,
             nodeLines(node.steps, ordinals, `${indent}      `),
           ].join('\n');
+        case 'approval': {
+          const pathBlock = (path: BranchPath, heading: string) => {
+            const body = path.steps.length
+              ? nodeLines(path.steps, ordinals, `${indent}      `)
+              : `${indent}      (nothing — continues after the approval)`;
+            return `${indent}   ${heading} "${path.name}":\n${body}`;
+          };
+          const channels = [
+            ...(node.notifyEmail ? ['an email'] : []),
+            ...(node.notifyWebex ? ['a WebEx note'] : []),
+          ];
+          return [
+            `${indent}${label} ${node.name} (an approval — the run PAUSES here and waits for the OWNER, up to ${node.timeoutHours} hours)`,
+            `${indent}   asks: ${instructionPreview(node.message)}${node.mode === 'input' ? ` (the owner types an answer${node.saveAs ? `, saved as "${node.saveAs}"` : ''})` : ' (the owner approves or declines)'}`,
+            channels.length > 0
+              ? `${indent}   at the pause the owner gets ${channels.join(' and ')} with the message and a link`
+              : `${indent}   no notification — the owner sees the card on their home page`,
+            pathBlock(node.onApproved, node.mode === 'input' ? 'if answered, path' : 'if approved, path'),
+            pathBlock(node.onDeclined, 'if declined, path'),
+            pathBlock(node.onTimeout, 'if nobody acts in time, path'),
+            `${indent}   after a path finishes, the automation continues below the approval`,
+          ].join('\n');
+        }
         case 'terminal': {
           const wording =
             node.result === 'failure'
@@ -174,6 +198,16 @@ function nodeLines(
 }
 
 /**
+ * The whole steps document as the reviewer's plain-text outline — exported
+ * so the agents-over-MCP tools can show a definition without inventing a
+ * THIRD renderer. Same pre-order numbering as the canvas and timeline.
+ */
+export function renderStepsOutline(steps: AgentStepsDoc): string {
+  const ordinals = new Map(walkSteps(steps.steps).map((entry) => [entry.node.id, entry.ordinal]));
+  return nodeLines(steps.steps, ordinals, '');
+}
+
+/**
  * The reviewer prompt, exported so prose drafting can run the SAME critic
  * against a draft before the user ever sees it — the gap-closing loop and
  * the save-time "Worth checking" panel must judge by one set of rules, or
@@ -183,7 +217,8 @@ function nodeLines(
 export function buildAgentReviewPrompt(
   name: string,
   steps: AgentStepsDoc,
-  triggers: TriggerDraft[]
+  triggers: TriggerDraft[],
+  guardrails?: string | null
 ): string {
   const ordinals = new Map(walkSteps(steps.steps).map((entry) => [entry.node.id, entry.ordinal]));
   const stepLines = nodeLines(steps.steps, ordinals, '');
@@ -195,6 +230,13 @@ export function buildAgentReviewPrompt(
   return [
     `An end user drafted this automation, named "${name}". It runs ${triggerLines}.`,
     '',
+    ...(guardrails?.trim()
+      ? [
+          'The owner wrote these STANDING GUARDRAILS — every step must obey them at run time, and a step that plainly conflicts with them is a top-priority concern:',
+          guardrails.trim(),
+          '',
+        ]
+      : []),
     'Steps (variables appear as [name], tools as [tool_name]):',
     stepLines,
     '',
@@ -205,10 +247,11 @@ export function buildAgentReviewPrompt(
     "- The runner checks each step's tool is available before running, and verifies tool errors against the declared success.",
     '- Loop round limits and the collected-list size are engine-enforced ceilings with truncation notes — do not flag them as missing safeguards.',
     '- An end marker ends the WHOLE run exactly as configured (success, failure, or nothing-to-do) and delivers only its own configured notifications — the editor already prevents steps after it, and a failure ending without notifications is a deliberate choice, not a flaw.',
+    '- An approval pauses the run safely for the owner: exactly one of its three paths runs (approved/answered, declined, or timed out — every wait has an engine-enforced ceiling), and an empty path just continues below. Do not flag the pause, the wait, or an empty outcome path as problems.',
     '',
     'Reply with JSON only, no code fences: {"summary": "...", "concerns": [{"issue": "...", "fix": "..."}]}.',
     'summary: 2-3 plain sentences telling the OWNER what this agent does, no technical terms, no tool identifiers.',
-    'concerns: 0-5 REAL logic problems a reviewer should check: an instruction promising work no step or tool performs, a step needing information nothing provides, contradictory failure handling, a saved result nothing uses. Each carries "issue" (what is wrong, one sentence) and "fix" (the concrete edit the owner should make, one sentence, e.g. which step to add or how to reword an instruction). Empty array if none.',
+    'concerns: 0-5 REAL logic problems a reviewer should check: an instruction promising work no step or tool performs, a step needing information nothing provides, contradictory failure handling, a saved result nothing uses, or a step that conflicts with the standing guardrails above (e.g. a sending step under a "draft only" rule). Each carries "issue" (what is wrong, one sentence) and "fix" (the concrete edit the owner should make, one sentence, e.g. which step to add or how to reword an instruction). Empty array if none.',
     'When naming a step, use its number EXACTLY as labeled above ("Step 7") — the owner sees these same numbers in the editor. Never invent dotted numbering like "Step 5.1.2".',
   ].join('\n');
 }
@@ -245,6 +288,7 @@ export async function generateAgentDescription(
     steps: AgentStepsDoc;
     triggers: TriggerDraft[];
     llmModelId: string | null;
+    guardrails?: string | null;
   }
 ): Promise<{ description: string | null; reviewNotes: ReviewNote[] }> {
   const failed = async (reason: string) => {
@@ -270,7 +314,15 @@ export async function generateAgentDescription(
         {
           role: 'user',
           content: [
-            { type: 'text', text: buildAgentReviewPrompt(agent.name, agent.steps, agent.triggers) },
+            {
+              type: 'text',
+              text: buildAgentReviewPrompt(
+                agent.name,
+                agent.steps,
+                agent.triggers,
+                agent.guardrails
+              ),
+            },
           ],
         },
       ],

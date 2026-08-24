@@ -97,6 +97,15 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     toolPrefix: 'card_*',
   },
   {
+    capabilityKey: 'agents',
+    // No connector_configs row: agents live entirely in Renkei's own
+    // store — the key exists so the identifier stays consistent.
+    configKey: 'agents',
+    label: 'Renkei agents',
+    summary: 'Read, draft and update your own agents — definitions, runs, knowledge, memory.',
+    toolPrefix: 'agent_*',
+  },
+  {
     capabilityKey: 'knowledge',
     configKey: 'embeddings',
     label: 'Knowledge',

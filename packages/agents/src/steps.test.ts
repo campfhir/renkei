@@ -16,10 +16,13 @@ import {
   flattenActionSteps,
   isAgentStepsDoc,
   isBranchStep,
+  requiredVersion,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
+  type ApprovalStep,
   type BranchStep,
+  type TerminalStep,
 } from './steps';
 
 function action(overrides: Partial<ActionStep> = {}): ActionStep {
@@ -121,7 +124,7 @@ describe('isAgentStepsDoc', () => {
   });
 
   it('rejects unknown versions', () => {
-    expect(isAgentStepsDoc({ version: 5, steps: [] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 6, steps: [] })).toBe(false);
   });
 
   it('accepts an empty version-3 document shell', () => {
@@ -380,5 +383,95 @@ describe('tree helpers', () => {
     expect(containsBranch([action()])).toBe(false);
     expect(containsBranch([action(), branch()])).toBe(true);
     expect(isBranchStep(branch())).toBe(true);
+  });
+});
+
+describe('approval nodes (version 5)', () => {
+  const approval = (overrides: Partial<ApprovalStep> = {}): ApprovalStep => ({
+    id: randomUUID(),
+    kind: 'approval',
+    name: 'Ship it?',
+    message: [{ t: 'text', v: 'OK to send the report?' }],
+    mode: 'approve',
+    timeoutHours: 72,
+    notifyEmail: true,
+    notifyWebex: false,
+    onApproved: { id: randomUUID(), name: 'Approved', steps: [] },
+    onDeclined: { id: randomUUID(), name: 'Rejected', steps: [] },
+    onTimeout: { id: randomUUID(), name: 'No answer in time', steps: [] },
+    ...overrides,
+  });
+
+  it('admits approval nodes only at version 5', () => {
+    const node = approval();
+    expect(isAgentStepsDoc({ version: 5, steps: [node] })).toBe(true);
+    expect(isAgentStepsDoc({ version: 4, steps: [node] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 3, steps: [node] })).toBe(false);
+    expect(
+      isAgentStepsDoc({ version: 5, steps: [{ ...node, mode: 'shout' }] })
+    ).toBe(false);
+    expect(
+      isAgentStepsDoc({ version: 5, steps: [{ ...node, onTimeout: undefined }] })
+    ).toBe(false);
+  });
+
+  it('requiredVersion puts approval above terminal', () => {
+    const terminal: TerminalStep = {
+      id: randomUUID(),
+      kind: 'terminal',
+      name: 'Stop',
+      result: 'stop',
+      message: [],
+      notifyEmail: false,
+      notifyWebex: false,
+    };
+    expect(requiredVersion([approval()])).toBe(5);
+    expect(
+      requiredVersion([approval({ onDeclined: { id: randomUUID(), name: 'R', steps: [terminal] } })])
+    ).toBe(5);
+    expect(requiredVersion([terminal])).toBe(4);
+  });
+
+  it('walks and finds nodes inside outcome paths with the path grammar', () => {
+    const inner: ActionStep = {
+      id: randomUUID(),
+      name: 'Send it',
+      instruction: [{ t: 'text', v: 'send' }],
+      tool: null,
+      maxAttempts: 1,
+      failureHandling: [],
+    };
+    const node = approval({ onApproved: { id: randomUUID(), name: 'Approved', steps: [inner] } });
+    const walked = walkSteps([node]);
+    expect(walked.map((entry) => entry.path)).toEqual(['steps.0', 'steps.0.onApproved.steps.0']);
+
+    const found = findNodeById([node], inner.id);
+    expect(found?.ancestors).toHaveLength(1);
+    const ancestor = found?.ancestors[0];
+    expect(ancestor?.kind).toBe('approval');
+    if (ancestor?.kind === 'approval') expect(ancestor.outcome).toBe('onApproved');
+  });
+
+  it('counts approval toward the branch nesting budget', () => {
+    // approval > branch > branch > branch exceeds the 3-level branch cap.
+    const deepBranch = (steps: AgentStepNode[]): BranchStep => ({
+      id: randomUUID(),
+      kind: 'branch',
+      name: 'B',
+      condition: [{ t: 'text', v: 'x?' }],
+      paths: [
+        { id: randomUUID(), name: 'Yes', steps },
+        { id: randomUUID(), name: 'No', steps: [] },
+      ],
+      maxAttempts: 2,
+    });
+    const tooDeep = approval({
+      onApproved: {
+        id: randomUUID(),
+        name: 'Approved',
+        steps: [deepBranch([deepBranch([deepBranch([])])])],
+      },
+    });
+    expect(isAgentStepsDoc({ version: 5, steps: [tooDeep] })).toBe(false);
   });
 });

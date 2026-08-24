@@ -62,6 +62,10 @@ export interface StoredAgent {
   stepsVersion: number;
   llmModelId: string | null;
   enabled: boolean;
+  /** Standing instructions injected into every run's model calls. */
+  guardrails: string | null;
+  /** Act tools the engine refuses for this agent's model-driven calls. */
+  blockedTools: string[];
   createdAt: string;
   updatedAt: string;
   triggers: StoredTrigger[];
@@ -198,8 +202,16 @@ interface AgentRow {
   steps_version: number;
   llm_model_id: string | null;
   enabled: boolean;
+  guardrails: string | null;
+  blocked_tools: Json | null;
   created_at: Date;
   updated_at: Date;
+}
+
+/** blocked_tools jsonb → string[], defensively (it round-trips through jsonb). */
+function blockedToolsOf(value: Json | null): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
 }
 
 async function toStored(
@@ -218,6 +230,8 @@ async function toStored(
     stepsVersion: row.steps_version,
     llmModelId: row.llm_model_id,
     enabled: row.enabled,
+    guardrails: row.guardrails,
+    blockedTools: blockedToolsOf(row.blocked_tools),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     triggers: await triggersOf(db, tenantId, row.id),
@@ -234,6 +248,8 @@ const AGENT_COLUMNS = [
   'steps_version',
   'llm_model_id',
   'enabled',
+  'guardrails',
+  'blocked_tools',
   'created_at',
   'updated_at',
 ] as const;
@@ -487,6 +503,8 @@ export interface SaveAgentInput {
   triggers: TriggerPayload[];
   enabled: boolean;
   llmModelId: string | null;
+  guardrails: string | null;
+  blockedTools: string[];
 }
 
 export async function createAgent(
@@ -507,6 +525,8 @@ export async function createAgent(
         steps: JSON.stringify(input.steps),
         llm_model_id: input.llmModelId,
         enabled: input.enabled,
+        guardrails: input.guardrails,
+        blocked_tools: JSON.stringify(input.blockedTools),
         description_status: 'stale',
       })
       .execute();
@@ -544,6 +564,8 @@ export async function updateAgent(
         steps_version: sql`steps_version + 1`,
         llm_model_id: input.llmModelId,
         enabled: input.enabled,
+        guardrails: input.guardrails,
+        blocked_tools: JSON.stringify(input.blockedTools),
         ...(options.markDescriptionStale === false ? {} : { description_status: 'stale' }),
         updated_at: sql`NOW()`,
       })

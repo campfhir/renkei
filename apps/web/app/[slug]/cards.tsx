@@ -1,6 +1,8 @@
 import React from 'react';
+import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
 import CardActions from './card-actions';
+import ApprovalActions from './approval-actions';
 import ArchiveAction from './archive-action';
 
 /**
@@ -21,10 +23,13 @@ import ArchiveAction from './archive-action';
  */
 export default async function ActionableCards({
   tenantId,
+  slug,
   subject,
   showArchived = false,
 }: {
   tenantId: string;
+  /** The tenant's URL slug — approval cards link to their paused run. */
+  slug: string;
   /** The viewer's OIDC subject — what owner-scoped cards are matched on. */
   subject: string;
   showArchived?: boolean;
@@ -50,6 +55,9 @@ export default async function ActionableCards({
       'actionable_items.summary as summary',
       'actionable_items.evidence as evidence',
       'actionable_items.result as result',
+      'actionable_items.suggested_action as suggested_action',
+      'actionable_items.run_id as run_id',
+      'actionable_items.created_by_agent_id as agent_id',
       'actionable_items.created_at as created_at',
       'actionable_items.archived_at as archived_at',
       'agents.name as agent_name',
@@ -96,14 +104,41 @@ export default async function ActionableCards({
 
           <RelatedEvidence evidence={item.evidence} />
 
-          {item.status === 'suggested' && (
-            <CardActions tenantId={tenantId} itemId={item.id} dismissOnly={item.kind === 'info'} />
-          )}
+          {item.kind === 'approval' && item.run_id && item.agent_id ? (
+            <p className="mb-2 text-sm">
+              <Link
+                href={`/${slug}/agents/${item.agent_id}/runs/${item.run_id}`}
+                className="text-blue-600 hover:underline dark:text-blue-400"
+              >
+                View the paused run →
+              </Link>
+            </p>
+          ) : null}
 
+          {item.status === 'suggested' &&
+            (item.kind === 'approval' ? (
+              // No dismiss here: declining is the "no", and doing nothing
+              // lets the wait route the flow's timed-out path.
+              <ApprovalActions
+                tenantId={tenantId}
+                itemId={item.id}
+                mode={approvalModeOf(item.suggested_action)}
+              />
+            ) : (
+              <CardActions
+                tenantId={tenantId}
+                itemId={item.id}
+                dismissOnly={item.kind === 'info'}
+              />
+            ))}
+
+          {item.kind === 'approval' && item.status !== 'suggested' && (
+            <ApprovalOutcome status={item.status} result={item.result} />
+          )}
           {item.status === 'executed' && <ExecutionResult result={item.result} />}
           {item.status === 'failed' && <ExecutionResult result={item.result} failed />}
 
-          {item.status !== 'suggested' && (
+          {item.status !== 'suggested' && item.kind !== 'approval' && (
             <ArchiveAction
               tenantId={tenantId}
               itemId={item.id}
@@ -114,6 +149,32 @@ export default async function ActionableCards({
       ))}
     </div>
   );
+}
+
+/** The engine stamps the node's mode on the card so the UI knows its controls. */
+function approvalModeOf(suggestedAction: unknown): 'approve' | 'input' {
+  if (typeof suggestedAction === 'object' && suggestedAction !== null) {
+    const record: Record<string, unknown> = { ...suggestedAction };
+    if (record.approvalMode === 'input') return 'input';
+  }
+  return 'approve';
+}
+
+/** What happened to a decided approval card — the feed's audit line. */
+function ApprovalOutcome({ status, result }: { status: string; result: unknown }): React.ReactNode {
+  const record: Record<string, unknown> =
+    typeof result === 'object' && result !== null ? { ...result } : {};
+  const wording =
+    status === 'approved'
+      ? typeof record.answer === 'string' && record.answer
+        ? `You answered: ${record.answer}`
+        : 'You approved — the run continued.'
+      : status === 'declined'
+        ? 'You declined.'
+        : record.reason === 'run-ended' || record.reason === 'agent-disabled'
+          ? 'The run ended before anyone decided.'
+          : 'Nobody decided in time — the run took its timed-out path.';
+  return <p className="whitespace-pre-wrap text-sm text-gray-600 dark:text-gray-400">{wording}</p>;
 }
 
 /**

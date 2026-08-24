@@ -76,6 +76,22 @@ export default async function SharedAgentPage({
         </p>
       ) : null}
 
+      {agent.guardrails || agent.blockedTools.length > 0 ? (
+        <div className="mb-4">
+          <h2 className="mb-2 text-sm font-semibold">Guardrails &amp; context</h2>
+          {agent.blockedTools.length > 0 ? (
+            <p className="mb-2 text-xs text-gray-600 dark:text-gray-400">
+              <span className="font-medium">Blocked skills:</span> {agent.blockedTools.join(', ')}
+            </p>
+          ) : null}
+          {agent.guardrails ? (
+            <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-800 dark:bg-gray-900 dark:text-gray-200">
+              {agent.guardrails}
+            </pre>
+          ) : null}
+        </div>
+      ) : null}
+
       <h2 className="mb-2 text-sm font-semibold">Triggers</h2>
       {agent.triggers.length === 0 ? (
         <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">None configured.</p>

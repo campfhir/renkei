@@ -5,7 +5,8 @@
  * and they should look it over first).
  *
  * What copies: name (deduped with a "(copy)" suffix), steps, the model
- * pin, event/schedule/API triggers, and the agent's KNOWLEDGE notes —
+ * pin, GUARDRAILS and blocked skills (policy is configuration and travels
+ * with it), event/schedule/API triggers, and the agent's KNOWLEDGE notes —
  * re-authored under the recipient, embeddings reused. API triggers mint
  * FRESH keys (returned once, the builder rule). What does not: 'agent'
  * (chained) triggers — they point at the sharer's other agents; MEMORY —
@@ -77,6 +78,8 @@ export async function POST(
       triggers,
       enabled: false,
       llmModelId: shared.llmModelId,
+      guardrails: shared.guardrails,
+      blockedTools: shared.blockedTools,
     });
     if (created === 'NAME_TAKEN') continue;
 

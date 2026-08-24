@@ -16,6 +16,7 @@ export interface EditableSettings {
   agentRunTimeoutMinutes: number;
   agentMaxStepAttempts: number;
   agentMaxRunsPerDay: number;
+  agentApprovalMaxWaitDays: number;
   contentPollMinutes: number;
   logRetentionDays: number;
 }
@@ -176,6 +177,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How many agents may trigger each other in a chain before the platform refuses."
         >
           {numberInput('agentMaxChainDepth', '1–10')}
+        </Row>
+        <Row
+          label="Max approval wait (days)"
+          hint="Ceiling on how long an 'Ask for approval' step may wait for its owner before its timeout path runs. Nodes set their own wait; this clamps them, existing agents included."
+        >
+          {numberInput('agentApprovalMaxWaitDays', '1–90')}
         </Row>
       </Section>
 

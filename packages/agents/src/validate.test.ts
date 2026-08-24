@@ -63,6 +63,8 @@ function draft(overrides: Partial<AgentDraft> = {}): AgentDraft {
     triggers: [],
     enabled: false,
     llmModelId: null,
+    guardrails: null,
+    blockedTools: [],
     ...overrides,
   };
 }
@@ -733,5 +735,139 @@ describe('terminal nodes (version 4)', () => {
       TOOLS
     );
     expect(messagesOf(issues).some((message) => message.includes('never run'))).toBe(true);
+  });
+});
+
+describe('guardrails and blocked skills', () => {
+  it('normalizes guardrails (trim, empty → null) and dedupes blocked tools', () => {
+    const normalized = normalizeAgentDraft(
+      draft({
+        guardrails: '  Draft only. Never send.  ',
+        blockedTools: [' jira_create_issue', 'jira_create_issue', '', 'jira_get_issue '],
+      })
+    );
+    expect(normalized.guardrails).toBe('Draft only. Never send.');
+    expect(normalized.blockedTools).toEqual(['jira_create_issue', 'jira_get_issue']);
+    expect(normalizeAgentDraft(draft({ guardrails: '   ' })).guardrails).toBeNull();
+  });
+
+  it('accepts a long guardrails document — the cap is a sanity bound only', () => {
+    const long = 'Never fabricate numbers. '.repeat(2_000); // ~50k chars
+    expect(validateAgentDraft(draft({ guardrails: long }), TOOLS)).toEqual([]);
+  });
+
+  it('rejects a step whose skill is blocked by the guardrails', () => {
+    const issues = validateAgentDraft(
+      draft({ blockedTools: ['jira_get_issue'] }),
+      TOOLS
+    );
+    expect(issues.some((issue) => issue.path === 'steps.0.tool')).toBe(true);
+    expect(messagesOf(issues).some((message) => message.includes('blocked'))).toBe(true);
+  });
+
+  it('rejects blocked skills smuggled through retry guidance', () => {
+    const withGuidance = step({
+      failureHandling: [
+        {
+          outcome: 'not-found',
+          action: 'retry',
+          guidance: [text('Try creating it with '), toolChip('jira_create_issue')],
+        },
+      ],
+    });
+    const issues = validateAgentDraft(
+      draft({
+        steps: { version: 1, steps: [withGuidance] },
+        blockedTools: ['jira_create_issue'],
+      }),
+      TOOLS
+    );
+    expect(issues.some((issue) => issue.path === 'steps.0.failureHandling.0')).toBe(true);
+  });
+});
+
+describe('approval nodes (validation + normalize)', () => {
+  const path = (name: string) => ({ id: uuid(), name, steps: [] });
+  const approval = (
+    overrides: Partial<import('./steps').ApprovalStep> = {}
+  ): import('./steps').ApprovalStep => ({
+    id: uuid(),
+    kind: 'approval',
+    name: 'Ship it?',
+    message: [text('OK to send the weekly report?')],
+    mode: 'approve',
+    timeoutHours: 72,
+    notifyEmail: true,
+    notifyWebex: false,
+    onApproved: path('Approved'),
+    onDeclined: path('Rejected'),
+    onTimeout: path('No answer in time'),
+    ...overrides,
+  });
+
+  it('accepts a well-formed approval and versions the doc 5', () => {
+    const doc = { version: 5 as const, steps: [approval()] };
+    expect(validateAgentDraft(draft({ steps: doc }), TOOLS)).toEqual([]);
+    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(5);
+  });
+
+  it('requires a message and refuses tool chips in it', () => {
+    const issues = validateAgentDraft(
+      draft({ steps: { version: 5, steps: [approval({ message: [] })] } }),
+      TOOLS
+    );
+    expect(issues.some((issue) => issue.path.endsWith('.message'))).toBe(true);
+
+    const chipped = approval({ message: [toolChip('jira_get_issue')] });
+    expect(
+      messagesOf(
+        validateAgentDraft(draft({ steps: { version: 5, steps: [chipped] } }), TOOLS)
+      ).some((message) => message.includes('skill'))
+    ).toBe(true);
+  });
+
+  it('requires a named answer in input mode, and binds it for later steps', () => {
+    const unnamed = approval({ mode: 'input' });
+    const issues = validateAgentDraft(
+      draft({ steps: { version: 5, steps: [unnamed] } }),
+      TOOLS
+    );
+    expect(issues.some((issue) => issue.path.endsWith('.saveAs'))).toBe(true);
+
+    const named = approval({ mode: 'input', saveAs: 'the decision' });
+    const consumer = step({
+      tool: null,
+      instruction: [text('Act on '), varChip('the decision'), text(' via '), varChip('approval.link')],
+    });
+    expect(
+      validateAgentDraft(draft({ steps: { version: 5, steps: [named, consumer] } }), TOOLS)
+    ).toEqual([]);
+  });
+
+  it('clamps the wait ceiling to the org cap', () => {
+    const eager = approval({ timeoutHours: 24 * 90 });
+    const normalized = normalizeAgentDraft(
+      draft({ steps: { version: 5, steps: [eager] } }),
+      { approvalWaitCapHours: 7 * 24 }
+    );
+    const first = normalized.steps.steps[0];
+    expect(first && 'timeoutHours' in first ? first.timeoutHours : null).toBe(7 * 24);
+
+    // Default cap = 14 days when no org settings are in hand.
+    const defaulted = normalizeAgentDraft(draft({ steps: { version: 5, steps: [eager] } }));
+    const firstDefault = defaulted.steps.steps[0];
+    expect(
+      firstDefault && 'timeoutHours' in firstDefault ? firstDefault.timeoutHours : null
+    ).toBe(14 * 24);
+  });
+
+  it('validates steps inside outcome paths', () => {
+    const badInner = step({ tool: 'nonsense_tool', instruction: [text('do')] });
+    const node = approval({ onDeclined: { id: uuid(), name: 'Rejected', steps: [badInner] } });
+    const issues = validateAgentDraft(
+      draft({ steps: { version: 5, steps: [node] } }),
+      TOOLS
+    );
+    expect(issues.some((issue) => issue.path.includes('.onDeclined.steps.0'))).toBe(true);
   });
 });

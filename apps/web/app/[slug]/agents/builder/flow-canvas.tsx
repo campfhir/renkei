@@ -18,10 +18,12 @@
 
 import { useEffect, useMemo, useRef, useState, Fragment, type ReactNode } from 'react';
 import {
+  APPROVAL_OUTCOME_KEYS,
   findNodeById,
   MAX_BRANCH_DEPTH_V3,
   MAX_CONTAINER_DEPTH,
   type AgentStepNode,
+  type ApprovalStep,
   type BranchPath,
   type BranchStep,
   type FoundAncestor,
@@ -42,13 +44,14 @@ import { BranchNode } from './branch-node';
 import { LoopNode } from './loop-node';
 import { GroupNode } from './group-node';
 import { TerminalNode } from './terminal-node';
+import { ApprovalNode } from './approval-node';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 
 export type BuilderSelection =
   { type: 'step'; id: string } | { type: 'trigger'; index: number } | { type: 'new-trigger' };
 
-export type InsertKind = 'step' | 'branch' | 'loop' | 'group' | 'terminal';
+export type InsertKind = 'step' | 'branch' | 'loop' | 'group' | 'terminal' | 'approval';
 
 interface CanvasHandlers {
   selection: BuilderSelection | null;
@@ -90,6 +93,10 @@ function nestingOfAncestors(ancestors: FoundAncestor[]): Nesting {
         nesting.inLoop = true;
         break;
       case 'group':
+        break;
+      case 'approval':
+        nesting.branchDepth += 1;
+        nesting.containerDepth += 1;
         break;
       default: {
         const unhandled: never = ancestor;
@@ -149,6 +156,9 @@ function Connector({
           {allowBranch ? item('Add a branch', 'branch', ICONS.branch, 'text-indigo-500') : null}
           {allowLoop ? item('Add a loop', 'loop', ICONS.loop, 'text-amber-500') : null}
           {item('Add a group', 'group', ICONS.group, 'text-slate-400')}
+          {allowBranch
+            ? item('Ask for approval', 'approval', ICONS.approval, 'text-sky-500')
+            : null}
           {item('End the run here', 'terminal', ICONS.terminal, 'text-rose-500')}
         </div>
       ) : null}
@@ -166,6 +176,8 @@ function nodeNoun(node: AgentStepNode): string {
       return 'group';
     case 'terminal':
       return 'ending';
+    case 'approval':
+      return 'approval';
     case 'action':
     case undefined:
       return 'step';
@@ -368,6 +380,68 @@ function RouterBlock({
   );
 }
 
+/**
+ * An approval body as vertical labeled outcome rows — the RouterBlock
+ * shape in sky, one row per outcome. An empty row falls through to the
+ * steps below the approval, so it says so instead of hiding.
+ */
+function ApprovalBlock({
+  approval,
+  nesting,
+  ordinals,
+  handlers,
+}: {
+  approval: ApprovalStep;
+  nesting: Nesting;
+  ordinals: Map<string, number>;
+  handlers: CanvasHandlers;
+}) {
+  const inner: Nesting = {
+    branchDepth: nesting.branchDepth + 1,
+    containerDepth: nesting.containerDepth + 1,
+    inLoop: nesting.inLoop,
+    display: nesting.display + 1,
+  };
+  const outcomes: { path: BranchPath; caption: string }[] = [
+    {
+      path: approval.onApproved,
+      caption: approval.mode === 'input' ? 'If answered' : 'If approved',
+    },
+    {
+      path: approval.onDeclined,
+      caption: approval.mode === 'input' ? 'If stopped' : 'If declined',
+    },
+    { path: approval.onTimeout, caption: 'If nobody acts in time' },
+  ];
+  return (
+    <div className="mt-2 w-max min-w-72 max-w-full rounded-lg border border-sky-200 bg-sky-50/30 dark:border-sky-900 dark:bg-sky-950/20">
+      {outcomes.map(({ path, caption }) => (
+        <div
+          key={path.id}
+          className="border-t border-sky-100 px-3 py-2 dark:border-sky-900"
+        >
+          <span
+            className="inline-block max-w-full truncate rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-xs font-medium text-sky-700 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300"
+            aria-label={`${caption}: ${path.name}`}
+          >
+            {caption}: {path.name}
+          </span>
+          {path.steps.length === 0 ? (
+            <p className="mt-1 text-xs italic text-gray-500">(continues below the approval)</p>
+          ) : null}
+          <NodeColumn
+            nodes={path.steps}
+            locate={(index) => pathLocation(path.id, index)}
+            nesting={inner}
+            ordinals={ordinals}
+            handlers={handlers}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function LoopContainer({
   loop,
   nesting,
@@ -542,6 +616,16 @@ function NodeBlock({
             onSelect={onSelect}
           />
         );
+      case 'approval':
+        return (
+          <ApprovalNode
+            approval={node}
+            ordinal={ordinal}
+            selected={selectedId === node.id}
+            issueCount={handlers.issuesFor(node.id)}
+            onSelect={onSelect}
+          />
+        );
       case 'action':
       case undefined:
         return (
@@ -621,6 +705,39 @@ function NodeBlock({
           {header}
         </GroupContainer>
       );
+    case 'approval': {
+      // Same selection-expands rule as branches: a just-inserted approval
+      // shows its outcome rows right away; Collapse still wins.
+      const defaultExpanded = nesting.display < 2 || selectedId === node.id;
+      const expanded = forceExpanded || handlers.isExpanded(node.id, defaultExpanded);
+      return (
+        <>
+          {header}
+          {!forceExpanded ? (
+            <ContainerControls
+              id={node.id}
+              name={node.name}
+              noun="approval"
+              expanded={expanded}
+              defaultExpanded={defaultExpanded}
+              childCount={APPROVAL_OUTCOME_KEYS.reduce(
+                (sum, key) => sum + node[key].steps.length,
+                0
+              )}
+              handlers={handlers}
+            />
+          ) : null}
+          {expanded ? (
+            <ApprovalBlock
+              approval={node}
+              nesting={nesting}
+              ordinals={ordinals}
+              handlers={handlers}
+            />
+          ) : null}
+        </>
+      );
+    }
     case 'terminal':
     case 'action':
     case undefined:
@@ -736,6 +853,8 @@ export function FlowCanvas({
           return [{ id: ancestor.loop.id, name: ancestor.loop.name.trim() || 'Loop' }];
         case 'group':
           return [{ id: ancestor.group.id, name: ancestor.group.name.trim() || 'Group' }];
+        case 'approval':
+          return [{ id: ancestor.approval.id, name: ancestor.approval.name.trim() || 'Approval' }];
         default: {
           const unhandled: never = ancestor;
           throw new Error(`unknown ancestor kind: ${JSON.stringify(unhandled)}`);

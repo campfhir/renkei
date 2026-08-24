@@ -8,6 +8,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { getAgent } from '@/lib/agents/store';
 import { getRunForOwner } from '@/lib/agents/runs-view';
 import { RunTimeline, StatusPill } from '../../../run-timeline';
+import ApprovalActions from '../../../../approval-actions';
 import LocalTime from '@/components/local-time';
 import CopyDebugButton from '@/components/copy-debug-button';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
@@ -34,6 +35,27 @@ export default async function AgentRunDetailPage({
   const run = await getRunForOwner(dbResult.val, tenant.id, session.subject, agentId, runId);
   if (!run) notFound();
 
+  // The run page mirrors the home-page approval card while the run waits,
+  // so the person reading the timeline can decide right here.
+  const approvalCard =
+    run.status === 'waiting'
+      ? await dbResult.val
+          .selectFrom('actionable_items')
+          .select(['id', 'status', 'summary', 'suggested_action'])
+          .where('run_id', '=', runId)
+          .where('kind', '=', 'approval')
+          .where('status', '=', 'suggested')
+          .where('owner_subject', '=', session.subject)
+          .orderBy('created_at', 'desc')
+          .executeTakeFirst()
+      : null;
+  const approvalMode = (() => {
+    if (typeof approvalCard?.suggested_action !== 'object' || approvalCard.suggested_action === null)
+      return 'approve' as const;
+    const record: Record<string, unknown> = { ...approvalCard.suggested_action };
+    return record.approvalMode === 'input' ? ('input' as const) : ('approve' as const);
+  })();
+
   return (
     <div className="mx-auto max-w-3xl">
       <p className="mb-2 text-sm">
@@ -54,6 +76,12 @@ export default async function AgentRunDetailPage({
           <CopyDebugButton text={renderRunDebugMarkdown(agent.name, run)} />
         ) : null}
       </div>
+      {approvalCard ? (
+        <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50/50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
+          <p className="mb-2 whitespace-pre-wrap text-sm font-medium">{approvalCard.summary}</p>
+          <ApprovalActions tenantId={tenant.id} itemId={approvalCard.id} mode={approvalMode} />
+        </div>
+      ) : null}
       {run.error ? (
         <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
           {run.error}

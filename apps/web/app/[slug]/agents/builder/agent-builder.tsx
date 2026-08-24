@@ -47,6 +47,7 @@ import {
   newGroup,
   newLoop,
   newStep,
+  newApproval,
   newTerminal,
   removeNode,
   updateNode,
@@ -59,6 +60,8 @@ import { BranchEditor } from './branch-editor';
 import { LoopEditor } from './loop-editor';
 import { GroupEditor } from './group-editor';
 import { TerminalEditor } from './terminal-editor';
+import { ApprovalEditor } from './approval-editor';
+import { GuardrailsPanel } from './guardrails-panel';
 import { summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
 import { TriggerChooser, TriggerEditor } from './trigger-editor';
 import type { CalendarOption } from './schedule-picker';
@@ -127,6 +130,8 @@ export function AgentBuilder({
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const [enabled, setEnabled] = useState(existing?.enabled ?? false);
   const [llmModelId, setLlmModelId] = useState<string | null>(existing?.llmModelId ?? null);
+  const [guardrails, setGuardrails] = useState(existing?.guardrails ?? '');
+  const [blockedTools, setBlockedTools] = useState<string[]>(existing?.blockedTools ?? []);
   const [saving, setSaving] = useState(false);
   const [enabling, setEnabling] = useState(false);
   const [serverIssues, setServerIssues] = useState<ValidationIssue[]>([]);
@@ -234,6 +239,10 @@ export function AgentBuilder({
           // An end marker is real config the moment it exists — its result
           // and notification settings are meaning a redraft would erase.
           return true;
+        case 'approval':
+          // Likewise an approval: mode, wait, and outcome paths are meaning
+          // a redraft would erase.
+          return true;
         case 'action':
         case undefined:
           return node.instruction.length > 0 || node.tool !== null || node.name.trim().length > 0;
@@ -263,9 +272,13 @@ export function AgentBuilder({
       triggers?: TriggerDraft[];
       questions?: unknown;
       concerns?: unknown;
+      guardrails?: unknown;
       detail?: string;
     }>(`/api/tenant/${tenantId}/agents/draft`, 'POST', {
       text: prose,
+      // Existing guardrails constrain the draft; an empty slot invites the
+      // model to propose some from the description.
+      guardrails: guardrails.trim() ? guardrails : null,
       ...(hasRealSteps ? { steps: stepsDoc } : {}),
       // Trigger suggestions only while NONE are configured — the draft
       // fills an empty slot, it never rewrites what the user set up.
@@ -292,6 +305,11 @@ export function AgentBuilder({
         : []
     );
     setDraftConcerns(parseReviewNotes(result.data.concerns));
+    // A proposed guardrails doc only ever fills an empty panel — the model
+    // never rewrites rules the owner wrote.
+    if (!guardrails.trim() && typeof result.data.guardrails === 'string') {
+      setGuardrails(result.data.guardrails);
+    }
     if (!name.trim() && result.data.name) setName(result.data.name);
     if (triggers.length === 0 && Array.isArray(result.data.triggers)) {
       // A drafted schedule with no stated timezone means "the prose never
@@ -361,8 +379,10 @@ export function AgentBuilder({
       triggers: triggers.map((trigger) => trigger.draft),
       enabled,
       llmModelId,
+      guardrails: guardrails.trim() ? guardrails : null,
+      blockedTools,
     }),
-    [name, stepsDoc, triggers, enabled, llmModelId]
+    [name, stepsDoc, triggers, enabled, llmModelId, guardrails, blockedTools]
   );
 
   const variables: VariableOption[] = useMemo(() => {
@@ -406,7 +426,37 @@ export function AgentBuilder({
           : []),
       ];
     });
-    return toVariableOptions([...BUILTIN_VARIABLES, ...fromTriggers, ...fromSteps, ...fromLoops]);
+    // Approvals bind names too: the typed answer, and the card link once
+    // any approval exists (the engine binds it when the run pauses).
+    const fromApprovals = walkSteps(steps).flatMap(({ node }) => {
+      if (node.kind !== 'approval' || !node.saveAs) return [];
+      return [
+        {
+          name: node.saveAs,
+          label: node.saveAs,
+          description: `Your answer to the approval “${node.name.trim() || 'unnamed'}”.`,
+          source: 'step' as const,
+        },
+      ];
+    });
+    const approvalLink = walkSteps(steps).some(({ node }) => node.kind === 'approval')
+      ? [
+          {
+            name: 'approval.link',
+            label: 'approval.link',
+            description: 'Link to the most recent approval card of this run.',
+            source: 'step' as const,
+          },
+        ]
+      : [];
+    return toVariableOptions([
+      ...BUILTIN_VARIABLES,
+      ...fromTriggers,
+      ...fromSteps,
+      ...fromLoops,
+      ...fromApprovals,
+      ...approvalLink,
+    ]);
   }, [draft.triggers, steps]);
 
   const knownVarNames = useMemo(() => new Set(variables.map((v) => v.name)), [variables]);
@@ -422,6 +472,8 @@ export function AgentBuilder({
           case 'group':
             return [];
           case 'terminal':
+            return node.message;
+          case 'approval':
             return node.message;
           case 'action':
           case undefined:
@@ -461,6 +513,8 @@ export function AgentBuilder({
       triggers,
       enabled: withEnabled,
       llmModelId,
+      guardrails: guardrails.trim() ? guardrails : null,
+      blockedTools,
       // Save says "rewrite the summary, I'm about to review it"; the review
       // panel's confirm deliberately does not — see the PUT route.
       ...(options.refreshDescription ? { refreshDescription: true } : {}),
@@ -549,6 +603,8 @@ export function AgentBuilder({
           return newGroup();
         case 'terminal':
           return newTerminal();
+        case 'approval':
+          return newApproval();
         case 'step':
           return newStep(attemptsCap);
         default: {
@@ -600,6 +656,8 @@ export function AgentBuilder({
           return selectedNode.name.trim() || 'Group';
         case 'terminal':
           return selectedNode.name.trim() || 'End here';
+        case 'approval':
+          return selectedNode.name.trim() || 'Ask for approval';
         case 'action':
         case undefined:
           return selectedNode.name.trim() || `Step ${ordinal}`;
@@ -763,6 +821,16 @@ export function AgentBuilder({
                 return (
                   <TerminalEditor
                     terminal={selectedNode}
+                    onChange={(next) => changeNode(selectedNode.id, next)}
+                    variables={variables}
+                    invalidVars={invalidVars}
+                    issues={issueMap.get(selectedNode.id) ?? []}
+                  />
+                );
+              case 'approval':
+                return (
+                  <ApprovalEditor
+                    approval={selectedNode}
                     onChange={(next) => changeNode(selectedNode.id, next)}
                     variables={variables}
                     invalidVars={invalidVars}
@@ -1003,6 +1071,27 @@ export function AgentBuilder({
               </div>
 
               {prosePanel}
+
+              <GuardrailsPanel
+                guardrails={guardrails}
+                onGuardrailsChange={(next) => {
+                  setGuardrails(next);
+                  setServerIssues([]);
+                }}
+                blockedTools={blockedTools}
+                onBlockedToolsChange={(next) => {
+                  setBlockedTools(next);
+                  setServerIssues([]);
+                }}
+                actTools={tools
+                  .filter((tool) => tool.kind === 'act' && !tool.appOnly)
+                  .map((tool) => ({
+                    name: tool.name,
+                    title: tool.title,
+                    connector: tool.connector,
+                  }))}
+                issues={issuesAt('guardrails')}
+              />
 
               {agentId ? (
                 <div className="rounded-md border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/40">

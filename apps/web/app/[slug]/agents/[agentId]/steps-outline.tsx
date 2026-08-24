@@ -94,6 +94,44 @@ function NodeList({
               </li>
             );
           }
+          case 'approval': {
+            const outcomes: { label: string; path: (typeof node)['onApproved'] }[] = [
+              { label: node.mode === 'input' ? 'If answered' : 'If approved', path: node.onApproved },
+              { label: 'If declined', path: node.onDeclined },
+              { label: 'If nobody acts in time', path: node.onTimeout },
+            ];
+            return (
+              <li
+                key={node.id}
+                className="rounded-md border border-sky-200 bg-sky-50/50 p-3 text-sm dark:border-sky-900 dark:bg-sky-950/30"
+              >
+                <span className="mr-2 font-semibold">{(ordinals.get(node.id) ?? 0) + 1}.</span>
+                <span className="font-medium">✋ {node.name}</span>
+                <p className="mt-1 text-gray-600 dark:text-gray-400">
+                  {instructionPreview(node.message)}
+                </p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Pauses for {node.mode === 'input' ? 'your typed answer' : 'your approval'} — up to{' '}
+                  {node.timeoutHours}h{node.saveAs ? ` — saves the answer as “${node.saveAs}”` : ''}
+                </p>
+                {outcomes.map(({ label, path }) => (
+                  <div
+                    key={path.id}
+                    className="mt-2 border-l-2 border-sky-200 pl-3 dark:border-sky-900"
+                  >
+                    <p className="mb-1 text-xs font-medium text-sky-700 dark:text-sky-300">
+                      {label}: {path.name}
+                    </p>
+                    {path.steps.length > 0 ? (
+                      <NodeList nodes={path.steps} ordinals={ordinals} />
+                    ) : (
+                      <p className="text-xs italic text-gray-500">(continues below)</p>
+                    )}
+                  </div>
+                ))}
+              </li>
+            );
+          }
           case 'action':
           case undefined:
             return (

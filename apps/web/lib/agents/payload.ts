@@ -18,6 +18,8 @@ export function parseAgentPayload(
     triggers?: unknown;
     enabled?: unknown;
     llmModelId?: unknown;
+    guardrails?: unknown;
+    blockedTools?: unknown;
     refreshDescription?: unknown;
   } = body;
 
@@ -39,15 +41,32 @@ export function parseAgentPayload(
 
   const enabled = payload.enabled === true;
   const llmModelId = typeof payload.llmModelId === 'string' ? payload.llmModelId : null;
+  const guardrails =
+    typeof payload.guardrails === 'string' && payload.guardrails.trim() ? payload.guardrails : null;
+  const blockedTools = Array.isArray(payload.blockedTools)
+    ? payload.blockedTools.filter(
+        (entry): entry is string => typeof entry === 'string' && entry.length > 0
+      )
+    : [];
 
   return {
-    input: { name: payload.name, steps: payload.steps, triggers, enabled, llmModelId },
+    input: {
+      name: payload.name,
+      steps: payload.steps,
+      triggers,
+      enabled,
+      llmModelId,
+      guardrails,
+      blockedTools,
+    },
     draft: {
       name: payload.name,
       steps: payload.steps,
       triggers: triggers.map((trigger) => trigger.draft),
       enabled,
       llmModelId,
+      guardrails,
+      blockedTools,
     },
     // The builder's Save sets this: an explicit save rewrites the summary
     // unconditionally, because the person is about to be shown it for

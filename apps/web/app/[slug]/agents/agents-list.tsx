@@ -183,6 +183,10 @@ export function AgentsList({
     })),
     enabled,
     llmModelId: agent.llmModelId,
+    // Every field the PUT persists must ride along — omitting one here
+    // would make the on/off toggle silently wipe it.
+    guardrails: agent.guardrails,
+    blockedTools: agent.blockedTools,
   });
 
   const toggle = async (agent: StoredAgent) => {

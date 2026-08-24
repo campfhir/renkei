@@ -60,6 +60,7 @@ export async function POST(
     steps?: unknown;
     triggerVars?: unknown;
     suggestTriggers?: unknown;
+    guardrails?: unknown;
   } = typeof body === 'object' && body !== null ? body : {};
   if (typeof payload.text !== 'string' || payload.text.trim().length < 10) {
     return NextResponse.json(
@@ -92,6 +93,9 @@ export async function POST(
     triggerVars,
     suggestTriggers,
     otherAgents,
+    // The builder's CURRENT guardrails: drafted steps must respect them,
+    // and only an empty slot invites a proposal.
+    guardrails: typeof payload.guardrails === 'string' ? payload.guardrails : null,
     // Close the "Worth checking" gaps before the user ever sees the draft;
     // whatever stays open (and any questions only the user can answer)
     // rides back on the response for the builder to show.

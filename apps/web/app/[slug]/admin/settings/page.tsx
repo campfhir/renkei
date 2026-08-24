@@ -68,6 +68,7 @@ export default async function SettingsPage({
     agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
     agentMaxStepAttempts: settings.agentMaxStepAttempts,
     agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
+    agentApprovalMaxWaitDays: settings.agentApprovalMaxWaitDays,
     contentPollMinutes: settings.contentPollMinutes,
     logRetentionDays: settings.logRetentionDays,
   };

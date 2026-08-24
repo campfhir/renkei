@@ -18,6 +18,9 @@ const STATUS_LABELS: Record<string, string> = {
   // A graceful early end — a step judged the automation does not apply to
   // this input. Deliberately not a failure and not a plain success.
   stopped: 'Stopped — nothing to do',
+  // Parked behind an approval card on the home page — the run continues
+  // when the owner acts (or its wait ceiling routes the timeout path).
+  waiting: 'Waiting for you',
 };
 
 /** Title-case label for a run or attempt status; unknown values capitalize. */

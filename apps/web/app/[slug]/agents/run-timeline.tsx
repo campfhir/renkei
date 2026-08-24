@@ -23,6 +23,8 @@ function stepName(run: RunDetail, stepId: string, stepIndex: number): string {
           return `Group: ${found.node.name}`;
         case 'terminal':
           return `End: ${found.node.name}`;
+        case 'approval':
+          return `Approval: ${found.node.name}`;
         case 'action':
         case undefined:
           return found.node.name;
@@ -48,6 +50,9 @@ function statusTone(status: string): string {
     // work done, and emphatically not the red of a failure.
     case 'stopped':
       return 'bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300';
+    // Parked on a human decision — amber says "your move", not "broken".
+    case 'waiting':
+      return 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300';
     default:
       return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
   }
@@ -103,6 +108,7 @@ interface DetailShape {
   toolCalls?: unknown;
   chosenPathName?: unknown;
   terminalMessage?: unknown;
+  approvalMessage?: unknown;
 }
 
 function AttemptDetail({ attempt }: { attempt: AttemptView }) {
@@ -136,6 +142,9 @@ function AttemptDetail({ attempt }: { attempt: AttemptView }) {
       ) : null}
       {typeof detail.terminalMessage === 'string' && detail.terminalMessage ? (
         <ClampedText label="Message" text={detail.terminalMessage} />
+      ) : null}
+      {typeof detail.approvalMessage === 'string' && detail.approvalMessage ? (
+        <ClampedText label="Asked" text={detail.approvalMessage} />
       ) : null}
       {toolCalls.length > 0 ? (
         <details>

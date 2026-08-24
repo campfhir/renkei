@@ -91,6 +91,24 @@ export const SYSTEM_PROMPT = [
   'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled — and record anything future runs must know via finish_step’s remember field.',
 ].join(' ');
 
+/**
+ * SYSTEM_PROMPT plus the guardrails framing — appended ONLY when the agent
+ * has guardrails, so every agent without them keeps a byte-identical
+ * system prompt (the same freeze discipline the branch prompts follow).
+ */
+export function systemPromptWith(guardrailsText?: string): string {
+  if (!guardrailsText) return SYSTEM_PROMPT;
+  return (
+    SYSTEM_PROMPT +
+    ' The owner’s standing guardrails are shown with the step. They are binding: where they and the instruction conflict, the guardrails win.'
+  );
+}
+
+/** The guardrails block every prompt builder renders — in full, never clipped. */
+function guardrailsBlock(text: string): string {
+  return `Standing guardrails from this agent’s owner (binding — where they and the task conflict, the guardrails win):\n${text}`;
+}
+
 export const CHOOSE_PATH_TOOL = 'choose_path';
 
 /**
@@ -207,6 +225,8 @@ export interface LoopPromptInput {
   memoryText?: string;
   /** Rendered agent knowledge notes, already bounded. */
   knowledgeText?: string;
+  /** The agent's standing guardrails — injected in full, never clipped. */
+  guardrailsText?: string;
 }
 
 export function buildLoopConditionMessages(input: LoopPromptInput): {
@@ -220,6 +240,7 @@ export function buildLoopConditionMessages(input: LoopPromptInput): {
 
   const parts = [
     `Loop: ${input.loop.name}`,
+    ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Round ${input.iteration} of at most ${input.loop.maxIterations} has just finished.`,
     `Stop condition to decide: ${rendered.text}`,
     'If it HOLDS (choice: "finished") the automation continues after the loop. If it does NOT hold yet (choice: "continue") the loop runs another round.',
@@ -254,6 +275,8 @@ export interface BranchPromptInput {
   memoryText?: string;
   /** Rendered agent knowledge notes, already bounded. */
   knowledgeText?: string;
+  /** The agent's standing guardrails — injected in full, never clipped. */
+  guardrailsText?: string;
 }
 
 export function buildBranchMessages(input: BranchPromptInput): {
@@ -281,6 +304,7 @@ export function buildBranchMessages(input: BranchPromptInput): {
 
   const parts = [
     `Branch: ${input.branch.name}`,
+    ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Condition to decide: ${rendered.text}`,
     routing,
     ...(variableLines ? [`Known information:\n${variableLines}`] : []),
@@ -323,6 +347,8 @@ export interface AttemptPromptInput {
   memoryText?: string;
   /** Rendered agent knowledge notes, already bounded. */
   knowledgeText?: string;
+  /** The agent's standing guardrails — injected in full, never clipped. */
+  guardrailsText?: string;
   /** True when this step's saveAs is a loop's items source — nudge saveItems. */
   savesItemsForLoop?: boolean;
 }
@@ -339,6 +365,7 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
 
   const parts = [
     `Step: ${input.step.name}`,
+    ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Instruction: ${rendered.text}`,
     `Tool budget: at most ${input.toolBudget} tool call(s) this attempt (finish_step is free). ` +
       'Spend them deliberately — one well-chosen call beats several exploratory ones. When the ' +

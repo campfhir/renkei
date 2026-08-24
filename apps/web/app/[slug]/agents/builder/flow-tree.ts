@@ -6,15 +6,19 @@
  */
 
 import {
+  APPROVAL_DEFAULT_TIMEOUT_HOURS,
   BRANCH_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
   MAX_BRANCH_DEPTH_V3,
   MAX_CONTAINER_DEPTH,
+  approvalPathsOf,
   findNodeById,
+  isApprovalStep,
   isBranchStep,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
+  type ApprovalStep,
   type BranchPath,
   type BranchStep,
   type ForEachLoopStep,
@@ -72,6 +76,22 @@ export function newGroup(): GroupStep {
   };
 }
 
+export function newApproval(): ApprovalStep {
+  return {
+    id: randomUUID(),
+    kind: 'approval',
+    name: '',
+    message: [],
+    mode: 'approve',
+    timeoutHours: APPROVAL_DEFAULT_TIMEOUT_HOURS,
+    notifyEmail: true,
+    notifyWebex: false,
+    onApproved: { id: randomUUID(), name: 'Approved', steps: [] },
+    onDeclined: { id: randomUUID(), name: 'Declined', steps: [] },
+    onTimeout: { id: randomUUID(), name: 'No answer in time', steps: [] },
+  };
+}
+
 export function newTerminal(): TerminalStep {
   return {
     id: randomUUID(),
@@ -113,16 +133,42 @@ function clone(nodes: AgentStepNode[]): AgentStepNode[] {
   return structuredClone(nodes);
 }
 
-/** Every BranchPath in the tree (logical and failure), with its branch. */
-function allPaths(
-  nodes: AgentStepNode[]
-): { branch: BranchStep; path: BranchPath; isFailurePath: boolean }[] {
-  const out: { branch: BranchStep; path: BranchPath; isFailurePath: boolean }[] = [];
+/** One path-shaped child list: a branch route, a failure route, or an approval outcome. */
+interface PathEntry {
+  /** The owning NODE's id (branch or approval) — nesting context anchor. */
+  ownerId: string;
+  path: BranchPath;
+  /** Move-menu label, e.g. `Path "A ticket exists" of "Triage"`. */
+  label: string;
+}
+
+/** Every BranchPath in the tree — branch routes, failure routes, approval outcomes. */
+function allPaths(nodes: AgentStepNode[]): PathEntry[] {
+  const out: PathEntry[] = [];
   for (const { node } of walkSteps(nodes)) {
-    if (!isBranchStep(node)) continue;
-    for (const path of node.paths) out.push({ branch: node, path, isFailurePath: false });
-    if (node.failurePath) {
-      out.push({ branch: node, path: node.failurePath, isFailurePath: true });
+    if (isBranchStep(node)) {
+      const branchName = displayName(node.name, 'branch');
+      for (const path of node.paths) {
+        out.push({
+          ownerId: node.id,
+          path,
+          label: `Path "${displayName(path.name, 'path')}" of "${branchName}"`,
+        });
+      }
+      if (node.failurePath) {
+        out.push({
+          ownerId: node.id,
+          path: node.failurePath,
+          label: `Failure path of "${branchName}"`,
+        });
+      }
+    } else if (isApprovalStep(node)) {
+      const approvalName = displayName(node.name, 'approval');
+      for (const { key, path } of approvalPathsOf(node)) {
+        const what =
+          key === 'onApproved' ? 'Approved' : key === 'onDeclined' ? 'Declined' : 'Timed-out';
+        out.push({ ownerId: node.id, path, label: `${what} path of "${approvalName}"` });
+      }
     }
   }
   return out;
@@ -194,11 +240,8 @@ export function moveSibling(
   return next;
 }
 
-/** The path object a location inserts into, for labels. */
-export function pathOf(
-  nodes: AgentStepNode[],
-  pathId: string
-): { branch: BranchStep; path: BranchPath; isFailurePath: boolean } | null {
+/** The path entry a location inserts into, for labels and owner lookups. */
+export function pathOf(nodes: AgentStepNode[], pathId: string): PathEntry | null {
   return allPaths(nodes).find(({ path }) => path.id === pathId) ?? null;
 }
 
@@ -259,6 +302,25 @@ function subtreeMetrics(node: AgentStepNode): SubtreeMetrics {
     case 'group':
       // Depth-neutral, same as the schema's guards.
       return ofList(node.steps);
+    case 'approval': {
+      // Branch-like: the outcome paths consume a branch level and a
+      // container level, same as a BranchStep.
+      const inner = approvalPathsOf(node)
+        .map(({ path }) => ofList(path.steps))
+        .reduce(
+          (a, b) => ({
+            branchDepth: Math.max(a.branchDepth, b.branchDepth),
+            containerDepth: Math.max(a.containerDepth, b.containerDepth),
+            hasLoop: a.hasLoop || b.hasLoop,
+          }),
+          { branchDepth: 0, containerDepth: 0, hasLoop: false }
+        );
+      return {
+        branchDepth: inner.branchDepth + 1,
+        containerDepth: inner.containerDepth + 1,
+        hasLoop: inner.hasLoop,
+      };
+    }
     case 'terminal':
     case 'action':
     case undefined:
@@ -288,7 +350,7 @@ function contextOfLocation(
   }
   const ownerId =
     location.slot === 'path'
-      ? (pathOf(nodes, location.containerId)?.branch.id ?? null)
+      ? (pathOf(nodes, location.containerId)?.ownerId ?? null)
       : location.containerId;
   if (ownerId === null) return null;
   const found = findNodeById(nodes, ownerId);
@@ -303,6 +365,7 @@ function contextOfLocation(
     context.ancestorIds.push(node.id);
     switch (node.kind) {
       case 'branch':
+      case 'approval':
         context.branchDepth += 1;
         context.containerDepth += 1;
         break;
@@ -331,6 +394,9 @@ function contextOfLocation(
         break;
       case 'group':
         enter(ancestor.group);
+        break;
+      case 'approval':
+        enter(ancestor.approval);
         break;
       default: {
         const unhandled: never = ancestor;
@@ -406,13 +472,10 @@ export function moveTargets(nodes: AgentStepNode[], id: string): MoveTarget[] {
   const candidates: { location: InsertLocation; label: string; list: AgentStepNode[] }[] = [
     { location: topLocation(nodes.length), label: 'Top level', list: nodes },
   ];
-  for (const { branch, path, isFailurePath } of allPaths(nodes)) {
-    const branchName = displayName(branch.name, 'branch');
+  for (const { path, label } of allPaths(nodes)) {
     candidates.push({
       location: pathLocation(path.id, path.steps.length),
-      label: isFailurePath
-        ? `Failure path of "${branchName}"`
-        : `Path "${displayName(path.name, 'path')}" of "${branchName}"`,
+      label,
       list: path.steps,
     });
   }
