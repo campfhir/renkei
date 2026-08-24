@@ -59,6 +59,15 @@ export async function POST(
   if (item.status !== 'suggested') {
     return NextResponse.json({ error: `Item is already ${item.status}` }, { status: 409 });
   }
+  if (item.kind === 'approval') {
+    // An approval card gates a PAUSED AGENT RUN — deciding it must go
+    // through the approval route, which also wakes the run. Dismissing is
+    // refused too: the run would wait for a card nobody can see.
+    return NextResponse.json(
+      { error: 'This card resumes an agent run — use its approve/decline controls' },
+      { status: 422 }
+    );
+  }
   if (item.kind === 'info' && body.decision === 'approve') {
     // Named early rather than falling through to "carries no executable
     // action": an info card is WORKING as designed, not missing data.
