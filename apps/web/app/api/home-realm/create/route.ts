@@ -3,8 +3,37 @@ import { getDatabase } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { isReservedSlug } from '@/lib/tenant-slug';
 import { seedDefaultClassifierRules } from '@renkei/email-sanitizer';
+import { checkInboundLimit } from '@/lib/inbound-rate-limit';
+import { logger } from '@/lib/logger';
+
+/**
+ * Self-service onboarding: an email domain nothing yet claims becomes a
+ * tenant. UNAUTHENTICATED BY DESIGN — there is no one to authenticate before
+ * the first tenant exists — which makes the throttle below the only thing
+ * standing between this endpoint and an open tenant factory. Registered as a
+ * deliberate exception in lib/route-auth-coverage.test.ts.
+ */
+const LIMITS = {
+  // A person onboarding an organization does it once. A handful of attempts
+  // covers typos and a re-submit; nothing legitimate needs more.
+  perClient: { limit: 5, windowMs: 60 * 60 * 1000 },
+  // The ceiling that cannot be widened by forging a client address.
+  global: { limit: 20, windowMs: 60 * 60 * 1000 },
+};
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const verdict = checkInboundLimit('home-realm/create', request, LIMITS);
+  if (!verdict.allowed) {
+    logger.warn('tenant creation throttled', {
+      component: 'web/home-realm',
+      ip: request.headers.get('x-forwarded-for') ?? undefined,
+    });
+    return NextResponse.json(
+      { error: 'Too many organization attempts. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(verdict.retryAfterSeconds) } }
+    );
+  }
+
   const { domain } = await request.json();
 
   if (!domain) {

@@ -411,7 +411,15 @@ export default function UsageViewer({
   function refresh(days: number, scope: 'self' | 'tenant') {
     startTransition(async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      setReport(await getUsageReport(tenantId, days, timeZone, scope));
+      const next = await getUsageReport(tenantId, days, timeZone, scope);
+      // The session died while this page sat open. Send them to sign in
+      // rather than leaving a dead-end banner behind a period change — the
+      // server render of this page redirects for exactly the same verdict.
+      if (next.signedOut) {
+        window.location.href = signInUrl(tenantId, `/${slug}/usage`);
+        return;
+      }
+      setReport(next);
     });
   }
 
