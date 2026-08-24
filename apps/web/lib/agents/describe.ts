@@ -198,6 +198,16 @@ function nodeLines(
 }
 
 /**
+ * The whole steps document as the reviewer's plain-text outline — exported
+ * so the agents-over-MCP tools can show a definition without inventing a
+ * THIRD renderer. Same pre-order numbering as the canvas and timeline.
+ */
+export function renderStepsOutline(steps: AgentStepsDoc): string {
+  const ordinals = new Map(walkSteps(steps.steps).map((entry) => [entry.node.id, entry.ordinal]));
+  return nodeLines(steps.steps, ordinals, '');
+}
+
+/**
  * The reviewer prompt, exported so prose drafting can run the SAME critic
  * against a draft before the user ever sees it — the gap-closing loop and
  * the save-time "Worth checking" panel must judge by one set of rules, or

@@ -42,6 +42,7 @@ const PREFIXES: [string, string][] = [
   ['zoom_', 'zoom'],
   ['knowledge_', 'knowledge'],
   ['card_', 'cards'],
+  ['agent_', 'agents'],
 ];
 
 /**

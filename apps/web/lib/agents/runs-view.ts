@@ -123,7 +123,10 @@ export async function listRunsForOwner(
   tenantId: string,
   ownerSubject: string,
   agentId: string,
-  options: { status?: 'succeeded' | 'failed' | 'stopped'; limit?: number } = {}
+  options: {
+    status?: 'succeeded' | 'failed' | 'stopped' | 'waiting' | 'running' | 'queued' | 'canceled';
+    limit?: number;
+  } = {}
 ): Promise<RunSummary[]> {
   if (!isUuid(agentId)) return [];
   let query = db

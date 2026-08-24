@@ -1,11 +1,10 @@
 /**
  * Your agents: list and create.
  *
- * Validation is the shared @renkei/agents validator, run here as the
- * authority against THIS caller's tool projection (listAvailableTools —
- * the same gates the MCP route applies). The draft is normalized before
- * persisting, which is where the 5-attempt ceiling becomes a server fact
- * rather than a UI courtesy.
+ * The save itself — normalize against org caps, validate against THIS
+ * caller's tool projection, persist, audit, describe — is the shared
+ * saveAgent path (lib/agents/save.ts), which the MCP agents tools run
+ * through too. This route is the HTTP translation around it.
  *
  * A create returns any freshly minted API-trigger keys exactly once; only
  * their SHA-256 digests are stored.
@@ -14,14 +13,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { normalizeAgentDraft, validateAgentDraft } from '@renkei/agents';
-import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromRequest } from '@/lib/session';
-import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { parseAgentPayload } from '@/lib/agents/payload';
-import { createAgent, listAgents } from '@/lib/agents/store';
-import { recordAuditEvent } from '@/lib/audit-events';
-import { generateAgentDescription } from '@/lib/agents/describe';
+import { listAgents } from '@/lib/agents/store';
+import { saveAgent } from '@/lib/agents/save';
 
 export async function GET(
   request: NextRequest,
@@ -53,50 +48,22 @@ export async function POST(
   const parsed = parseAgentPayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const settings = await getOrgSettings(tenantId);
-  const normalized = normalizeAgentDraft(parsed.draft, {
-    attemptsCap: settings.ok ? settings.val.agentMaxStepAttempts : undefined,
-    approvalWaitCapHours: settings.ok ? settings.val.agentApprovalMaxWaitDays * 24 : undefined,
-  });
-  const tools = await listAvailableTools(tenantId, session.subject);
-  const issues = validateAgentDraft(normalized, tools);
-  if (issues.length > 0) return NextResponse.json({ issues }, { status: 422 });
-
-  const result = await createAgent(dbResult.val, tenantId, session.subject, {
-    ...parsed.input,
-    name: normalized.name,
-    steps: normalized.steps,
-    guardrails: normalized.guardrails,
-    blockedTools: normalized.blockedTools,
-  });
-  if (result === 'NAME_TAKEN') {
-    return NextResponse.json(
-      { issues: [{ path: 'name', message: 'You already have an agent with this name.' }] },
-      { status: 422 }
-    );
-  }
-
-  recordAuditEvent({
-    tenantId,
-    actorSubject: session.subject,
-    action: 'agent.created',
-    targetKind: 'agent',
-    targetLabel: normalized.name,
-  });
-
   // The summary is written AFTER the response: authoring must never wait
   // on a model. The builder polls the agent until description_status
   // resolves and shows a writing indicator meanwhile.
-  after(() =>
-    generateAgentDescription(dbResult.val, tenantId, {
-      id: result.agentId,
-      name: normalized.name,
-      steps: normalized.steps,
-      triggers: normalized.triggers,
-      llmModelId: parsed.input.llmModelId,
-      guardrails: normalized.guardrails,
-    })
-  );
+  const result = await saveAgent(dbResult.val, tenantId, session.subject, parsed, {
+    defer: after,
+  });
+  if (result.outcome === 'not-found') {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+  // 'valid-dry-run' cannot happen (no dryRun passed); narrowing to 'saved'.
+  if (result.outcome !== 'saved') {
+    return NextResponse.json(
+      { issues: result.outcome === 'invalid' ? result.issues : [] },
+      { status: 422 }
+    );
+  }
 
   return NextResponse.json(
     { agentId: result.agentId, apiKeys: result.apiKeys, descriptionPending: true },

@@ -10,13 +10,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { normalizeAgentDraft, validateAgentDraft } from '@renkei/agents';
-import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromRequest } from '@/lib/session';
-import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { parseAgentPayload } from '@/lib/agents/payload';
-import { deleteAgent, getAgent, updateAgent } from '@/lib/agents/store';
-import { generateAgentDescription } from '@/lib/agents/describe';
+import { deleteAgent, getAgent } from '@/lib/agents/store';
+import { saveAgent } from '@/lib/agents/save';
 import { recordAuditEvent } from '@/lib/audit-events';
 
 export async function GET(
@@ -50,90 +47,20 @@ export async function PUT(
   const parsed = parseAgentPayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const settings = await getOrgSettings(tenantId);
-  const normalized = normalizeAgentDraft(parsed.draft, {
-    attemptsCap: settings.ok ? settings.val.agentMaxStepAttempts : undefined,
-    approvalWaitCapHours: settings.ok ? settings.val.agentApprovalMaxWaitDays * 24 : undefined,
-  });
-  const tools = await listAvailableTools(tenantId, session.subject);
-  const issues = validateAgentDraft(normalized, tools);
-  if (issues.length > 0) return NextResponse.json({ issues }, { status: 422 });
-
-  const existing = await getAgent(dbResult.val, tenantId, session.subject, agentId);
-  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  const describedChanged =
-    existing.name !== normalized.name ||
-    JSON.stringify(existing.steps) !== JSON.stringify(normalized.steps) ||
-    // Guardrails shape the summary and the reviewer's concerns, so a
-    // guardrails edit re-describes like a steps edit does.
-    existing.guardrails !== normalized.guardrails ||
-    JSON.stringify(existing.blockedTools) !== JSON.stringify(normalized.blockedTools) ||
-    JSON.stringify(existing.triggers.map((trigger) => trigger.draft)) !==
-      JSON.stringify(normalized.triggers);
-  // An explicit Save (refreshDescription — the builder's Save button)
-  // rewrites the summary unconditionally: the review panel is about to
-  // show it, so it must reflect THIS save, not a cached earlier one. The
-  // panel's confirm and the list's on/off toggle omit the flag, so they
-  // only regenerate when the content actually changed (or a summary is
-  // still missing) — confirming must never re-stale what was just read.
-  const needsDescription =
-    parsed.refreshDescription || describedChanged || existing.descriptionStatus !== 'ok';
-
-  const result = await updateAgent(
-    dbResult.val,
-    tenantId,
-    session.subject,
+  // The shared save path (normalize → validate → persist → audit); the
+  // summary is written AFTER the response — the builder polls meanwhile.
+  const result = await saveAgent(dbResult.val, tenantId, session.subject, parsed, {
     agentId,
-    {
-      ...parsed.input,
-      name: normalized.name,
-      steps: normalized.steps,
-      guardrails: normalized.guardrails,
-      blockedTools: normalized.blockedTools,
-    },
-    { markDescriptionStale: needsDescription }
-  );
-  if (result === 'NOT_FOUND') return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  if (result === 'NAME_TAKEN') {
+    defer: after,
+  });
+  if (result.outcome === 'not-found') {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
+  // 'valid-dry-run' cannot happen (no dryRun passed); narrowing to 'saved'.
+  if (result.outcome !== 'saved') {
     return NextResponse.json(
-      { issues: [{ path: 'name', message: 'You already have an agent with this name.' }] },
+      { issues: result.outcome === 'invalid' ? result.issues : [] },
       { status: 422 }
-    );
-  }
-
-  // A toggle and an edit are different stories in the audit trail: "turned
-  // it on" is a decision to let it act, "changed it" is a change to what it
-  // does. A save that flips enabled AND rewrites steps records both.
-  if (existing.enabled !== normalized.enabled) {
-    recordAuditEvent({
-      tenantId,
-      actorSubject: session.subject,
-      action: normalized.enabled ? 'agent.enabled' : 'agent.disabled',
-      targetKind: 'agent',
-      targetLabel: normalized.name,
-    });
-  }
-  if (describedChanged) {
-    recordAuditEvent({
-      tenantId,
-      actorSubject: session.subject,
-      action: 'agent.updated',
-      targetKind: 'agent',
-      targetLabel: normalized.name,
-    });
-  }
-
-  if (needsDescription) {
-    // Written AFTER the response; the builder polls and shows an indicator.
-    after(() =>
-      generateAgentDescription(dbResult.val, tenantId, {
-        id: agentId,
-        name: normalized.name,
-        steps: normalized.steps,
-        triggers: normalized.triggers,
-        llmModelId: parsed.input.llmModelId,
-        guardrails: normalized.guardrails,
-      })
     );
   }
 
@@ -141,7 +68,7 @@ export async function PUT(
   return NextResponse.json({
     agent,
     apiKeys: result.apiKeys,
-    descriptionPending: needsDescription,
+    descriptionPending: result.descriptionPending,
   });
 }
 
