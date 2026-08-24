@@ -82,6 +82,13 @@ export interface OrgSettings {
   /** Per-tenant ceiling on runs started per day — the runaway-trigger brake. */
   agentMaxRunsPerDay: number;
   /**
+   * Hard upper bound on how long an approval node may wait for the owner
+   * to act before its timeout path routes. Nodes declare their own wait in
+   * hours; this org ceiling clamps them — at save AND live at pause time,
+   * so lowering it bites existing agents without a re-save.
+   */
+  agentApprovalMaxWaitDays: number;
+  /**
    * How stale watched content (Jira projects, Confluence spaces, document
    * libraries) may get before the worker polls it again. Atlassian offers
    * plain OAuth apps no push, so this dial IS that content's freshness —
@@ -118,6 +125,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentRunTimeoutMinutes: 15,
   agentMaxStepAttempts: 10,
   agentMaxRunsPerDay: 200,
+  agentApprovalMaxWaitDays: 14,
   contentPollMinutes: 15,
   logRetentionDays: 0,
 };
@@ -205,6 +213,9 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
       coerce(stored.get('agent_max_step_attempts'), d.agentMaxStepAttempts)
     ),
     agentMaxRunsPerDay: Number(coerce(stored.get('agent_max_runs_per_day'), d.agentMaxRunsPerDay)),
+    agentApprovalMaxWaitDays: Number(
+      coerce(stored.get('agent_approval_max_wait_days'), d.agentApprovalMaxWaitDays)
+    ),
     contentPollMinutes: Number(coerce(stored.get('content_poll_minutes'), d.contentPollMinutes)),
     logRetentionDays: Number(coerce(stored.get('log_retention_days'), d.logRetentionDays)),
   };
@@ -240,6 +251,7 @@ export async function setOrgSettings(
     ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
     ['agent_max_step_attempts', updates.agentMaxStepAttempts],
     ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
+    ['agent_approval_max_wait_days', updates.agentApprovalMaxWaitDays],
     ['content_poll_minutes', updates.contentPollMinutes],
     ['log_retention_days', updates.logRetentionDays],
   ];

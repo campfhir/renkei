@@ -222,6 +222,22 @@ export default async function AgentOverviewPage({
             </div>
           ) : null}
 
+          {agent.guardrails || agent.blockedTools.length > 0 ? (
+            <CollapsibleSection title="Guardrails & context">
+              {agent.blockedTools.length > 0 ? (
+                <p className="mb-2 text-xs text-gray-600 dark:text-gray-400">
+                  <span className="font-medium">Blocked skills:</span>{' '}
+                  {agent.blockedTools.join(', ')}
+                </p>
+              ) : null}
+              {agent.guardrails ? (
+                <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-800 dark:bg-gray-900 dark:text-gray-200">
+                  {agent.guardrails}
+                </pre>
+              ) : null}
+            </CollapsibleSection>
+          ) : null}
+
           <CollapsibleSection title="Knowledge">
             <KnowledgePanel tenantId={tenant.id} agentId={agentId} />
           </CollapsibleSection>

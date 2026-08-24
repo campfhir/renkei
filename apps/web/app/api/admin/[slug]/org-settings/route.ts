@@ -28,6 +28,10 @@ const NUMERIC_BOUNDS = {
   // Above the 10 default is allowed on purpose; 100 is the typo guard.
   agentMaxStepAttempts: [1, 100],
   agentMaxRunsPerDay: [1, 10_000],
+  // Ceiling on how long an approval node may wait for its owner; 90 days
+  // is the typo guard, 1 the floor (a sub-day org bound would make the
+  // feature useless).
+  agentApprovalMaxWaitDays: [1, 90],
   // Floor 5: the worker's sweep wakes every 5 minutes, so smaller values
   // would promise a freshness the sweep cannot deliver.
   contentPollMinutes: [5, 1_440],
@@ -46,6 +50,7 @@ const NUMERIC_KEYS = [
   'agentRunTimeoutMinutes',
   'agentMaxStepAttempts',
   'agentMaxRunsPerDay',
+  'agentApprovalMaxWaitDays',
   'contentPollMinutes',
   'logRetentionDays',
 ] as const;
@@ -68,6 +73,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
     agentMaxStepAttempts: settings.agentMaxStepAttempts,
     agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
+    agentApprovalMaxWaitDays: settings.agentApprovalMaxWaitDays,
     contentPollMinutes: settings.contentPollMinutes,
     logRetentionDays: settings.logRetentionDays,
   };

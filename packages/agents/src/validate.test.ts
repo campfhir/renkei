@@ -63,6 +63,8 @@ function draft(overrides: Partial<AgentDraft> = {}): AgentDraft {
     triggers: [],
     enabled: false,
     llmModelId: null,
+    guardrails: null,
+    blockedTools: [],
     ...overrides,
   };
 }
@@ -733,5 +735,53 @@ describe('terminal nodes (version 4)', () => {
       TOOLS
     );
     expect(messagesOf(issues).some((message) => message.includes('never run'))).toBe(true);
+  });
+});
+
+describe('guardrails and blocked skills', () => {
+  it('normalizes guardrails (trim, empty → null) and dedupes blocked tools', () => {
+    const normalized = normalizeAgentDraft(
+      draft({
+        guardrails: '  Draft only. Never send.  ',
+        blockedTools: [' jira_create_issue', 'jira_create_issue', '', 'jira_get_issue '],
+      })
+    );
+    expect(normalized.guardrails).toBe('Draft only. Never send.');
+    expect(normalized.blockedTools).toEqual(['jira_create_issue', 'jira_get_issue']);
+    expect(normalizeAgentDraft(draft({ guardrails: '   ' })).guardrails).toBeNull();
+  });
+
+  it('accepts a long guardrails document — the cap is a sanity bound only', () => {
+    const long = 'Never fabricate numbers. '.repeat(2_000); // ~50k chars
+    expect(validateAgentDraft(draft({ guardrails: long }), TOOLS)).toEqual([]);
+  });
+
+  it('rejects a step whose skill is blocked by the guardrails', () => {
+    const issues = validateAgentDraft(
+      draft({ blockedTools: ['jira_get_issue'] }),
+      TOOLS
+    );
+    expect(issues.some((issue) => issue.path === 'steps.0.tool')).toBe(true);
+    expect(messagesOf(issues).some((message) => message.includes('blocked'))).toBe(true);
+  });
+
+  it('rejects blocked skills smuggled through retry guidance', () => {
+    const withGuidance = step({
+      failureHandling: [
+        {
+          outcome: 'not-found',
+          action: 'retry',
+          guidance: [text('Try creating it with '), toolChip('jira_create_issue')],
+        },
+      ],
+    });
+    const issues = validateAgentDraft(
+      draft({
+        steps: { version: 1, steps: [withGuidance] },
+        blockedTools: ['jira_create_issue'],
+      }),
+      TOOLS
+    );
+    expect(issues.some((issue) => issue.path === 'steps.0.failureHandling.0')).toBe(true);
   });
 });

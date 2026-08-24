@@ -141,10 +141,12 @@ export interface AgentRunSteps {
 }
 
 export interface Agents {
+  blocked_tools: Json | null;
   created_at: Generated<Timestamp>;
   description: string | null;
   description_status: Generated<string>;
   enabled: Generated<boolean>;
+  guardrails: string | null;
   id: string;
   llm_model_id: string | null;
   name: string;

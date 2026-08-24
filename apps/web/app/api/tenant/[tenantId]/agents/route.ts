@@ -65,6 +65,8 @@ export async function POST(
     ...parsed.input,
     name: normalized.name,
     steps: normalized.steps,
+    guardrails: normalized.guardrails,
+    blockedTools: normalized.blockedTools,
   });
   if (result === 'NAME_TAKEN') {
     return NextResponse.json(

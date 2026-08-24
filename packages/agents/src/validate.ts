@@ -30,6 +30,7 @@ import {
   MAX_BRANCH_DEPTH_V3,
   MAX_BRANCH_PATHS,
   MAX_CONTAINER_DEPTH,
+  MAX_GUARDRAILS_CHARS,
   MAX_INSTRUCTION_CHARS,
   MAX_LOOP_ITERATIONS,
   MAX_STEP_ATTEMPTS,
@@ -69,6 +70,18 @@ export interface AgentDraft {
   enabled: boolean;
   /** Org-configured model override; null = org default. */
   llmModelId: string | null;
+  /**
+   * The agent's standing instructions — role, sources of truth and
+   * precedence, content rules, hard rules — injected IN FULL into every
+   * model call at run time. Null = none.
+   */
+  guardrails: string | null;
+  /**
+   * Act tools the engine refuses for model-driven calls, whatever a step
+   * or corrective guidance asks. Terminal-node notifications are exempt
+   * (engine-initiated, owner-configured).
+   */
+  blockedTools: string[];
 }
 
 export interface ValidationIssue {
@@ -651,9 +664,13 @@ export function normalizeAgentDraft(
 ): AgentDraft {
   const cap = Math.max(1, options.attemptsCap ?? MAX_STEP_ATTEMPTS);
   const steps = draft.steps.steps.map((node) => normalizeNode(node, cap));
+  const guardrails = draft.guardrails?.trim() || null;
   return {
     ...draft,
     name: draft.name.trim(),
+    guardrails,
+    // Deduped, order preserved; empty entries dropped.
+    blockedTools: [...new Set(draft.blockedTools.map((tool) => tool.trim()).filter(Boolean))],
     steps: {
       // The SERVER owns the version rule (requiredVersion): a document any
       // older writer could produce keeps its exact old version, so linear
@@ -691,6 +708,15 @@ export function validateAgentDraft(
   }
   if (draft.name.trim().length > 200) {
     issues.push({ path: 'name', message: 'Keep the name under 200 characters.' });
+  }
+  // A sanity bound, not a style rule — guardrails are injected in full on
+  // purpose, so length is the owner's cost choice; this only stops a paste
+  // accident from parking a megabyte in every prompt.
+  if ((draft.guardrails?.length ?? 0) > MAX_GUARDRAILS_CHARS) {
+    issues.push({
+      path: 'guardrails',
+      message: `The guardrails document is too long to inject — keep it under ${MAX_GUARDRAILS_CHARS.toLocaleString()} characters.`,
+    });
   }
 
   const nodes = draft.steps.steps;
@@ -766,6 +792,32 @@ export function validateAgentDraft(
     issues.push(...validateNode(node, `steps.${index}`, TOP_LEVEL, toolsByName, knownVariables));
   });
   issues.push(...terminalPlacementIssues(nodes, 'steps'));
+
+  // Blocked skills — the guardrails' mechanical arm. A step configured to
+  // use one is a contradiction worth failing at save, not discovering at
+  // run time (where the engine refuses it as a guard stop).
+  const blocked = new Set(draft.blockedTools);
+  if (blocked.size > 0) {
+    for (const { node, path } of walked) {
+      if (node.kind !== undefined && node.kind !== 'action') continue;
+      if (node.tool && blocked.has(node.tool)) {
+        issues.push({
+          path: `${path}.tool`,
+          message: 'This skill is blocked by the agent’s guardrails — unblock it or pick another skill.',
+        });
+      }
+      node.failureHandling.forEach((handling, handlingIndex) => {
+        for (const guidanceTool of toolSegments(handling.guidance ?? [])) {
+          if (blocked.has(guidanceTool)) {
+            issues.push({
+              path: `${path}.failureHandling.${handlingIndex}`,
+              message: 'A skill in this guidance is blocked by the agent’s guardrails.',
+            });
+          }
+        }
+      });
+    }
+  }
 
   issues.push(
     ...validateTriggerDrafts(draft.triggers).map((issue) => ({

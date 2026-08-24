@@ -63,6 +63,10 @@ export async function PUT(
   const describedChanged =
     existing.name !== normalized.name ||
     JSON.stringify(existing.steps) !== JSON.stringify(normalized.steps) ||
+    // Guardrails shape the summary and the reviewer's concerns, so a
+    // guardrails edit re-describes like a steps edit does.
+    existing.guardrails !== normalized.guardrails ||
+    JSON.stringify(existing.blockedTools) !== JSON.stringify(normalized.blockedTools) ||
     JSON.stringify(existing.triggers.map((trigger) => trigger.draft)) !==
       JSON.stringify(normalized.triggers);
   // An explicit Save (refreshDescription — the builder's Save button)
@@ -83,6 +87,8 @@ export async function PUT(
       ...parsed.input,
       name: normalized.name,
       steps: normalized.steps,
+      guardrails: normalized.guardrails,
+      blockedTools: normalized.blockedTools,
     },
     { markDescriptionStale: needsDescription }
   );

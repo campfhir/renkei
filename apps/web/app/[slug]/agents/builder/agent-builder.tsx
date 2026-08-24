@@ -59,6 +59,7 @@ import { BranchEditor } from './branch-editor';
 import { LoopEditor } from './loop-editor';
 import { GroupEditor } from './group-editor';
 import { TerminalEditor } from './terminal-editor';
+import { GuardrailsPanel } from './guardrails-panel';
 import { summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
 import { TriggerChooser, TriggerEditor } from './trigger-editor';
 import type { CalendarOption } from './schedule-picker';
@@ -127,6 +128,8 @@ export function AgentBuilder({
   const isDesktop = useMediaQuery('(min-width: 1024px)');
   const [enabled, setEnabled] = useState(existing?.enabled ?? false);
   const [llmModelId, setLlmModelId] = useState<string | null>(existing?.llmModelId ?? null);
+  const [guardrails, setGuardrails] = useState(existing?.guardrails ?? '');
+  const [blockedTools, setBlockedTools] = useState<string[]>(existing?.blockedTools ?? []);
   const [saving, setSaving] = useState(false);
   const [enabling, setEnabling] = useState(false);
   const [serverIssues, setServerIssues] = useState<ValidationIssue[]>([]);
@@ -361,8 +364,10 @@ export function AgentBuilder({
       triggers: triggers.map((trigger) => trigger.draft),
       enabled,
       llmModelId,
+      guardrails: guardrails.trim() ? guardrails : null,
+      blockedTools,
     }),
-    [name, stepsDoc, triggers, enabled, llmModelId]
+    [name, stepsDoc, triggers, enabled, llmModelId, guardrails, blockedTools]
   );
 
   const variables: VariableOption[] = useMemo(() => {
@@ -461,6 +466,8 @@ export function AgentBuilder({
       triggers,
       enabled: withEnabled,
       llmModelId,
+      guardrails: guardrails.trim() ? guardrails : null,
+      blockedTools,
       // Save says "rewrite the summary, I'm about to review it"; the review
       // panel's confirm deliberately does not — see the PUT route.
       ...(options.refreshDescription ? { refreshDescription: true } : {}),
@@ -1003,6 +1010,27 @@ export function AgentBuilder({
               </div>
 
               {prosePanel}
+
+              <GuardrailsPanel
+                guardrails={guardrails}
+                onGuardrailsChange={(next) => {
+                  setGuardrails(next);
+                  setServerIssues([]);
+                }}
+                blockedTools={blockedTools}
+                onBlockedToolsChange={(next) => {
+                  setBlockedTools(next);
+                  setServerIssues([]);
+                }}
+                actTools={tools
+                  .filter((tool) => tool.kind === 'act' && !tool.appOnly)
+                  .map((tool) => ({
+                    name: tool.name,
+                    title: tool.title,
+                    connector: tool.connector,
+                  }))}
+                issues={issuesAt('guardrails')}
+              />
 
               {agentId ? (
                 <div className="rounded-md border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/40">

@@ -293,6 +293,14 @@ export const BRANCH_DEFAULT_ATTEMPTS = 2;
 export const LOOP_DEFAULT_ATTEMPTS = 2;
 /** Default iteration ceiling the editors seed. */
 export const LOOP_DEFAULT_ITERATIONS = 10;
+/**
+ * Sanity bound on the guardrails document, NOT a style rule: guardrails
+ * are injected into every model call IN FULL (a clipped "no PHI" rule is
+ * worse than none), so their length is the owner's informed cost choice.
+ * This cap exists only so a paste accident or abuse cannot park a
+ * megabyte-scale blob in every prompt.
+ */
+export const MAX_GUARDRAILS_CHARS = 1_000_000;
 
 /**
  * `saveAs` names and API-trigger input names share this shape. Spaces are
