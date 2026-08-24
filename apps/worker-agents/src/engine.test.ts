@@ -1770,11 +1770,7 @@ maybe('agent run engine', () => {
   it('injects guardrails into the system and step prompts, in full', async () => {
     const { runId, agentId } = await seedRun(singleStep());
     const guardrails = 'Never fabricate numbers. Draft only — never send anything.';
-    await db
-      .updateTable('agents')
-      .set({ guardrails })
-      .where('id', '=', agentId)
-      .execute();
+    await db.updateTable('agents').set({ guardrails }).where('id', '=', agentId).execute();
 
     const seen: LlmRequest[] = [];
     const llm = stubLlm((request, call) => {
@@ -1984,6 +1980,106 @@ maybe('agent run engine', () => {
       expect(calls).toEqual(['outlook_send_mail']);
     });
 
+    it('tells the steps after an approval that it was approved, by whom, and when', async () => {
+      // The bug this covers cost a real run: the owner clicked Approve, the
+      // engine routed correctly into onApproved, and the very next step
+      // refused to act — its prompt listed `approval.link` and nothing
+      // else, so an agent whose guardrails demand explicit approval saw a
+      // request for one and no evidence of one. Routing is invisible to a
+      // model; only variables reach the prompt.
+      const acting = {
+        id: randomUUID(),
+        name: 'Do the approved thing',
+        instruction: [{ t: 'text' as const, v: 'Proceed.' }],
+        tool: null,
+        maxAttempts: 1,
+        failureHandling: [],
+      };
+      const { doc } = approvalDoc({ onApproved: [acting] });
+      const { runId } = await seedRun(doc);
+      const prompts: string[] = [];
+      const llm = stubLlm((request) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'approved',
+          result: JSON.stringify({ decidedBy: 'owner@example.com' }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+
+      // The acting step's prompt states the approval as a fact, names the
+      // decider, and is not merely a link to go ask for one.
+      const acted = prompts.join('\n');
+      expect(acted).toContain('approval.decision: approved');
+      expect(acted).toMatch(/The owner approved .*owner@example\.com/);
+      expect(acted).toContain('approval.decidedBy: owner@example.com');
+    });
+
+    it('says plainly when a decision was a decline rather than an approval', async () => {
+      const acting = {
+        id: randomUUID(),
+        name: 'Runs on the declined path',
+        instruction: [{ t: 'text' as const, v: 'Clean up.' }],
+        tool: null,
+        maxAttempts: 1,
+        failureHandling: [],
+      };
+      const { doc } = approvalDoc({ onDeclined: [acting] });
+      const { runId } = await seedRun(doc);
+      const prompts: string[] = [];
+      const llm = stubLlm((request) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({ status: 'declined', decided_at: sql`NOW()` })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const acted = prompts.join('\n');
+      expect(acted).toContain('approval.decision: declined');
+      // A step on the declined path must not be able to read the variable
+      // as permission — the wording has to carry the negative.
+      expect(acted).toContain('DECLINED');
+    });
+
     it('an answered card binds the answer and routes the approved path', async () => {
       const { doc, approvalId } = approvalDoc({
         mode: 'input',
@@ -1996,7 +2092,10 @@ maybe('agent run engine', () => {
         ],
       });
       const { runId } = await seedRun(doc);
-      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      const handler = handlerWith(
+        noModel(),
+        stubMcp([], () => okToolResult)
+      );
       await handler({ payload: { runId } });
 
       const card = await cardOf(runId);
@@ -2036,7 +2135,10 @@ maybe('agent run engine', () => {
     it('a declined card routes the declined path', async () => {
       const { doc } = approvalDoc({ onDeclined: [terminalNode('stop')] });
       const { runId } = await seedRun(doc);
-      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      const handler = handlerWith(
+        noModel(),
+        stubMcp([], () => okToolResult)
+      );
       await handler({ payload: { runId } });
       const card = await cardOf(runId);
       await db
@@ -2059,7 +2161,10 @@ maybe('agent run engine', () => {
       // nothing after it, finishes.
       const { doc, approvalId } = approvalDoc({ timeoutHours: 1 });
       const { runId } = await seedRun(doc);
-      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      const handler = handlerWith(
+        noModel(),
+        stubMcp([], () => okToolResult)
+      );
       await handler({ payload: { runId } });
       await db
         .updateTable('agent_runs')
@@ -2093,7 +2198,10 @@ maybe('agent run engine', () => {
     it('replays a finished approval without touching the archived card', async () => {
       const { doc } = approvalDoc({ onDeclined: [terminalNode('stop')] });
       const { runId } = await seedRun(doc);
-      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      const handler = handlerWith(
+        noModel(),
+        stubMcp([], () => okToolResult)
+      );
       await handler({ payload: { runId } });
       const card = await cardOf(runId);
       await db
@@ -2122,7 +2230,10 @@ maybe('agent run engine', () => {
     it('disabling the agent cancels the waiting run and archives its card', async () => {
       const { doc } = approvalDoc({});
       const { runId, agentId } = await seedRun(doc);
-      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      const handler = handlerWith(
+        noModel(),
+        stubMcp([], () => okToolResult)
+      );
       await handler({ payload: { runId } });
       await db.updateTable('agents').set({ enabled: false }).where('id', '=', agentId).execute();
       await handler({ payload: { runId } });
@@ -2142,7 +2253,10 @@ maybe('agent run engine', () => {
     it('the sweep expires due waits, re-enqueues them, and clears cards of dead runs', async () => {
       const { doc } = approvalDoc({ timeoutHours: 1 });
       const { runId, agentId } = await seedRun(doc);
-      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      const handler = handlerWith(
+        noModel(),
+        stubMcp([], () => okToolResult)
+      );
       await handler({ payload: { runId } });
       await db
         .updateTable('agent_runs')
