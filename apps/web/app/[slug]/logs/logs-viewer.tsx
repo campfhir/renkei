@@ -93,16 +93,22 @@ export default function LogsViewer({
   }) {
     const query = { expr, levels, range, sort, ...next };
     startTransition(async () => {
-      setResult(
-        await searchLogs(tenantId, {
-          expr: query.expr,
-          levels: query.levels,
-          start: query.range.start,
-          end: query.range.end,
-          sort: query.sort.direction,
-          accountId,
-        })
-      );
+      const result = await searchLogs(tenantId, {
+        expr: query.expr,
+        levels: query.levels,
+        start: query.range.start,
+        end: query.range.end,
+        sort: query.sort.direction,
+        accountId,
+      });
+      // The session died while this page sat open. Send them to sign in
+      // rather than leaving a dead-end banner behind a filter change — the
+      // server render of this page redirects for exactly the same verdict.
+      if (result.signedOut) {
+        window.location.href = signInUrl(tenantId, `/${slug}/logs`);
+        return;
+      }
+      setResult(result);
       setPage(1);
     });
   }
