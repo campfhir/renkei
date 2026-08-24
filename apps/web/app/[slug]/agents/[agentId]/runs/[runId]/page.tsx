@@ -11,6 +11,7 @@ import { RunTimeline, StatusPill } from '../../../run-timeline';
 import ApprovalActions from '../../../../approval-actions';
 import LocalTime from '@/components/local-time';
 import CopyDebugButton from '@/components/copy-debug-button';
+import RerunButton from './rerun-button';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 
 /** One run, owner's view: every attempt with full content. */
@@ -50,7 +51,10 @@ export default async function AgentRunDetailPage({
           .executeTakeFirst()
       : null;
   const approvalMode = (() => {
-    if (typeof approvalCard?.suggested_action !== 'object' || approvalCard.suggested_action === null)
+    if (
+      typeof approvalCard?.suggested_action !== 'object' ||
+      approvalCard.suggested_action === null
+    )
       return 'approve' as const;
     const record: Record<string, unknown> = { ...approvalCard.suggested_action };
     return record.approvalMode === 'input' ? ('input' as const) : ('approve' as const);
@@ -75,6 +79,11 @@ export default async function AgentRunDetailPage({
         {run.status === 'failed' || run.attempts.some((a) => a.status === 'failed') ? (
           <CopyDebugButton text={renderRunDebugMarkdown(agent.name, run)} />
         ) : null}
+        {/* Only once the run is settled — a rerun while it is still going
+            would put two runs on the same message at once. */}
+        {run.status === 'queued' || run.status === 'running' || run.status === 'waiting' ? null : (
+          <RerunButton tenantId={tenant.id} slug={slug} agentId={agentId} runId={runId} />
+        )}
       </div>
       {approvalCard ? (
         <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50/50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
