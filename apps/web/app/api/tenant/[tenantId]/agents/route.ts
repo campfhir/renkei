@@ -56,6 +56,7 @@ export async function POST(
   const settings = await getOrgSettings(tenantId);
   const normalized = normalizeAgentDraft(parsed.draft, {
     attemptsCap: settings.ok ? settings.val.agentMaxStepAttempts : undefined,
+    approvalWaitCapHours: settings.ok ? settings.val.agentApprovalMaxWaitDays * 24 : undefined,
   });
   const tools = await listAvailableTools(tenantId, session.subject);
   const issues = validateAgentDraft(normalized, tools);

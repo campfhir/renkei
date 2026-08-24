@@ -47,6 +47,7 @@ import {
   newGroup,
   newLoop,
   newStep,
+  newApproval,
   newTerminal,
   removeNode,
   updateNode,
@@ -59,6 +60,7 @@ import { BranchEditor } from './branch-editor';
 import { LoopEditor } from './loop-editor';
 import { GroupEditor } from './group-editor';
 import { TerminalEditor } from './terminal-editor';
+import { ApprovalEditor } from './approval-editor';
 import { GuardrailsPanel } from './guardrails-panel';
 import { summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
 import { TriggerChooser, TriggerEditor } from './trigger-editor';
@@ -236,6 +238,10 @@ export function AgentBuilder({
         case 'terminal':
           // An end marker is real config the moment it exists — its result
           // and notification settings are meaning a redraft would erase.
+          return true;
+        case 'approval':
+          // Likewise an approval: mode, wait, and outcome paths are meaning
+          // a redraft would erase.
           return true;
         case 'action':
         case undefined:
@@ -420,7 +426,37 @@ export function AgentBuilder({
           : []),
       ];
     });
-    return toVariableOptions([...BUILTIN_VARIABLES, ...fromTriggers, ...fromSteps, ...fromLoops]);
+    // Approvals bind names too: the typed answer, and the card link once
+    // any approval exists (the engine binds it when the run pauses).
+    const fromApprovals = walkSteps(steps).flatMap(({ node }) => {
+      if (node.kind !== 'approval' || !node.saveAs) return [];
+      return [
+        {
+          name: node.saveAs,
+          label: node.saveAs,
+          description: `Your answer to the approval “${node.name.trim() || 'unnamed'}”.`,
+          source: 'step' as const,
+        },
+      ];
+    });
+    const approvalLink = walkSteps(steps).some(({ node }) => node.kind === 'approval')
+      ? [
+          {
+            name: 'approval.link',
+            label: 'approval.link',
+            description: 'Link to the most recent approval card of this run.',
+            source: 'step' as const,
+          },
+        ]
+      : [];
+    return toVariableOptions([
+      ...BUILTIN_VARIABLES,
+      ...fromTriggers,
+      ...fromSteps,
+      ...fromLoops,
+      ...fromApprovals,
+      ...approvalLink,
+    ]);
   }, [draft.triggers, steps]);
 
   const knownVarNames = useMemo(() => new Set(variables.map((v) => v.name)), [variables]);
@@ -436,6 +472,8 @@ export function AgentBuilder({
           case 'group':
             return [];
           case 'terminal':
+            return node.message;
+          case 'approval':
             return node.message;
           case 'action':
           case undefined:
@@ -565,6 +603,8 @@ export function AgentBuilder({
           return newGroup();
         case 'terminal':
           return newTerminal();
+        case 'approval':
+          return newApproval();
         case 'step':
           return newStep(attemptsCap);
         default: {
@@ -616,6 +656,8 @@ export function AgentBuilder({
           return selectedNode.name.trim() || 'Group';
         case 'terminal':
           return selectedNode.name.trim() || 'End here';
+        case 'approval':
+          return selectedNode.name.trim() || 'Ask for approval';
         case 'action':
         case undefined:
           return selectedNode.name.trim() || `Step ${ordinal}`;
@@ -779,6 +821,16 @@ export function AgentBuilder({
                 return (
                   <TerminalEditor
                     terminal={selectedNode}
+                    onChange={(next) => changeNode(selectedNode.id, next)}
+                    variables={variables}
+                    invalidVars={invalidVars}
+                    issues={issueMap.get(selectedNode.id) ?? []}
+                  />
+                );
+              case 'approval':
+                return (
+                  <ApprovalEditor
+                    approval={selectedNode}
                     onChange={(next) => changeNode(selectedNode.id, next)}
                     variables={variables}
                     invalidVars={invalidVars}

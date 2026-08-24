@@ -21,6 +21,7 @@ import { createEventLoop, schedulePeriodicSweep } from '@renkei/worker-loop';
 import { createAgentRunHandler } from './engine';
 import { createFinalizeHook } from './finalize';
 import { createScheduleSweep } from './schedule-sweep';
+import { createApprovalSweep, APPROVAL_SWEEP_MS } from './approval-sweep';
 import { createRetentionSweep, createStuckRunJanitor } from './maintenance';
 import { createMemoryCompactionSweep, MEMORY_COMPACTION_SWEEP_MS } from './memory-compaction';
 import { logger, attachPersistentLogging } from './logger';
@@ -68,6 +69,15 @@ async function main(): Promise<void> {
       'worker-agents/schedule',
       SCHEDULE_SWEEP_MS,
       createScheduleSweep(db, queue.producer)
+    ),
+    // Approval timeouts + heals: card claims are optimistically locked and
+    // duplicate resume enqueues replay harmlessly.
+    schedulePeriodicSweep(
+      logger,
+      'approval waits',
+      'worker-agents/approval-sweep',
+      APPROVAL_SWEEP_MS,
+      createApprovalSweep(db, queue.producer)
     ),
     schedulePeriodicSweep(
       logger,

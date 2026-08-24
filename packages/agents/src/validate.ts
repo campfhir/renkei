@@ -24,7 +24,9 @@
  */
 
 import {
+  APPROVAL_DEFAULT_TIMEOUT_HOURS,
   BRANCH_DEFAULT_ATTEMPTS,
+  DEFAULT_APPROVAL_WAIT_CAP_HOURS,
   LOOP_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
   MAX_BRANCH_DEPTH_V3,
@@ -36,6 +38,8 @@ import {
   MAX_STEP_ATTEMPTS,
   MAX_STEPS,
   VARIABLE_NAME_PATTERN,
+  approvalPathsOf,
+  containsApproval,
   countNodes,
   flattenActionSteps,
   requiredVersion,
@@ -45,6 +49,7 @@ import {
   type ActionStep,
   type AgentStepNode,
   type AgentStepsDoc,
+  type ApprovalStep,
   type BranchPath,
   type BranchStep,
   type GroupStep,
@@ -494,6 +499,104 @@ function validateTerminalStep(
   return issues;
 }
 
+function validateApprovalStep(
+  approval: ApprovalStep,
+  prefix: string,
+  context: NestingContext,
+  toolsByName: Map<string, ToolDescriptorLike>,
+  knownVariables: Set<string>
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  // Branch-like containment: a pause routes between outcome paths, so it
+  // spends the same nesting budgets a branch does.
+  const inner: NestingContext = {
+    branchDepth: context.branchDepth + 1,
+    containerDepth: context.containerDepth + 1,
+    inLoop: context.inLoop,
+  };
+  if (inner.branchDepth > MAX_BRANCH_DEPTH_V3) {
+    issues.push({
+      path: prefix,
+      message: `Conditions can nest ${MAX_BRANCH_DEPTH_V3} levels deep — move this approval up.`,
+    });
+  }
+  if (inner.containerDepth > MAX_CONTAINER_DEPTH) {
+    issues.push({
+      path: prefix,
+      message: 'Steps are nested too deeply here — move this up a level.',
+    });
+  }
+  if (approval.name.trim().length === 0) {
+    issues.push({ path: `${prefix}.name`, message: 'Give this approval a short name.' });
+  }
+
+  // The message is the card body — without it the owner is asked to
+  // approve nothing in particular.
+  if (approval.message.length === 0 || segmentChars(approval.message) === 0) {
+    issues.push({
+      path: `${prefix}.message`,
+      message: 'Say what you are being asked to approve or answer.',
+    });
+  }
+  if (segmentChars(approval.message) > MAX_INSTRUCTION_CHARS) {
+    issues.push({
+      path: `${prefix}.message`,
+      message: `Keep the message under ${MAX_INSTRUCTION_CHARS.toLocaleString()} characters.`,
+    });
+  }
+  if (toolSegments(approval.message).length > 0) {
+    issues.push({
+      path: `${prefix}.message`,
+      message: 'An approval message can’t use a skill — it is shown to you as written.',
+    });
+  }
+  for (const name of varSegments(approval.message)) {
+    if (!knownVariables.has(name)) {
+      issues.push({
+        path: `${prefix}.message`,
+        message: `"${name}" is not something this agent knows — remove or replace the chip.`,
+      });
+    }
+  }
+
+  if (approval.mode === 'input') {
+    if (!approval.saveAs || !VARIABLE_NAME_PATTERN.test(approval.saveAs)) {
+      issues.push({
+        path: `${prefix}.saveAs`,
+        message: approval.saveAs
+          ? 'Answer names start with a letter and use letters, numbers, spaces, ".", "-" or "_" (64 characters max).'
+          : 'Name the answer so later steps can use it.',
+      });
+    }
+  }
+
+  if (!Number.isFinite(approval.timeoutHours) || approval.timeoutHours < 1) {
+    issues.push({
+      path: `${prefix}.timeoutHours`,
+      message: 'The wait ceiling must be at least one hour.',
+    });
+  }
+
+  for (const { key, path } of approvalPathsOf(approval)) {
+    if (path.name.trim().length === 0) {
+      issues.push({ path: `${prefix}.${key}.name`, message: 'Name this path.' });
+    }
+    path.steps.forEach((node, nodeIndex) => {
+      issues.push(
+        ...validateNode(
+          node,
+          `${prefix}.${key}.steps.${nodeIndex}`,
+          inner,
+          toolsByName,
+          knownVariables
+        )
+      );
+    });
+  }
+
+  return issues;
+}
+
 function validateNode(
   node: AgentStepNode,
   prefix: string,
@@ -512,6 +615,8 @@ function validateNode(
       return validateGroupStep(node, prefix, context, toolsByName, knownVariables);
     case 'terminal':
       return validateTerminalStep(node, prefix, knownVariables);
+    case 'approval':
+      return validateApprovalStep(node, prefix, context, toolsByName, knownVariables);
     case 'action':
     case undefined:
       return validateActionStep(node, prefix, toolsByName, knownVariables);
@@ -555,6 +660,11 @@ function terminalPlacementIssues(nodes: AgentStepNode[], prefix: string): Valida
       case 'group':
         issues.push(...terminalPlacementIssues(node.steps, `${at}.steps`));
         break;
+      case 'approval':
+        for (const { key, path } of approvalPathsOf(node)) {
+          issues.push(...terminalPlacementIssues(path.steps, `${at}.${key}.steps`));
+        }
+        break;
       case 'action':
       case undefined:
         break;
@@ -578,13 +688,13 @@ function clampIterations(value: number): number {
   );
 }
 
-function normalizeNode(node: AgentStepNode, cap: number): AgentStepNode {
+function normalizeNode(node: AgentStepNode, cap: number, waitCapHours: number): AgentStepNode {
   switch (node.kind) {
     case 'branch': {
       const normalizePath = (path: BranchPath): BranchPath => ({
         ...path,
         name: path.name.trim(),
-        steps: path.steps.map((child) => normalizeNode(child, cap)),
+        steps: path.steps.map((child) => normalizeNode(child, cap, waitCapHours)),
       });
       return {
         ...node,
@@ -599,7 +709,7 @@ function normalizeNode(node: AgentStepNode, cap: number): AgentStepNode {
         node.collectFrom?.trim() && node.collectVar?.trim()
           ? { collectFrom: node.collectFrom.trim(), collectVar: node.collectVar.trim() }
           : {};
-      const steps = node.steps.map((child) => normalizeNode(child, cap));
+      const steps = node.steps.map((child) => normalizeNode(child, cap, waitCapHours));
       if (node.mode === 'foreach') {
         const { collectFrom: _f, collectVar: _v, ...rest } = node;
         return {
@@ -626,10 +736,36 @@ function normalizeNode(node: AgentStepNode, cap: number): AgentStepNode {
       return {
         ...node,
         name: node.name.trim(),
-        steps: node.steps.map((child) => normalizeNode(child, cap)),
+        steps: node.steps.map((child) => normalizeNode(child, cap, waitCapHours)),
       };
     case 'terminal':
       return { ...node, name: node.name.trim() };
+    case 'approval': {
+      const normalizePath = (path: BranchPath): BranchPath => ({
+        ...path,
+        name: path.name.trim(),
+        steps: path.steps.map((child) => normalizeNode(child, cap, waitCapHours)),
+      });
+      return {
+        ...node,
+        name: node.name.trim(),
+        ...(node.saveAs !== undefined ? { saveAs: node.saveAs.trim() || undefined } : {}),
+        // The org's wait cap binds here AND live at pause time — the
+        // stricter of the two always wins.
+        timeoutHours: Math.min(
+          Math.max(1, waitCapHours),
+          Math.max(
+            1,
+            Math.round(
+              Number.isFinite(node.timeoutHours) ? node.timeoutHours : APPROVAL_DEFAULT_TIMEOUT_HOURS
+            )
+          )
+        ),
+        onApproved: normalizePath(node.onApproved),
+        onDeclined: normalizePath(node.onDeclined),
+        onTimeout: normalizePath(node.onTimeout),
+      };
+    }
     case 'action':
     case undefined: {
       // Strip the optional discriminant so linear documents stay
@@ -660,10 +796,15 @@ function normalizeNode(node: AgentStepNode, cap: number): AgentStepNode {
  */
 export function normalizeAgentDraft(
   draft: AgentDraft,
-  options: { attemptsCap?: number } = {}
+  options: {
+    attemptsCap?: number;
+    /** Org ceiling on approval waits, in hours (agentApprovalMaxWaitDays × 24). */
+    approvalWaitCapHours?: number;
+  } = {}
 ): AgentDraft {
   const cap = Math.max(1, options.attemptsCap ?? MAX_STEP_ATTEMPTS);
-  const steps = draft.steps.steps.map((node) => normalizeNode(node, cap));
+  const waitCapHours = Math.max(1, options.approvalWaitCapHours ?? DEFAULT_APPROVAL_WAIT_CAP_HOURS);
+  const steps = draft.steps.steps.map((node) => normalizeNode(node, cap, waitCapHours));
   const guardrails = draft.guardrails?.trim() || null;
   return {
     ...draft,
@@ -691,6 +832,11 @@ export function savesByPathCoverage(nodes: AgentStepNode[]): Map<string, 'always
   for (const { node, depth } of walkSteps(nodes)) {
     if ((node.kind === undefined || node.kind === 'action') && node.saveAs) {
       out.set(node.saveAs, depth === 1 ? 'always' : 'conditional');
+    }
+    // An approval answer binds only on the answered outcome — conditional
+    // wherever the node sits.
+    if (node.kind === 'approval' && node.saveAs) {
+      out.set(node.saveAs, 'conditional');
     }
   }
   return out;
@@ -739,6 +885,8 @@ export function validateAgentDraft(
           ...node.paths.map((path) => path.id),
           ...(node.failurePath ? [node.failurePath.id] : []),
         ];
+      case 'approval':
+        return [node.id, ...approvalPathsOf(node).map(({ path }) => path.id)];
       case 'loop':
       case 'group':
       case 'terminal':
@@ -767,7 +915,11 @@ export function validateAgentDraft(
       ...(node.collectVar ? [node.collectVar] : []),
     ];
   });
-  const boundNames = [...saveAsNames, ...loopBindings];
+  // Approval answers bind names too (input mode).
+  const approvalBindings = walked.flatMap(({ node }) =>
+    node.kind === 'approval' && node.saveAs ? [node.saveAs] : []
+  );
+  const boundNames = [...saveAsNames, ...loopBindings, ...approvalBindings];
   if (new Set(boundNames).size !== boundNames.length) {
     issues.push({
       path: 'steps',
@@ -786,6 +938,8 @@ export function validateAgentDraft(
     ...BUILTIN_VARIABLES.map((variable) => variable.name),
     ...triggerVariableNames(draft.triggers),
     ...boundNames,
+    // The pause binds the card/run link for its outcome paths and beyond.
+    ...(containsApproval(nodes) ? ['approval.link'] : []),
   ]);
 
   nodes.forEach((node, index) => {

@@ -29,6 +29,8 @@ function stepNameOf(run: RunDetail, stepId: string, stepIndex: number): string {
           return `Group: ${found.node.name}`;
         case 'terminal':
           return `End: ${found.node.name}`;
+        case 'approval':
+          return `Approval: ${found.node.name}`;
         case 'action':
         case undefined:
           return found.node.name;
@@ -85,6 +87,16 @@ function snapshotLines(run: RunDetail): string[] {
         );
         const message = instructionPreview(node.message);
         if (message) lines.push(`${indent}   message: ${message}`);
+        break;
+      }
+      case 'approval': {
+        lines.push(
+          `${indent}${ordinal + 1}. Approval: ${node.name} — pauses for the owner (` +
+            `${node.mode === 'input' ? 'typed answer' : 'approve/decline'}, waits up to ${node.timeoutHours}h)` +
+            (node.saveAs ? `; saves the answer as: ${node.saveAs}` : '')
+        );
+        const ask = instructionPreview(node.message);
+        if (ask) lines.push(`${indent}   asks: ${ask}`);
         break;
       }
       case 'action':

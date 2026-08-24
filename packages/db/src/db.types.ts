@@ -36,11 +36,14 @@ export interface ActionableItems {
   decided_by: string | null;
   evidence: Json;
   id: string;
+  iteration: number | null;
   kind: Generated<string>;
   owner_subject: string | null;
   result: Json | null;
+  run_id: string | null;
   source: string;
   status: Generated<string>;
+  step_id: string | null;
   suggested_action: Json | null;
   summary: string;
   tenant_id: string;
@@ -118,6 +121,7 @@ export interface AgentRuns {
   trigger_kind: string;
   triggered_by_subject: string | null;
   updated_at: Generated<Timestamp>;
+  waiting_until: Timestamp | null;
 }
 
 export interface AgentRunSteps {

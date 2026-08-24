@@ -57,10 +57,21 @@
  *     context-free failure mail: the endpoint says what to send and where.
  *     A leaf: no children, no LLM call, deterministic.
  *
- * `requiredVersion` is the single version rule: 4 iff a terminal node is
- * present, else 3 iff any v3 construct is, else 2 iff a branch exists,
- * else 1 — so every document any older writer could produce keeps its
- * exact old version and bytes.
+ * VERSION 5 adds one construct:
+ *   - `ApprovalStep` — a human-in-the-loop pause. Reaching it parks the
+ *     whole run as 'waiting', puts an interactive card on the owner's
+ *     home-page feed (approve/reject, or a typed answer in 'input' mode),
+ *     optionally notifies them with the card link, and resumes down ONE
+ *     of three outcome paths — approved/answered, declined, or timed out
+ *     (every wait has a ceiling, org-bounded). Branch-like on purpose:
+ *     the outcome paths are nested step lists, an empty path falls
+ *     through, and the node counts toward the same nesting budgets as a
+ *     branch.
+ *
+ * `requiredVersion` is the single version rule: 5 iff an approval node is
+ * present, else 4 iff a terminal node is, else 3 iff any v3 construct is,
+ * else 2 iff a branch exists, else 1 — so every document any older writer
+ * could produce keeps its exact old version and bytes.
  */
 
 export type InstructionSegment =
@@ -250,11 +261,56 @@ export interface TerminalStep {
   notifyWebex: boolean;
 }
 
-export type AgentStepNode = ActionStep | BranchStep | LoopStep | GroupStep | TerminalStep;
+export type ApprovalMode = 'approve' | 'input';
+
+export interface ApprovalStep {
+  /** uuid, same doc-wide id space as every node. */
+  id: string;
+  kind: 'approval';
+  name: string;
+  /**
+   * What the owner is being asked — prose + var chips (never tool chips),
+   * rendered with the run's live values. The card body AND the
+   * notification body.
+   */
+  message: InstructionSegment[];
+  /** 'approve' = approve/decline buttons; 'input' = a typed answer. */
+  mode: ApprovalMode;
+  /**
+   * REQUIRED in 'input' mode: the owner's answer binds to this name for
+   * the outcome paths and everything after the node. Same namespace as
+   * saveAs/loop bindings.
+   */
+  saveAs?: string;
+  /**
+   * How long the run may wait, in hours — clamped by the org's
+   * agentApprovalMaxWaitDays cap at save AND live at pause time. Reaching
+   * it routes onTimeout; it never fails the run by itself.
+   */
+  timeoutHours: number;
+  /** Send the message + card link to the owner's own inbox at pause. */
+  notifyEmail: boolean;
+  /** Post the message + card link to the owner's WebEx note-to-self. */
+  notifyWebex: boolean;
+  /** Approved (or, in input mode, answered). Empty = continue after. */
+  onApproved: BranchPath;
+  /** Declined — the Reject / "Stop the run" button. Empty = continue. */
+  onDeclined: BranchPath;
+  /** Nobody acted before the ceiling. Empty = continue after the node. */
+  onTimeout: BranchPath;
+}
+
+export type AgentStepNode =
+  | ActionStep
+  | BranchStep
+  | LoopStep
+  | GroupStep
+  | TerminalStep
+  | ApprovalStep;
 
 export interface AgentStepsDoc {
-  /** See requiredVersion: 4 for terminal nodes, 3 for v3 constructs, 2 for plain branches, else 1. */
-  version: 1 | 2 | 3 | 4;
+  /** See requiredVersion: 5 approval, 4 terminal, 3 v3 constructs, 2 plain branches, else 1. */
+  version: 1 | 2 | 3 | 4 | 5;
   /** Array order is execution order; success is linear within a list. */
   steps: AgentStepNode[];
 }
@@ -301,6 +357,14 @@ export const LOOP_DEFAULT_ITERATIONS = 10;
  * megabyte-scale blob in every prompt.
  */
 export const MAX_GUARDRAILS_CHARS = 1_000_000;
+/** Default wait ceiling the approval editor seeds: three days. */
+export const APPROVAL_DEFAULT_TIMEOUT_HOURS = 72;
+/**
+ * The approval wait cap used when no org settings are in hand — matches
+ * the org setting's default (agentApprovalMaxWaitDays = 14). The live
+ * setting binds at save (normalizeAgentDraft option) and again at pause.
+ */
+export const DEFAULT_APPROVAL_WAIT_CAP_HOURS = 14 * 24;
 
 /**
  * `saveAs` names and API-trigger input names share this shape. Spaces are
@@ -386,6 +450,10 @@ export function isTerminalStep(node: AgentStepNode): node is TerminalStep {
   return node.kind === 'terminal';
 }
 
+export function isApprovalStep(node: AgentStepNode): node is ApprovalStep {
+  return node.kind === 'approval';
+}
+
 /** A node whose `steps`/`paths` contain other nodes. */
 export function isContainerNode(node: AgentStepNode): node is BranchStep | LoopStep | GroupStep {
   return node.kind === 'branch' || node.kind === 'loop' || node.kind === 'group';
@@ -398,10 +466,21 @@ export function isContainerNode(node: AgentStepNode): node is BranchStep | LoopS
  * treats every future kind as an ActionStep, which is exactly how a new
  * construct would misexecute.
  */
-export type NodeKind = 'action' | 'branch' | 'loop' | 'group' | 'terminal';
+export type NodeKind = 'action' | 'branch' | 'loop' | 'group' | 'terminal' | 'approval';
 
 export function nodeKind(node: AgentStepNode): NodeKind {
   return node.kind ?? 'action';
+}
+
+/** The three outcome slots of an approval node, in display order. */
+export const APPROVAL_OUTCOME_KEYS = ['onApproved', 'onDeclined', 'onTimeout'] as const;
+export type ApprovalOutcomeKey = (typeof APPROVAL_OUTCOME_KEYS)[number];
+
+/** An approval node's outcome paths as key/path pairs — the shared walk vocabulary. */
+export function approvalPathsOf(
+  node: ApprovalStep
+): { key: ApprovalOutcomeKey; path: BranchPath }[] {
+  return APPROVAL_OUTCOME_KEYS.map((key) => ({ key, path: node[key] }));
 }
 
 /* ---------------- FROZEN v2 structural arm ------------------------- */
@@ -622,6 +701,66 @@ function isNodeV4(value: unknown, context: GuardContext): value is AgentStepNode
     if (candidate.kind === 'loop') return isLoopStepShape(value, context, isNodeV4);
     if (candidate.kind === 'group') return isGroupStepShape(value, context, isNodeV4);
     if (candidate.kind === 'terminal') return isTerminalStepShape(value);
+    // A v4-labeled document may not carry v5 constructs.
+    if (candidate.kind === 'approval') return false;
+  }
+  return isActionStep(value);
+}
+
+/* ---------------- v5 structural arm -------------------------------- */
+
+function isApprovalStepShape(
+  value: unknown,
+  context: GuardContext,
+  isNode: NodeShapeCheck
+): value is ApprovalStep {
+  if (typeof value !== 'object' || value === null) return false;
+  const step: {
+    id?: unknown;
+    kind?: unknown;
+    name?: unknown;
+    message?: unknown;
+    mode?: unknown;
+    saveAs?: unknown;
+    timeoutHours?: unknown;
+    notifyEmail?: unknown;
+    notifyWebex?: unknown;
+    onApproved?: unknown;
+    onDeclined?: unknown;
+    onTimeout?: unknown;
+  } = value;
+  if (step.kind !== 'approval') return false;
+  // Branch-like containment: the pause consumes a branch level and a
+  // container level, same budgets as a BranchStep.
+  const inner: GuardContext = {
+    branchDepth: context.branchDepth + 1,
+    containerDepth: context.containerDepth + 1,
+    inLoop: context.inLoop,
+  };
+  if (inner.branchDepth > MAX_BRANCH_DEPTH_V3) return false;
+  if (inner.containerDepth > MAX_CONTAINER_DEPTH) return false;
+  if (typeof step.id !== 'string' || step.id.length === 0) return false;
+  if (typeof step.name !== 'string') return false;
+  if (!Array.isArray(step.message) || !step.message.every(isInstructionSegment)) return false;
+  if (step.mode !== 'approve' && step.mode !== 'input') return false;
+  if (step.saveAs !== undefined && typeof step.saveAs !== 'string') return false;
+  if (typeof step.timeoutHours !== 'number') return false;
+  if (typeof step.notifyEmail !== 'boolean' || typeof step.notifyWebex !== 'boolean') return false;
+  return (
+    isBranchPathV3(step.onApproved, inner, isNode) &&
+    isBranchPathV3(step.onDeclined, inner, isNode) &&
+    isBranchPathV3(step.onTimeout, inner, isNode)
+  );
+}
+
+function isNodeV5(value: unknown, context: GuardContext): value is AgentStepNode {
+  if (typeof value === 'object' && value !== null) {
+    const candidate: { kind?: unknown } = value;
+    if (candidate.kind === 'branch') return isBranchStepShapeV3(value, context, isNodeV5);
+    if (candidate.kind === 'loop') return isLoopStepShape(value, context, isNodeV5);
+    if (candidate.kind === 'group') return isGroupStepShape(value, context, isNodeV5);
+    if (candidate.kind === 'terminal') return isTerminalStepShape(value);
+    if (candidate.kind === 'approval') return isApprovalStepShape(value, context, isNodeV5);
   }
   return isActionStep(value);
 }
@@ -652,6 +791,10 @@ export function isAgentStepsDoc(value: unknown): value is AgentStepsDoc {
   if (doc.version === 4) {
     const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
     return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV4(step, root));
+  }
+  if (doc.version === 5) {
+    const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
+    return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV5(step, root));
   }
   return false;
 }
@@ -710,6 +853,11 @@ export function walkSteps(nodes: AgentStepNode[]): WalkedNode[] {
         case 'group':
           visit(node.steps, `${path}.steps`, depth + 1);
           break;
+        case 'approval':
+          for (const { key, path: outcomePath } of approvalPathsOf(node)) {
+            visit(outcomePath.steps, `${path}.${key}.steps`, depth + 1);
+          }
+          break;
         case 'terminal':
         case 'action':
         case undefined:
@@ -741,7 +889,8 @@ export function countNodes(nodes: AgentStepNode[]): number {
 export type FoundAncestor =
   | { kind: 'branch'; branch: BranchStep; path: BranchPath; isFailurePath: boolean }
   | { kind: 'loop'; loop: LoopStep }
-  | { kind: 'group'; group: GroupStep };
+  | { kind: 'group'; group: GroupStep }
+  | { kind: 'approval'; approval: ApprovalStep; path: BranchPath; outcome: ApprovalOutcomeKey };
 
 export interface FoundNode {
   node: AgentStepNode;
@@ -789,6 +938,16 @@ export function findNodeById(nodes: AgentStepNode[], id: string): FoundNode | nu
         case 'group': {
           const found = search(node.steps, [...ancestors, { kind: 'group', group: node }]);
           if (found) return found;
+          break;
+        }
+        case 'approval': {
+          for (const { key, path } of approvalPathsOf(node)) {
+            const found = search(path.steps, [
+              ...ancestors,
+              { kind: 'approval', approval: node, path, outcome: key },
+            ]);
+            if (found) return found;
+          }
           break;
         }
         case 'terminal':
@@ -846,12 +1005,18 @@ export function containsTerminal(nodes: AgentStepNode[]): boolean {
   return walkSteps(nodes).some(({ node }) => isTerminalStep(node));
 }
 
+/** Whether the tree contains an approval node — the version-5 test. */
+export function containsApproval(nodes: AgentStepNode[]): boolean {
+  return walkSteps(nodes).some(({ node }) => isApprovalStep(node));
+}
+
 /**
  * THE version rule — normalizeAgentDraft is its only writer. Anything an
  * older writer could have produced keeps its exact old version, which is
  * what keeps old snapshots byte-stable.
  */
-export function requiredVersion(nodes: AgentStepNode[]): 1 | 2 | 3 | 4 {
+export function requiredVersion(nodes: AgentStepNode[]): 1 | 2 | 3 | 4 | 5 {
+  if (containsApproval(nodes)) return 5;
   if (containsTerminal(nodes)) return 4;
   if (containsV3Feature(nodes)) return 3;
   return containsBranch(nodes) ? 2 : 1;

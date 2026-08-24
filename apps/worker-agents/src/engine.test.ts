@@ -12,8 +12,17 @@ import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { LlmRequest, LlmResponse, ResolvedLlm } from '@renkei/agent-llm';
-import { isAgentStepsDoc, type AgentStepsDoc } from '@renkei/agents';
+import {
+  isAgentStepsDoc,
+  type AgentStepNode,
+  type AgentStepsDoc,
+  type ApprovalStep,
+  type InstructionSegment,
+  type TerminalStep,
+} from '@renkei/agents';
 import { createAgentRunHandler } from './engine';
+import { createApprovalSweep } from './approval-sweep';
+import type { QueueMessageInput } from '@renkei/queue';
 import type { McpClient, McpToolResult } from './mcp-client';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
@@ -115,6 +124,7 @@ maybe('agent run engine', () => {
     // Cascades take agents/runs/steps/triggers/tokens with the tenant.
     await db.deleteFrom('oauth_access_tokens').where('tenant_id', '=', tenantId).execute();
     await db.deleteFrom('oauth_clients').where('tenant_id', '=', tenantId).execute();
+    await sql`DELETE FROM actionable_items WHERE tenant_id = ${tenantId}`.execute(db);
     await sql`DELETE FROM agent_run_steps WHERE tenant_id = ${tenantId}`.execute(db);
     await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
     await sql`DELETE FROM agent_triggers WHERE tenant_id = ${tenantId}`.execute(db);
@@ -1813,5 +1823,364 @@ maybe('agent run engine', () => {
     expect(run.status).toBe('failed');
     expect(run.error_kind).toBe('guard');
     expect(run.error).toContain('blocked');
+  });
+
+  describe('approval nodes', () => {
+    const terminalNode = (
+      result: 'success' | 'failure' | 'stop',
+      message: InstructionSegment[] = []
+    ): TerminalStep => ({
+      id: randomUUID(),
+      kind: 'terminal',
+      name: `end-${result}`,
+      result,
+      message,
+      notifyEmail: false,
+      notifyWebex: false,
+    });
+
+    function approvalDoc(
+      options: {
+        mode?: 'approve' | 'input';
+        saveAs?: string;
+        timeoutHours?: number;
+        notifyEmail?: boolean;
+        notifyWebex?: boolean;
+        onApproved?: AgentStepNode[];
+        onDeclined?: AgentStepNode[];
+        onTimeout?: AgentStepNode[];
+      } = {}
+    ): { doc: AgentStepsDoc; approvalId: string } {
+      const approval: ApprovalStep = {
+        id: randomUUID(),
+        kind: 'approval',
+        name: 'OK to send?',
+        message: [
+          { t: 'text', v: 'Send the report for ' },
+          { t: 'var', name: 'trigger.subject' },
+          { t: 'text', v: '?' },
+        ],
+        mode: options.mode ?? 'approve',
+        ...(options.saveAs ? { saveAs: options.saveAs } : {}),
+        timeoutHours: options.timeoutHours ?? 72,
+        notifyEmail: options.notifyEmail ?? false,
+        notifyWebex: options.notifyWebex ?? false,
+        onApproved: { id: randomUUID(), name: 'Approved', steps: options.onApproved ?? [] },
+        onDeclined: { id: randomUUID(), name: 'Declined', steps: options.onDeclined ?? [] },
+        onTimeout: { id: randomUUID(), name: 'No answer', steps: options.onTimeout ?? [] },
+      };
+      const doc: AgentStepsDoc = { version: 5, steps: [approval] };
+      if (!isAgentStepsDoc(doc)) throw new Error('test doc is not a valid v5 steps doc');
+      return { doc, approvalId: approval.id };
+    }
+
+    /** Approval nodes are deterministic — any model call is a bug. */
+    const noModel = () =>
+      stubLlm(() => {
+        throw new Error('approval nodes must not call the model');
+      });
+
+    const cardOf = async (runId: string) =>
+      db
+        .selectFrom('actionable_items')
+        .selectAll()
+        .where('run_id', '=', runId)
+        .executeTakeFirstOrThrow();
+
+    it('parks the run waiting behind a card and delivers the notifications', async () => {
+      const { doc, approvalId } = approvalDoc({
+        notifyEmail: true,
+        notifyWebex: true,
+        timeoutHours: 4,
+      });
+      const { runId } = await seedRun(doc);
+      const calls: { name: string; args: Record<string, unknown> }[] = [];
+      const mcp: McpClient = {
+        initialize: async () => undefined,
+        listTools: async () =>
+          ['outlook_send_mail', 'webex_note_to_self'].map((name) => ({
+            name,
+            description: name,
+            inputSchema: { type: 'object' },
+          })),
+        callTool: async (name, args) => {
+          calls.push({ name, args });
+          return okToolResult;
+        },
+      };
+      const before = Date.now();
+      await handlerWith(noModel(), mcp)({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'waiting_until', 'error'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('waiting');
+      expect(run.error).toBeNull();
+      // The deadline is the node's own wait, not the org cap.
+      const waitingUntil = new Date(run.waiting_until ?? 0).getTime();
+      expect(waitingUntil).toBeGreaterThanOrEqual(before + 3.9 * 3_600_000);
+      expect(waitingUntil).toBeLessThanOrEqual(Date.now() + 4 * 3_600_000);
+
+      const rows = await db
+        .selectFrom('agent_run_steps')
+        .select(['step_id', 'status', 'outcome'])
+        .where('run_id', '=', runId)
+        .execute();
+      expect(rows).toEqual([{ step_id: approvalId, status: 'waiting', outcome: 'approval' }]);
+
+      const card = await cardOf(runId);
+      expect(card.status).toBe('suggested');
+      expect(card.kind).toBe('approval');
+      expect(card.owner_subject).toBe(subject);
+      expect(card.step_id).toBe(approvalId);
+      expect(card.summary).toContain('PROJ-42 is broken');
+
+      // Both channels got the rendered question.
+      const mail = calls.find((call) => call.name === 'outlook_send_mail');
+      expect(mail?.args).toMatchObject({ to: ['owner@example.com'] });
+      expect(String(mail?.args.body)).toContain('Send the report for PROJ-42 is broken?');
+      const note = calls.find((call) => call.name === 'webex_note_to_self');
+      expect(String(note?.args.markdown)).toContain('Send the report for PROJ-42 is broken?');
+    });
+
+    it('re-parks a spurious wake without extending the deadline or re-notifying', async () => {
+      const { doc } = approvalDoc({ notifyEmail: true, timeoutHours: 4 });
+      const { runId } = await seedRun(doc);
+      const calls: string[] = [];
+      const mcp = stubMcp(['outlook_send_mail', 'webex_note_to_self'], (name) => {
+        calls.push(name);
+        return okToolResult;
+      });
+      const handler = handlerWith(noModel(), mcp);
+      await handler({ payload: { runId } });
+      const first = await db
+        .selectFrom('agent_runs')
+        .select('waiting_until')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(calls).toEqual(['outlook_send_mail']);
+
+      // A duplicate delivery while the owner is still thinking.
+      await handler({ payload: { runId } });
+
+      const again = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'waiting_until'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(again.status).toBe('waiting');
+      expect(new Date(again.waiting_until ?? 0).toISOString()).toBe(
+        new Date(first.waiting_until ?? 0).toISOString()
+      );
+      // Exactly one card, exactly one notification.
+      const cards = await db
+        .selectFrom('actionable_items')
+        .select('id')
+        .where('run_id', '=', runId)
+        .execute();
+      expect(cards).toHaveLength(1);
+      expect(calls).toEqual(['outlook_send_mail']);
+    });
+
+    it('an answered card binds the answer and routes the approved path', async () => {
+      const { doc, approvalId } = approvalDoc({
+        mode: 'input',
+        saveAs: 'the decision',
+        onApproved: [
+          terminalNode('failure', [
+            { t: 'text', v: 'Answer was: ' },
+            { t: 'var', name: 'the decision' },
+          ]),
+        ],
+      });
+      const { runId } = await seedRun(doc);
+      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      await handler({ payload: { runId } });
+
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'approved',
+          result: JSON.stringify({ answer: 'ship it' }),
+          decided_at: sql`NOW()`,
+          archived_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      // Routed into onApproved, whose terminal message SAW the bound answer.
+      const run = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'error', 'waiting_until'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('failed');
+      expect(run.error).toContain('Answer was: ship it');
+      expect(run.waiting_until).toBeNull();
+
+      const approvalRow = await db
+        .selectFrom('agent_run_steps')
+        .select(['status', 'detail'])
+        .where('run_id', '=', runId)
+        .where('step_id', '=', approvalId)
+        .executeTakeFirstOrThrow();
+      expect(approvalRow.status).toBe('succeeded');
+      expect(JSON.stringify(approvalRow.detail)).toContain('"decision":"approved"');
+      expect(JSON.stringify(approvalRow.detail)).toContain('ship it');
+    });
+
+    it('a declined card routes the declined path', async () => {
+      const { doc } = approvalDoc({ onDeclined: [terminalNode('stop')] });
+      const { runId } = await seedRun(doc);
+      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      await handler({ payload: { runId } });
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({ status: 'declined', decided_at: sql`NOW()`, archived_at: sql`NOW()` })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('stopped');
+    });
+
+    it('past the deadline the engine claims expiry and routes the timed-out path', async () => {
+      // Empty onTimeout: the run falls through past the approval and, with
+      // nothing after it, finishes.
+      const { doc, approvalId } = approvalDoc({ timeoutHours: 1 });
+      const { runId } = await seedRun(doc);
+      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      await handler({ payload: { runId } });
+      await db
+        .updateTable('agent_runs')
+        .set({ waiting_until: new Date(Date.now() - 60_000) })
+        .where('id', '=', runId)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'error'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+      expect(run.error).toBeNull();
+
+      const card = await cardOf(runId);
+      expect(card.status).toBe('expired');
+      expect(card.archived_at).not.toBeNull();
+
+      const approvalRow = await db
+        .selectFrom('agent_run_steps')
+        .select(['status', 'detail'])
+        .where('run_id', '=', runId)
+        .where('step_id', '=', approvalId)
+        .executeTakeFirstOrThrow();
+      expect(approvalRow.status).toBe('succeeded');
+      expect(JSON.stringify(approvalRow.detail)).toContain('"decision":"expired"');
+    });
+
+    it('replays a finished approval without touching the archived card', async () => {
+      const { doc } = approvalDoc({ onDeclined: [terminalNode('stop')] });
+      const { runId } = await seedRun(doc);
+      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      await handler({ payload: { runId } });
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({ status: 'declined', decided_at: sql`NOW()`, archived_at: sql`NOW()` })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+      const decidedAt = (await cardOf(runId)).decided_at;
+
+      // Redelivery of the finished run: nothing moves.
+      await handler({ payload: { runId } });
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('stopped');
+      const after = await cardOf(runId);
+      expect(after.status).toBe('declined');
+      expect(new Date(after.decided_at ?? 0).toISOString()).toBe(
+        new Date(decidedAt ?? 0).toISOString()
+      );
+    });
+
+    it('disabling the agent cancels the waiting run and archives its card', async () => {
+      const { doc } = approvalDoc({});
+      const { runId, agentId } = await seedRun(doc);
+      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      await handler({ payload: { runId } });
+      await db.updateTable('agents').set({ enabled: false }).where('id', '=', agentId).execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'waiting_until'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('canceled');
+      expect(run.waiting_until).toBeNull();
+      const card = await cardOf(runId);
+      expect(card.status).toBe('expired');
+      expect(JSON.stringify(card.result)).toContain('agent-disabled');
+    });
+
+    it('the sweep expires due waits, re-enqueues them, and clears cards of dead runs', async () => {
+      const { doc } = approvalDoc({ timeoutHours: 1 });
+      const { runId, agentId } = await seedRun(doc);
+      const handler = handlerWith(noModel(), stubMcp([], () => okToolResult));
+      await handler({ payload: { runId } });
+      await db
+        .updateTable('agent_runs')
+        .set({ waiting_until: new Date(Date.now() - 60_000) })
+        .where('id', '=', runId)
+        .execute();
+
+      // A second, already-finished run whose card was never resolved — the
+      // mirror-orphan arm must clear it WITHOUT enqueueing anything.
+      const { runId: deadRunId } = await seedRun(approvalDoc({}).doc);
+      await handler({ payload: { runId: deadRunId } });
+      await db
+        .updateTable('agent_runs')
+        .set({ status: 'canceled', waiting_until: null, finished_at: sql`NOW()` })
+        .where('id', '=', deadRunId)
+        .execute();
+
+      const enqueued: QueueMessageInput[] = [];
+      const sweep = createApprovalSweep(db, {
+        enqueue: async (message) => {
+          enqueued.push(message);
+          return ok(undefined);
+        },
+      });
+      await sweep();
+
+      const card = await cardOf(runId);
+      expect(card.status).toBe('expired');
+      expect(JSON.stringify(card.result)).toContain('timeout');
+      expect(enqueued).toHaveLength(1);
+      expect(enqueued[0]).toMatchObject({
+        payload: { runId },
+        orderingKey: `agent:${agentId}`,
+      });
+
+      const deadCard = await cardOf(deadRunId);
+      expect(deadCard.status).toBe('expired');
+      expect(JSON.stringify(deadCard.result)).toContain('run-ended');
+    });
   });
 });

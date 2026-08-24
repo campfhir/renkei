@@ -19,7 +19,10 @@
  */
 
 export {
+  APPROVAL_DEFAULT_TIMEOUT_HOURS,
+  APPROVAL_OUTCOME_KEYS,
   BRANCH_DEFAULT_ATTEMPTS,
+  DEFAULT_APPROVAL_WAIT_CAP_HOURS,
   LOOP_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
   MAX_BRANCH_DEPTH,
@@ -33,6 +36,8 @@ export {
   MAX_STEP_ATTEMPTS,
   MAX_STEPS,
   VARIABLE_NAME_PATTERN,
+  approvalPathsOf,
+  containsApproval,
   containsBranch,
   containsTerminal,
   containsV3Feature,
@@ -40,6 +45,7 @@ export {
   findNodeById,
   flattenActionSteps,
   isAgentStepsDoc,
+  isApprovalStep,
   isBranchStep,
   isContainerNode,
   isGroupStep,
@@ -55,6 +61,9 @@ export {
   type AgentStep,
   type AgentStepNode,
   type AgentStepsDoc,
+  type ApprovalMode,
+  type ApprovalOutcomeKey,
+  type ApprovalStep,
   type BranchPath,
   type BranchStep,
   type FailureHandling,

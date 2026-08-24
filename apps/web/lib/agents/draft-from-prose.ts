@@ -33,6 +33,7 @@ import {
   LOOP_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
   TRIGGER_EVENT_CATALOG,
+  approvalPathsOf,
   flattenActionSteps,
   isBranchStep,
   isValidTimezone,
@@ -133,6 +134,14 @@ function currentLinesOf(nodes: AgentStepNode[]): string {
               : '; no notification')
           );
         }
+        case 'approval':
+          return (
+            `${indent}s${ordinal + 1}. [ask] "${node.name}" — pauses for the owner ` +
+            `(${node.mode === 'input' ? 'typed answer' : 'approve/decline'}, up to ${node.timeoutHours}h)` +
+            (node.saveAs ? `, saves the answer as "${node.saveAs}"` : '') +
+            ` — asks: ${segmentsToTokens(node.message)} (the indented steps below belong to its ` +
+            'approved/declined/timed-out paths)'
+          );
         case 'action':
         case undefined:
           return (
@@ -247,6 +256,15 @@ function promptOf(
     '- Only when the user NAMES a phase ("triage", "the cleanup part"), you may wrap steps ' +
       'in a GROUP object: {"kind": "group", "name": the phase name, "steps": [...]}. Groups ' +
       'change nothing about execution — never invent them.',
+    '- When the user wants a HUMAN DECISION mid-flow ("ask me before sending", "wait for my ' +
+      'approval", "let me pick the wording"), use an ASK object: {"kind": "ask", "name": short ' +
+      'label, "message": what to ask (may use {{var:...}} for context, never {{tool:...}}), ' +
+      '"mode": "approve" (approve/decline buttons) | "input" (the user types an answer, saved ' +
+      'under "saveAs" for later steps), "timeoutHours": how long to wait (default 72), ' +
+      '"notify": array of "email"/"webex" to alert the user with a link, and OPTIONAL ' +
+      '"onApproved"/"onDeclined"/"onTimeout": step arrays for each outcome (empty/omitted = ' +
+      'just continue). The run PAUSES at an ask until the user acts or the wait expires. Only ' +
+      'add one when the description asks for human sign-off or input.',
     '- When the user wants to be NOTIFIED about how the flow ends ("email me if it fails", ' +
       '"send me a WebEx note when it\'s done"), or wants a branch path to deliberately end ' +
       'the whole run, use an END object as the LAST entry of that list: {"kind": "end", ' +
@@ -413,6 +431,21 @@ function promptOf(
     '    "name": string — the phase name, never empty,',
     '    "steps": array of steps — never empty' + (revising ? ',' : ''),
     ...(revising ? ['    "from": string or null — the sN id of the existing group, or null'] : []),
+    '  }',
+    '  Or an ask (ONLY when the description wants a human decision mid-flow):',
+    '  {',
+    '    "kind": "ask",',
+    '    "name": string — a short label, never empty,',
+    '    "message": string — what to ask the user; {{var:...}} allowed, {{tool:...}} forbidden,',
+    '    "mode": "approve" (buttons) or "input" (typed answer),',
+    '    "saveAs": string — required for "input": the answer\'s name for later steps,',
+    '    "timeoutHours": integer — how long to wait before the timed-out path (default 72),',
+    '    "notify": array containing "email" and/or "webex", or empty,',
+    '    "onApproved": array of steps or omitted — runs when approved/answered,',
+    '    "onDeclined": array of steps or omitted — runs when declined,',
+    '    "onTimeout": array of steps or omitted — runs when nobody acts in time' +
+      (revising ? ',' : ''),
+    ...(revising ? ['    "from": string or null — the sN id of the existing ask, or null'] : []),
     '  }',
     '  Or an end marker (ONLY when the description asks for a notification or an explicit ending):',
     '  {',
@@ -625,6 +658,20 @@ const END_SHAPE = z.object({
   from: z.string().nullable().optional(),
 });
 
+const ASK_SHAPE = z.object({
+  kind: z.literal('ask'),
+  name: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  message: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  mode: z.enum(['approve', 'input']).optional(),
+  saveAs: z.string().nullable().optional(),
+  timeoutHours: z.number().int().min(1).optional(),
+  notify: z.array(z.enum(['email', 'webex'])).optional(),
+  onApproved: z.array(z.unknown()).optional(),
+  onDeclined: z.array(z.unknown()).optional(),
+  onTimeout: z.array(z.unknown()).optional(),
+  from: z.string().nullable().optional(),
+});
+
 /* ---------------- trigger wire shapes ------------------------------ */
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -826,14 +873,15 @@ function parseTriggerEntries(
   return drafts;
 }
 
-function wireKindOf(entry: unknown): 'branch' | 'loop' | 'group' | 'end' | 'action' {
+function wireKindOf(entry: unknown): 'branch' | 'loop' | 'group' | 'end' | 'ask' | 'action' {
   if (typeof entry === 'object' && entry !== null) {
     const candidate: { kind?: unknown } = entry;
     if (
       candidate.kind === 'branch' ||
       candidate.kind === 'loop' ||
       candidate.kind === 'group' ||
-      candidate.kind === 'end'
+      candidate.kind === 'end' ||
+      candidate.kind === 'ask'
     ) {
       return candidate.kind;
     }
@@ -970,6 +1018,12 @@ function parseDraftReply(
         case 'group':
           dedupe(node.steps);
           break;
+        case 'approval':
+          for (const { path } of approvalPathsOf(node)) {
+            path.id = claimId(path.id);
+            dedupe(path.steps);
+          }
+          break;
         case 'terminal':
         case 'action':
         case undefined:
@@ -1039,6 +1093,11 @@ function parseNodeList(
       case 'end': {
         const parsedEnd = parseEndEntry(entry, label, state);
         if (parsedEnd) nodes.push(parsedEnd);
+        break;
+      }
+      case 'ask': {
+        const parsedAsk = parseAskEntry(entry, label, state, nesting);
+        if (parsedAsk) nodes.push(parsedAsk);
         break;
       }
       case 'action': {
@@ -1346,6 +1405,88 @@ function parseEndEntry(entry: unknown, label: string, state: ParseState): Termin
     message: segmentsOf(messageText, new Set<string>(), state.knownVars),
     notifyEmail: notify.has('email'),
     notifyWebex: notify.has('webex'),
+  };
+}
+
+function parseAskEntry(
+  entry: unknown,
+  label: string,
+  state: ParseState,
+  nesting: WireNesting
+): AgentStepNode | null {
+  const checked = ASK_SHAPE.safeParse(entry);
+  if (!checked.success) {
+    state.problems.push(...zodProblems(`${label} (ask): `, checked.error));
+    return null;
+  }
+  const wire = checked.data;
+
+  // Branch-like containment, same budgets as a branch entry.
+  const inner: WireNesting = {
+    branchDepth: nesting.branchDepth + 1,
+    containerDepth: nesting.containerDepth + 1,
+    inLoop: nesting.inLoop,
+  };
+  if (inner.branchDepth > MAX_BRANCH_DEPTH_V3 || inner.containerDepth > MAX_CONTAINER_DEPTH) {
+    state.softProblems.push(
+      `${label} nests an ask deeper than the limit (${MAX_BRANCH_DEPTH_V3} branch levels, ${MAX_CONTAINER_DEPTH} container levels) — move it up.`
+    );
+    return null;
+  }
+
+  const mode = wire.mode ?? 'approve';
+  let saveAs = '';
+  if (mode === 'input') {
+    saveAs = claimBoundName(
+      typeof wire.saveAs === 'string' && wire.saveAs.trim() ? wire.saveAs : 'the answer',
+      label,
+      'answer',
+      state
+    );
+    if (!saveAs) {
+      state.problems.push(`${label} (ask): input mode needs a usable "saveAs" name.`);
+      return null;
+    }
+  }
+  for (const match of wire.message.matchAll(TOKEN_PATTERN)) {
+    const [, kind, rawName] = match;
+    const name = rawName.trim();
+    if (kind === 'var' && !state.knownVars.has(name)) {
+      state.softProblems.push(
+        name.startsWith('trigger.')
+          ? unknownTriggerVarProblem(`${label} (ask message)`, name, state.knownVars)
+          : `${label} references {{var:${name}}} in its message, which no earlier step saves and no trigger provides.`
+      );
+    }
+  }
+
+  const origin = originOf(state, wire.from);
+  const askOrigin = origin && origin.kind === 'approval' ? origin : undefined;
+  const notify = new Set(wire.notify ?? []);
+  const pathOf = (
+    key: 'onApproved' | 'onDeclined' | 'onTimeout',
+    fallbackName: string,
+    steps: unknown[] | undefined
+  ) => ({
+    id: askOrigin?.[key]?.id ?? randomUUID(),
+    name: fallbackName,
+    steps: steps ? parseNodeList(steps, `${label}.${key}`, state, inner) : [],
+  });
+
+  return {
+    id: askOrigin?.id ?? randomUUID(),
+    kind: 'approval',
+    name: wire.name.slice(0, 80),
+    // Tool chips never belong in an ask's message.
+    message: segmentsOf(wire.message, new Set<string>(), state.knownVars),
+    mode,
+    ...(saveAs ? { saveAs } : {}),
+    timeoutHours: wire.timeoutHours ?? askOrigin?.timeoutHours ?? 72,
+    notifyEmail: notify.has('email'),
+    notifyWebex: notify.has('webex'),
+    onApproved: pathOf('onApproved', mode === 'input' ? 'Answered' : 'Approved', wire.onApproved),
+    onDeclined: pathOf('onDeclined', 'Declined', wire.onDeclined),
+    onTimeout: pathOf('onTimeout', 'No answer in time', wire.onTimeout),
   };
 }
 
