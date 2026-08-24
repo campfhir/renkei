@@ -9,6 +9,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import { summarizeWireRequest } from './wire-summary';
+import { looksLikeCredentialFailure } from './contract';
 import type { Result } from '@campfhir/safe-functions/types';
 import type {
   LlmContentBlock,
@@ -81,11 +82,21 @@ function toolChoiceOf(request: LlmRequest): Record<string, unknown> | undefined 
   return { type: 'tool', name: request.toolChoice.name };
 }
 
-function errorKindOf(status: number): LlmErrorKind {
+function errorKindOf(status: number, body = ''): LlmErrorKind {
+  // The BODY outranks the status for credentials, because a gateway in front
+  // of the model (Azure, a proxy, a load balancer) answers a bad upstream
+  // credential with 503 rather than 401 — and 503 otherwise means "retry
+  // me", which a wrong API key never outgrows. Misread once, that costs a
+  // run per triggering event, blamed on the owner's step instead of the
+  // org's model settings.
+  if (looksLikeCredentialFailure(body)) return 'auth';
   if (status === 401 || status === 403) return 'auth';
   if (status === 429) return 'rate_limit';
   if (status === 400 || status === 413 || status === 422) return 'invalid_request';
-  if (status === 529) return 'overloaded';
+  // 529 is Anthropic's own overload code; 502/503/504 are what a gateway
+  // between us and it returns. All are worth retrying — the OpenAI adapter
+  // has always treated 503 this way.
+  if (status === 529 || status === 502 || status === 503 || status === 504) return 'overloaded';
   return 'provider_error';
 }
 
@@ -156,7 +167,7 @@ export class AnthropicProvider implements LlmProvider {
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      return err(errorKindOf(response.status), {
+      return err(errorKindOf(response.status, text), {
         message: `Anthropic ${response.status}: ${text.slice(0, 500)}`,
         // The redacted request shape, for "what did we actually send"
         // troubleshooting — content replaced by lengths.
