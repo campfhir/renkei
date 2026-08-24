@@ -419,6 +419,31 @@ interface SeqFrame {
   index: number;
 }
 
+/**
+ * A resolved approval, on its way to the path it routes into.
+ *
+ * `decision` and `decidedBy` exist because ROUTING ALONE IS INVISIBLE TO THE
+ * MODEL. A step inside the approved path is only reachable after a human
+ * approved, but the step's prompt is built from variables — and binding only
+ * `approval.link` told the next step that an approval had been *requested*,
+ * never that one was *given*. An agent whose owner wrote "require explicit
+ * approval before creating a ticket" into its guardrails then correctly
+ * refused to act, having been shown no evidence, and the run died one step
+ * after the owner clicked Approve.
+ */
+interface ApprovalRoute {
+  kind: 'route';
+  outcome: ApprovalOutcomeKey;
+  answer: string | null;
+  link: string | null;
+  /** The card's own status: 'approved' | 'declined' | 'expired'. */
+  decision: string;
+  /** Who decided, when the card recorded it. */
+  decidedBy: string | null;
+  /** ISO timestamp of the decision. */
+  decidedAt: string | null;
+}
+
 interface LoopFrame {
   kind: 'loop';
   loop: LoopStep;
@@ -906,6 +931,24 @@ export function createAgentRunHandler(deps: EngineDeps) {
               return;
             }
             if (outcome.link) vars['approval.link'] = outcome.link;
+            // THE DECISION ITSELF, as a variable every later step's prompt
+            // lists. Without this the only approval-shaped thing in scope
+            // was the link — which reads as "an approval was requested",
+            // the opposite of what a guardrail asking for explicit approval
+            // needs to see. Phrased as a sentence rather than a bare enum
+            // because it is read by a model, not switched on by code.
+            vars['approval.decision'] = outcome.decision;
+            vars['approval.status'] =
+              outcome.decision === 'approved'
+                ? `The owner approved "${node.name.trim() || 'this step'}"` +
+                  (outcome.decidedBy ? ` (${outcome.decidedBy})` : '') +
+                  (outcome.decidedAt ? ` at ${outcome.decidedAt}` : '') +
+                  '. This run may proceed with what that approval covered.'
+                : outcome.decision === 'declined'
+                  ? `The owner DECLINED "${node.name.trim() || 'this step'}". Do not carry out what was declined.`
+                  : `Nobody answered "${node.name.trim() || 'this step'}" before the deadline. Treat it as not approved.`;
+            if (outcome.decidedBy) vars['approval.decidedBy'] = outcome.decidedBy;
+            if (outcome.decidedAt) vars['approval.decidedAt'] = outcome.decidedAt;
             if (node.mode === 'input' && node.saveAs && outcome.answer !== null) {
               vars[node.saveAs] = outcome.answer;
             }
@@ -1547,7 +1590,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // Close a row a crashed worker left open, then replay a finished one.
     await db
       .updateTable('agent_run_steps')
-      .set({ status: 'failed', outcome: 'terminal', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
+      .set({
+        status: 'failed',
+        outcome: 'terminal',
+        finished_at: sql`NOW()`,
+        updated_at: sql`NOW()`,
+      })
       .where('run_id', '=', run.id)
       .where('step_id', '=', node.id)
       .where('iteration', '=', iteration)
@@ -1628,7 +1676,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     await db
       .updateTable('agent_run_steps')
       .set({
-        status: node.result === 'failure' ? 'failed' : node.result === 'stop' ? 'stopped' : 'succeeded',
+        status:
+          node.result === 'failure' ? 'failed' : node.result === 'stop' ? 'stopped' : 'succeeded',
         outcome: 'terminal',
         outcome_code: null,
         tool_call_count: toolCalls.length,
@@ -1680,10 +1729,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     ordinals: Map<string, number>,
     iteration: number,
     waitCapHours: number
-  ): Promise<
-    | { kind: 'waiting' }
-    | { kind: 'route'; outcome: ApprovalOutcomeKey; answer: string | null; link: string | null }
-  > {
+  ): Promise<{ kind: 'waiting' } | ApprovalRoute> {
     const link = await approvalLink(run);
 
     // Replay: crash-after-resolve-before-advance, and history whose card
@@ -1697,8 +1743,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
       .where('status', '=', 'succeeded')
       .executeTakeFirst();
     if (resolved) {
-      const detail: { decision?: unknown; saveValue?: unknown } =
-        typeof resolved.detail === 'object' && resolved.detail !== null && !Array.isArray(resolved.detail)
+      const detail: {
+        decision?: unknown;
+        saveValue?: unknown;
+        decidedBy?: unknown;
+        decidedAt?: unknown;
+      } =
+        typeof resolved.detail === 'object' &&
+        resolved.detail !== null &&
+        !Array.isArray(resolved.detail)
           ? resolved.detail
           : {};
       const outcome = approvalOutcomeOf(detail.decision);
@@ -1708,6 +1761,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcome,
           answer: typeof detail.saveValue === 'string' ? detail.saveValue : null,
           link,
+          // Replay must rebind the same evidence the first pass did, or a
+          // resumed run reaches the approved path having forgotten why.
+          decision: typeof detail.decision === 'string' ? detail.decision : 'approved',
+          decidedBy: typeof detail.decidedBy === 'string' ? detail.decidedBy : null,
+          decidedAt: typeof detail.decidedAt === 'string' ? detail.decidedAt : null,
         };
       }
     }
@@ -1725,10 +1783,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // 'succeeded' (all three outcomes ROUTE onward — run-ending semantics
     // belong to terminal nodes placed inside the paths) and hand back the
     // route. detail.decision is what replay re-derives from.
-    const resolveDecision = async (
-      status: string,
-      result: unknown
-    ): Promise<{ kind: 'route'; outcome: ApprovalOutcomeKey; answer: string | null; link: string | null }> => {
+    const resolveDecision = async (status: string, result: unknown): Promise<ApprovalRoute> => {
       const outcome = approvalOutcomeOf(status) ?? 'onTimeout';
       const resultObj: { answer?: unknown; decidedBy?: unknown } =
         typeof result === 'object' && result !== null && !Array.isArray(result) ? result : {};
@@ -1744,10 +1799,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
           : status === 'declined'
             ? 'You declined.'
             : 'Nobody answered in time.';
+      const decidedBy = typeof resultObj.decidedBy === 'string' ? resultObj.decidedBy : null;
+      const decidedAt = new Date().toISOString();
       const detail = {
         llmSummary: wording,
         declaredOutcome: 'success',
         decision: approvalOutcomeOf(status) ? status : 'expired',
+        // Persisted so replay rebinds identical evidence — see ApprovalRoute.
+        ...(decidedBy !== null ? { decidedBy } : {}),
+        decidedAt,
         ...(answer !== null ? { saveValue: clip(answer, PREVIEW_CHARS) } : {}),
       };
       const updated = await db
@@ -1794,7 +1854,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .execute();
       }
-      return { kind: 'route', outcome, answer, link };
+      return {
+        kind: 'route',
+        outcome,
+        answer,
+        link,
+        decision: approvalOutcomeOf(status) ? status : 'expired',
+        decidedBy,
+        decidedAt,
+      };
     };
 
     if (card && card.status !== 'suggested') {
@@ -1932,10 +2000,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     });
 
     const waitingDetail = {
-      llmSummary: [
-        `Waiting for you (until ${waitingUntil.toISOString()}).`,
-        ...notes,
-      ].join(' '),
+      llmSummary: [`Waiting for you (until ${waitingUntil.toISOString()}).`, ...notes].join(' '),
       approvalMessage: clip(message, PREVIEW_CHARS),
       ...(rendered.unbound.length > 0 ? { unboundVariables: rendered.unbound } : {}),
       toolCalls,
