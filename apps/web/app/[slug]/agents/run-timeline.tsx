@@ -111,11 +111,32 @@ interface DetailShape {
   approvalMessage?: unknown;
 }
 
+/**
+ * Why an admin is not seeing this attempt's content. The rule is "content
+ * only for FAILED attempts", so every other status lands here — and saying
+ * "this step succeeded" under a Running pill states something the page
+ * itself contradicts two lines above.
+ */
+function redactionReason(status: string): string {
+  switch (status) {
+    case 'succeeded':
+      return 'Details hidden — this step succeeded.';
+    case 'running':
+      return 'Details hidden — this step is still running.';
+    case 'waiting':
+      return 'Details hidden — this step is waiting for someone.';
+    case 'stopped':
+      return 'Details hidden — this step ended the run without a failure.';
+    default:
+      return 'Details are shown only for steps that failed.';
+  }
+}
+
 function AttemptDetail({ attempt }: { attempt: AttemptView }) {
   if (attempt.redacted) {
     return (
       <p className="mt-1 text-xs italic text-gray-400 dark:text-gray-500">
-        Details hidden — this step succeeded.
+        {redactionReason(attempt.status)}
       </p>
     );
   }
