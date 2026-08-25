@@ -22,6 +22,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import {
   matchesQuery,
   rankOptions,
+  type DateOption,
   type InsertOption,
   type ToolOption,
   type VariableOption,
@@ -34,6 +35,8 @@ export interface InsertMenuProps {
   withSearchBox: boolean;
   tools: ToolOption[];
   variables: VariableOption[];
+  /** Runtime-computed dates — always insertable, never the step's one tool. */
+  dates: DateOption[];
   /** Non-null when tools may not be inserted; shown instead of the list. */
   toolsBlockedHint: string | null;
   activeIndex: number;
@@ -60,16 +63,17 @@ function groupTools(tools: ToolOption[], query: string): Map<string, ToolOption[
 export function flattenOptions(
   tools: ToolOption[],
   variables: VariableOption[],
+  dates: DateOption[],
   toolsBlocked: boolean,
   query: string
 ): InsertOption[] {
   if (query) {
-    // Searching: ranked flat lists, tools then details.
+    // Searching: ranked flat lists, tools then details then dates.
     const shownTools = toolsBlocked ? [] : rankOptions(tools, query);
-    return [...shownTools, ...rankOptions(variables, query)];
+    return [...shownTools, ...rankOptions(variables, query), ...rankOptions(dates, query)];
   }
   const shownTools = toolsBlocked ? [] : [...groupTools(tools, query).values()].flat();
-  return [...shownTools, ...variables];
+  return [...shownTools, ...variables, ...dates];
 }
 
 export function optionDomId(listboxId: string, index: number): string {
@@ -82,6 +86,7 @@ export function InsertMenu({
   withSearchBox,
   tools,
   variables,
+  dates,
   toolsBlockedHint,
   activeIndex,
   onHover,
@@ -118,6 +123,10 @@ export function InsertMenu({
   const shownVars = useMemo(
     () => (searching ? rankOptions(variables, query) : variables),
     [searching, variables, query]
+  );
+  const shownDates = useMemo(
+    () => (searching ? rankOptions(dates, query) : dates),
+    [searching, dates, query]
   );
 
   let index = -1;
@@ -256,6 +265,19 @@ export function InsertMenu({
           </div>
         ) : (
           shownVars.map(row)
+        )}
+        <div
+          role="presentation"
+          className="border-t border-gray-100 px-2 pb-0.5 pt-1.5 text-[0.65rem] font-semibold uppercase tracking-wide text-gray-400 dark:border-gray-800"
+        >
+          Insert a date
+        </div>
+        {shownDates.length === 0 ? (
+          <div className="px-2 py-1.5 text-xs text-gray-500 dark:text-gray-400">
+            No dates match “{query}”.
+          </div>
+        ) : (
+          shownDates.map(row)
         )}
       </div>
     </div>

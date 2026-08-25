@@ -61,6 +61,7 @@ export {
   type AgentStep,
   type AgentStepNode,
   type AgentStepsDoc,
+  type DateSegment,
   type ApprovalMode,
   type ApprovalOutcomeKey,
   type ApprovalStep,
@@ -87,7 +88,12 @@ export {
   type ToolDescriptorLike,
   type ValidationIssue,
 } from './validate';
-export { instructionPreview, renderInstruction, type RenderResult } from './render';
+export {
+  instructionPreview,
+  renderDateSegment,
+  renderInstruction,
+  type RenderResult,
+} from './render';
 export {
   computeNextRun,
   computeNextRunForSchedule,
@@ -125,6 +131,7 @@ export {
 } from './triggers';
 
 export {
+  describeDateSegment,
   resolveTime,
   TIME_UNITS,
   type ResolveTimeRequest,

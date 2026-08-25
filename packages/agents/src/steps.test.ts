@@ -124,7 +124,7 @@ describe('isAgentStepsDoc', () => {
   });
 
   it('rejects unknown versions', () => {
-    expect(isAgentStepsDoc({ version: 6, steps: [] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 7, steps: [] })).toBe(false);
   });
 
   it('accepts an empty version-3 document shell', () => {
@@ -143,12 +143,12 @@ describe('isAgentStepsDoc', () => {
     };
     expect(isAgentStepsDoc({ version: 4, steps: [terminal] })).toBe(true);
     expect(isAgentStepsDoc({ version: 3, steps: [terminal] })).toBe(false);
-    expect(
-      isAgentStepsDoc({ version: 4, steps: [{ ...terminal, result: 'explode' }] })
-    ).toBe(false);
-    expect(
-      isAgentStepsDoc({ version: 4, steps: [{ ...terminal, notifyEmail: 'yes' }] })
-    ).toBe(false);
+    expect(isAgentStepsDoc({ version: 4, steps: [{ ...terminal, result: 'explode' }] })).toBe(
+      false
+    );
+    expect(isAgentStepsDoc({ version: 4, steps: [{ ...terminal, notifyEmail: 'yes' }] })).toBe(
+      false
+    );
   });
 });
 
@@ -407,12 +407,8 @@ describe('approval nodes (version 5)', () => {
     expect(isAgentStepsDoc({ version: 5, steps: [node] })).toBe(true);
     expect(isAgentStepsDoc({ version: 4, steps: [node] })).toBe(false);
     expect(isAgentStepsDoc({ version: 3, steps: [node] })).toBe(false);
-    expect(
-      isAgentStepsDoc({ version: 5, steps: [{ ...node, mode: 'shout' }] })
-    ).toBe(false);
-    expect(
-      isAgentStepsDoc({ version: 5, steps: [{ ...node, onTimeout: undefined }] })
-    ).toBe(false);
+    expect(isAgentStepsDoc({ version: 5, steps: [{ ...node, mode: 'shout' }] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 5, steps: [{ ...node, onTimeout: undefined }] })).toBe(false);
   });
 
   it('requiredVersion puts approval above terminal', () => {
@@ -427,7 +423,9 @@ describe('approval nodes (version 5)', () => {
     };
     expect(requiredVersion([approval()])).toBe(5);
     expect(
-      requiredVersion([approval({ onDeclined: { id: randomUUID(), name: 'R', steps: [terminal] } })])
+      requiredVersion([
+        approval({ onDeclined: { id: randomUUID(), name: 'R', steps: [terminal] } }),
+      ])
     ).toBe(5);
     expect(requiredVersion([terminal])).toBe(4);
   });
