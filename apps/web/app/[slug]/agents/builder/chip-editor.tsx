@@ -28,8 +28,9 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { InstructionSegment } from '@renkei/agents';
 import { InsertMenu, flattenOptions, optionDomId } from './insert-menu';
+import { DateChipEditor } from './date-chip-editor';
 import { dateOptions, type InsertOption, type ToolOption, type VariableOption } from './options';
-import { describeDateSegment, isInstructionSegment } from '@renkei/agents';
+import { describeDateSegment, isInstructionSegment, type DateSegment } from '@renkei/agents';
 
 export interface ChipEditorProps {
   value: InstructionSegment[];
@@ -216,6 +217,15 @@ export function ChipEditor({
     : null;
   // The caller's timezone is the one thing this cannot infer and the model
   // must not guess, so it is read from the browser at insert time.
+  // The date chip under edit: the live DOM node (so changes write straight
+  // back into the document) plus where to float the popover.
+  const [editingDate, setEditingDate] = useState<{
+    element: HTMLElement;
+    segment: DateSegment;
+    top: number;
+    left: number;
+  } | null>(null);
+
   const dates = useMemo(
     () => dateOptions(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', query),
     [query]
@@ -417,8 +427,47 @@ export function ChipEditor({
     if (chip instanceof HTMLElement && target.closest('button')) {
       chip.remove();
       setSelectedChip(null);
+      setEditingDate(null);
       emit();
+      return;
     }
+    // A date chip is the one chip whose MEANING is editable — a tool or var
+    // chip is just a name, and is replaced rather than adjusted.
+    if (chip instanceof HTMLElement && chip.getAttribute('data-chip-kind') === 'date') {
+      const raw = chip.getAttribute('data-chip-date');
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      if (isInstructionSegment(parsed) && parsed.t === 'date') {
+        // Viewport coordinates: the popover is fixed, so it is not clipped
+        // by the rail's scroll container. Flipped above the chip when there
+        // is not room below it.
+        const box = chip.getBoundingClientRect();
+        const POPOVER_HEIGHT = 380;
+        const below = window.innerHeight - box.bottom;
+        setEditingDate({
+          element: chip,
+          segment: parsed,
+          top: below < POPOVER_HEIGHT ? Math.max(8, box.top - POPOVER_HEIGHT - 4) : box.bottom + 4,
+          left: Math.max(8, Math.min(box.left, window.innerWidth - 300)),
+        });
+      }
+    }
+  };
+
+  const applyDateEdit = (next: DateSegment) => {
+    setEditingDate((current) => {
+      if (!current) return current;
+      // Straight onto the node: the chip IS the document here, and the
+      // label is re-derived so the pill can never disagree with the value.
+      current.element.setAttribute('data-chip-date', JSON.stringify(next));
+      const label = describeDateSegment(next);
+      current.element.setAttribute('data-chip-name', label);
+      const text = current.element.firstElementChild;
+      if (text) text.textContent = label;
+      const remove = current.element.querySelector('button');
+      remove?.setAttribute('aria-label', `Remove ${label}`);
+      emit();
+      return { ...current, segment: next };
+    });
   };
 
   return (
@@ -523,6 +572,15 @@ export function ChipEditor({
           }}
           onClose={closeMenu}
           listboxId={listboxId}
+        />
+      ) : null}
+      {editingDate ? (
+        <DateChipEditor
+          segment={editingDate.segment}
+          top={editingDate.top}
+          left={editingDate.left}
+          onChange={applyDateEdit}
+          onClose={() => setEditingDate(null)}
         />
       ) : null}
     </div>
