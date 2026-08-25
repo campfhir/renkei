@@ -8,6 +8,7 @@
  * authorization; the gate is.
  */
 
+import { compileMetadataFilter, type MetadataFilterExpr } from './metadata-filter';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { contentEncryptionKey, revealContent } from '@renkei/crypto';
@@ -136,6 +137,8 @@ interface CandidateFilters {
   sources?: readonly SourceFilter[];
   after?: string;
   before?: string;
+  /** `key:value` narrowing over metadata — see metadata-filter.ts. */
+  metadata?: MetadataFilterExpr | null;
 }
 
 /**
@@ -154,11 +157,13 @@ function filterFragments(filters: CandidateFilters) {
       ? sql`(provider = ${source.provider.trim()} AND metadata ->> 'kind' = ${source.kind})`
       : sql`(provider = ${source.provider.trim()})`
   );
+  const metadata = compileMetadataFilter(filters.metadata);
   return {
     source: clauses.length > 0 ? sql`(${sql.join(clauses, sql` OR `)})` : sql`TRUE`,
     // A dated filter excludes undated rows rather than treating NULL as epoch.
     after: after ? sql`source_at IS NOT NULL AND source_at >= ${after}` : sql`TRUE`,
     before: before ? sql`source_at IS NOT NULL AND source_at < ${before}` : sql`TRUE`,
+    metadata: metadata ?? sql`TRUE`,
   };
 }
 
@@ -269,6 +274,7 @@ export async function listRecentKnowledge(
        AND ${owner}
        AND ${filters.after}
        AND ${filters.before}
+       AND ${filters.metadata}
      ORDER BY source_at DESC
      LIMIT ${overfetch})
   `;
@@ -356,6 +362,7 @@ export async function searchKnowledge(
           AND ${owner}
           AND ${filters.after}
           AND ${filters.before}
+          AND ${filters.metadata}
         ORDER BY distance
         LIMIT ${overfetch}
       `.execute(dbResult.val),
@@ -385,3 +392,12 @@ export async function searchKnowledge(
     unverified: outcome.unverified,
   });
 }
+
+export {
+  compileMetadataFilter,
+  splitQuery,
+  FREE_TEXT_KEY,
+  type MetadataFilterExpr,
+  type MetadataFilterOperator,
+  type MetadataFilterToken,
+} from './metadata-filter';

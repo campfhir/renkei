@@ -15,7 +15,13 @@
 
 import { getSessionFromCookies } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
-import { resolveEmbeddingProvider, searchKnowledge, listRecentKnowledge } from '@renkei/knowledge';
+import {
+  resolveEmbeddingProvider,
+  searchKnowledge,
+  listRecentKnowledge,
+  splitQuery,
+} from '@renkei/knowledge';
+import { parseLogQueryExpr } from '@campfhir/bored-logs';
 import { buildKnowledgeVerifiers, sourceFiltersFor } from '@/lib/mcp-tools/knowledge';
 
 const MIN_K = 1;
@@ -74,6 +80,17 @@ export async function searchMyKnowledge(
   }
 
   const trimmedQuery = query.trim();
+  // `key:value` narrows metadata; bare words search the vector. The parser
+  // is bored-logs' — the same syntax the activity log takes — so what a
+  // person already knows from filtering logs works here unchanged.
+  const parsed = trimmedQuery ? parseLogQueryExpr(trimmedQuery) : null;
+  const { terms, filter: metadataFilter } =
+    parsed && parsed.ok ? splitQuery(parsed.val) : { terms: [], filter: null };
+  // What is left after the filters are lifted out is what the embedder sees.
+  // A query of ONLY filters ("reporter:Evan") has nothing to be semantically
+  // similar to, so it browses the newest matching rows instead of embedding
+  // an empty string.
+  const semanticQuery = parsed && parsed.ok ? terms.join(' ').trim() : trimmedQuery;
   const clampedK = Math.min(Math.max(Math.trunc(k) || DEFAULT_K, MIN_K), MAX_K);
 
   // No recorded email = nothing can be verified = nothing is disclosed —
@@ -100,7 +117,7 @@ export async function searchMyKnowledge(
   // so the filters double as a browser ("top 20 mail", "top 20 WebEx").
   // This path needs no embedder, so browsing still works for an org that
   // has not configured one.
-  if (!trimmedQuery) {
+  if (!semanticQuery) {
     const recent = await listRecentKnowledge({
       tenantId,
       userEmail,
@@ -109,6 +126,7 @@ export async function searchMyKnowledge(
       ...(sourceFilters.length > 0 ? { sources: sourceFilters } : {}),
       ...(filters.after ? { after: filters.after } : {}),
       ...(filters.before ? { before: filters.before } : {}),
+      ...(metadataFilter ? { metadata: metadataFilter } : {}),
     });
     if (!recent.ok) {
       return { hits: [], elided: 0, error: 'The knowledge store could not be read.' };
@@ -136,13 +154,14 @@ export async function searchMyKnowledge(
   const searched = await searchKnowledge({
     tenantId,
     userEmail,
-    query: trimmedQuery,
+    query: semanticQuery,
     k: clampedK,
     embedder,
     verifiers,
     ...(sourceFilters.length > 0 ? { sources: sourceFilters } : {}),
     ...(filters.after ? { after: filters.after } : {}),
     ...(filters.before ? { before: filters.before } : {}),
+    ...(metadataFilter ? { metadata: metadataFilter } : {}),
   });
   if (!searched.ok) {
     return {
