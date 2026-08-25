@@ -84,14 +84,23 @@ export async function searchMyKnowledge(
   // is bored-logs' — the same syntax the activity log takes — so what a
   // person already knows from filtering logs works here unchanged.
   const parsed = trimmedQuery ? parseLogQueryExpr(trimmedQuery) : null;
-  const { terms, filter: metadataFilter } =
-    parsed && parsed.ok ? splitQuery(parsed.val) : { terms: [], filter: null };
+  const {
+    terms,
+    filter: metadataFilter,
+    unsupported,
+  } = parsed && parsed.ok ? splitQuery(parsed.val) : { terms: [], filter: null, unsupported: null };
   // What is left after the filters are lifted out is what the embedder sees.
   // A query of ONLY filters ("reporter:Evan") has nothing to be semantically
   // similar to, so it browses the newest matching rows instead of embedding
   // an empty string.
   const semanticQuery = parsed && parsed.ok ? terms.join(' ').trim() : trimmedQuery;
   const clampedK = Math.min(Math.max(Math.trunc(k) || DEFAULT_K, MIN_K), MAX_K);
+
+  // A query that cannot be answered as written is said so, not approximated:
+  // a smaller answer that looks right is worse than a clear refusal.
+  if (unsupported) {
+    return { hits: [], elided: 0, error: unsupported };
+  }
 
   // No recorded email = nothing can be verified = nothing is disclosed —
   // the same fail-closed rule search_knowledge enforces.

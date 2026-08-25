@@ -122,8 +122,27 @@ export function compileMetadataFilter(
 export function splitQuery(expr: MetadataFilterExpr | null | undefined): {
   terms: string[];
   filter: MetadataFilterExpr | null;
+  /**
+   * Set when the query asked for something this split cannot honour: a bare
+   * word OR-ed with a filter.
+   *
+   * The two halves recombine as AND by construction — the filter narrows
+   * which rows are candidates, then the vector ranks them — so `printers ||
+   * ticket:ENG-787` cannot be answered as written. Lifting the word out
+   * anyway would quietly return "about printers AND on that ticket", which
+   * is a different and much smaller answer to a question nobody asked. Say
+   * so instead.
+   */
+  unsupported: string | null;
 } {
   const terms: string[] = [];
+  let unsupported: string | null = null;
+
+  const hasFreeText = (node: MetadataFilterExpr): boolean =>
+    node.type === 'filter' ? node.filter.key === FREE_TEXT_KEY : node.nodes.some(hasFreeText);
+  const hasMetadata = (node: MetadataFilterExpr): boolean =>
+    node.type === 'filter' ? node.filter.key !== FREE_TEXT_KEY : node.nodes.some(hasMetadata);
+
   const walk = (node: MetadataFilterExpr): MetadataFilterExpr | null => {
     if (node.type === 'filter') {
       if (node.filter.key === FREE_TEXT_KEY) {
@@ -135,6 +154,17 @@ export function splitQuery(expr: MetadataFilterExpr | null | undefined): {
       }
       return node;
     }
+    // An OR spanning both halves is the one shape that cannot be split. An
+    // AND is fine: narrowing then ranking IS an AND.
+    if (node.type === 'or' && node.nodes.length > 1) {
+      if (hasFreeText(node) && hasMetadata(node)) {
+        unsupported =
+          'A word cannot be combined with || against a filter — searching meaning and ' +
+          'matching a field are answered in different ways, so they always narrow together. ' +
+          'Use && , or search for the two things separately.';
+        return null;
+      }
+    }
     const kept = node.nodes
       .map(walk)
       .filter((child): child is MetadataFilterExpr => child !== null);
@@ -143,5 +173,5 @@ export function splitQuery(expr: MetadataFilterExpr | null | undefined): {
     return { type: node.type, nodes: kept };
   };
   const filter = expr ? walk(expr) : null;
-  return { terms, filter };
+  return { terms, filter, unsupported };
 }
