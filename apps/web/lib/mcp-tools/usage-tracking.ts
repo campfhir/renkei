@@ -28,7 +28,8 @@
 
 import { randomUUID } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
+import { describeActor, getDatabase } from '@renkei/db';
+import { friendlyToolName } from '@renkei/agents';
 import { logger } from '@/lib/logger';
 import { connectorKeyForTool } from './tool-connector';
 
@@ -119,6 +120,66 @@ function record(
     });
 }
 
+/**
+ * Every tool call, on the record — the thing the activity log was missing
+ * entirely.
+ *
+ * Debug when it worked: successful calls are the highest-volume event here
+ * and nobody goes looking for one. A FAILED call is precisely what someone
+ * IS looking for, so it speaks up at warn.
+ *
+ * The sentence carries names — the person and a readable tool title —
+ * because a log a human reads should not require them to decode
+ * `confluence_update_blogpost` or an OIDC subject. Both exact values ride
+ * along in the metadata, so grepping for either still works.
+ */
+async function actorFor(context: UsageContext): Promise<{ subject: string; displayName: string }> {
+  const fallback = {
+    subject: context.subject ?? '(none)',
+    displayName: context.subject ?? '(none)',
+  };
+  try {
+    const dbResult = getDatabase();
+    if (!dbResult.ok) return fallback;
+    return await describeActor(dbResult.val, context.tenantId, context.subject);
+  } catch {
+    return fallback;
+  }
+}
+
+async function logToolCall(
+  context: UsageContext,
+  tool: string,
+  config: { title?: unknown } | undefined,
+  status: 'ok' | 'error',
+  startedAt: Date,
+  errorSummary: string | null
+): Promise<void> {
+  // Nothing in here may affect the tool call it describes. Resolving a
+  // name touches the database, and a log line is never worth failing real
+  // work for — so the whole body is defended, and an unresolvable name
+  // degrades to the subject rather than taking the line down with it.
+  const actor = await actorFor(context);
+  const title = typeof config?.title === 'string' ? config.title : null;
+  const fields = {
+    component: 'mcp/tools',
+    tenantId: context.tenantId,
+    userName: actor.displayName,
+    subject: actor.subject,
+    toolLabel: friendlyToolName(tool, title),
+    tool,
+    durationMs: Date.now() - startedAt.getTime(),
+  };
+  if (status === 'error') {
+    logger.warn('{userName}: {toolLabel} failed — {error}', {
+      ...fields,
+      error: errorSummary ?? 'no detail',
+    });
+    return;
+  }
+  logger.debug('{userName}: {toolLabel} ok', fields);
+}
+
 export function withUsageTracking(server: McpServer, context: UsageContext): McpServer {
   return new Proxy(server, {
     get(target, property, receiver) {
@@ -138,25 +199,24 @@ export function withUsageTracking(server: McpServer, context: UsageContext): Mcp
             const forwarded = handlerArgs as Parameters<typeof handler>;
             try {
               const result: unknown = await handler(...forwarded);
-              record(
+              const status = statusOf(result);
+              record(context, name, status, startedAt, new Date(), errorSummaryOf(result));
+              void logToolCall(
                 context,
                 name,
-                statusOf(result),
+                config,
+                status,
                 startedAt,
-                new Date(),
                 errorSummaryOf(result)
-              );
+              ).catch(() => undefined);
               return result;
             } catch (error) {
               // A throw is a failure that still happened, and its latency is
               // the interesting kind. Record, then let it propagate untouched.
-              record(
-                context,
-                name,
-                'error',
-                startedAt,
-                new Date(),
-                briefly(error instanceof Error ? error.message : String(error))
+              const summary = briefly(error instanceof Error ? error.message : String(error));
+              record(context, name, 'error', startedAt, new Date(), summary);
+              void logToolCall(context, name, config, 'error', startedAt, summary).catch(
+                () => undefined
               );
               throw error;
             }

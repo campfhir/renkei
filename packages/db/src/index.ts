@@ -7,6 +7,7 @@
  */
 
 export { initDatabase, getDatabase, getPool, closeDatabase } from './client';
+export { describeActor, describeAccountActor, resetActorCache, type Actor } from './actors';
 export type * from './db.types';
 // The migration runner is deliberately NOT re-exported here: it touches fs,
 // path and process.cwd, which poisons this barrel for Next's edge-runtime

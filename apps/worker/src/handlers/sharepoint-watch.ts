@@ -25,6 +25,7 @@
 import { sql } from 'kysely';
 import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
+import { actorForAccount } from '../log-actor';
 import {
   initialDeltaUrl,
   runDeltaRound,
@@ -248,19 +249,32 @@ export async function runDriveWatchSync(
     .where('id', '=', row.id)
     .execute();
 
-  logger.info(
-    'indexed {items} doc(s) from {scope} — {skipped} unchanged, {unsupported} unsupported, {oversized} oversized, {removed} removed',
-    {
-      component: COMPONENT,
-      tenantId,
-      scope: row.scope_label ?? driveId,
-      items: result.items,
-      skipped: result.skipped,
-      unsupported: result.unsupported,
-      oversized: result.oversized,
-      removed: result.removed,
-    }
-  );
+  const actor = await actorForAccount(db, tenantId, row.account_id);
+  const fields = {
+    component: COMPONENT,
+    tenantId,
+    scope: row.scope_label ?? driveId,
+    // The opaque drive id stays searchable in the metadata.
+    driveId,
+    userName: actor.displayName,
+    subject: actor.subject,
+    items: result.items,
+    skipped: result.skipped,
+    unsupported: result.unsupported,
+    oversized: result.oversized,
+    removed: result.removed,
+  };
+  if (result.items > 0 || result.removed > 0) {
+    logger.info(
+      'indexed {items} doc(s) from {scope} for {userName} — {skipped} unchanged, {unsupported} unsupported, {oversized} oversized, {removed} removed',
+      fields
+    );
+  } else {
+    // "0 doc(s), 0 unchanged, 0 unsupported, 0 oversized, 0 removed" is a
+    // poll that found nothing — true, frequent, and not worth a line
+    // someone has to read past.
+    logger.debug('no new docs from {scope} for {userName}', fields);
+  }
 
   return result;
 }

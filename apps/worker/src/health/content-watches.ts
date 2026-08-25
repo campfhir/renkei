@@ -22,6 +22,7 @@
 
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
+import { actorForAccount } from '../log-actor';
 import { getOrgSettings } from '@renkei/settings';
 import { ATLASSIAN, ATLASSIAN_CONFLUENCE } from '@renkei/provider-grants';
 import { logger } from '../logger';
@@ -137,14 +138,29 @@ export async function sweepContentWatches(): Promise<void> {
         grantProviderFor(watch.provider)
       );
       const result = await runWatchSync(watch.tenant_id, access, watch);
+      // The NAME, not the id: "349536260" tells a reader nothing, and the
+      // watch row already carries the label the UI shows. The id stays in
+      // the metadata, where searching for it still works.
+      const scope = watch.scope_label ?? watch.scope_key;
+      // The grant behind this watch names the person whose credential it
+      // polls with — the one the indexed content is attributable to.
+      const actor = await actorForAccount(db, watch.tenant_id, watch.account_id);
+      const fields = {
+        component: COMPONENT,
+        tenantId: watch.tenant_id,
+        provider: watch.provider,
+        scope,
+        scopeKey: watch.scope_key,
+        userName: actor.displayName,
+        subject: actor.subject,
+        items: result.items,
+      };
       if (result.items > 0) {
-        logger.info('indexed {items} item(s) from {provider} {scope}', {
-          component: COMPONENT,
-          tenantId: watch.tenant_id,
-          provider: watch.provider,
-          scope: watch.scope_key,
-          items: result.items,
-        });
+        logger.info('indexed {items} item(s) from {provider} {scope} for {userName}', fields);
+      } else {
+        // A poll that found nothing is the normal case and says nothing;
+        // at info it drowns the log in rows nobody can act on.
+        logger.debug('no new items from {provider} {scope} for {userName}', fields);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

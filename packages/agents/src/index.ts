@@ -138,3 +138,5 @@ export {
   type ResolvedTime,
   type TimeUnit,
 } from './resolve-time';
+
+export { friendlyToolName } from './tool-name';

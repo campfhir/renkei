@@ -23,10 +23,12 @@
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
 import { randomUUID } from 'node:crypto';
+import { describeActor as describeActorRaw } from '@renkei/db';
 import type { DB, Json } from '@renkei/db';
 import {
   MAX_COLLECTED_ITEMS,
   findNodeById,
+  friendlyToolName,
   flattenActionSteps,
   isAgentStepsDoc,
   renderInstruction,
@@ -543,6 +545,23 @@ function buildResumeStack(nodes: AgentStepNode[], startId: string | null): Frame
  * dropped rather than coerced — resolveTime then reports precisely what was
  * wrong, and the model gets a free retry to fix it.
  */
+/**
+ * The owner's name for a log line. Total on purpose: resolving a display
+ * name is a convenience, and a run must never fail because one could not be
+ * found (a stubbed module in a test is enough to make that happen).
+ */
+async function describeActor(
+  db: Kysely<DB>,
+  tenantId: string,
+  subject: string | null | undefined
+): Promise<{ subject: string; displayName: string }> {
+  try {
+    return await describeActorRaw(db, tenantId, subject);
+  } catch {
+    return { subject: subject ?? '(none)', displayName: subject ?? '(none)' };
+  }
+}
+
 function resolveTimeArgsOf(input: unknown): ResolveTimeRequest {
   const args: {
     timezone?: unknown;
@@ -2907,6 +2926,34 @@ export function createAgentRunHandler(deps: EngineDeps) {
           };
         }
         const durationMs = Date.now() - startedAt;
+        // Every tool an agent calls, on the record. Debug when it worked —
+        // this is the highest-volume event in the system and nobody reads a
+        // successful call — but a FAILED call is exactly what someone is
+        // hunting for, so it speaks up, naming the agent and the person
+        // whose authority it borrowed.
+        const toolFields = {
+          component: 'worker-agents/engine',
+          runId: run.id,
+          tenantId: run.tenant_id,
+          agentId: run.agent_id,
+          agentName: await agentNameOf(run.tenant_id, run.agent_id),
+          userName: (await describeActor(db, run.tenant_id, run.owner_subject)).displayName,
+          subject: run.owner_subject,
+          stepName: step.name,
+          // Readable in the sentence, exact in the metadata: someone
+          // grepping for the wire name still finds it.
+          toolLabel: friendlyToolName(use.name, null),
+          tool: use.name,
+          durationMs,
+        };
+        if (result.isError) {
+          logger.warn('agent "{agentName}" ({userName}): {toolLabel} failed — {error}', {
+            ...toolFields,
+            error: clip(textOf(result), PREVIEW_CHARS),
+          });
+        } else {
+          logger.debug('agent "{agentName}" ({userName}): {toolLabel} ok', toolFields);
+        }
         toolCalls.push({
           tool: use.name,
           argsPreview: clip(JSON.stringify(args), PREVIEW_CHARS),
@@ -3056,6 +3103,33 @@ export function createAgentRunHandler(deps: EngineDeps) {
     return typeof detail.llmSummary === 'string' ? detail.llmSummary : undefined;
   }
 
+  /** The agent's name for a log sentence; its id stays in the metadata. */
+  async function agentNameOf(tenantId: string, agentId: string): Promise<string> {
+    try {
+      const row = await db
+        .selectFrom('agents')
+        .select('name')
+        .where('tenant_id', '=', tenantId)
+        .where('id', '=', agentId)
+        .executeTakeFirst();
+      return row?.name?.trim() || '(unnamed agent)';
+    } catch {
+      return '(unknown agent)';
+    }
+  }
+
+  /**
+   * Which step stopped the run. current_step_id records where execution was
+   * when it failed; resolving it to the step's NAME is the difference
+   * between a log line you can act on and a uuid you have to go look up.
+   */
+  async function failedStepNameOf(run: RunRow): Promise<string | null> {
+    if (!run.current_step_id) return null;
+    if (!isAgentStepsDoc(run.steps_snapshot)) return null;
+    const found = findNodeById(run.steps_snapshot.steps, run.current_step_id);
+    return found?.node.name?.trim() || null;
+  }
+
   async function finalizeRun(
     run: RunRow,
     status: 'succeeded' | 'failed' | 'stopped',
@@ -3075,17 +3149,39 @@ export function createAgentRunHandler(deps: EngineDeps) {
       })
       .where('id', '=', run.id)
       .execute();
-    logger.info('run {runId} finished: {status}', {
+    // A run's log line has to answer "whose agent, which one, and where did
+    // it stop" without a second query. The ids stay in the metadata; the
+    // sentence carries the names.
+    const actor = await describeActor(db, run.tenant_id, run.owner_subject);
+    const agentName = await agentNameOf(run.tenant_id, run.agent_id);
+    const failedStep = status === 'failed' ? await failedStepNameOf(run) : null;
+    const fields = {
       component: 'worker-agents/engine',
       runId: run.id,
       tenantId: run.tenant_id,
       agentId: run.agent_id,
+      agentName,
       // The agent's OWNER — agent activity in the logs attributes to the
       // person whose authority the run borrowed.
-      subject: run.owner_subject,
+      userName: actor.displayName,
+      subject: actor.subject,
       status,
       errorKind: errorKind ?? undefined,
-    });
+      failedStep: failedStep ?? undefined,
+      error: error ?? undefined,
+    };
+    if (status === 'failed') {
+      // The only one worth an unprompted read: it names the agent, the
+      // person, and the step that stopped it.
+      logger.warn(
+        'agent "{agentName}" ({userName}) failed at step "{failedStep}": {error}',
+        fields
+      );
+    } else {
+      // Success is the expected case; at info it is just volume between the
+      // lines that matter.
+      logger.debug('agent "{agentName}" ({userName}) run {status}', fields);
+    }
     if (status === 'failed') {
       // The durable failure tally the oversight page buckets by period —
       // best effort, same as the run tally at creation.
