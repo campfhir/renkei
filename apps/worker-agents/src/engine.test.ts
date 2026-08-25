@@ -2298,3 +2298,172 @@ maybe('agent run engine', () => {
     });
   });
 });
+
+maybe('resolve_time — the free, deterministic clock', () => {
+  jest.setTimeout(20_000);
+  let db: Kysely<DB>;
+  const tenantId = randomUUID();
+  const subject = `test-subject-${tenantId.slice(0, 8)}`;
+
+  beforeAll(async () => {
+    const result = getDatabase();
+    if (!result.ok) throw new Error('database unavailable');
+    db = result.val;
+    await db
+      .insertInto('tenants')
+      .values({ id: tenantId, slug: `rt-${tenantId.slice(0, 8)}` })
+      .execute();
+    await db
+      .insertInto('identities')
+      .values({ tenant_id: tenantId, subject, email: 'owner@example.com', display_name: 'Owner' })
+      .execute();
+  });
+
+  afterAll(async () => {
+    await sql`DELETE FROM agent_run_steps WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agent_runs WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM identities WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
+    // This suite reopened the pool the previous one closed; leave it shut so
+    // the worker process exits instead of hanging on an idle connection.
+    await closeDatabase();
+  });
+
+  async function seedOneStep(): Promise<string> {
+    const agentId = randomUUID();
+    const doc: AgentStepsDoc = {
+      version: 1,
+      steps: [
+        {
+          id: randomUUID(),
+          name: 'Search yesterday evening',
+          instruction: [{ t: 'text', v: 'Search mail from yesterday 19:00 Los Angeles.' }],
+          tool: 'jira_get_issue',
+          maxAttempts: 1,
+          failureHandling: [],
+        },
+      ],
+    };
+    await db
+      .insertInto('agents')
+      .values({
+        id: agentId,
+        tenant_id: tenantId,
+        owner_subject: subject,
+        name: `agent-${agentId.slice(0, 8)}`,
+        steps: JSON.stringify(doc),
+        enabled: true,
+      })
+      .execute();
+    const runId = randomUUID();
+    await db
+      .insertInto('agent_runs')
+      .values({
+        id: runId,
+        tenant_id: tenantId,
+        agent_id: agentId,
+        owner_subject: subject,
+        trigger_kind: 'manual',
+        steps_snapshot: JSON.stringify(doc),
+        lineage: JSON.stringify([]),
+        status: 'queued',
+      })
+      .execute();
+    return runId;
+  }
+
+  it('answers in-process, costs no budget, and still leaves the step its own tool', async () => {
+    const runId = await seedOneStep();
+    const seen: string[] = [];
+    let mcpCalls = 0;
+    // Four resolve_time calls — well past the 3-call budget — then the
+    // step's real tool, then finish. If resolve_time were billed, the real
+    // call would be refused.
+    const llm = stubLlm((request, call) => {
+      for (const message of request.messages) {
+        for (const block of message.content) {
+          if (block.type === 'tool_result' && typeof block.content === 'string') {
+            seen.push(block.content);
+          }
+        }
+      }
+      if (call < 4) {
+        return useTool('resolve_time', {
+          timezone: 'America/Los_Angeles',
+          amount: -1,
+          unit: 'day',
+          atTime: '19:00',
+        });
+      }
+      if (call === 4) return useTool('jira_get_issue', { issueKey: 'PROJ-42' });
+      return finish('success', { saveValue: 'done' });
+    });
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () =>
+        stubMcp(['jira_get_issue'], () => {
+          mcpCalls += 1;
+          return okToolResult;
+        }),
+      resolveLlm: async () => ok(llm),
+      mintToken: async () => 'stub-token',
+      revokeToken: async () => undefined,
+    });
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+
+    // The real tool ran despite four prior date calls — that is "free".
+    expect(mcpCalls).toBe(1);
+    // The clock answered locally: an ISO instant, never routed through MCP.
+    const answered = seen.filter((text) => text.includes('"iso"'));
+    expect(answered.length).toBeGreaterThanOrEqual(1);
+    expect(answered[0]).toContain('America/Los_Angeles');
+
+    // Only the billed call is counted, though the timeline keeps both.
+    const attempt = await db
+      .selectFrom('agent_run_steps')
+      .select(['tool_call_count', 'detail'])
+      .where('run_id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(attempt.tool_call_count).toBe(1);
+    expect(JSON.stringify(attempt.detail)).toContain('resolve_time');
+  });
+
+  it('hands a bad timezone straight back instead of guessing', async () => {
+    const runId = await seedOneStep();
+    const seen: string[] = [];
+    const llm = stubLlm((request, call) => {
+      for (const message of request.messages) {
+        for (const block of message.content) {
+          if (block.type === 'tool_result' && typeof block.content === 'string') {
+            seen.push(block.content);
+          }
+        }
+      }
+      if (call === 0) return useTool('resolve_time', { timezone: 'Pacific Time' });
+      return finish('success');
+    });
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () => stubMcp(['jira_get_issue'], () => okToolResult),
+      resolveLlm: async () => ok(llm),
+      mintToken: async () => 'stub-token',
+      revokeToken: async () => undefined,
+    });
+    await handler({ payload: { runId } });
+
+    const complaint = seen.find((text) => text.includes('IANA'));
+    expect(complaint).toBeDefined();
+    // And it says the retry is free, so the model re-asks rather than guesses.
+    expect(complaint).toContain('it is free');
+  });
+});

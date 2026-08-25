@@ -16,6 +16,76 @@ import {
 } from '@renkei/agents';
 import type { LlmMessage, LlmToolDef } from '@renkei/agent-llm';
 
+export const RESOLVE_TIME_TOOL = 'resolve_time';
+
+/**
+ * Deterministic date arithmetic, offered in every action step and FREE —
+ * it does not touch the step's tool budget, and it is not the step's "one
+ * tool" either.
+ *
+ * It exists because models are confidently wrong at this. "Yesterday at
+ * 19:00 in America/Los_Angeles, as UTC" needs a calendar shift, a
+ * wall-clock set and a DST-aware conversion, and a wrong answer is
+ * indistinguishable from a right one until a search quietly covers the
+ * wrong window. Charging for the call would push a model toward guessing
+ * instead — which is the failure this is meant to remove.
+ */
+export const RESOLVE_TIME_DEF: LlmToolDef = {
+  name: RESOLVE_TIME_TOOL,
+  description:
+    'Compute an exact timestamp instead of working one out yourself. Say which timezone, ' +
+    'how far to move (amount + unit), and optionally the time of day; you get back the ' +
+    'instant in UTC. Free: it never counts against your tool budget, so use it whenever a ' +
+    'date or time matters — never hand-calculate one.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      timezone: {
+        type: 'string',
+        description:
+          'IANA zone the times are expressed in, e.g. "America/Los_Angeles" or "UTC". ' +
+          'Use the timezone the request is written in, not your own.',
+      },
+      amount: {
+        type: 'number',
+        description:
+          'How far to move, signed: -1 with unit "day" is yesterday, 2 with "week" is a ' +
+          'fortnight from now. Omit for "today"/"now".',
+      },
+      unit: {
+        type: 'string',
+        enum: ['minute', 'hour', 'day', 'week', 'month', 'year'],
+        description:
+          'The unit for amount. minute/hour are exact elapsed time; day and larger keep the ' +
+          'same wall-clock time across daylight-saving changes.',
+      },
+      atTime: {
+        type: 'string',
+        description:
+          'Time of day in the target zone, 24-hour "HH:MM" — e.g. "19:00" for 7pm. Applied ' +
+          'after the shift.',
+      },
+      anchor: {
+        type: 'string',
+        description:
+          'What to measure from: "now" (default) or an ISO 8601 instant such as a timestamp ' +
+          'from an earlier step.',
+      },
+      startOf: {
+        type: 'string',
+        enum: ['hour', 'day', 'week', 'month'],
+        description: 'Snap to the beginning of this unit. Ignored when atTime is given.',
+      },
+      endOf: {
+        type: 'string',
+        enum: ['hour', 'day', 'week', 'month'],
+        description: 'Snap to the last minute of this unit. Ignored when atTime is given.',
+      },
+    },
+    required: ['timezone'],
+  },
+};
+
 export const FINISH_STEP_TOOL = 'finish_step';
 
 export const FINISH_STEP_DEF: LlmToolDef = {
@@ -367,9 +437,13 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
     `Step: ${input.step.name}`,
     ...(input.guardrailsText ? [guardrailsBlock(input.guardrailsText)] : []),
     `Instruction: ${rendered.text}`,
-    `Tool budget: at most ${input.toolBudget} tool call(s) this attempt (finish_step is free). ` +
+    `Tool budget: at most ${input.toolBudget} tool call(s) this attempt (finish_step and ` +
+      `${RESOLVE_TIME_TOOL} are free). ` +
       'Spend them deliberately — one well-chosen call beats several exploratory ones. When the ' +
       'budget runs out you will be asked to declare the outcome from what you have already seen.',
+    `Dates: never work out a timestamp in your head. Call ${RESOLVE_TIME_TOOL} — it is free, it ` +
+      'is exact about timezones and daylight saving, and a date you calculated yourself is the ' +
+      'single most likely thing in this step to be quietly wrong.',
     ...(input.step.saveAs
       ? [
           input.savesItemsForLoop
