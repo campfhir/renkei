@@ -518,9 +518,10 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
       <p className="mb-4 -mt-1 text-xs text-gray-500 dark:text-gray-400">
         Words search meaning; <code>key:value</code> narrows by detail — try{' '}
         <code>reporter:&quot;Evan Jeing&quot;</code>, <code>ticket:ENG-787</code>,{' '}
-        <code>from:evan</code>, <code>space:Engineering</code>. Combine them with{' '}
-        <code>&amp;&amp;</code> and <code>||</code>, and mix both:{' '}
-        <code>printers not working ticket:ENG-787</code>.
+        <code>from:evan</code>, <code>space:Engineering</code>. Combine filters with{' '}
+        <code>&amp;&amp;</code>, <code>||</code> and parentheses —{' '}
+        <code>(space:Eng || space:Ops) &amp;&amp; reporter:Evan</code> — and put words alongside
+        them: <code>printers not working ticket:ENG-787</code>.
       </p>
 
       {!hasSearched && busy && <p className="text-sm text-gray-600 dark:text-gray-400">Loading…</p>}
