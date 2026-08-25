@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import safeFunctions from '@campfhir/safe-functions';
+import logTemplateFields from './scripts/eslint-rules/log-template-fields.js';
 
 export default [
   {
@@ -27,6 +28,9 @@ export default [
       'apps/web/jest.env-integration.js',
       // Standalone vendoring script: runs via tsx, no tsconfig project covers it.
       'scripts/trim-graph-openapi.ts',
+      // The local ESLint rules themselves — plain ESM consumed by this config,
+      // outside every tsconfig project, same category as the scripts above.
+      'scripts/eslint-rules/**',
     ],
   },
   js.configs.recommended,
@@ -40,7 +44,20 @@ export default [
       },
     },
     ...safeFunctions.configs.recommended,
+    plugins: {
+      ...safeFunctions.configs.recommended.plugins,
+      // Local rules live in scripts/eslint-rules. See that file for why a
+      // type cannot catch what this one catches.
+      renkei: { rules: { 'log-template-fields': logTemplateFields } },
+    },
     rules: {
+      // `application`, `version` and `commit` are handed to createLogger as
+      // global attributes in each app's logger.ts, so they resolve on every
+      // record without a call site repeating them.
+      'renkei/log-template-fields': [
+        'error',
+        { globalAttributes: ['application', 'version', 'commit'] },
+      ],
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/consistent-type-assertions': [
         'error',
