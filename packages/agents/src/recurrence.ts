@@ -268,7 +268,7 @@ export function serializeScheduleConfig(config: ScheduleConfig): string {
   });
 }
 
-interface WallClock {
+export interface WallClock {
   year: number;
   month: number; // 1-12
   day: number;
@@ -280,7 +280,7 @@ interface WallClock {
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /** The wall clock in `timezone` at a given instant. */
-function wallClockAt(instant: Date, timezone: string): WallClock {
+export function wallClockAt(instant: Date, timezone: string): WallClock {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     year: 'numeric',
@@ -311,7 +311,7 @@ function offsetMinutes(instant: Date, timezone: string): number {
 }
 
 /** The instant at which `timezone`'s wall clock reads the given values. */
-function instantOfWallClock(
+export function instantOfWallClock(
   year: number,
   month: number,
   day: number,

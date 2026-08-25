@@ -123,3 +123,11 @@ export {
   type TriggerDraft,
   type TriggerIssue,
 } from './triggers';
+
+export {
+  resolveTime,
+  TIME_UNITS,
+  type ResolveTimeRequest,
+  type ResolvedTime,
+  type TimeUnit,
+} from './resolve-time';

@@ -34,7 +34,11 @@ import {
   walkSteps,
   type ActionStep,
   type AgentStepNode,
+  resolveTime,
+  TIME_UNITS,
   type ApprovalOutcomeKey,
+  type ResolveTimeRequest,
+  type TimeUnit,
   type ApprovalStep,
   type BranchPath,
   type BranchStep,
@@ -72,6 +76,8 @@ import {
   CHOOSE_PATH_TOOL,
   FINISH_STEP_DEF,
   FINISH_STEP_TOOL,
+  RESOLVE_TIME_DEF,
+  RESOLVE_TIME_TOOL,
   LOOP_DECISION_DEF,
   LOOP_DECISION_TOOL,
   systemPromptWith,
@@ -238,6 +244,12 @@ interface ToolCallRecord {
   resultPreview: string;
   isError: boolean;
   durationMs: number;
+  /**
+   * An in-process call that cost no budget (resolve_time). Recorded so the
+   * timeline can show what was computed, excluded from tool_call_count so
+   * the number still means "calls against the step's budget".
+   */
+  free?: boolean;
 }
 
 interface AttemptOutcome {
@@ -519,6 +531,39 @@ function buildResumeStack(nodes: AgentStepNode[], startId: string | null): Frame
   }
   stack.push({ kind: 'seq', nodes: found.siblings, index: found.index });
   return stack;
+}
+
+/**
+ * resolve_time's arguments, narrowed field by field. Anything unusable is
+ * dropped rather than coerced — resolveTime then reports precisely what was
+ * wrong, and the model gets a free retry to fix it.
+ */
+function resolveTimeArgsOf(input: unknown): ResolveTimeRequest {
+  const args: {
+    timezone?: unknown;
+    anchor?: unknown;
+    amount?: unknown;
+    unit?: unknown;
+    atTime?: unknown;
+    startOf?: unknown;
+    endOf?: unknown;
+  } = typeof input === 'object' && input !== null && !Array.isArray(input) ? input : {};
+  const snap = (value: unknown): 'hour' | 'day' | 'week' | 'month' | undefined =>
+    value === 'hour' || value === 'day' || value === 'week' || value === 'month'
+      ? value
+      : undefined;
+  const unit: TimeUnit | undefined = TIME_UNITS.find((known) => known === args.unit);
+  const startOf = snap(args.startOf);
+  const endOf = snap(args.endOf);
+  return {
+    timezone: typeof args.timezone === 'string' ? args.timezone : '',
+    ...(typeof args.anchor === 'string' ? { anchor: args.anchor } : {}),
+    ...(typeof args.amount === 'number' ? { amount: args.amount } : {}),
+    ...(unit ? { unit } : {}),
+    ...(typeof args.atTime === 'string' ? { atTime: args.atTime } : {}),
+    ...(startOf ? { startOf } : {}),
+    ...(endOf ? { endOf } : {}),
+  };
 }
 
 function finishArgsOf(input: unknown): {
@@ -1474,7 +1519,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           status: outcome.succeeded ? 'succeeded' : 'failed',
           outcome: outcome.outcome,
           outcome_code: outcome.outcomeCode,
-          tool_call_count: outcome.toolCalls.length,
+          tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
           detail: detailJson,
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
@@ -2569,9 +2614,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // chips — the deliberately laxer set for fixing a failure. Blocked
     // skills never enter the offer, so guidance chips can't smuggle one
     // past the guardrails.
-    const offered: LlmToolDef[] = [FINISH_STEP_DEF];
+    // resolve_time rides alongside finish_step: in-process, deterministic,
+    // free of the budget, and NOT the step's "one tool" — a step whose one
+    // skill is a mail search must still be able to work out what
+    // "yesterday 19:00 Los Angeles" means without spending its only call.
+    const offered: LlmToolDef[] = [FINISH_STEP_DEF, RESOLVE_TIME_DEF];
     const primaryTool = step.tool;
-    const offeredNames = new Set<string>([FINISH_STEP_TOOL]);
+    const offeredNames = new Set<string>([FINISH_STEP_TOOL, RESOLVE_TIME_TOOL]);
     const offer = (name: string) => {
       if (blockedTools.has(name)) return;
       const info = toolsByName.get(name);
@@ -2630,7 +2679,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           );
         }
         if (kind === 'rate_limit' || kind === 'overloaded' || kind === 'network') {
-          if (toolCalls.length === 0) throw new TransientFailure(`model ${kind}`);
+          if (toolCalls.every((call) => call.free)) throw new TransientFailure(`model ${kind}`);
           return {
             ...base,
             succeeded: false,
@@ -2692,6 +2741,37 @@ export function createAgentRunHandler(deps: EngineDeps) {
           return decideOutcome(step, finish, primaryResults, base);
         }
 
+        // Free and local: answered here, never sent to MCP, never charged
+        // against the budget. Placed ahead of the budget check on purpose
+        // — a model that has spent its calls must still be able to get a
+        // date right while declaring its outcome.
+        if (use.name === RESOLVE_TIME_TOOL) {
+          const resolved = resolveTime(resolveTimeArgsOf(use.input));
+          results.push({
+            type: 'tool_result',
+            toolUseId: use.id,
+            content: resolved.ok
+              ? JSON.stringify(resolved.value)
+              : `${resolved.error} Call ${RESOLVE_TIME_TOOL} again with that corrected — it is free.`,
+            isError: !resolved.ok,
+          });
+          // Recorded for the run timeline (someone reading a bad search
+          // wants to see which instant was computed), but not counted:
+          // tool_call_count is the budget's tally.
+          toolCalls.push({
+            free: true,
+            tool: RESOLVE_TIME_TOOL,
+            argsPreview: clip(JSON.stringify(use.input ?? {}), PREVIEW_CHARS),
+            resultPreview: clip(
+              resolved.ok ? `${resolved.value.iso} (${resolved.value.local})` : resolved.error,
+              PREVIEW_CHARS
+            ),
+            isError: !resolved.ok,
+            durationMs: 0,
+          });
+          continue;
+        }
+
         if (!offeredNames.has(use.name)) {
           results.push({
             type: 'tool_result',
@@ -2701,7 +2781,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
           });
           continue;
         }
-        if (toolCalls.length >= toolCap) {
+        const billedCalls = toolCalls.filter((call) => !call.free);
+        if (billedCalls.length >= toolCap) {
           // Out of budget — but the model has context worth a verdict.
           // Refuse the call and force finish_step on the next turn instead
           // of failing the attempt outright: exhaustion should end in a
@@ -2712,7 +2793,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           // Same-tool repetition usually means iterating items one call at a
           // time — the fix is a bulk tool in the step, not more budget.
           const repetitive =
-            toolCalls.length > 1 && toolCalls.every((call) => call.tool === use.name);
+            billedCalls.length > 1 && billedCalls.every((call) => call.tool === use.name);
           results.push({
             type: 'tool_result',
             toolUseId: use.id,
