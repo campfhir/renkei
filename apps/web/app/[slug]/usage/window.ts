@@ -90,3 +90,28 @@ export function zeroFill(
   }
   return filled;
 }
+
+/**
+ * How many tools each headline card lists.
+ *
+ * Lives here rather than beside the report that produces it because
+ * `actions.ts` is a `'use server'` module, and those may export nothing but
+ * async functions — a constant there is a build error, not a style choice.
+ */
+export const TOP_TOOLS = 5;
+
+/**
+ * Who may see the org-wide "most used" card.
+ *
+ * Separate from `resolveScope` and deliberately NOT derived from it. The
+ * scope toggle answers "whose calls am I looking at"; this answers "may I be
+ * shown the org comparison at all", and the two differ for an operator who
+ * has narrowed to their own calls — they should still get the comparison.
+ *
+ * Taking `isOperator` and nothing else is the point: there is no argument a
+ * caller can send that turns this on, so the card cannot be obtained by
+ * anyone who could not already open the tenant-wide view.
+ */
+export function canSeeOrgTop(isOperator: boolean): boolean {
+  return isOperator;
+}

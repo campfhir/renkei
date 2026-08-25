@@ -13,6 +13,7 @@ import {
   localDay,
   zeroFill,
   resolveScope,
+  canSeeOrgTop,
   type UsagePoint,
 } from './window';
 
@@ -33,6 +34,25 @@ describe('resolveScope', () => {
     expect(resolveScope(false, 'tenant')).toBe('self');
     expect(resolveScope(false, 'self')).toBe('self');
     expect(resolveScope(false, undefined)).toBe('self');
+  });
+});
+
+describe('canSeeOrgTop', () => {
+  it('shows an operator the org comparison even when narrowed to themselves', () => {
+    // The two decisions are separate on purpose: an operator who has clicked
+    // "Just me" is asking whose CALLS to chart, not giving up the comparison.
+    expect(canSeeOrgTop(true)).toBe(true);
+  });
+
+  it('never shows it to anyone else', () => {
+    expect(canSeeOrgTop(false)).toBe(false);
+  });
+
+  it('depends on the role alone', () => {
+    // It takes no requested scope, which is what makes "ask for it by POST"
+    // impossible rather than merely unhandled. If this signature ever grows a
+    // caller-supplied argument, that is the moment to look hard at it.
+    expect(canSeeOrgTop).toHaveLength(1);
   });
 });
 

@@ -35,9 +35,12 @@ function IconButton({
   disabled?: boolean;
   danger?: boolean;
 }) {
+  // Danger is red AT REST, matching RemoveButton. It used to be grey until
+  // hovered, which tells you it deletes only once you are already pointing at
+  // it — and on a touch screen, never.
   const className = `rounded-md p-1.5 transition-colors ${
     danger
-      ? 'text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950'
+      ? 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40'
       : 'text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200'
   } ${disabled ? 'pointer-events-none opacity-40' : ''}`;
   if (href) {
