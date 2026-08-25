@@ -191,10 +191,21 @@ describe('coerceFieldValue', () => {
     ]);
   });
 
-  it('asks for an account id rather than sending an email Jira ignores', () => {
+  it('refuses an unresolved email rather than sending one Jira ignores', () => {
+    // Coercion is the last line of defence, not the resolver: by this point
+    // buildFieldUpdates has already looked the person up. An email still
+    // here means resolution failed, and passing it through would produce
+    // { accountId: 'dana@x.test' } — which Jira accepts, discards, and
+    // reports as a successful write.
     const result = coerceFieldValue(of('Change Owner'), 'dana@x.test');
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.message).toContain('jira_search_users');
+    expect(!result.ok && result.message).toContain('could not resolve');
+  });
+
+  it('refuses an unresolved email in a multi-user field too', () => {
+    const result = coerceFieldValue(of('Reviewers'), 'dana@x.test');
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.message).toContain('could not resolve');
   });
 
   it('checks the shape of a date', () => {
@@ -668,5 +679,102 @@ describe('rich text fields', () => {
 
   it('still clears with null', () => {
     expect(coerceFieldValue(backoutPlan, null)).toEqual({ ok: true, value: null });
+  });
+});
+
+describe('user fields resolve people to accountIds', () => {
+  const AMANDA = {
+    accountId: '5b21a397a6d3c211bbc5f967',
+    displayName: 'Amanda Wong',
+    emailAddress: 'Amanda.Wong@nems.org',
+  };
+
+  /** Jira's own /field shape — what loadFieldSchema parses. */
+  const RAW_USER_FIELDS = [
+    {
+      id: 'customfield_12017',
+      name: 'Change Owner',
+      custom: true,
+      schema: { type: 'user' },
+      clauseNames: ['Change Owner'],
+    },
+    {
+      id: 'customfield_12014',
+      name: 'Reviewers',
+      custom: true,
+      schema: { type: 'array', items: 'user' },
+      clauseNames: ['Reviewers'],
+    },
+  ];
+
+  /** Field schema for /field, `users` for every user search. */
+  function serveSchemaThenUsers(users: unknown): void {
+    jiraFetchMock.mockReset();
+    jiraFetchMock.mockImplementation(async (path: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => (String(path).includes('/user/search') ? users : RAW_USER_FIELDS),
+    }));
+  }
+
+  beforeEach(() => {
+    clearFieldSchemaCache();
+  });
+
+  it('turns an email in a user field into an accountId', async () => {
+    // The reported bug: this refused the value and told the caller to go
+    // and run jira_search_users, leaving an "unwritten field" note on an
+    // issue that could have been written correctly.
+    serveSchemaThenUsers([AMANDA]);
+    const result = await buildFieldUpdates({} as MCPToolContext, auth, {
+      'Change Owner': 'Amanda.Wong@nems.org',
+    });
+    expect(result.problems).toEqual([]);
+    expect(result.fields.customfield_12017).toEqual({ accountId: AMANDA.accountId });
+  });
+
+  it('resolves every member of a multi-user field', async () => {
+    serveSchemaThenUsers([AMANDA]);
+    const result = await buildFieldUpdates({} as MCPToolContext, auth, {
+      Reviewers: 'Amanda.Wong@nems.org',
+    });
+    expect(result.problems).toEqual([]);
+    expect(result.fields.customfield_12014).toEqual([{ accountId: AMANDA.accountId }]);
+  });
+
+  it('never writes an email as though it were an accountId', async () => {
+    // Jira accepts { accountId: 'someone@example.com' }, writes nothing and
+    // reports success — so an unresolvable name must fail loudly here
+    // rather than produce a payload that looks fine.
+    serveSchemaThenUsers([]);
+    const result = await buildFieldUpdates({} as MCPToolContext, auth, {
+      'Change Owner': 'nobody@nems.org',
+    });
+    expect(result.fields.customfield_12017).toBeUndefined();
+    expect(result.problems.join(' ')).toContain('no Jira user matches');
+  });
+
+  it('leaves an accountId alone without searching', async () => {
+    serveSchemaThenUsers([]);
+    const result = await buildFieldUpdates({} as MCPToolContext, auth, {
+      'Change Owner': AMANDA.accountId,
+    });
+    expect(result.problems).toEqual([]);
+    expect(result.fields.customfield_12017).toEqual({ accountId: AMANDA.accountId });
+    expect(
+      jiraFetchMock.mock.calls.filter((call) => String(call[0]).includes('/user/search'))
+    ).toHaveLength(0);
+  });
+
+  it('reports ambiguity instead of picking someone', async () => {
+    serveSchemaThenUsers([
+      { accountId: 'aaaaaaaaaaaaaaaaaaaaaaaa', displayName: 'Amanda Wong' },
+      { accountId: 'bbbbbbbbbbbbbbbbbbbbbbbb', displayName: 'Amanda Wongler' },
+    ]);
+    const result = await buildFieldUpdates({} as MCPToolContext, auth, {
+      'Change Owner': 'Amanda',
+    });
+    expect(result.fields.customfield_12017).toBeUndefined();
+    expect(result.problems.join(' ')).toContain('matches 2 users');
   });
 });
