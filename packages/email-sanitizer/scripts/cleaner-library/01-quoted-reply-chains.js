@@ -23,4 +23,4 @@
     if (match && match.index < cut) cut = match.index;
   }
   return email.text.slice(0, cut).trimEnd();
-};
+}

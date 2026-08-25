@@ -10,4 +10,4 @@
 (email) => {
   const match = /^-- ?$/m.exec(email.text);
   return match ? email.text.slice(0, match.index).trimEnd() : email.text;
-};
+}

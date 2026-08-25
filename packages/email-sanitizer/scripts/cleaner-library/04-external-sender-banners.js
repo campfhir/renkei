@@ -31,4 +31,4 @@
     text = text.replace(new RegExp(words.join('\\s+'), 'gi'), '');
   }
   return text.trim();
-};
+}

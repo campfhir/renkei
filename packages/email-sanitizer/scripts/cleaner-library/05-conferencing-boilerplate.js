@@ -94,4 +94,4 @@
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
-};
+}
