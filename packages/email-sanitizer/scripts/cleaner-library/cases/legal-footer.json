@@ -1,5 +1,5 @@
 {
-  "script": "03-legal-footers.js",
+  "script": "03-legal-footers.ts",
   "kind": "msg",
   "description": "A literal confidentiality-notice anchor truncates the trailing legal footer",
   "content": "Approved, please proceed with the deployment.\n\nThis message and any attachments are confidential and intended solely for the addressee.",

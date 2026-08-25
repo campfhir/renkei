@@ -6,7 +6,7 @@
 // Each divider is anchored to a real client's literal format rather than a
 // guess at where "the old stuff" starts. The earliest match in the message
 // wins, so a thread quoting a thread is cut at the outermost boundary.
-(email) => {
+function cutQuotedChain(email: CleanerEmail): string {
   const dividers = [
     // Outlook desktop's plain-text divider.
     /^-{3,}\s*Original Message\s*-{3,}$/im,

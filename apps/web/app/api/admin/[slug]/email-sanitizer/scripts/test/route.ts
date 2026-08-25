@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
-import { runCleanerScript, MAX_SCRIPT_CHARS } from '@renkei/email-sanitizer';
+import { runCleanerScript, compileCleanerScript, MAX_SCRIPT_CHARS } from '@renkei/email-sanitizer';
 import { isContentKind } from '@/lib/email-sanitizer/content-kinds';
 
 export async function POST(
@@ -61,7 +61,17 @@ export async function POST(
     ? payload.attendees.filter((entry): entry is string => typeof entry === 'string').slice(0, 50)
     : [];
 
-  const result = await runCleanerScript(script, {
+  // The dry-run must exercise exactly what production would run, which for
+  // a TypeScript script is the stripped output rather than what is typed.
+  const built = await compileCleanerScript(script);
+  if (!built.ok) {
+    return NextResponse.json(
+      { error: built.detail ?? 'The script could not be compiled.' },
+      { status: 422 }
+    );
+  }
+
+  const result = await runCleanerScript(built.val.compiled, {
     kind,
     text: text.slice(0, 100_000),
     subject: field(payload.subject, '(test)'),

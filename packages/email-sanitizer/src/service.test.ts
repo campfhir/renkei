@@ -106,6 +106,9 @@ describe('sanitizeEmailForTenant — dedup', () => {
           id: 'script-1',
           name: 'shout',
           script: '(email) => email.text.toUpperCase()',
+          // The stage runs `compiled`, never `script` — a TypeScript source
+          // would not parse in QuickJS. For plain JS the two match.
+          compiled: '(email) => email.text.toUpperCase()',
           enabled: true,
           lastError: null,
         },
@@ -137,6 +140,7 @@ describe('sanitizeEmailForTenant — dedup', () => {
           id: 'script-1',
           name: 'broken',
           script: "() => { throw new Error('boom'); }",
+          compiled: "() => { throw new Error('boom'); }",
           enabled: true,
           lastError: null,
         },

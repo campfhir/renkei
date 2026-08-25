@@ -1,5 +1,5 @@
 {
-  "script": "05-conferencing-boilerplate.js",
+  "script": "05-conferencing-boilerplate.ts",
   "kind": "evt",
   "description": "A chrome-like line is kept when it carries the join link",
   "content": "Join the meeting now https://teams.microsoft.com/l/meetup-join/abc",

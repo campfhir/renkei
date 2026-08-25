@@ -267,6 +267,7 @@ export interface EmailClassifierRules {
 
 export interface EmailCleanerScripts {
   applies_to: Generated<string[]>;
+  compiled: string | null;
   created_at: Generated<Timestamp>;
   enabled: Generated<boolean>;
   id: string;

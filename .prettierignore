@@ -16,4 +16,4 @@ yarn.lock
 # evaluates each one as `const __fn = ( <file> );`, so the statement
 # semicolon Prettier appends turns every script into a syntax error. Their
 # exact text is what an admin copies into the editor.
-packages/email-sanitizer/scripts/cleaner-library/*.js
+packages/email-sanitizer/scripts/cleaner-library/*.ts

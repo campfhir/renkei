@@ -19,8 +19,9 @@
   "dependencies": {
     "@campfhir/bored-logs": "^0.7.1",
     "@modelcontextprotocol/server": "^2.0.0",
-    "@renkei/agents": "workspace:*",
+    "@monaco-editor/react": "^4.7.0",
     "@renkei/agent-llm": "workspace:*",
+    "@renkei/agents": "workspace:*",
     "@renkei/capability-registry": "workspace:*",
     "@renkei/connector-atlassian": "workspace:*",
     "@renkei/connector-config": "workspace:*",
@@ -41,6 +42,7 @@
     "jose": "^6.2.5",
     "kysely": "^0.29.4",
     "mcp-handler": "^2.1.0",
+    "monaco-editor": "^0.55.1",
     "next": "16.2.12",
     "pdfjs-dist": "catalog:",
     "pg": "^8.22.0",

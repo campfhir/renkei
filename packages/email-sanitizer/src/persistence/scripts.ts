@@ -19,6 +19,12 @@ export interface CleanerScript {
   script: string;
   enabled: boolean;
   /**
+   * The JavaScript the sandbox runs. Equals `script` when the admin wrote
+   * plain JS; differs when they wrote TypeScript and the types were
+   * stripped at save. Callers must run THIS, never `script`.
+   */
+  compiled: string;
+  /**
    * The content kinds this script is allowed to touch. Never empty — a
    * script that runs on nothing is a disabled script, and the enabled flag
    * already says that.
@@ -56,7 +62,7 @@ export async function listCleanerScripts(
     () =>
       dbResult.val
         .selectFrom('email_cleaner_scripts')
-        .select(['id', 'name', 'script', 'enabled', 'applies_to', 'last_error'])
+        .select(['id', 'name', 'script', 'compiled', 'enabled', 'applies_to', 'last_error'])
         .where('tenant_id', '=', tenantId)
         .orderBy('created_at', 'asc')
         .execute(),
@@ -68,6 +74,9 @@ export async function listCleanerScripts(
       id: row.id,
       name: row.name,
       script: row.script,
+      // Null on every row written before TypeScript was supported — those
+      // are already JavaScript, so the source IS the runnable form.
+      compiled: row.compiled ?? row.script,
       enabled: row.enabled,
       appliesTo: kindsOf(row.applies_to),
       lastError: row.last_error,
@@ -96,6 +105,8 @@ export interface CleanerScriptInput {
   id?: string;
   name: string;
   script: string;
+  /** Type-stripped JavaScript. Omit when the source is already JavaScript. */
+  compiled?: string | null;
   enabled: boolean;
   /** Omitted means mail only — the conservative reading of an older client. */
   appliesTo?: CleanerScriptKind[];
@@ -116,6 +127,7 @@ export async function upsertCleanerScript(
         .set({
           name: input.name,
           script: input.script,
+          compiled: input.compiled ?? null,
           enabled: input.enabled,
           applies_to: kindsOf(input.appliesTo ?? null),
           // An edited script starts with a clean bill of health — its old
@@ -134,6 +146,7 @@ export async function upsertCleanerScript(
           tenant_id: tenantId,
           name: input.name,
           script: input.script,
+          compiled: input.compiled ?? null,
           enabled: input.enabled,
           applies_to: kindsOf(input.appliesTo ?? null),
         })
@@ -145,6 +158,7 @@ export async function upsertCleanerScript(
     id,
     name: input.name,
     script: input.script,
+    compiled: input.compiled ?? input.script,
     enabled: input.enabled,
     appliesTo: kindsOf(input.appliesTo ?? null),
     lastError: null,

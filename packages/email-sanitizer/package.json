@@ -14,6 +14,7 @@
     "@campfhir/safe-functions": "^0.1.3",
     "@renkei/db": "workspace:*",
     "@renkei/knowledge": "workspace:*",
+    "esbuild": "^0.28.1",
     "kysely": "^0.29.4",
     "quickjs-emscripten": "^0.32.0"
   },

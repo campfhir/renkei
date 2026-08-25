@@ -12,11 +12,11 @@ counts as noise in its own correspondence, rather than inheriting our decision.
 
 | Script                           | Runs on  | Replaces                       |
 | -------------------------------- | -------- | ------------------------------ |
-| `01-quoted-reply-chains.js`      | Email    | `truncateQuotedChain`          |
-| `02-signature-blocks.js`         | Email    | `truncateSignatureDelimiter`   |
-| `03-legal-footers.js`            | Email    | `stripLegalFooter`             |
-| `04-external-sender-banners.js`  | Email    | `SEED_BANNERS` stripping       |
-| `05-conferencing-boilerplate.js` | Calendar | `stripConferencingBoilerplate` |
+| `01-quoted-reply-chains.ts`      | Email    | `truncateQuotedChain`          |
+| `02-signature-blocks.ts`         | Email    | `truncateSignatureDelimiter`   |
+| `03-legal-footers.ts`            | Email    | `stripLegalFooter`             |
+| `04-external-sender-banners.ts`  | Email    | `SEED_BANNERS` stripping       |
+| `05-conferencing-boilerplate.ts` | Calendar | `stripConferencingBoilerplate` |
 
 ## Installing
 
@@ -60,6 +60,17 @@ No database, no network, nothing installed. Run it after editing any script.
 
 ## Writing your own
 
+Scripts are TypeScript. The editor runs the TypeScript language service
+against the declarations in `apps/web/lib/email-sanitizer/cleaner-types.ts`,
+so `email.` completes to the real fields and a wrong type is underlined as you
+type. Types are stripped when you save; the sandbox runs the JavaScript.
+
+Write a **named** function — `function clean(email: CleanerEmail): string` —
+because that is valid TypeScript on its own and is what lets the editor check
+the file. An anonymous `function (email) { }` or an arrow still works
+everywhere (the compiler and the sandbox both parenthesise it); the editor
+just flags it as a declaration missing a name.
+
 The guest receives `email` (also available as `item`):
 
 - `text` — the body as cleaned so far; transform and return this
@@ -70,6 +81,8 @@ The guest receives `email` (also available as `item`):
 
 Constraints: pure ES2020, no `require`/`fetch`/`fs`/timers/`Date.now`, 250ms,
 32MB, must return a string. Return `email.text` unchanged when nothing applies.
+TypeScript features that emit runtime code — `enum`, `namespace` — are
+rejected at save, since a cleaner script must stay a single expression.
 
 Two habits worth copying from these scripts:
 

@@ -4,7 +4,7 @@
  * a bad return is an error — never silently adopted output.
  */
 
-import { runCleanerScript } from './run';
+import { runCleanerScript, validateCleanerScriptSource } from './run';
 
 const input = {
   text: 'Hello team.\nFollow NEMS: Facebook | WeChat\nBye.',
@@ -138,5 +138,38 @@ describe('content kinds inside the sandbox', () => {
 
     const looping = await runCleanerScript(`() => { while (true) {} }`, { ...input, kind: 'evt' });
     expect(looping.ok).toBe(false);
+  });
+});
+
+describe('script forms', () => {
+  it('accepts a plain function declaration, which is the documented shape', async () => {
+    const result = await runCleanerScript(
+      `function (email) { return email.text.toUpperCase(); }`,
+      input
+    );
+    expect(result.ok && result.val).toBe(input.text.toUpperCase());
+  });
+
+  it('accepts a named function too', async () => {
+    const result = await runCleanerScript(`function clean(email) { return 'ok'; }`, input);
+    expect(result.ok && result.val).toBe('ok');
+  });
+
+  it('tolerates a trailing semicolon', async () => {
+    // Every formatter appends one. Without this the script is a syntax
+    // error whose only symptom in production is a last_error nobody reads —
+    // Prettier reformatting the checked-in library is how it was found.
+    const result = await runCleanerScript(`function (email) { return 'ok'; };`, input);
+    expect(result.ok && result.val).toBe('ok');
+  });
+
+  it('validates a semicolon-terminated function at save time', async () => {
+    const valid = await validateCleanerScriptSource(`(email) => email.text;`);
+    expect(valid.ok).toBe(true);
+  });
+
+  it('still rejects something that is not a function', async () => {
+    const valid = await validateCleanerScriptSource(`{ notAFunction: true }`);
+    expect(valid.ok).toBe(false);
   });
 });

@@ -86,6 +86,7 @@ export const EXPECTED_MIGRATIONS = [
   '053-approval-pauses',
   '054-cleaner-script-content-kinds',
   '055-banner-phrases-to-scripts',
+  '056-cleaner-script-compiled',
 ];
 
 export interface MigrationStatus {
