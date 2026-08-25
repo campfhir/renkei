@@ -24,6 +24,7 @@ import {
 import { logger } from '@/lib/logger';
 import { APP_ONLY_META, ISSUE_PREVIEW_URI, confirmGuard, previewToolMeta } from '../widgets';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+import { resolveUserId } from './resolve-user';
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
@@ -31,38 +32,17 @@ function errText(value: string) {
 
 // Type guard functions
 /**
- * Resolve an assignee argument to an Atlassian accountId. Jira Cloud dropped
- * name/email user identification in field objects (GDPR): `{ name: ... }` is
- * silently ignored, which made create/update claim an assignee was set while
- * writing nothing. An accountId-shaped value passes through; anything else
- * goes through user search and must match exactly one user — ambiguity or a
- * miss becomes an unwritten value, reported, never a silent no-op.
+ * Resolve an assignee argument to an Atlassian accountId.
+ *
+ * Delegates to the shared resolver so assignee and every other user field
+ * behave identically — this used to be its own copy, and the copy was the
+ * only path that did a lookup at all.
  */
 async function resolveAssigneeId(
   auth: JiraAuth,
   value: string
 ): Promise<{ ok: true; id: string } | { ok: false; reason: string }> {
-  if (!value.includes('@') && /^[0-9a-zA-Z:-]{16,128}$/.test(value)) {
-    return { ok: true, id: value };
-  }
-  const response = await auth.fetch(
-    granularJiraScopes('jira_search_users', true),
-    `/rest/api/3/user/search?query=${encodeURIComponent(value)}`
-  );
-  const users: unknown = response.ok ? await response.json().catch(() => null) : null;
-  const candidates = Array.isArray(users)
-    ? users.filter(isRecord).filter((u) => isString(u.accountId))
-    : [];
-  const exact = candidates.filter(
-    (u) => isString(u.emailAddress) && u.emailAddress.toLowerCase() === value.toLowerCase()
-  );
-  const pick = exact.length > 0 ? exact : candidates;
-  if (pick.length === 1) return { ok: true, id: String(pick[0].accountId) };
-  if (pick.length === 0) return { ok: false, reason: `no Jira user matches "${value}"` };
-  return {
-    ok: false,
-    reason: `"${value}" matches ${pick.length} users — pass an accountId (jira_search_users shows them)`,
-  };
+  return resolveUserId(auth, value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

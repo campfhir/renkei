@@ -22,6 +22,7 @@ import { adfToMarkdown } from './adf';
 import { normalizeFieldId, renderFieldValue } from './fields';
 import { markdownToAdf } from './markdown';
 import { granularJiraScopes, type JiraAuth } from './jira-auth';
+import { createUserResolver, looksLikeAccountId } from './resolve-user';
 
 /** Field/metadata reads that back every write — same scope regardless of caller. */
 const FIELD_SCHEMA_SCOPES = granularJiraScopes('jira_list_fields', true);
@@ -432,6 +433,13 @@ function requestTypeValue(field: JiraField, value: unknown): Coercion {
   };
 }
 
+/**
+ * By the time coercion runs, an email should already have been turned into
+ * an accountId by `resolveUserFields`. If one is still here, resolution was
+ * skipped or failed, and passing it through would be the worst outcome
+ * available: Jira accepts `{ accountId: 'someone@example.com' }`, writes
+ * nothing, and reports success.
+ */
 function userValue(field: JiraField, value: unknown): Coercion {
   if (isRecord(value)) return { ok: true, value };
 
@@ -439,7 +447,7 @@ function userValue(field: JiraField, value: unknown): Coercion {
   if (text.includes('@')) {
     return {
       ok: false,
-      message: `${field.name} needs an account id, not an email. Call jira_search_users for "${text}".`,
+      message: `${field.name}: could not resolve "${text}" to a Jira account.`,
     };
   }
   return { ok: true, value: { accountId: text } };
@@ -468,11 +476,25 @@ function arrayValue(field: JiraField, value: unknown): Coercion {
             : { [field.itemType === 'option' ? 'value' : 'name']: String(member) }
         ),
       };
-    case 'user':
+    case 'user': {
+      // Same silent-no-op hazard as the single-user case: an unresolved
+      // email wrapped as an accountId is accepted and discarded.
+      const unresolved = members.filter(
+        (member) => !isRecord(member) && String(member).includes('@')
+      );
+      if (unresolved.length > 0) {
+        return {
+          ok: false,
+          message: `${field.name}: could not resolve ${unresolved
+            .map((member) => `"${String(member)}"`)
+            .join(', ')} to a Jira account.`,
+        };
+      }
       return {
         ok: true,
         value: members.map((member) => (isRecord(member) ? member : { accountId: String(member) })),
       };
+    }
     default:
       return { ok: true, value: members };
   }
@@ -552,6 +574,59 @@ export interface EnrichmentSource {
 }
 
 /**
+ * Replace any human reference in a user-typed field with an accountId.
+ *
+ * Handles the single-user and multi-user shapes alike, and leaves anything
+ * already resolved — an accountId, or an explicit `{ accountId }` object —
+ * untouched so a caller who did the lookup themselves pays nothing.
+ *
+ * A failure to resolve is returned as a message rather than thrown: one
+ * unresolvable name should cost that one field, not the whole write.
+ */
+async function resolveUserReferences(
+  field: JiraField,
+  value: unknown,
+  resolve: (value: string) => Promise<{ ok: true; id: string } | { ok: false; reason: string }>
+): Promise<{ ok: true; value: unknown } | { ok: false; message: string }> {
+  const isUserField = field.type === 'user';
+  const isUserArray = field.type === 'array' && field.itemType === 'user';
+  if (!isUserField && !isUserArray) return { ok: true, value };
+
+  const one = async (
+    member: unknown
+  ): Promise<{ ok: true; value: unknown } | { ok: false; message: string }> => {
+    // An object is the caller being explicit; a plain accountId needs no
+    // round trip. Only a human-readable reference costs a search.
+    if (isRecord(member)) return { ok: true, value: member };
+    const text = String(member).trim();
+    if (!text) return { ok: true, value: member };
+    if (looksLikeAccountId(text)) return { ok: true, value: text };
+
+    const resolved = await resolve(text);
+    return resolved.ok
+      ? { ok: true, value: resolved.id }
+      : { ok: false, message: `${field.name}: ${resolved.reason}` };
+  };
+
+  if (isUserField) return one(value);
+
+  const members = Array.isArray(value)
+    ? value
+    : String(value)
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+
+  const out: unknown[] = [];
+  for (const member of members) {
+    const resolved = await one(member);
+    if (!resolved.ok) return resolved;
+    out.push(resolved.value);
+  }
+  return { ok: true, value: out };
+}
+
+/**
  * Resolve a map of field references to a REST payload.
  *
  * Refuses on the first unresolvable name rather than sending a partial update:
@@ -612,6 +687,13 @@ export async function buildFieldUpdates(
   const problems: string[] = [];
   const optionHints: Record<string, string> = {};
 
+  // Emails and display names become accountIds BEFORE coercion. This used
+  // to be the caller's job — the tool refused the value and told them to go
+  // and call jira_search_users — which is work it has everything it needs
+  // to do, and which produced an "unwritten field" note on an issue that
+  // could simply have been written correctly.
+  const resolveUser = createUserResolver(auth);
+
   for (const [reference, value] of entries) {
     const lookup = lookupField(schema, reference);
     if (!lookup.ok) {
@@ -624,7 +706,13 @@ export async function buildFieldUpdates(
       if (hint) optionHints[lookup.field.id] = hint;
     }
 
-    const coerced = coerceFieldValue(lookup.field, value);
+    const prepared = await resolveUserReferences(lookup.field, value, resolveUser);
+    if (!prepared.ok) {
+      problems.push(prepared.message);
+      continue;
+    }
+
+    const coerced = coerceFieldValue(lookup.field, prepared.value);
     if (!coerced.ok) {
       problems.push(coerced.message);
       continue;
