@@ -14,6 +14,7 @@ import {
   el,
   injectStyle,
   readonlyField,
+  parseLinks,
   recallDone,
   rememberDone,
   renderDone,
@@ -46,14 +47,20 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   }
 
   const destination = roomId ? str(preview.roomTitle) || `room ${roomId}` : toPersonEmail;
-  const stateKey = `renkei-webex:${roomId || toPersonEmail}:${str(preview.markdown).slice(0, 80)}`;
-  const remembered = recallDone(stateKey);
+  // Keyed by the id the preview tool minted for THIS card, not by its
+  // content: two previews of the same kind used to share a receipt, so the
+  // second rendered as already-decided with no fields and no button. No id
+  // means an older server — render the live card rather than risk showing
+  // someone else's outcome.
+  const previewId = str(preview.previewId);
+  const stateKey = previewId ? `renkei-preview:${previewId}` : '';
+  const remembered = stateKey ? recallDone(stateKey) : null;
   if (remembered) {
     renderDone(root, remembered);
     return;
   }
   const finishDone = (state: DoneState) => {
-    rememberDone(stateKey, state);
+    if (stateKey) rememberDone(stateKey, state);
     renderDone(root, state);
   };
 
@@ -83,7 +90,13 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       ...(str(preview.parentId) ? { parentId: str(preview.parentId) } : {}),
     });
     if (sent.isError) throw new Error(resultText(sent) || 'Send failed');
-    finishDone({ icon: 'sent', headline: 'Sent', detail: `To ${destination}` });
+    const sentLinks = parseLinks(resultText(sent));
+    finishDone({
+      icon: 'sent',
+      headline: 'Sent',
+      detail: `To ${destination}`,
+      ...(sentLinks.length > 0 ? { links: sentLinks } : {}),
+    });
     bridge.updateModelContext(
       `The user reviewed the WebEx message preview and sent it to ${destination}.`
     );

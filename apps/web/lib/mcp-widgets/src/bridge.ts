@@ -152,14 +152,31 @@ export class WidgetBridge {
     }
   }
 
-  /** Report content height so the host sizes the iframe to the card. */
+  /**
+   * Report content height so the host sizes the iframe to the card.
+   *
+   * Measured on BODY, not documentElement. In an iframe
+   * `documentElement.scrollHeight` is at least the viewport height, and the
+   * viewport is whatever the host last sized the frame to — so once a tall
+   * card had been rendered the number could never come back down. Replacing
+   * a form with a two-line receipt left the frame at its old height and the
+   * card became a small message floating in a large blank box.
+   *
+   * `body` is a plain block that wraps its content, so its border-box
+   * height shrinks with it.
+   */
   private watchSize(): void {
+    let last = -1;
     const report = () => {
-      this.notify('ui/notifications/size-changed', {
-        height: document.documentElement.scrollHeight,
-      });
+      const height = Math.ceil(document.body.getBoundingClientRect().height);
+      // The host resizing the frame resizes the body's containing block,
+      // which fires the observer again. Reporting only real changes stops
+      // that from becoming a loop.
+      if (height === last) return;
+      last = height;
+      this.notify('ui/notifications/size-changed', { height });
     };
-    new ResizeObserver(report).observe(document.documentElement);
+    new ResizeObserver(report).observe(document.body);
     report();
   }
 }

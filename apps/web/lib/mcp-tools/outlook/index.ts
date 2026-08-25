@@ -43,6 +43,7 @@ import {
   ISSUE_PREVIEW_URI,
   confirmGuard,
   previewToolMeta,
+  newPreviewId,
 } from '../widgets';
 import type { GraphAuth } from '../graph/graph-auth';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
@@ -3061,6 +3062,7 @@ export async function registerOutlookTools(
         ],
         structuredContent: {
           kind: 'issue',
+          previewId: newPreviewId(),
           title: isOrganizer ? 'Cancel event' : 'Remove event from calendar',
           subtitle: subject,
           confirmTool: 'outlook_cancel_event_confirm',

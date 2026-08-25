@@ -23,7 +23,13 @@ import { getDatabase } from '@renkei/db';
 import { logger } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
-import { APP_ONLY_META, CHAT_MESSAGE_URI, confirmGuard, previewToolMeta } from '../widgets';
+import {
+  APP_ONLY_META,
+  CHAT_MESSAGE_URI,
+  confirmGuard,
+  previewToolMeta,
+  newPreviewId,
+} from '../widgets';
 import { resolveWebexAccess, type WebexAuth } from './webex-auth';
 
 export const WEBEX_USER_MCP_CONNECTOR = 'webex-user';
@@ -579,6 +585,7 @@ export async function registerWebexUserTools(
             `whether to send it with webex_send_message instead.`
         ),
         structuredContent: {
+          previewId: newPreviewId(),
           kind: 'webex',
           ...(roomId ? { roomId, ...(roomTitle ? { roomTitle } : {}) } : { toPersonEmail }),
           markdown,

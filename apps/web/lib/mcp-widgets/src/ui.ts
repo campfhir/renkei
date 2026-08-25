@@ -54,6 +54,11 @@ body {
   padding: 16px;
 }
 .card { display: flex; flex-direction: column; gap: 10px; }
+.done-links { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px; }
+.done-links a {
+  color: var(--card-accent); text-decoration: none; font-weight: 500; font-size: 13px;
+}
+.done-links a:hover { text-decoration: underline; }
 .card-title { font-size: 15px; font-weight: 600; }
 .card-subtitle { color: var(--card-muted); font-size: 12px; }
 .field { display: flex; flex-direction: column; gap: 3px; }
@@ -254,10 +259,40 @@ export function cardActions(buttons: HTMLButtonElement[]): CardActions {
  * unavailable in an opaque-origin sandbox, so persistence is best-effort —
  * without it the card degrades to re-showing the form, never to re-sending.
  */
+export interface DoneLink {
+  label: string;
+  href: string;
+}
+
 export interface DoneState {
   icon: 'sent' | 'cancelled';
   headline: string;
   detail?: string;
+  /**
+   * Where the thing that was just created now lives. Without these the card
+   * ends at "Created ENG-789" and finding it means going back to the model
+   * and asking for a link it already had.
+   */
+  links?: DoneLink[];
+}
+
+/**
+ * Markdown links in a tool's reply text, in order.
+ *
+ * The confirm tools already answer with `[Open in Jira](url)` because that
+ * is what the model needs; the card can use the same text rather than
+ * inventing a second channel for it.
+ */
+export function parseLinks(text: string): DoneLink[] {
+  const pattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  const links: DoneLink[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    const label = (match[1] ?? '').trim();
+    const href = (match[2] ?? '').trim();
+    if (label && href && !links.some((link) => link.href === href)) links.push({ label, href });
+  }
+  return links;
 }
 
 export function renderDone(root: HTMLElement, state: DoneState): void {
@@ -267,6 +302,23 @@ export function renderDone(root: HTMLElement, state: DoneState): void {
   const text = el('div');
   text.append(el('div', 'done-headline', state.headline));
   if (state.detail) text.append(el('div', 'done-detail', state.detail));
+
+  const links = state.links ?? [];
+  if (links.length > 0) {
+    const row = el('div', 'done-links');
+    for (const link of links) {
+      const anchor = document.createElement('a');
+      anchor.textContent = link.label;
+      anchor.href = link.href;
+      // The card runs in a sandboxed iframe; without an explicit target the
+      // navigation would try to replace the card itself.
+      anchor.target = '_blank';
+      anchor.rel = 'noopener noreferrer';
+      row.append(anchor);
+    }
+    text.append(row);
+  }
+
   done.append(icon, text);
   root.append(done);
 }

@@ -17,6 +17,7 @@
  * a template with no tool bound to it is inert.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { EMAIL_COMPOSE_HTML, EMAIL_COMPOSE_HASH } from '@/lib/mcp-widgets/generated/email-compose';
 import { CHAT_MESSAGE_HTML, CHAT_MESSAGE_HASH } from '@/lib/mcp-widgets/generated/chat-message';
@@ -39,6 +40,24 @@ export const ISSUE_PREVIEW_URI = `ui://widget/issue-preview.${ISSUE_PREVIEW_HASH
 export const RESULTS_LIST_URI = `ui://widget/results-list.${RESULTS_LIST_HASH}.html`;
 
 const WIDGET_MIME = 'text/html;profile=mcp-app';
+
+/**
+ * A fresh id for one preview card.
+ *
+ * The card remembers, in localStorage, that it was confirmed or cancelled,
+ * so re-rendering an old message does not offer live buttons for something
+ * already decided. That receipt used to be keyed by the confirm tool plus a
+ * slice of its arguments — which meant a SECOND preview of the same kind
+ * recalled the FIRST one's receipt and rendered as already-cancelled, with
+ * no fields and no way to submit. Cancelling a draft issue and asking for
+ * another made the tool unusable until localStorage was cleared.
+ *
+ * Keying on a value minted per preview call fixes it: stable for one card
+ * across re-renders, never shared with the next one.
+ */
+export function newPreviewId(): string {
+  return randomUUID();
+}
 
 /**
  * `_meta` for a preview tool: binds its result to a widget template. Spread

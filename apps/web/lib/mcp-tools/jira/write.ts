@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { issueUrl, getCachedDisplayName } from '../common';
+import { getCachedDisplayName } from '../common';
 import { markdownToAdf } from './markdown';
 import {
   buildFieldUpdates,
@@ -22,7 +22,14 @@ import {
   type UnwrittenField,
 } from './field-write';
 import { logger } from '@/lib/logger';
-import { APP_ONLY_META, ISSUE_PREVIEW_URI, confirmGuard, previewToolMeta } from '../widgets';
+import { issueLinksMarkdown } from './issue-urls';
+import {
+  APP_ONLY_META,
+  ISSUE_PREVIEW_URI,
+  confirmGuard,
+  previewToolMeta,
+  newPreviewId,
+} from '../widgets';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 import { resolveUserId } from './resolve-user';
 
@@ -357,7 +364,7 @@ export async function registerWriteTools(
       const text =
         `Created issue ${resultKey}` +
         describeOutcome(applied, unwritten, commented) +
-        `\n\n[Open in Jira](${issueUrl(context.siteUrl, resultKey)})`;
+        `\n\n${await issueLinksMarkdown(context.siteUrl, auth, resultKey)}`;
       return { content: [{ type: 'text' as const, text }] };
     } catch (error) {
       return {
@@ -471,7 +478,7 @@ export async function registerWriteTools(
               text:
                 `Nothing could be written to ${issueKey}` +
                 describeOutcome([], extra.unwritten, noted) +
-                `\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`,
+                `\n\n${await issueLinksMarkdown(context.siteUrl, auth, issueKey)}`,
             },
           ],
           isError: true,
@@ -503,7 +510,7 @@ export async function registerWriteTools(
       const text =
         headline +
         describeOutcome(applied, unwritten, commented) +
-        `\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        `\n\n${await issueLinksMarkdown(context.siteUrl, auth, issueKey)}`;
       return {
         content: [{ type: 'text' as const, text }],
         ...(outcome.sent ? {} : { isError: true }),
@@ -600,6 +607,7 @@ export async function registerWriteTools(
         ],
         structuredContent: {
           kind: 'issue',
+          previewId: newPreviewId(),
           title: 'Create Jira issue',
           subtitle: `${String(projectKey)} · ${String(issueType)}`,
           confirmTool: 'jira_create_issue_confirm',
@@ -681,6 +689,7 @@ export async function registerWriteTools(
         content: [{ type: 'text' as const, text: previewGuidance(`The update to ${issueKey}`) }],
         structuredContent: {
           kind: 'issue',
+          previewId: newPreviewId(),
           title: `Update ${issueKey}`,
           ...(isString(current.summary) ? { subtitle: current.summary } : {}),
           confirmTool: 'jira_update_issue_confirm',
@@ -757,7 +766,7 @@ export async function registerWriteTools(
         );
         if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
-        const text = `Comment added to ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        const text = `Comment added to ${issueKey}\n\n${await issueLinksMarkdown(context.siteUrl, auth, issueKey)}`;
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         return {
@@ -878,7 +887,7 @@ export async function registerWriteTools(
         );
         if (!execResponse.ok) return errText(await describeJiraAuthFailure(execResponse));
 
-        const text = `Transitioned ${issueKey} to ${transitionName}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        const text = `Transitioned ${issueKey} to ${transitionName}\n\n${await issueLinksMarkdown(context.siteUrl, auth, issueKey)}`;
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         return {
@@ -941,7 +950,7 @@ export async function registerWriteTools(
         );
         if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
-        const text = `Logged ${timeSpent} on ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        const text = `Logged ${timeSpent} on ${issueKey}\n\n${await issueLinksMarkdown(context.siteUrl, auth, issueKey)}`;
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         return {
@@ -1061,6 +1070,7 @@ export async function registerWriteTools(
         content: [{ type: 'text' as const, text: previewGuidance(`The deletion of ${issueKey}`) }],
         structuredContent: {
           kind: 'issue',
+          previewId: newPreviewId(),
           title: `Delete ${issueKey} permanently`,
           ...(summary ? { subtitle: summary } : {}),
           confirmTool: 'jira_delete_issue_confirm',
@@ -1140,7 +1150,7 @@ export async function registerWriteTools(
         );
         if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
-        const text = `Comment ${commentId} has been deleted from ${issueKey}\n\n[Open in Jira](${issueUrl(context.siteUrl, issueKey)})`;
+        const text = `Comment ${commentId} has been deleted from ${issueKey}\n\n${await issueLinksMarkdown(context.siteUrl, auth, issueKey)}`;
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         return {

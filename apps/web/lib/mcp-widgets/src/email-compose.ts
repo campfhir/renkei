@@ -18,6 +18,7 @@ import {
   injectStyle,
   inputField,
   readonlyField,
+  parseLinks,
   recallDone,
   rememberDone,
   renderDone,
@@ -127,6 +128,7 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     const finalSubject = overrides ? overrides.subject : subject;
     finishDone({
       icon: 'sent',
+      ...(parseLinks(resultText(sent)).length > 0 ? { links: parseLinks(resultText(sent)) } : {}),
       headline: 'Sent',
       detail: `To ${finalTo}${finalSubject ? ` — “${finalSubject}”` : ''}`,
     });
