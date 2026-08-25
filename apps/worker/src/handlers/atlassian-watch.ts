@@ -159,12 +159,7 @@ async function syncJira(
           provider: 'jira',
           refId: key,
           content,
-          metadata: {
-            kind: 'issue',
-            title: `${key}: ${str(rec(issue.fields).summary)}`,
-            project: row.scope_key,
-            status: str(rec(rec(issue.fields).status).name) || undefined,
-          },
+          metadata: jiraMetadata(key, issue, row.scope_key, row.scope_label, access.siteUrl),
           sourceAt: updated || null,
         },
         // Successive versions of one issue stay serial; issues parallelize.
@@ -235,7 +230,14 @@ async function syncConfluence(
           provider: 'confluence',
           refId: id,
           content,
-          metadata: { kind: 'page', title: title || undefined, spaceId: row.scope_key },
+          metadata: confluenceMetadata(
+            id,
+            title,
+            entry,
+            row.scope_key,
+            row.scope_label,
+            access.siteUrl
+          ),
           sourceAt: modified || null,
         },
         `confluence/${id}`
@@ -256,6 +258,90 @@ async function syncConfluence(
  * One idempotent polling round for a watch. Records progress and the new
  * cursor; returns what it did so the sweep can log it.
  */
+/**
+ * What a Jira issue IS, in the words a person uses — plus the ids those
+ * words came from.
+ *
+ * A knowledge result that says only "349536260" or an accountId cannot be
+ * read, cited, or opened. So every resolved field ships next to its raw
+ * value: the name for reading, the id for matching, and a url for going to
+ * the actual thing.
+ */
+function jiraMetadata(
+  key: string,
+  issue: Record<string, unknown>,
+  projectKey: string,
+  projectLabel: string | null,
+  siteUrl: string
+): Record<string, unknown> {
+  const fields = rec(issue.fields);
+  const person = (value: unknown): { name: string; id: string; email: string } => {
+    const who = rec(value);
+    return {
+      name: str(who.displayName),
+      id: str(who.accountId),
+      email: str(who.emailAddress),
+    };
+  };
+  const reporter = person(fields.reporter);
+  const assignee = person(fields.assignee);
+  const summary = str(fields.summary);
+  return {
+    kind: 'issue',
+    title: `${key}: ${summary}`,
+    ticket: key,
+    summary: summary || undefined,
+    project: projectLabel || projectKey,
+    projectKey,
+    status: str(rec(fields.status).name) || undefined,
+    issueType: str(rec(fields.issuetype).name) || undefined,
+    priority: str(rec(fields.priority).name) || undefined,
+    reporter: reporter.name || reporter.email || undefined,
+    reporterId: reporter.id || undefined,
+    reporterEmail: reporter.email || undefined,
+    assignee: assignee.name || assignee.email || undefined,
+    assigneeId: assignee.id || undefined,
+    // JSM request type, when the issue is a service-desk request. The field
+    // id varies by site, so read the rendered name Jira returns rather than
+    // guessing a customfield number.
+    requestType:
+      str(rec(rec(fields.requestType).requestType).name) ||
+      str(rec(fields.requestType).name) ||
+      undefined,
+    url: siteUrl ? `${siteUrl.replace(/\/$/, '')}/browse/${key}` : undefined,
+  };
+}
+
+/** The same idea for a Confluence page: name it, attribute it, link it. */
+function confluenceMetadata(
+  id: string,
+  title: string,
+  entry: Record<string, unknown>,
+  spaceKey: string,
+  spaceLabel: string | null,
+  siteUrl: string
+): Record<string, unknown> {
+  const version = rec(entry.version);
+  const author = rec(version.author ?? entry.authorId);
+  const authorName = str(author.displayName);
+  const authorId = str(author.accountId) || str(entry.authorId);
+  const base = siteUrl.replace(/\/$/, '');
+  const webui = str(rec(entry._links).webui);
+  return {
+    kind: 'page',
+    title: title || undefined,
+    page: title || undefined,
+    space: spaceLabel || spaceKey,
+    spaceId: spaceKey,
+    author: authorName || undefined,
+    authorId: authorId || undefined,
+    version: typeof version.number === 'number' ? version.number : undefined,
+    // Confluence hands back a site-relative link; absolutize it so the row
+    // is clickable without the reader knowing which site it came from.
+    url: webui && base ? `${base}/wiki${webui}` : base ? `${base}/wiki/spaces` : undefined,
+  };
+}
+
 export async function runWatchSync(
   tenantId: string,
   access: AtlassianAccess,

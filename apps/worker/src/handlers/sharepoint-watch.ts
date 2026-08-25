@@ -208,6 +208,12 @@ export async function runDriveWatchSync(
         size: size ?? null,
         cTag,
         webUrl: str(entry.webUrl) || null,
+        // Who last touched it — a document's most useful attribution, and
+        // free here since Graph already returned it.
+        lastModifiedBy:
+          isRecord(entry.lastModifiedBy) && isRecord(entry.lastModifiedBy.user)
+            ? str(entry.lastModifiedBy.user.displayName) || null
+            : null,
         path: `${str(parent.path)}/${name}`.replace(/^\/?root:/, ''),
         scopeKey: driveId,
         scopeLabel: row.scope_label,

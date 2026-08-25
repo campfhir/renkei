@@ -73,7 +73,12 @@ beforeEach(() => {
 });
 
 function access(): AtlassianAccess {
-  return { accessToken: 'token-1', accountId: 'acct-1', cloudId: 'cloud-1' };
+  return {
+    accessToken: 'token-1',
+    accountId: 'acct-1',
+    cloudId: 'cloud-1',
+    siteUrl: 'https://acme.atlassian.net',
+  };
 }
 
 function jiraRow(cursor: string | null): WatchRow {

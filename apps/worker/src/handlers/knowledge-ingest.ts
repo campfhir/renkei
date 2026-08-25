@@ -369,6 +369,14 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
         driveId,
         itemId,
         name,
+        // The same value under the names a reader looks for: the file, the
+        // library it lives in, and somewhere to click. webUrl stays for
+        // anything already reading it.
+        fileName: name,
+        site: str(payload.scopeLabel) || undefined,
+        library: str(payload.scopeLabel) || undefined,
+        url: str(payload.webUrl) || undefined,
+        lastModifiedBy: str(payload.lastModifiedBy) || undefined,
         path: str(payload.path),
         webUrl: str(payload.webUrl),
         mimeType: str(payload.mimeType),
