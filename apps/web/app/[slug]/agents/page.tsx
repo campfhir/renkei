@@ -32,21 +32,26 @@ export default async function AgentsPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="mb-1 text-xl font-bold">Agents</h1>
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            Step-by-step helpers you draft yourself — they act with your own connections, on your
-            triggers, and keep a full history of every run.
-          </p>
-        </div>
+      {/*
+        The button belongs to the TITLE row, not to the title-plus-description
+        block. Centring it against both put it level with the gap between
+        them, so it read as floating next to the prose rather than as the
+        action for the heading. The description then spans the full width
+        beneath, where a line of prose wants to be anyway.
+      */}
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <h1 className="min-w-0 truncate text-xl font-bold">Agents</h1>
         <Link
           href={`/${slug}/agents/new`}
-          className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white"
+          className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
         >
           New agent
         </Link>
       </div>
+      <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
+        Step-by-step helpers you draft yourself — they act with your own connections, on your
+        triggers, and keep a full history of every run.
+      </p>
       <AgentsList slug={slug} tenantId={tenant.id} agents={agents} />
     </div>
   );

@@ -12,6 +12,7 @@
  * disagree with what will actually happen.
  */
 
+import RemoveButton from '@/components/remove-button';
 import { useId, useMemo, useState } from 'react';
 import {
   blackoutPredicate,
@@ -396,14 +397,11 @@ export function ScheduleEditor({
               onChange={(next) => setRules(rules.map((entry, at) => (at === index ? next : entry)))}
             />
             {rules.length > 1 ? (
-              <button
-                type="button"
-                aria-label="Remove rule"
+              <RemoveButton
+                compact
+                label="Remove rule"
                 onClick={() => setRules(rules.filter((_, at) => at !== index))}
-                className="shrink-0 rounded p-1 text-gray-400 hover:text-red-600"
-              >
-                ✕
-              </button>
+              />
             ) : null}
           </li>
         ))}

@@ -54,6 +54,7 @@ import {
   type InsertLocation,
 } from './flow-tree';
 import { EditorPanel } from './editor-panel';
+import RemoveButton from '@/components/remove-button';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { StepEditor } from './step-editor';
 import { BranchEditor } from './branch-editor';
@@ -96,6 +97,33 @@ interface SaveResponse {
 
 function notesOf(agent: StoredAgent | undefined | null): ReviewNote[] {
   return parseReviewNotes(agent?.reviewNotes);
+}
+
+/**
+ * What to call a node in the Remove label. "Remove loop" says more than
+ * "Delete" about what is going to disappear — which matters most for the
+ * containers, where removing takes everything inside with it.
+ */
+function kindWord(node: AgentStepNode): string {
+  switch (node.kind) {
+    case 'branch':
+      return 'branch';
+    case 'loop':
+      return 'loop';
+    case 'group':
+      return 'group';
+    case 'terminal':
+      return 'ending';
+    case 'approval':
+      return 'approval';
+    case 'action':
+    case undefined:
+      return 'step';
+    default: {
+      const unhandled: never = node;
+      throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+    }
+  }
 }
 
 export function AgentBuilder({
@@ -695,18 +723,15 @@ export function AgentBuilder({
         <EditorPanel
           title={panelTitle}
           onClose={() => setSelection(null)}
-          footer={
-            <button
-              type="button"
+          headerAction={
+            <RemoveButton
+              label="Remove trigger"
               onClick={() => {
                 const index = selection.index;
                 setTriggers((current) => current.filter((_, at) => at !== index));
                 setSelection(null);
               }}
-              className="text-sm text-red-600 hover:underline dark:text-red-400"
-            >
-              Remove this trigger
-            </button>
+            />
           }
         >
           <TriggerEditor
@@ -729,8 +754,17 @@ export function AgentBuilder({
         <EditorPanel
           title={panelTitle}
           onClose={() => setSelection(null)}
-          // Desktop keeps these on the canvas next to the selected node;
-          // deleting closes the modal because deleteNode clears the selection.
+          // Removing lives in the header on BOTH layouts, matching the
+          // trigger editor and every other panel in the app. Deleting closes
+          // the panel, because deleteNode clears the selection.
+          headerAction={
+            <RemoveButton
+              label={`Remove ${kindWord(selectedNode)}`}
+              onClick={() => deleteNode(selectedNode.id)}
+            />
+          }
+          // Reordering stays mobile-only: on desktop the canvas offers it
+          // next to the node itself, where the order is visible.
           footer={
             !isDesktop && selectedFound ? (
               <div className="space-y-2">
@@ -750,13 +784,6 @@ export function AgentBuilder({
                     className="rounded-md border border-gray-200 px-3 py-1.5 text-sm text-gray-600 disabled:opacity-30 dark:border-gray-800 dark:text-gray-300"
                   >
                     ↓ Move down
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => deleteNode(selectedNode.id)}
-                    className="ml-auto rounded-md px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
-                  >
-                    Delete
                   </button>
                 </div>
                 {(() => {
@@ -967,8 +994,8 @@ export function AgentBuilder({
                 ))}
               </ul>
               <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                Rather than guessing, the draft left these open. Add the answers to your
-                description above and draft again — or fill them into the steps yourself.
+                Rather than guessing, the draft left these open. Add the answers to your description
+                above and draft again — or fill them into the steps yourself.
               </p>
             </div>
           ) : null}
@@ -991,8 +1018,8 @@ export function AgentBuilder({
                 ))}
               </ul>
               <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-                The draft was reviewed and revised to close its own gaps; these stayed open —
-                check them in the steps below before saving.
+                The draft was reviewed and revised to close its own gaps; these stayed open — check
+                them in the steps below before saving.
               </p>
             </div>
           ) : null}

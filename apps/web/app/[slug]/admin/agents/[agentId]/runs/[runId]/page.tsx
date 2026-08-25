@@ -1,5 +1,5 @@
+import BackLink from '@/components/back-link';
 import React from 'react';
-import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
@@ -40,15 +40,8 @@ export default async function AdminRunDetailPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <p className="mb-2 text-sm">
-        <Link
-          href={`/${slug}/admin/agents/${agentId}/runs`}
-          className="text-blue-600 hover:underline dark:text-blue-400"
-        >
-          ← Runs
-        </Link>
-      </p>
       <div className="mb-4 flex flex-wrap items-center gap-2">
+        <BackLink href={`/${slug}/admin/agents/${agentId}/runs`} label="Runs" />
         <h1 className="text-xl font-bold">Run</h1>
         <StatusPill status={run.status} />
         <span className="text-sm text-gray-500">

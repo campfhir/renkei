@@ -1,5 +1,6 @@
 'use client';
 
+import RemoveButton from '@/components/remove-button';
 import { useRef, useState, useEffect } from 'react';
 import { isEmailCategory } from '@/lib/email-sanitizer-guards';
 import { humanizeSystemName } from '@/lib/email-sanitizer-display';
@@ -268,14 +269,12 @@ function ReviewCard({
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
+        <RemoveButton
+          label="Remove entirely"
+          accessibleLabel="Remove this message from the index entirely"
           disabled={busy}
           onClick={() => void override('exclude')}
-          className={buttonClass}
-        >
-          Remove entirely
-        </button>
+        />
         <button
           type="button"
           disabled={busy}

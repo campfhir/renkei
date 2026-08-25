@@ -1,3 +1,4 @@
+import BackLink from '@/components/back-link';
 import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
@@ -36,15 +37,10 @@ export default async function AdminAgentRunsPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <p className="mb-2 text-sm">
-        <Link
-          href={`/${slug}/admin/agents`}
-          className="text-blue-600 hover:underline dark:text-blue-400"
-        >
-          ← Agent oversight
-        </Link>
-      </p>
-      <h1 className="mb-4 text-xl font-bold">Runs of “{agent.name}”</h1>
+      <div className="mb-4 flex items-center gap-2">
+        <BackLink href={`/${slug}/admin/agents`} label="Agent oversight" />
+        <h1 className="min-w-0 truncate text-xl font-bold">Runs of “{agent.name}”</h1>
+      </div>
       {runs.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">No runs recorded.</p>
       ) : (

@@ -7,6 +7,7 @@
  * blank submit keeps the stored key (the embeddings-connector rule).
  */
 
+import RemoveButton from '@/components/remove-button';
 import { useCallback, useEffect, useState } from 'react';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 
@@ -226,13 +227,11 @@ export default function ModelForms({ slug }: { slug: string }) {
               >
                 Edit
               </button>
-              <button
-                type="button"
+              <RemoveButton
+                label="Remove"
+                accessibleLabel={`Remove ${row.label}`}
                 onClick={() => remove(row)}
-                className="font-medium text-red-600 hover:underline dark:text-red-400"
-              >
-                Remove
-              </button>
+              />
             </div>
           </div>
         </div>

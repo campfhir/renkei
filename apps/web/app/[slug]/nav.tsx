@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import RenkeiMark from '@/components/renkei-mark';
 
 interface NavProps {
   slug: string;
@@ -96,7 +97,10 @@ export default function AppNav({
         { href: `/${slug}/knowledge`, label: 'Knowledge' },
         { href: `/${slug}/agents`, label: 'Agents' },
         { href: `/${slug}/usage`, label: 'Tools' },
-        { href: `/${slug}/mail-review`, label: 'Mail review' },
+        // Mail review is deliberately unlinked, not removed: it is the only
+        // place a person can correct how their own mail was classified, and
+        // there is no admin equivalent by design. The route still works for
+        // anyone who has it bookmarked or is sent there.
         { href: `/${slug}/logs`, label: 'Activity' },
       ],
     },
@@ -153,9 +157,10 @@ export default function AppNav({
           <span className="h-0.5 w-5 rounded bg-gray-700 dark:bg-gray-300" />
         </button>
 
-        <Link href={`/${slug}`} className="font-semibold tracking-tight">
+        <Link href={`/${slug}`} className="flex items-center gap-2 font-semibold tracking-tight">
+          <RenkeiMark className="h-6 w-6 shrink-0" />
           Renkei
-          <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">{slug}</span>
+          <span className="text-sm font-normal text-gray-500 dark:text-gray-400">{slug}</span>
         </Link>
 
         <div className="ml-auto flex items-center gap-2">
@@ -198,6 +203,13 @@ export default function AppNav({
                   >
                     Preferences
                   </button>
+                  <Link
+                    href={`/${slug}/about`}
+                    role="menuitem"
+                    className="block w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
+                  >
+                    About
+                  </Link>
                   <button
                     type="button"
                     role="menuitem"
@@ -240,7 +252,10 @@ export default function AppNav({
         }`}
       >
         <div className="mb-4 flex items-center justify-between">
-          <span className="font-semibold">Renkei</span>
+          <span className="flex items-center gap-2 font-semibold">
+            <RenkeiMark className="h-6 w-6 shrink-0" />
+            Renkei
+          </span>
           <button
             type="button"
             aria-label="Close menu"

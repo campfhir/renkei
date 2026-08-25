@@ -1,4 +1,3 @@
-import ConnectorIcon from '@/components/connector-icon';
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
@@ -158,13 +157,34 @@ export default async function ConnectorsPage({
       : [undefined, undefined, undefined, undefined, undefined, undefined];
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto max-w-6xl">
       <h1 className="mb-1 text-xl font-bold">Connectors</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Your connected accounts, and the endpoint your LLM app talks to.
       </p>
 
-      <div className="space-y-6">
+      {/*
+        A grid rather than one long column: with seven connectors the stack
+        made you scroll past everything you had already connected to reach
+        the one you had not. Capped at three columns — wider than that and
+        the cards stretch far enough that the eye loses the row.
+
+        `items-start` matters: grid children stretch to the tallest cell by
+        default, so the Atlassian card (three products) would drag every
+        neighbour's border down with it.
+      */}
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2 xl:grid-cols-3">
+        {/*
+          The endpoint URL leads on desktop — it is the one thing on this
+          page a first-time visitor has to copy, and it sat at the bottom
+          behind every connector card. On a single column it goes back to
+          last: on a phone, the connect buttons are what you came for and
+          the URL is not something you paste from there anyway.
+        */}
+        <div className="order-last lg:order-first">
+          <McpEndpoint tenantId={tenant.id} />
+        </div>
+
         {/*
           One Atlassian card holding all three products. Each keeps its own
           connect/disconnect controls — they are three separate OAuth apps
@@ -201,19 +221,6 @@ export default async function ConnectorsPage({
               : undefined
           }
         />
-
-        {enabled.has('webex') && (
-          <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
-            <h2 className="flex items-center gap-2 font-semibold">
-              <ConnectorIcon capabilityKey="webex" label="WebEx" size={20} />
-              WebEx (org bot)
-            </h2>
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              Enabled by your organization. Add the bot to a space and mention it, or forward it a
-              message in a 1:1 — there is nothing to connect here.
-            </p>
-          </div>
-        )}
 
         {enabled.has(WEBEX_USER_CONNECTOR) && (
           <WebexUserConnector
@@ -261,8 +268,6 @@ export default async function ConnectorsPage({
             priorScopes={zoomGrant?.requested_scopes ?? null}
           />
         )}
-
-        <McpEndpoint tenantId={tenant.id} />
       </div>
     </div>
   );
