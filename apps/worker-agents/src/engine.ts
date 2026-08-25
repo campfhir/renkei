@@ -84,6 +84,11 @@ import {
 } from './prompt';
 import { logger } from './logger';
 
+/**
+ * Turns a branch or loop condition gets to reach its verdict. Enough for a
+ * free date lookup and a nudge before the final forced decision.
+ */
+const CONDITION_TURNS = 4;
 const NORMAL_TOOL_CAP = 3;
 const CORRECTIVE_TOOL_CAP = 10;
 const MAX_LLM_TURNS = 10;
@@ -564,6 +569,43 @@ function resolveTimeArgsOf(input: unknown): ResolveTimeRequest {
     ...(startOf ? { startOf } : {}),
     ...(endOf ? { endOf } : {}),
   };
+}
+
+/**
+ * Answer any resolve_time calls the model made while deciding a branch or
+ * loop condition.
+ *
+ * Conditions are judgment-only by design — no tools, so a decision can
+ * never act or fetch a fresh fact. resolve_time does not weaken that: it
+ * reaches nothing, changes nothing, and is a pure function of its
+ * arguments. What it removes is the arithmetic, which is the one part of
+ * "is this older than yesterday 19:00?" a model reliably gets wrong while
+ * sounding certain.
+ *
+ * Returns the tool_result blocks to hand back, plus a readable note per
+ * lookup for the attempt's detail — when a branch decides wrongly, the
+ * first question is which instant it thought it was comparing against.
+ */
+function answerTimeLookups(toolUses: Extract<LlmContentBlock, { type: 'tool_use' }>[]): {
+  results: LlmContentBlock[];
+  notes: string[];
+} {
+  const results: LlmContentBlock[] = [];
+  const notes: string[] = [];
+  for (const use of toolUses) {
+    if (use.name !== RESOLVE_TIME_TOOL) continue;
+    const resolved = resolveTime(resolveTimeArgsOf(use.input));
+    results.push({
+      type: 'tool_result',
+      toolUseId: use.id,
+      content: resolved.ok
+        ? JSON.stringify(resolved.value)
+        : `${resolved.error} Call ${RESOLVE_TIME_TOOL} again with that corrected — it is free.`,
+      isError: !resolved.ok,
+    });
+    notes.push(resolved.ok ? `${resolved.value.iso} (${resolved.value.local})` : resolved.error);
+  }
+  return { results, notes };
 }
 
 function finishArgsOf(input: unknown): {
@@ -2227,14 +2269,21 @@ export function createAgentRunHandler(deps: EngineDeps) {
       let decidedReason = '';
       const choosePathDef = buildChoosePathDef(branch);
       const branchSystem = branch.paths.length === 2 ? BRANCH_SYSTEM_PROMPT : ROUTER_SYSTEM_PROMPT;
-      // A short turn cap: forced choose_path should answer immediately; one
-      // nudge covers a model that answered in prose first.
-      for (let turn = 0; turn < 3 && !decidedPath; turn += 1) {
+      const timeNotes: string[] = [];
+      // A short turn cap: the decision should come immediately; the spare
+      // turns cover a model that answered in prose first, or spent one
+      // looking up a date. On the LAST turn the decision tool is forced
+      // alone — a condition that keeps asking the time must still land.
+      for (let turn = 0; turn < CONDITION_TURNS && !decidedPath; turn += 1) {
+        const lastTurn = turn === CONDITION_TURNS - 1;
         const completion = await llm.provider.complete({
           system: branchSystem,
           messages,
-          tools: [choosePathDef],
-          toolChoice: { name: CHOOSE_PATH_TOOL },
+          tools: lastTurn ? [choosePathDef] : [choosePathDef, RESOLVE_TIME_DEF],
+          // 'any' rather than the named tool: forcing choose_path would make
+          // resolve_time unreachable, which is the whole point of offering
+          // it. Either way the model must call SOMETHING.
+          toolChoice: lastTurn ? { name: CHOOSE_PATH_TOOL } : 'any',
           maxTokens: llm.maxOutputTokens,
           ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
         });
@@ -2280,6 +2329,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
           decidedReason = choice.reason;
           break;
         }
+        // A date lookup is not a failure to decide: answer it and let the
+        // model decide on the next turn, without spending the nudge.
+        const lookups = answerTimeLookups(toolUses);
+        if (lookups.results.length > 0) {
+          timeNotes.push(...lookups.notes);
+          messages.push({ role: 'user', content: lookups.results });
+          continue;
+        }
         messages.push({
           role: 'user',
           content: [
@@ -2298,6 +2355,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
         const detail = {
           resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
           llmSummary: clip(decidedReason, PREVIEW_CHARS),
+          // Which instants it compared against — the first thing anyone
+          // asks when a time-based branch went the wrong way.
+          ...(timeNotes.length > 0 ? { timeLookups: timeNotes } : {}),
           declaredOutcome: 'success',
           chosenPathId: decidedPath.id,
           chosenPathName: decidedPath.name,
@@ -2470,12 +2530,18 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       let decided: 'finished' | 'continue' | null = null;
       let decidedReason = '';
-      for (let turn = 0; turn < 3 && !decided; turn += 1) {
+      const timeNotes: string[] = [];
+      // Same shape as a branch decision: free date lookups are allowed on
+      // every turn but the last, where the verdict is forced alone. An
+      // until-loop asking "has it been an hour yet?" is exactly the
+      // arithmetic worth taking out of the model's head.
+      for (let turn = 0; turn < CONDITION_TURNS && !decided; turn += 1) {
+        const lastTurn = turn === CONDITION_TURNS - 1;
         const completion = await llm.provider.complete({
           system: LOOP_SYSTEM_PROMPT,
           messages,
-          tools: [LOOP_DECISION_DEF],
-          toolChoice: { name: LOOP_DECISION_TOOL },
+          tools: lastTurn ? [LOOP_DECISION_DEF] : [LOOP_DECISION_DEF, RESOLVE_TIME_DEF],
+          toolChoice: lastTurn ? { name: LOOP_DECISION_TOOL } : 'any',
           maxTokens: llm.maxOutputTokens,
           ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
         });
@@ -2520,6 +2586,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
           decidedReason = choice.reason;
           break;
         }
+        const lookups = answerTimeLookups(toolUses);
+        if (lookups.results.length > 0) {
+          timeNotes.push(...lookups.notes);
+          messages.push({ role: 'user', content: lookups.results });
+          continue;
+        }
         messages.push({
           role: 'user',
           content: [
@@ -2535,6 +2607,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         const detail = {
           resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
           llmSummary: clip(decidedReason, PREVIEW_CHARS),
+          ...(timeNotes.length > 0 ? { timeLookups: timeNotes } : {}),
           declaredOutcome: 'success',
           loopDecision: decided,
           ...(built.unbound.length > 0 ? { unboundVariables: built.unbound } : {}),

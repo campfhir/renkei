@@ -27,6 +27,9 @@ import type { McpClient, McpToolResult } from './mcp-client';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
+/** Mirrors CONDITION_TURNS in engine.ts — the decision turn cap. */
+const CONDITION_TURNS_IN_TEST = 4;
+
 type Scripted = (request: LlmRequest, call: number) => LlmResponse;
 
 function stubLlm(script: Scripted): ResolvedLlm {
@@ -915,8 +918,9 @@ maybe('agent run engine', () => {
     const { runId } = await seedRun(doc);
     let chooseCalls = 0;
     const llm = stubLlm((request, call) => {
-      const forced =
-        typeof request.toolChoice === 'object' && request.toolChoice?.name === 'choose_path';
+      // A branch turn offers choose_path — whether or not it is the forced
+      // tool that turn (see forcedName above).
+      const forced = request.tools.some((tool) => tool.name === 'choose_path');
       if (forced) {
         chooseCalls += 1;
         return choosePath('yes');
@@ -983,10 +987,19 @@ maybe('agent run engine', () => {
     usage: { inputTokens: 10, outputTokens: 5 },
   };
 
-  const forcedName = (request: LlmRequest): string | null =>
-    typeof request.toolChoice === 'object' && request.toolChoice !== null
-      ? request.toolChoice.name
-      : null;
+  /**
+   * Which decision this request is asking for. Not the forced tool name:
+   * condition turns offer the decision tool ALONGSIDE the free resolve_time
+   * and use toolChoice 'any', so the forced name is only set on the final
+   * turn. The offered set is what actually identifies the request.
+   */
+  const forcedName = (request: LlmRequest): string | null => {
+    if (typeof request.toolChoice === 'object' && request.toolChoice !== null) {
+      return request.toolChoice.name;
+    }
+    const decision = request.tools.find((tool) => tool.name !== 'resolve_time');
+    return decision ? decision.name : null;
+  };
 
   const firstText = (request: LlmRequest): string => {
     for (const message of request.messages) {
@@ -1595,6 +1608,93 @@ maybe('agent run engine', () => {
       [ids.cleanup, 'succeeded'],
       [ids.after, 'succeeded'],
     ]);
+  });
+
+  it('lets a branch condition compute a date before it decides', async () => {
+    // The arithmetic a condition should never do in its head: "was this
+    // before yesterday 19:00 in Los Angeles?"
+    const { doc, ids } = branchDoc();
+    const { runId } = await seedRun(doc);
+    let lookups = 0;
+    let sawResult = '';
+    const llm = stubLlm((request) => {
+      if (forcedName(request) !== 'choose_path') return finish('success');
+      for (const message of request.messages) {
+        for (const block of message.content) {
+          if (block.type === 'tool_result' && typeof block.content === 'string') {
+            sawResult = block.content;
+          }
+        }
+      }
+      if (!sawResult) {
+        lookups += 1;
+        return useTool('resolve_time', {
+          timezone: 'America/Los_Angeles',
+          amount: -1,
+          unit: 'day',
+          atTime: '19:00',
+        });
+      }
+      return choosePath('yes');
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+    expect(lookups).toBe(1);
+    // Answered in process, with a real instant — not routed anywhere.
+    expect(sawResult).toContain('"iso"');
+    expect(sawResult).toContain('America/Los_Angeles');
+
+    // The branch still decided, and the instant it used is on the record.
+    const branchRow = await db
+      .selectFrom('agent_run_steps')
+      .select(['outcome', 'detail'])
+      .where('run_id', '=', runId)
+      .where('step_id', '=', ids.branch)
+      .executeTakeFirstOrThrow();
+    expect(branchRow.outcome).toBe('path_chosen');
+    expect(JSON.stringify(branchRow.detail)).toContain('timeLookups');
+  });
+
+  it('forces the verdict on the last turn even if the condition keeps asking the time', async () => {
+    // A model that only ever looks up dates must still land on a path
+    // rather than burning the attempt budget.
+    const { doc } = branchDoc({ branchAttempts: 1 });
+    const { runId } = await seedRun(doc);
+    let dateCalls = 0;
+    const llm = stubLlm((request) => {
+      if (forcedName(request) !== 'choose_path') return finish('success');
+      // On the final turn resolve_time is not offered at all — the only
+      // callable tool is the decision.
+      if (request.tools.some((tool) => tool.name === 'resolve_time')) {
+        dateCalls += 1;
+        return useTool('resolve_time', { timezone: 'UTC' });
+      }
+      return choosePath('no');
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select('status')
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('succeeded');
+    // Bounded: it asked on every turn that offered it, then had to decide.
+    expect(dateCalls).toBe(CONDITION_TURNS_IN_TEST - 1);
   });
 
   it('swallows the failure and continues when the failure route is empty', async () => {
