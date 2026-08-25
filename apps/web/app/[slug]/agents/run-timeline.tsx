@@ -180,11 +180,20 @@ function AttemptDetail({ attempt }: { attempt: AttemptView }) {
                 resultPreview?: unknown;
                 isError?: unknown;
                 durationMs?: unknown;
+                free?: unknown;
               } = typeof call === 'object' && call !== null ? call : {};
               return (
                 <li key={index} className="rounded bg-gray-50 p-2 dark:bg-gray-900">
                   <p className="font-mono">
                     {typeof entry.tool === 'string' ? entry.tool : 'tool'}
+                    {/* Marked, because the count above deliberately excludes
+                        these: "1 tool call" over two listed entries is
+                        otherwise just confusing. */}
+                    {entry.free === true ? (
+                      <span className="ml-1 rounded bg-gray-200 px-1 text-[0.65rem] font-sans text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                        free
+                      </span>
+                    ) : null}
                     {entry.isError === true ? (
                       <span className="ml-1 text-red-600 dark:text-red-400">(error)</span>
                     ) : null}
