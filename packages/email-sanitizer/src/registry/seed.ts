@@ -50,24 +50,6 @@ export const SEED_TEMPLATES: readonly SeedTemplate[] = [
 ];
 
 /**
- * Built-in "external sender" warning-banner phrases, verified against real
- * gateway output rather than a guess like the Jira/JSM templates above —
- * unlike those, these are always active: `sanitizeEmailForTenant` unions
- * them with a tenant's own `email_banner_patterns` rows, so out-of-the-box
- * behavior never regresses to "nothing stripped" while an org is still
- * building out its own library. An admin can't disable one of these from
- * the UI (there's no row to toggle) — if that's ever needed, promote it to
- * a real per-tenant row with `enabled: false` instead of special-casing it
- * here.
- */
-export const SEED_BANNERS: readonly string[] = [
-  'CAUTION : This Email is from an EXTERNAL source. DO NOT CLICK LINKS or ' +
-    'ATTACHMENTS if the email is not anticipated, and NEVER provide your User ID or Password.',
-  '[EXTERNAL EMAIL] DO NOT CLICK links or attachments unless you recognize the sender ' +
-    'and know the content is safe.',
-];
-
-/**
  * Classifier rules every tenant starts with.
  *
  * These exist because the pipeline's fail-safe default is `human`: with an

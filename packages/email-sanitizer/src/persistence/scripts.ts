@@ -1,6 +1,6 @@
 /**
  * DB accessors for `email_cleaner_scripts` — tenant-editable sandboxed
- * cleaner functions. Content-free like rules/banners: a script is code the
+ * cleaner functions. Content-free like classifier rules: a script is code the
  * admin wrote, never message content, so the admin route reads and writes
  * it directly. Execution lives in ../scripts/run.ts; this module only
  * stores the source and each script's health (`last_error`).

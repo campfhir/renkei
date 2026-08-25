@@ -7,7 +7,7 @@
  */
 
 import { classify } from './classify';
-import { cleanHumanMail } from './clean/generic';
+import { decodeBody } from './clean/generic';
 import { normalizeBody } from './normalize';
 import { matchTemplate } from './registry/template';
 import type {
@@ -25,8 +25,6 @@ export interface SanitizeInputs {
   raw: RawEmail;
   /** The message owner's explicit correction, when one exists — bypasses automatic routing. */
   override?: MessageOverride;
-  /** Literal external-sender-banner phrases to strip; defaults to the built-in seed list when omitted. */
-  bannerPatterns?: readonly string[];
 }
 
 function headerOf(raw: RawEmail): string {
@@ -102,7 +100,7 @@ export function sanitizeEmail(inputs: SanitizeInputs): SanitizeResult {
       // cleaner rather than extracting garbage, and flag for the owner.
       return {
         action: 'index',
-        content: `${header}\n\n${cleanHumanMail(bodyText, inputs.bannerPatterns)}`,
+        content: `${header}\n\n${decodeBody(bodyText)}`,
         category: 'system_notification',
         matchedRuleId: classification.matchedRuleId,
         senderKey: classification.senderKey,
@@ -115,7 +113,7 @@ export function sanitizeEmail(inputs: SanitizeInputs): SanitizeResult {
     // No template yet for this sender: fail safe, flag for the owner to teach one.
     return {
       action: 'index',
-      content: `${header}\n\n${cleanHumanMail(bodyText, inputs.bannerPatterns)}`,
+      content: `${header}\n\n${decodeBody(bodyText)}`,
       category: 'system_notification',
       matchedRuleId: classification.matchedRuleId,
       senderKey: classification.senderKey,
@@ -128,7 +126,7 @@ export function sanitizeEmail(inputs: SanitizeInputs): SanitizeResult {
 
   return {
     action: 'index',
-    content: `${header}\n\n${cleanHumanMail(bodyText, inputs.bannerPatterns)}`,
+    content: `${header}\n\n${decodeBody(bodyText)}`,
     category: 'human',
     matchedRuleId: classification.matchedRuleId,
     senderKey: null,

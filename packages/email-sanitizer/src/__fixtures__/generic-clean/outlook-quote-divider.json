@@ -1,5 +1,0 @@
-{
-  "description": "Outlook's plain-text '-----Original Message-----' divider truncates the quoted chain",
-  "content": "Thanks for the update, I'll take a look today.\n\n-----Original Message-----\nFrom: Bob Smith\nSent: Monday, January 5, 2026 9:00 AM\nTo: Alice Jones\nSubject: Server issue\n\nCan you check on this?",
-  "expected": "Thanks for the update, I'll take a look today."
-}

@@ -12,13 +12,11 @@ import type { EmbeddingProvider } from '@renkei/knowledge';
 import { sanitizeEmail } from './pipeline';
 import { listClassifierRules } from './persistence/rules';
 import { listActiveTemplates } from './persistence/templates';
-import { listActiveBannerPatterns } from './persistence/banners';
 import { hasRecentDuplicate, recordClassification } from './persistence/log';
 import { hasNearDuplicateChunk } from './persistence/similarity';
 import { listActiveCleanerScripts, recordCleanerScriptError } from './persistence/scripts';
 import { runCleanerScript } from './scripts/run';
 import type { CleanerScriptInput as CleanerScriptRunInput, CleanerScriptKind } from './scripts/run';
-import { SEED_BANNERS } from './registry/seed';
 import type { MessageOverride, RawEmail, SanitizeResult } from './types';
 
 /** How long an exact duplicate of a cleaned message is remembered before re-indexing is allowed again. */
@@ -177,24 +175,18 @@ export type TenantSanitizeResult = SanitizeResult & { embedding?: number[] };
 export async function sanitizeEmailForTenant(
   options: SanitizeForTenantOptions
 ): Promise<TenantSanitizeResult> {
-  const [rulesResult, templatesResult, bannersResult] = await Promise.all([
+  const [rulesResult, templatesResult] = await Promise.all([
     listClassifierRules(options.tenantId),
     listActiveTemplates(options.tenantId),
-    listActiveBannerPatterns(options.tenantId),
   ]);
   const rules = rulesResult.ok ? rulesResult.val : [];
   const templates = templatesResult.ok ? templatesResult.val : new Map();
-  // The built-in defaults always apply; a tenant's own library only adds to
-  // them, so out-of-the-box stripping never regresses to "nothing stripped"
-  // while an org is still building out its list.
-  const bannerPatterns = [...SEED_BANNERS, ...(bannersResult.ok ? bannersResult.val : [])];
 
   let result: TenantSanitizeResult = sanitizeEmail({
     rules,
     templates,
     raw: options.raw,
     override: options.override,
-    bannerPatterns,
   });
 
   // Tenant cleaner scripts run over the cleaned BODY (never the header),

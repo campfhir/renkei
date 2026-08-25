@@ -5,7 +5,7 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { cleanHumanMail } from '../clean/generic';
+import { decodeBody } from '../clean/generic';
 import { classify } from '../classify';
 import type { ClassifiableEmail } from '../classify';
 import { deriveTemplate, matchTemplate } from '../registry/template';
@@ -18,12 +18,17 @@ function loadFixtures<T>(dir: string): Array<T & { __file: string }> {
     .map((f) => ({ ...JSON.parse(readFileSync(join(full, f), 'utf8')), __file: f }));
 }
 
+// Only the DECODING cases remain here. The heuristic fixtures (banners,
+// quoted chains, the signature delimiter, legal footers) went with the
+// heuristics themselves — they describe behaviour a tenant now owns in a
+// script, and a fixture asserting the package still does it would be
+// asserting the opposite of the design.
 describe('generic-clean fixtures', () => {
   for (const fixture of loadFixtures<{ description: string; content: string; expected: string }>(
     'generic-clean'
   )) {
     it(`${fixture.__file}: ${fixture.description}`, () => {
-      expect(cleanHumanMail(fixture.content)).toBe(fixture.expected);
+      expect(decodeBody(fixture.content)).toBe(fixture.expected);
     });
   }
 });

@@ -85,6 +85,7 @@ export const EXPECTED_MIGRATIONS = [
   '052-agent-guardrails',
   '053-approval-pauses',
   '054-cleaner-script-content-kinds',
+  '055-banner-phrases-to-scripts',
 ];
 
 export interface MigrationStatus {

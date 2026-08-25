@@ -39,12 +39,6 @@ interface TemplateHealthRow {
   needsReviewCount: number;
 }
 
-interface BannerPattern {
-  id: string;
-  phrase: string;
-  enabled: boolean;
-}
-
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
 const labelClass = 'block text-sm font-medium mb-1';
@@ -201,7 +195,8 @@ function RulesCard({ slug }: { slug: string }) {
     <Card title="Classifier rules">
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
         Evaluated in priority order (lowest first); the first enabled match wins. Mail matching no
-        rule is treated as human correspondence and cleaned generically — never dropped.
+        rule is treated as human correspondence — links decoded, whitespace tidied, and whatever
+        your cleaner scripts do — never dropped.
       </p>
 
       {loadError && <p className="mb-3 text-sm text-red-700 dark:text-red-300">{loadError}</p>}
@@ -413,196 +408,6 @@ function RulesCard({ slug }: { slug: string }) {
   );
 }
 
-function BannersCard({ slug }: { slug: string }) {
-  const url = `/api/admin/${slug}/email-sanitizer/banners`;
-  const [banners, setBanners] = useState<BannerPattern[] | null>(null);
-  const [seeds, setSeeds] = useState<string[]>([]);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [phrase, setPhrase] = useState('');
-  const [enabled, setEnabled] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function reload() {
-    const { data, error: err } = await getJson<{ banners: BannerPattern[]; seeds: string[] }>(url);
-    if (err) {
-      setLoadError(err);
-      return;
-    }
-    setLoadError(null);
-    setBanners(data?.banners ?? []);
-    setSeeds(data?.seeds ?? []);
-  }
-
-  useEffect(() => {
-    void reload();
-  }, [slug]);
-
-  function startEdit(banner: BannerPattern) {
-    setEditingId(banner.id);
-    setPhrase(banner.phrase);
-    setEnabled(banner.enabled);
-    setNotice(null);
-    setError(null);
-  }
-
-  function startNew() {
-    setEditingId(null);
-    setPhrase('');
-    setEnabled(true);
-    setNotice(null);
-    setError(null);
-  }
-
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setNotice(null);
-    setError(null);
-
-    const payload = { phrase: phrase.trim(), enabled };
-    const failure = editingId
-      ? await sendJson(`${url}/${editingId}`, 'PUT', payload)
-      : await sendJson(url, 'POST', payload);
-
-    setBusy(false);
-    if (failure) {
-      setError(failure);
-      return;
-    }
-    setNotice('Saved');
-    startNew();
-    await reload();
-  }
-
-  async function remove(id: string) {
-    setBusy(true);
-    const failure = await sendJson(`${url}/${id}`, 'DELETE');
-    setBusy(false);
-    if (failure) {
-      setError(failure);
-      return;
-    }
-    if (editingId === id) startNew();
-    await reload();
-  }
-
-  return (
-    <Card title="External-sender banner library">
-      <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
-        Literal warning banners a mail gateway prepends to outside mail (e.g. &quot;CAUTION: This
-        Email is from an EXTERNAL source...&quot;) are stripped before a message is cleaned, so they
-        never dilute embeddings. Add a phrase here when a gateway wording changes or a new one shows
-        up — no code deploy needed.
-      </p>
-
-      {seeds.length > 0 && (
-        <div className="mb-4">
-          <p className="mb-2 text-xs font-medium uppercase text-gray-500 dark:text-gray-400">
-            Built in (always active)
-          </p>
-          <ul className="space-y-1">
-            {seeds.map((seed) => (
-              <li
-                key={seed}
-                className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:bg-gray-900 dark:text-gray-400"
-              >
-                {seed}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {loadError && <p className="mb-3 text-sm text-red-700 dark:text-red-300">{loadError}</p>}
-
-      {banners && banners.length > 0 && (
-        <div className="mb-4 space-y-2">
-          {banners.map((banner) => (
-            <div
-              key={banner.id}
-              className="flex items-start justify-between gap-3 rounded-md border border-gray-200 px-3 py-2 dark:border-gray-800"
-            >
-              <p className="text-xs text-gray-700 dark:text-gray-300">
-                {!banner.enabled && <span className="mr-2 text-gray-400">(disabled)</span>}
-                {banner.phrase}
-              </p>
-              <div className="flex shrink-0 gap-3">
-                <button
-                  type="button"
-                  onClick={() => startEdit(banner)}
-                  className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void remove(banner.id)}
-                  className="text-xs font-medium text-red-600 hover:underline disabled:opacity-50 dark:text-red-400"
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <form
-        onSubmit={(e) => void save(e)}
-        className="space-y-3 border-t border-gray-200 pt-4 dark:border-gray-800"
-      >
-        <p className="text-sm font-medium">{editingId ? 'Edit phrase' : 'Add a phrase'}</p>
-        <div>
-          <label className={labelClass} htmlFor="banner-phrase">
-            Banner text
-          </label>
-          <textarea
-            id="banner-phrase"
-            required
-            rows={2}
-            value={phrase}
-            onChange={(e) => setPhrase(e.target.value)}
-            placeholder="[EXTERNAL EMAIL] DO NOT CLICK links or attachments unless you recognize the sender..."
-            className={inputClass}
-          />
-          <p className={hintClass}>
-            Matched word-by-word regardless of line-wrapping — paste the exact banner text as it
-            appears in a real message.
-          </p>
-        </div>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
-          Enabled
-        </label>
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={busy}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {busy ? 'Saving…' : editingId ? 'Save changes' : 'Add phrase'}
-          </button>
-          {editingId && (
-            <button
-              type="button"
-              onClick={startNew}
-              className="text-sm text-gray-600 hover:underline dark:text-gray-400"
-            >
-              Cancel edit
-            </button>
-          )}
-          {notice && <span className="text-sm text-green-700 dark:text-green-300">{notice}</span>}
-          {error && <span className="text-sm text-red-700 dark:text-red-300">{error}</span>}
-        </div>
-      </form>
-    </Card>
-  );
-}
-
 function TemplateHealthCard({ slug }: { slug: string }) {
   const [rows, setRows] = useState<TemplateHealthRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -624,8 +429,8 @@ function TemplateHealthCard({ slug }: { slug: string }) {
     <Card title="Template health">
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
         Read-only. A rising drift count means a sender restyled its notification format — its mail
-        still gets cleaned generically in the meantime, never garbled or dropped, but the template
-        should be re-taught from a fresh sample.
+        still gets indexed in the meantime, never garbled or dropped, but the template should be
+        re-taught from a fresh sample.
       </p>
       {error && <p className="text-sm text-red-700 dark:text-red-300">{error}</p>}
       {rows && rows.length === 0 && (
@@ -669,7 +474,6 @@ export default function RuleForms({ slug }: { slug: string }) {
   return (
     <div className="space-y-6">
       <RulesCard slug={slug} />
-      <BannersCard slug={slug} />
       <TemplateHealthCard slug={slug} />
     </div>
   );

@@ -13,7 +13,6 @@ jest.mock('@renkei/knowledge', () => ({
 }));
 jest.mock('./persistence/rules', () => ({ listClassifierRules: jest.fn() }));
 jest.mock('./persistence/templates', () => ({ listActiveTemplates: jest.fn() }));
-jest.mock('./persistence/banners', () => ({ listActiveBannerPatterns: jest.fn() }));
 jest.mock('./persistence/log', () => ({
   hasRecentDuplicate: jest.fn(),
   recordClassification: jest.fn(),
@@ -34,9 +33,6 @@ const { listClassifierRules: mockListClassifierRules } = jest.requireMock<{
 const { listActiveTemplates: mockListActiveTemplates } = jest.requireMock<{
   listActiveTemplates: jest.Mock;
 }>('./persistence/templates');
-const { listActiveBannerPatterns: mockListActiveBannerPatterns } = jest.requireMock<{
-  listActiveBannerPatterns: jest.Mock;
-}>('./persistence/banners');
 const {
   hasRecentDuplicate: mockHasRecentDuplicate,
   recordClassification: mockRecordClassification,
@@ -64,7 +60,6 @@ beforeEach(() => {
   jest.resetAllMocks();
   mockListClassifierRules.mockResolvedValue(ok([]));
   mockListActiveTemplates.mockResolvedValue(ok(new Map()));
-  mockListActiveBannerPatterns.mockResolvedValue(ok([]));
   mockListActiveCleanerScripts.mockResolvedValue(ok([]));
   mockRecordClassification.mockResolvedValue(ok());
 });
@@ -288,35 +283,5 @@ describe('sanitizeEmailForTenant — dedup', () => {
         result: expect.objectContaining({ action: 'excluded' }),
       })
     );
-  });
-});
-
-describe('sanitizeEmailForTenant — banner library', () => {
-  it("strips both the built-in seed banners and a tenant's own configured phrase", async () => {
-    mockHasRecentDuplicate.mockResolvedValue(ok(false));
-    mockListActiveBannerPatterns.mockResolvedValue(ok(['This is a tenant-specific test banner.']));
-
-    const result = await sanitizeEmailForTenant({
-      tenantId: 'tenant-1',
-      provider: 'microsoft',
-      refId: 'bob@example.com/msg/1',
-      ownerUpn: 'bob@example.com',
-      raw: {
-        subject: 'Hello',
-        fromName: 'Bob',
-        fromAddress: 'bob@example.com',
-        receivedAt: '2026-08-10T12:00:00Z',
-        body: {
-          content: 'This is a tenant-specific test banner.\n\nJust checking in.',
-          contentType: 'text',
-        },
-      },
-    });
-
-    expect(result).toMatchObject({ action: 'index' });
-    if (result.action === 'index') {
-      expect(result.content).not.toContain('tenant-specific test banner');
-      expect(result.content).toContain('Just checking in.');
-    }
   });
 });
