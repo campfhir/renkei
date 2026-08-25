@@ -74,8 +74,45 @@
  * could produce keeps its exact old version and bytes.
  */
 
+/**
+ * A DATE CHIP: a timestamp computed at render time, before the model reads
+ * the instruction.
+ *
+ * The model is not asked to work the date out and not asked to call
+ * anything for it — by the time the prompt exists, "yesterday at 19:00 Los
+ * Angeles" is already the literal instant. That is the difference between a
+ * date being deterministic and a date being usually right.
+ *
+ * The parameters are the same vocabulary resolveTime speaks: a signed
+ * amount and a unit, an optional time of day, an optional snap to the start
+ * or end of the unit.
+ */
+export interface DateSegment {
+  t: 'date';
+  /** Signed: -1 with unit 'day' is yesterday, 0 is today. */
+  amount: number;
+  unit: 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year';
+  /**
+   * IANA zone, e.g. 'America/Los_Angeles'. Deliberately not a fixed offset
+   * like '-08:00': an offset is wrong for half the year in any zone that
+   * observes daylight saving, which is exactly the error this chip exists
+   * to remove.
+   */
+  timezone: string;
+  /** 'HH:MM' wall-clock time in `timezone`, applied after the shift. */
+  atTime?: string;
+  /** Snap to the start or end of `unit`; ignored when atTime is set. */
+  boundary?: 'start' | 'end';
+  /**
+   * How it reads in the prompt. 'iso' (default) is the instant a tool
+   * wants; 'date' is YYYY-MM-DD for query languages that take a day;
+   * 'datetime' is the local reading, for text a person will see.
+   */
+  format?: 'iso' | 'date' | 'datetime';
+}
+
 export type InstructionSegment =
-  { t: 'text'; v: string } | { t: 'tool'; name: string } | { t: 'var'; name: string };
+  { t: 'text'; v: string } | { t: 'tool'; name: string } | { t: 'var'; name: string } | DateSegment;
 
 export interface FailureHandling {
   /** Failure code from the tool's outcome enumeration, incl. 'other'. */
@@ -301,16 +338,11 @@ export interface ApprovalStep {
 }
 
 export type AgentStepNode =
-  | ActionStep
-  | BranchStep
-  | LoopStep
-  | GroupStep
-  | TerminalStep
-  | ApprovalStep;
+  ActionStep | BranchStep | LoopStep | GroupStep | TerminalStep | ApprovalStep;
 
 export interface AgentStepsDoc {
   /** See requiredVersion: 5 approval, 4 terminal, 3 v3 constructs, 2 plain branches, else 1. */
-  version: 1 | 2 | 3 | 4 | 5;
+  version: 1 | 2 | 3 | 4 | 5 | 6;
   /** Array order is execution order; success is linear within a list. */
   steps: AgentStepNode[];
 }
@@ -374,6 +406,46 @@ export const DEFAULT_APPROVAL_WAIT_CAP_HOURS = 14 * 24;
  */
 export const VARIABLE_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9 _.-]{0,63}$/;
 
+const DATE_UNITS = ['minute', 'hour', 'day', 'week', 'month', 'year'];
+
+/**
+ * Structural check for a date chip. Kept in the SHARED segment guard rather
+ * than a frozen v6 copy: a document containing one is labeled version 6 by
+ * requiredVersion, and a worker that predates date chips rejects an unknown
+ * version outright — which is the guarantee that actually protects an old
+ * reader from a construct it cannot render.
+ */
+function isDateSegment(value: unknown): value is DateSegment {
+  const segment: {
+    amount?: unknown;
+    unit?: unknown;
+    timezone?: unknown;
+    atTime?: unknown;
+    boundary?: unknown;
+    format?: unknown;
+  } = typeof value === 'object' && value !== null ? value : {};
+  if (typeof segment.amount !== 'number' || !Number.isFinite(segment.amount)) return false;
+  if (typeof segment.unit !== 'string' || !DATE_UNITS.includes(segment.unit)) return false;
+  if (typeof segment.timezone !== 'string' || segment.timezone.length === 0) return false;
+  if (segment.atTime !== undefined && typeof segment.atTime !== 'string') return false;
+  if (
+    segment.boundary !== undefined &&
+    segment.boundary !== 'start' &&
+    segment.boundary !== 'end'
+  ) {
+    return false;
+  }
+  if (
+    segment.format !== undefined &&
+    segment.format !== 'iso' &&
+    segment.format !== 'date' &&
+    segment.format !== 'datetime'
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export function isInstructionSegment(value: unknown): value is InstructionSegment {
   if (typeof value !== 'object' || value === null) return false;
   const segment: { t?: unknown; v?: unknown; name?: unknown } = value;
@@ -381,6 +453,7 @@ export function isInstructionSegment(value: unknown): value is InstructionSegmen
   if (segment.t === 'tool' || segment.t === 'var') {
     return typeof segment.name === 'string' && segment.name.length > 0;
   }
+  if (segment.t === 'date') return isDateSegment(value);
   return false;
 }
 
@@ -792,7 +865,10 @@ export function isAgentStepsDoc(value: unknown): value is AgentStepsDoc {
     const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
     return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV4(step, root));
   }
-  if (doc.version === 5) {
+  if (doc.version === 5 || doc.version === 6) {
+    // Version 6 differs only in what an INSTRUCTION may contain (a date
+    // chip), which the shared segment guard already covers — the node
+    // shapes are v5's.
     const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
     return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV5(step, root));
   }
@@ -1010,12 +1086,45 @@ export function containsApproval(nodes: AgentStepNode[]): boolean {
   return walkSteps(nodes).some(({ node }) => isApprovalStep(node));
 }
 
+/** Every instruction-ish segment list a node carries. */
+function segmentListsOf(node: AgentStepNode): InstructionSegment[][] {
+  switch (node.kind) {
+    case 'branch':
+      return [node.condition];
+    case 'loop':
+      return node.mode === 'until' ? [node.condition] : [];
+    case 'group':
+      return [];
+    case 'terminal':
+      return [node.message];
+    case 'approval':
+      return [node.message];
+    case 'action':
+    case undefined:
+      return [node.instruction, ...node.failureHandling.map((entry) => entry.guidance ?? [])];
+    default: {
+      const unhandled: never = node;
+      throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
+    }
+  }
+}
+
+/** Whether any instruction carries a date chip — the version-6 test. */
+export function containsDateChip(nodes: AgentStepNode[]): boolean {
+  return walkSteps(nodes).some(({ node }) =>
+    segmentListsOf(node).some((segments) => segments.some((segment) => segment.t === 'date'))
+  );
+}
+
 /**
  * THE version rule — normalizeAgentDraft is its only writer. Anything an
  * older writer could have produced keeps its exact old version, which is
  * what keeps old snapshots byte-stable.
  */
-export function requiredVersion(nodes: AgentStepNode[]): 1 | 2 | 3 | 4 | 5 {
+export function requiredVersion(nodes: AgentStepNode[]): 1 | 2 | 3 | 4 | 5 | 6 {
+  // Highest first: a date chip renders to a literal only in code that knows
+  // what it is, so it outranks every construct below it.
+  if (containsDateChip(nodes)) return 6;
   if (containsApproval(nodes)) return 5;
   if (containsTerminal(nodes)) return 4;
   if (containsV3Feature(nodes)) return 3;

@@ -58,6 +58,8 @@ import {
   type TerminalStep,
 } from './steps';
 import { BUILTIN_VARIABLES } from './variables';
+import { isValidTimezone } from './recurrence';
+import { resolveTime } from './resolve-time';
 import { validateTriggerDrafts, triggerVariableNames, type TriggerDraft } from './triggers';
 
 /** The slice of the web catalog's ToolDescriptor validation needs. */
@@ -98,8 +100,52 @@ export interface ValidationIssue {
 
 function segmentChars(segments: InstructionSegment[]): number {
   return segments.reduce((total, segment) => {
-    return total + (segment.t === 'text' ? segment.v.length : segment.name.length);
+    switch (segment.t) {
+      case 'text':
+        return total + segment.v.length;
+      case 'tool':
+      case 'var':
+        return total + segment.name.length;
+      case 'date':
+        // A date chip renders to a timestamp; count a representative width
+        // rather than zero, so the instruction budget stays honest.
+        return total + 30;
+      default: {
+        const unhandled: never = segment;
+        throw new Error(`unknown segment: ${JSON.stringify(unhandled)}`);
+      }
+    }
   }, 0);
+}
+
+/**
+ * Date chips that cannot resolve. A chip the builder inserted always can —
+ * this catches a hand-edited or pasted document, and does it at SAVE time,
+ * because the alternative is discovering it in a prompt at 3am as
+ * "(unresolved date: …)" inside an instruction that then does the wrong
+ * thing.
+ */
+function dateChipIssues(segments: InstructionSegment[], path: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  for (const segment of segments) {
+    if (segment.t !== 'date') continue;
+    if (!isValidTimezone(segment.timezone)) {
+      issues.push({
+        path,
+        message: `"${segment.timezone}" is not a recognized timezone — re-insert the date chip.`,
+      });
+      continue;
+    }
+    const resolved = resolveTime({
+      timezone: segment.timezone,
+      amount: segment.amount,
+      unit: segment.unit,
+      ...(segment.atTime ? { atTime: segment.atTime } : {}),
+    });
+    if (!resolved.ok)
+      issues.push({ path, message: `A date chip is not usable: ${resolved.error}` });
+  }
+  return issues;
 }
 
 function validateActionStep(
@@ -209,6 +255,7 @@ function validateActionStep(
       });
     }
   }
+  issues.push(...dateChipIssues(step.instruction, at('instruction')));
 
   return issues;
 }
@@ -757,7 +804,9 @@ function normalizeNode(node: AgentStepNode, cap: number, waitCapHours: number): 
           Math.max(
             1,
             Math.round(
-              Number.isFinite(node.timeoutHours) ? node.timeoutHours : APPROVAL_DEFAULT_TIMEOUT_HOURS
+              Number.isFinite(node.timeoutHours)
+                ? node.timeoutHours
+                : APPROVAL_DEFAULT_TIMEOUT_HOURS
             )
           )
         ),
@@ -957,7 +1006,8 @@ export function validateAgentDraft(
       if (node.tool && blocked.has(node.tool)) {
         issues.push({
           path: `${path}.tool`,
-          message: 'This skill is blocked by the agent’s guardrails — unblock it or pick another skill.',
+          message:
+            'This skill is blocked by the agent’s guardrails — unblock it or pick another skill.',
         });
       }
       node.failureHandling.forEach((handling, handlingIndex) => {

@@ -25,10 +25,11 @@
  * (arrows/Enter/Escape, aria-activedescendant).
  */
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { InstructionSegment } from '@renkei/agents';
 import { InsertMenu, flattenOptions, optionDomId } from './insert-menu';
-import type { InsertOption, ToolOption, VariableOption } from './options';
+import { dateOptions, type InsertOption, type ToolOption, type VariableOption } from './options';
+import { describeDateSegment, isInstructionSegment } from '@renkei/agents';
 
 export interface ChipEditorProps {
   value: InstructionSegment[];
@@ -53,6 +54,11 @@ function segmentsEqual(a: InstructionSegment[], b: InstructionSegment[]): boolea
     const other = b[index];
     if (segment.t !== other.t) return false;
     if (segment.t === 'text' && other.t === 'text') return segment.v === other.v;
+    // A date chip is its parameters; compare them rather than a name it
+    // does not have.
+    if (segment.t === 'date' || other.t === 'date') {
+      return JSON.stringify(segment) === JSON.stringify(other);
+    }
     return segment.t !== 'text' && other.t !== 'text' && segment.name === other.name;
   });
 }
@@ -84,23 +90,37 @@ export function ChipEditor({
   const listboxId = useId().replace(/[^a-zA-Z0-9-]/g, '');
 
   const labelFor = useCallback(
-    (segment: Extract<InstructionSegment, { t: 'tool' } | { t: 'var' }>): string => {
+    (
+      segment: Extract<InstructionSegment, { t: 'tool' } | { t: 'var' } | { t: 'date' }>
+    ): string => {
       if (segment.t === 'tool') {
         return tools.find((tool) => tool.name === segment.name)?.label ?? segment.name;
       }
+      // Derived from the parameters, never stored beside them, so the pill
+      // cannot drift from what the chip actually resolves to.
+      if (segment.t === 'date') return describeDateSegment(segment);
       return variables.find((variable) => variable.name === segment.name)?.label ?? segment.name;
     },
     [tools, variables]
   );
 
   const chipElement = useCallback(
-    (segment: Extract<InstructionSegment, { t: 'tool' } | { t: 'var' }>): HTMLSpanElement => {
+    (
+      segment: Extract<InstructionSegment, { t: 'tool' } | { t: 'var' } | { t: 'date' }>
+    ): HTMLSpanElement => {
       const chip = document.createElement('span');
       chip.setAttribute('data-chip', '');
       chip.setAttribute('data-chip-kind', segment.t);
-      chip.setAttribute('data-chip-name', segment.name);
+      // A date chip has no name to resolve later — its meaning IS its
+      // parameters, so they ride on the element and round-trip verbatim.
+      if (segment.t === 'date') {
+        chip.setAttribute('data-chip-date', JSON.stringify(segment));
+        chip.setAttribute('data-chip-name', describeDateSegment(segment));
+      } else {
+        chip.setAttribute('data-chip-name', segment.name);
+      }
       chip.contentEditable = 'false';
-      if (segment.t === 'var' && invalidVars?.has(segment.name)) {
+      if (segment.t !== 'date' && segment.t === 'var' && invalidVars?.has(segment.name)) {
         chip.setAttribute('data-chip-invalid', '');
         chip.title = 'This detail is no longer provided — remove the chip or re-add its trigger.';
       }
@@ -136,6 +156,13 @@ export function ChipEditor({
         const kind = node.getAttribute('data-chip-kind');
         const name = node.getAttribute('data-chip-name') ?? '';
         if ((kind === 'tool' || kind === 'var') && name) segments.push({ t: kind, name });
+        if (kind === 'date') {
+          const raw = node.getAttribute('data-chip-date');
+          const parsed: unknown = raw ? JSON.parse(raw) : null;
+          // Structurally checked on the way back in: a hand-edited DOM (or a
+          // paste) must not smuggle a malformed chip into the document.
+          if (isInstructionSegment(parsed) && parsed.t === 'date') segments.push(parsed);
+        }
         continue;
       }
       // Anything else (a <br>, a pasted element that slipped through) reads
@@ -187,7 +214,13 @@ export function ChipEditor({
       ? 'This step already uses a skill — remove that chip to choose a different one.'
       : 'This guidance has reached its skill limit.'
     : null;
-  const options = flattenOptions(tools, variables, toolsBlocked, query);
+  // The caller's timezone is the one thing this cannot infer and the model
+  // must not guess, so it is read from the browser at insert time.
+  const dates = useMemo(
+    () => dateOptions(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', query),
+    [query]
+  );
+  const options = flattenOptions(tools, variables, dates, toolsBlocked, query);
 
   const insertOption = useCallback(
     (option: InsertOption) => {
@@ -224,7 +257,11 @@ export function ChipEditor({
       }
 
       const chip = chipElement(
-        option.kind === 'tool' ? { t: 'tool', name: option.name } : { t: 'var', name: option.name }
+        option.kind === 'tool'
+          ? { t: 'tool', name: option.name }
+          : option.kind === 'date'
+            ? option.segment
+            : { t: 'var', name: option.name }
       );
       range.insertNode(chip);
       const space = document.createTextNode(' ');
@@ -469,6 +506,7 @@ export function ChipEditor({
           withSearchBox={searchMode}
           tools={tools}
           variables={variables}
+          dates={dates}
           toolsBlockedHint={blockedHint}
           activeIndex={activeIndex}
           onHover={setActiveIndex}

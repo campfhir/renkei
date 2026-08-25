@@ -206,3 +206,39 @@ export function resolveTime(
     },
   };
 }
+
+/**
+ * A date chip in words, for the builder pill and for previews/history —
+ * "yesterday 19:00 America/Los_Angeles". Derived from the parameters rather
+ * than stored alongside them, so the label can never drift from what the
+ * chip actually resolves to.
+ */
+export function describeDateSegment(segment: {
+  amount: number;
+  unit: TimeUnit;
+  timezone: string;
+  atTime?: string;
+  boundary?: 'start' | 'end';
+}): string {
+  const plural = Math.abs(segment.amount) === 1 ? segment.unit : `${segment.unit}s`;
+  const when =
+    segment.amount === 0
+      ? segment.unit === 'day'
+        ? 'today'
+        : `this ${segment.unit}`
+      : segment.amount === -1 && segment.unit === 'day'
+        ? 'yesterday'
+        : segment.amount === 1 && segment.unit === 'day'
+          ? 'tomorrow'
+          : segment.amount < 0
+            ? `${Math.abs(segment.amount)} ${plural} ago`
+            : `in ${segment.amount} ${plural}`;
+  const boundary = segment.atTime
+    ? ` ${segment.atTime}`
+    : segment.boundary === 'start'
+      ? ' (start)'
+      : segment.boundary === 'end'
+        ? ' (end)'
+        : '';
+  return `${when}${boundary} ${segment.timezone}`;
+}
