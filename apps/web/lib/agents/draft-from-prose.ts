@@ -455,7 +455,9 @@ function promptOf(
     '    "message": string or null — the notification text; {{var:...}} allowed,',
     '      {{tool:...}} forbidden,',
     '    "notify": array containing "email" and/or "webex", or empty' + (revising ? ',' : ''),
-    ...(revising ? ['    "from": string or null — the sN id of the existing end marker, or null'] : []),
+    ...(revising
+      ? ['    "from": string or null — the sN id of the existing end marker, or null']
+      : []),
     '  }',
     '}',
     'Every field must be present on every step. Do not add fields not listed here.',
@@ -1892,6 +1894,26 @@ export async function draftAgentFromProse(
   // "unusable answer — try again" teaches the human nothing and the model
   // less. The five-minute budget is shared across both calls.
   const deadline = Date.now() + DRAFT_TIMEOUT_MS;
+  // What this call actually cost, so "drafting is slow" is a number rather
+  // than a feeling: sequential model calls are the whole latency story here,
+  // and the tool catalog is the bulk of every prompt.
+  const startedAt = Date.now();
+  let modelCalls = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  const reportTiming = (result: string) => {
+    logger.info('prose draft {result}: {calls} call(s) in {ms}ms', {
+      component: 'agents/draft',
+      tenantId,
+      result,
+      calls: modelCalls,
+      ms: Date.now() - startedAt,
+      inputTokens,
+      outputTokens,
+      toolCount: tools.length,
+      revising: currentSteps.length > 0,
+    });
+  };
   const messages: LlmMessage[] = [
     {
       role: 'user',
@@ -1940,11 +1962,18 @@ export async function draftAgentFromProse(
         timer = setTimeout(() => resolve('timeout'), remaining);
       }),
     ]).finally(() => clearTimeout(timer));
-    if (completion === 'timeout')
+    if (completion === 'timeout') {
+      reportTiming('timed out');
       return {
         error:
           'The model took over five minutes and was cut off — try again, or try a shorter description.',
       };
+    }
+    modelCalls += 1;
+    if (completion.ok) {
+      inputTokens += completion.val.usage.inputTokens;
+      outputTokens += completion.val.usage.outputTokens;
+    }
     if (!completion.ok) {
       logger.warn('prose draft failed: {kind} {message}', {
         component: 'agents/draft',
@@ -2037,6 +2066,7 @@ export async function draftAgentFromProse(
   }
 
   if (usable) {
+    reportTiming('ok');
     if (!options.refineWithReview) return usable;
     return closeReviewGaps({
       llm,
@@ -2055,6 +2085,7 @@ export async function draftAgentFromProse(
     });
   }
 
+  reportTiming('unusable');
   logger.warn('prose draft unusable after retry: {problems}', {
     component: 'agents/draft',
     tenantId,
