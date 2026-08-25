@@ -9,6 +9,7 @@
  * or router rows.
  */
 
+import RemoveButton from '@/components/remove-button';
 import { MAX_BRANCH_PATHS, type BranchPath, type BranchStep } from '@renkei/agents';
 import { randomUUID } from '@/lib/agents/uuid';
 import { ChipEditor } from './chip-editor';
@@ -170,15 +171,12 @@ export function BranchEditor({
                 >
                   ↓
                 </button>
-                <button
-                  type="button"
-                  aria-label={`Remove path ${index + 1}`}
+                <RemoveButton
+                  compact
+                  label={`Remove path ${index + 1}`}
                   disabled={branch.paths.length <= 2}
                   onClick={() => removePath(index)}
-                  className="rounded border border-gray-200 px-1.5 py-1 text-xs text-gray-500 hover:text-red-600 disabled:opacity-30 dark:border-gray-800"
-                >
-                  ✕
-                </button>
+                />
               </li>
             );
           })}

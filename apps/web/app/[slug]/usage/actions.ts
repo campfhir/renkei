@@ -15,15 +15,23 @@
  * 032), which makes that guarantee structural rather than a promise.
  */
 
-import { getDatabase } from '@renkei/db';
-import { sql } from 'kysely';
+import { getDatabase, type DB } from '@renkei/db';
+import { sql, type Kysely, type RawBuilder } from 'kysely';
 import { getSessionFromCookies } from '@/lib/session';
 import { getIdentityDisplay } from '@/lib/identity';
 import { ROLE_OPERATOR, ROLE_USER } from '@/lib/access';
 // Only async functions may be exported from a 'use server' module, so the
 // descriptor type is imported from its own module wherever it is needed.
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
-import { clampDays, safeTimeZone, zeroFill, resolveScope, type UsagePoint } from './window';
+import {
+  clampDays,
+  safeTimeZone,
+  zeroFill,
+  resolveScope,
+  canSeeOrgTop,
+  TOP_TOOLS,
+  type UsagePoint,
+} from './window';
 
 export interface ToolUsageRow {
   tool: string;
@@ -53,6 +61,21 @@ export interface UsageReport {
   trend: UsagePoint[];
   /** Operator view only. */
   byUser: UserUsageRow[];
+  /**
+   * The caller's OWN five most-used tools, whatever scope is being viewed —
+   * "what do I lean on" is a question the scope toggle should not change the
+   * answer to.
+   */
+  myTop: ToolUsageRow[];
+  /**
+   * The org's five most-used. Populated for OPERATORS ONLY, and gated on the
+   * session's role rather than on the requested scope: an operator looking at
+   * their own calls still gets the org comparison, and nobody else gets it in
+   * any view. Empty is the honest answer for a caller who may not see it.
+   */
+  orgTop: ToolUsageRow[];
+  /** The five failing most in the current scope. Empty when nothing failed. */
+  troubled: ToolUsageRow[];
   error?: string;
   signedOut?: boolean;
 }
@@ -66,7 +89,54 @@ const EMPTY: UsageReport = {
   tools: [],
   trend: [],
   byUser: [],
+  myTop: [],
+  orgTop: [],
+  troubled: [],
 };
+
+/**
+ * The most-called tools over the window, for one subject or for the whole
+ * tenant.
+ *
+ * `subject: null` means tenant-wide, and is the ONLY way to ask for it —
+ * every caller has to state which they mean, so widening the scope cannot
+ * happen by forgetting a `.where()`.
+ */
+async function topToolsFor(
+  db: Kysely<DB>,
+  tenantId: string,
+  since: RawBuilder<Date>,
+  subject: string | null
+): Promise<ToolUsageRow[]> {
+  let query = db
+    .selectFrom('tool_calls')
+    .select([
+      'tool',
+      'connector',
+      sql<string>`count(*)`.as('calls'),
+      sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
+    ])
+    .where('tenant_id', '=', tenantId)
+    .where('started_at', '>=', since);
+  if (subject !== null) query = query.where('subject', '=', subject);
+
+  const rows = await query
+    .groupBy(['tool', 'connector'])
+    .orderBy(sql`count(*)`, 'desc')
+    .limit(TOP_TOOLS)
+    .execute();
+
+  return rows.map((row) => ({
+    tool: row.tool,
+    connector: row.connector,
+    calls: Number(row.calls),
+    errors: Number(row.errors),
+    // Latency is not what these cards are about, and asking for percentiles
+    // would cost a sort over the window for a number nothing displays.
+    medianMs: 0,
+    p95Ms: 0,
+  }));
+}
 
 export async function getUsageReport(
   tenantId: string,
@@ -193,6 +263,29 @@ export async function getUsageReport(
       p95Ms: Number(row.p95_ms ?? 0),
     }));
 
+    // The headline cards. `tools` is already ordered by call count, so the
+    // caller's own top five come free whenever the view IS their own; the
+    // extra query happens only for an operator looking tenant-wide, who is
+    // the one person whose two answers differ.
+    const myTop = tenantWide
+      ? await topToolsFor(db, tenantId, since, ownSubject)
+      : tools.slice(0, TOP_TOOLS);
+    // Role, never requested scope: an operator viewing their own calls still
+    // gets the org comparison, and a non-operator gets it in no view at all.
+    // Asking for it as a parameter cannot make it appear.
+    const orgTop = canSeeOrgTop(isOperator)
+      ? tenantWide
+        ? tools.slice(0, TOP_TOOLS)
+        : await topToolsFor(db, tenantId, since, null)
+      : [];
+    // Ranked by failures, and only tools that actually failed — a card
+    // listing the five least-broken tools in a healthy org would be noise
+    // dressed as a warning.
+    const troubled = tools
+      .filter((row) => row.errors > 0)
+      .sort((left, right) => right.errors - left.errors)
+      .slice(0, TOP_TOOLS);
+
     return {
       scope,
       canSeeTenant: isOperator,
@@ -200,6 +293,9 @@ export async function getUsageReport(
       totalCalls: tools.reduce((sum, row) => sum + row.calls, 0),
       totalErrors: tools.reduce((sum, row) => sum + row.errors, 0),
       tools,
+      myTop,
+      orgTop,
+      troubled,
       trend: zeroFill(
         trendRows.map((row) => ({
           day: row.day,

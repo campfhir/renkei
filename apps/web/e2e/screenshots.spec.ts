@@ -315,3 +315,35 @@ test('admin — cleaner script editor with types', async ({ page }, testInfo) =>
 
   await shot(page, testInfo, 'admin-cleaner-script-editor');
 });
+
+test('connectors — grid', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/connectors`);
+  await expect(page.getByRole('heading', { name: 'Connectors', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'MCP endpoint' })).toBeVisible();
+  await shot(page, testInfo, 'connectors-grid');
+});
+
+test('tools — headline cards', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/usage`);
+  // The seeded session is an operator, so all three cards render.
+  await expect(page.getByRole('heading', { name: 'Most used across the org' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Most used by you' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Failing most' })).toBeVisible();
+  await shot(page, testInfo, 'tools-top-cards');
+});
+
+test('about — changelog', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/about`);
+  // The heading uses a typographic apostrophe, so match on the stable words.
+  await expect(page.getByRole('heading', { name: /changed/ })).toBeVisible();
+  await shot(page, testInfo, 'about-changelog');
+});
+
+test('builder — trigger editor with header remove', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/edit`);
+  // Trigger cards are named by their own summary text, so anchor on the
+  // "gives:" line every one of them carries and let the click bubble.
+  await page.getByText('gives:').first().click();
+  await expect(page.getByRole('button', { name: 'Remove trigger' })).toBeVisible();
+  await shot(page, testInfo, 'builder-trigger-editor', { fullPage: false });
+});

@@ -1,5 +1,7 @@
 'use client';
 
+import RemoveButton from '@/components/remove-button';
+import { BackButton } from '@/components/back-link';
 import { useCallback, useEffect, useState } from 'react';
 
 /**
@@ -376,14 +378,12 @@ export default function WatchManager({
                 >
                   Re-index
                 </button>
-                <button
-                  onClick={() => remove(watch)}
+                <RemoveButton
+                  label="Remove"
+                  accessibleLabel={`Stop indexing ${watch.scopeLabel || watch.scopeKey}`}
                   disabled={busy}
-                  className="shrink-0 text-gray-400 hover:text-red-600 disabled:opacity-50 dark:hover:text-red-400"
-                  aria-label={`Stop indexing ${watch.scopeLabel || watch.scopeKey}`}
-                >
-                  Remove
-                </button>
+                  onClick={() => remove(watch)}
+                />
               </div>
               {watch.lastError && (
                 <p className="mt-0.5 pl-4 text-red-600 dark:text-red-400">{watch.lastError}</p>
@@ -556,19 +556,17 @@ function SitePicker({
   if (site) {
     return (
       <div>
-        <p className="text-xs text-gray-600 dark:text-gray-400">
-          <button
+        <div className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400">
+          <BackButton
+            label="Sites"
             onClick={() => {
               setSite(null);
               setLibraries(null);
               setError(null);
             }}
-            className="text-gray-500 hover:underline"
-          >
-            ← Sites
-          </button>
-          <span className="ml-2 font-medium">{site.name}</span>
-        </p>
+          />
+          <span className="min-w-0 truncate font-medium">{site.name}</span>
+        </div>
 
         {loading && <p className="mt-2 text-xs text-gray-500">Loading libraries…</p>}
         {error && <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">{error}</p>}

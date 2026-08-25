@@ -920,6 +920,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
         }
         const node = frame.nodes[frame.index];
         const iteration = currentIteration(stack);
+        // The in-memory row moves WITH the database row. finalizeRun resolves
+        // the failed step's name from `run.current_step_id`, so a write that
+        // only lands in Postgres leaves every failure reporting the value the
+        // run started with — null on a fresh run — and the log line then
+        // carries a literal "{failedStep}" instead of a step name.
+        run.current_step_id = node.id;
         await db
           .updateTable('agent_runs')
           .set({ current_step_id: node.id, updated_at: sql`NOW()` })
@@ -3123,7 +3129,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
    * when it failed; resolving it to the step's NAME is the difference
    * between a log line you can act on and a uuid you have to go look up.
    */
-  async function failedStepNameOf(run: RunRow): Promise<string | null> {
+  function failedStepNameOf(run: RunRow): string | null {
     if (!run.current_step_id) return null;
     if (!isAgentStepsDoc(run.steps_snapshot)) return null;
     const found = findNodeById(run.steps_snapshot.steps, run.current_step_id);
@@ -3154,8 +3160,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // sentence carries the names.
     const actor = await describeActor(db, run.tenant_id, run.owner_subject);
     const agentName = await agentNameOf(run.tenant_id, run.agent_id);
-    const failedStep = status === 'failed' ? await failedStepNameOf(run) : null;
-    const fields = {
+    const common = {
       component: 'worker-agents/engine',
       runId: run.id,
       tenantId: run.tenant_id,
@@ -3167,20 +3172,27 @@ export function createAgentRunHandler(deps: EngineDeps) {
       subject: actor.subject,
       status,
       errorKind: errorKind ?? undefined,
-      failedStep: failedStep ?? undefined,
-      error: error ?? undefined,
     };
     if (status === 'failed') {
       // The only one worth an unprompted read: it names the agent, the
       // person, and the step that stopped it.
-      logger.warn(
-        'agent "{agentName}" ({userName}) failed at step "{failedStep}": {error}',
-        fields
-      );
+      //
+      // Every attribute this sentence NAMES is built to be present, because
+      // the interpolator leaves "{failedStep}" in the message rather than
+      // erroring when a key is missing — a placeholder in the log is the
+      // whole failure mode this shape exists to prevent. An unnameable step
+      // and a detail-free error each degrade to prose; the raw step id stays
+      // in the metadata for anyone who needs to go and look it up.
+      logger.warn('agent "{agentName}" ({userName}) failed at step "{failedStep}": {error}', {
+        ...common,
+        failedStep: failedStepNameOf(run) ?? 'an unnamed step',
+        failedStepId: run.current_step_id ?? undefined,
+        error: error ?? 'no detail recorded',
+      });
     } else {
       // Success is the expected case; at info it is just volume between the
       // lines that matter.
-      logger.debug('agent "{agentName}" ({userName}) run {status}', fields);
+      logger.debug('agent "{agentName}" ({userName}) run {status}', common);
     }
     if (status === 'failed') {
       // The durable failure tally the oversight page buckets by period —

@@ -350,6 +350,8 @@ export async function seed(client: Client): Promise<void> {
   await client.query('DELETE FROM agent_memories WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM agent_triggers WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM agents WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM tool_calls WHERE tenant_id = $1', [E2E_TENANT_ID]);
+  await client.query('DELETE FROM connector_configs WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM provider_grants WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM sessions WHERE tenant_id = $1', [E2E_TENANT_ID]);
   await client.query('DELETE FROM identities WHERE tenant_id = $1', [E2E_TENANT_ID]);
@@ -1131,4 +1133,147 @@ export async function seed(client: Client): Promise<void> {
      DO UPDATE SET runs = EXCLUDED.runs, failures = EXCLUDED.failures`,
     [E2E_TENANT_ID, AGENT_RICH_ID]
   );
+
+  // Connectors the org has switched on. Without these the connectors page
+  // renders a single card and its grid cannot be judged at all — the layout
+  // only has a shape once there is more than one thing in it.
+  for (const connector of [
+    'atlassian',
+    'atlassian-jsm',
+    'atlassian-confluence',
+    'webex-user',
+    'microsoft',
+    'zoom',
+  ]) {
+    await client.query(
+      `INSERT INTO connector_configs (tenant_id, connector, enabled, encrypted_secrets, settings)
+       VALUES ($1, $2, true, 'not-a-real-secret', '{}'::jsonb)
+       ON CONFLICT (tenant_id, connector) DO UPDATE SET enabled = true`,
+      [E2E_TENANT_ID, connector]
+    );
+  }
+
+  // Tool calls, so the Tools page has something to rank. Deliberately uneven:
+  // equal counts would hide a bug in the bar widths, and a tool that fails
+  // some of the time is the only way to see the "failing most" card at all.
+  //
+  // `otherSubject` rows belong to somebody else in the tenant — they are what
+  // makes "most used across the org" differ from "most used by you", which is
+  // the whole reason both cards exist.
+  const otherSubject = 'e2e-colleague@example.com';
+  const toolCallRows: {
+    tool: string;
+    connector: string;
+    subject: string;
+    calls: number;
+    failures: number;
+    ms: number;
+  }[] = [
+    {
+      tool: 'jira_search_issues',
+      connector: 'jira',
+      subject: E2E_SUBJECT,
+      calls: 24,
+      failures: 2,
+      ms: 420,
+    },
+    {
+      tool: 'jira_get_issue',
+      connector: 'jira',
+      subject: E2E_SUBJECT,
+      calls: 17,
+      failures: 0,
+      ms: 180,
+    },
+    {
+      tool: 'search_knowledge',
+      connector: 'knowledge',
+      subject: E2E_SUBJECT,
+      calls: 11,
+      failures: 0,
+      ms: 950,
+    },
+    {
+      tool: 'jira_add_comment',
+      connector: 'jira',
+      subject: E2E_SUBJECT,
+      calls: 6,
+      failures: 3,
+      ms: 260,
+    },
+    {
+      tool: 'outlook_list_messages',
+      connector: 'microsoft',
+      subject: E2E_SUBJECT,
+      calls: 4,
+      failures: 1,
+      ms: 610,
+    },
+    {
+      tool: 'webex_send_message',
+      connector: 'webex',
+      subject: E2E_SUBJECT,
+      calls: 2,
+      failures: 0,
+      ms: 310,
+    },
+    // Somebody else's usage, which outweighs the viewer's on two tools.
+    {
+      tool: 'outlook_list_messages',
+      connector: 'microsoft',
+      subject: otherSubject,
+      calls: 39,
+      failures: 4,
+      ms: 580,
+    },
+    {
+      tool: 'confluence_search',
+      connector: 'atlassian-confluence',
+      subject: otherSubject,
+      calls: 28,
+      failures: 0,
+      ms: 700,
+    },
+    {
+      tool: 'jira_search_issues',
+      connector: 'jira',
+      subject: otherSubject,
+      calls: 9,
+      failures: 5,
+      ms: 450,
+    },
+    {
+      tool: 'zoom_list_meetings',
+      connector: 'zoom',
+      subject: otherSubject,
+      calls: 5,
+      failures: 0,
+      ms: 350,
+    },
+  ];
+  for (const row of toolCallRows) {
+    for (let index = 0; index < row.calls; index += 1) {
+      const failed = index < row.failures;
+      // Spread across the last three days so the trend chart has more than
+      // one bar and the 24-hour period is not empty.
+      const startedAt = hoursAgo(1 + (index % 60));
+      await client.query(
+        `INSERT INTO tool_calls
+           (id, tenant_id, subject, tool, connector, status, duration_ms,
+            started_at, ended_at, error_summary)
+         VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          E2E_TENANT_ID,
+          row.subject,
+          row.tool,
+          row.connector,
+          failed ? 'error' : 'ok',
+          row.ms + index,
+          startedAt,
+          new Date(startedAt.getTime() + row.ms + index),
+          failed ? 'The upstream API answered 500' : null,
+        ]
+      );
+    }
+  }
 }

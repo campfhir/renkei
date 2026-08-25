@@ -23,6 +23,7 @@
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { actorForAccount } from '../log-actor';
+import { summariseTitles } from '../log-titles';
 import { getOrgSettings } from '@renkei/settings';
 import { ATLASSIAN, ATLASSIAN_CONFLUENCE } from '@renkei/provider-grants';
 import { logger } from '../logger';
@@ -154,9 +155,17 @@ export async function sweepContentWatches(): Promise<void> {
         userName: actor.displayName,
         subject: actor.subject,
         items: result.items,
+        // What was taken in, by name. A count and a space label cannot
+        // answer "did my page make it in?"; the titles can, and the handler
+        // already had them.
+        titles: result.titles,
+        documents: summariseTitles(result.titles, result.items),
       };
       if (result.items > 0) {
-        logger.info('indexed {items} item(s) from {provider} {scope} for {userName}', fields);
+        logger.info(
+          'indexed {items} item(s) from {provider} {scope} for {userName}: {documents}',
+          fields
+        );
       } else {
         // A poll that found nothing is the normal case and says nothing;
         // at info it drowns the log in rows nobody can act on.

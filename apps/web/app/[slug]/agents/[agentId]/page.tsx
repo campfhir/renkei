@@ -1,3 +1,4 @@
+import BackLink from '@/components/back-link';
 import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
@@ -124,14 +125,7 @@ export default async function AgentOverviewPage({
     <div className="mx-auto max-w-5xl">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <Link
-            href={`/${slug}/agents`}
-            aria-label="All agents"
-            title="Back to all agents"
-            className="shrink-0 rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-          >
-            <Icon path={ICONS.chevronLeft} />
-          </Link>
+          <BackLink href={`/${slug}/agents`} label="All agents" />
           <h1 className="min-w-0 truncate text-xl font-bold">{agent.name}</h1>
         </div>
         <div className="flex shrink-0 items-center gap-2 text-sm">

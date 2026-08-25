@@ -25,6 +25,7 @@ import {
   type ToolUsageRow,
   type ToolDetail,
 } from './actions';
+import { TOP_TOOLS } from './window';
 import { friendlyToolName } from '@/lib/tool-name';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 
@@ -34,6 +35,11 @@ const PERIODS = [
   { days: 30, label: '30 days' },
   { days: 90, label: '90 days' },
 ];
+
+/** "24 hours" / "7 days" — the wording the period buttons already use. */
+function periodLabel(days: number): string {
+  return PERIODS.find((period) => period.days === days)?.label ?? `${days} days`;
+}
 
 /** Catalog label for a capability key, falling back to the key itself. */
 function connectorLabel(key: string | null): string {
@@ -383,6 +389,77 @@ function ToolDetailDialog({
   );
 }
 
+/**
+ * A ranked five, as a card.
+ *
+ * The table below answers "what happened to tool X". These answer the
+ * questions you arrive with — what do we lean on, what do I lean on, what is
+ * breaking — which the table could only answer by being read end to end.
+ *
+ * Titles come from the tool catalog where there is one; a tool nobody on this
+ * page has access to still shows by name, because the CALLS happened whether
+ * or not the viewer could make them.
+ */
+function TopTools({
+  heading,
+  hint,
+  rows,
+  tools,
+  metric,
+  empty,
+}: {
+  heading: string;
+  hint: string;
+  rows: ToolUsageRow[];
+  tools: ToolDescriptor[];
+  /** Which number the bar and the count show. */
+  metric: 'calls' | 'errors';
+  empty: string;
+}) {
+  const titleOf = (name: string) =>
+    friendlyToolName(name, tools.find((tool) => tool.name === name)?.title ?? null);
+  // Bars are relative to the leader, not to the total: with a long tail the
+  // top five can be 3% of calls each, and five near-invisible slivers say
+  // nothing about which is biggest.
+  const largest = rows.reduce((max, row) => Math.max(max, row[metric]), 0);
+
+  return (
+    <section className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
+      <h2 className="text-sm font-semibold">{heading}</h2>
+      <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">{hint}</p>
+      {rows.length === 0 ? (
+        <p className="text-sm text-gray-500 dark:text-gray-400">{empty}</p>
+      ) : (
+        <ol className="space-y-2">
+          {rows.map((row) => (
+            <li key={row.tool}>
+              <div className="flex items-baseline justify-between gap-2 text-sm">
+                <span className="min-w-0 truncate" title={row.tool}>
+                  {titleOf(row.tool)}
+                </span>
+                <span className="shrink-0 tabular-nums text-gray-600 dark:text-gray-400">
+                  {row[metric].toLocaleString()}
+                </span>
+              </div>
+              <div
+                className="mt-1 h-1 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800"
+                aria-hidden="true"
+              >
+                <div
+                  className={`h-full rounded-full ${
+                    metric === 'errors' ? 'bg-red-500' : 'bg-blue-500'
+                  }`}
+                  style={{ width: `${largest > 0 ? (row[metric] / largest) * 100 : 0}%` }}
+                />
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="rounded-lg border border-gray-200 px-4 py-3 dark:border-gray-800">
@@ -528,6 +605,49 @@ export default function UsageViewer({
           hint={slowest ? friendlyToolName(slowest.name, slowest.title) : undefined}
         />
       </section>
+
+      {/*
+        Above the chart because they answer the questions people arrive
+        with. An operator gets three columns (org, mine, failing); everyone
+        else gets two — `orgTop` is empty for them by construction, not
+        hidden here, so there is nothing to leak by rendering.
+      */}
+      <div
+        className={`grid grid-cols-1 gap-4 ${
+          report.orgTop.length > 0 ? 'lg:grid-cols-3' : 'sm:grid-cols-2'
+        }`}
+      >
+        {report.orgTop.length > 0 && (
+          <TopTools
+            heading="Most used across the org"
+            hint={`Top ${TOP_TOOLS} by calls, everyone, last ${periodLabel(report.days)}`}
+            rows={report.orgTop}
+            tools={tools}
+            metric="calls"
+            empty="No calls in this period."
+          />
+        )}
+        <TopTools
+          heading="Most used by you"
+          hint={`Top ${TOP_TOOLS} by your own calls, last ${periodLabel(report.days)}`}
+          rows={report.myTop}
+          tools={tools}
+          metric="calls"
+          empty="You have not called a tool in this period."
+        />
+        <TopTools
+          heading="Failing most"
+          hint={
+            report.scope === 'tenant'
+              ? `Top ${TOP_TOOLS} by failed calls, everyone`
+              : `Top ${TOP_TOOLS} by failed calls, yours`
+          }
+          rows={report.troubled}
+          tools={tools}
+          metric="errors"
+          empty="Nothing failed in this period."
+        />
+      </div>
 
       <TrendChart points={report.trend} />
 

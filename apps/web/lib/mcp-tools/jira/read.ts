@@ -11,6 +11,7 @@ import { STANDARD_ISSUE_FIELDS, normalizeFieldId, renderFieldValue } from './fie
 import { previewToolMeta, RESULTS_LIST_URI } from '../widgets';
 import { logger } from '@/lib/logger';
 import { issueLinkTargets, issueLinksMarkdown } from './issue-urls';
+import { checkJql, describeJqlProblem, JQL_PARAMETER_DESCRIPTION } from './jql';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
 function errText(value: string) {
@@ -171,9 +172,7 @@ export async function registerReadTools(
         'Use `project = SCRUM` for a specific project or `status != Done` for filtering.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        jql: z
-          .string()
-          .describe('JQL query, e.g. "project = SCRUM AND status != Done ORDER BY updated DESC"'),
+        jql: z.string().describe(JQL_PARAMETER_DESCRIPTION),
         maxResults: z.number().describe('Maximum results (1-100, default 50)').optional(),
         fields: z
           .array(z.string().min(1))
@@ -206,6 +205,11 @@ export async function registerReadTools(
             isError: true,
           };
         }
+        // Structural mistakes are answered here rather than forwarded, so the
+        // caller gets a sentence it can act on instead of Jira's character
+        // offset. Never rewritten — see jql.ts.
+        const malformed = isString(jql) ? checkJql(jql) : null;
+        if (malformed) return errText(describeJqlProblem(malformed));
 
         const extraFields = isArray(args.fields)
           ? args.fields.filter((field): field is string => typeof field === 'string' && !!field)
@@ -339,9 +343,7 @@ export async function registerReadTools(
       annotations: { readOnlyHint: true },
       _meta: previewToolMeta(RESULTS_LIST_URI),
       inputSchema: z.object({
-        jql: z
-          .string()
-          .describe('JQL query, e.g. "project = SCRUM AND status != Done ORDER BY updated DESC"'),
+        jql: z.string().describe(JQL_PARAMETER_DESCRIPTION),
         maxResults: z.number().describe('Maximum results (1-100, default 50)').optional(),
       }),
     },
@@ -349,6 +351,8 @@ export async function registerReadTools(
       try {
         const { jql } = args;
         if (!jql) return errText('JQL query is required');
+        const malformed = isString(jql) ? checkJql(jql) : null;
+        if (malformed) return errText(describeJqlProblem(malformed));
         const maxResults = Math.min(
           (isNumber(args.maxResults) ? args.maxResults : 50) || 50,
           context.maxJqlResults
@@ -507,11 +511,7 @@ export async function registerReadTools(
         'capped result says nothing about how many there really are.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        jql: z
-          .string()
-          .describe(
-            'JQL query, e.g. "assignee = \'someone@example.com\' AND resolution = Unresolved"'
-          ),
+        jql: z.string().describe(JQL_PARAMETER_DESCRIPTION),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -530,6 +530,8 @@ export async function registerReadTools(
             isError: true,
           };
         }
+        const malformed = checkJql(jql);
+        if (malformed) return errText(describeJqlProblem(malformed));
 
         // The endpoint that replaced the removed /search's `total` (CHANGE-2046).
         // Its answer is an estimate by design — Jira does not count exactly on a

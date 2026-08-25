@@ -24,6 +24,7 @@ import { createAgentRunHandler } from './engine';
 import { createApprovalSweep } from './approval-sweep';
 import type { QueueMessageInput } from '@renkei/queue';
 import type { McpClient, McpToolResult } from './mcp-client';
+import { recordedLogs, renderLog, resetRecordedLogs } from './test-support/logger-mock';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
@@ -688,6 +689,68 @@ maybe('agent run engine', () => {
       .where('agent_id', '=', agentId)
       .executeTakeFirstOrThrow();
     expect(counter.failures).toBe(1);
+  });
+
+  it('names the failed step in the warning it logs', async () => {
+    // Regression: current_step_id was written to the row and never to the
+    // in-memory run, so the name lookup read the value the run STARTED with
+    // — null — and the interpolator left "{failedStep}" sitting in the
+    // sentence. Nothing failed; the log was simply wrong, every time.
+    resetRecordedLogs();
+    const { runId } = await seedRun(
+      singleStep({
+        name: 'Send summary to WebEx space',
+        maxAttempts: 1,
+        failureHandling: [{ outcome: 'invalid-input', action: 'exit' }],
+      })
+    );
+    const llm = stubLlm((_request, call) =>
+      call === 0
+        ? useTool('jira_get_issue', { issueKey: 'PROJ-1' })
+        : finish('failure', { code: 'invalid-input' })
+    );
+    const handler = handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => ({
+        content: [{ type: 'text', text: 'no room id was available' }],
+        isError: true,
+        meta: {},
+      }))
+    );
+    await handler({ payload: { runId } });
+
+    const failure = recordedLogs().find((entry) => entry.template.includes('failed at step'));
+    expect(failure).toBeDefined();
+    if (!failure) return;
+    const sentence = renderLog(failure);
+    expect(sentence).toContain('failed at step "Send summary to WebEx space"');
+    // The real assertion: no placeholder survives into the message. Any
+    // brace here means an attribute the template names went missing.
+    expect(sentence).not.toContain('{');
+    expect(failure.attrs.failedStep).toBe('Send summary to WebEx space');
+  });
+
+  it('degrades to prose when the failed step cannot be named', async () => {
+    // A run that fails before entering any step has no current_step_id to
+    // resolve. That must read as a sentence, not as "{failedStep}".
+    resetRecordedLogs();
+    const { runId } = await seedRun(singleStep());
+    await db
+      .updateTable('agent_runs')
+      .set({ steps_snapshot: JSON.stringify({ nonsense: true }) })
+      .where('id', '=', runId)
+      .execute();
+    const handler = handlerWith(
+      stubLlm(() => finish('success', {})),
+      stubMcp([], () => ({ content: [], isError: false, meta: {} }))
+    );
+    await handler({ payload: { runId } });
+
+    const failure = recordedLogs().find((entry) => entry.template.includes('failed at step'));
+    expect(failure).toBeDefined();
+    if (!failure) return;
+    expect(renderLog(failure)).not.toContain('{');
+    expect(failure.attrs.failedStep).toBe('an unnamed step');
   });
 
   it('records a declared success over an all-error tool as tool_error', async () => {
