@@ -194,3 +194,19 @@ describe('withUsageTracking', () => {
     expect(registered.get('weird_tool')).toBeUndefined();
   });
 });
+
+describe('tool-call logging never affects the tool call', () => {
+  it('runs the tool and returns its result even when identity lookup explodes', async () => {
+    // This file's @renkei/db mock exports no describeActor at all, so the
+    // logging path throws on every call — which is exactly the point: a log
+    // line must never be able to take a working tool down with it.
+    const { server, registered } = harness();
+    server.registerTool('jira_get_issue', { title: 'Jira · Read — Get issue' }, async () => ({
+      content: [{ type: 'text', text: 'PROJ-1' }],
+    }));
+
+    const result = await registered.get('jira_get_issue')!({});
+    expect(JSON.stringify(result)).toContain('PROJ-1');
+    await flush();
+  });
+});
