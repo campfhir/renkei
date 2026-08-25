@@ -11,13 +11,39 @@ import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import type { CleanerScriptKind } from '../scripts/run';
 
 export interface CleanerScript {
   id: string;
   name: string;
   script: string;
   enabled: boolean;
+  /**
+   * The content kinds this script is allowed to touch. Never empty — a
+   * script that runs on nothing is a disabled script, and the enabled flag
+   * already says that.
+   */
+  appliesTo: CleanerScriptKind[];
   lastError: string | null;
+}
+
+const KINDS: readonly CleanerScriptKind[] = ['msg', 'evt', 'task'];
+
+function isKind(value: string): value is CleanerScriptKind {
+  return KINDS.some((kind) => kind === value);
+}
+
+/**
+ * Kinds as stored, narrowed to the ones this build knows.
+ *
+ * A row written by a newer deploy can name a kind this one has never heard
+ * of; dropping it here means an old worker simply does not run that script
+ * on that kind, rather than passing an unknown string into the stage. Falls
+ * back to mail — the behaviour every row had before the column existed.
+ */
+function kindsOf(stored: readonly string[] | null): CleanerScriptKind[] {
+  const known = (stored ?? []).filter(isKind);
+  return known.length > 0 ? known : ['msg'];
 }
 
 export async function listCleanerScripts(
@@ -30,7 +56,7 @@ export async function listCleanerScripts(
     () =>
       dbResult.val
         .selectFrom('email_cleaner_scripts')
-        .select(['id', 'name', 'script', 'enabled', 'last_error'])
+        .select(['id', 'name', 'script', 'enabled', 'applies_to', 'last_error'])
         .where('tenant_id', '=', tenantId)
         .orderBy('created_at', 'asc')
         .execute(),
@@ -43,18 +69,27 @@ export async function listCleanerScripts(
       name: row.name,
       script: row.script,
       enabled: row.enabled,
+      appliesTo: kindsOf(row.applies_to),
       lastError: row.last_error,
     }))
   );
 }
 
-/** Enabled scripts in creation order — the pipeline runs them in sequence. */
+/**
+ * Enabled scripts for one content kind, in creation order — the pipeline
+ * runs them in sequence.
+ *
+ * The kind argument defaults to mail so the original call site, and any
+ * caller that predates invites reaching this stage, keeps its exact
+ * behaviour.
+ */
 export async function listActiveCleanerScripts(
-  tenantId: string
+  tenantId: string,
+  kind: CleanerScriptKind = 'msg'
 ): Promise<Result<CleanerScript[], 'DB_ERROR'>> {
   const result = await listCleanerScripts(tenantId);
   if (!result.ok) return result;
-  return ok(result.val.filter((script) => script.enabled));
+  return ok(result.val.filter((script) => script.enabled && script.appliesTo.includes(kind)));
 }
 
 export interface CleanerScriptInput {
@@ -62,6 +97,8 @@ export interface CleanerScriptInput {
   name: string;
   script: string;
   enabled: boolean;
+  /** Omitted means mail only — the conservative reading of an older client. */
+  appliesTo?: CleanerScriptKind[];
 }
 
 export async function upsertCleanerScript(
@@ -80,6 +117,7 @@ export async function upsertCleanerScript(
           name: input.name,
           script: input.script,
           enabled: input.enabled,
+          applies_to: kindsOf(input.appliesTo ?? null),
           // An edited script starts with a clean bill of health — its old
           // error described code that no longer exists.
           last_error: null,
@@ -97,6 +135,7 @@ export async function upsertCleanerScript(
           name: input.name,
           script: input.script,
           enabled: input.enabled,
+          applies_to: kindsOf(input.appliesTo ?? null),
         })
         .execute();
     }
@@ -107,6 +146,7 @@ export async function upsertCleanerScript(
     name: input.name,
     script: input.script,
     enabled: input.enabled,
+    appliesTo: kindsOf(input.appliesTo ?? null),
     lastError: null,
   });
 }

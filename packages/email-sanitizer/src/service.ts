@@ -17,6 +17,7 @@ import { hasRecentDuplicate, recordClassification } from './persistence/log';
 import { hasNearDuplicateChunk } from './persistence/similarity';
 import { listActiveCleanerScripts, recordCleanerScriptError } from './persistence/scripts';
 import { runCleanerScript } from './scripts/run';
+import type { CleanerScriptInput as CleanerScriptRunInput, CleanerScriptKind } from './scripts/run';
 import { SEED_BANNERS } from './registry/seed';
 import type { MessageOverride, RawEmail, SanitizeResult } from './types';
 
@@ -62,18 +63,25 @@ export interface SanitizeForTenantOptions {
 }
 
 /**
- * Run the tenant's enabled cleaner scripts over an index-bound content
- * string. The header (Subject/From/Received, the first paragraph) is held
- * back — scripts transform the message body, not the metadata the index
- * relies on. Script failures are recorded on the script's own row and the
- * text passes through unchanged; a broken script is a visible no-op, never
- * a lost message.
+ * Run a tenant's enabled cleaner scripts over an index-bound content string.
+ *
+ * The header (Subject/From/When, the first paragraph) is held back —
+ * scripts transform the body, not the metadata the index relies on. Script
+ * failures are recorded on the script's own row and the text passes through
+ * unchanged; a broken script is a visible no-op, never a lost message.
+ *
+ * Shared by mail and by the calendar/task path, because the risky part —
+ * sandbox, header split, failure-is-a-no-op — is identical and must not
+ * drift between two copies. What differs is only which scripts are selected
+ * and what fields the guest is handed.
  */
-async function applyCleanerScripts(
-  options: SanitizeForTenantOptions,
-  content: string
+async function runScriptsOver(
+  tenantId: string,
+  kind: CleanerScriptKind,
+  content: string,
+  fields: Omit<CleanerScriptRunInput, 'text' | 'kind'>
 ): Promise<string> {
-  const scriptsResult = await listActiveCleanerScripts(options.tenantId);
+  const scriptsResult = await listActiveCleanerScripts(tenantId, kind);
   if (!scriptsResult.ok || scriptsResult.val.length === 0) return content;
 
   const separator = content.indexOf('\n\n');
@@ -81,28 +89,59 @@ async function applyCleanerScripts(
   let body = separator >= 0 ? content.slice(separator + 2) : content;
 
   for (const script of scriptsResult.val) {
-    const run = await runCleanerScript(script.script, {
-      text: body,
-      subject: options.raw.subject,
-      fromAddress: options.raw.fromAddress,
-      fromName: options.raw.fromName,
-      senderAddress: options.raw.senderAddress ?? null,
-      replyToAddress: options.raw.replyToAddress ?? null,
-      messageId: options.raw.messageId ?? null,
-      receivedAt: options.raw.receivedAt,
-    });
+    const run = await runCleanerScript(script.script, { ...fields, text: body, kind });
     if (run.ok) {
       body = run.val;
-      if (script.lastError) await recordCleanerScriptError(options.tenantId, script.id, null);
+      if (script.lastError) await recordCleanerScriptError(tenantId, script.id, null);
     } else {
       await recordCleanerScriptError(
-        options.tenantId,
+        tenantId,
         script.id,
         `${run.err.type}: ${run.detail ?? ''}`.trim()
       );
     }
   }
   return header ? `${header}\n\n${body}` : body;
+}
+
+async function applyCleanerScripts(
+  options: SanitizeForTenantOptions,
+  content: string
+): Promise<string> {
+  return runScriptsOver(options.tenantId, 'msg', content, {
+    subject: options.raw.subject,
+    fromAddress: options.raw.fromAddress,
+    fromName: options.raw.fromName,
+    senderAddress: options.raw.senderAddress ?? null,
+    replyToAddress: options.raw.replyToAddress ?? null,
+    messageId: options.raw.messageId ?? null,
+    receivedAt: options.raw.receivedAt,
+  });
+}
+
+/**
+ * The calendar/task entry point: a tenant's scripts over content that is
+ * not mail and never passes through classification.
+ *
+ * Deliberately NOT the whole pipeline. Classification sorts mail into
+ * human/notification/marketing and the extraction registry matches a known
+ * sender's template — neither has any meaning for a meeting a colleague
+ * scheduled, and running an invite through them would produce a confident
+ * category nobody asked for. What an invite shares with mail is the need to
+ * strip boilerplate, so that is what it gets.
+ */
+export async function applyCleanerScriptsToItem(inputs: {
+  tenantId: string;
+  kind: CleanerScriptKind;
+  content: string;
+  fields?: Partial<Omit<CleanerScriptRunInput, 'text' | 'kind'>>;
+}): Promise<string> {
+  return runScriptsOver(inputs.tenantId, inputs.kind, inputs.content, {
+    ...inputs.fields,
+    subject: inputs.fields?.subject ?? '',
+    fromAddress: inputs.fields?.fromAddress ?? '',
+    fromName: inputs.fields?.fromName ?? '',
+  });
 }
 
 /**

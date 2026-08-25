@@ -84,6 +84,7 @@ export const EXPECTED_MIGRATIONS = [
   '051-agent-run-step-iterations',
   '052-agent-guardrails',
   '053-approval-pauses',
+  '054-cleaner-script-content-kinds',
 ];
 
 export interface MigrationStatus {

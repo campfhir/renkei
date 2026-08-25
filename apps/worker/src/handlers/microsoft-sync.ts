@@ -29,7 +29,7 @@ import {
 } from '@renkei/connector-microsoft';
 import { MICROSOFT } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
-import { cleanInviteBody, normalizeBody } from '@renkei/email-sanitizer';
+import { applyCleanerScriptsToItem, cleanInviteBody, normalizeBody } from '@renkei/email-sanitizer';
 import type { RawEmail } from '@renkei/email-sanitizer';
 import { enqueueKnowledgeEvent } from '../enqueue';
 import {
@@ -411,6 +411,42 @@ function attendeeList(item: Record<string, unknown>): { display: string[]; addre
   return { display, addresses };
 }
 
+/**
+ * The tenant's own cleaner scripts, over an invite or a task.
+ *
+ * Mail has had this since scripts shipped; calendar and tasks reach the
+ * same stage now, so an org can strip a conferencing block, a room-booking
+ * footer or whatever its own tooling staples onto invites without waiting
+ * for a release. Only scripts an admin has marked as applying to this kind
+ * run — a mail-only script keeps its old reach.
+ *
+ * Scripts are the last word, after the built-in cleaning: they exist to
+ * handle what the shared rules could not.
+ */
+async function scripted(
+  tenantId: string,
+  kind: MicrosoftRefKind,
+  item: Record<string, unknown>,
+  content: string
+): Promise<string> {
+  if (kind !== 'evt' && kind !== 'task') return content;
+  const organizer = rec(rec(item.organizer).emailAddress);
+  return applyCleanerScriptsToItem({
+    tenantId,
+    kind,
+    content,
+    fields: {
+      subject: str(item.subject) || str(item.title),
+      organizer: str(organizer.name) || str(organizer.address) || null,
+      attendees: attendeeList(item).display,
+      location: str(rec(item.location).displayName) || null,
+      startsAt: str(rec(item.start).dateTime) || null,
+      endsAt: str(rec(item.end).dateTime) || null,
+      isOnline: item.isOnlineMeeting === true,
+    },
+  });
+}
+
 function contentOf(kind: MicrosoftRefKind, item: Record<string, unknown>): string {
   if (kind === 'evt') {
     const organizer = rec(rec(item.organizer).emailAddress);
@@ -610,7 +646,7 @@ export async function runSubscriptionSync(
       if (full.ok && isRecord(full.val)) item = full.val;
     }
 
-    const content = contentOf(kind, item);
+    const content = await scripted(tenantId, kind, item, contentOf(kind, item));
     if (!hasSubstance(kind, item)) {
       await enqueueKnowledgeEvent(
         tenantId,

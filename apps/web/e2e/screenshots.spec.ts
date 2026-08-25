@@ -61,6 +61,20 @@ test('admin — event monitor', async ({ page }, testInfo) => {
   await shot(page, testInfo, 'admin-events');
 });
 
+test('admin — cleaner script reach', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/admin/email-sanitizer`);
+  await expect(page.getByRole('heading', { name: 'Cleaner scripts' })).toBeVisible();
+  // The reach control is the point of the shot: a script says which content
+  // kinds it may touch, and widening it past mail is a deliberate act.
+  const calendar = page.getByRole('checkbox', { name: 'Calendar' });
+  await expect(calendar).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'Email' })).toBeChecked();
+  await calendar.check();
+  // Two kinds selected means the dry-run has to ask which one to run as.
+  await expect(page.getByLabel('Content kind to test as')).toBeVisible();
+  await shot(page, testInfo, 'admin-cleaner-script-reach');
+});
+
 test('agents list', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/agents`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();

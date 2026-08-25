@@ -31,9 +31,25 @@ import {
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
+/**
+ * What a script may be pointed at. Mail was the only kind when scripts
+ * shipped; invites and tasks reach the same stage now, and a script says
+ * which of them it is willing to handle.
+ */
+export type CleanerScriptKind = 'msg' | 'evt' | 'task';
+
 export interface CleanerScriptInput {
   /** The message text as cleaned so far — what the script transforms. */
   text: string;
+  /**
+   * Which kind of thing `text` came from.
+   *
+   * Handed to the guest so one script can serve several kinds without
+   * guessing from the shape of the text — `if (email.kind !== 'evt') return
+   * email.text` is the whole idiom. Defaults to 'msg' so every existing
+   * script, written when mail was all there was, reads exactly as before.
+   */
+  kind?: CleanerScriptKind;
   subject: string;
   fromAddress: string;
   fromName: string;
@@ -47,6 +63,17 @@ export interface CleanerScriptInput {
   replyToAddress?: string | null;
   messageId?: string | null;
   receivedAt?: string | null;
+  /**
+   * Calendar fields, empty for other kinds. An invite's structure is where
+   * its boilerplate is anchored — a script that strips a conferencing block
+   * usually wants to know whether the meeting is online at all.
+   */
+  organizer?: string | null;
+  attendees?: readonly string[];
+  location?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  isOnline?: boolean;
 }
 
 export interface CleanerScriptLimits {
@@ -149,7 +176,18 @@ export async function runCleanerScript(
         replyToAddress: input.replyToAddress ?? null,
         messageId: input.messageId ?? null,
         receivedAt: input.receivedAt ?? null,
+        kind: input.kind ?? 'msg',
+        organizer: input.organizer ?? null,
+        attendees: input.attendees ? [...input.attendees] : [],
+        location: input.location ?? null,
+        startsAt: input.startsAt ?? null,
+        endsAt: input.endsAt ?? null,
+        isOnline: input.isOnline ?? false,
       })};\n` +
+      // `item` is the same object under a name that does not lie when the
+      // thing in hand is a meeting. `email` stays because scripts already
+      // written against it must keep working.
+      `const item = email;\n` +
       // Parenthesised so arrow and function expressions both evaluate;
       // the signature check is what makes "must be (email) => string" a
       // contract rather than documentation.

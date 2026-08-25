@@ -87,3 +87,56 @@ describe('runCleanerScript', () => {
     if (!result.ok) expect(result.err.type).toBe('BAD_OUTPUT');
   });
 });
+
+describe('content kinds inside the sandbox', () => {
+  it('tells the script which kind it is holding', async () => {
+    const script = `(email) => email.kind`;
+    const asEvent = await runCleanerScript(script, { ...input, kind: 'evt' });
+    expect(asEvent.ok && asEvent.val).toBe('evt');
+  });
+
+  it('defaults to mail, so a script written before invites existed is unchanged', async () => {
+    const result = await runCleanerScript(`(email) => email.kind`, input);
+    expect(result.ok && result.val).toBe('msg');
+  });
+
+  it('hands an invite its own fields', async () => {
+    const script = `(item) => [item.organizer, item.attendees.join('|'), item.location, item.isOnline].join(' / ')`;
+    const result = await runCleanerScript(script, {
+      ...input,
+      kind: 'evt',
+      organizer: 'Dana Reyes',
+      attendees: ['Evan Jeing', 'Sam Ortiz'],
+      location: 'Room 4B',
+      isOnline: true,
+    });
+    expect(result.ok && result.val).toBe('Dana Reyes / Evan Jeing|Sam Ortiz / Room 4B / true');
+  });
+
+  it('exposes the same object as `item` and as `email`', async () => {
+    // `email` is kept for scripts already written against it; `item` exists
+    // because that name does not lie when the thing in hand is a meeting.
+    const result = await runCleanerScript(`() => String(item === email)`, {
+      ...input,
+      kind: 'evt',
+    });
+    expect(result.ok && result.val).toBe('true');
+  });
+
+  it('gives calendar fields harmless empties on a message', async () => {
+    const script = `(email) => JSON.stringify([email.attendees, email.organizer, email.isOnline])`;
+    const result = await runCleanerScript(script, input);
+    expect(result.ok && result.val).toBe('[[],null,false]');
+  });
+
+  it('still sandboxes an invite script — no host reach, budget enforced', async () => {
+    const reaching = await runCleanerScript(`() => typeof fetch + typeof require`, {
+      ...input,
+      kind: 'evt',
+    });
+    expect(reaching.ok && reaching.val).toBe('undefinedundefined');
+
+    const looping = await runCleanerScript(`() => { while (true) {} }`, { ...input, kind: 'evt' });
+    expect(looping.ok).toBe(false);
+  });
+});
