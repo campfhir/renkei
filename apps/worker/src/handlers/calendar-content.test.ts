@@ -8,11 +8,11 @@
  * vector search.
  */
 
-import { defluffUrls, normalizeBody } from '@renkei/email-sanitizer';
+import { cleanInviteBody, normalizeBody } from '@renkei/email-sanitizer';
 
 /** The same reduction microsoft-sync applies before embedding. */
 function readable(content: string, contentType: 'html' | 'text'): string {
-  return defluffUrls(normalizeBody({ content, contentType }));
+  return cleanInviteBody(normalizeBody({ content, contentType }));
 }
 
 describe('calendar body cleaning', () => {
@@ -38,5 +38,22 @@ describe('calendar body cleaning', () => {
 
   it('leaves a plain-text body alone apart from tidying', () => {
     expect(readable('Standup at 9.\n\nBring numbers.', 'text')).toContain('Standup at 9.');
+  });
+});
+
+describe('invite chrome', () => {
+  it('drops the Teams block that is identical in every invite, keeping the coordinates', () => {
+    const html =
+      '<div>Cutover review — bring the rollback plan.<br>' +
+      '<hr>Microsoft Teams<br>Need help?<br>Join the meeting now<br>' +
+      'Meeting ID: 231 998 447 102<br>Passcode: Kd7pQ2<br>' +
+      'Find a local number<br>For organizers: Meeting options | Reset dial-in PIN</div>';
+    const cleaned = readable(html, 'html');
+    expect(cleaned).toContain('bring the rollback plan');
+    expect(cleaned).toContain('231 998 447 102');
+    expect(cleaned).toContain('Kd7pQ2');
+    expect(cleaned).not.toContain('Need help?');
+    expect(cleaned).not.toContain('Find a local number');
+    expect(cleaned).not.toContain('For organizers');
   });
 });
