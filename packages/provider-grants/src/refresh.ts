@@ -155,7 +155,17 @@ export async function refreshGrantTokens(
         await deleteGrant(provider, tenantId, accountId);
         return err('GRANT_REVOKED' as const);
       }
-      logger.error('[Refresh] Provider refresh failed', { provider, tenantId, accountId });
+      // The kind and the provider's own words: without them this line
+      // cannot distinguish an expired refresh token from a network blip
+      // from a misconfigured client, which are three different fixes.
+      logger.error('[Refresh] Provider refresh failed: {kind} {message}', {
+        provider,
+        tenantId,
+        accountId,
+        kind: refreshed.err.type,
+        message:
+          typeof refreshed.err.message === 'string' ? refreshed.err.message.slice(0, 300) : '',
+      });
       return err('REFRESH_FAILED' as const);
     }
 

@@ -35,6 +35,13 @@ export interface GraphSubscription {
   resource: string;
   expirationDateTime: string;
   clientState?: string;
+  /**
+   * Where Graph delivers it. Load-bearing for reconciliation: one Entra app
+   * registration is commonly shared by several deployments, so "not in my
+   * table" is NOT sufficient grounds to delete a subscription — it might be
+   * another environment's. The notificationUrl is what says whose it is.
+   */
+  notificationUrl?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -141,6 +148,9 @@ export async function listGraphSubscriptions(
       expirationDateTime:
         typeof item.expirationDateTime === 'string' ? item.expirationDateTime : '',
       ...(typeof item.clientState === 'string' ? { clientState: item.clientState } : {}),
+      ...(typeof item.notificationUrl === 'string'
+        ? { notificationUrl: item.notificationUrl }
+        : {}),
     });
   }
   return ok(subscriptions);
