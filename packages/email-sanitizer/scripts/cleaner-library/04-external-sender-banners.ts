@@ -13,7 +13,7 @@
 //
 // Matching is word-by-word with \s+ between words, so a mail client that
 // re-wraps the banner across lines cannot dodge it.
-function stripBanners(email: CleanerEmail): string {
+function stripBanners(email: CleanerMessage): string {
   const phrases = [
     'CAUTION : This Email is from an EXTERNAL source. DO NOT CLICK LINKS or ' +
       'ATTACHMENTS if the email is not anticipated, and NEVER provide your User ID or Password.',

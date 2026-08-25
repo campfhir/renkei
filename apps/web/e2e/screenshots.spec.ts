@@ -285,6 +285,27 @@ test('admin — cleaner script editor with types', async ({ page }, testInfo) =>
   );
   expect(await errors()).toBe(1);
 
+  // Per-kind types: a calendar script reaches the invite fields...
+  await write(
+    "function clean(event: CleanerEvent): string {\n  return event.attendees.join(', ');"
+  );
+  expect(await errors()).toBe(0);
+
+  // ...and a message script does not, which is the point of narrowing —
+  // `attendees` on an email is always an empty array, so a script reading
+  // it would silently do nothing.
+  await write(
+    "function clean(email: CleanerMessage): string {\n  return email.attendees.join(', ');"
+  );
+  expect(await errors()).toBe(1);
+
+  // The discriminated union narrows on `kind`, so one script can serve
+  // several kinds and still reach what each really has.
+  await write(
+    "function clean(item: CleanerItem): string {\n  if (item.kind !== 'evt') return item.text;\n  return item.attendees.join(', ');"
+  );
+  expect(await errors()).toBe(0);
+
   // Completion comes from our own type, not from word-matching the buffer.
   await write('function clean(email: CleanerEmail): string {\n  return email.att');
   await page.keyboard.press('Control+Space');

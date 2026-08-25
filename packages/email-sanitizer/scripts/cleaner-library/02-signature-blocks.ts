@@ -7,7 +7,7 @@
 // "this looks like a signature" — a line of dashes, a name followed by a
 // title, a phone number — eventually eats a real sentence, and truncating
 // correspondence is far worse than indexing a job title.
-function cutSignature(email: CleanerEmail): string {
+function cutSignature(email: CleanerMessage): string {
   const match = /^-- ?$/m.exec(email.text);
   return match ? email.text.slice(0, match.index).trimEnd() : email.text;
 }

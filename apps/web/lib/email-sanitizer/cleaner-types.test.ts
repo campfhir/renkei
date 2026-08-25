@@ -10,7 +10,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CLEANER_FIELDS, CLEANER_TYPES } from './cleaner-types';
+import { CALENDAR_ONLY_FIELDS, CLEANER_FIELDS, CLEANER_TYPES } from './cleaner-types';
 
 const RUNNER = join(__dirname, '../../../../packages/email-sanitizer/src/scripts/run.ts');
 
@@ -40,5 +40,39 @@ describe('cleaner type declarations', () => {
 
   it('declares the script signature the docs promise', () => {
     expect(CLEANER_TYPES).toContain('(email: CleanerEmail) => string');
+  });
+
+  it('gives each kind its own type, discriminated on kind', () => {
+    expect(CLEANER_TYPES).toContain('interface CleanerMessage extends CleanerItemBase');
+    expect(CLEANER_TYPES).toContain('interface CleanerEvent extends CleanerItemBase');
+    expect(CLEANER_TYPES).toContain('interface CleanerTask extends CleanerItemBase');
+    expect(CLEANER_TYPES).toContain(
+      'type CleanerItem = CleanerMessage | CleanerEvent | CleanerTask'
+    );
+    for (const kind of ["kind: 'msg'", "kind: 'evt'", "kind: 'task'"]) {
+      expect(CLEANER_TYPES).toContain(kind);
+    }
+  });
+
+  it('puts the calendar-only fields on CleanerEvent and nowhere narrower', () => {
+    // The whole point of narrowing is that these are unreachable until a
+    // script has established it is holding an invite. If one leaked onto
+    // the base, every message script would autocomplete an attendee list
+    // that is always empty.
+    const base = CLEANER_TYPES.slice(
+      CLEANER_TYPES.indexOf('interface CleanerItemBase'),
+      CLEANER_TYPES.indexOf('interface CleanerMessage')
+    );
+    for (const field of CALENDAR_ONLY_FIELDS) {
+      expect(base).not.toContain(`${field}:`);
+    }
+
+    const event = CLEANER_TYPES.slice(
+      CLEANER_TYPES.indexOf('interface CleanerEvent'),
+      CLEANER_TYPES.indexOf('interface CleanerTask')
+    );
+    for (const field of CALENDAR_ONLY_FIELDS) {
+      expect(event).toContain(`${field}:`);
+    }
   });
 });

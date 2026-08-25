@@ -71,13 +71,37 @@ the file. An anonymous `function (email) { }` or an arrow still works
 everywhere (the compiler and the sandbox both parenthesise it); the editor
 just flags it as a declaration missing a name.
 
-The guest receives `email` (also available as `item`):
+Type the parameter for the reach you chose — the editor seeds this for you:
 
-- `text` — the body as cleaned so far; transform and return this
-- `kind` — `"msg" | "evt" | "task"`, so one script can serve several
-- `subject`, `fromAddress`, `fromName`
-- `senderAddress`, `replyToAddress`, `messageId`, `receivedAt`
-- `organizer`, `attendees`, `location`, `startsAt`, `endsAt`, `isOnline` — invites
+| Runs on       | Type             |
+| ------------- | ---------------- |
+| Email         | `CleanerMessage` |
+| Calendar      | `CleanerEvent`   |
+| Tasks         | `CleanerTask`    |
+| More than one | `CleanerItem`    |
+
+All of them carry `text` (the body so far — transform and return this),
+`kind`, `subject`, `fromAddress`, `fromName`, `senderAddress`,
+`replyToAddress`, `messageId` and `receivedAt`.
+
+`CleanerEvent` adds what only an invite has: `organizer`, `attendees`,
+`location`, `startsAt`, `endsAt`, `isOnline`. Those are deliberately
+unreachable from `CleanerMessage` — on an email they are always null or
+empty, so a script reading them would silently do nothing rather than fail
+where you could see it.
+
+`CleanerItem` is the union, so it narrows on `kind`:
+
+```ts
+function clean(item: CleanerItem): string {
+  if (item.kind !== 'evt') return item.text;
+  return item.attendees.length > 12 ? '' : item.text;
+}
+```
+
+`CleanerEmail` also still exists — every field at once, matching what the
+sandbox literally passes — for scripts written before the per-kind types.
+Prefer the narrow ones.
 
 Constraints: pure ES2020, no `require`/`fetch`/`fs`/timers/`Date.now`, 250ms,
 32MB, must return a string. Return `email.text` unchanged when nothing applies.

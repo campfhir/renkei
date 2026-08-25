@@ -30,18 +30,36 @@ interface CleanerScript {
 }
 
 /**
+ * The parameter type for a given reach.
+ *
+ * One kind gets that kind's own type, so the calendar fields are reachable
+ * without narrowing and unreachable when they would always be empty.
+ * Several kinds get the union, which forces a `kind` check before touching
+ * anything kind-specific — the same discipline as the warning under the
+ * checkboxes, enforced by the compiler instead of by reading.
+ */
+function typeForKinds(kinds: readonly CleanerScriptKind[]): string {
+  if (kinds.length !== 1) return 'CleanerItem';
+  if (kinds[0] === 'evt') return 'CleanerEvent';
+  if (kinds[0] === 'task') return 'CleanerTask';
+  return 'CleanerMessage';
+}
+
+/**
  * Seeded into an empty editor. A NAMED function on purpose: it is valid
  * TypeScript on its own, which is what lets the language service check the
  * file and offer completions. An anonymous `function (email) {}` still
  * works everywhere else — the sandbox and the compiler both parenthesise
  * it — but the editor would flag it as a declaration missing a name.
  */
-const STARTER = `function clean(email: CleanerEmail): string {
-  return email.text
+function starterFor(kinds: readonly CleanerScriptKind[]): string {
+  return `function clean(item: ${typeForKinds(kinds)}): string {
+  return item.text
     .split('\\n')
     .filter((line) => !line.startsWith('Follow NEMS:'))
     .join('\\n');
 }`;
+}
 
 /**
  * Sandboxed cleaner scripts — where every boilerplate decision now lives.
@@ -106,11 +124,11 @@ export default function CleanerScripts({
   function startEdit(script: CleanerScript | null) {
     setEditingId(script?.id ?? null);
     setName(script?.name ?? '');
+    const kinds: CleanerScriptKind[] = script?.appliesTo?.length ? script.appliesTo : ['msg'];
     // Monaco has no placeholder, so a new script starts from the starter
     // rather than an empty box — which also means the first thing an author
-    // sees is the documented shape and the typed parameter.
-    setSource(script?.script ?? STARTER);
-    const kinds: CleanerScriptKind[] = script?.appliesTo?.length ? script.appliesTo : ['msg'];
+    // sees is the documented shape and a parameter typed for this reach.
+    setSource(script?.script ?? starterFor(kinds));
     setAppliesTo(kinds);
     setTestKind(kinds[0]);
     setTestOutput(null);
@@ -160,6 +178,10 @@ export default function CleanerScripts({
 
   function toggleKind(kind: CleanerScriptKind) {
     setAppliesTo((current) => {
+      // Re-seeding is safe only while the editor still holds an untouched
+      // starter: past that, the text is the author's and replacing it
+      // would throw away work.
+      const untouched = source.trim() === starterFor(current).trim();
       // Never empty: a script pointed at nothing is a disabled script, and
       // the Enable/Disable control already says that more clearly.
       const next = current.includes(kind)
@@ -167,6 +189,7 @@ export default function CleanerScripts({
         : [...current, kind];
       const resolved = next.length > 0 ? next : current;
       if (!resolved.includes(testKind)) setTestKind(resolved[0]);
+      if (untouched) setSource(starterFor(resolved));
       return resolved;
     });
   }
@@ -315,9 +338,7 @@ export default function CleanerScripts({
           <code>&quot;task&quot;</code>, branch on it when a script serves more than one —{' '}
           <code>subject</code>, <code>fromAddress</code>, <code>fromName</code>, the header fields{' '}
           <code>senderAddress</code>, <code>replyToAddress</code>, <code>messageId</code>,{' '}
-          <code>receivedAt</code>, and for invites <code>organizer</code>, <code>attendees</code>,{' '}
-          <code>location</code>, <code>startsAt</code>, <code>endsAt</code>, <code>isOnline</code>{' '}
-          (null or empty when the connector reported none). Return the new text.
+          <code>receivedAt</code> (null when the connector reported none). Return the new text.
         </p>
 
         <textarea
