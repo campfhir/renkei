@@ -16,11 +16,12 @@
  * to invent. GFM tables ARE supported: they need no such IDs, adf.ts has
  * always been able to READ them, and a model asked for a comparison writes
  * one whether or not the writer understands it — unsupported, a table
- * arrived as a wall of pipe characters. Mentions ARE supported, deliberately not by
- * invention: `[~accountId]` (Jira's own wiki-markup mention syntax) is
- * converted to a real ADF `mention` node by processMentions below, so a
- * caller can only mention an account id it already has (e.g. from
- * confluence_search_users or jira_search_users), never a guessed one.
+ * arrived as a wall of pipe characters. Mentions ARE supported, deliberately
+ * not by invention: Jira's own wiki-markup mention syntax — any of
+ * `[~accountid:ID]`, `[~ID]` or `[~557058:uuid]` — becomes a real ADF
+ * `mention` node in processMentions below, so a caller can only mention an
+ * account id it already has (from jira_search_users), never a guessed one.
+ * Anything else in brackets stays literal text.
  */
 
 /** A mark applied to a text node — bold, italic, code, link, and so on. */
@@ -409,18 +410,54 @@ function processMentions(nodes: readonly AdfNode[]): AdfNode[] {
 }
 
 /**
+ * The account id inside a `[~...]`, or null when it is not one.
+ *
+ * Jira Cloud writes mentions three ways and this has to accept all of them:
+ *
+ *   [~accountid:5b21a397a6d3c211bbc5f967]   the documented wiki syntax
+ *   [~5b21a397a6d3c211bbc5f967]             a bare 24-hex account id
+ *   [~557058:3bce8cf9-3a60-4a2e-b655-...]   the colon form
+ *
+ * The previous pattern — `[0-9a-f]+:[0-9a-f-]+` — required a colon, so it
+ * matched only the third. The other two passed through as literal text and
+ * were posted verbatim: a comment reading "[~accountid:5b21...] please
+ * look" instead of a mention, with nobody notified. It went unnoticed
+ * because the only tests used the colon form.
+ *
+ * Validation is done here rather than in the regex because the regex that
+ * expresses "any of these three but not [~username]" is unreadable, and
+ * being unreadable is how it came to be wrong in the first place.
+ */
+function accountIdOf(raw: string): string | null {
+  const value = raw.trim().replace(/^accountid:/i, '');
+  // 24+ hex characters: the modern Atlassian account id.
+  if (/^[0-9a-f]{24,}$/i.test(value)) return value;
+  // Or a colon-separated id (557058:uuid, qm:uuid:uuid).
+  if (/^[0-9a-zA-Z]+:[0-9a-zA-Z:_-]{8,}$/.test(value)) return value;
+  // Anything else — [~username], [~a.name] — cannot be resolved on Cloud.
+  // Emitting a mention with a bogus id renders as a broken chip that
+  // notifies nobody, which is strictly worse than leaving the text alone.
+  return null;
+}
+
+/**
  * Convert [~accountId] patterns in a text node to separate text and mention nodes.
  */
 function processMentionsInText(node: AdfNode, marks: readonly AdfMark[]): AdfNode | AdfNode[] {
   const text = node.text ?? '';
-  // Match Jira wiki markup: [~accountId] where accountId is a Jira UUID
-  const mentionPattern = /\[~([0-9a-f]+:[0-9a-f-]+)\]/gi;
+  const mentionPattern = /\[~([^\]\s][^\]]*)\]/g;
 
   const parts: AdfNode[] = [];
   let lastIndex = 0;
   let match;
 
   while ((match = mentionPattern.exec(text)) !== null) {
+    const accountId = accountIdOf(match[1] ?? '');
+    // Not an account id: leave it as ordinary text. lastIndex is not moved,
+    // so the bracketed text is carried into the next slice rather than
+    // being silently dropped.
+    if (accountId === null) continue;
+
     // Add text before the mention
     if (match.index > lastIndex) {
       parts.push({
@@ -430,8 +467,6 @@ function processMentionsInText(node: AdfNode, marks: readonly AdfMark[]): AdfNod
       });
     }
 
-    // Add the mention node
-    const accountId = match[1] ?? '';
     parts.push({
       type: 'mention',
       attrs: {
