@@ -17,3 +17,8 @@ yarn.lock
 # semicolon Prettier appends turns every script into a syntax error. Their
 # exact text is what an admin copies into the editor.
 packages/email-sanitizer/scripts/cleaner-library/*.ts
+
+# Widget bundles are build output (lib/mcp-widgets/build.mjs). Prettier
+# rewrites the generator's quoting, so every build and every commit fought
+# over the same files without changing a byte of the payload.
+apps/web/lib/mcp-widgets/generated/*.ts
