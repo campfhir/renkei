@@ -1,0 +1,7 @@
+{
+  "script": "05-conferencing-boilerplate.js",
+  "kind": "evt",
+  "description": "A Teams join block is removed while the meeting id, passcode and dial-in number survive",
+  "content": "Cutover review — bring the rollback plan.\n\n________________________________________________________________________\nMicrosoft Teams\nNeed help?\nJoin the meeting now\nMeeting ID: 123 456 789 012\nPasscode: aB3xY9\n\nDial in by phone\n+1 323-555-0100,,472910384# United States, Los Angeles\nFind a local number\nReset dial-in PIN\n\nFor organizers: Meeting options | Reset dial-in PIN\n________________________________________________________________________",
+  "expected": "Cutover review — bring the rollback plan.\n\nMeeting ID: 123 456 789 012\nPasscode: aB3xY9\n\n+1 323-555-0100,,472910384# United States, Los Angeles"
+}

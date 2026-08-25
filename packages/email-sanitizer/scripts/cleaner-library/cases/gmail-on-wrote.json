@@ -1,0 +1,7 @@
+{
+  "script": "01-quoted-reply-chains.js",
+  "kind": "msg",
+  "description": "Gmail/webmail's 'On <date>, <name> wrote:' attribution line truncates the quoted chain",
+  "content": "Sounds good, let's sync tomorrow.\n\nOn Mon, Jan 5, 2026 at 9:00 AM Bob Smith <bob@example.com> wrote:\n> Can we meet tomorrow?",
+  "expected": "Sounds good, let's sync tomorrow."
+}

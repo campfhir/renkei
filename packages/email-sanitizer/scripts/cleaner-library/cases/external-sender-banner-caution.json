@@ -1,0 +1,7 @@
+{
+  "script": "04-external-sender-banners.js",
+  "kind": "msg",
+  "description": "A gateway-prepended EXTERNAL/CAUTION banner is stripped, leaving the sender's real content",
+  "content": "CAUTION : This Email is from an EXTERNAL source. DO NOT CLICK LINKS or ATTACHMENTS if the email is not anticipated, and NEVER provide your User ID or Password.\n\nHi team, the vendor contract is attached for review.",
+  "expected": "Hi team, the vendor contract is attached for review."
+}

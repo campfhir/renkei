@@ -1,0 +1,7 @@
+{
+  "script": "05-conferencing-boilerplate.js",
+  "kind": "evt",
+  "description": "A human sentence using the same words as the chrome is left alone",
+  "content": "I changed the meeting options so guests can join the meeting now.",
+  "expected": "I changed the meeting options so guests can join the meeting now."
+}

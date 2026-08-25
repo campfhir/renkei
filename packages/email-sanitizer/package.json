@@ -7,7 +7,8 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "verify:cleaners": "tsx scripts/verify-cleaner-library.ts"
   },
   "dependencies": {
     "@campfhir/safe-functions": "^0.1.3",
@@ -21,6 +22,7 @@
     "@types/node": "^24",
     "jest": "^30.4.2",
     "ts-jest": "^29.4.12",
+    "tsx": "^4.23.5",
     "typescript": "^5"
   }
 }
