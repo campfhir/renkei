@@ -45,6 +45,7 @@ export {
 export { sanitizeEmail, type SanitizeInputs } from './pipeline';
 export {
   sanitizeEmailForTenant,
+  applyCleanerScriptsToItem,
   type SanitizeForTenantOptions,
   type TenantSanitizeResult,
 } from './service';
@@ -97,6 +98,7 @@ export {
   runCleanerScript,
   validateCleanerScriptSource,
   MAX_SCRIPT_CHARS,
+  type CleanerScriptKind,
   type CleanerScriptInput as CleanerScriptRunInput,
   type CleanerScriptLimits,
 } from './scripts/run';

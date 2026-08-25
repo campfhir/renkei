@@ -18,6 +18,7 @@ import {
   MAX_SCRIPT_CHARS,
 } from '@renkei/email-sanitizer';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { describeKinds, parseContentKinds } from '@/lib/email-sanitizer/content-kinds';
 
 export async function GET(
   _request: NextRequest,
@@ -50,8 +51,13 @@ export async function POST(
   }
 
   const body: unknown = await request.json().catch(() => null);
-  const payload: { id?: unknown; name?: unknown; script?: unknown; enabled?: unknown } =
-    typeof body === 'object' && body !== null ? body : {};
+  const payload: {
+    id?: unknown;
+    name?: unknown;
+    script?: unknown;
+    enabled?: unknown;
+    appliesTo?: unknown;
+  } = typeof body === 'object' && body !== null ? body : {};
 
   const name = typeof payload.name === 'string' ? payload.name.trim().slice(0, 120) : '';
   if (!name) return NextResponse.json({ error: 'Give the script a name.' }, { status: 400 });
@@ -69,11 +75,13 @@ export async function POST(
   const valid = await validateCleanerScriptSource(script);
   if (!valid.ok) return NextResponse.json({ error: valid.error }, { status: 422 });
 
+  const appliesTo = parseContentKinds(payload.appliesTo);
   const saved = await upsertCleanerScript(tenantRef.id, {
     ...(typeof payload.id === 'string' && payload.id ? { id: payload.id } : {}),
     name,
     script,
     enabled: payload.enabled !== false,
+    appliesTo,
   });
   if (!saved.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
 
@@ -82,7 +90,9 @@ export async function POST(
     actorSubject: access.subject,
     action: 'sanitizer.script_saved',
     targetKind: 'cleaner-script',
-    targetLabel: name,
+    // The reach is the part someone audits after the fact: the same script
+    // over mail alone and over every kind are very different decisions.
+    targetLabel: `${name} (${describeKinds(appliesTo)})`,
   });
   return NextResponse.json({ script: saved.val });
 }

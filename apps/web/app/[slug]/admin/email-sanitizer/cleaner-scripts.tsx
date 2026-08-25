@@ -2,12 +2,15 @@
 
 import { useEffect, useState } from 'react';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
+import { CONTENT_KINDS, describeKinds } from '@/lib/email-sanitizer/content-kinds';
+import type { CleanerScriptKind } from '@renkei/email-sanitizer';
 
 interface CleanerScript {
   id: string;
   name: string;
   script: string;
   enabled: boolean;
+  appliesTo: CleanerScriptKind[];
   lastError: string | null;
 }
 
@@ -39,6 +42,7 @@ export default function CleanerScripts({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [source, setSource] = useState('');
+  const [appliesTo, setAppliesTo] = useState<CleanerScriptKind[]>(['msg']);
   const [saving, setSaving] = useState(false);
 
   // Test harness state. Header fields are settable so scripts keyed on
@@ -48,6 +52,10 @@ export default function CleanerScripts({
   const [testFrom, setTestFrom] = useState('');
   const [testReplyTo, setTestReplyTo] = useState('');
   const [testMessageId, setTestMessageId] = useState('');
+  // Which kind the dry-run pretends to be. A script that branches on
+  // `email.kind` behaves differently per kind, so testing it as mail when
+  // it is meant for invites would prove nothing.
+  const [testKind, setTestKind] = useState<CleanerScriptKind>('msg');
   const [testOutput, setTestOutput] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
@@ -71,6 +79,9 @@ export default function CleanerScripts({
     setEditingId(script?.id ?? null);
     setName(script?.name ?? '');
     setSource(script?.script ?? '');
+    const kinds: CleanerScriptKind[] = script?.appliesTo?.length ? script.appliesTo : ['msg'];
+    setAppliesTo(kinds);
+    setTestKind(kinds[0]);
     setTestOutput(null);
     setTestError(null);
     setError(null);
@@ -84,6 +95,7 @@ export default function CleanerScripts({
       name,
       script: source,
       enabled: true,
+      appliesTo,
     });
     setSaving(false);
     if (result.error) {
@@ -100,6 +112,9 @@ export default function CleanerScripts({
       name: script.name,
       script: script.script,
       enabled: !script.enabled,
+      // Carried through unchanged: toggling availability must never
+      // quietly widen or narrow what a script is pointed at.
+      appliesTo: script.appliesTo,
     });
     if (result.error) setError(result.error);
     await load();
@@ -110,6 +125,19 @@ export default function CleanerScripts({
     const result = await sendJsonFull(`${url}/${script.id}`, 'DELETE');
     if (result.error) setError(result.error);
     await load();
+  }
+
+  function toggleKind(kind: CleanerScriptKind) {
+    setAppliesTo((current) => {
+      // Never empty: a script pointed at nothing is a disabled script, and
+      // the Enable/Disable control already says that more clearly.
+      const next = current.includes(kind)
+        ? current.filter((entry) => entry !== kind)
+        : [...current, kind];
+      const resolved = next.length > 0 ? next : current;
+      if (!resolved.includes(testKind)) setTestKind(resolved[0]);
+      return resolved;
+    });
   }
 
   async function draft() {
@@ -125,6 +153,7 @@ export default function CleanerScripts({
       sampleOutput: string;
     }>(`${url}/suggest`, 'POST', {
       text: sample,
+      kind: testKind,
       ...(instructions.trim() ? { instructions } : {}),
     });
     setDrafting(false);
@@ -146,6 +175,7 @@ export default function CleanerScripts({
     const result = await sendJsonFull<{ output: string }>(`${url}/test`, 'POST', {
       script: source,
       text: sample,
+      kind: testKind,
       ...(testSubject.trim() ? { subject: testSubject } : {}),
       ...(testFrom.trim() ? { fromAddress: testFrom } : {}),
       ...(testReplyTo.trim() ? { replyToAddress: testReplyTo } : {}),
@@ -161,9 +191,10 @@ export default function CleanerScripts({
       <h2 className="text-sm font-semibold">Cleaner scripts</h2>
       <p className="text-xs text-gray-500 dark:text-gray-400">
         For boilerplate a phrase can&apos;t express: a function <code>(email) =&gt; string</code>{' '}
-        that transforms the cleaned message body. Scripts run in a sealed sandbox — no network, no
-        files, a hard time limit — and a failing script never loses a message: the text passes
-        through unchanged and the error shows here.
+        that transforms a body before it is indexed — email, calendar invites, or tasks, whichever
+        you point it at. Scripts run in a sealed sandbox — no network, no files, a hard time limit —
+        and a failing script never loses anything: the text passes through unchanged and the error
+        shows here.
       </p>
 
       {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}
@@ -175,6 +206,9 @@ export default function CleanerScripts({
               <div className="min-w-0">
                 <span className={script.enabled ? 'font-medium' : 'font-medium text-gray-400'}>
                   {script.name}
+                </span>
+                <span className="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600 dark:bg-gray-900 dark:text-gray-400">
+                  {describeKinds(script.appliesTo)}
                 </span>
                 {script.lastError && (
                   <p className="text-xs text-red-600 dark:text-red-400">
@@ -220,6 +254,28 @@ export default function CleanerScripts({
           placeholder="Script name (e.g. Strip signature blocks)"
           className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
         />
+        <fieldset className="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-800">
+          <legend className="px-1 text-xs font-medium text-gray-600 dark:text-gray-400">
+            Runs on
+          </legend>
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            {CONTENT_KINDS.map((kind) => (
+              <label key={kind.id} className="flex items-center gap-1.5 text-xs" title={kind.hint}>
+                <input
+                  type="checkbox"
+                  checked={appliesTo.includes(kind.id)}
+                  onChange={() => toggleKind(kind.id)}
+                  className="h-3.5 w-3.5"
+                />
+                {kind.label}
+              </label>
+            ))}
+          </div>
+          <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+            A script written for email can cut the wrong half of an invite — widen this only once
+            you have tested the script against that kind below.
+          </p>
+        </fieldset>
         <textarea
           value={source}
           onChange={(event) => setSource(event.target.value)}
@@ -229,10 +285,14 @@ export default function CleanerScripts({
           className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs dark:border-gray-700 dark:bg-gray-900"
         />
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          <code>email</code> carries <code>text</code>, <code>subject</code>,{' '}
-          <code>fromAddress</code>, <code>fromName</code> — and the header fields{' '}
+          <code>email</code> (also <code>item</code>) carries <code>text</code>, <code>kind</code> —{' '}
+          <code>&quot;msg&quot;</code> | <code>&quot;evt&quot;</code> |{' '}
+          <code>&quot;task&quot;</code>, branch on it when a script serves more than one —{' '}
+          <code>subject</code>, <code>fromAddress</code>, <code>fromName</code>, the header fields{' '}
           <code>senderAddress</code>, <code>replyToAddress</code>, <code>messageId</code>,{' '}
-          <code>receivedAt</code> (null when the connector reported none). Return the new text.
+          <code>receivedAt</code>, and for invites <code>organizer</code>, <code>attendees</code>,{' '}
+          <code>location</code>, <code>startsAt</code>, <code>endsAt</code>, <code>isOnline</code>{' '}
+          (null or empty when the connector reported none). Return the new text.
         </p>
 
         <textarea
@@ -288,6 +348,26 @@ export default function CleanerScripts({
         )}
 
         <div className="flex flex-wrap items-center gap-2">
+          {appliesTo.length > 1 && (
+            <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
+              Test as
+              <select
+                value={testKind}
+                onChange={(event) => {
+                  const chosen = CONTENT_KINDS.find((kind) => kind.id === event.target.value);
+                  if (chosen) setTestKind(chosen.id);
+                }}
+                aria-label="Content kind to test as"
+                className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
+              >
+                {CONTENT_KINDS.filter((kind) => appliesTo.includes(kind.id)).map((kind) => (
+                  <option key={kind.id} value={kind.id}>
+                    {kind.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button
             type="button"
             disabled={testing || !source.trim() || !sample.trim()}
