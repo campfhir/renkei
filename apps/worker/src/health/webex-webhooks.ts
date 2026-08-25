@@ -94,9 +94,12 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
       secret,
     });
     if (!reconciled.ok) {
-      logger.error('WebEx API error; will retry next sweep', {
+      logger.error('WebEx API error; will retry next sweep: {kind} {message}', {
         component: 'webex/webhook-health',
         tenantId: row.tenant_id,
+        kind: reconciled.err.type,
+        message:
+          typeof reconciled.err.message === 'string' ? reconciled.err.message.slice(0, 300) : '',
       });
       continue;
     }

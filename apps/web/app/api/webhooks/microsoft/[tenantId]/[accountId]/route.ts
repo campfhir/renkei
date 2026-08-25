@@ -21,6 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import { logger } from '@/lib/logger';
+import { throttleLog } from '@/lib/log-throttle';
 
 const MICROSOFT_SOURCE = 'microsoft';
 const eventsQueue = webhookEventsQueue();
@@ -88,11 +89,28 @@ export async function POST(
     const clientState =
       typeof notification.clientState === 'string' ? notification.clientState : null;
     if (!subscriptionId || clientStateBySubscription.get(subscriptionId) !== clientState) {
-      logger.warn('Dropped Graph notification with unknown subscription or clientState mismatch', {
-        component: 'microsoft/webhook',
-        tenantId,
-        subscriptionId: subscriptionId ?? '(none)',
-      });
+      // A subscription we no longer recognise keeps being delivered to
+      // until it expires at Microsoft — potentially thousands of times.
+      // One line an hour per subscription says everything a line per
+      // delivery said, without burying every other log on the box. The
+      // health sweep is what actually ends it, by deleting the orphan at
+      // Graph; this only stops it from shouting meanwhile.
+      const verdict = throttleLog(
+        `microsoft/webhook/unknown:${tenantId}:${subscriptionId ?? 'none'}`,
+        60 * 60 * 1000
+      );
+      if (verdict.log) {
+        logger.warn(
+          'Dropped Graph notification with unknown subscription or clientState mismatch' +
+            (verdict.suppressed > 0 ? ' ({suppressed} more since the last of these)' : ''),
+          {
+            component: 'microsoft/webhook',
+            tenantId,
+            subscriptionId: subscriptionId ?? '(none)',
+            suppressed: verdict.suppressed,
+          }
+        );
+      }
       continue;
     }
 
