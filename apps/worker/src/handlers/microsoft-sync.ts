@@ -29,7 +29,7 @@ import {
 } from '@renkei/connector-microsoft';
 import { MICROSOFT } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
-import { defluffUrls, normalizeBody } from '@renkei/email-sanitizer';
+import { cleanInviteBody, normalizeBody } from '@renkei/email-sanitizer';
 import type { RawEmail } from '@renkei/email-sanitizer';
 import { enqueueKnowledgeEvent } from '../enqueue';
 import {
@@ -371,24 +371,24 @@ function hasSubstance(kind: MicrosoftRefKind, item: Record<string, unknown>): bo
  * A Graph body reduced to the text worth embedding.
  *
  * Graph returns calendar and task bodies as HTML, and this used to embed
- * that HTML verbatim — tags, base64-ish tracking blobs, and every link
- * wrapped in an
- * `https://nam11.safelinks.protection.outlook.com/?url=…&data=…` envelope.
- * A meeting invite is mostly join links, so the stored chunk ended up being
- * mostly URL-encoding: it wastes the chunk budget, and it drags the
- * embedding toward whatever a wall of percent-escapes means, which is
- * nothing.
+ * that HTML verbatim — tags, base64-ish tracking blobs, every link wrapped
+ * in a `safelinks.protection.outlook.com` envelope (often wrapping a second
+ * gateway inside it), and forty lines of Teams join chrome. An invite is
+ * mostly join links, so the stored chunk ended up being mostly
+ * URL-encoding, and what wasn't encoding was boilerplate identical to every
+ * other invite in the tenant.
  *
  * Mail never had this problem because it goes through the sanitizer.
- * Calendar and tasks skipped it entirely; these are the same tested pieces,
- * applied to the same kind of content.
+ * Calendar and tasks now go through it too — the shared mail rules, plus
+ * `cleanInviteBody`'s conferencing-block pass, which is maintained
+ * alongside them in the same package.
  */
 function readableBody(item: Record<string, unknown>): string {
   const body = rec(item.body);
   const content = str(body.content);
   if (!content) return str(item.bodyPreview);
   const contentType = str(body.contentType).toLowerCase() === 'html' ? 'html' : 'text';
-  return defluffUrls(normalizeBody({ content, contentType }));
+  return cleanInviteBody(normalizeBody({ content, contentType }));
 }
 
 /** The people on an invite, as names where Graph gave one. */

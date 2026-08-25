@@ -130,15 +130,82 @@ const TRACKING_PARAMS = new Set([
   'gclid',
 ]);
 
-function unwrapSafeLinks(url: string): string {
-  if (!SAFE_LINKS_HOST.test(url)) return url;
+/**
+ * Every link-rewriting gateway we have seen in this org's mail.
+ *
+ * These matter more than they look. A wrapped link is a few hundred
+ * characters of opaque token where a readable URL used to be, and mail and
+ * invites are FULL of links — so an unwrapped body is largely gibberish by
+ * volume, which wastes the chunk budget and drags the embedding toward
+ * nothing in particular.
+ *
+ * They also NEST: a message relayed through two gateways arrives as
+ * safelinks wrapping urldefense. Unwrapping once leaves the inner wrapper
+ * sitting there, so the loop below runs until the URL stops changing.
+ */
+const PROOFPOINT_V3 = /^https:\/\/urldefense\.com\/v3\/__(.+?)__;/i;
+const PROOFPOINT_V2 = /^https:\/\/urldefense\.proofpoint\.com\/v2\/url\?/i;
+const BARRACUDA = /^https:\/\/linkprotect\.cudasvc\.com\/url\?/i;
+const MIMECAST = /^https:\/\/protect[a-z0-9-]*\.mimecast\.com\//i;
+
+function fromParam(url: string, parameter: string): string | null {
   try {
-    const parsed = new URL(url);
-    const inner = parsed.searchParams.get('url');
-    return inner || url;
+    const inner = new URL(url).searchParams.get(parameter);
+    return inner || null;
   } catch {
-    return url;
+    return null;
   }
+}
+
+/** One layer off, or the URL unchanged when it is not wrapped. */
+function unwrapOnce(url: string): string {
+  if (SAFE_LINKS_HOST.test(url)) return fromParam(url, 'url') ?? url;
+
+  // Proofpoint v3 embeds the target between __ markers rather than in a
+  // query parameter.
+  const v3 = PROOFPOINT_V3.exec(url);
+  if (v3?.[1]) {
+    // v3 substitutes `*` for some characters and describes them in the
+    // trailing token; the token is not recoverable here, so the asterisks
+    // are dropped. A very slightly lossy URL beats 300 characters of
+    // wrapper.
+    return v3[1].replace(/\*+/g, '');
+  }
+
+  if (PROOFPOINT_V2.test(url)) {
+    const encoded = fromParam(url, 'u');
+    // v2's own encoding: `-` for `%` and `_` for `/`, then percent-decoding.
+    if (encoded) {
+      const restored = encoded.replace(/-/g, '%').replace(/_/g, '/');
+      try {
+        return decodeURIComponent(restored);
+      } catch {
+        return restored;
+      }
+    }
+  }
+
+  if (BARRACUDA.test(url)) return fromParam(url, 'a') ?? url;
+
+  // Mimecast tokens are not reversible — the original lives only in their
+  // service. The domain hint it carries is still far better than the token.
+  if (MIMECAST.test(url)) {
+    const domain = fromParam(url, 'domain');
+    return domain ? `https://${domain.replace(/^https?:\/\//i, '')}` : url;
+  }
+
+  return url;
+}
+
+function unwrapRedirects(url: string): string {
+  let current = url;
+  // Bounded: wrappers nest two deep in practice, and a cycle must not spin.
+  for (let layer = 0; layer < 4; layer += 1) {
+    const next = unwrapOnce(current);
+    if (next === current) break;
+    current = next;
+  }
+  return current;
 }
 
 function stripTrackingParams(url: string): string {
@@ -163,7 +230,7 @@ const URL_PATTERN = /https?:\/\/[^\s<>"')\]]+/gi;
 
 /** Unwrap known tracking-redirect wrappers and strip tracking query params from bare URLs. */
 export function defluffUrls(text: string): string {
-  return text.replace(URL_PATTERN, (match) => stripTrackingParams(unwrapSafeLinks(match)));
+  return text.replace(URL_PATTERN, (match) => stripTrackingParams(unwrapRedirects(match)));
 }
 
 export function cleanHumanMail(text: string, bannerPatterns?: readonly string[]): string {

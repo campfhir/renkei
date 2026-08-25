@@ -31,6 +31,7 @@ export {
   defluffUrls,
   LEGAL_FOOTER_ANCHORS,
 } from './clean/generic';
+export { cleanInviteBody, stripConferencingBoilerplate } from './clean/calendar';
 export { deriveTemplate, matchTemplate, type MarkedField } from './registry/template';
 export {
   SEED_TEMPLATES,
