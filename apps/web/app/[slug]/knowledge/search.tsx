@@ -230,8 +230,14 @@ function HitCard({ group, terms }: { group: DocumentGroup; terms: string[] }) {
   const hit = group.best;
   const when = whenFor(hit);
   const relevance = relevanceLabel(hit.distance);
+  // `url` is what the connectors now record for Jira issues, Confluence
+  // pages, SharePoint files and mail alike; the older per-provider keys stay
+  // ahead of nothing, so chunks indexed before this keep their link.
   const webLink =
-    str(hit.metadata.webLink) || str(hit.metadata.note_link) || str(hit.metadata.join_url);
+    str(hit.metadata.url) ||
+    str(hit.metadata.webLink) ||
+    str(hit.metadata.note_link) ||
+    str(hit.metadata.join_url);
   const needsTruncation = hit.content.length > EXCERPT_CHARS;
   const shown =
     expanded || !needsTruncation ? hit.content : `${hit.content.slice(0, EXCERPT_CHARS)}…`;

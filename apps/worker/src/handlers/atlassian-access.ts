@@ -31,6 +31,12 @@ export interface AtlassianAccess {
   accountId: string;
   /** The Atlassian site — every gateway path is /ex/{product}/{cloudId}/… */
   cloudId: string;
+  /**
+   * The site's own address, e.g. https://acme.atlassian.net. Carried so
+   * indexed content can record a link a person can actually open — a
+   * cloudId is a routing detail, not somewhere to click.
+   */
+  siteUrl: string;
 }
 
 /**
@@ -89,5 +95,10 @@ export async function resolveAtlassianAccess(
     throw new Error(`${provider} grant for ${accountId} carries no cloud id`);
   }
 
-  return { accessToken: grant.accessToken, accountId, cloudId: site.cloudId };
+  return {
+    accessToken: grant.accessToken,
+    accountId,
+    cloudId: site.cloudId,
+    siteUrl: site.siteUrl,
+  };
 }

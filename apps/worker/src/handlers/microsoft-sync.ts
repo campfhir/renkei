@@ -271,6 +271,49 @@ export async function ensureMicrosoftSubscriptions(
 }
 
 /** A Graph message record as the connector-agnostic shape the sanitizer expects. */
+/**
+ * The correspondents on a Graph item, resolved to names with the addresses
+ * beside them.
+ *
+ * "Evan Jeing <evan.jeing@nems.org>" is what someone reads; the bare address
+ * is what they search for. Recording both costs nothing here and cannot be
+ * reconstructed later — the sanitized body does not carry it.
+ */
+function correspondents(item: Record<string, unknown>): Record<string, unknown> {
+  const one = (value: unknown): string => {
+    const address = rec(rec(value).emailAddress);
+    const name = str(address.name);
+    const email = str(address.address);
+    if (name && email && name.toLowerCase() !== email.toLowerCase()) return `${name} <${email}>`;
+    return email || name;
+  };
+  const many = (value: unknown): string[] =>
+    Array.isArray(value) ? value.map(one).filter((entry) => entry.length > 0) : [];
+  const addresses = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value
+          .map((entry) => str(rec(rec(entry).emailAddress).address))
+          .filter((entry) => entry.length > 0)
+      : [];
+
+  const from = one(item.from ?? item.sender);
+  const to = many(item.toRecipients);
+  const cc = many(item.ccRecipients);
+  const organizer = one(item.organizer);
+  const toAddresses = addresses(item.toRecipients);
+  const ccAddresses = addresses(item.ccRecipients);
+  return {
+    from: from || undefined,
+    fromAddress: str(rec(rec(item.from ?? item.sender).emailAddress).address) || undefined,
+    to: to.length > 0 ? to : undefined,
+    toAddresses: toAddresses.length > 0 ? toAddresses : undefined,
+    cc: cc.length > 0 ? cc : undefined,
+    ccAddresses: ccAddresses.length > 0 ? ccAddresses : undefined,
+    organizer: organizer || undefined,
+    hasAttachments: item.hasAttachments === true ? true : undefined,
+  };
+}
+
 export function rawEmailOf(item: Record<string, unknown>): RawEmail {
   const from = rec(rec(item.from).emailAddress);
   // `sender` is Graph's RFC 5322 Sender — the actual authenticated sender,
@@ -475,8 +518,10 @@ export async function runSubscriptionSync(
             kind,
             upn: access.upn,
             webLink: str(entry.webLink) || undefined,
+            url: str(entry.webLink) || undefined,
             when: str(entry.receivedDateTime) || undefined,
             subject: str(entry.subject) || undefined,
+            ...correspondents(entry),
           },
           sourceAt: str(entry.receivedDateTime) || null,
         },
@@ -547,6 +592,8 @@ export async function runSubscriptionSync(
           kind,
           upn: access.upn,
           webLink: str(item.webLink) || undefined,
+          url: str(item.webLink) || undefined,
+          ...correspondents(item),
           when:
             str(item.receivedDateTime) ||
             str(rec(item.start).dateTime) ||
