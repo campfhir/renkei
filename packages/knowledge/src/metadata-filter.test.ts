@@ -105,3 +105,61 @@ describe('compileMetadataFilter', () => {
     expect(built!.sql).toContain(' OR ');
   });
 });
+
+describe('|| across the two halves', () => {
+  it('supports || between filters, which is the common case', () => {
+    const { filter: kept, unsupported } = splitQuery({
+      type: 'or',
+      nodes: [filter('space', 'Eng'), filter('space', 'Ops')],
+    });
+    expect(unsupported).toBeNull();
+    expect(kept?.type).toBe('or');
+    const built = compileMetadataFilter(kept)!.compile(compiler);
+    expect(built.sql).toContain(' OR ');
+    expect(built.parameters).toEqual(expect.arrayContaining(['space', '%Eng%', '%Ops%']));
+  });
+
+  it('keeps grouping: (a || b) && c', () => {
+    const { filter: kept } = splitQuery({
+      type: 'and',
+      nodes: [
+        { type: 'or', nodes: [filter('space', 'Eng'), filter('space', 'Ops')] },
+        filter('ticket', 'ENG-787'),
+      ],
+    });
+    const built = compileMetadataFilter(kept)!.compile(compiler);
+    expect(built.sql).toContain(' OR ');
+    expect(built.sql).toContain(' AND ');
+  });
+
+  it('refuses a word OR-ed with a filter instead of quietly ANDing it', () => {
+    // The halves recombine as AND by construction, so this cannot be
+    // honoured — and answering a narrower question without saying so is the
+    // worst of the options.
+    const {
+      unsupported,
+      filter: kept,
+      terms,
+    } = splitQuery({
+      type: 'or',
+      nodes: [bare('printers'), filter('ticket', 'ENG-787')],
+    });
+    expect(unsupported).toContain('cannot be combined with ||');
+    expect(kept).toBeNull();
+    expect(terms).toEqual([]);
+  });
+
+  it('still allows a word AND-ed with an OR of filters', () => {
+    const {
+      terms,
+      filter: kept,
+      unsupported,
+    } = splitQuery({
+      type: 'and',
+      nodes: [bare('printers'), { type: 'or', nodes: [filter('a', '1'), filter('b', '2')] }],
+    });
+    expect(unsupported).toBeNull();
+    expect(terms).toEqual(['printers']);
+    expect(kept?.type).toBe('or');
+  });
+});
