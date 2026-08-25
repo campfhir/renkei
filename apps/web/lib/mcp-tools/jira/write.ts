@@ -719,7 +719,11 @@ export async function registerWriteTools(
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         issueKey: z.string().describe('Issue key, e.g. PROJ-123'),
-        comment: z.string().describe('Comment text (markdown format)'),
+        comment: z
+          .string()
+          .describe(
+            'Comment text (markdown). To mention someone use [~accountid:ACCOUNT_ID] with an id from jira_search_users — a name or email will not notify anyone.'
+          ),
       }),
     },
     async (args: Record<string, unknown>) => {
