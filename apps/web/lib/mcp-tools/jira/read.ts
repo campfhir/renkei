@@ -6,15 +6,11 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import {
-  issueUrl,
-  cacheUserDisplayName,
-  getCachedDisplayName,
-  withPresentationHint,
-} from '../common';
+import { cacheUserDisplayName, getCachedDisplayName, withPresentationHint } from '../common';
 import { STANDARD_ISSUE_FIELDS, normalizeFieldId, renderFieldValue } from './fields';
 import { previewToolMeta, RESULTS_LIST_URI } from '../widgets';
 import { logger } from '@/lib/logger';
+import { issueLinkTargets, issueLinksMarkdown } from './issue-urls';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
 function errText(value: string) {
@@ -449,7 +445,7 @@ export async function registerReadTools(
                   ]
                 : []),
             ],
-            links: [{ label: 'Open in Jira', url: issueUrl(context.siteUrl, key) }],
+            links: await issueLinkTargets(context.siteUrl, auth, key),
           };
           const group = grouped.get(statusName) ?? {
             order: categoryOrder(category),
@@ -702,7 +698,7 @@ export async function registerReadTools(
         }
 
         const resolvedIssueKey = isString(issue.key) ? issue.key : String(issue.key);
-        const text = `${lines.join('\n')}\n\n[Open in Jira](${issueUrl(context.siteUrl, resolvedIssueKey)})`;
+        const text = `${lines.join('\n')}\n\n${await issueLinksMarkdown(context.siteUrl, auth, resolvedIssueKey)}`;
         return { content: [{ type: 'text' as const, text }] };
       } catch (error) {
         return {

@@ -22,7 +22,13 @@ import { ZoomClient, encodeZoomMeetingId, vttToText } from '@renkei/connector-zo
 import { logger } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
-import { APP_ONLY_META, MEETING_PREVIEW_URI, confirmGuard, previewToolMeta } from '../widgets';
+import {
+  APP_ONLY_META,
+  MEETING_PREVIEW_URI,
+  confirmGuard,
+  previewToolMeta,
+  newPreviewId,
+} from '../widgets';
 import { resolveZoomAccess, ZOOM_API_BASE, type ZoomAuth } from './zoom-auth';
 
 export const ZOOM_MCP_CONNECTOR = 'zoom';
@@ -377,6 +383,7 @@ export async function registerZoomTools(
             `it with zoom_create_meeting instead.`
         ),
         structuredContent: {
+          previewId: newPreviewId(),
           kind: 'zoom',
           topic,
           startTime,

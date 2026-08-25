@@ -23,6 +23,7 @@ import {
   el,
   injectStyle,
   inputField,
+  parseLinks,
   recallDone,
   rememberDone,
   renderDone,
@@ -61,14 +62,24 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     return;
   }
 
-  const stateKey = `renkei-issue:${confirmTool}:${JSON.stringify(confirmArgs).slice(0, 200)}`;
-  const remembered = recallDone(stateKey);
+  // Keyed by the id the preview tool minted for THIS card. It used to be
+  // the confirm tool plus a slice of its arguments, so a second preview of
+  // the same kind recalled the first one's receipt and rendered as already
+  // cancelled — no fields, no button, and no way back short of clearing
+  // localStorage.
+  //
+  // No id means an older server: render the live card rather than risk
+  // recalling someone else's outcome. Forgetting a cancellation costs one
+  // extra click; showing a stale one makes the tool unusable.
+  const previewId = str(preview.previewId);
+  const stateKey = previewId ? `renkei-preview:${previewId}` : '';
+  const remembered = stateKey ? recallDone(stateKey) : null;
   if (remembered) {
     renderDone(root, remembered);
     return;
   }
   const finishDone = (state: DoneState) => {
-    rememberDone(stateKey, state);
+    if (stateKey) rememberDone(stateKey, state);
     renderDone(root, state);
   };
 
@@ -127,10 +138,15 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     if (confirmed.isError) throw new Error(text || 'The write failed');
     // First line only on the card ("Created issue SCRUM-42"); the model gets
     // the whole result — it needs the key and link for its next reply.
+    // Whatever the confirm tool linked to — the issue, and for a JSM
+    // request the customer portal as well — so the thing just created can
+    // be opened from the card instead of scrolled back for.
+    const links = parseLinks(text);
     finishDone({
       icon: 'sent',
       headline: text.split('\n')[0] || 'Done',
       detail: str(preview.subtitle) || str(preview.title),
+      ...(links.length > 0 ? { links } : {}),
     });
     bridge.updateModelContext(
       `The user confirmed "${str(preview.title)}" on the preview card. Result: ${text}`

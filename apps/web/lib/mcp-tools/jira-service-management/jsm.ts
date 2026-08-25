@@ -15,6 +15,7 @@ import {
   RESULTS_LIST_URI,
   confirmGuard,
   previewToolMeta,
+  newPreviewId,
 } from '../widgets';
 import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
 
@@ -492,7 +493,12 @@ export async function registerJsmTools(
         content: [
           {
             type: 'text' as const,
-            text: `Created request ${key}\n\n[Open in portal](${requestUrl(context.siteUrl, key)})`,
+            // Both views: whoever works it needs the Jira issue, whoever
+            // reported it can only open the portal.
+            text:
+              `Created request ${key}\n\n` +
+              `[Open in Jira](${issueUrl(context.siteUrl, key)}) · ` +
+              `[Customer portal](${requestUrl(context.siteUrl, key)})`,
           },
         ],
       };
@@ -585,6 +591,7 @@ export async function registerJsmTools(
         ],
         structuredContent: {
           kind: 'issue',
+          previewId: newPreviewId(),
           title: 'Create service desk request',
           subtitle: `${deskName || `desk ${serviceDeskId}`} · ${typeName || `type ${requestTypeId}`}`,
           confirmTool: 'jsm_create_request_confirm',

@@ -15,6 +15,7 @@ import {
   injectStyle,
   inputField,
   readonlyField,
+  parseLinks,
   recallDone,
   rememberDone,
   renderDone,
@@ -47,14 +48,20 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   }
 
   const timezone = str(preview.timezone);
-  const stateKey = `renkei-zoom:${str(preview.topic)}:${startTime}`;
-  const remembered = recallDone(stateKey);
+  // Keyed by the id the preview tool minted for THIS card, not by its
+  // content: two previews of the same kind used to share a receipt, so the
+  // second rendered as already-decided with no fields and no button. No id
+  // means an older server — render the live card rather than risk showing
+  // someone else's outcome.
+  const previewId = str(preview.previewId);
+  const stateKey = previewId ? `renkei-preview:${previewId}` : '';
+  const remembered = stateKey ? recallDone(stateKey) : null;
   if (remembered) {
     renderDone(root, remembered);
     return;
   }
   const finishDone = (state: DoneState) => {
-    rememberDone(stateKey, state);
+    if (stateKey) rememberDone(stateKey, state);
     renderDone(root, state);
   };
 
@@ -87,6 +94,9 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     if (created.isError) throw new Error(resultText(created) || 'Create failed');
     finishDone({
       icon: 'sent',
+      ...(parseLinks(resultText(created)).length > 0
+        ? { links: parseLinks(resultText(created)) }
+        : {}),
       headline: 'Meeting created',
       detail: `“${topic.input.value.trim()}” — ${startTime}`,
     });
