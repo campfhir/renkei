@@ -29,6 +29,7 @@ import {
 } from '@renkei/connector-microsoft';
 import { MICROSOFT } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
+import { defluffUrls, normalizeBody } from '@renkei/email-sanitizer';
 import type { RawEmail } from '@renkei/email-sanitizer';
 import { enqueueKnowledgeEvent } from '../enqueue';
 import {
@@ -366,16 +367,55 @@ function hasSubstance(kind: MicrosoftRefKind, item: Record<string, unknown>): bo
   return true;
 }
 
+/**
+ * A Graph body reduced to the text worth embedding.
+ *
+ * Graph returns calendar and task bodies as HTML, and this used to embed
+ * that HTML verbatim — tags, base64-ish tracking blobs, and every link
+ * wrapped in an
+ * `https://nam11.safelinks.protection.outlook.com/?url=…&data=…` envelope.
+ * A meeting invite is mostly join links, so the stored chunk ended up being
+ * mostly URL-encoding: it wastes the chunk budget, and it drags the
+ * embedding toward whatever a wall of percent-escapes means, which is
+ * nothing.
+ *
+ * Mail never had this problem because it goes through the sanitizer.
+ * Calendar and tasks skipped it entirely; these are the same tested pieces,
+ * applied to the same kind of content.
+ */
+function readableBody(item: Record<string, unknown>): string {
+  const body = rec(item.body);
+  const content = str(body.content);
+  if (!content) return str(item.bodyPreview);
+  const contentType = str(body.contentType).toLowerCase() === 'html' ? 'html' : 'text';
+  return defluffUrls(normalizeBody({ content, contentType }));
+}
+
+/** The people on an invite, as names where Graph gave one. */
+function attendeeList(item: Record<string, unknown>): { display: string[]; addresses: string[] } {
+  const entries = Array.isArray(item.attendees) ? item.attendees : [];
+  const display: string[] = [];
+  const addresses: string[] = [];
+  for (const entry of entries) {
+    const address = rec(rec(entry).emailAddress);
+    const email = str(address.address);
+    const name = str(address.name);
+    if (!email && !name) continue;
+    display.push(
+      name && email && name.toLowerCase() !== email.toLowerCase()
+        ? `${name} <${email}>`
+        : email || name
+    );
+    if (email) addresses.push(email);
+  }
+  return { display, addresses };
+}
+
 function contentOf(kind: MicrosoftRefKind, item: Record<string, unknown>): string {
   if (kind === 'evt') {
     const organizer = rec(rec(item.organizer).emailAddress);
-    const attendees = Array.isArray(item.attendees)
-      ? item.attendees
-          .map((entry) => str(rec(rec(entry).emailAddress).address))
-          .filter(Boolean)
-          .join(', ')
-      : '';
-    const body = str(rec(item.body).content) || str(item.bodyPreview);
+    const attendees = attendeeList(item).display.join(', ');
+    const body = readableBody(item);
     return [
       `Event: ${str(item.subject)}`,
       `When: ${str(rec(item.start).dateTime)} → ${str(rec(item.end).dateTime)}`,
@@ -387,7 +427,7 @@ function contentOf(kind: MicrosoftRefKind, item: Record<string, unknown>): strin
       .filter(Boolean)
       .join('\n');
   }
-  const body = str(rec(item.body).content);
+  const body = readableBody(item);
   return [
     `Task: ${str(item.title)}`,
     `Status: ${str(item.status)}`,
@@ -594,6 +634,16 @@ export async function runSubscriptionSync(
           webLink: str(item.webLink) || undefined,
           url: str(item.webLink) || undefined,
           ...correspondents(item),
+          ...(() => {
+            const { display, addresses } = attendeeList(item);
+            return {
+              attendees: display.length > 0 ? display : undefined,
+              attendeeAddresses: addresses.length > 0 ? addresses : undefined,
+              attendeeCount: display.length > 0 ? display.length : undefined,
+              location: str(rec(item.location).displayName) || undefined,
+              isOnline: item.isOnlineMeeting === true ? true : undefined,
+            };
+          })(),
           when:
             str(item.receivedDateTime) ||
             str(rec(item.start).dateTime) ||
