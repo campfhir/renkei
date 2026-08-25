@@ -25,6 +25,7 @@ import { getDatabase } from '@renkei/db';
 import { atlassianFetch, fieldScreenFor, listOf, rec, str } from '@renkei/connector-atlassian';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { enqueueKnowledgeEvent } from '../enqueue';
+import { TitleList } from '../log-titles';
 import { jiraDocument } from './jira-document';
 import { confluenceDocument } from './confluence-document';
 import type { AtlassianAccess } from './atlassian-access';
@@ -58,6 +59,12 @@ export interface WatchRow {
 export interface WatchSyncResult {
   /** Items ingested this round — the running count the connectors page shows. */
   items: number;
+  /**
+   * What was ingested, by name — an issue key and summary, or a page title.
+   * Bounded; see log-titles.ts for why a log line must not grow with the
+   * space it is indexing.
+   */
+  titles: string[];
   /** The new high-water mark, or null when nothing moved. */
   cursor: string | null;
 }
@@ -94,6 +101,7 @@ async function syncJira(
   const jql = `${clauses.join(' AND ')} ORDER BY updated ASC`;
 
   let items = 0;
+  const indexed = new TitleList();
   let newest = row.cursor;
   let nextPageToken: string | null = null;
 
@@ -165,6 +173,7 @@ async function syncJira(
         // Successive versions of one issue stay serial; issues parallelize.
         `jira/${key}`
       );
+      indexed.add(`${key}: ${str(rec(issue.fields).summary)}`.trim());
       items += 1;
       if (updated && (!newest || updated > newest)) newest = updated;
     }
@@ -173,7 +182,7 @@ async function syncJira(
     if (!nextPageToken || issues.length === 0) break;
   }
 
-  return { items, cursor: newest };
+  return { items, titles: indexed.titles(), cursor: newest };
 }
 
 async function syncConfluence(
@@ -183,6 +192,7 @@ async function syncConfluence(
 ): Promise<WatchSyncResult> {
   const since = windowStart(row.cursor);
   let items = 0;
+  const indexed = new TitleList();
   let newest = row.cursor;
   // Confluence v2 has no delta endpoint; newest-modified-first plus a
   // watermark is the closest equivalent, so we walk until we reach content
@@ -242,6 +252,7 @@ async function syncConfluence(
         },
         `confluence/${id}`
       );
+      indexed.add(title);
       items += 1;
       if (modified && (!newest || modified > newest)) newest = modified;
     }
@@ -251,7 +262,7 @@ async function syncConfluence(
     path = nextLink || null;
   }
 
-  return { items, cursor: newest };
+  return { items, titles: indexed.titles(), cursor: newest };
 }
 
 /**
@@ -355,7 +366,7 @@ export async function runWatchSync(
   if (!embedder) {
     // No embedding provider means the knowledge layer is off for this org.
     // Nothing to do, and not an error worth retrying.
-    return { items: 0, cursor: row.cursor };
+    return { items: 0, titles: [], cursor: row.cursor };
   }
 
   const result =

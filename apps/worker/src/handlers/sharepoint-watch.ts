@@ -36,6 +36,7 @@ import { readObjectMetadataBatch } from '@renkei/knowledge';
 import { isExtractableCandidate, DEFAULT_MAX_INPUT_BYTES } from '@renkei/document-text';
 import { enqueueKnowledgeEvent } from '../enqueue';
 import { logger } from '../logger';
+import { TitleList } from '../log-titles';
 import type { MicrosoftAccess } from './microsoft-access';
 
 const COMPONENT = 'sharepoint/watch';
@@ -64,6 +65,8 @@ export interface DriveSyncResult {
   removed: number;
   unsupported: number;
   oversized: number;
+  /** The names of the enqueued documents, bounded — see log-titles.ts. */
+  titles: string[];
   cursor: string | null;
 }
 
@@ -117,7 +120,15 @@ export async function runDriveWatchSync(
         tenantId,
         scope: row.scope_label ?? driveId,
       });
-      return { items: 0, skipped: 0, removed: 0, unsupported: 0, oversized: 0, cursor: null };
+      return {
+        items: 0,
+        skipped: 0,
+        removed: 0,
+        unsupported: 0,
+        oversized: 0,
+        titles: [],
+        cursor: null,
+      };
     }
     throw new Error(`delta round failed for drive ${driveId}: ${round.err.message ?? 'unknown'}`);
   }
@@ -137,12 +148,16 @@ export async function runDriveWatchSync(
   const known = stored.ok ? stored.val : new Map<string, Record<string, unknown>>();
 
   const orderingKey = `sharepoint/${driveId}`;
+  // Which documents, not just how many — the counts alone cannot answer
+  // "did the file I just saved get picked up?".
+  const indexed = new TitleList();
   const result: DriveSyncResult = {
     items: 0,
     skipped: 0,
     removed: 0,
     unsupported: 0,
     oversized: 0,
+    titles: [],
     cursor: round.val.deltaLink ?? round.val.nextLink,
   };
 
@@ -222,8 +237,10 @@ export async function runDriveWatchSync(
       },
       orderingKey
     );
+    indexed.add(name);
     result.items += 1;
   }
+  result.titles = indexed.titles();
 
   // When a cursorless enumeration CLOSES (Graph handed back a real deltaLink
   // rather than a capped continuation), everything that survived it has been
@@ -269,10 +286,14 @@ export async function runDriveWatchSync(
     unsupported: result.unsupported,
     oversized: result.oversized,
     removed: result.removed,
+    // The names themselves, so a search on a filename finds the round that
+    // took it in. `documents` is the phrase the sentence uses.
+    titles: result.titles,
+    documents: indexed.summary(),
   };
   if (result.items > 0 || result.removed > 0) {
     logger.info(
-      'indexed {items} doc(s) from {scope} for {userName} — {skipped} unchanged, {unsupported} unsupported, {oversized} oversized, {removed} removed',
+      'indexed {items} doc(s) from {scope} for {userName}: {documents} — {skipped} unchanged, {unsupported} unsupported, {oversized} oversized, {removed} removed',
       fields
     );
   } else {
