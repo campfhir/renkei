@@ -228,15 +228,6 @@ export interface ContentWatches {
   updated_at: Generated<Timestamp>;
 }
 
-export interface EmailBannerPatterns {
-  created_at: Generated<Timestamp>;
-  enabled: Generated<boolean>;
-  id: string;
-  phrase: string;
-  tenant_id: string;
-  updated_at: Generated<Timestamp>;
-}
-
 export interface EmailClassificationLog {
   account_id: string | null;
   category: string;
@@ -690,7 +681,6 @@ export interface DB {
   audit_events: AuditEvents;
   connector_configs: ConnectorConfigs;
   content_watches: ContentWatches;
-  email_banner_patterns: EmailBannerPatterns;
   email_classification_log: EmailClassificationLog;
   email_classifier_rules: EmailClassifierRules;
   email_cleaner_scripts: EmailCleanerScripts;

@@ -1,6 +1,11 @@
 /**
  * What a calendar invite looks like by the time it is embedded.
  *
+ * Only decoding is asserted here. Whether a Teams join block counts as
+ * boilerplate is a tenant's judgment now, expressed in a cleaner script
+ * pointed at the calendar kind — so there is no built-in behaviour left to
+ * test for it, and a test demanding one would be arguing with the design.
+ *
  * Graph hands back HTML, and a meeting invite is mostly join links — each
  * wrapped in a safelinks envelope carrying a few hundred characters of
  * percent-encoding. Embedded raw, a chunk is more URL escape than meaning,
@@ -8,11 +13,11 @@
  * vector search.
  */
 
-import { cleanInviteBody, normalizeBody } from '@renkei/email-sanitizer';
+import { decodeBody, normalizeBody } from '@renkei/email-sanitizer';
 
 /** The same reduction microsoft-sync applies before embedding. */
 function readable(content: string, contentType: 'html' | 'text'): string {
-  return cleanInviteBody(normalizeBody({ content, contentType }));
+  return decodeBody(normalizeBody({ content, contentType }));
 }
 
 describe('calendar body cleaning', () => {
@@ -38,22 +43,5 @@ describe('calendar body cleaning', () => {
 
   it('leaves a plain-text body alone apart from tidying', () => {
     expect(readable('Standup at 9.\n\nBring numbers.', 'text')).toContain('Standup at 9.');
-  });
-});
-
-describe('invite chrome', () => {
-  it('drops the Teams block that is identical in every invite, keeping the coordinates', () => {
-    const html =
-      '<div>Cutover review — bring the rollback plan.<br>' +
-      '<hr>Microsoft Teams<br>Need help?<br>Join the meeting now<br>' +
-      'Meeting ID: 231 998 447 102<br>Passcode: Kd7pQ2<br>' +
-      'Find a local number<br>For organizers: Meeting options | Reset dial-in PIN</div>';
-    const cleaned = readable(html, 'html');
-    expect(cleaned).toContain('bring the rollback plan');
-    expect(cleaned).toContain('231 998 447 102');
-    expect(cleaned).toContain('Kd7pQ2');
-    expect(cleaned).not.toContain('Need help?');
-    expect(cleaned).not.toContain('Find a local number');
-    expect(cleaned).not.toContain('For organizers');
   });
 });

@@ -14,7 +14,6 @@ export type {
   TemplateSegment,
   ExtractionTemplate,
   TemplateMatch,
-  BannerPattern,
   MessageOverrideAction,
   MessageOverride,
   SanitizeResult,
@@ -22,22 +21,12 @@ export type {
 
 export { classify, type ClassifiableEmail } from './classify';
 export { normalizeBody, htmlToText, collapseWhitespace } from './normalize';
-export {
-  cleanHumanMail,
-  truncateQuotedChain,
-  truncateSignatureDelimiter,
-  stripExternalSenderBanner,
-  stripLegalFooter,
-  defluffUrls,
-  LEGAL_FOOTER_ANCHORS,
-} from './clean/generic';
-export { cleanInviteBody, stripConferencingBoilerplate } from './clean/calendar';
+export { decodeBody, defluffUrls } from './clean/generic';
 export { deriveTemplate, matchTemplate, type MarkedField } from './registry/template';
 export {
   SEED_TEMPLATES,
   JIRA_SEED_SEGMENTS,
   JSM_SEED_SEGMENTS,
-  SEED_BANNERS,
   DEFAULT_CLASSIFIER_RULES,
   type SeedTemplate,
   type SeedClassifierRule,
@@ -57,13 +46,6 @@ export {
   seedDefaultClassifierRules,
   type ClassifierRuleInput,
 } from './persistence/rules';
-export {
-  listBannerPatterns,
-  listActiveBannerPatterns,
-  upsertBannerPattern,
-  deleteBannerPattern,
-  type BannerPatternInput,
-} from './persistence/banners';
 export {
   listActiveTemplates,
   listTemplateHealth,

@@ -20,8 +20,12 @@ const PLACEHOLDER = `(email) => email.text
   .join('\\n')`;
 
 /**
- * Sandboxed cleaner scripts — for boilerplate the phrase library cannot
- * express. Each script is a function (email) => string run in a QuickJS
+ * Sandboxed cleaner scripts — where every boilerplate decision now lives.
+ * The pipeline itself only decodes (HTML to text, link gateways unwrapped)
+ * and tidies whitespace; what counts as a signature, a footer or a
+ * conferencing block is this organization's call, made here.
+ *
+ * Each script is a function (email) => string run in a QuickJS
  * WebAssembly sandbox (no network, no files, hard time and memory limits);
  * a failing script never eats a message — the text passes through
  * unchanged and the error shows here. The test box runs the script in the
@@ -190,11 +194,12 @@ export default function CleanerScripts({
     <div className="mt-6 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
       <h2 className="text-sm font-semibold">Cleaner scripts</h2>
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        For boilerplate a phrase can&apos;t express: a function <code>(email) =&gt; string</code>{' '}
-        that transforms a body before it is indexed — email, calendar invites, or tasks, whichever
-        you point it at. Scripts run in a sealed sandbox — no network, no files, a hard time limit —
-        and a failing script never loses anything: the text passes through unchanged and the error
-        shows here.
+        Where all boilerplate removal happens: a function <code>(email) =&gt; string</code> that
+        transforms a body before it is indexed — email, calendar invites, or tasks, whichever you
+        point it at. Nothing is stripped that a script here does not strip; the pipeline only
+        decodes links and tidies whitespace on its own. Scripts run in a sealed sandbox — no
+        network, no files, a hard time limit — and a failing script never loses anything: the text
+        passes through unchanged and the error shows here.
       </p>
 
       {error && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p>}

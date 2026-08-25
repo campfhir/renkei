@@ -62,20 +62,6 @@ export interface ClassifierRule {
   enabled: boolean;
 }
 
-/**
- * A literal warning-banner phrase a mail gateway/transport rule prepends to
- * messages from outside senders (e.g. "CAUTION: This Email is from an
- * EXTERNAL source..."). Content-free the same way a classifier rule is —
- * it's boilerplate the org's own mail infrastructure injects, never the
- * sender's own words — so an org-admin manages this library directly, and a
- * new gateway wording is a data change here, not a code deploy.
- */
-export interface BannerPattern {
-  id: string;
-  phrase: string;
-  enabled: boolean;
-}
-
 export interface Classification {
   category: EmailCategory;
   matchedRuleId: string | null;

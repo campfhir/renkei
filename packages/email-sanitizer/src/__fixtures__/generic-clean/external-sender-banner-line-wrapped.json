@@ -1,5 +1,0 @@
-{
-  "description": "A banner that a mail client line-wrapped mid-phrase still matches and is stripped",
-  "content": "CAUTION : This Email is from an EXTERNAL source. DO NOT CLICK LINKS or\nATTACHMENTS if the email is not anticipated, and NEVER provide your User ID\nor Password.\n\nSee you at the review meeting.",
-  "expected": "See you at the review meeting."
-}

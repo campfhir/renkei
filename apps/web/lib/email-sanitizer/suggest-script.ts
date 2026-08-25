@@ -40,7 +40,8 @@ export interface ScriptSuggestion {
 const KIND_BRIEF: Record<CleanerScriptKind, string[]> = {
   msg: [
     'This script cleans EMAIL (email.kind === "msg"). The boilerplate to expect is signature',
-    'blocks, social-link rows, injected banners and legal footers.',
+    'blocks, social-link rows, injected gateway banners and legal footers — none of which the',
+    'pipeline strips on its own any more.',
   ],
   evt: [
     'This script cleans CALENDAR INVITES (email.kind === "evt"). The boilerplate to expect is the',

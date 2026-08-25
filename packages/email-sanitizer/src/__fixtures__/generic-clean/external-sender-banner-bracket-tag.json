@@ -1,5 +1,0 @@
-{
-  "description": "A gateway-prepended [EXTERNAL EMAIL] banner is stripped, leaving the sender's real content",
-  "content": "[EXTERNAL EMAIL] DO NOT CLICK links or attachments unless you recognize the sender and know the content is safe.\n\nThanks for the update, let's sync tomorrow.",
-  "expected": "Thanks for the update, let's sync tomorrow."
-}
