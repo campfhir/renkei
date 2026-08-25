@@ -2,6 +2,7 @@
 
 import StructuredContent from './structured-content';
 import { detailRows } from './detail-rows';
+import { SOURCE_OPTIONS } from './source-options';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { searchMyKnowledge, type KnowledgeSearchHit, type KnowledgeSearchResult } from './actions';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -14,16 +15,6 @@ const K_OPTIONS = [10, 20, 30];
  * sourceFiltersFor, so this list only has to be nameable, not accurate
  * about the schema.
  */
-const SOURCE_OPTIONS: { id: string; label: string }[] = [
-  { id: 'outlook_mail', label: 'Email' },
-  { id: 'outlook_calendar', label: 'Calendar' },
-  { id: 'outlook_tasks', label: 'Tasks' },
-  { id: 'confluence', label: 'Confluence' },
-  { id: 'jira', label: 'Jira' },
-  { id: 'zoom', label: 'Zoom' },
-  { id: 'webex', label: 'WebEx' },
-  { id: 'notes', label: 'My notes' },
-];
 
 const DATE_PRESETS: { id: string; label: string; days: number | null }[] = [
   { id: 'any', label: 'Any time', days: null },
@@ -46,6 +37,12 @@ function providerLabel(provider: string): string {
       return 'Confluence';
     case 'jira':
       return 'Jira';
+    case 'sharepoint':
+      // Capitalised by hand: the generic path renders "Sharepoint", which
+      // is not how the product spells itself.
+      return 'SharePoint';
+    case 'note':
+      return 'Note';
     default:
       return provider.charAt(0).toUpperCase() + provider.slice(1);
   }
@@ -85,6 +82,8 @@ function providerBadgeClass(provider: string): string {
       return 'bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300';
     case 'jira':
       return 'bg-violet-100 text-violet-800 dark:bg-violet-900/40 dark:text-violet-300';
+    case 'sharepoint':
+      return 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300';
     default:
       return 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-300';
   }
