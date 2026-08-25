@@ -1,5 +1,5 @@
 {
-  "script": "01-quoted-reply-chains.js",
+  "script": "01-quoted-reply-chains.ts",
   "kind": "msg",
   "description": "A message with no quoted chain is returned unchanged",
   "expected": "Please review the attached contract before Friday.",

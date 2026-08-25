@@ -95,6 +95,24 @@ const DEFAULT_MEMORY_LIMIT = 32 * 1024 * 1024;
 const DEFAULT_MAX_OUTPUT = 200_000;
 export const MAX_SCRIPT_CHARS = 20_000;
 
+/**
+ * The source as the sandbox needs to see it: an EXPRESSION.
+ *
+ * A script is evaluated as `const __fn = ( <source> );`, so a trailing
+ * semicolon — which is what every formatter adds, and what anyone who
+ * writes `function (email) { ... };` out of habit produces — turns the
+ * whole thing into a syntax error. That failure is invisible in exactly the
+ * wrong way: in production it is a recorded no-op, so the message indexes
+ * uncleaned and the only trace is a `last_error` on a row nobody watches.
+ * Prettier reformatting a checked-in script library is how this was found.
+ *
+ * Only trailing semicolons and surrounding whitespace are touched; anything
+ * inside the function body is left exactly as written.
+ */
+function asExpression(script: string): string {
+  return script.trim().replace(/;+$/, '');
+}
+
 /** One engine per process — the wasm module is the expensive part. */
 let enginePromise: Promise<QuickJSWASMModule> | null = null;
 function engine(): Promise<QuickJSWASMModule> {
@@ -117,7 +135,7 @@ export async function validateCleanerScriptSource(
   runtime.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + 100));
   const context = runtime.newContext();
   try {
-    const evaluated = context.evalCode(`typeof (\n${script}\n) === 'function'`);
+    const evaluated = context.evalCode(`typeof (\n${asExpression(script)}\n) === 'function'`);
     if (evaluated.error) {
       const dumped: unknown = context.dump(evaluated.error);
       evaluated.error.dispose();
@@ -191,7 +209,7 @@ export async function runCleanerScript(
       // Parenthesised so arrow and function expressions both evaluate;
       // the signature check is what makes "must be (email) => string" a
       // contract rather than documentation.
-      `const __fn = (\n${script}\n);\n` +
+      `const __fn = (\n${asExpression(script)}\n);\n` +
       `if (typeof __fn !== 'function') { throw new Error('the script must be a function: (email) => string'); }\n` +
       `const __result = __fn(email);\n` +
       `if (typeof __result !== 'string') { throw new Error('the function must return a string'); }\n` +

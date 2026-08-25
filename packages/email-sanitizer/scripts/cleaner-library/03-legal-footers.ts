@@ -7,7 +7,7 @@
 // only inside such footers, so a match is near-certain; broad keyword
 // scoring ("confidential", "intended recipient") would eventually fire on
 // a real sentence and truncate the message that contains it.
-(email) => {
+function cutLegalFooter(email: CleanerEmail): string {
   const anchors = [
     'this message and any attachments',
     'this e-mail and any attachments',

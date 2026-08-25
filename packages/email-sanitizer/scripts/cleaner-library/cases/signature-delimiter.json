@@ -1,5 +1,5 @@
 {
-  "script": "02-signature-blocks.js",
+  "script": "02-signature-blocks.ts",
   "kind": "msg",
   "description": "The RFC 3676 '-- ' signature delimiter truncates everything after it",
   "content": "See you at the standup.\n\n--\nJane Doe\nSenior Engineer\nExample Corp",

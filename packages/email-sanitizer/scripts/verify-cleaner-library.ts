@@ -23,7 +23,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runCleanerScript, validateCleanerScriptSource } from '../src/index';
+import { runCleanerScript, validateCleanerScriptSource, compileCleanerScript } from '../src/index';
 import type { CleanerScriptKind } from '../src/index';
 
 // The package is ESM ("type": "module"), so there is no __dirname.
@@ -97,13 +97,26 @@ function stressBody(): string {
 }
 
 async function main(): Promise<void> {
-  const scripts = readdirSync(LIBRARY).filter((file) => file.endsWith('.js'));
+  const scripts = readdirSync(LIBRARY).filter((file) => file.endsWith('.ts'));
   const cases = loadCases();
   let failures = 0;
 
   for (const name of scripts) {
-    const source = readFileSync(join(LIBRARY, name), 'utf8');
+    const written = readFileSync(join(LIBRARY, name), 'utf8');
     console.log(`\n${name}`);
+
+    // The library is TypeScript, and QuickJS is not. Everything below runs
+    // the STRIPPED output, which is what the save route stores and what
+    // production actually executes — verifying the annotated source would
+    // be verifying something no sandbox ever sees.
+    const built = await compileCleanerScript(written);
+    if (!built.ok) {
+      console.log(`  ✗ does not compile — ${built.detail ?? built.err.type}`);
+      failures += 1;
+      continue;
+    }
+    const source = built.val.compiled;
+    console.log('  ✓ compiles (types stripped)');
 
     // Save-time check first: the admin page refuses a script that is not a
     // function expression, so a library entry that would be rejected there

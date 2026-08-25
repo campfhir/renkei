@@ -15,6 +15,7 @@ import {
   listCleanerScripts,
   upsertCleanerScript,
   validateCleanerScriptSource,
+  compileCleanerScript,
   MAX_SCRIPT_CHARS,
 } from '@renkei/email-sanitizer';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -72,7 +73,19 @@ export async function POST(
     );
   }
 
-  const valid = await validateCleanerScriptSource(script);
+  // Types come off first, and everything downstream — validation, storage,
+  // the sandbox — sees the JavaScript. Validating the TypeScript source
+  // instead would pass here and then fail in QuickJS, which has no idea
+  // what an annotation is.
+  const built = await compileCleanerScript(script);
+  if (!built.ok) {
+    return NextResponse.json(
+      { error: built.detail ?? 'The script could not be compiled.' },
+      { status: 422 }
+    );
+  }
+
+  const valid = await validateCleanerScriptSource(built.val.compiled);
   if (!valid.ok) return NextResponse.json({ error: valid.error }, { status: 422 });
 
   const appliesTo = parseContentKinds(payload.appliesTo);
@@ -80,6 +93,9 @@ export async function POST(
     ...(typeof payload.id === 'string' && payload.id ? { id: payload.id } : {}),
     name,
     script,
+    // Only stored when the strip actually changed something — a plain-JS
+    // script keeps a null here and reads back as its own source.
+    compiled: built.val.transformed ? built.val.compiled : null,
     enabled: payload.enabled !== false,
     appliesTo,
   });

@@ -11,6 +11,12 @@ export default [
       '.claude/worktrees/**',
       '**/*.config.js',
       '**/*.config.mjs',
+      // Cleaner-library scripts are pasteable payloads, not module code:
+      // nothing imports them, so the exported function is "unused" by
+      // definition, and their exact text is what an admin copies into the
+      // editor. Correctness is enforced by `verify:cleaners`, which runs
+      // each one in the real sandbox against recorded cases.
+      'packages/email-sanitizer/scripts/cleaner-library/*.ts',
       'packages/db/scripts/build-migrations.js',
       'apps/web/scripts/fix-async-warnings.ts',
       'apps/web/scripts/generate-log-ship-keys.mjs',

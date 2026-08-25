@@ -18,7 +18,7 @@
 // run, or a named credential with an actual value is never dropped, however
 // chrome-like it reads — losing a join URL is far worse than leaving a
 // stray line of instructions.
-(email) => {
+function stripConferencingChrome(email: CleanerEmail): string {
   const chrome = [
     // Teams
     /^microsoft teams$/i,

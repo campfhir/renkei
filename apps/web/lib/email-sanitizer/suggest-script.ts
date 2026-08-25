@@ -20,6 +20,7 @@ import { resolveAgentLlm } from '@renkei/agent-llm';
 import {
   runCleanerScript,
   validateCleanerScriptSource,
+  compileCleanerScript,
   MAX_SCRIPT_CHARS,
   type CleanerScriptKind,
 } from '@renkei/email-sanitizer';
@@ -59,8 +60,12 @@ const KIND_BRIEF: Record<CleanerScriptKind, string[]> = {
 
 function promptOf(sample: string, instructions: string, kind: CleanerScriptKind): string {
   return [
-    'You write cleaner scripts for a content sanitizer. A cleaner script is ONE JavaScript',
-    'function expression `(email) => string` that transforms a body before indexing —',
+    'You write cleaner scripts for a content sanitizer. A cleaner script is ONE TypeScript',
+    'function expression that transforms a body before indexing —',
+    'Write it as a NAMED function declaration so it is valid TypeScript on its own:',
+    '  function clean(email: CleanerEmail): string { ... }',
+    'Annotations are stripped before execution, so they cost nothing at run time. Do NOT use',
+    'enum or namespace — they emit runtime code and are rejected.',
     'stripping organization boilerplate while preserving what a person actually wrote.',
     '',
     ...KIND_BRIEF[kind],
@@ -167,7 +172,11 @@ export async function suggestCleanerScript(
 
   // Pre-flight 2: it must actually RUN on the sample it was written for —
   // in the exact production sandbox, same limits.
-  const ran = await runCleanerScript(script, {
+  const built = await compileCleanerScript(script);
+  if (!built.ok) {
+    return { error: built.detail ?? 'The model wrote a script that does not compile.' };
+  }
+  const ran = await runCleanerScript(built.val.compiled, {
     text: sample,
     kind,
     subject: '(sample)',

@@ -76,6 +76,7 @@ export {
   type CleanerScript,
   type CleanerScriptInput,
 } from './persistence/scripts';
+export { compileCleanerScript, type CompiledScript } from './scripts/compile';
 export {
   runCleanerScript,
   validateCleanerScriptSource,

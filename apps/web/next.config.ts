@@ -39,7 +39,10 @@ const nextConfig: NextConfig = {
   ],
   // The cleaner-script sandbox: left external so its .wasm file resolves
   // from node_modules at runtime instead of being lost in the bundle.
-  serverExternalPackages: ['quickjs-emscripten'],
+  // Both ship binaries the bundler must not touch: quickjs-emscripten
+  // resolves a .wasm at runtime, and esbuild spawns a native child process
+  // (it strips types off TypeScript cleaner scripts at save time).
+  serverExternalPackages: ['quickjs-emscripten', 'esbuild'],
   async rewrites() {
     return [
       // RFC 8414 path-insert form for the per-tenant authorization server,

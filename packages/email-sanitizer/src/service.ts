@@ -87,7 +87,9 @@ async function runScriptsOver(
   let body = separator >= 0 ? content.slice(separator + 2) : content;
 
   for (const script of scriptsResult.val) {
-    const run = await runCleanerScript(script.script, { ...fields, text: body, kind });
+    // compiled, never script: the source may be TypeScript, which QuickJS
+    // cannot parse. For plain-JS rows the two are the same string.
+    const run = await runCleanerScript(script.compiled, { ...fields, text: body, kind });
     if (run.ok) {
       body = run.val;
       if (script.lastError) await recordCleanerScriptError(tenantId, script.id, null);

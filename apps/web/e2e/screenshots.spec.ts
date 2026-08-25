@@ -249,3 +249,48 @@ test('run timeline with iterations', async ({ page }, testInfo) => {
   await expect(page.getByText('Iteration 2').first()).toBeVisible();
   await shot(page, testInfo, 'run-timeline-iterations');
 });
+
+test('admin — cleaner script editor with types', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/admin/email-sanitizer`);
+  await expect(page.getByRole('heading', { name: 'Cleaner scripts' })).toBeVisible();
+
+  // Monaco is client-only and lazily imported, so it arrives after hydration.
+  await page.locator('.monaco-editor').first().waitFor();
+  await page.waitForTimeout(2_000);
+  await page.locator('.view-lines').first().click();
+
+  // insertText rather than type(): key events race with auto-closing
+  // brackets and completion, which corrupts the input and produces errors
+  // that belong to the test rather than to the code under test.
+  const write = async (code: string) => {
+    await page.keyboard.press('Control+A');
+    await page.keyboard.press('Delete');
+    await page.keyboard.insertText(code);
+    await page.waitForTimeout(3_500);
+  };
+  const errors = () => page.locator('.squiggly-error').count();
+
+  // The whole point of the editor is that these three differ. If the
+  // ambient CleanerEmail declarations failed to load, correct code would
+  // report errors too and all three counts would be equal — which is
+  // exactly the silent failure this asserts against.
+  await write('function clean(email: CleanerEmail): string {\n  return email.text.trim();');
+  expect(await errors()).toBe(0);
+
+  await write('function clean(email: CleanerEmail): string {\n  return email.nope;');
+  expect(await errors()).toBe(1);
+
+  await write(
+    'function clean(email: CleanerEmail): string {\n  const n: number = email.subject;\n  return email.text;'
+  );
+  expect(await errors()).toBe(1);
+
+  // Completion comes from our own type, not from word-matching the buffer.
+  await write('function clean(email: CleanerEmail): string {\n  return email.att');
+  await page.keyboard.press('Control+Space');
+  const suggestions = page.locator('.suggest-widget');
+  await expect(suggestions).toBeVisible();
+  await expect(suggestions.getByText('attendees', { exact: true })).toBeVisible();
+
+  await shot(page, testInfo, 'admin-cleaner-script-editor');
+});

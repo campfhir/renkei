@@ -1,9 +1,24 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { CONTENT_KINDS, describeKinds } from '@/lib/email-sanitizer/content-kinds';
 import type { CleanerScriptKind } from '@renkei/email-sanitizer';
+
+/**
+ * Monaco is a few megabytes and touches `window` on import, so it is loaded
+ * client-side only and on demand — an admin who came here to add a
+ * classifier rule should not pay for a code editor.
+ */
+const ScriptEditor = dynamic(() => import('./script-editor'), {
+  ssr: false,
+  loading: () => (
+    <div className="rounded-md border border-gray-300 p-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+      Loading editor…
+    </div>
+  ),
+});
 
 interface CleanerScript {
   id: string;
@@ -14,10 +29,19 @@ interface CleanerScript {
   lastError: string | null;
 }
 
-const PLACEHOLDER = `(email) => email.text
-  .split('\\n')
-  .filter((line) => !line.startsWith('Follow NEMS:'))
-  .join('\\n')`;
+/**
+ * Seeded into an empty editor. A NAMED function on purpose: it is valid
+ * TypeScript on its own, which is what lets the language service check the
+ * file and offer completions. An anonymous `function (email) {}` still
+ * works everywhere else — the sandbox and the compiler both parenthesise
+ * it — but the editor would flag it as a declaration missing a name.
+ */
+const STARTER = `function clean(email: CleanerEmail): string {
+  return email.text
+    .split('\\n')
+    .filter((line) => !line.startsWith('Follow NEMS:'))
+    .join('\\n');
+}`;
 
 /**
  * Sandboxed cleaner scripts — where every boilerplate decision now lives.
@@ -82,7 +106,10 @@ export default function CleanerScripts({
   function startEdit(script: CleanerScript | null) {
     setEditingId(script?.id ?? null);
     setName(script?.name ?? '');
-    setSource(script?.script ?? '');
+    // Monaco has no placeholder, so a new script starts from the starter
+    // rather than an empty box — which also means the first thing an author
+    // sees is the documented shape and the typed parameter.
+    setSource(script?.script ?? STARTER);
     const kinds: CleanerScriptKind[] = script?.appliesTo?.length ? script.appliesTo : ['msg'];
     setAppliesTo(kinds);
     setTestKind(kinds[0]);
@@ -281,14 +308,7 @@ export default function CleanerScripts({
             you have tested the script against that kind below.
           </p>
         </fieldset>
-        <textarea
-          value={source}
-          onChange={(event) => setSource(event.target.value)}
-          rows={7}
-          placeholder={PLACEHOLDER}
-          spellCheck={false}
-          className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs dark:border-gray-700 dark:bg-gray-900"
-        />
+        <ScriptEditor value={source} onChange={setSource} />
         <p className="text-xs text-gray-500 dark:text-gray-400">
           <code>email</code> (also <code>item</code>) carries <code>text</code>, <code>kind</code> —{' '}
           <code>&quot;msg&quot;</code> | <code>&quot;evt&quot;</code> |{' '}
