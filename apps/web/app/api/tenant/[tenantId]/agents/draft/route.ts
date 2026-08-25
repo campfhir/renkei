@@ -96,10 +96,16 @@ export async function POST(
     // The builder's CURRENT guardrails: drafted steps must respect them,
     // and only an empty slot invites a proposal.
     guardrails: typeof payload.guardrails === 'string' ? payload.guardrails : null,
-    // Close the "Worth checking" gaps before the user ever sees the draft;
-    // whatever stays open (and any questions only the user can answer)
-    // rides back on the response for the builder to show.
-    refineWithReview: true,
+    // NOT refineWithReview. Someone is watching a spinner here, and that
+    // loop costs up to five more SEQUENTIAL model calls on top of the
+    // draft — a review, up to two refines, and a re-review after each —
+    // every one of which re-sends the whole tool catalog and regenerates
+    // every step verbatim. It turned "draft my agent" into minutes.
+    //
+    // The quality pass is not lost, it is moved: saving already runs the
+    // same critic and fills the builder's "Worth checking" panel. The
+    // user now reads the steps while that happens, instead of watching a
+    // spinner until it finishes.
   });
   if ('error' in drafted) {
     return NextResponse.json(

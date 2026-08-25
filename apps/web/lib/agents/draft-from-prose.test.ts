@@ -815,3 +815,15 @@ describe('questions and edge-case reasoning', () => {
     expect(prompt).toContain('questions');
   });
 });
+
+describe('the interactive draft path costs one model call', () => {
+  it('returns as soon as a clean reply parses, without a review round trip', async () => {
+    replies = [GOOD_REPLY];
+    // No refineWithReview: this is what the builder's Draft button sends.
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    expect(result.steps).toHaveLength(1);
+    // The whole point of the change: one call, not draft + review + refine.
+    expect(requests).toHaveLength(1);
+  });
+});
