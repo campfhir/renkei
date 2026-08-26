@@ -1,0 +1,22 @@
+{
+  // The payloads compile as their own program, not as part of the package.
+  //
+  // Two reasons they cannot just be added to ../../tsconfig.json's include:
+  // cleaner-globals.d.ts declares AMBIENT types, which would then also be
+  // visible to src/ and could mask a missing import there; and the sandbox
+  // is QuickJS, so "types": [] is deliberate — a payload reaching for
+  // Buffer or process must fail here rather than in production, where a
+  // script error is a recorded no-op that indexes the message uncleaned.
+  //
+  // Run by the package's own "typecheck" script; `pnpm -r typecheck` picks
+  // it up from there.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["esnext"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["*.ts"]
+}

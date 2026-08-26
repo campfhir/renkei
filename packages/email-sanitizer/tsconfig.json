@@ -20,5 +20,7 @@
     }
   },
   "include": ["src/**/*.ts", "scripts/**/*.ts"],
-  "exclude": ["node_modules"]
+  // The cleaner library is pasteable payloads compiled against ambient
+  // sandbox globals, so it has its own tsconfig — see the comment there.
+  "exclude": ["node_modules", "scripts/cleaner-library"]
 }

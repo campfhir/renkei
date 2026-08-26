@@ -89,6 +89,8 @@ export const EXPECTED_MIGRATIONS = [
   '056-cleaner-script-compiled',
   '057-webex-sent-messages',
   '058-agent-drafts',
+  '059-agent-notifications',
+  '060-user-preferences',
 ];
 
 export interface MigrationStatus {

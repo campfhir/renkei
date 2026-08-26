@@ -6,7 +6,7 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/cleaner-library",
     "test": "jest",
     "verify:cleaners": "tsx scripts/verify-cleaner-library.ts"
   },
