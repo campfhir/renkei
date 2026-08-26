@@ -51,8 +51,8 @@ const { getAclContext, listGrantedShares, openBackend } = jest.requireMock<{
 }>('@renkei/connector-fileshares');
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
-const paramsOf = (shareId?: string) =>
-  Promise.resolve(shareId ? { tenantId: 'tenant-1', shareId } : { tenantId: 'tenant-1' });
+const paramsOf = () => Promise.resolve({ tenantId: 'tenant-1' });
+const shareParamsOf = (shareId: string) => Promise.resolve({ tenantId: 'tenant-1', shareId });
 
 function aclContext(defaultAccess: 'none' | 'read' | 'read_write', userRules: unknown[] = []) {
   return {
@@ -89,11 +89,11 @@ test('every route answers a signed-out request with 401', async () => {
   const listing = await listShares(reqOf('http://x/api'), { params: paramsOf() });
   expect(listing.status).toBe(401);
   const folder = await listFolder(reqOf('http://x/api?path=/'), {
-    params: paramsOf(SHARE_ID),
+    params: shareParamsOf(SHARE_ID),
   });
   expect(folder.status).toBe(401);
   const file = await downloadFile(reqOf('http://x/api?path=/a'), {
-    params: paramsOf(SHARE_ID),
+    params: shareParamsOf(SHARE_ID),
   });
   expect(file.status).toBe(401);
 });
@@ -101,7 +101,7 @@ test('every route answers a signed-out request with 401', async () => {
 test('an ungranted share answers 404, indistinguishable from a missing one', async () => {
   getAclContext.mockResolvedValue({ ok: true, val: null });
   const response = await listFolder(reqOf('http://x/api?path=/'), {
-    params: paramsOf(SHARE_ID),
+    params: shareParamsOf(SHARE_ID),
   });
   expect(response.status).toBe(404);
 });
@@ -143,7 +143,7 @@ test('folder listings run the same annotate-and-filter pass as the tools', async
     },
   });
   const response = await listFolder(reqOf('http://x/api?path=/'), {
-    params: paramsOf(SHARE_ID),
+    params: shareParamsOf(SHARE_ID),
   });
   expect(response.status).toBe(200);
   const body = await response.json();
@@ -154,7 +154,7 @@ test('folder listings run the same annotate-and-filter pass as the tools', async
 test('a traversal query string is a 400, not a resolution', async () => {
   getAclContext.mockResolvedValue({ ok: true, val: aclContext('read') });
   const response = await listFolder(reqOf('http://x/api?path=/a/../../etc'), {
-    params: paramsOf(SHARE_ID),
+    params: shareParamsOf(SHARE_ID),
   });
   expect(response.status).toBe(400);
   expect(openBackend).not.toHaveBeenCalled();
@@ -166,7 +166,7 @@ test('download refuses a closed path with 403 before any backend call', async ()
     val: aclContext('read', [{ path: '/closed', access: 'none' }]),
   });
   const response = await downloadFile(reqOf('http://x/api?path=/closed/file.txt'), {
-    params: paramsOf(SHARE_ID),
+    params: shareParamsOf(SHARE_ID),
   });
   expect(response.status).toBe(403);
   expect(openBackend).not.toHaveBeenCalled();
@@ -182,7 +182,7 @@ test('download streams bytes with an attachment disposition', async () => {
     },
   });
   const response = await downloadFile(reqOf('http://x/api?path=/report.pdf'), {
-    params: paramsOf(SHARE_ID),
+    params: shareParamsOf(SHARE_ID),
   });
   expect(response.status).toBe(200);
   expect(response.headers.get('content-disposition')).toContain('report.pdf');
@@ -193,7 +193,7 @@ test('PUT requires read_write on the exact destination', async () => {
   getAclContext.mockResolvedValue({ ok: true, val: aclContext('read') });
   const response = await uploadFile(
     reqOf('http://x/api?path=/new.txt', { method: 'PUT', body: 'data' }),
-    { params: paramsOf(SHARE_ID) }
+    { params: shareParamsOf(SHARE_ID) }
   );
   expect(response.status).toBe(403);
   expect(openBackend).not.toHaveBeenCalled();
@@ -203,7 +203,7 @@ test('PUT refuses bodies over the org attachment limit with 413', async () => {
   getAclContext.mockResolvedValue({ ok: true, val: aclContext('read_write') });
   const response = await uploadFile(
     reqOf('http://x/api?path=/new.txt', { method: 'PUT', body: 'x'.repeat(2048) }),
-    { params: paramsOf(SHARE_ID) }
+    { params: shareParamsOf(SHARE_ID) }
   );
   expect(response.status).toBe(413);
   expect(openBackend).not.toHaveBeenCalled();
@@ -219,13 +219,13 @@ test('folder creation authorizes on the parent', async () => {
 
   const refused = await createFolder(
     reqOf('http://x/api', { method: 'POST', body: JSON.stringify({ path: '/reports/new' }) }),
-    { params: paramsOf(SHARE_ID) }
+    { params: shareParamsOf(SHARE_ID) }
   );
   expect(refused.status).toBe(403);
 
   const allowed = await createFolder(
     reqOf('http://x/api', { method: 'POST', body: JSON.stringify({ path: '/drafts/new' }) }),
-    { params: paramsOf(SHARE_ID) }
+    { params: shareParamsOf(SHARE_ID) }
   );
   expect(allowed.status).toBe(200);
   expect(mkdir).toHaveBeenCalledWith('/drafts/new');
