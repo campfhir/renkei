@@ -3,15 +3,27 @@
 /**
  * Share → folder drill-down over the tenant REST routes (the SitePicker
  * idiom: per-level loading/error/empty states, breadcrumb back-navigation).
- * Uploads and new folders appear only where the caller's effective access
- * is read/write — the buttons mirror the ACL, and the routes re-check it.
+ * Rows are fully clickable — a folder opens, a file asks before
+ * downloading — and every mutation (new folder, upload, rename, move,
+ * delete) runs through a modal that shows its own errors. Write controls
+ * appear only where the caller's effective access is read/write — the
+ * buttons mirror the ACL, and the routes re-check it.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { getJson, sendJson } from '@/lib/fetch-json';
+import Modal from '@/components/modal';
+import { Icon, ICONS } from '@/components/icons';
+import { useDismiss } from '@/lib/use-dismiss';
 
 const inputClass =
-  'rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
+  'w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
+const primaryButton =
+  'rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50';
+const dangerButton =
+  'rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50';
+const secondaryButton =
+  'rounded-md border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-800 dark:hover:bg-gray-900';
 
 interface ShareView {
   id: string;
@@ -32,6 +44,15 @@ interface EntryView {
   access: 'read' | 'read_write' | 'traverse';
 }
 
+type ModalState =
+  | null
+  | { kind: 'newFolder' }
+  | { kind: 'upload' }
+  | { kind: 'download'; entry: EntryView }
+  | { kind: 'rename'; entry: EntryView }
+  | { kind: 'move'; entry: EntryView }
+  | { kind: 'delete'; entry: EntryView };
+
 const ACCESS_BADGE: Record<EntryView['access'], string> = {
   read: 'read',
   read_write: 'read/write',
@@ -45,6 +66,14 @@ function formatSize(size: number | null): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function childOf(folder: string, name: string): string {
+  return folder === '/' ? `/${name}` : `${folder}/${name}`;
+}
+
+function fileUrl(tenantId: string, shareId: string, path: string): string {
+  return `/api/tenant/${tenantId}/fileshares/${shareId}/file?path=${encodeURIComponent(path)}`;
+}
+
 export default function FilesBrowser({ tenantId }: { tenantId: string }) {
   const [shares, setShares] = useState<ShareView[] | null>(null);
   const [share, setShare] = useState<ShareView | null>(null);
@@ -53,8 +82,7 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
   const [canWriteHere, setCanWriteHere] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [newFolder, setNewFolder] = useState('');
-  const fileInput = useRef<HTMLInputElement | null>(null);
+  const [modal, setModal] = useState<ModalState>(null);
 
   useEffect(() => {
     void (async () => {
@@ -95,85 +123,10 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
     void loadFolder(target, folderPath);
   };
 
-  const createFolder = async () => {
-    if (!share || !newFolder.trim()) return;
-    const target = path === '/' ? `/${newFolder.trim()}` : `${path}/${newFolder.trim()}`;
-    const createError = await sendJson(
-      `/api/tenant/${tenantId}/fileshares/${share.id}/folders`,
-      'POST',
-      { path: target }
-    );
-    if (createError) {
-      setError(createError);
-      return;
-    }
-    setNewFolder('');
-    await loadFolder(share, path);
-  };
-
-  const upload = async (file: File) => {
-    if (!share) return;
-    const target = path === '/' ? `/${file.name}` : `${path}/${file.name}`;
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(
-        `/api/tenant/${tenantId}/fileshares/${share.id}/file?path=${encodeURIComponent(target)}`,
-        { method: 'PUT', body: file }
-      );
-      if (!response.ok) {
-        const body: unknown = await response.json().catch(() => null);
-        const message =
-          typeof body === 'object' && body !== null && 'error' in body
-            ? String(Reflect.get(body, 'error'))
-            : `Upload failed (${response.status})`;
-        setError(message);
-      }
-    } catch {
-      setError('Upload failed');
-    }
-    setLoading(false);
-    await loadFolder(share, path);
-  };
-
-  const renameEntry = async (entry: EntryView) => {
-    if (!share) return;
-    const newName = window.prompt(`New name for ${entry.name}:`, entry.name)?.trim();
-    if (!newName || newName === entry.name) return;
-    const opError = await sendJson(
-      `/api/tenant/${tenantId}/fileshares/${share.id}/entries`,
-      'POST',
-      { op: 'rename', from: entry.path, newName }
-    );
-    if (opError) setError(opError);
-    await loadFolder(share, path);
-  };
-
-  const moveEntry = async (entry: EntryView) => {
-    if (!share) return;
-    const toFolder = window
-      .prompt(`Move ${entry.name} to which folder? (path from the share root)`, path)
-      ?.trim();
-    if (toFolder === undefined || toFolder === null || toFolder === '') return;
-    const opError = await sendJson(
-      `/api/tenant/${tenantId}/fileshares/${share.id}/entries`,
-      'POST',
-      { op: 'move', from: entry.path, toFolder }
-    );
-    if (opError) setError(opError);
-    await loadFolder(share, path);
-  };
-
-  const deleteEntry = async (entry: EntryView) => {
-    if (!share) return;
-    const what = entry.kind === 'dir' ? 'folder (must be empty)' : 'file';
-    if (!window.confirm(`Delete this ${what} permanently? ${entry.path}`)) return;
-    const opError = await sendJson(
-      `/api/tenant/${tenantId}/fileshares/${share.id}/entries?path=${encodeURIComponent(entry.path)}`,
-      'DELETE'
-    );
-    if (opError) setError(opError);
-    await loadFolder(share, path);
+  /** A modal finished its mutation: close it and re-read the folder. */
+  const done = async () => {
+    setModal(null);
+    if (share) await loadFolder(share, path);
   };
 
   if (shares === null) {
@@ -263,6 +216,8 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
         ))}
       </div>
 
+      {error ? <p className="mt-3 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+
       {loading ? (
         <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">Loading…</p>
       ) : entries.length === 0 && !error ? (
@@ -272,61 +227,42 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
       ) : (
         <ul className="mt-2 divide-y divide-gray-100 dark:divide-gray-900">
           {entries.map((entry) => (
-            <li key={entry.path} className="flex items-center justify-between gap-2 py-1.5">
-              <div className="min-w-0 flex-1">
-                {entry.kind === 'dir' ? (
-                  <button
-                    type="button"
-                    onClick={() => open(share, entry.path)}
-                    className="truncate text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
-                  >
-                    {entry.name}/
-                  </button>
-                ) : entry.access !== 'traverse' ? (
-                  <a
-                    href={`/api/tenant/${tenantId}/fileshares/${share.id}/file?path=${encodeURIComponent(entry.path)}`}
-                    className="truncate text-sm hover:underline"
-                  >
-                    {entry.name}
-                  </a>
-                ) : (
-                  <span className="truncate text-sm">{entry.name}</span>
-                )}
-              </div>
-              <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
-                {formatSize(entry.size)}
-              </span>
-              <span className="shrink-0 rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
-                {ACCESS_BADGE[entry.access]}
-              </span>
-              {entry.access === 'read_write' ? (
-                <span className="flex shrink-0 gap-2 text-xs">
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={() => void renameEntry(entry)}
-                    className="text-blue-600 hover:underline dark:text-blue-400"
-                  >
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={() => void moveEntry(entry)}
-                    className="text-blue-600 hover:underline dark:text-blue-400"
-                  >
-                    Move
-                  </button>
-                  <button
-                    type="button"
-                    disabled={loading}
-                    onClick={() => void deleteEntry(entry)}
-                    className="text-red-600 hover:underline dark:text-red-400"
-                  >
-                    Delete
-                  </button>
+            <li key={entry.path} className="flex items-center gap-1 py-0.5">
+              <button
+                type="button"
+                disabled={loading || (entry.kind === 'file' && entry.access === 'traverse')}
+                onClick={() =>
+                  entry.kind === 'dir'
+                    ? open(share, entry.path)
+                    : setModal({ kind: 'download', entry })
+                }
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-50 disabled:cursor-default disabled:hover:bg-transparent dark:hover:bg-gray-900"
+              >
+                <span
+                  className={`min-w-0 flex-1 truncate text-sm ${
+                    entry.kind === 'dir' ? 'font-medium text-blue-600 dark:text-blue-400' : ''
+                  }`}
+                >
+                  {entry.name}
+                  {entry.kind === 'dir' ? '/' : ''}
                 </span>
-              ) : null}
+                <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
+                  {formatSize(entry.size)}
+                </span>
+                <span className="shrink-0 rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                  {ACCESS_BADGE[entry.access]}
+                </span>
+              </button>
+              {entry.access === 'read_write' ? (
+                <EntryMenu
+                  entry={entry}
+                  disabled={loading}
+                  onAction={(kind) => setModal({ kind, entry })}
+                />
+              ) : (
+                // Keeps rows with and without a menu aligned.
+                <span className="w-7 shrink-0" />
+              )}
             </li>
           ))}
         </ul>
@@ -334,44 +270,574 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
 
       {canWriteHere ? (
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
-          <input
-            ref={fileInput}
-            type="file"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void upload(file);
-              event.target.value = '';
-            }}
-          />
           <button
             type="button"
             disabled={loading}
-            onClick={() => fileInput.current?.click()}
-            className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+            onClick={() => setModal({ kind: 'upload' })}
+            className={secondaryButton}
           >
             Upload file
           </button>
-          <span className="text-gray-300 dark:text-gray-700">·</span>
-          <input
-            aria-label="New folder name"
-            className={inputClass}
-            placeholder="New folder name"
-            value={newFolder}
-            onChange={(event) => setNewFolder(event.target.value)}
-          />
           <button
             type="button"
-            disabled={loading || !newFolder.trim()}
-            onClick={() => void createFolder()}
-            className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+            disabled={loading}
+            onClick={() => setModal({ kind: 'newFolder' })}
+            className={secondaryButton}
           >
-            Create folder
+            New folder
           </button>
         </div>
       ) : null}
 
-      {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      {modal?.kind === 'newFolder' ? (
+        <NewFolderModal
+          tenantId={tenantId}
+          share={share}
+          path={path}
+          onClose={() => setModal(null)}
+          onDone={done}
+        />
+      ) : null}
+      {modal?.kind === 'upload' ? (
+        <UploadModal
+          tenantId={tenantId}
+          share={share}
+          path={path}
+          onClose={() => setModal(null)}
+          onDone={done}
+        />
+      ) : null}
+      {modal?.kind === 'download' ? (
+        <DownloadModal
+          tenantId={tenantId}
+          share={share}
+          entry={modal.entry}
+          onClose={() => setModal(null)}
+        />
+      ) : null}
+      {modal?.kind === 'rename' ? (
+        <RenameModal
+          tenantId={tenantId}
+          share={share}
+          entry={modal.entry}
+          onClose={() => setModal(null)}
+          onDone={done}
+        />
+      ) : null}
+      {modal?.kind === 'move' ? (
+        <MoveModal
+          tenantId={tenantId}
+          share={share}
+          entry={modal.entry}
+          path={path}
+          onClose={() => setModal(null)}
+          onDone={done}
+        />
+      ) : null}
+      {modal?.kind === 'delete' ? (
+        <DeleteModal
+          tenantId={tenantId}
+          share={share}
+          entry={modal.entry}
+          onClose={() => setModal(null)}
+          onDone={done}
+        />
+      ) : null}
     </div>
+  );
+}
+
+/** The per-row "⋯" menu: rename, move, delete — only rendered at read/write. */
+function EntryMenu({
+  entry,
+  disabled,
+  onAction,
+}: {
+  entry: EntryView;
+  disabled: boolean;
+  onAction: (kind: 'rename' | 'move' | 'delete') => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useDismiss(menuOpen, ref, () => setMenuOpen(false));
+
+  const item = (label: string, kind: 'rename' | 'move' | 'delete', danger = false) => (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={() => {
+        setMenuOpen(false);
+        onAction(kind);
+      }}
+      className={`whitespace-nowrap px-3 py-1.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800 ${
+        danger ? 'text-red-600 dark:text-red-400' : ''
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        aria-label={`Actions for ${entry.name}`}
+        disabled={disabled}
+        onClick={() => setMenuOpen((current) => !current)}
+        className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+      >
+        <Icon path={ICONS.more} />
+      </button>
+      {menuOpen ? (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-20 mt-1 flex w-max flex-col rounded-md border border-gray-200 bg-white py-1 text-left shadow-lg dark:border-gray-700 dark:bg-gray-950"
+        >
+          {item('Rename', 'rename')}
+          {item('Move', 'move')}
+          {item('Delete', 'delete', true)}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ModalFooter({ onClose, action }: { onClose: () => void; action: ReactNode }) {
+  return (
+    <div className="mt-4 flex justify-end gap-2">
+      <button type="button" onClick={onClose} className={secondaryButton}>
+        Cancel
+      </button>
+      {action}
+    </div>
+  );
+}
+
+function NewFolderModal({
+  tenantId,
+  share,
+  path,
+  onClose,
+  onDone,
+}: {
+  tenantId: string;
+  share: ShareView;
+  path: string;
+  onClose: () => void;
+  onDone: () => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const create = async () => {
+    if (!name.trim()) return;
+    setBusy(true);
+    setError(null);
+    const createError = await sendJson(
+      `/api/tenant/${tenantId}/fileshares/${share.id}/folders`,
+      'POST',
+      { path: childOf(path, name.trim()) }
+    );
+    setBusy(false);
+    if (createError) {
+      setError(createError);
+      return;
+    }
+    await onDone();
+  };
+
+  return (
+    <Modal title="New folder" onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void create();
+        }}
+      >
+        <label className="block text-sm">
+          <span className="mb-1 block text-gray-600 dark:text-gray-400">
+            Folder name, created in <span className="font-mono">{path}</span>
+          </span>
+          <input
+            autoFocus
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            className={inputClass}
+            placeholder="e.g. 2026-planning"
+          />
+        </label>
+        {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+        <ModalFooter
+          onClose={onClose}
+          action={
+            <button type="submit" disabled={!name.trim() || busy} className={primaryButton}>
+              {busy ? 'Creating…' : 'Create folder'}
+            </button>
+          }
+        />
+      </form>
+    </Modal>
+  );
+}
+
+function UploadModal({
+  tenantId,
+  share,
+  path,
+  onClose,
+  onDone,
+}: {
+  tenantId: string;
+  share: ShareView;
+  path: string;
+  onClose: () => void;
+  onDone: () => Promise<void>;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
+
+  const upload = async () => {
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(fileUrl(tenantId, share.id, childOf(path, file.name)), {
+        method: 'PUT',
+        body: file,
+      });
+      if (!response.ok) {
+        const body: unknown = await response.json().catch(() => null);
+        const message =
+          typeof body === 'object' && body !== null && 'error' in body
+            ? String(Reflect.get(body, 'error'))
+            : `Upload failed (${response.status})`;
+        setError(message);
+        setBusy(false);
+        return;
+      }
+    } catch {
+      setError('Upload failed');
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    await onDone();
+  };
+
+  return (
+    <Modal title="Upload file" onClose={onClose}>
+      <button
+        type="button"
+        onClick={() => fileInput.current?.click()}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragOver(false);
+          const dropped = event.dataTransfer.files?.[0];
+          if (dropped) setFile(dropped);
+        }}
+        className={`flex w-full flex-col items-center gap-1 rounded-md border-2 border-dashed px-4 py-8 text-sm text-gray-600 dark:text-gray-400 ${
+          dragOver
+            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30'
+            : 'border-gray-300 hover:border-gray-400 dark:border-gray-700 dark:hover:border-gray-600'
+        }`}
+      >
+        <span>Drag a file here</span>
+        <span>
+          or <span className="font-medium text-blue-600 dark:text-blue-400">browse</span>
+        </span>
+      </button>
+      <input
+        ref={fileInput}
+        type="file"
+        className="hidden"
+        onChange={(event) => {
+          const picked = event.target.files?.[0];
+          if (picked) setFile(picked);
+          event.target.value = '';
+        }}
+      />
+      {file ? (
+        <p className="mt-2 truncate text-sm">
+          <span className="font-medium">{file.name}</span>
+          <span className="ml-2 text-gray-500 dark:text-gray-400">{formatSize(file.size)}</span>
+        </p>
+      ) : null}
+      <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+        Uploads to <span className="font-mono">{path}</span> on “{share.name}”.
+      </p>
+      {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      <ModalFooter
+        onClose={onClose}
+        action={
+          <button
+            type="button"
+            disabled={!file || busy}
+            onClick={() => void upload()}
+            className={primaryButton}
+          >
+            {busy ? 'Uploading…' : 'Upload'}
+          </button>
+        }
+      />
+    </Modal>
+  );
+}
+
+function DownloadModal({
+  tenantId,
+  share,
+  entry,
+  onClose,
+}: {
+  tenantId: string;
+  share: ShareView;
+  entry: EntryView;
+  onClose: () => void;
+}) {
+  return (
+    <Modal title="Download file" onClose={onClose}>
+      <p className="truncate text-sm font-medium">{entry.name}</p>
+      <dl className="mt-2 space-y-1 text-sm text-gray-600 dark:text-gray-400">
+        <div className="flex gap-2">
+          <dt className="w-20 shrink-0">Path</dt>
+          <dd className="min-w-0 truncate font-mono text-xs leading-5">{entry.path}</dd>
+        </div>
+        {entry.size !== null ? (
+          <div className="flex gap-2">
+            <dt className="w-20 shrink-0">Size</dt>
+            <dd>{formatSize(entry.size)}</dd>
+          </div>
+        ) : null}
+        {entry.modifiedAt ? (
+          <div className="flex gap-2">
+            <dt className="w-20 shrink-0">Modified</dt>
+            <dd>{new Date(entry.modifiedAt).toLocaleString()}</dd>
+          </div>
+        ) : null}
+      </dl>
+      <ModalFooter
+        onClose={onClose}
+        action={
+          <a
+            href={fileUrl(tenantId, share.id, entry.path)}
+            onClick={onClose}
+            className={primaryButton}
+          >
+            Download
+          </a>
+        }
+      />
+    </Modal>
+  );
+}
+
+function RenameModal({
+  tenantId,
+  share,
+  entry,
+  onClose,
+  onDone,
+}: {
+  tenantId: string;
+  share: ShareView;
+  entry: EntryView;
+  onClose: () => void;
+  onDone: () => Promise<void>;
+}) {
+  const [name, setName] = useState(entry.name);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const rename = async () => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === entry.name) return;
+    setBusy(true);
+    setError(null);
+    const opError = await sendJson(
+      `/api/tenant/${tenantId}/fileshares/${share.id}/entries`,
+      'POST',
+      { op: 'rename', from: entry.path, newName: trimmed }
+    );
+    setBusy(false);
+    if (opError) {
+      setError(opError);
+      return;
+    }
+    await onDone();
+  };
+
+  return (
+    <Modal title={`Rename ${entry.kind === 'dir' ? 'folder' : 'file'}`} onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void rename();
+        }}
+      >
+        <label className="block text-sm">
+          <span className="mb-1 block text-gray-600 dark:text-gray-400">
+            New name for <span className="font-mono">{entry.path}</span>
+          </span>
+          <input
+            autoFocus
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            className={inputClass}
+          />
+        </label>
+        {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+        <ModalFooter
+          onClose={onClose}
+          action={
+            <button
+              type="submit"
+              disabled={!name.trim() || name.trim() === entry.name || busy}
+              className={primaryButton}
+            >
+              {busy ? 'Renaming…' : 'Rename'}
+            </button>
+          }
+        />
+      </form>
+    </Modal>
+  );
+}
+
+function MoveModal({
+  tenantId,
+  share,
+  entry,
+  path,
+  onClose,
+  onDone,
+}: {
+  tenantId: string;
+  share: ShareView;
+  entry: EntryView;
+  path: string;
+  onClose: () => void;
+  onDone: () => Promise<void>;
+}) {
+  const [toFolder, setToFolder] = useState(path);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const move = async () => {
+    const trimmed = toFolder.trim();
+    if (!trimmed) return;
+    setBusy(true);
+    setError(null);
+    const opError = await sendJson(
+      `/api/tenant/${tenantId}/fileshares/${share.id}/entries`,
+      'POST',
+      { op: 'move', from: entry.path, toFolder: trimmed }
+    );
+    setBusy(false);
+    if (opError) {
+      setError(opError);
+      return;
+    }
+    await onDone();
+  };
+
+  return (
+    <Modal title={`Move ${entry.kind === 'dir' ? 'folder' : 'file'}`} onClose={onClose}>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void move();
+        }}
+      >
+        <label className="block text-sm">
+          <span className="mb-1 block text-gray-600 dark:text-gray-400">
+            Move <span className="font-mono">{entry.path}</span> to which folder? (path from the
+            share root)
+          </span>
+          <input
+            autoFocus
+            value={toFolder}
+            onChange={(event) => setToFolder(event.target.value)}
+            className={`${inputClass} font-mono`}
+            placeholder="/archive"
+          />
+        </label>
+        {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+        <ModalFooter
+          onClose={onClose}
+          action={
+            <button type="submit" disabled={!toFolder.trim() || busy} className={primaryButton}>
+              {busy ? 'Moving…' : 'Move'}
+            </button>
+          }
+        />
+      </form>
+    </Modal>
+  );
+}
+
+function DeleteModal({
+  tenantId,
+  share,
+  entry,
+  onClose,
+  onDone,
+}: {
+  tenantId: string;
+  share: ShareView;
+  entry: EntryView;
+  onClose: () => void;
+  onDone: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    const opError = await sendJson(
+      `/api/tenant/${tenantId}/fileshares/${share.id}/entries?path=${encodeURIComponent(entry.path)}`,
+      'DELETE'
+    );
+    setBusy(false);
+    if (opError) {
+      setError(opError);
+      return;
+    }
+    await onDone();
+  };
+
+  return (
+    <Modal
+      title={entry.kind === 'dir' ? 'Delete folder' : 'Delete file'}
+      onClose={onClose}
+    >
+      <p className="text-sm">
+        Delete <span className="font-mono">{entry.path}</span> permanently?
+      </p>
+      <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+        Deletion on the file server is permanent — there is no recycle bin.
+        {entry.kind === 'dir' ? ' Only empty folders can be deleted.' : ''}
+      </p>
+      {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+      <ModalFooter
+        onClose={onClose}
+        action={
+          <button type="button" disabled={busy} onClick={() => void remove()} className={dangerButton}>
+            {busy ? 'Deleting…' : 'Delete permanently'}
+          </button>
+        }
+      />
+    </Modal>
   );
 }
