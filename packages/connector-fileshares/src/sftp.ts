@@ -44,7 +44,11 @@ function mapError(operation: string, cause: unknown): { kind: BackendError; mess
   // file, 3 = permission denied) and socket-level failures as string codes.
   if (code === 2 || /no such file/i.test(message)) return { kind: 'not_found', message };
   if (code === 3 || /permission denied/i.test(message)) return { kind: 'access_denied', message };
+  if (code === 4 && /not empty/i.test(message)) return { kind: 'not_empty', message };
   if (code === 4 && /exist/i.test(message)) return { kind: 'exists', message };
+  // OpenSSH reports a non-empty rmdir as a bare SSH_FX_FAILURE with an
+  // unhelpful "Failure" message; the operation name is the only signal.
+  if (code === 4 && /rmdir/i.test(operation)) return { kind: 'not_empty', message };
   if (typeof code === 'string') return { kind: 'connection', message };
   return { kind: 'protocol', message };
 }
@@ -113,6 +117,11 @@ export async function openSftpBackend(
         OP_TIMEOUT_MS,
         client.realPath(target.val)
       );
+      // ssh2-sftp-client answers a nonexistent path with '' rather than an
+      // error; that is absence, not a containment violation.
+      if (resolved === '') {
+        return err('not_found' as const, { message: 'Nothing exists at that path.' });
+      }
       const normalized = normalizePath(resolved);
       if (!normalized.ok || !isBoundaryPrefix(realRoot, normalized.val, false)) {
         return err('access_denied' as const, { message: 'Path resolves outside the share root.' });
@@ -239,6 +248,59 @@ export async function openSftpBackend(
         return ok(undefined);
       } catch (cause) {
         const info = mapError('mkdir', cause);
+        return err(info.kind, { message: info.message });
+      }
+    },
+
+    async remove(path, kind) {
+      const resolved = await resolveExisting(path);
+      if (!resolved.ok) {
+        // Convergent by contract, matching the SMB backend: an already-absent
+        // target IS the desired end state. Callers stat first for the kind.
+        if (resolved.err.type === 'not_found') return ok(undefined);
+        return resolved;
+      }
+      if (resolved.val === realRoot) {
+        return err('protocol' as const, { message: 'Refusing to remove the share root.' });
+      }
+      try {
+        await withTimeout(
+          'sftp remove',
+          OP_TIMEOUT_MS,
+          kind === 'dir' ? client.rmdir(resolved.val, false) : client.delete(resolved.val)
+        );
+        return ok(undefined);
+      } catch (cause) {
+        const info = mapError(kind === 'dir' ? 'rmdir' : 'delete', cause);
+        if (info.kind === 'not_found') return ok(undefined);
+        return err(info.kind, { message: info.message });
+      }
+    },
+
+    async rename(fromPath, toPath) {
+      const from = await resolveExisting(fromPath);
+      if (!from.ok) return from;
+      const to = await resolveForCreate(toPath);
+      if (!to.ok) return to;
+      if (from.val === realRoot) {
+        return err('protocol' as const, { message: 'Refusing to rename the share root.' });
+      }
+
+      // Never clobber: SFTP servers differ on whether rename overwrites, so
+      // the uniform answer comes from probing the destination first. The
+      // probe-then-rename race window is accepted — the ACL already allows
+      // this caller to write both paths.
+      const collision = await backend.stat(toPath);
+      if (collision.ok) {
+        return err('exists' as const, { message: `"${toPath}" already exists.` });
+      }
+      if (collision.err.type !== 'not_found') return collision;
+
+      try {
+        await withTimeout('sftp rename', OP_TIMEOUT_MS, client.rename(from.val, to.val));
+        return ok(undefined);
+      } catch (cause) {
+        const info = mapError('rename', cause);
         return err(info.kind, { message: info.message });
       }
     },

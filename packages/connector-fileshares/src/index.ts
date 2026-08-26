@@ -71,6 +71,7 @@ export {
   hasAnyGrant,
   listGrantedShares,
   listGrants,
+  listRulePathsUnder,
   listRules,
   listShares,
   readCredentialCiphertext,

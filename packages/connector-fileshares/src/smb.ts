@@ -78,6 +78,8 @@ function mapError(operation: string, cause: unknown): { kind: BackendError; mess
       return { kind: 'access_denied', message };
     case 'STATUS_OBJECT_NAME_COLLISION':
       return { kind: 'exists', message };
+    case 'STATUS_DIRECTORY_NOT_EMPTY':
+      return { kind: 'not_empty', message };
     default:
       return code.startsWith('STATUS_')
         ? { kind: 'protocol', message }
@@ -290,6 +292,63 @@ export function openSmbBackend(
         return ok(undefined);
       } catch (cause) {
         const info = mapError('mkdir', cause);
+        return err(info.kind, { message: info.message });
+      }
+    },
+
+    async remove(path, kind) {
+      const target = resolve(path);
+      if (!target.ok) return target;
+      if (target.val === '') {
+        return err('protocol' as const, { message: 'Refusing to remove the share root.' });
+      }
+      try {
+        await run('smb remove', OP_TIMEOUT_MS, (c) =>
+          kind === 'dir' ? c.rmdir(target.val) : c.unlink(target.val)
+        );
+        return ok(undefined);
+      } catch (cause) {
+        const info = mapError('remove', cause);
+        // Convergent by contract: the desired end state is "absent", and a
+        // not_found here usually means a STATUS_PENDING retry reissued a
+        // remove whose first attempt had already landed. Callers stat first
+        // (they need the kind), so a genuinely-missing target is their
+        // answer to give.
+        if (info.kind === 'not_found') return ok(undefined);
+        return err(info.kind, { message: info.message });
+      }
+    },
+
+    async rename(fromPath, toPath) {
+      const from = resolve(fromPath);
+      if (!from.ok) return from;
+      const to = resolve(toPath);
+      if (!to.ok) return to;
+      if (from.val === '' || to.val === '') {
+        return err('protocol' as const, { message: 'Refusing to rename the share root.' });
+      }
+
+      // Never clobber: probe the destination first so every server answers
+      // uniformly, then rename without replace so a race still refuses.
+      const collision = await backend.stat(toPath);
+      if (collision.ok) {
+        return err('exists' as const, { message: `"${toPath}" already exists.` });
+      }
+      if (collision.err.type !== 'not_found') return collision;
+
+      try {
+        await run('smb rename', OP_TIMEOUT_MS, (c) =>
+          c.rename(from.val, to.val, { replace: false })
+        );
+        return ok(undefined);
+      } catch (cause) {
+        const info = mapError('rename', cause);
+        if (info.kind === 'not_found') {
+          // A retried rename whose first attempt landed reports not_found on
+          // the source; the destination existing now is the disambiguation.
+          const healed = await backend.stat(toPath);
+          if (healed.ok) return ok(undefined);
+        }
         return err(info.kind, { message: info.message });
       }
     },

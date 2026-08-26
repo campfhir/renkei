@@ -20,6 +20,7 @@ import type { DB } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { isAccessLevel, isShareProtocol } from './types';
+import { isBoundaryPrefix } from './paths';
 import type { AccessLevel, AclContext, PathRule, ShareGrant, ShareSummary } from './types';
 
 export type StoreError = 'DB_ERROR' | 'MALFORMED_ROW';
@@ -306,6 +307,39 @@ export async function readCredentialCiphertext(
   );
   if (!row.ok) return row;
   return ok(row.val?.encrypted_credentials ?? null);
+}
+
+/**
+ * Every rule path — ANY layer, ANY subject — anchored at or strictly under
+ * `path`. This is the move/rename/delete guard's question, and it must span
+ * all subjects: the caller's AclContext only carries their own layers, but
+ * moving a folder would slide OTHER users' rules off their targets too
+ * (rules govern paths, not objects). A non-empty answer means the operation
+ * is refused until an admin removes those rules.
+ */
+export async function listRulePathsUnder(
+  db: Kysely<DB>,
+  tenantId: string,
+  shareId: string,
+  path: string,
+  caseInsensitive: boolean
+): Promise<Result<string[], StoreError>> {
+  const rows = await wrapAsync(
+    () =>
+      db
+        .selectFrom('file_share_path_rules')
+        .select('path')
+        .where('tenant_id', '=', tenantId)
+        .where('share_id', '=', shareId)
+        .execute(),
+    'DB_ERROR' as const
+  );
+  if (!rows.ok) return rows;
+  const anchored = new Set<string>();
+  for (const row of rows.val) {
+    if (isBoundaryPrefix(path, row.path, caseInsensitive)) anchored.add(row.path);
+  }
+  return ok([...anchored].sort());
 }
 
 // ---------------------------------------------------------------------------

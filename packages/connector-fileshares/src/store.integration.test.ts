@@ -23,6 +23,7 @@ import {
   hasAnyGrant,
   listGrantedShares,
   listGrants,
+  listRulePathsUnder,
   listRules,
   upsertGrant,
   upsertRule,
@@ -187,6 +188,44 @@ describeLive('file-share store (live database)', () => {
     clearFileShareCache();
     const fresh = await getAclContext(db, tenantId, shareId, SUBJECT);
     expect(fresh.ok && fresh.val?.grant.defaultAccess).toBe('read_write');
+
+    await deleteShare(db, tenantId, shareId);
+  });
+
+  it('finds every subject’s rules anchored under a path', async () => {
+    const created = await createShare(db, tenantId, shareInput('anchored'), 'cred');
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const shareId = created.val;
+    await upsertGrant(db, tenantId, shareId, SUBJECT, 'read_write', 'admin-subject');
+    await upsertGrant(db, tenantId, shareId, 'other-subject', 'read', 'admin-subject');
+
+    // One share-layer rule, one rule belonging to ANOTHER subject — the
+    // move/delete guard must see both, not just the caller's layers.
+    await upsertRule(db, tenantId, shareId, null, '/vault/shared', 'read', 'admin-subject');
+    await upsertRule(
+      db,
+      tenantId,
+      shareId,
+      'other-subject',
+      '/Vault/secret',
+      'none',
+      'admin-subject'
+    );
+    await upsertRule(db, tenantId, shareId, SUBJECT, '/elsewhere', 'read', 'admin-subject');
+
+    const anchored = await listRulePathsUnder(db, tenantId, shareId, '/vault', true);
+    expect(anchored.ok).toBe(true);
+    if (anchored.ok) {
+      expect(anchored.val).toEqual(['/Vault/secret', '/vault/shared']);
+    }
+
+    // Case folding is the share's choice: sensitive matching drops /Vault.
+    const sensitive = await listRulePathsUnder(db, tenantId, shareId, '/vault', false);
+    expect(sensitive.ok && sensitive.val).toEqual(['/vault/shared']);
+
+    const clean = await listRulePathsUnder(db, tenantId, shareId, '/clean', true);
+    expect(clean.ok && clean.val).toEqual([]);
 
     await deleteShare(db, tenantId, shareId);
   });

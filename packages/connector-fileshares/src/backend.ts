@@ -19,7 +19,14 @@ import type { ShareCredentials } from './credentials';
 import type { RawEntry, ShareSummary } from './types';
 
 export type BackendError =
-  'not_found' | 'access_denied' | 'connection' | 'timeout' | 'too_large' | 'exists' | 'protocol';
+  | 'not_found'
+  | 'access_denied'
+  | 'connection'
+  | 'timeout'
+  | 'too_large'
+  | 'exists'
+  | 'not_empty'
+  | 'protocol';
 
 export interface ShareBackend {
   list(path: string): Promise<Result<RawEntry[], BackendError>>;
@@ -28,6 +35,17 @@ export interface ShareBackend {
   read(path: string, maxBytes: number): Promise<Result<Uint8Array, BackendError>>;
   write(path: string, bytes: Uint8Array): Promise<Result<void, BackendError>>;
   mkdir(path: string): Promise<Result<void, BackendError>>;
+  /**
+   * Remove one entry. `kind` comes from a prior stat and selects the
+   * protocol primitive; directory removal is NON-recursive — a non-empty
+   * directory is a 'not_empty' error, never a tree delete.
+   */
+  remove(path: string, kind: 'file' | 'dir'): Promise<Result<void, BackendError>>;
+  /**
+   * Rename/move within the share (one primitive serves both). Never
+   * clobbers: an existing destination is an 'exists' error.
+   */
+  rename(fromPath: string, toPath: string): Promise<Result<void, BackendError>>;
   close(): Promise<void>;
 }
 

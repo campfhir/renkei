@@ -72,4 +72,58 @@ describeLive('sftp backend (live)', () => {
       await backend.close();
     }
   }, 30_000);
+
+  it('renames, moves, and deletes with the guarded semantics', async () => {
+    const opened = await openSftpBackend(share(), {
+      protocol: 'sftp',
+      username: user ?? '',
+      password: password ?? '',
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    const backend = opened.val;
+
+    try {
+      const dir = `/mvtest-${Date.now()}`;
+      const sub = `${dir}/sub`;
+      expect((await backend.mkdir(dir)).ok).toBe(true);
+      expect((await backend.mkdir(sub)).ok).toBe(true);
+      const body = new TextEncoder().encode('payload');
+      expect((await backend.write(`${dir}/a.txt`, body)).ok).toBe(true);
+      expect((await backend.write(`${dir}/blocker.txt`, body)).ok).toBe(true);
+
+      // Rename in place.
+      expect((await backend.rename(`${dir}/a.txt`, `${dir}/b.txt`)).ok).toBe(true);
+      // Move into a subfolder.
+      expect((await backend.rename(`${dir}/b.txt`, `${sub}/b.txt`)).ok).toBe(true);
+      const moved = await backend.read(`${sub}/b.txt`, 1024);
+      expect(moved.ok).toBe(true);
+
+      // Clobbering is refused.
+      const clobber = await backend.rename(`${sub}/b.txt`, `${dir}/blocker.txt`);
+      expect(clobber.ok).toBe(false);
+      if (!clobber.ok) expect(clobber.err.type).toBe('exists');
+
+      // Rename a folder.
+      expect((await backend.rename(sub, `${dir}/sub2`)).ok).toBe(true);
+      const inRenamed = await backend.stat(`${dir}/sub2/b.txt`);
+      expect(inRenamed.ok).toBe(true);
+
+      // A non-empty folder does not delete.
+      const notEmpty = await backend.remove(`${dir}/sub2`, 'dir');
+      expect(notEmpty.ok).toBe(false);
+      if (!notEmpty.ok) expect(notEmpty.err.type).toBe('not_empty');
+
+      // Files, then the emptied folders, delete cleanly.
+      expect((await backend.remove(`${dir}/sub2/b.txt`, 'file')).ok).toBe(true);
+      expect((await backend.remove(`${dir}/blocker.txt`, 'file')).ok).toBe(true);
+      expect((await backend.remove(`${dir}/sub2`, 'dir')).ok).toBe(true);
+      expect((await backend.remove(dir, 'dir')).ok).toBe(true);
+
+      // Convergent contract: removing what is already gone succeeds.
+      expect((await backend.remove(`${dir}/sub2/b.txt`, 'file')).ok).toBe(true);
+    } finally {
+      await backend.close();
+    }
+  }, 30_000);
 });
