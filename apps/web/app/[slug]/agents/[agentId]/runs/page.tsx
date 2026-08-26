@@ -7,10 +7,14 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getAgent } from '@/lib/agents/store';
-import { listRunsForOwner } from '@/lib/agents/runs-view';
+import { isRunStatus, listRunsForOwner } from '@/lib/agents/runs-view';
 import { StatusPill } from '../../run-timeline';
-import { errorSummary } from '@/lib/agents/run-labels';
+import RunsSearch from '../../runs-search';
+import { errorSummary, statusLabel } from '@/lib/agents/run-labels';
 import LocalTime from '@/components/local-time';
+
+/** The status tabs the pages offer; 'queued' stays reachable via All. */
+const STATUS_TABS = ['succeeded', 'failed', 'stopped', 'waiting', 'running', 'canceled'] as const;
 
 /** The owner's run list — full visibility over their own agent's history. */
 export default async function AgentRunsPage({
@@ -18,10 +22,10 @@ export default async function AgentRunsPage({
   searchParams,
 }: {
   params: Promise<{ slug: string; agentId: string }>;
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; q?: string }>;
 }): Promise<React.ReactNode> {
   const { slug, agentId } = await params;
-  const { status } = await searchParams;
+  const { status, q } = await searchParams;
   const tenant = await tenantForSlug(slug);
   if (!tenant) notFound();
 
@@ -35,11 +39,21 @@ export default async function AgentRunsPage({
   const agent = await getAgent(dbResult.val, tenant.id, session.subject, agentId);
   if (!agent) notFound();
 
-  const filter =
-    status === 'succeeded' || status === 'failed' || status === 'stopped' ? status : undefined;
+  const filter = isRunStatus(status) ? status : undefined;
+  const query = typeof q === 'string' && q.trim() ? q.trim() : undefined;
   const runs = await listRunsForOwner(dbResult.val, tenant.id, session.subject, agentId, {
     status: filter,
+    ...(query ? { q: query } : {}),
   });
+
+  const basePath = `/${slug}/agents/${agentId}/runs`;
+  const tabHref = (tabStatus?: string) => {
+    const params = new URLSearchParams();
+    if (tabStatus) params.set('status', tabStatus);
+    if (query) params.set('q', query);
+    const search = params.toString();
+    return search ? `${basePath}?${search}` : basePath;
+  };
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -47,18 +61,16 @@ export default async function AgentRunsPage({
         <BackLink href={`/${slug}/agents/${agentId}`} label={`“${agent.name}”`} />
         <h1 className="min-w-0 truncate text-xl font-bold">Runs of “{agent.name}”</h1>
       </div>
-      <div className="mb-4 flex gap-2 text-sm">
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-sm">
         {[
-          { label: 'All', href: `/${slug}/agents/${agentId}/runs` },
-          { label: 'Succeeded', href: `/${slug}/agents/${agentId}/runs?status=succeeded` },
-          { label: 'Failed', href: `/${slug}/agents/${agentId}/runs?status=failed` },
-          { label: 'Stopped', href: `/${slug}/agents/${agentId}/runs?status=stopped` },
+          { label: 'All', value: undefined },
+          ...STATUS_TABS.map((value) => ({ label: statusLabel(value), value })),
         ].map((tab) => (
           <Link
             key={tab.label}
-            href={tab.href}
+            href={tabHref(tab.value)}
             className={`rounded-full border px-3 py-1 ${
-              tab.label.toLowerCase() === (filter ?? 'all')
+              tab.value === filter
                 ? 'border-blue-600 bg-blue-600 text-white'
                 : 'border-gray-300 text-gray-600 dark:border-gray-700 dark:text-gray-400'
             }`}
@@ -67,9 +79,14 @@ export default async function AgentRunsPage({
           </Link>
         ))}
       </div>
+      <div className="mb-4">
+        <RunsSearch basePath={basePath} status={filter} initialQ={query ?? ''} />
+      </div>
 
       {runs.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">No runs yet.</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          {query || filter ? 'No runs match.' : 'No runs yet.'}
+        </p>
       ) : (
         <ul className="space-y-2">
           {runs.map((run) => (
@@ -96,6 +113,12 @@ export default async function AgentRunsPage({
           ))}
         </ul>
       )}
+      {runs.length === 50 ? (
+        <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+          Showing the newest 50 matching runs — narrow with the search or a status tab to reach
+          older ones.
+        </p>
+      ) : null}
     </div>
   );
 }

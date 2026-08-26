@@ -156,3 +156,46 @@ export async function POST(
   const result = await update.executeTakeFirst();
   return NextResponse.json({ marked: Number(result.numUpdatedRows ?? 0) });
 }
+
+/**
+ * Delete some or all of the caller's notifications — the UI's dismiss.
+ *
+ * A hard delete on purpose: rows are an ephemeral feed the retention sweep
+ * already deletes wholesale, so a tombstone would outlive its point. The
+ * same structural scoping as the POST — a borrowed id deletes nothing.
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ tenantId: string }> }
+): Promise<NextResponse> {
+  const { tenantId } = await params;
+  const session = await getSessionFromRequest(request, tenantId);
+  if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
+  const body: unknown = await request.json().catch(() => null);
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return NextResponse.json({ error: 'Expected an object' }, { status: 400 });
+  }
+  const payload: { ids?: unknown; all?: unknown } = body;
+  const ids = Array.isArray(payload.ids)
+    ? payload.ids.filter((id): id is string => typeof id === 'string')
+    : null;
+  if (!ids && payload.all !== true) {
+    return NextResponse.json({ error: 'Expected ids: string[] or all: true' }, { status: 400 });
+  }
+
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+
+  let del = dbResult.val
+    .deleteFrom('agent_notifications')
+    .where('tenant_id', '=', tenantId)
+    .where('subject', '=', session.subject);
+  if (ids) {
+    if (ids.length === 0) return NextResponse.json({ deleted: 0 });
+    del = del.where('id', 'in', ids);
+  }
+
+  const result = await del.executeTakeFirst();
+  return NextResponse.json({ deleted: Number(result.numDeletedRows ?? 0) });
+}

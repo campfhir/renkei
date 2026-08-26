@@ -69,7 +69,7 @@ function NodeList({
               node.result === 'failure'
                 ? 'Fails the run here'
                 : node.result === 'stop'
-                  ? 'Stops the run here — nothing to do'
+                  ? 'Skips the rest of the run here'
                   : 'Finishes the run here';
             const channels = [
               ...(node.notifyEmail ? ['emails you'] : []),
@@ -96,7 +96,10 @@ function NodeList({
           }
           case 'approval': {
             const outcomes: { label: string; path: (typeof node)['onApproved'] }[] = [
-              { label: node.mode === 'input' ? 'If answered' : 'If approved', path: node.onApproved },
+              {
+                label: node.mode === 'input' ? 'If answered' : 'If approved',
+                path: node.onApproved,
+              },
               { label: 'If declined', path: node.onDeclined },
               { label: 'If nobody acts in time', path: node.onTimeout },
             ];
@@ -162,7 +165,14 @@ function StepCard({ step, ordinal }: { step: ActionStep; ordinal: number }): Rea
       ) : null}
       {step.failureHandling.some((entry) => entry.action === 'stop-quiet') ? (
         <p className="mt-1 text-xs text-gray-500">
-          Some failure conditions are treated as “nothing to do” and end the run silently.
+          Some failure conditions skip the rest of the run silently.
+        </p>
+      ) : null}
+      {step.failureHandling.some(
+        (entry) => entry.action === 'continue' || entry.exhausted === 'continue'
+      ) ? (
+        <p className="mt-1 text-xs text-gray-500">
+          Some failure conditions are noted and the run keeps going.
         </p>
       ) : null}
     </li>

@@ -60,7 +60,7 @@ function stubMcp(tools: string[], callTool: (name: string) => McpToolResult): Mc
 }
 
 const finish = (
-  outcome: 'success' | 'failure' | 'nothing-to-do',
+  outcome: 'success' | 'failure' | 'skipped' | 'nothing-to-do',
   extra: Record<string, unknown> = {}
 ): LlmResponse => ({
   content: [
@@ -465,7 +465,7 @@ maybe('agent run engine', () => {
 
     // The attempt keeps its outcome code (the timeline says what happened)
     // but its status matches the run's graceful end — not a red Failed pill
-    // inside a nothing-to-do run, and not admin-visible content either
+    // inside a skipped run, and not admin-visible content either
     // (the redaction rule shows step content only for failures).
     const attempts = await db
       .selectFrom('agent_run_steps')
@@ -478,6 +478,152 @@ maybe('agent run engine', () => {
 
     // Quiet: no notification, no chained agents.
     expect(finalized[0]).toMatchObject({ status: 'stopped', quiet: true });
+  });
+
+  it("continues to the next step when the failure's handling says continue", async () => {
+    const secondStepId = randomUUID();
+    const steps: AgentStepsDoc = {
+      version: 7,
+      steps: [
+        {
+          id: randomUUID(),
+          name: 'Find the ticket',
+          instruction: [
+            { t: 'text', v: 'Find the ticket using ' },
+            { t: 'tool', name: 'jira_get_issue' },
+          ],
+          tool: 'jira_get_issue',
+          maxAttempts: 1,
+          saveAs: 'theTicket',
+          failureHandling: [{ outcome: 'not-found', action: 'continue' }],
+        },
+        {
+          id: secondStepId,
+          name: 'Decide what to do',
+          instruction: [
+            { t: 'text', v: 'Decide from ' },
+            { t: 'var', name: 'theTicket' },
+          ],
+          tool: null,
+          maxAttempts: 1,
+          failureHandling: [],
+        },
+      ],
+    };
+    const { runId } = await seedRun(steps);
+    const seen: string[] = [];
+    const llm = stubLlm((request, call) => {
+      seen.push(JSON.stringify(request.messages));
+      return call === 0 ? finish('failure', { code: 'not-found' }) : finish('success');
+    });
+    const handler = handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => notFoundToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    // The failure stayed on the step; the run moved on and finished.
+    expect(run.status).toBe('succeeded');
+    expect(run.error_kind).toBeNull();
+
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['step_id', 'status', 'outcome_code'])
+      .where('run_id', '=', runId)
+      .orderBy('step_index')
+      .execute();
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0].status).toBe('failed');
+    expect(attempts[0].outcome_code).toBe('not-found');
+    expect(attempts[1].status).toBe('succeeded');
+    // The saved result bound to the failure summary, so the second step's
+    // prompt saw what happened instead of an unbound chip.
+    expect(seen[1]).toContain('theTicket: declared failure');
+  });
+
+  it('takes the exhausted choice when every retry fails', async () => {
+    const steps: AgentStepsDoc = {
+      version: 7,
+      steps: [
+        {
+          id: randomUUID(),
+          name: 'Search for a ticket',
+          instruction: [
+            { t: 'text', v: 'Search using ' },
+            { t: 'tool', name: 'jira_get_issue' },
+          ],
+          tool: 'jira_get_issue',
+          maxAttempts: 2,
+          saveAs: 'theTicket',
+          failureHandling: [
+            {
+              outcome: 'not-found',
+              action: 'retry',
+              guidance: [{ t: 'text', v: 'Search by summary text instead.' }],
+              exhausted: 'continue',
+            },
+          ],
+        },
+        {
+          id: randomUUID(),
+          name: 'Carry on regardless',
+          instruction: [{ t: 'text', v: 'Proceed.' }],
+          tool: null,
+          maxAttempts: 1,
+          failureHandling: [],
+        },
+      ],
+    };
+    const { runId } = await seedRun(steps);
+    const llm = stubLlm((_request, call) =>
+      call < 2 ? finish('failure', { code: 'not-found' }) : finish('success')
+    );
+    const handler = handlerWith(
+      llm,
+      stubMcp(['jira_get_issue'], () => notFoundToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    // Both tries failed; the exhausted choice moved the run on instead of
+    // failing it — the pre-v7 default only binds when nothing was chosen.
+    expect(run.status).toBe('succeeded');
+    expect(run.error_kind).toBeNull();
+
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['status'])
+      .where('run_id', '=', runId)
+      .orderBy('step_index')
+      .orderBy('attempt')
+      .execute();
+    expect(attempts.map((row) => row.status)).toEqual(['failed', 'failed', 'succeeded']);
+  });
+
+  it("accepts the legacy 'nothing-to-do' spelling as a skip", async () => {
+    const { runId } = await seedRun(singleStep({ failureHandling: [], maxAttempts: 1 }));
+    const handler = handlerWith(
+      stubLlm(() => finish('nothing-to-do')),
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error_kind'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('stopped');
+    expect(run.error_kind).toBeNull();
   });
 
   it('ends the run early — and quietly — when finish_step declares stop', async () => {
@@ -535,7 +681,7 @@ maybe('agent run engine', () => {
     expect(finalized[0]).toMatchObject({ status: 'succeeded', quiet: true });
   });
 
-  it('ends the run as stopped — not failed — when finish_step declares nothing-to-do', async () => {
+  it('ends the run as stopped — not failed — when finish_step declares skipped', async () => {
     const twoSteps: AgentStepsDoc = {
       version: 1,
       steps: [
@@ -563,7 +709,7 @@ maybe('agent run engine', () => {
       db,
       webBaseUrl: 'http://unused.example',
       createMcpClient: () => stubMcp([], () => okToolResult),
-      resolveLlm: async () => ok(stubLlm(() => finish('nothing-to-do'))),
+      resolveLlm: async () => ok(stubLlm(() => finish('skipped'))),
       mintToken: async () => 'stub-token',
       revokeToken: async () => undefined,
       onFinalized: async (run) => {
@@ -591,7 +737,7 @@ maybe('agent run engine', () => {
       .execute();
     expect(attempts).toHaveLength(1);
     expect(attempts[0].status).toBe('succeeded');
-    expect(JSON.stringify(attempts[0].detail)).toContain('nothing-to-do');
+    expect(JSON.stringify(attempts[0].detail)).toContain('skipped');
 
     // The finalize hook sees the graceful status, marked quiet: no
     // notification, no chained agents.

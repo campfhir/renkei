@@ -93,6 +93,58 @@ describe('normalizeAgentDraft', () => {
       1, 3, 1,
     ]);
   });
+
+  it("strips the default exhausted 'exit' so untouched drafts stay below version 7", () => {
+    const normalized = normalizeAgentDraft(
+      draft({
+        steps: {
+          version: 7,
+          steps: [
+            step({
+              failureHandling: [
+                {
+                  outcome: 'not-found',
+                  action: 'retry',
+                  guidance: [text('Search by summary instead.')],
+                  exhausted: 'exit',
+                },
+              ],
+            }),
+          ],
+        },
+      })
+    );
+    const first = normalized.steps.steps[0];
+    const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
+    expect(handling?.exhausted).toBeUndefined();
+    expect(normalized.steps.version).toBe(1);
+  });
+
+  it('keeps a deliberate exhausted choice and labels the doc version 7', () => {
+    const normalized = normalizeAgentDraft(
+      draft({
+        steps: {
+          version: 7,
+          steps: [
+            step({
+              failureHandling: [
+                {
+                  outcome: 'not-found',
+                  action: 'retry',
+                  guidance: [text('Search by summary instead.')],
+                  exhausted: 'continue',
+                },
+              ],
+            }),
+          ],
+        },
+      })
+    );
+    const first = normalized.steps.steps[0];
+    const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
+    expect(handling?.exhausted).toBe('continue');
+    expect(normalized.steps.version).toBe(7);
+  });
 });
 
 describe('the step ceiling is the org setting', () => {
@@ -126,6 +178,40 @@ describe('the step ceiling is the org setting', () => {
 });
 
 describe('validateAgentDraft', () => {
+  it('rejects an exhausted choice on a non-retry handling', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 7,
+          steps: [
+            step({
+              failureHandling: [
+                { outcome: 'not-found', action: 'continue', exhausted: 'continue' },
+              ],
+            }),
+          ],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues)).toContain(
+      'An after-every-try choice only applies when the action is to try again.'
+    );
+  });
+
+  it('accepts a continue handling without guidance', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 7,
+          steps: [step({ failureHandling: [{ outcome: 'not-found', action: 'continue' }] })],
+        },
+      }),
+      TOOLS
+    );
+    expect(issues).toEqual([]);
+  });
+
   it('accepts a well-formed draft', () => {
     expect(validateAgentDraft(draft(), TOOLS)).toEqual([]);
   });

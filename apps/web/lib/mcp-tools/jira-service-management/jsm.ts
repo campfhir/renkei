@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
+import { actMeta } from '@renkei/tool-outcomes';
 import { getCachedDisplayName, issueUrl, requestUrl, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 import {
@@ -603,7 +604,8 @@ export async function registerJsmTools(
 
       const result = (await response.json()) as any;
       // Echo what Jira actually created, not the input.
-      const key = str(result.issueKey) || '(no key in response)';
+      const realKey = str(result.issueKey);
+      const key = realKey || '(no key in response)';
       return {
         content: [
           {
@@ -621,6 +623,18 @@ export async function registerJsmTools(
               `[Customer portal](${requestUrl(context.siteUrl, key)})`,
           },
         ],
+        // The receipt turns the owner's notification from "Raised a
+        // service request" into "Raised a service request CAS-101", with a
+        // link to the issue. Only the handler ever sees the key, which is
+        // why it has to be attached here.
+        ...(realKey
+          ? {
+              _meta: actMeta({
+                id: realKey,
+                ...(context.siteUrl ? { url: issueUrl(context.siteUrl, realKey) } : {}),
+              }),
+            }
+          : {}),
       };
     } catch (error) {
       return {
@@ -803,6 +817,10 @@ export async function registerJsmTools(
               text: `Comment added to ${issueKey}${isInternal ? ' (internal)' : ''}`,
             },
           ],
+          _meta: actMeta({
+            id: String(issueKey),
+            ...(context.siteUrl ? { url: issueUrl(context.siteUrl, String(issueKey)) } : {}),
+          }),
         };
       } catch (error) {
         return {
@@ -942,6 +960,10 @@ export async function registerJsmTools(
           content: [
             { type: 'text' as const, text: `Transitioned ${issueKey} to "${transitionName}"` },
           ],
+          _meta: actMeta({
+            id: String(issueKey),
+            ...(context.siteUrl ? { url: issueUrl(context.siteUrl, String(issueKey)) } : {}),
+          }),
         };
       } catch (error) {
         return {

@@ -82,7 +82,38 @@ describe('isAgentStepsDoc', () => {
     expect(isAgentStepsDoc(doc('retry'))).toBe(true);
     // 'stop-quiet' = the owner declared the outcome benign (not an error).
     expect(isAgentStepsDoc(doc('stop-quiet'))).toBe(true);
-    expect(isAgentStepsDoc(doc('continue'))).toBe(false);
+    // 'continue' = record the failure, move on (v7 vocabulary; the shared
+    // guard admits it and requiredVersion labels the doc 7 — the date-chip
+    // pattern).
+    expect(isAgentStepsDoc(doc('continue'))).toBe(true);
+    expect(isAgentStepsDoc(doc('explode'))).toBe(false);
+  });
+
+  it('accepts the v7 exhausted choices, and only those', () => {
+    const doc = (exhausted: string): unknown => ({
+      version: 7,
+      steps: [
+        {
+          id: randomUUID(),
+          name: 'Find it',
+          instruction: [{ t: 'text', v: 'Find it.' }],
+          tool: 'jira_search_issues',
+          maxAttempts: 3,
+          failureHandling: [
+            {
+              outcome: 'no-results',
+              action: 'retry',
+              guidance: [{ t: 'text', v: 'Reword the search.' }],
+              exhausted,
+            },
+          ],
+        },
+      ],
+    });
+    expect(isAgentStepsDoc(doc('exit'))).toBe(true);
+    expect(isAgentStepsDoc(doc('continue'))).toBe(true);
+    expect(isAgentStepsDoc(doc('stop-quiet'))).toBe(true);
+    expect(isAgentStepsDoc(doc('give-up'))).toBe(false);
   });
 
   it('accepts a v2 document with a branch', () => {
@@ -125,7 +156,7 @@ describe('isAgentStepsDoc', () => {
   });
 
   it('rejects unknown versions', () => {
-    expect(isAgentStepsDoc({ version: 7, steps: [] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 8, steps: [] })).toBe(false);
   });
 
   it('accepts an empty version-3 document shell', () => {
@@ -429,6 +460,43 @@ describe('approval nodes (version 5)', () => {
       ])
     ).toBe(5);
     expect(requiredVersion([terminal])).toBe(4);
+  });
+
+  it('requiredVersion labels the continue/exhausted handling vocabulary 7', () => {
+    const withContinue = action({
+      tool: 'jira_search_issues',
+      failureHandling: [{ outcome: 'no-results', action: 'continue' }],
+    });
+    const withExhausted = action({
+      tool: 'jira_search_issues',
+      maxAttempts: 3,
+      failureHandling: [
+        {
+          outcome: 'no-results',
+          action: 'retry',
+          guidance: [{ t: 'text', v: 'Reword the search.' }],
+          exhausted: 'continue',
+        },
+      ],
+    });
+    expect(requiredVersion([withContinue])).toBe(7);
+    expect(requiredVersion([withExhausted])).toBe(7);
+    // The plain vocabulary keeps its old label — byte-stability for every
+    // document an older writer could produce.
+    expect(
+      requiredVersion([
+        action({
+          tool: 'jira_search_issues',
+          failureHandling: [
+            {
+              outcome: 'no-results',
+              action: 'retry',
+              guidance: [{ t: 'text', v: 'Reword the search.' }],
+            },
+          ],
+        }),
+      ])
+    ).toBe(1);
   });
 
   it('walks and finds nodes inside outcome paths with the path grammar', () => {

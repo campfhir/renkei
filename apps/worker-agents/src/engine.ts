@@ -57,7 +57,7 @@ import {
   type ResolvedLlm,
 } from '@renkei/agent-llm';
 import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
-import { toolKindOf } from '@renkei/tool-outcomes';
+import { resolveOutcomes, toolKindOf } from '@renkei/tool-outcomes';
 import { notifierFor, type Notifier } from './notifications';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { AgentMcpClient } from './mcp-client';
@@ -120,7 +120,7 @@ export interface FinalizedRun {
   tenantId: string;
   agentId: string;
   ownerSubject: string;
-  /** 'stopped' = the run ended gracefully with nothing to do — not a failure. */
+  /** 'stopped' = the run ended gracefully as skipped — not a failure. */
   status: 'succeeded' | 'failed' | 'stopped';
   errorKind: string | null;
   error: string | null;
@@ -277,10 +277,10 @@ interface AttemptOutcome {
   succeeded: boolean;
   /**
    * Set when finish_step declared the whole run over: 'done'/'quiet' from a
-   * success's stop flags, 'nothing' from outcome 'nothing-to-do' — the step
-   * judged the automation does not apply to this input at all.
+   * success's stop flags, 'skip' from outcome 'skipped' — the step judged
+   * the automation does not apply to this input at all.
    */
-  stopRun?: 'done' | 'quiet' | 'nothing';
+  stopRun?: 'done' | 'quiet' | 'skip';
   outcome: 'tool_ok' | 'llm_declared' | 'tool_error' | 'llm_error' | 'guard';
   outcomeCode: string | null;
   summary: string;
@@ -426,6 +426,43 @@ function handlingFor(step: ActionStep, code: string): FailureHandling | undefine
     step.failureHandling.find((handling) => handling.outcome === code) ??
     step.failureHandling.find((handling) => handling.outcome === 'other')
   );
+}
+
+/**
+ * The failure codes this step's author planned for, as a prompt paragraph.
+ *
+ * Injected so a declared failure lands on a code the failure handling can
+ * route instead of an unroutable 'other' — and, when the author handled
+ * 'no-results', so an empty search result goes where they pointed it
+ * (retry with a reworded query, move on, …) instead of masquerading as a
+ * success or a skip. The wording comes from the same outcome catalog the
+ * builder's failure panel shows (`resolveOutcomes` is pure data; the kind
+ * argument only shapes the success label, which is unused here).
+ */
+function outcomeGuideFor(step: ActionStep): string | undefined {
+  if (step.tool === null || step.failureHandling.length === 0) return undefined;
+  const labelOf = new Map(
+    resolveOutcomes(step.tool, 'read').failures.map((failure) => [failure.code, failure.label])
+  );
+  const handled = step.failureHandling.map((handling) => handling.outcome);
+  const listed = handled
+    .map((code) => {
+      const label = labelOf.get(code);
+      return label ? `"${code}" (${label.toLowerCase()})` : `"${code}"`;
+    })
+    .join(', ');
+  const parts = [
+    `On failure, set code to the best match among the conditions this step plans for: ${listed}; anything else falls under "other".`,
+  ];
+  if (handled.includes('no-results')) {
+    parts.push(
+      'A search or lookup that runs cleanly but matches nothing IS that "no-results" failure — ' +
+        'declare it as such (never success with an empty answer, never "skipped") so the ' +
+        'configured handling decides what happens next. If you have tries left you will be ' +
+        'asked to search again differently.'
+    );
+  }
+  return parts.join(' ');
 }
 
 /**
@@ -662,7 +699,7 @@ function answerTimeLookups(toolUses: Extract<LlmContentBlock, { type: 'tool_use'
 }
 
 function finishArgsOf(input: unknown): {
-  outcome: 'success' | 'failure' | 'nothing-to-do';
+  outcome: 'success' | 'failure' | 'skipped';
   code: string | null;
   summary: string;
   saveValue: string | null;
@@ -682,11 +719,11 @@ function finishArgsOf(input: unknown): {
     quiet?: unknown;
     remember?: unknown;
   } = input;
-  if (
-    args.outcome !== 'success' &&
-    args.outcome !== 'failure' &&
-    args.outcome !== 'nothing-to-do'
-  ) {
+  // 'nothing-to-do' is the pre-rename spelling of 'skipped' — still
+  // accepted so an attempt in flight across a deploy lands, never taught
+  // to new models (the tool schema offers only 'skipped').
+  const outcome = args.outcome === 'nothing-to-do' ? 'skipped' : args.outcome;
+  if (outcome !== 'success' && outcome !== 'failure' && outcome !== 'skipped') {
     return null;
   }
   const saveItems = Array.isArray(args.saveItems)
@@ -696,7 +733,7 @@ function finishArgsOf(input: unknown): {
         .map((entry) => clip(entry, SAVE_ITEM_CHARS))
     : null;
   return {
-    outcome: args.outcome,
+    outcome,
     code: typeof args.code === 'string' ? args.code : null,
     summary: typeof args.summary === 'string' ? args.summary : '',
     saveValue: typeof args.saveValue === 'string' ? args.saveValue : null,
@@ -1200,7 +1237,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         }
         if (result.kind === 'stop') {
           // The step judged the automation does not apply to this input (a
-          // declared nothing-to-do, or a failure the owner marked benign) —
+          // declared skip, or a failure the owner marked benign) —
           // a graceful terminal: no error, and quiet so no notification and
           // no chained agents (nothing was done to chain from). The why is
           // on the step's attempt row in the run timeline.
@@ -1539,10 +1576,52 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       const onIteration = iteration > 0 ? ` on round ${iteration}` : '';
       if (attemptsUsed >= budget) {
+        // Every try is spent. A retry handling may name where to land when
+        // that happens (`exhausted`, version 7); the default is the fail
+        // below — the pre-v7 behavior. After a redelivery the in-memory
+        // failure state is gone, so it is re-read from the last attempt
+        // row rather than silently ignoring the configured choice.
+        let code = lastFailureCode;
+        let summary = lastFailureSummary;
+        if (code === null) {
+          const lastFailed = await db
+            .selectFrom('agent_run_steps')
+            .select(['outcome_code', 'detail'])
+            .where('run_id', '=', run.id)
+            .where('step_id', '=', step.id)
+            .where('iteration', '=', iteration)
+            .where('status', '=', 'failed')
+            .orderBy('attempt', 'desc')
+            .limit(1)
+            .executeTakeFirst();
+          code = lastFailed?.outcome_code ?? null;
+          const lastDetail: { llmSummary?: unknown } =
+            typeof lastFailed?.detail === 'object' &&
+            lastFailed.detail !== null &&
+            !Array.isArray(lastFailed.detail)
+              ? lastFailed.detail
+              : {};
+          summary = typeof lastDetail.llmSummary === 'string' ? lastDetail.llmSummary : undefined;
+        }
+        const matched = code === null ? undefined : handlingFor(step, code);
+        const exhausted = matched?.action === 'retry' ? matched.exhausted : undefined;
+        const spent =
+          summary ??
+          `Step "${step.name}" did not succeed after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}.`;
+        if (exhausted === 'continue') {
+          // Move on with the failure on record; the saved result, when the
+          // step names one, binds to the failure summary so later steps
+          // and branches see what happened instead of an unbound chip.
+          if (step.saveAs) vars[step.saveAs] = clip(spent, PREVIEW_CHARS);
+          return { kind: 'advance' };
+        }
+        if (exhausted === 'stop-quiet') {
+          return { kind: 'stop', reason: clip(spent, 300) };
+        }
         return {
           kind: 'fail',
           errorKind: 'step_failed',
-          error: `Step "${step.name}" failed after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}${onIteration}${lastFailureCode ? ` (${lastFailureCode})` : ''}.`,
+          error: `Step "${step.name}" failed after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}${onIteration}${code ? ` (${code})` : ''}.`,
         };
       }
       if (Date.now() > deadline) {
@@ -1615,11 +1694,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         resolvedInstruction: clip(outcome.resolvedInstruction, PREVIEW_CHARS),
         llmSummary: clip(outcome.summary, PREVIEW_CHARS),
         declaredOutcome:
-          outcome.stopRun === 'nothing'
-            ? 'nothing-to-do'
-            : outcome.succeeded
-              ? 'success'
-              : 'failure',
+          outcome.stopRun === 'skip' ? 'skipped' : outcome.succeeded ? 'success' : 'failure',
         ...(outcome.saveValue !== null
           ? { saveValue: clip(outcome.saveValue, PREVIEW_CHARS) }
           : {}),
@@ -1668,9 +1743,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
 
       if (outcome.succeeded) {
-        // A 'nothing-to-do' declaration ends the run gracefully — its own
+        // A 'skipped' declaration ends the run gracefully — its own
         // terminal, distinct from success, never a failure.
-        if (outcome.stopRun === 'nothing') {
+        if (outcome.stopRun === 'skip') {
           return { kind: 'stop', reason: clip(outcome.summary, 300) };
         }
         if (step.saveAs && outcome.saveItems !== null) {
@@ -1699,11 +1774,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
       lastFailureCode = outcome.outcomeCode ?? 'other';
       const handling = handlingFor(step, lastFailureCode);
       // The owner declared this outcome NOT an error ("ticket not found" is
-      // sometimes just "nothing to do") — the same graceful terminal as a
-      // declared nothing-to-do. The attempt row keeps its outcome code (the
+      // sometimes a reason to skip the rest) — the same graceful terminal
+      // as a declared skip. The attempt row keeps its outcome code (the
       // timeline still says exactly what happened) but its STATUS becomes
       // 'stopped', matching the run: left 'failed', the timeline showed a
-      // red Failed pill inside a nothing-to-do run, and the admin redaction
+      // red Failed pill inside a skipped run, and the admin redaction
       // rule (step content is visible on failures, for troubleshooting)
       // exposed content of a step the owner explicitly declared benign.
       if (handling?.action === 'stop-quiet') {
@@ -1713,6 +1788,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
           .where('id', '=', rowId)
           .execute();
         return { kind: 'stop', reason: clip(lastFailureSummary, 300) };
+      }
+      // The owner chose to move on past this failure (version 7). The
+      // attempt row keeps its failed status and code — the timeline stays
+      // honest — and the saved result, when the step names one, binds to
+      // the failure summary so later steps and branches can see what
+      // happened instead of meeting an unbound chip.
+      if (handling?.action === 'continue') {
+        if (step.saveAs) vars[step.saveAs] = clip(lastFailureSummary, PREVIEW_CHARS);
+        return { kind: 'advance' };
       }
       if (!handling || handling.action === 'exit') {
         return {
@@ -1825,11 +1909,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const detail = {
       llmSummary: [`The flow ended here (${resultPhrase}).`, ...notes].join(' '),
       declaredOutcome:
-        node.result === 'failure'
-          ? 'failure'
-          : node.result === 'stop'
-            ? 'nothing-to-do'
-            : 'success',
+        node.result === 'failure' ? 'failure' : node.result === 'stop' ? 'skipped' : 'success',
       terminalResult: node.result,
       ...(message ? { terminalMessage: clip(message, PREVIEW_CHARS) } : {}),
       ...(rendered.unbound.length > 0 ? { unboundVariables: rendered.unbound } : {}),
@@ -2748,6 +2828,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const previousFailure =
       attempt > 1 ? await lastFailureText(run.id, step.id, iteration) : undefined;
     const toolCap = attempt > 1 ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
+    const outcomeGuide = outcomeGuideFor(step);
     const built = buildAttemptMessages({
       step,
       attempt,
@@ -2756,6 +2837,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       guidanceText,
       previousFailure,
       savesItemsForLoop,
+      ...(outcomeGuide ? { outcomeGuide } : {}),
       ...(context.memoryText ? { memoryText: context.memoryText } : {}),
       ...(context.knowledgeText ? { knowledgeText: context.knowledgeText } : {}),
       ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
@@ -2951,7 +3033,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             content:
               `Tool budget spent (${toolCap} calls this attempt) — this call was not made. ` +
               'Call finish_step now: declare success if what you already found satisfies the ' +
-              'step, "nothing-to-do" if the automation turned out not to apply to this input, ' +
+              'step, "skipped" if the automation turned out not to apply to this input, ' +
               'or failure with the best-matching code if it clearly does not.' +
               (repetitive
                 ? ` Note: every call this attempt was ${use.name} — if you were covering many ` +
@@ -3069,7 +3151,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
   function decideOutcome(
     step: ActionStep,
     finish: {
-      outcome: 'success' | 'failure' | 'nothing-to-do';
+      outcome: 'success' | 'failure' | 'skipped';
       code: string | null;
       summary: string;
       saveValue: string | null;
@@ -3084,14 +3166,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
       'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'remember'
     >
   ): AttemptOutcome {
-    if (finish.outcome === 'nothing-to-do') {
+    if (finish.outcome === 'skipped') {
       // The step judged the automation does not apply to this input — a
       // judgment call, not an error, so the attempt records as succeeded
       // (its summary carries the why) and the run ends gracefully.
       return {
         ...base,
         succeeded: true,
-        stopRun: 'nothing',
+        stopRun: 'skip',
         outcome: primaryResults.length > 0 ? 'tool_ok' : 'llm_declared',
         outcomeCode: null,
         summary: finish.summary,

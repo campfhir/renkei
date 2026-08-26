@@ -21,6 +21,7 @@ import { randomUUID } from 'crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
 import { logger } from '@/lib/logger';
+import { actMeta } from '@renkei/tool-outcomes';
 import { recordSentWebexMessage } from './sent-ledger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
@@ -130,6 +131,23 @@ const PARENT_ID_HINT =
   "top-level message's own id. Omitted = new top-level message.";
 
 /** The title webex_note_to_self creates — and finds first on every later run. */
+/**
+ * A browser link to a WebEx space, from the API's room id.
+ *
+ * The id is base64 of a `ciscospark://…/ROOM/<uuid>` URI; the web client
+ * opens the space at /spaces/<uuid>. Null when the id doesn't decode to
+ * that shape — a receipt with no link beats a link to the wrong place.
+ */
+function webexSpaceUrl(roomId: string): string | null {
+  try {
+    const decoded = Buffer.from(roomId, 'base64').toString('utf8');
+    const match = /\/ROOM\/([0-9a-f-]{36})$/i.exec(decoded);
+    return match ? `https://web.webex.com/spaces/${match[1]}` : null;
+  } catch {
+    return null;
+  }
+}
+
 const NOTE_TO_SELF_TITLE = 'Note to Self';
 /** Membership probes before concluding no solo space exists and creating one. */
 const SOLO_PROBE_CAP = 20;
@@ -423,10 +441,21 @@ export async function registerWebexUserTools(
       });
       // Room id included so a 1:1 send's room is addressable afterward —
       // follow-ups and thread replies need it, and only this response has it.
-      return textResult(
-        `Sent (message id ${str(sent.id) || 'unknown'}` +
-          `${str(sent.roomId) ? `, room ${str(sent.roomId)}` : ''}).`
-      );
+      const sentRoomUrl = str(sent.roomId) ? webexSpaceUrl(str(sent.roomId)) : null;
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text:
+              `Sent (message id ${str(sent.id) || 'unknown'}` +
+              `${str(sent.roomId) ? `, room ${str(sent.roomId)}` : ''}).`,
+          },
+        ],
+        // The receipt gives the owner's "Posted a WebEx message"
+        // notification a link to the space it landed in. No id: a base64
+        // message id in a headline is noise, not a name.
+        ...(sentRoomUrl ? { _meta: actMeta({ url: sentRoomUrl }) } : {}),
+      };
     }
   );
 
@@ -519,13 +548,22 @@ export async function registerWebexUserTools(
         roomId,
         created,
       });
-      return textResult(
-        `Sent to ${
-          created
-            ? `a newly created "${NOTE_TO_SELF_TITLE}" space`
-            : `"${roomTitle || NOTE_TO_SELF_TITLE}"`
-        } (room ${roomId}, message id ${str(sent.id) || 'unknown'}).`
-      );
+      const noteRoomUrl = webexSpaceUrl(roomId);
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Sent to ${
+              created
+                ? `a newly created "${NOTE_TO_SELF_TITLE}" space`
+                : `"${roomTitle || NOTE_TO_SELF_TITLE}"`
+            } (room ${roomId}, message id ${str(sent.id) || 'unknown'}).`,
+          },
+        ],
+        // The receipt gives the owner's "Left you a WebEx note"
+        // notification a link straight to the note-to-self space.
+        ...(noteRoomUrl ? { _meta: actMeta({ url: noteRoomUrl }) } : {}),
+      };
     }
   );
 

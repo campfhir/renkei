@@ -214,6 +214,14 @@ function validateActionStep(
       issues.push({ path: hAt, message: 'This failure condition is handled twice.' });
     }
     seenCodes.add(handling.outcome);
+    // An exhausted choice only means something when the step retries — on
+    // any other action the attempt budget is never what ends the step.
+    if (handling.exhausted !== undefined && handling.action !== 'retry') {
+      issues.push({
+        path: hAt,
+        message: 'An after-every-try choice only applies when the action is to try again.',
+      });
+    }
     if (handling.action === 'retry') {
       const guidance = handling.guidance ?? [];
       if (guidance.length === 0 || segmentChars(guidance) === 0) {
@@ -827,6 +835,15 @@ function normalizeNode(node: AgentStepNode, cap: number, waitCapHours: number): 
         // the pattern (and every later lookup) never meets stray whitespace.
         ...(step.saveAs !== undefined ? { saveAs: step.saveAs.trim() || undefined } : {}),
         maxAttempts: clampAttempts(step.maxAttempts, cap, 1),
+        // An exhausted choice of 'exit' is the default and rides only on
+        // retry entries — stripping the no-ops keeps a document that never
+        // left the defaults byte-identical (and below version 7).
+        failureHandling: step.failureHandling.map((handling) => {
+          const { exhausted, ...rest } = handling;
+          return handling.action === 'retry' && exhausted !== undefined && exhausted !== 'exit'
+            ? { ...rest, exhausted }
+            : rest;
+        }),
       };
     }
     default: {

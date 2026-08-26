@@ -13,7 +13,7 @@ describe('statusLabel', () => {
     ['succeeded', 'Succeeded'],
     ['failed', 'Failed'],
     ['canceled', 'Canceled'],
-    ['stopped', 'Stopped — nothing to do'],
+    ['stopped', 'Skipped'],
   ])('titles %s', (raw, label) => {
     expect(statusLabel(raw)).toBe(label);
   });

@@ -137,15 +137,22 @@ maybe('agent notifications', () => {
 
   it('writes NOTHING for an uncurated act by default', async () => {
     // 'other' is off out of the box, which is what keeps the ~110 uncurated
-    // act tools from burying the ones that say something.
-    await notifier().act('jira_add_attachment', 'act', {}, null);
+    // act tools from burying the ones that say something. (The upload
+    // handshake tool is deliberately uncurated — see ACT_OUTCOMES' header;
+    // jira_add_attachment, which this test once used, got curated.)
+    await notifier().act('jira_request_attachment_upload', 'act', {}, null);
     expect(await rows()).toHaveLength(0);
   });
 
   it('writes an uncurated act once somebody asks for them', async () => {
-    await notifier({ acts: { jira: { other: true } } }).act('jira_add_attachment', 'act', {}, null);
+    await notifier({ acts: { jira: { other: true } } }).act(
+      'jira_request_attachment_upload',
+      'act',
+      {},
+      null
+    );
     const [row] = await rows();
-    expect(row?.headline).toBe('Ran jira add attachment');
+    expect(row?.headline).toBe('Ran jira request attachment upload');
     expect(row?.category).toBe('other');
   });
 

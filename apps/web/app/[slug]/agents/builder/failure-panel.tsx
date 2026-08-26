@@ -3,15 +3,17 @@
 /**
  * "If something goes wrong" — one row per condition the step's tool
  * enumerates (the outcome metadata served with the tool catalog), each a
- * choice between stopping the agent, retrying with extra guidance, and
- * declaring the condition benign ("ticket not found" is sometimes just
- * "nothing to do") — which ends the run silently as 'stopped', not failed.
+ * choice between stopping the agent, retrying with extra guidance,
+ * declaring the condition benign ("ticket not found" is sometimes a
+ * reason to skip the rest) — which ends the run silently as skipped, not
+ * failed — and carrying on to the next step with the failure on record.
  *
  * The default is stop: an absent handling entry means exit, so a user who
  * configures nothing gets the safe behavior. Retry reveals a guidance
  * editor (chips allowed, tools allowed — several, deliberately laxer than
- * the step body, because fixing a failure may take extra lookups) and the
- * step-level attempts selector caps everything at the platform's 5.
+ * the step body, because fixing a failure may take extra lookups), plus a
+ * choice of where to land when every try fails; the step-level attempts
+ * selector caps everything at the org's ceiling.
  */
 
 import type { FailureHandling } from '@renkei/agents';
@@ -139,6 +141,7 @@ export function FailurePanel({
                     title={failure.retriable ? undefined : "Retrying won't help here."}
                     onClick={() =>
                       setEntry(failure.code, {
+                        ...entry,
                         outcome: failure.code,
                         action: 'retry',
                         guidance: entry?.guidance ?? [],
@@ -156,7 +159,21 @@ export function FailurePanel({
                   </button>
                   <button
                     type="button"
-                    title="Treat this as not an error: the run ends silently — no reply, no notification, no follow-up automations — and shows as stopped, not failed."
+                    title="Note the failure and move on to the next step anyway — the step's saved result becomes the failure summary, so later steps can see what happened."
+                    onClick={() =>
+                      setEntry(failure.code, { outcome: failure.code, action: 'continue' })
+                    }
+                    className={`px-2.5 py-1 ${
+                      action === 'continue'
+                        ? 'bg-gray-700 text-white dark:bg-gray-300 dark:text-gray-900'
+                        : 'text-gray-600 dark:text-gray-400'
+                    }`}
+                  >
+                    Keep going anyway
+                  </button>
+                  <button
+                    type="button"
+                    title="Treat this as not an error: the run ends silently — no reply, no notification, no follow-up automations — and shows as skipped, not failed."
                     onClick={() =>
                       setEntry(failure.code, { outcome: failure.code, action: 'stop-quiet' })
                     }
@@ -171,22 +188,57 @@ export function FailurePanel({
                 </div>
               </div>
               {action === 'retry' ? (
-                <div className="mt-2 pl-3">
-                  <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
-                    What should it do differently? (This runs only when retrying.)
-                  </label>
-                  <ChipEditor
-                    value={entry?.guidance ?? []}
-                    onChange={(guidance) =>
-                      setEntry(failure.code, { outcome: failure.code, action: 'retry', guidance })
-                    }
-                    tools={tools}
-                    variables={variables}
-                    maxTools={CORRECTIVE_TOOL_LIMIT}
-                    placeholder="e.g. Search by the summary text instead of the exact key"
-                    ariaLabel={`Guidance when ${failure.label.toLowerCase()}`}
-                    invalidVars={invalidVars}
-                  />
+                <div className="mt-2 space-y-2 pl-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                      What should it do differently? (This runs only when retrying.)
+                    </label>
+                    <ChipEditor
+                      value={entry?.guidance ?? []}
+                      onChange={(guidance) =>
+                        setEntry(failure.code, {
+                          ...entry,
+                          outcome: failure.code,
+                          action: 'retry',
+                          guidance,
+                        })
+                      }
+                      tools={tools}
+                      variables={variables}
+                      maxTools={CORRECTIVE_TOOL_LIMIT}
+                      placeholder="e.g. Search by the summary text instead of the exact key"
+                      ariaLabel={`Guidance when ${failure.label.toLowerCase()}`}
+                      invalidVars={invalidVars}
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+                      If every try still fails:
+                    </span>
+                    <select
+                      value={entry?.exhausted ?? 'exit'}
+                      aria-label={`When every try fails on ${failure.label.toLowerCase()}`}
+                      onChange={(event) => {
+                        const choice = event.target.value;
+                        const base = {
+                          outcome: failure.code,
+                          action: 'retry' as const,
+                          guidance: entry?.guidance ?? [],
+                        };
+                        setEntry(
+                          failure.code,
+                          choice === 'continue' || choice === 'stop-quiet'
+                            ? { ...base, exhausted: choice }
+                            : base
+                        );
+                      }}
+                      className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
+                    >
+                      <option value="exit">Stop the agent</option>
+                      <option value="continue">Keep going anyway</option>
+                      <option value="stop-quiet">End quietly — skipped</option>
+                    </select>
+                  </div>
                 </div>
               ) : null}
             </li>

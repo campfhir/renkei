@@ -22,6 +22,11 @@ export const ICONS = {
   /** A chip with legs — "this runs as fixed code, not as a model call". */
   chip: 'M8 8h8v8H8zM9 4v3M15 4v3M9 17v3M15 17v3M4 9h3M4 15h3M17 9h3M17 15h3',
   bell: 'M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16zM10 22h4',
+  /** Vertical three-dot "more" trigger for per-item menus. */
+  ellipsis:
+    'M12 5.5a.6.6 0 1 0 0-1.2.6.6 0 0 0 0 1.2zM12 12.6a.6.6 0 1 0 0-1.2.6.6 0 0 0 0 1.2zM12 19.7a.6.6 0 1 0 0-1.2.6.6 0 0 0 0 1.2z',
+  /** Arrow leaving a box — opens in the connector / a new tab. */
+  externalLink: 'M14 4h6v6M20 4l-9 9M20 14v6H4V4h6',
 };
 
 export function Icon({ path, className }: { path: string; className?: string }) {
