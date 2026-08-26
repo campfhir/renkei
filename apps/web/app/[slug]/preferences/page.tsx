@@ -56,7 +56,14 @@ export default async function PreferencesPage({
   }));
 
   return (
-    <div className="mx-auto max-w-3xl">
+    /*
+      Wider than the usual max-w-3xl reading column, because this page is
+      not prose: its bulk is a grid of forty-odd short checkbox labels, and
+      3xl leaves room for two columns where 5xl fits three. Still capped —
+      the layout's own max-w-6xl would stretch the explanatory sentences
+      past comfortable reading length to no benefit.
+    */
+    <div className="mx-auto max-w-5xl">
       <h1 className="mb-1 text-xl font-bold">Preferences</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Yours alone — nobody else sees these, and they change nothing about what your agents are
