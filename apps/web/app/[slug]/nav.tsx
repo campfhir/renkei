@@ -99,6 +99,7 @@ export default function AppNav({
       items: [
         { href: `/${slug}`, label: 'Home' },
         { href: `/${slug}/connectors`, label: 'Connectors' },
+        { href: `/${slug}/files`, label: 'Files' },
         { href: `/${slug}/knowledge`, label: 'Knowledge' },
         { href: `/${slug}/agents`, label: 'Agents' },
         { href: `/${slug}/usage`, label: 'Tools' },

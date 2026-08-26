@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   annotateEntries,
   canListFolder,
+  effectiveAccess,
   normalizePath,
   openBackend,
   withSessionLimits,
@@ -56,6 +57,9 @@ export async function GET(
   return NextResponse.json({
     path: path.val,
     share: { id: access.ctx.share.id, name: access.ctx.share.name },
+    // The listed folder's own level, so the browser can offer (or not)
+    // upload and new-folder controls without guessing from children.
+    access: effectiveAccess(access.ctx, path.val),
     entries: annotateEntries(access.ctx, path.val, listed.val).map((entry) => ({
       name: entry.name,
       path: entry.path,

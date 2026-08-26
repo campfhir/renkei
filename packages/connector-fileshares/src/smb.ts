@@ -90,6 +90,24 @@ function toSmbRelative(joined: string): string {
   return joined === '/' ? '' : joined.slice(1).replace(/\//g, '\\');
 }
 
+/**
+ * A loaded server may answer any request with STATUS_PENDING — SMB2's
+ * async interim response, meaning "the real answer follows". The library
+ * treats it as a terminal error instead of waiting — and worse, when the
+ * real response arrives later the connection's dispatch state is left
+ * wedged: every subsequent request on that client times out. Both were
+ * found by stress-testing concurrent sessions against a real samba. So
+ * the retry policy is: on STATUS_PENDING, DISCARD the client, reconnect
+ * fresh, and reissue. Every operation here is safe to reissue — reads
+ * are pure, mkdir converges, and writes open with FILE_OVERWRITE_IF.
+ */
+const PENDING_RETRIES = 3;
+const PENDING_RETRY_DELAY_MS = 150;
+
+function isPendingStatus(cause: unknown): boolean {
+  return isRecord(cause) && cause.code === 'STATUS_PENDING';
+}
+
 export function openSmbBackend(
   share: ShareSummary,
   credentials: ShareCredentials
@@ -101,16 +119,58 @@ export function openSmbBackend(
     return err('protocol' as const, { message: 'SMB share has no share name configured.' });
   }
 
-  const client = new SMB2({
-    share: `\\\\${share.host}\\${share.shareName}`,
-    domain: credentials.domain ?? '',
-    username: credentials.username,
-    password: credentials.password,
-    ...(share.port !== null ? { port: share.port } : {}),
-    // The client dials lazily and re-dials as needed; keep idle sessions
-    // from lingering long past their one tool call.
-    autoCloseTimeout: CONNECT_TIMEOUT_MS,
-  });
+  const makeClient = () =>
+    new SMB2({
+      share: `\\\\${share.host}\\${share.shareName}`,
+      domain: credentials.domain ?? '',
+      username: credentials.username,
+      password: credentials.password,
+      ...(share.port !== null ? { port: share.port } : {}),
+      // The client dials lazily and re-dials as needed; keep idle sessions
+      // from lingering long past their one tool call.
+      autoCloseTimeout: CONNECT_TIMEOUT_MS,
+    });
+  let client = makeClient();
+
+  /**
+   * Run one operation, replacing the client on a wedge. Two spellings of
+   * the same server behavior get a fresh connection and a reissue: a
+   * surfaced STATUS_PENDING, and a timeout — the interim response can
+   * also be swallowed entirely, leaving the request unresolved and the
+   * client's dispatch state poisoned for everything after it. Pending
+   * retries a few times (cheap, definitely transient); a timeout retries
+   * once, because it may equally mean the server is simply down and each
+   * attempt costs the full window.
+   */
+  async function run<T>(operation: string, ms: number, work: (c: SMB2) => Promise<T>): Promise<T> {
+    let lastCause: unknown;
+    let timeouts = 0;
+    for (let attempt = 0; attempt <= PENDING_RETRIES; attempt += 1) {
+      if (attempt > 0) {
+        try {
+          client.disconnect();
+        } catch {
+          // The wedged client may not even close cleanly.
+        }
+        client = makeClient();
+        await new Promise((resolveDelay) =>
+          setTimeout(resolveDelay, PENDING_RETRY_DELAY_MS * attempt)
+        );
+      }
+      try {
+        return await withTimeout(operation, ms, work(client));
+      } catch (cause) {
+        if (cause instanceof OperationTimeout) {
+          timeouts += 1;
+          if (timeouts > 1) throw cause;
+        } else if (!isPendingStatus(cause)) {
+          throw cause;
+        }
+        lastCause = cause;
+      }
+    }
+    throw lastCause;
+  }
 
   function resolve(path: string): Result<string, BackendError> {
     const joined = joinUnder(share.rootPath, path);
@@ -125,10 +185,8 @@ export function openSmbBackend(
       const target = resolve(path);
       if (!target.ok) return target;
       try {
-        const listed: unknown = await withTimeout(
-          'smb readdir',
-          OP_TIMEOUT_MS,
-          client.readdir(target.val, { stats: true })
+        const listed: unknown = await run('smb readdir', OP_TIMEOUT_MS, (c) =>
+          c.readdir(target.val, { stats: true })
         );
         const entries: RawEntry[] = [];
         if (Array.isArray(listed)) {
@@ -160,11 +218,7 @@ export function openSmbBackend(
         return ok({ name: '', kind: 'dir', size: null, modifiedAt: null });
       }
       try {
-        const stats: unknown = await withTimeout(
-          'smb stat',
-          OP_TIMEOUT_MS,
-          client.stat(target.val)
-        );
+        const stats: unknown = await run('smb stat', OP_TIMEOUT_MS, (c) => c.stat(target.val));
         const dir = isDirectoryStat(stats);
         const name = path.slice(path.lastIndexOf('/') + 1);
         return ok({
@@ -193,10 +247,8 @@ export function openSmbBackend(
         });
       }
       try {
-        const content = await withTimeout(
-          'smb readFile',
-          TRANSFER_TIMEOUT_MS,
-          client.readFile(target.val)
+        const content = await run('smb readFile', TRANSFER_TIMEOUT_MS, (c) =>
+          c.readFile(target.val)
         );
         if (content.byteLength > maxBytes) {
           return err('too_large' as const, {
@@ -214,10 +266,14 @@ export function openSmbBackend(
       const target = resolve(path);
       if (!target.ok) return target;
       try {
-        await withTimeout(
-          'smb writeFile',
-          TRANSFER_TIMEOUT_MS,
-          client.writeFile(target.val, Buffer.from(bytes))
+        // 'w' = FILE_OVERWRITE_IF. The library's default is 'wx' (exclusive
+        // create), which would refuse to overwrite an existing file — and
+        // would also collide with this operation's own first attempt when a
+        // STATUS_PENDING retry reissues it. The options type under-declares
+        // `flags`, hence the widened variable rather than a literal.
+        const overwrite: { encoding?: null; flags: string } = { flags: 'w' };
+        await run('smb writeFile', TRANSFER_TIMEOUT_MS, (c) =>
+          c.writeFile(target.val, Buffer.from(bytes), overwrite)
         );
         return ok(undefined);
       } catch (cause) {
@@ -230,7 +286,7 @@ export function openSmbBackend(
       const target = resolve(path);
       if (!target.ok) return target;
       try {
-        await withTimeout('smb mkdir', OP_TIMEOUT_MS, client.mkdir(target.val));
+        await run('smb mkdir', OP_TIMEOUT_MS, (c) => c.mkdir(target.val));
         return ok(undefined);
       } catch (cause) {
         const info = mapError('mkdir', cause);

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * The file-share REST routes, against a stubbed backend and a REAL ACL
  * engine — what these pin is enforcement equivalence with the MCP tools:
