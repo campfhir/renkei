@@ -501,6 +501,9 @@ importers:
       '@tryjsky/v9u-smb2':
         specifier: ^1.1.0
         version: 1.1.0
+      kysely:
+        specifier: ^0.29.4
+        version: 0.29.4
       ssh2-sftp-client:
         specifier: ^12.1.1
         version: 12.1.1
@@ -511,12 +514,18 @@ importers:
       '@types/node':
         specifier: ^24
         version: 24.13.3
+      '@types/pg':
+        specifier: ^8.20.3
+        version: 8.20.3
       '@types/ssh2-sftp-client':
         specifier: ^9.0.6
         version: 9.0.6
       jest:
         specifier: ^30.4.2
         version: 30.4.2(@types/node@24.13.3)
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
       ts-jest:
         specifier: ^29.4.12
         version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
