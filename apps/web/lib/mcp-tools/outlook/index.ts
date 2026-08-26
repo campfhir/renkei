@@ -46,6 +46,11 @@ import {
   newPreviewId,
 } from '../widgets';
 import type { GraphAuth } from '../graph/graph-auth';
+import {
+  DIRECTORY_SEARCH_HEADERS,
+  DIRECTORY_USER_SELECT,
+  searchDirectoryUsers,
+} from '../graph/directory';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
 import { registerBulkJobTools } from './bulk-jobs';
 import { createUploadSlot } from '../upload-slots';
@@ -682,12 +687,10 @@ function outlookScopeFor(toolName: string): string[] {
   }
 }
 
-/** `$search` against the directory requires the eventual-consistency header. */
-const DIRECTORY_SEARCH_HEADERS = { ConsistencyLevel: 'eventual' };
-
-const USER_SELECT =
-  '$select=id,displayName,jobTitle,department,officeLocation,mail,userPrincipalName,' +
-  'businessPhones,mobilePhone';
+// The directory query, its required header and its $select live in
+// ../graph/directory.ts — the people picker in the builder needs the same
+// three and they are each a silent-failure waiting to drift.
+const USER_SELECT = DIRECTORY_USER_SELECT;
 
 function userLine(user: Record<string, unknown>): string {
   const phones = [
@@ -1749,18 +1752,11 @@ export async function registerOutlookTools(
     async (args: Record<string, any>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const query = str(args.query).replace(/"/g, '');
-      if (!query) return errText('query is required');
+      if (!str(args.query).replace(/"/g, '').trim()) return errText('query is required');
       const max = typeof args.max === 'number' ? args.max : 15;
-      const search = encodeURIComponent(`"displayName:${query}" OR "mail:${query}"`);
-      const result = await graphGet(
-        context,
-        access.accessToken,
-        `/users?$search=${search}&$count=true&$top=${max}&${USER_SELECT}`,
-        DIRECTORY_SEARCH_HEADERS
-      );
-      if (!result.ok) return errText(result.error);
-      const lines = values(result.body).map((user) => `${userLine(user)} — id: ${str(user.id)}`);
+      const found = await searchDirectoryUsers(context, access.accessToken, str(args.query), max);
+      if (typeof found === 'string') return errText(found);
+      const lines = found.map((user) => `${userLine(user)} — id: ${str(user.id)}`);
       if (lines.length === 0) return textResult('No directory matches.');
       return textResult(
         withPresentationHint(

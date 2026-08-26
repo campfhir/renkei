@@ -7,7 +7,12 @@
  * also teach the trigger.* chip vocabulary via the violet provides-chips.
  */
 
-import { describeSchedule, triggerEventById, type TriggerDraft } from '@renkei/agents';
+import {
+  describeSchedule,
+  describeTriggerMatch,
+  triggerEventById,
+  type TriggerDraft,
+} from '@renkei/agents';
 import type { TriggerPayload } from '@/lib/agents/store';
 
 export interface AgentChoice {
@@ -32,6 +37,17 @@ export function providesOf(draft: TriggerDraft): string[] {
     case 'schedule':
       return ['The scheduled time'];
   }
+}
+
+/**
+ * The trigger's deterministic narrowing, as a phrase, or null when it runs
+ * on everything. The same sentence the filter panel prints — one
+ * implementation in `@renkei/agents`, so the card and the editor cannot
+ * describe one filter two ways.
+ */
+export function filterSummaryOf(draft: TriggerDraft): string | null {
+  if (draft.kind !== 'event') return null;
+  return describeTriggerMatch(draft.eventId, draft.match ?? {});
 }
 
 export function summaryOf(draft: TriggerDraft, otherAgents: AgentChoice[]): string {
@@ -101,6 +117,19 @@ export function TriggerNode({
                   <span className="shrink-0">gives:</span>
                   <span className="truncate">{providesOf(trigger.draft).join(' · ') || '—'}</span>
                 </span>
+                {/*
+                  Only when the trigger is actually narrowed. An unfiltered
+                  trigger saying "only when: everything" would be a line of
+                  chrome on every card that never means anything.
+                */}
+                {filterSummaryOf(trigger.draft) ? (
+                  <span className="mt-0.5 flex items-center gap-1 overflow-hidden text-xs text-gray-500">
+                    <span aria-hidden="true" className="shrink-0">
+                      ▽
+                    </span>
+                    <span className="truncate">only {filterSummaryOf(trigger.draft)}</span>
+                  </span>
+                ) : null}
               </button>
             </li>
           ))}

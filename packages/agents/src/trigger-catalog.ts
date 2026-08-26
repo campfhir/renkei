@@ -78,6 +78,10 @@ const addressList = (
   maxEntries: 25,
   pattern: EMAIL_PATTERN,
   invalidMessage: `${label} takes email addresses`,
+  // A search, not a source: colleagues are worth not having to spell, but
+  // plenty of addresses worth filtering on — a customer, a vendor, an
+  // alias — are in nobody's directory. Typed values are always accepted.
+  suggest: 'microsoft-people',
   describeOne: one,
   describeMany: many,
 });
