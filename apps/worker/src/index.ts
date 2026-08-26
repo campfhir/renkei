@@ -34,6 +34,7 @@ import { sweepLogRetention, LOG_RETENTION_SWEEP_INTERVAL_MS } from './health/log
 import { sweepExpiredGrants, EXPIRED_GRANTS_SWEEP_INTERVAL_MS } from './health/expired-grants';
 import { createUploadSlotsSweep, UPLOAD_SLOTS_SWEEP_INTERVAL_MS } from './health/upload-slots';
 import { createAgentFiringsSweep, AGENT_FIRINGS_SWEEP_INTERVAL_MS } from './health/agent-firings';
+import { createWebexSentSweep, WEBEX_SENT_SWEEP_INTERVAL_MS } from './health/webex-sent';
 import { withSweepLock } from './health/sweep-lock';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
@@ -155,6 +156,12 @@ async function main(): Promise<void> {
               'agentfirings/sweep',
               AGENT_FIRINGS_SWEEP_INTERVAL_MS,
               createAgentFiringsSweep(dbResult.val)
+            ),
+            schedulePeriodicSweep(
+              'sent WebEx messages',
+              'webexsent/sweep',
+              WEBEX_SENT_SWEEP_INTERVAL_MS,
+              createWebexSentSweep(dbResult.val)
             ),
           ]
         : [];

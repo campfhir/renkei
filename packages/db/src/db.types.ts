@@ -649,6 +649,13 @@ export interface ToolCalls {
   tool: string;
 }
 
+export interface WebexSentMessages {
+  account_id: string | null;
+  created_at: Generated<Timestamp>;
+  message_id: string;
+  tenant_id: string;
+}
+
 export interface WebhookSubscriptions {
   account_id: string;
   client_state: string;
@@ -718,5 +725,6 @@ export interface DB {
   tenants: Tenants;
   tool_calls: ToolCalls;
   upload_slots: UploadSlots;
+  webex_sent_messages: WebexSentMessages;
   webhook_subscriptions: WebhookSubscriptions;
 }
