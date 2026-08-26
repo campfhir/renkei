@@ -43,8 +43,8 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
-    date: null,
-    heading: 'On the way',
+    date: '2026-08-26',
+    heading: 'Narrowing what wakes a WebEx agent',
     entries: [
       {
         kind: 'added',
