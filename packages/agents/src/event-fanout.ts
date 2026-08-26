@@ -53,12 +53,28 @@ function dedupeKeyFor(event: AgentEventInput): string | null {
   return event.eventId ? `event:${event.eventId}` : null;
 }
 
-/** Fire every enabled trigger matching this event. Returns run ids started. */
+/** What one event did: the runs it started, and the triggers it did not. */
+export interface FanOutResult {
+  /** Run ids created, one per trigger that fired. */
+  started: string[];
+  /**
+   * Triggers that WOULD have fired but for their own filters.
+   *
+   * Reported because "no run" has two very different causes that look the
+   * same from outside: nothing was listening, or something was listening
+   * and the filter turned this event away. Only the second means a person
+   * wrote a rule, and only the second is worth reading when an agent that
+   * should have run did not.
+   */
+  filtered: number;
+}
+
+/** Fire every enabled trigger matching this event. */
 export async function fanOutAgentEvents(
   db: Kysely<DB>,
   producer: QueueProducer,
   event: AgentEventInput
-): Promise<string[]> {
+): Promise<FanOutResult> {
   const triggers = await db
     .selectFrom('agent_triggers as t')
     .innerJoin('agents as a', 'a.id', 't.agent_id')
@@ -82,6 +98,7 @@ export async function fanOutAgentEvents(
   const dedupeKey = dedupeKeyFor(event);
   const eventId = `${event.source}/${event.type}`;
   const started: string[] = [];
+  let filtered = 0;
   for (const trigger of triggers) {
     const config: { match?: unknown } =
       typeof trigger.config === 'object' &&
@@ -93,7 +110,14 @@ export async function fanOutAgentEvents(
     // exists: a filtered-out event costs this comparison and nothing else.
     // The rules live in trigger-filters.ts so the builder that renders a
     // filter and the worker that applies it cannot drift.
-    if (!matchesTriggerEvent(eventId, config.match, event.payload)) continue;
+    if (!matchesTriggerEvent(eventId, config.match, event.payload)) {
+      // Counted, not just skipped. A filter working correctly and a filter
+      // that is quietly wrong look identical from outside — both are an
+      // agent that did not run — so the one number that separates them has
+      // to leave this loop.
+      filtered += 1;
+      continue;
+    }
     if (!isAgentStepsDoc(trigger.steps)) continue;
 
     // The firing lock: one run per (trigger, source event), across every
@@ -163,5 +187,5 @@ export async function fanOutAgentEvents(
         .execute();
     }
   }
-  return started;
+  return { started, filtered };
 }

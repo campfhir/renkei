@@ -113,7 +113,7 @@ export function createDomainDispatchHandler(): EventHandler {
 
     const dbResult = getDatabase();
     if (!dbResult.ok) throw new Error('database unavailable for domain dispatch');
-    const started = await fanOutAgentEvents(dbResult.val, queue.producer, {
+    const { started, filtered } = await fanOutAgentEvents(dbResult.val, queue.producer, {
       tenantId: event.tenant_id,
       source: payload.provider,
       type: event.type,
@@ -131,6 +131,19 @@ export function createDomainDispatchHandler(): EventHandler {
         source: payload.provider,
         type: event.type,
         count: started.length,
+      });
+    }
+    if (filtered > 0) {
+      // Said out loud, and at info rather than debug. A trigger that turned
+      // an event away on its own filters is the answer to "why didn't my
+      // agent run", and without this line the event simply vanishes —
+      // indistinguishable from nothing having been listening at all.
+      logger.info('{count} trigger(s) filtered out {source}/{type}', {
+        component: 'worker/domain-dispatch',
+        tenantId: event.tenant_id,
+        source: payload.provider,
+        type: event.type,
+        count: filtered,
       });
     }
   };

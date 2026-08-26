@@ -118,7 +118,7 @@ maybe('agent event fan-out', () => {
     await seedEventAgent(owner, { enabled: false }); // switched off — must not fire
 
     const queue = new InMemoryQueue();
-    const started = await fanOutAgentEvents(db, queue.producer, mailEvent(owner));
+    const { started } = await fanOutAgentEvents(db, queue.producer, mailEvent(owner));
     expect(started).toHaveLength(1);
 
     const run = await db
@@ -142,7 +142,7 @@ maybe('agent event fan-out', () => {
     const other = await seedEventAgent(owner, { match: { fromDomain: 'elsewhere.example' } });
 
     const queue = new InMemoryQueue();
-    const started = await fanOutAgentEvents(db, queue.producer, mailEvent(owner));
+    const { started } = await fanOutAgentEvents(db, queue.producer, mailEvent(owner));
     const runs = await db
       .selectFrom('agent_runs')
       .select('agent_id')
@@ -162,7 +162,7 @@ maybe('agent event fan-out', () => {
    */
   async function firedAgentsFor(event: Parameters<typeof fanOutAgentEvents>[2]): Promise<string[]> {
     const queue = new InMemoryQueue();
-    const started = await fanOutAgentEvents(db, queue.producer, event);
+    const { started } = await fanOutAgentEvents(db, queue.producer, event);
     if (started.length === 0) return [];
     const runs = await db
       .selectFrom('agent_runs')
@@ -240,9 +240,12 @@ maybe('agent event fan-out', () => {
       mailEvent(soloOwner, { messageId: `fresh-${randomUUID()}` })
     );
 
-    expect(first).toHaveLength(1);
-    expect(second).toHaveLength(0);
-    expect(fresh).toHaveLength(1);
+    expect(first.started).toHaveLength(1);
+    expect(second.started).toHaveLength(0);
+    expect(fresh.started).toHaveLength(1);
+    // A lost firing lock is not a filter — nothing turned this event away,
+    // another delivery simply got there first.
+    expect(second.filtered).toBe(0);
 
     // The winner's run is recorded on the firing row.
     const firing = await db
@@ -250,7 +253,7 @@ maybe('agent event fan-out', () => {
       .select('run_id')
       .where('dedupe_key', '=', `msg:${messageId}`)
       .executeTakeFirstOrThrow();
-    expect(firing.run_id).toBe(first[0]);
+    expect(firing.run_id).toBe(first.started[0]);
   });
 
   it('falls back to the delivery id, and without one does not lock at all', async () => {
@@ -264,12 +267,12 @@ maybe('agent event fan-out', () => {
     });
 
     const deliveryId = randomUUID();
-    expect(await fanOutAgentEvents(db, queue.producer, bare(deliveryId))).toHaveLength(1);
-    expect(await fanOutAgentEvents(db, queue.producer, bare(deliveryId))).toHaveLength(0);
+    expect((await fanOutAgentEvents(db, queue.producer, bare(deliveryId))).started).toHaveLength(1);
+    expect((await fanOutAgentEvents(db, queue.producer, bare(deliveryId))).started).toHaveLength(0);
 
     // No key derivable anywhere → pre-lock behavior (fires every time).
-    expect(await fanOutAgentEvents(db, queue.producer, bare(undefined))).toHaveLength(1);
-    expect(await fanOutAgentEvents(db, queue.producer, bare(undefined))).toHaveLength(1);
+    expect((await fanOutAgentEvents(db, queue.producer, bare(undefined))).started).toHaveLength(1);
+    expect((await fanOutAgentEvents(db, queue.producer, bare(undefined))).started).toHaveLength(1);
   });
 
   it('fires zoom transcript-completed triggers with the payload as state', async () => {
@@ -279,7 +282,7 @@ maybe('agent event fan-out', () => {
     });
 
     const queue = new InMemoryQueue();
-    const started = await fanOutAgentEvents(db, queue.producer, {
+    const { started } = await fanOutAgentEvents(db, queue.producer, {
       tenantId,
       source: 'zoom',
       type: 'recording.transcript_completed',

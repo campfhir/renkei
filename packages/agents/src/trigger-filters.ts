@@ -23,10 +23,13 @@
  * - **Empty or absent means no constraint** — never "match nothing". An
  *   agent that silently stops firing is the worse failure, and an empty list
  *   is what a half-finished edit looks like.
- * - **A constraint set against a payload key that is missing FAILS CLOSED.**
- *   "Only from these senders" is not satisfied by an event carrying no
- *   sender. This is the one place the rule above inverts, and it is
- *   deliberate: the constraint was stated, so it must hold.
+ * - **A constraint applies only where it can be POSITIVELY established.**
+ *   For an inclusion that means failing closed: "only from these senders"
+ *   is not satisfied by an event carrying no sender, because the constraint
+ *   was stated and must hold. For an exclusion it means the opposite:
+ *   "except from these senders" cannot be shown to apply to an event
+ *   carrying no sender, so nothing is excluded and it goes through. One
+ *   rule, and the asymmetry falls out of it — see `negate` below.
  * - **An unknown field id in a stored match is IGNORED**, and its siblings
  *   still apply. That is the rollback case — deploy N-1 reading a filter
  *   that deploy N wrote — where silencing the agent would be worse than
@@ -54,6 +57,24 @@ export type FilterMatchKind =
    * yields a filter that silently never matches.
    */
   | 'id-equals-any';
+
+/**
+ * Whether a multi-entry field needs one match or all of them.
+ *
+ * Only `contains` honours this today — it is the one matcher where both
+ * readings are useful ("mentions invoice OR receipt" against "mentions
+ * invoice AND overdue"). The others are identity comparisons where "all"
+ * would mean a payload equal to several different values at once.
+ */
+export type FilterMatchMode = 'any' | 'all';
+
+/**
+ * Absent means ANY, and that direction is deliberate: an unreadable or
+ * missing mode must widen the filter, never narrow it. Reading a bad value
+ * as ALL would quietly stop an agent firing, which is the failure this
+ * module says out loud it will not cause.
+ */
+export const DEFAULT_FILTER_MODE: FilterMatchMode = 'any';
 
 /** Where a picker's options come from, or a list's non-exclusive hints. */
 export type FilterOptionSource = 'webex-rooms' | 'microsoft-people';
@@ -99,6 +120,37 @@ export interface TriggerFilterField {
   describeOne: string;
   /** Fragment for more than one, e.g. 'from any of {count} senders'. */
   describeMany?: string;
+  /**
+   * Makes this field all-or-any, storing the choice under this key in the
+   * same match record.
+   *
+   * A sibling KEY rather than a second field, because a mode is not a
+   * constraint: a field would have to be skipped by the matcher, counted as
+   * nothing by `isEmptyMatch`, and hidden from `describeFilters`, which is
+   * three special cases to keep in step. As a key it is inert everywhere
+   * except the one field that names it. Only meaningful with `contains`.
+   */
+  modeKey?: string;
+  /** Fragment when the mode is ALL, e.g. 'mentions all of {count} keywords'. */
+  describeAll?: string;
+  /**
+   * Inverts the field: the event passes when it does NOT match.
+   *
+   * The two directions resolve missing payload data OPPOSITELY, and the
+   * asymmetry is the point rather than an oversight. One rule governs both:
+   * a constraint applies only where it can be POSITIVELY established.
+   *
+   * - "only these spaces" against an event with no space: the constraint
+   *   was stated and cannot be shown to hold, so the event is turned away.
+   * - "except these spaces" against an event with no space: the exclusion
+   *   cannot be shown to apply, so nothing is excluded and the event goes
+   *   through.
+   *
+   * Read the other way round — an exclusion that fires on unreadable data —
+   * a single malformed payload would silence an agent for a reason nobody
+   * could see, which is the failure this module refuses to cause.
+   */
+  negate?: boolean;
 }
 
 /** Scalars for `text`, arrays for the list inputs. */
@@ -178,7 +230,28 @@ export function normalizeMatch(fields: TriggerFilterField[], raw: unknown): Trig
     const cleaned = foldEntry(field, scalar);
     if (cleaned) out[field.id] = cleaned;
   }
+  // Mode keys are not field ids, so the loop above would have dropped them
+  // as unknown. Only ALL is stored, and only alongside entries it applies
+  // to: ANY is the default, so writing it would put a key in every row that
+  // means exactly what its absence already means.
+  for (const field of fields) {
+    if (!field.modeKey) continue;
+    if (out[field.id] === undefined) continue;
+    if (readMode(raw, field) === 'all') out[field.modeKey] = 'all';
+  }
   return out;
+}
+
+/** The stored mode for a field, defaulting open — see DEFAULT_FILTER_MODE. */
+function readMode(match: TriggerMatch, field: TriggerFilterField): FilterMatchMode {
+  if (!field.modeKey) return DEFAULT_FILTER_MODE;
+  return match[field.modeKey] === 'all' ? 'all' : DEFAULT_FILTER_MODE;
+}
+
+/** The all-or-any choice a stored match expresses for one field. */
+export function filterModeOf(field: TriggerFilterField, match: unknown): FilterMatchMode {
+  if (!isTriggerMatch(match)) return DEFAULT_FILTER_MODE;
+  return readMode(match, field);
 }
 
 /**
@@ -229,11 +302,18 @@ function constraintOf(field: TriggerFilterField, match: TriggerMatch): string[] 
   return entries.map((entry) => foldEntry(field, entry)).filter(Boolean);
 }
 
-function satisfies(field: TriggerFilterField, entries: string[], subject: string): boolean {
+function satisfies(
+  field: TriggerFilterField,
+  entries: string[],
+  subject: string,
+  mode: FilterMatchMode
+): boolean {
   switch (field.match) {
     case 'contains': {
       const haystack = subject.toLowerCase();
-      return entries.some((entry) => haystack.includes(entry));
+      return mode === 'all'
+        ? entries.every((entry) => haystack.includes(entry))
+        : entries.some((entry) => haystack.includes(entry));
     }
     case 'equals-any': {
       const actual = subject.trim().toLowerCase();
@@ -267,8 +347,15 @@ export function matchesFilters(
     const entries = constraintOf(field, match);
     if (entries.length === 0) continue;
     const subject = payload[field.payloadKey];
-    if (typeof subject !== 'string' || subject === '') return false;
-    if (!satisfies(field, entries, subject)) return false;
+    if (typeof subject !== 'string' || subject === '') {
+      // Unreadable payload: an inclusion cannot be established so it fails,
+      // an exclusion cannot be established so it does not apply. See the
+      // `negate` doc comment — one rule, two directions.
+      if (field.negate) continue;
+      return false;
+    }
+    const hit = satisfies(field, entries, subject, readMode(match, field));
+    if (field.negate ? hit : !hit) return false;
   }
   return true;
 }
@@ -288,8 +375,11 @@ export function describeFilters(fields: TriggerFilterField[], match: unknown): s
   for (const field of fields) {
     const entries = constraintOf(field, match);
     if (entries.length === 0) continue;
-    const template =
-      entries.length === 1 || !field.describeMany ? field.describeOne : field.describeMany;
+    const many =
+      readMode(match, field) === 'all' && field.describeAll
+        ? field.describeAll
+        : field.describeMany;
+    const template = entries.length === 1 || !many ? field.describeOne : many;
     parts.push(
       template.replace('{value}', entries[0] ?? '').replace('{count}', String(entries.length))
     );

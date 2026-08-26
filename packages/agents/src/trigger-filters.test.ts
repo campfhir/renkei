@@ -10,11 +10,13 @@
 
 import {
   describeFilters,
+  filterModeOf,
   isEmptyMatch,
   isTriggerMatch,
   matchesFilters,
   normalizeMatch,
   validateMatch,
+  type TriggerFilterField,
 } from './trigger-filters';
 import {
   TRIGGER_EVENT_CATALOG,
@@ -377,5 +379,256 @@ describe('the primitives work without the catalog', () => {
     expect(matchesFilters(fields, { roomIds: ['A'] }, { roomId: 'A' })).toBe(true);
     expect(normalizeMatch(fields, { roomIds: [' A '] })).toEqual({ roomIds: ['A'] });
     expect(validateMatch(fields, {})).toEqual([]);
+  });
+});
+
+/**
+ * All-or-any on a keyword field.
+ *
+ * The mode lives beside the entries under the field's `modeKey` rather than
+ * as a field of its own, so these also pin that it stays inert: it is not a
+ * constraint, not something `isEmptyMatch` counts, and not a line in the
+ * description.
+ */
+describe('keyword filters with an all/any mode', () => {
+  const keywords: TriggerFilterField = {
+    id: 'textKeywords',
+    payloadKey: 'text',
+    match: 'contains',
+    input: 'text-list',
+    label: 'Mentions these keywords',
+    hint: '',
+    invalidMessage: 'bad keyword',
+    modeKey: 'textKeywordsMode',
+    describeOne: 'mentioning "{value}"',
+    describeMany: 'mentioning any of {count} keywords',
+    describeAll: 'mentioning all {count} keywords',
+  };
+  const fields = [keywords];
+  const post = (text: string) => ({ text });
+
+  it('needs only one keyword by default', () => {
+    const match = normalizeMatch(fields, { textKeywords: ['deploy', 'rollback'] });
+    expect(matchesFilters(fields, match, post('starting the deploy now'))).toBe(true);
+    expect(matchesFilters(fields, match, post('nothing relevant'))).toBe(false);
+  });
+
+  it('needs every keyword when the mode is all', () => {
+    const match = normalizeMatch(fields, {
+      textKeywords: ['deploy', 'rollback'],
+      textKeywordsMode: 'all',
+    });
+    expect(matchesFilters(fields, match, post('deploy then rollback if it fails'))).toBe(true);
+    expect(matchesFilters(fields, match, post('starting the deploy now'))).toBe(false);
+  });
+
+  it('matches case-insensitively either way', () => {
+    const match = normalizeMatch(fields, {
+      textKeywords: ['Deploy', 'ROLLBACK'],
+      textKeywordsMode: 'all',
+    });
+    expect(matchesFilters(fields, match, post('DEPLOY, then rollback'))).toBe(true);
+  });
+
+  it('matches a multi-word keyword as a phrase', () => {
+    // No pattern on the field, so a phrase is a legitimate keyword and has
+    // to survive normalization intact.
+    const match = normalizeMatch(fields, { textKeywords: ['on call'] });
+    expect(matchesFilters(fields, match, post('who is On Call tonight?'))).toBe(true);
+    expect(matchesFilters(fields, match, post('call me'))).toBe(false);
+  });
+
+  it('reads an unusable mode as ANY, never as ALL', () => {
+    // The whole point of the default: a mode nobody can read must widen the
+    // filter. Reading junk as ALL would quietly stop an agent firing.
+    for (const mode of ['ALL', 'every', '', 42, null, ['all']]) {
+      const match = { textKeywords: ['deploy', 'rollback'], textKeywordsMode: mode };
+      expect(matchesFilters(fields, match, post('deploy only'))).toBe(true);
+    }
+  });
+
+  it('stores ALL and leaves ANY implied', () => {
+    expect(normalizeMatch(fields, { textKeywords: ['a'], textKeywordsMode: 'all' })).toEqual({
+      textKeywords: ['a'],
+      textKeywordsMode: 'all',
+    });
+    expect(normalizeMatch(fields, { textKeywords: ['a'], textKeywordsMode: 'any' })).toEqual({
+      textKeywords: ['a'],
+    });
+  });
+
+  it('drops a mode with no keywords to apply it to', () => {
+    // A mode alone is not a filter, and a row carrying one would read as
+    // configured while constraining nothing.
+    expect(normalizeMatch(fields, { textKeywordsMode: 'all' })).toEqual({});
+  });
+
+  it('does not let a lone mode count as a constraint', () => {
+    expect(isEmptyMatch(fields, { textKeywordsMode: 'all' })).toBe(true);
+    expect(matchesFilters(fields, { textKeywordsMode: 'all' }, post('anything'))).toBe(true);
+  });
+
+  it('says which reading it is using', () => {
+    expect(describeFilters(fields, { textKeywords: ['a', 'b'] })).toBe(
+      'mentioning any of 2 keywords'
+    );
+    expect(describeFilters(fields, { textKeywords: ['a', 'b'], textKeywordsMode: 'all' })).toBe(
+      'mentioning all 2 keywords'
+    );
+    // One keyword reads the same either way, so the mode must not intrude.
+    expect(describeFilters(fields, { textKeywords: ['a'], textKeywordsMode: 'all' })).toBe(
+      'mentioning "a"'
+    );
+  });
+
+  it('reports the mode back for the editor to render', () => {
+    expect(filterModeOf(keywords, { textKeywords: ['a'], textKeywordsMode: 'all' })).toBe('all');
+    expect(filterModeOf(keywords, { textKeywords: ['a'] })).toBe('any');
+    expect(filterModeOf(keywords, 'not a match at all')).toBe('any');
+  });
+
+  it('still fails closed when the message carries no text', () => {
+    const match = normalizeMatch(fields, { textKeywords: ['deploy'] });
+    expect(matchesFilters(fields, match, {})).toBe(false);
+    expect(matchesFilters(fields, match, { text: '' })).toBe(false);
+  });
+});
+
+/**
+ * Negated fields, and the asymmetry they introduce deliberately.
+ *
+ * One rule covers both directions: a constraint applies only where it can
+ * be POSITIVELY established. So an inclusion over unreadable data turns the
+ * event away, and an exclusion over the same data does not apply. The
+ * alternative — an exclusion that fires on a payload it could not read —
+ * silences an agent for a reason nobody can see.
+ */
+describe('negated filters', () => {
+  const except: TriggerFilterField = {
+    id: 'exceptSenders',
+    payloadKey: 'sender',
+    match: 'equals-any',
+    input: 'text-list',
+    label: 'Except from these people',
+    hint: '',
+    invalidMessage: 'bad address',
+    negate: true,
+    describeOne: 'but not from {value}',
+    describeMany: 'but not from {count} people',
+  };
+  const only: TriggerFilterField = {
+    id: 'senders',
+    payloadKey: 'sender',
+    match: 'equals-any',
+    input: 'text-list',
+    label: 'Only from these people',
+    hint: '',
+    invalidMessage: 'bad address',
+    describeOne: 'from {value}',
+  };
+
+  it('turns away exactly what it names, and passes everything else', () => {
+    const fields = [except];
+    const match = normalizeMatch(fields, { exceptSenders: ['builds@example.com'] });
+    expect(matchesFilters(fields, match, { sender: 'builds@example.com' })).toBe(false);
+    expect(matchesFilters(fields, match, { sender: 'dana@example.com' })).toBe(true);
+  });
+
+  it('ignores case, like its positive twin', () => {
+    const fields = [except];
+    const match = normalizeMatch(fields, { exceptSenders: ['Builds@Example.com'] });
+    expect(matchesFilters(fields, match, { sender: 'BUILDS@example.com' })).toBe(false);
+  });
+
+  it('excludes if ANY entry matches', () => {
+    const fields = [except];
+    const match = normalizeMatch(fields, { exceptSenders: ['a@x.com', 'b@x.com'] });
+    expect(matchesFilters(fields, match, { sender: 'b@x.com' })).toBe(false);
+    expect(matchesFilters(fields, match, { sender: 'c@x.com' })).toBe(true);
+  });
+
+  it('does not apply when the payload cannot be read', () => {
+    // The asymmetry, stated as a test: unreadable data cannot establish an
+    // exclusion, so nothing is excluded.
+    const fields = [except];
+    const match = normalizeMatch(fields, { exceptSenders: ['builds@example.com'] });
+    expect(matchesFilters(fields, match, {})).toBe(true);
+    expect(matchesFilters(fields, match, { sender: '' })).toBe(true);
+    expect(matchesFilters(fields, match, { sender: 42 })).toBe(true);
+  });
+
+  it('still fails an INCLUSION on the same unreadable payload', () => {
+    // Both behaviours in one place, because the pair is the design.
+    const fields = [only];
+    const match = normalizeMatch(fields, { senders: ['dana@example.com'] });
+    expect(matchesFilters(fields, match, {})).toBe(false);
+  });
+
+  it('composes with its positive twin, both narrowing', () => {
+    // "Only these two people, except one of them" is contradictory but
+    // legal; the AND between fields has to resolve it to "nothing".
+    const fields = [only, except];
+    const match = normalizeMatch(fields, {
+      senders: ['dana@example.com', 'ops@example.com'],
+      exceptSenders: ['ops@example.com'],
+    });
+    expect(matchesFilters(fields, match, { sender: 'dana@example.com' })).toBe(true);
+    expect(matchesFilters(fields, match, { sender: 'ops@example.com' })).toBe(false);
+    expect(matchesFilters(fields, match, { sender: 'other@example.com' })).toBe(false);
+  });
+
+  it('is still no constraint when empty', () => {
+    const fields = [except];
+    expect(matchesFilters(fields, { exceptSenders: [] }, { sender: 'anyone@x.com' })).toBe(true);
+    expect(isEmptyMatch(fields, { exceptSenders: [] })).toBe(true);
+  });
+
+  it('reads as an exception in the summary', () => {
+    expect(describeFilters([except], { exceptSenders: ['builds@example.com'] })).toBe(
+      'but not from builds@example.com'
+    );
+  });
+});
+
+describe('the webex catalog entry offers both directions', () => {
+  it('carries a keyword filter and both exclusions', () => {
+    const ids = triggerFilterFields(WEBEX).map((field) => field.id);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        'roomIds',
+        'exceptRoomIds',
+        'senderAddresses',
+        'exceptSenderAddresses',
+        'textKeywords',
+      ])
+    );
+  });
+
+  it('excludes a noisy sender end to end through the catalog', () => {
+    const match = normalizeMatchForEvent(WEBEX, {
+      exceptSenderAddresses: ['builds@example.com'],
+    });
+    expect(
+      matchesTriggerEvent(WEBEX, match, { text: 'deploy done', sender: 'builds@example.com' })
+    ).toBe(false);
+    expect(
+      matchesTriggerEvent(WEBEX, match, { text: 'deploy done', sender: 'dana@example.com' })
+    ).toBe(true);
+  });
+
+  it('keeps keywords and an exclusion working together', () => {
+    const match = normalizeMatchForEvent(WEBEX, {
+      textKeywords: ['deploy', 'rollback'],
+      textKeywordsMode: 'all',
+      exceptSenderAddresses: ['builds@example.com'],
+    });
+    const post = (text: string, sender: string) => ({ text, sender });
+    expect(matchesTriggerEvent(WEBEX, match, post('deploy then rollback', 'dana@x.com'))).toBe(
+      true
+    );
+    expect(matchesTriggerEvent(WEBEX, match, post('deploy only', 'dana@x.com'))).toBe(false);
+    expect(
+      matchesTriggerEvent(WEBEX, match, post('deploy then rollback', 'builds@example.com'))
+    ).toBe(false);
   });
 });
