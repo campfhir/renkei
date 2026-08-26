@@ -21,6 +21,7 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
+import { getDatabase } from '@renkei/db';
 import { extractText, DEFAULT_MAX_INPUT_BYTES } from '@renkei/document-text';
 import {
   annotateEntries,
@@ -28,6 +29,7 @@ import {
   childPath,
   effectiveAccess,
   hasAllowedDescendant,
+  listRulePathsUnder,
   normalizePath,
   openBackend,
   parentPath,
@@ -43,6 +45,13 @@ import type {
 import type { Result } from '@campfhir/safe-functions/types';
 import type { MCPToolContext } from '../common';
 import { createUploadSlot } from '../upload-slots';
+import {
+  APP_ONLY_META,
+  ISSUE_PREVIEW_URI,
+  confirmGuard,
+  newPreviewId,
+  previewToolMeta,
+} from '../widgets';
 import type { FileshareAuth, ResolvedShare } from './fileshare-auth';
 
 /** The connector key the fileshare capabilities register under. */
@@ -387,6 +396,252 @@ export function registerFileshareTools(
       return textResult(`Created ${path.path} on "${resolved.ctx.share.name}".`);
     }
   );
+
+  /**
+   * The destructive-operation gate, shared by move, rename and delete:
+   * read/write on the target, and NO rule — any layer, ANY subject —
+   * anchored at or under it. Rules govern paths, not objects; a rename
+   * that slid ruled content to an unruled path would be an ACL bypass, so
+   * anchored content stays put until an admin removes the rules. Errors
+   * fail closed, and the refusal names the anchored paths so the admin
+   * knows what to clear.
+   */
+  async function destructiveRefusal(
+    resolved: ResolvedShare,
+    path: string,
+    verb: string
+  ): Promise<string | null> {
+    if (effectiveAccess(resolved.ctx, path) !== 'read_write') {
+      return `You do not have read/write access to ${verb} that path.`;
+    }
+    const dbResult = getDatabase();
+    if (!dbResult.ok) return 'Database unavailable.';
+    const anchored = await listRulePathsUnder(
+      dbResult.val,
+      context.tenantId,
+      resolved.ctx.share.id,
+      path,
+      resolved.ctx.share.caseInsensitive
+    );
+    if (!anchored.ok) return 'Could not verify the path rules here.';
+    if (anchored.val.length > 0) {
+      return (
+        `Access rules are anchored at or under that path (${anchored.val.join(', ')}), so it ` +
+        `cannot be ${verb === 'delete' ? 'deleted' : 'moved or renamed'} — an administrator ` +
+        'must remove those rules first.'
+      );
+    }
+    return null;
+  }
+
+  server.registerTool(
+    'fileshare_move_entry',
+    {
+      title: 'FileShares · Act — Move a file or folder',
+      description:
+        'Move a file or folder to another folder on the SAME share, keeping its name ' +
+        '(requires read/write on both the source and the destination; use ' +
+        'fileshare_rename_entry to change the name). Never overwrites: an existing ' +
+        'destination is refused.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        shareId: z.string().uuid().describe('From fileshare_list_shares.'),
+        path: z.string().min(1).describe('The file or folder to move, Unix style.'),
+        toFolder: z.string().describe('Destination FOLDER path, Unix style (e.g. /archive).'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const resolved = await auth.resolve(str(args.shareId));
+      if (typeof resolved === 'string') return errText(resolved);
+      const source = inputPath(args.path);
+      if (!source.ok) return errText(source.error);
+      if (source.path === '/') return errText('The share root cannot be moved.');
+      const toFolder = inputPath(args.toFolder ?? '/');
+      if (!toFolder.ok) return errText(toFolder.error);
+
+      const name = source.path.slice(source.path.lastIndexOf('/') + 1);
+      const destination = childPath(toFolder.path, name);
+      if (destination === source.path) return errText('That is already where it lives.');
+
+      const refusal = await destructiveRefusal(resolved, source.path, 'move');
+      if (refusal) return errText(refusal);
+      if (effectiveAccess(resolved.ctx, destination) !== 'read_write') {
+        return errText('You do not have read/write access at the destination.');
+      }
+
+      const renamed = await withShareSession(resolved, (backend) =>
+        backend.rename(source.path, destination)
+      );
+      if (!renamed.ok) return errText(backendMessage('move it', renamed.err));
+      return textResult(`Moved ${source.path} to ${destination} on "${resolved.ctx.share.name}".`);
+    }
+  );
+
+  server.registerTool(
+    'fileshare_rename_entry',
+    {
+      title: 'FileShares · Act — Rename a file or folder',
+      description:
+        'Give a file or folder a new name in its current folder (requires read/write on ' +
+        'both the old and new paths). Never overwrites: an existing name is refused. To ' +
+        'change folders, use fileshare_move_entry.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        shareId: z.string().uuid().describe('From fileshare_list_shares.'),
+        path: z.string().min(1).describe('The file or folder to rename, Unix style.'),
+        newName: z.string().min(1).max(255).describe('The new name (no path separators).'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const resolved = await auth.resolve(str(args.shareId));
+      if (typeof resolved === 'string') return errText(resolved);
+      const source = inputPath(args.path);
+      if (!source.ok) return errText(source.error);
+      if (source.path === '/') return errText('The share root cannot be renamed.');
+
+      const newName = str(args.newName).trim();
+      if (!newName || newName.includes('/') || newName.includes('\\') || newName === '..') {
+        return errText('The new name must be a plain name with no path separators.');
+      }
+      const destination = childPath(parentPath(source.path), newName);
+      if (destination === source.path) return errText('That is already its name.');
+
+      const refusal = await destructiveRefusal(resolved, source.path, 'rename');
+      if (refusal) return errText(refusal);
+      if (effectiveAccess(resolved.ctx, destination) !== 'read_write') {
+        return errText('You do not have read/write access at the new name.');
+      }
+
+      const renamed = await withShareSession(resolved, (backend) =>
+        backend.rename(source.path, destination)
+      );
+      if (!renamed.ok) return errText(backendMessage('rename it', renamed.err));
+      return textResult(
+        `Renamed ${source.path} to ${destination} on "${resolved.ctx.share.name}".`
+      );
+    }
+  );
+
+  /*
+    Deletion is preview + confirm only (the outlook_cancel_event shape):
+    file-server deletes have no recycle bin, so the card puts a human click
+    between the model and the irreversible act. One schema and one handler
+    serve both registrations — the confirm path IS the delete path, and it
+    re-runs every check itself rather than trusting anything the card sends.
+  */
+  const deleteEntrySchema = z.object({
+    shareId: z.string().uuid().describe('From fileshare_list_shares.'),
+    path: z.string().min(1).describe('The file or empty folder to delete, Unix style.'),
+  });
+
+  const deleteEntryHandler = async (args: Record<string, unknown>) => {
+    const resolved = await auth.resolve(str(args.shareId));
+    if (typeof resolved === 'string') return errText(resolved);
+    const path = inputPath(args.path);
+    if (!path.ok) return errText(path.error);
+    if (path.path === '/') return errText('The share root cannot be deleted.');
+
+    const refusal = await destructiveRefusal(resolved, path.path, 'delete');
+    if (refusal) return errText(refusal);
+
+    const removed = await withShareSession(resolved, async (backend) => {
+      const stats = await backend.stat(path.path);
+      if (!stats.ok) return stats;
+      return backend.remove(path.path, stats.val.kind);
+    });
+    if (!removed.ok) return errText(backendMessage('delete it', removed.err));
+    return textResult(`Deleted ${path.path} from "${resolved.ctx.share.name}".`);
+  };
+
+  const previewGuidance = (what: string) =>
+    `${what} is awaiting the user's decision on the preview card. Do not write it another ` +
+    `way and do not repeat its contents in your reply; the user confirms or cancels from ` +
+    `the card. If no card appeared in this client, ask the user how to proceed.`;
+
+  server.registerTool(
+    'fileshare_delete_entry_preview',
+    {
+      title: 'FileShares · Act — Preview a deletion before it happens',
+      description:
+        'Show the user an interactive card to confirm or cancel deleting a file or EMPTY ' +
+        'folder from a granted share. This is the only way to delete here — file-server ' +
+        'deletion is permanent, so the user decides on the card. Requires read/write on ' +
+        'the path.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(ISSUE_PREVIEW_URI),
+      inputSchema: deleteEntrySchema,
+    },
+    async (args: Record<string, unknown>) => {
+      const resolved = await auth.resolve(str(args.shareId));
+      if (typeof resolved === 'string') return errText(resolved);
+      const path = inputPath(args.path);
+      if (!path.ok) return errText(path.error);
+      if (path.path === '/') return errText('The share root cannot be deleted.');
+
+      const refusal = await destructiveRefusal(resolved, path.path, 'delete');
+      if (refusal) return errText(refusal);
+
+      // Read-only enrichment: what exactly is on the card. A non-empty
+      // folder is refused here rather than at confirm time — the card must
+      // never promise a deletion the confirm path would refuse.
+      const looked = await withShareSession(resolved, async (backend) => {
+        const stats = await backend.stat(path.path);
+        if (!stats.ok) return stats;
+        if (stats.val.kind === 'dir') {
+          const children = await backend.list(path.path);
+          if (!children.ok) return children;
+          if (children.val.length > 0) {
+            return {
+              ok: false as const,
+              val: undefined,
+              err: { type: 'not_empty' as const, message: undefined },
+            };
+          }
+        }
+        return { ok: true as const, val: stats.val };
+      });
+      if (!looked.ok) return errText(backendMessage('delete it', looked.err));
+      const entry = looked.val;
+
+      const name = path.path.slice(path.path.lastIndexOf('/') + 1);
+      return {
+        content: [{ type: 'text' as const, text: previewGuidance(`The deletion of ${path.path}`) }],
+        structuredContent: {
+          kind: 'issue',
+          previewId: newPreviewId(),
+          title: `Delete ${name} permanently`,
+          subtitle: `${resolved.ctx.share.name} · ${path.path}`,
+          confirmTool: 'fileshare_delete_entry_confirm',
+          confirmLabel: 'Delete permanently',
+          confirmArgs: args,
+          fields: [
+            { label: 'Share', value: resolved.ctx.share.name },
+            { label: 'Path', value: path.path },
+            { label: 'Type', value: entry.kind === 'dir' ? 'Empty folder' : 'File' },
+            ...(entry.size !== null ? [{ label: 'Size', value: `${entry.size} bytes` }] : []),
+            ...(entry.modifiedAt
+              ? [{ label: 'Modified', value: entry.modifiedAt.toISOString() }]
+              : []),
+            { label: 'Undo', value: 'None — deletion on the file server is permanent' },
+          ],
+        },
+      };
+    }
+  );
+
+  server.registerTool(
+    'fileshare_delete_entry_confirm',
+    {
+      title: 'FileShares · Act — Execute a confirmed deletion',
+      description:
+        'Delete the file or empty folder the user confirmed on the preview card. ' +
+        confirmGuard('fileshare_delete_entry_preview'),
+      annotations: { readOnlyHint: false },
+      _meta: APP_ONLY_META,
+      inputSchema: deleteEntrySchema,
+    },
+    deleteEntryHandler
+  );
 }
 
 /** One bounded backend session: open, run, always close. */
@@ -417,6 +672,10 @@ function backendMessage(what: string, error: { type: string; message?: string })
       return error.message ?? 'The file is too large to read here.';
     case 'connection':
       return `Could not reach the file server to ${what}.`;
+    case 'exists':
+      return error.message ?? 'Something already exists at the destination.';
+    case 'not_empty':
+      return 'The folder is not empty — only empty folders can be deleted (delete its contents first).';
     default:
       return `Could not ${what}: ${error.message ?? error.type}.`;
   }

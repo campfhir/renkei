@@ -234,6 +234,18 @@ describe('listAvailableTools', () => {
     const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
     expect(tools).toContain('fileshare_list_shares');
     expect(tools).toContain('fileshare_request_file_upload');
+    expect(tools).toContain('fileshare_move_entry');
+    expect(tools).toContain('fileshare_rename_entry');
+    expect(tools).toContain('fileshare_delete_entry_preview');
+  });
+
+  it('marks the fileshare delete confirm app-only, like every card button', async () => {
+    fileshareGranted = true;
+    const tools = await listAvailableTools('tenant-1', 'subject-1');
+    const confirm = tools.find((tool) => tool.name === 'fileshare_delete_entry_confirm');
+    expect(confirm?.appOnly).toBe(true);
+    const preview = tools.find((tool) => tool.name === 'fileshare_delete_entry_preview');
+    expect(preview?.appOnly).toBe(false);
   });
 
   it('drops the fileshare act tools in org read-only mode, keeps the reads', async () => {

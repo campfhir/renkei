@@ -51,6 +51,18 @@ const ARGS: Record<string, Record<string, unknown>> = {
     filename: 'x.txt',
   },
   fileshare_create_folder: { shareId: '11111111-2222-3333-4444-555555555555', path: '/x' },
+  fileshare_move_entry: {
+    shareId: '11111111-2222-3333-4444-555555555555',
+    path: '/x',
+    toFolder: '/y',
+  },
+  fileshare_rename_entry: {
+    shareId: '11111111-2222-3333-4444-555555555555',
+    path: '/x',
+    newName: 'y',
+  },
+  fileshare_delete_entry_preview: { shareId: '11111111-2222-3333-4444-555555555555', path: '/x' },
+  fileshare_delete_entry_confirm: { shareId: '11111111-2222-3333-4444-555555555555', path: '/x' },
 };
 
 test('every fileshare tool answers a denied auth with a clean error', async () => {
