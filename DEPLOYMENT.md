@@ -120,6 +120,16 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   ingest-time call to the org-configured embeddings endpoint (chunk
   ingestion, index deletes and purges, related-items back-fill).
   Entrypoint: `pnpm --filter @renkei/worker start:embeddings`.
+- `worker-fileshares` — not a queue consumer but an internal HTTP service
+  off the same image: the only process that opens SMB/SFTP sessions or
+  decrypts file-share credentials. The web app reaches it at
+  `FILESHARES_WORKER_URL` (compose wires `http://renkei-worker-fileshares:8090`)
+  presenting the shared bearer key `FILESHARES_WORKER_API_KEY` — set both
+  in `.env` (`openssl rand -base64 32` makes a good key; the worker also
+  honors `FILESHARES_WORKER_PORT`, default 8090). Without them the
+  file-share connector answers "service not configured" everywhere —
+  closed, never open. Entrypoint:
+  `pnpm --filter @renkei/worker-fileshares start`.
 
 **Horizontal scale:** either process may run as N instances. Claims take
 row locks (`FOR UPDATE SKIP LOCKED`), and messages sharing an ordering key

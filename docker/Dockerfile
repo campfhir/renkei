@@ -25,6 +25,10 @@ RUN npm install -g pnpm@${PNPM_VERSION}
 # a workspace package was added, and a missing manifest fails the install with a
 # module-not-found much further along, in the Next build.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# pnpm-workspace.yaml declares patchedDependencies; without the patch files
+# themselves every install below fails against the frozen lockfile. Each
+# stage that runs pnpm install copies patches/ alongside the manifests.
+COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 
 # Install dependencies
@@ -67,6 +71,7 @@ RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 # downloads it from npm on every boot — slow, and broken on an offline host.
 # pnpm's os/cpu fields mean only the matching platform binary is installed.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 # next declares @playwright/test as an OPTIONAL peer dependency (its opt-in
 # experimental/testmode/playwright integration, which nothing here uses —
@@ -144,12 +149,13 @@ ENTRYPOINT ["dumb-init", "--"]
 # Start the application
 CMD ["pnpm", "--filter", "renkei", "start"]
 
-# Worker stage - every long-running queue consumer, one image. The three
-# worker processes (interactive events, embeddings, agent runs) are compose
-# services over this single image with different commands — the embeddings
-# precedent, extended when apps/worker-agents arrived. That is why BOTH
-# worker apps are installed and copied here: the agents worker is a separate
-# app (its own deps and entry point), not a second script in apps/worker.
+# Worker stage - every long-running worker process, one image. The four
+# worker processes (interactive events, embeddings, agent runs, file-share
+# I/O) are compose services over this single image with different commands —
+# the embeddings precedent, extended when apps/worker-agents and
+# apps/worker-fileshares arrived. That is why ALL worker apps are installed
+# and copied here: each is a separate app (its own deps and entry point),
+# not another script in apps/worker.
 FROM node:24-alpine AS worker
 ARG PNPM_VERSION
 
@@ -164,9 +170,11 @@ RUN addgroup -g 1001 -S nodejs && \
     adduser -S worker -u 1001
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional \
-      --filter @renkei/worker... --filter @renkei/worker-agents... && \
+      --filter @renkei/worker... --filter @renkei/worker-agents... \
+      --filter @renkei/worker-fileshares... && \
     rm -rf /root/.pnpm-store /root/.npm
 
 # The workers run TypeScript directly through tsx, so they ship source —
@@ -178,6 +186,8 @@ COPY --chown=worker:nodejs apps/worker/src ./apps/worker/src
 COPY --chown=worker:nodejs apps/worker/tsconfig.json ./apps/worker/
 COPY --chown=worker:nodejs apps/worker-agents/src ./apps/worker-agents/src
 COPY --chown=worker:nodejs apps/worker-agents/tsconfig.json ./apps/worker-agents/
+COPY --chown=worker:nodejs apps/worker-fileshares/src ./apps/worker-fileshares/src
+COPY --chown=worker:nodejs apps/worker-fileshares/tsconfig.json ./apps/worker-fileshares/
 
 USER worker
 
@@ -198,6 +208,7 @@ WORKDIR /app
 RUN npm install -g pnpm@${PNPM_VERSION}
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/db... && \
     rm -rf /root/.pnpm-store /root/.npm
