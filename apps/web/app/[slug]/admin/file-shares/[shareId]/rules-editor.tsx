@@ -41,6 +41,7 @@ import { Icon, ICONS } from '@/components/icons';
 import Modal from '@/components/modal';
 import { useDismiss } from '@/lib/use-dismiss';
 import { inputClass } from '../share-config-fields';
+import { AccessCheckboxes } from './access-checkboxes';
 import { GRANTS_CHANGED_EVENT } from './grant-manager';
 
 type Access = 'none' | 'read' | 'read_write';
@@ -508,6 +509,7 @@ export default function RulesEditor({
         <AddUserModal
           slug={slug}
           shareId={shareId}
+          ceiling={share.maxAccess}
           people={people.filter(
             (person) => !grants.some((grant) => grant.subject === person.subject)
           )}
@@ -554,12 +556,9 @@ export default function RulesEditor({
 }
 
 /**
- * Two checkboxes over the three-level ladder: neither = no access, read =
- * read, both = read/write (checking write implies read; unchecking read
- * clears write with it). `ceiling` grays out what the layer above does not
- * allow — a box you cannot check because nobody below that level may hold
- * it here. `explicit` rows carry the trash icon that deletes the rule
- * (back to inherited); inherited rows say so.
+ * The panel's row controls: the shared checkbox pair, an "inherited" hint
+ * for rows without an explicit rule, and the trash icon on explicit rows
+ * that deletes the rule (back to inherited).
  */
 function PermissionCheckboxes({
   name,
@@ -576,43 +575,12 @@ function PermissionCheckboxes({
   onLevel: (next: Access) => void;
   onClear: () => void;
 }) {
-  const readChecked = level !== 'none';
-  const writeChecked = level === 'read_write';
-  const readDisabled = ceiling === 'none';
-  const writeDisabled = ceiling !== 'read_write';
-
-  const box = (
-    label: 'read' | 'write',
-    checked: boolean,
-    disabled: boolean,
-    onToggle: (checked: boolean) => void
-  ) => (
-    <label
-      className={`flex items-center gap-1 text-xs ${
-        disabled ? 'opacity-40' : 'cursor-pointer'
-      } text-gray-600 dark:text-gray-400`}
-    >
-      <input
-        type="checkbox"
-        aria-label={`${name}: ${label}`}
-        className="h-4 w-4 accent-blue-600"
-        checked={checked}
-        disabled={disabled}
-        onChange={(event) => onToggle(event.target.checked)}
-      />
-      {label}
-    </label>
-  );
-
   return (
     <span className="flex shrink-0 items-center gap-3">
       {!explicit ? (
         <span className="text-xs text-gray-400 dark:text-gray-500">inherited</span>
       ) : null}
-      {box('read', readChecked, readDisabled, (checked) => onLevel(checked ? 'read' : 'none'))}
-      {box('write', writeChecked, writeDisabled, (checked) =>
-        onLevel(checked ? 'read_write' : 'read')
-      )}
+      <AccessCheckboxes name={name} level={level} ceiling={ceiling} onLevel={onLevel} />
       {explicit ? (
         <button
           type="button"
@@ -637,11 +605,13 @@ function PermissionCheckboxes({
 function AddUserModal({
   slug,
   shareId,
+  ceiling,
   people,
   onClose,
 }: {
   slug: string;
   shareId: string;
+  ceiling: 'read' | 'read_write';
   people: { subject: string; label: string }[];
   onClose: () => void;
 }) {
@@ -686,23 +656,24 @@ function AddUserModal({
             ))}
           </select>
         </label>
-        <label className="block">
+        <div>
           <span className="mb-1 block text-gray-600 dark:text-gray-400">
             Access across the share
           </span>
-          <select
-            className={`${inputClass} w-full`}
-            value={level}
-            onChange={(event) => {
-              const next = event.target.value;
-              if (next === 'none' || next === 'read' || next === 'read_write') setLevel(next);
-            }}
-          >
-            <option value="none">specific folders only</option>
-            <option value="read">read</option>
-            <option value="read_write">read/write</option>
-          </select>
-        </label>
+          <div className="flex items-center gap-3">
+            <AccessCheckboxes
+              name="New user default"
+              level={level}
+              ceiling={ceiling}
+              onLevel={setLevel}
+            />
+            {level === 'none' ? (
+              <span className="text-xs text-gray-400 dark:text-gray-500">
+                specific folders only — check folders in below
+              </span>
+            ) : null}
+          </div>
+        </div>
         {people.length === 0 ? (
           <p className="text-gray-500 dark:text-gray-400">
             Everyone the org knows about already has access to this share.

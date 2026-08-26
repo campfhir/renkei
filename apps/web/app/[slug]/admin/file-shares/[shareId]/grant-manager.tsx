@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getJson, sendJson } from '@/lib/fetch-json';
 import { Icon, ICONS } from '@/components/icons';
 import { inputClass } from '../share-config-fields';
+import { AccessCheckboxes } from './access-checkboxes';
 
 /** Window event announcing a grant mutation on the current share page. */
 export const GRANTS_CHANGED_EVENT = 'fileshare-grants-changed';
@@ -24,20 +25,16 @@ interface GrantRowView {
   createdAt: string;
 }
 
-const ACCESS_LABEL: Record<GrantRowView['defaultAccess'], string> = {
-  none: 'specific folders only',
-  read: 'read',
-  read_write: 'read/write',
-};
-
 export default function GrantManager({
   slug,
   shareId,
   people,
+  share,
 }: {
   slug: string;
   shareId: string;
   people: { subject: string; label: string }[];
+  share: { maxAccess: 'read' | 'read_write' };
 }) {
   const [grants, setGrants] = useState<GrantRowView[]>([]);
   const [subject, setSubject] = useState('');
@@ -63,9 +60,15 @@ export default function GrantManager({
   const labelFor = (grantSubject: string): string =>
     people.find((person) => person.subject === grantSubject)?.label ?? grantSubject;
 
-  const save = async (grantSubject: string, defaultAccess: string) => {
+  const save = async (grantSubject: string, defaultAccess: GrantRowView['defaultAccess']) => {
     setBusy(true);
     setError(null);
+    // Controlled checkboxes must flip on click; the reload reconciles after.
+    setGrants((current) =>
+      current.map((grant) =>
+        grant.subject === grantSubject ? { ...grant, defaultAccess } : grant
+      )
+    );
     const saveError = await sendJson(`/api/admin/${slug}/file-shares/${shareId}/grants`, 'POST', {
       subject: grantSubject,
       defaultAccess,
@@ -73,6 +76,7 @@ export default function GrantManager({
     setBusy(false);
     if (saveError) {
       setError(saveError);
+      await load();
       return;
     }
     setSubject('');
@@ -115,18 +119,19 @@ export default function GrantManager({
                   {grant.subject}
                 </p>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
-                <select
-                  aria-label={`Default access for ${labelFor(grant.subject)}`}
-                  className={inputClass}
-                  value={grant.defaultAccess}
+              <div className="flex shrink-0 items-center gap-3">
+                {grant.defaultAccess === 'none' ? (
+                  <span className="text-xs text-gray-400 dark:text-gray-500">
+                    specific folders only
+                  </span>
+                ) : null}
+                <AccessCheckboxes
+                  name={`Default access for ${labelFor(grant.subject)}`}
+                  level={grant.defaultAccess}
+                  ceiling={share.maxAccess}
                   disabled={busy}
-                  onChange={(event) => void save(grant.subject, event.target.value)}
-                >
-                  <option value="none">{ACCESS_LABEL.none}</option>
-                  <option value="read">{ACCESS_LABEL.read}</option>
-                  <option value="read_write">{ACCESS_LABEL.read_write}</option>
-                </select>
+                  onLevel={(next) => void save(grant.subject, next)}
+                />
                 <button
                   type="button"
                   aria-label={`Remove ${labelFor(grant.subject)}'s access`}
@@ -158,24 +163,16 @@ export default function GrantManager({
               </option>
             ))}
         </select>
-        <select
-          aria-label="Default access"
-          className={inputClass}
-          value={level}
-          onChange={(event) =>
-            setLevel(
-              event.target.value === 'read_write'
-                ? 'read_write'
-                : event.target.value === 'none'
-                  ? 'none'
-                  : 'read'
-            )
-          }
-        >
-          <option value="none">{ACCESS_LABEL.none}</option>
-          <option value="read">{ACCESS_LABEL.read}</option>
-          <option value="read_write">{ACCESS_LABEL.read_write}</option>
-        </select>
+        <AccessCheckboxes
+          name="Default access"
+          level={level}
+          ceiling={share.maxAccess}
+          disabled={busy}
+          onLevel={setLevel}
+        />
+        {level === 'none' ? (
+          <span className="text-xs text-gray-400 dark:text-gray-500">specific folders only</span>
+        ) : null}
         <button
           type="button"
           disabled={busy || !subject}

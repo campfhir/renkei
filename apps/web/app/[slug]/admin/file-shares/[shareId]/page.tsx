@@ -78,10 +78,16 @@ export default async function AdminFileSharePage({
         <h2 className="mb-1 text-lg font-semibold">Access</h2>
         <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
           Only people granted here can see or use this share — from the files page, from models over
-          MCP, anywhere. A grant&apos;s default applies from the share root; path rules below narrow
-          it further. Removing a grant also removes that person&apos;s path rules.
+          MCP, anywhere. A grant&apos;s default applies from the share root — neither box checked
+          means specific folders only; the permissions below narrow it further. Removing a grant
+          also removes that person&apos;s folder permissions.
         </p>
-        <GrantManager slug={slug} shareId={shareId} people={people} />
+        <GrantManager
+          slug={slug}
+          shareId={shareId}
+          people={people}
+          share={{ maxAccess: summary.maxAccess }}
+        />
       </section>
 
       <section>
