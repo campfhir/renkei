@@ -96,6 +96,7 @@ export {
   getAclContext,
   getShare,
   hasAnyGrant,
+  listAllRules,
   listGrantedShares,
   listGrants,
   listRulePathsUnder,

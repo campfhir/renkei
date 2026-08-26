@@ -53,10 +53,11 @@ type ModalState =
   | { kind: 'move'; entry: EntryView }
   | { kind: 'delete'; entry: EntryView };
 
-const ACCESS_BADGE: Record<EntryView['access'], string> = {
-  read: 'read',
-  read_write: 'read/write',
-  traverse: 'folders below',
+/** Files carry a whisper of their access; folders carry none at all. */
+const FILE_ACCESS_TEXT: Record<EntryView['access'], string> = {
+  read: 'r',
+  read_write: 'rw',
+  traverse: '',
 };
 
 function formatSize(size: number | null): string {
@@ -239,18 +240,21 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
                 className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-gray-50 disabled:cursor-default disabled:hover:bg-transparent dark:hover:bg-gray-900"
               >
                 <span
-                  className={`min-w-0 flex-1 truncate text-sm ${
+                  className={`min-w-0 truncate text-sm ${
                     entry.kind === 'dir' ? 'font-medium text-blue-600 dark:text-blue-400' : ''
                   }`}
                 >
                   {entry.name}
                   {entry.kind === 'dir' ? '/' : ''}
                 </span>
+                {entry.kind === 'file' && FILE_ACCESS_TEXT[entry.access] ? (
+                  <span className="shrink-0 text-xs text-gray-400 dark:text-gray-500">
+                    {FILE_ACCESS_TEXT[entry.access]}
+                  </span>
+                ) : null}
+                <span className="min-w-0 flex-1" />
                 <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
                   {formatSize(entry.size)}
-                </span>
-                <span className="shrink-0 rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
-                  {ACCESS_BADGE[entry.access]}
                 </span>
               </button>
               {entry.access === 'read_write' ? (
@@ -361,7 +365,12 @@ function EntryMenu({
   const ref = useRef<HTMLDivElement | null>(null);
   useDismiss(menuOpen, ref, () => setMenuOpen(false));
 
-  const item = (label: string, kind: 'rename' | 'move' | 'delete', danger = false) => (
+  const item = (
+    label: string,
+    icon: string,
+    kind: 'rename' | 'move' | 'delete',
+    danger = false
+  ) => (
     <button
       type="button"
       role="menuitem"
@@ -369,10 +378,11 @@ function EntryMenu({
         setMenuOpen(false);
         onAction(kind);
       }}
-      className={`whitespace-nowrap px-3 py-1.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800 ${
+      className={`flex items-center gap-2 whitespace-nowrap px-3 py-1.5 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800 ${
         danger ? 'text-red-600 dark:text-red-400' : ''
       }`}
     >
+      <Icon path={icon} className={`h-4 w-4 ${danger ? '' : 'text-gray-400'}`} />
       {label}
     </button>
   );
@@ -395,9 +405,9 @@ function EntryMenu({
           role="menu"
           className="absolute right-0 top-full z-20 mt-1 flex w-max flex-col rounded-md border border-gray-200 bg-white py-1 text-left shadow-lg dark:border-gray-700 dark:bg-gray-950"
         >
-          {item('Rename', 'rename')}
-          {item('Move', 'move')}
-          {item('Delete', 'delete', true)}
+          {item('Rename', ICONS.pencil, 'rename')}
+          {item('Move', ICONS.arrowRight, 'move')}
+          {item('Delete', ICONS.trash, 'delete', true)}
         </div>
       ) : null}
     </div>
@@ -687,7 +697,7 @@ function RenameModal({
       >
         <label className="block text-sm">
           <span className="mb-1 block text-gray-600 dark:text-gray-400">
-            New name for <span className="font-mono">{entry.path}</span>
+            New name for <span className="font-medium">{entry.name}</span>
           </span>
           <input
             autoFocus
@@ -761,8 +771,8 @@ function MoveModal({
       >
         <label className="block text-sm">
           <span className="mb-1 block text-gray-600 dark:text-gray-400">
-            Move <span className="font-mono">{entry.path}</span> to which folder? (path from the
-            share root)
+            Move <span className="font-medium">{entry.name}</span> to which folder? (path from
+            the share root)
           </span>
           <input
             autoFocus

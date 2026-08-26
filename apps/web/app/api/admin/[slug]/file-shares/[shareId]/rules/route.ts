@@ -1,14 +1,15 @@
 /**
- * Path rules for one share — operator-only. `subject` empty/absent means
- * the share-wide layer; set, that subject's narrowing layer (which
- * requires their grant to exist — the composite FK enforces it, this
- * route explains it). Rules may name paths that do not exist yet: they
- * describe policy, not the filesystem.
+ * Path rules for one share — operator-only. `all=1` returns every rule on
+ * the share (both layers, subjects attached) — the rules navigator's one
+ * read. Otherwise `subject` empty/absent means the share-wide layer; set,
+ * that subject's narrowing layer (which requires their grant to exist —
+ * the composite FK enforces it, this route explains it). Rules may name
+ * paths that do not exist yet: they describe policy, not the filesystem.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { getShare, listRules, upsertRule } from '@renkei/connector-fileshares';
+import { getShare, listAllRules, listRules, upsertRule } from '@renkei/connector-fileshares';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -29,7 +30,10 @@ export async function GET(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   const subject = request.nextUrl.searchParams.get('subject') || null;
-  const rules = await listRules(dbResult.val, tenant.id, shareId, subject);
+  const rules =
+    request.nextUrl.searchParams.get('all') === '1'
+      ? await listAllRules(dbResult.val, tenant.id, shareId)
+      : await listRules(dbResult.val, tenant.id, shareId, subject);
   if (!rules.ok) return NextResponse.json({ error: 'Could not read rules' }, { status: 500 });
 
   return NextResponse.json({

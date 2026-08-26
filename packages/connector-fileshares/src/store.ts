@@ -638,6 +638,45 @@ export async function listRules(
   return ok(rules);
 }
 
+/**
+ * Every rule on the share — both layers, all subjects — for surfaces that
+ * show the whole picture at once (the admin rules navigator's per-path
+ * permissions panel). `listRules` stays the one-layer read the evaluator
+ * builds contexts from.
+ */
+export async function listAllRules(
+  db: Kysely<DB>,
+  tenantId: string,
+  shareId: string
+): Promise<Result<RuleRow[], StoreError>> {
+  const rows = await wrapAsync(
+    () =>
+      db
+        .selectFrom('file_share_path_rules')
+        .select(['id', 'share_id', 'subject', 'path', 'access', 'created_by'])
+        .where('tenant_id', '=', tenantId)
+        .where('share_id', '=', shareId)
+        .orderBy('path')
+        .execute(),
+    'DB_ERROR' as const
+  );
+  if (!rows.ok) return rows;
+
+  const rules: RuleRow[] = [];
+  for (const row of rows.val) {
+    if (!isAccessLevel(row.access)) return err('MALFORMED_ROW' as const);
+    rules.push({
+      id: row.id,
+      shareId: row.share_id,
+      subject: row.subject,
+      path: row.path,
+      access: row.access,
+      createdBy: row.created_by,
+    });
+  }
+  return ok(rules);
+}
+
 export async function upsertRule(
   db: Kysely<DB>,
   tenantId: string,

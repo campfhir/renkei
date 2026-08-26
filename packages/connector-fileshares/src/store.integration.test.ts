@@ -24,6 +24,7 @@ import {
   listGrantedShares,
   listGrants,
   listRulePathsUnder,
+  listAllRules,
   listRules,
   upsertGrant,
   upsertRule,
@@ -148,6 +149,13 @@ describeLive('file-share store (live database)', () => {
     if (context.ok && context.val) {
       expect(context.val.shareRules).toEqual([{ path: '/finance', access: 'read' }]);
       expect(context.val.userRules).toEqual([{ path: '/finance', access: 'read' }]);
+    }
+
+    // The all-layers read returns both rows at once, subjects attached.
+    const allRules = await listAllRules(db, tenantId, shareId);
+    expect(allRules.ok).toBe(true);
+    if (allRules.ok) {
+      expect(allRules.val.map((rule) => rule.subject).sort()).toEqual([SUBJECT, null].sort());
     }
 
     // Revoking the grant must cascade the user layer and leave the share layer.

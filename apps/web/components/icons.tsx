@@ -24,6 +24,7 @@ export const ICONS = {
   bell: 'M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16zM10 22h4',
   /** Vertical kebab — "more actions on this row". Dots via round linecaps. */
   more: 'M12 5.2h.01M12 12h.01M12 18.8h.01',
+  arrowRight: 'M4 12h14M13 6l6 6-6 6',
 };
 
 export function Icon({ path, className }: { path: string; className?: string }) {

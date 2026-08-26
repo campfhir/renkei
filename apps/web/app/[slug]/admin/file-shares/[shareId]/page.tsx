@@ -87,12 +87,17 @@ export default async function AdminFileSharePage({
       <section>
         <h2 className="mb-1 text-lg font-semibold">Path rules</h2>
         <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
-          Two layers: share-wide rules apply to everyone granted; per-person rules narrow further
-          (they can never widen what the share-wide layer allows). Within a layer the longest
-          matching path wins, so a deeper rule overrides a shallower one — allow and deny alike.
-          Rules can name folders that do not exist yet.
+          Browse the share, select a file or folder, and set below what everyone — or one person —
+          may do there. Per-person rules can never widen what the share-wide layer allows; the
+          longest matching path wins, so a deeper rule overrides a shallower one, allow and deny
+          alike.
         </p>
-        <RulesEditor slug={slug} shareId={shareId} people={people} />
+        <RulesEditor
+          slug={slug}
+          shareId={shareId}
+          people={people}
+          share={{ maxAccess: summary.maxAccess, caseInsensitive: summary.caseInsensitive }}
+        />
       </section>
     </div>
   );

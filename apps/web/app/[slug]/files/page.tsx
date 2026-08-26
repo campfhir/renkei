@@ -29,8 +29,8 @@ export default async function FilesPage({
     <div className="mx-auto max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Files</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-        Org network shares you have been granted access to. Each entry shows what you may do with
-        it; folders marked &quot;folders below&quot; are on the way to something you can open.
+        Org network shares you have been granted access to. Files show your access beside their
+        name (r&nbsp;·&nbsp;read, rw&nbsp;·&nbsp;read/write); open a folder to see what is inside.
       </p>
       <FilesBrowser tenantId={tenant.id} />
     </div>
