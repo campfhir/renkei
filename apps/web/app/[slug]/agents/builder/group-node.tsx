@@ -6,6 +6,7 @@
  */
 
 import type { GroupStep } from '@renkei/agents';
+import { FixedPill, FixedRail } from './fixed-marker';
 
 export function GroupNode({
   group,
@@ -29,6 +30,7 @@ export function GroupNode({
         selected ? 'border-blue-500 ring-2 ring-blue-500' : 'border-slate-300 dark:border-slate-700'
       } bg-slate-50 dark:bg-slate-900/60`}
     >
+      <FixedRail />
       {issueCount > 0 ? (
         <span
           aria-label={`${issueCount} problem${issueCount === 1 ? '' : 's'}`}
@@ -52,6 +54,11 @@ export function GroupNode({
         {group.steps.length === 0
           ? 'Empty group'
           : `${group.steps.length} step${group.steps.length === 1 ? '' : 's'} inside`}
+      </span>
+      {/* Groups had no badge row until now; the marker is the first thing
+          worth saying about one beyond its size. */}
+      <span className="mt-1.5 flex flex-wrap items-center gap-1">
+        <FixedPill />
       </span>
     </button>
   );

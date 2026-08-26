@@ -53,6 +53,7 @@ export {
   isLoopStep,
   isTerminalStep,
   nodeKind,
+  nodeUsesModel,
   requiredVersion,
   toolSegments,
   varSegments,

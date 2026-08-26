@@ -68,8 +68,20 @@ export function StepNode({
       step.saveAs ||
       step.tool === null ? (
         <span className="mt-1.5 flex flex-wrap items-center gap-1">
+          {/*
+            Indigo, not gray. Gray is now the "fixed — no model call" badge
+            on the deterministic cards, and this pill marks the exact
+            opposite: a step with no tool is nothing BUT a model. Indigo is
+            already this canvas's "a model decides here" — it is the branch
+            node's colour, and a branch is a model call. Violet was the
+            other candidate and is wrong: violet means "a variable" here
+            (provides chips, saves, collects).
+          */}
           {step.tool === null ? (
-            <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+            <span
+              title="Nothing but a model call — no tool grounds what comes back"
+              className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+            >
               thinks
             </span>
           ) : null}

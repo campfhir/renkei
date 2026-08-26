@@ -7,7 +7,8 @@
  */
 
 import { useMemo } from 'react';
-import { instructionPreview, type LoopStep } from '@renkei/agents';
+import { instructionPreview, nodeUsesModel, type LoopStep } from '@renkei/agents';
+import { FixedPill, FixedRail } from './fixed-marker';
 
 export function LoopNode({
   loop,
@@ -39,6 +40,13 @@ export function LoopNode({
         selected ? 'border-blue-500 ring-2 ring-blue-500' : 'border-amber-300 dark:border-amber-800'
       } bg-amber-50/60 dark:bg-amber-950/40`}
     >
+      {/*
+        The one node whose answer depends on a field, not its kind: a
+        foreach counts items in code, an until asks the model after every
+        single iteration — which is the more expensive fact about a loop and
+        the one worth being able to see from the canvas.
+      */}
+      {nodeUsesModel(loop) ? null : <FixedRail />}
       {issueCount > 0 ? (
         <span
           aria-label={`${issueCount} problem${issueCount === 1 ? '' : 's'}`}
@@ -60,6 +68,7 @@ export function LoopNode({
         {summary}
       </span>
       <span className="mt-1.5 flex flex-wrap items-center gap-1">
+        {nodeUsesModel(loop) ? null : <FixedPill />}
         <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700 dark:bg-amber-900 dark:text-amber-300">
           up to {loop.maxIterations}×
         </span>

@@ -16,6 +16,7 @@ import {
   flattenActionSteps,
   isAgentStepsDoc,
   isBranchStep,
+  nodeUsesModel,
   requiredVersion,
   walkSteps,
   type ActionStep,
@@ -471,5 +472,127 @@ describe('approval nodes (version 5)', () => {
       },
     });
     expect(isAgentStepsDoc({ version: 5, steps: [tooDeep] })).toBe(false);
+  });
+});
+
+/**
+ * The table the builder canvas marks nodes from. It mirrors the engine's
+ * dispatch switch, which lives in another app and so cannot be asserted
+ * against from here — this test is the next best thing: an explicit,
+ * readable statement of the claim, so changing it is a deliberate edit
+ * rather than a silent drift.
+ */
+describe('nodeUsesModel', () => {
+  const id = () => randomUUID();
+  const body = (): AgentStepNode[] => [
+    {
+      id: id(),
+      name: 'Do',
+      instruction: [{ t: 'text', v: 'x' }],
+      tool: 'jira_get_issue',
+      maxAttempts: 1,
+      failureHandling: [],
+    },
+  ];
+
+  it('is true for an action step with a tool', () => {
+    expect(nodeUsesModel(body()[0]!)).toBe(true);
+  });
+
+  it('is true for an action step with NO tool — that one is nothing but a model', () => {
+    // The case most likely to be got backwards. A step with no tool is not
+    // a smaller step; it is pure reasoning with nothing grounding it.
+    expect(
+      nodeUsesModel({
+        id: id(),
+        kind: 'action',
+        name: 'Think',
+        instruction: [{ t: 'text', v: 'summarize' }],
+        tool: null,
+        maxAttempts: 1,
+        failureHandling: [],
+      })
+    ).toBe(true);
+  });
+
+  it('is true for a branch — the condition is model-evaluated', () => {
+    expect(
+      nodeUsesModel({
+        id: id(),
+        kind: 'branch',
+        name: 'B',
+        condition: [{ t: 'text', v: 'urgent?' }],
+        paths: [{ id: id(), name: 'Yes', steps: [] }],
+        maxAttempts: 2,
+      })
+    ).toBe(true);
+  });
+
+  it('splits the two loop modes — the one node that depends on a field', () => {
+    expect(
+      nodeUsesModel({
+        id: id(),
+        kind: 'loop',
+        mode: 'foreach',
+        name: 'Each',
+        itemsVar: 'items',
+        itemVar: 'item',
+        maxIterations: 10,
+        steps: body(),
+      })
+    ).toBe(false);
+
+    expect(
+      nodeUsesModel({
+        id: id(),
+        kind: 'loop',
+        mode: 'until',
+        name: 'Until',
+        condition: [{ t: 'text', v: 'done?' }],
+        maxAttempts: 2,
+        maxIterations: 10,
+        steps: body(),
+      })
+    ).toBe(true);
+  });
+
+  it('is false for a group', () => {
+    expect(nodeUsesModel({ id: id(), kind: 'group', name: 'G', steps: body() })).toBe(false);
+  });
+
+  it('is false for an approval', () => {
+    expect(
+      nodeUsesModel({
+        id: id(),
+        kind: 'approval',
+        name: 'Ask',
+        mode: 'approve',
+        message: [{ t: 'text', v: 'ok?' }],
+        timeoutHours: 24,
+        onApproved: { id: id(), name: 'Approved', steps: [] },
+        onDeclined: { id: id(), name: 'Declined', steps: [] },
+        onTimeout: { id: id(), name: 'Timed out', steps: [] },
+      })
+    ).toBe(false);
+  });
+
+  it('is false for a terminal — it calls tools, but with no model deciding', () => {
+    expect(
+      nodeUsesModel({
+        id: id(),
+        kind: 'terminal',
+        name: 'End',
+        result: 'success',
+        message: [{ t: 'text', v: 'done' }],
+      })
+    ).toBe(false);
+  });
+
+  it('treats a v1 kind-less node as the action step it is', () => {
+    // `action()` builds exactly that shape — no `kind`, as documents written
+    // before nodes carried one still are.
+    const legacy: AgentStepNode = action({ name: 'Old' });
+    expect('kind' in legacy).toBe(false);
+    expect(nodeUsesModel(legacy)).toBe(true);
   });
 });

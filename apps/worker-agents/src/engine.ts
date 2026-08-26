@@ -935,6 +935,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // Exhaustive dispatch on the node kind: a kind this switch does not
         // handle is a compile error, never a silent fall-through into the
         // action path.
+        //
+        // WHICH ARMS CALL A MODEL is mirrored by `nodeUsesModel` in
+        // @renkei/agents, which the builder canvas reads to mark the
+        // deterministic nodes. Nothing can span the app boundary to catch
+        // the two drifting, so changing whether an arm reaches an LLM means
+        // changing that function in the same commit.
         switch (node.kind) {
           case 'branch': {
             const decided = await evaluateBranch(

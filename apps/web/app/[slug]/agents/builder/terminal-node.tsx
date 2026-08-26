@@ -7,6 +7,7 @@
  */
 
 import type { TerminalStep } from '@renkei/agents';
+import { FixedPill, FixedRail } from './fixed-marker';
 
 const RESULT_WORDING: Record<TerminalStep['result'], string> = {
   success: 'Finishes the run',
@@ -42,6 +43,7 @@ export function TerminalNode({
         selected ? 'border-blue-500 ring-2 ring-blue-500' : tone
       } ${selected ? 'bg-white dark:bg-gray-950' : ''}`}
     >
+      <FixedRail />
       {issueCount > 0 ? (
         <span
           aria-label={`${issueCount} problem${issueCount === 1 ? '' : 's'}`}
@@ -55,27 +57,31 @@ export function TerminalNode({
           {ordinal}
         </span>
         <span aria-hidden="true">⏹</span>
-        <span className="min-w-0 truncate text-sm font-medium">
-          {terminal.name || 'End here'}
-        </span>
+        <span className="min-w-0 truncate text-sm font-medium">{terminal.name || 'End here'}</span>
       </span>
       <span className="mt-1 block text-xs text-gray-600 dark:text-gray-400">
         {RESULT_WORDING[terminal.result]}
       </span>
-      {terminal.notifyEmail || terminal.notifyWebex ? (
-        <span className="mt-1.5 flex flex-wrap items-center gap-1">
-          {terminal.notifyEmail ? (
-            <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-              ✉ emails you
-            </span>
-          ) : null}
-          {terminal.notifyWebex ? (
-            <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-              WebEx note
-            </span>
-          ) : null}
-        </span>
-      ) : null}
+      {/*
+        Unconditional now, where it used to appear only when a notify flag
+        was set: an ending always has something worth saying about it, and
+        "no model runs here" is that thing. An ending does call tools —
+        the email, the WebEx note — but it calls them directly, with no
+        model deciding anything.
+      */}
+      <span className="mt-1.5 flex flex-wrap items-center gap-1">
+        <FixedPill />
+        {terminal.notifyEmail ? (
+          <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+            ✉ emails you
+          </span>
+        ) : null}
+        {terminal.notifyWebex ? (
+          <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+            WebEx note
+          </span>
+        ) : null}
+      </span>
     </button>
   );
 }
