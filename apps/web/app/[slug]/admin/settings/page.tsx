@@ -67,6 +67,7 @@ export default async function SettingsPage({
     agentMaxChainDepth: settings.agentMaxChainDepth,
     agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
     agentMaxStepAttempts: settings.agentMaxStepAttempts,
+    agentMaxSteps: settings.agentMaxSteps,
     agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
     agentApprovalMaxWaitDays: settings.agentApprovalMaxWaitDays,
     contentPollMinutes: settings.contentPollMinutes,

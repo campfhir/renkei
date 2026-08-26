@@ -91,6 +91,16 @@ export interface OrgSettings {
    * effect on existing agents without re-saving them.
    */
   agentMaxStepAttempts: number;
+  /**
+   * Org ceiling on how many steps one agent may hold. Default 20 — the
+   * value that used to be the hardcoded MAX_STEPS — and, like the attempt
+   * ceiling, a policy rather than a platform constant: an org may raise it
+   * (the admin API bounds it at 100) or lower it. Enforced at save time;
+   * an already-saved agent over a lowered ceiling keeps running until its
+   * next edit, because refusing to RUN what was legal to save would stop
+   * automations with nobody at the keyboard.
+   */
+  agentMaxSteps: number;
   /** Per-tenant ceiling on runs started per day — the runaway-trigger brake. */
   agentMaxRunsPerDay: number;
   /**
@@ -137,6 +147,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentMaxChainDepth: 3,
   agentRunTimeoutMinutes: 15,
   agentMaxStepAttempts: 10,
+  agentMaxSteps: 20,
   agentMaxRunsPerDay: 200,
   agentApprovalMaxWaitDays: 14,
   contentPollMinutes: 15,
@@ -228,6 +239,7 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     agentMaxStepAttempts: Number(
       coerce(stored.get('agent_max_step_attempts'), d.agentMaxStepAttempts)
     ),
+    agentMaxSteps: Number(coerce(stored.get('agent_max_steps'), d.agentMaxSteps)),
     agentMaxRunsPerDay: Number(coerce(stored.get('agent_max_runs_per_day'), d.agentMaxRunsPerDay)),
     agentApprovalMaxWaitDays: Number(
       coerce(stored.get('agent_approval_max_wait_days'), d.agentApprovalMaxWaitDays)
@@ -267,6 +279,7 @@ export async function setOrgSettings(
     ['agent_max_chain_depth', updates.agentMaxChainDepth],
     ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
     ['agent_max_step_attempts', updates.agentMaxStepAttempts],
+    ['agent_max_steps', updates.agentMaxSteps],
     ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
     ['agent_approval_max_wait_days', updates.agentApprovalMaxWaitDays],
     ['content_poll_minutes', updates.contentPollMinutes],

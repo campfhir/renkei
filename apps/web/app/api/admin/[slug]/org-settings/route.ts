@@ -27,6 +27,9 @@ const NUMERIC_BOUNDS = {
   agentRunTimeoutMinutes: [1, 120],
   // Above the 10 default is allowed on purpose; 100 is the typo guard.
   agentMaxStepAttempts: [1, 100],
+  // Same shape: above the 20 default is allowed, 100 stops a typo from
+  // authorizing hundred-step plans nobody meant to permit.
+  agentMaxSteps: [1, 100],
   agentMaxRunsPerDay: [1, 10_000],
   // Ceiling on how long an approval node may wait for its owner; 90 days
   // is the typo guard, 1 the floor (a sub-day org bound would make the
@@ -53,6 +56,7 @@ const NUMERIC_KEYS = [
   'agentMaxChainDepth',
   'agentRunTimeoutMinutes',
   'agentMaxStepAttempts',
+  'agentMaxSteps',
   'agentMaxRunsPerDay',
   'agentApprovalMaxWaitDays',
   'contentPollMinutes',
@@ -77,6 +81,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     agentMaxChainDepth: settings.agentMaxChainDepth,
     agentRunTimeoutMinutes: settings.agentRunTimeoutMinutes,
     agentMaxStepAttempts: settings.agentMaxStepAttempts,
+    agentMaxSteps: settings.agentMaxSteps,
     agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
     agentApprovalMaxWaitDays: settings.agentApprovalMaxWaitDays,
     contentPollMinutes: settings.contentPollMinutes,

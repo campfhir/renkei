@@ -353,6 +353,12 @@ export interface AgentStepsDoc {
  * binds only where no settings are in hand.
  */
 export const MAX_STEP_ATTEMPTS = 10;
+/**
+ * The DEFAULT ceiling on an agent's step count. Like MAX_STEP_ATTEMPTS
+ * above, the real ceiling is the org's `agentMaxSteps` setting (the save
+ * path passes it into validateAgentDraft); this value binds only where no
+ * settings are in hand.
+ */
 export const MAX_STEPS = 20;
 export const MAX_INSTRUCTION_CHARS = 4_000;
 /**

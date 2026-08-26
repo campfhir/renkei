@@ -62,7 +62,9 @@ export async function saveAgent(
     approvalWaitCapHours: settings.ok ? settings.val.agentApprovalMaxWaitDays * 24 : undefined,
   });
   const tools = await listAvailableTools(tenantId, subject);
-  const issues = validateAgentDraft(normalized, tools);
+  const issues = validateAgentDraft(normalized, tools, {
+    maxSteps: settings.ok ? settings.val.agentMaxSteps : undefined,
+  });
   if (issues.length > 0) return { outcome: 'invalid', issues };
 
   if (options.dryRun) {

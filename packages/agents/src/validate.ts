@@ -893,10 +893,19 @@ export function savesByPathCoverage(nodes: AgentStepNode[]): Map<string, 'always
 
 export function validateAgentDraft(
   draft: AgentDraft,
-  tools: ToolDescriptorLike[]
+  tools: ToolDescriptorLike[],
+  options: {
+    /**
+     * The org's `agentMaxSteps` ceiling (routes pass it in); MAX_STEPS is
+     * only the default for callers with no settings in hand — the same
+     * split as normalizeAgentDraft's attemptsCap.
+     */
+    maxSteps?: number;
+  } = {}
 ): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
+  const maxSteps = Math.max(1, options.maxSteps ?? MAX_STEPS);
 
   if (draft.name.trim().length === 0) {
     issues.push({ path: 'name', message: 'Give the agent a name.' });
@@ -919,8 +928,8 @@ export function validateAgentDraft(
   if (nodes.length === 0) {
     issues.push({ path: 'steps', message: 'Add at least one step.' });
   }
-  if (countNodes(nodes) > MAX_STEPS) {
-    issues.push({ path: 'steps', message: `Keep the agent to ${MAX_STEPS} steps or fewer.` });
+  if (countNodes(nodes) > maxSteps) {
+    issues.push({ path: 'steps', message: `Keep the agent to ${maxSteps} steps or fewer.` });
   }
 
   // Doc-wide id uniqueness — node ids AND branch-path ids (failure path
