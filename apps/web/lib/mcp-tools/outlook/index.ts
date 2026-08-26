@@ -26,7 +26,10 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import {
   GRAPH_BASE_URL,
   buildMailQueryPath,
+  clientSideSelect,
   graphBatch,
+  hasClientSideFilter,
+  matchesClientSide,
   objectIdOfMicrosoftRefId,
   withCategoryChanges,
   type MailSearchFilters,
@@ -1343,6 +1346,22 @@ export async function registerOutlookTools(
           .describe('Only messages with (true) or without (false) attachments')
           .optional(),
         from: z.string().describe('Only messages from this exact sender address').optional(),
+        to: z
+          .string()
+          .describe(
+            'Only messages with this exact address on the To line. Applied after fetching — ' +
+              'Exchange cannot filter recipient collections at all — so it scans several pages ' +
+              'and reaches only as far back as the scan budget allows. Narrow it with folder ' +
+              '(e.g. sentitems) or a received-date range for anything older.'
+          )
+          .optional(),
+        cc: z
+          .string()
+          .describe(
+            'Only messages with this exact address on the Cc line. Applied after ' +
+              'fetching, exactly as `to`.'
+          )
+          .optional(),
         subjectContains: z
           .string()
           .describe(
@@ -1395,14 +1414,13 @@ export async function registerOutlookTools(
       if (typeof access === 'string') return errText(access);
 
       const max = typeof args.max === 'number' ? args.max : 25;
-      const subjectContains = str(args.subjectContains).toLowerCase();
       const countOnly = args.countOnly === true;
       const groupBySender = args.groupBySender === true;
       const pageToken = str(args.pageToken);
 
       // The clause builder is shared with the worker's mail bulk jobs —
       // filter shape, InefficientFilter-safe ordering, and the client-side
-      // subjectContains rule all live in @renkei/connector-microsoft now.
+      // matcher all live in @renkei/connector-microsoft now.
       const searchFilters: MailSearchFilters = {
         folder: str(args.folder) || undefined,
         ...(typeof args.isRead === 'boolean' ? { isRead: args.isRead } : {}),
@@ -1414,18 +1432,28 @@ export async function registerOutlookTools(
           ? { hasAttachments: args.hasAttachments }
           : {}),
         from: str(args.from) || undefined,
+        to: str(args.to) || undefined,
+        cc: str(args.cc) || undefined,
+        subjectContains: str(args.subjectContains) || undefined,
         receivedAfter: str(args.receivedAfter) || undefined,
         receivedBefore: str(args.receivedBefore) || undefined,
       };
+      // Anything Exchange cannot apply is applied after fetching, which is
+      // what makes a page thin and the scan long.
+      const scanning = hasClientSideFilter(searchFilters);
+      const select = clientSideSelect(
+        searchFilters,
+        'id,subject,from,receivedDateTime,isRead,flag,categories'
+      );
       const buildQuery = (top: number, withCount: boolean): string =>
-        buildMailQueryPath(searchFilters, { top, withCount });
+        buildMailQueryPath(searchFilters, { top, withCount, select });
 
       // ---- dry run: a total, plus who it's from, without listing anything.
       if (countOnly) {
-        // Without a subject filter Graph can answer the count itself in one
-        // call ($count is supported on mail, unlike ConsistencyLevel, which
-        // is a directory-objects-only feature and is deliberately not sent).
-        // A sender breakdown still needs real rows, so scan pages for it.
+        // With no client-side filter Graph can answer the count itself in
+        // one call ($count is supported on mail, unlike ConsistencyLevel,
+        // which is a directory-objects-only feature and is deliberately not
+        // sent). A sender breakdown still needs real rows, so scan for it.
         const senderCounts = new Map<string, { label: string; count: number }>();
         let scanned = 0;
         let matched = 0;
@@ -1439,9 +1467,7 @@ export async function registerOutlookTools(
           }
           for (const message of values(result.body)) {
             scanned += 1;
-            if (subjectContains && !str(message.subject).toLowerCase().includes(subjectContains)) {
-              continue;
-            }
+            if (!matchesClientSide(message, searchFilters)) continue;
             matched += 1;
             const key = senderKeyOf(message);
             const existing = senderCounts.get(key);
@@ -1453,7 +1479,7 @@ export async function registerOutlookTools(
         }
 
         const exhausted = next === null;
-        const headline = subjectContains
+        const headline = scanning
           ? `${matched} match${matched === 1 ? '' : 'es'} among the ${scanned} message(s) scanned` +
             (exhausted ? '.' : ' so far (scan limit reached — there may be more).')
           : serverTotal !== null
@@ -1472,23 +1498,23 @@ export async function registerOutlookTools(
       }
 
       // ---- listing mode.
-      // A client-side subject filter can throw away most of a page, so keep
-      // pulling pages until one page's worth of MATCHES is collected (or the
-      // scan budget runs out). Without that filter this is a single call and
-      // the loop exits immediately.
+      // A client-side filter can throw away most of a page, so keep pulling
+      // pages until one page's worth of MATCHES is collected (or the scan
+      // budget runs out). With nothing to match after fetching this is a
+      // single call and the loop exits immediately.
       //
       // Every match in a page we fetched is kept, even once `max` is met, so
-      // a subject scan can return a little more than the page size asked
-      // for. That is deliberate and it is a bug fix: capping mid-page used
-      // to DISCARD the rest of that page's matches and then hand back a
-      // pageToken pointing at the page AFTER it, so those messages were
-      // unreachable by any later call. Since `next` always advances a whole
-      // page, keeping the whole page is what makes the continuation honest.
+      // a scan can return a little more than the page size asked for. That
+      // is deliberate and it is a bug fix: capping mid-page used to DISCARD
+      // the rest of that page's matches and then hand back a pageToken
+      // pointing at the page AFTER it, so those messages were unreachable by
+      // any later call. Since `next` always advances a whole page, keeping
+      // the whole page is what makes the continuation honest.
       const collected: Record<string, unknown>[] = [];
       let scanned = 0;
-      let next: string | null = pageToken || buildQuery(subjectContains ? 100 : max, false);
+      let next: string | null = pageToken || buildQuery(scanning ? 100 : max, false);
       let pagesFetched = 0;
-      const pageBudget = subjectContains ? SUBJECT_SCAN_PAGE_BUDGET : 1;
+      const pageBudget = scanning ? SUBJECT_SCAN_PAGE_BUDGET : 1;
 
       while (next && collected.length < max && pagesFetched < pageBudget) {
         const result = await graphGet(context, access.accessToken, next);
@@ -1496,9 +1522,7 @@ export async function registerOutlookTools(
         pagesFetched += 1;
         for (const message of values(result.body)) {
           scanned += 1;
-          if (subjectContains && !str(message.subject).toLowerCase().includes(subjectContains)) {
-            continue;
-          }
+          if (!matchesClientSide(message, searchFilters)) continue;
           collected.push(message);
         }
         const nextLink = str(result.body['@odata.nextLink']);
@@ -1507,7 +1531,7 @@ export async function registerOutlookTools(
 
       if (collected.length === 0) {
         return textResult(
-          subjectContains
+          scanning
             ? `No messages match (scanned ${scanned}).` +
                 (next ? ' Scan limit reached — pass pageToken to keep looking.' : '')
             : 'No messages match.'
@@ -1515,7 +1539,7 @@ export async function registerOutlookTools(
       }
 
       const footerParts = [`${collected.length} message(s)`];
-      if (subjectContains) footerParts.push(`matched out of ${scanned} scanned`);
+      if (scanning) footerParts.push(`matched out of ${scanned} scanned`);
       footerParts.push(next ? `more available, pass pageToken: ${next}` : 'no more pages');
       const footer = `\n\n${footerParts.join(' — ')}`;
 

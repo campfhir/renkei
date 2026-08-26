@@ -6,7 +6,12 @@
  * match client-side).
  */
 
-import { buildMailQueryPath } from './mail-filter';
+import {
+  buildMailQueryPath,
+  clientSideSelect,
+  hasClientSideFilter,
+  matchesClientSide,
+} from './mail-filter';
 
 function filterOf(path: string): string {
   const match = /\$filter=([^&]+)/.exec(path);
@@ -117,5 +122,109 @@ describe('buildMailQueryPath keeps $orderby inside $filter', () => {
     expect(buildMailQueryPath({ subjectContains: 'invoice' }, { top: 25 })).not.toContain(
       '$filter'
     );
+  });
+});
+
+/**
+ * The filters Exchange cannot apply.
+ *
+ * `to` and `cc` are here rather than in $filter because Exchange supports
+ * no filtering on the recipient COLLECTIONS at all — not equality, not a
+ * `toRecipients/any(...)` lambda. $search can ask the question, but $search
+ * and $filter are mutually exclusive on mail, so using it would cost every
+ * other filter in the type.
+ *
+ * One implementation, shared by the interactive search and the worker's
+ * bulk-job expansion. The stakes differ between them: a search that ignores
+ * a filter returns a thin page, while an EXPANSION that ignores one selects
+ * the wrong messages and the job then deletes or moves them.
+ */
+describe('matchesClientSide', () => {
+  const message = {
+    subject: 'Q3 invoice',
+    toRecipients: [
+      { emailAddress: { name: 'Dana', address: 'Dana@Example.com' } },
+      { emailAddress: { name: 'Ops', address: 'ops@example.com' } },
+    ],
+    ccRecipients: [{ emailAddress: { name: 'Finance', address: 'finance@example.com' } }],
+  };
+
+  it('passes a message when nothing has to be matched here', () => {
+    expect(matchesClientSide(message, {})).toBe(true);
+    expect(matchesClientSide(message, { from: 'x@example.com', isRead: false })).toBe(true);
+  });
+
+  it('matches a To address regardless of case, on either side', () => {
+    expect(matchesClientSide(message, { to: 'dana@example.com' })).toBe(true);
+    expect(matchesClientSide(message, { to: 'OPS@EXAMPLE.COM' })).toBe(true);
+  });
+
+  it('matches any recipient on the line, not only the first', () => {
+    expect(matchesClientSide(message, { to: 'ops@example.com' })).toBe(true);
+  });
+
+  it('keeps To and Cc apart', () => {
+    // Asking for a Cc recipient on the To line has to fail, or "who was
+    // copied" and "who was addressed" stop being different questions.
+    expect(matchesClientSide(message, { to: 'finance@example.com' })).toBe(false);
+    expect(matchesClientSide(message, { cc: 'finance@example.com' })).toBe(true);
+    expect(matchesClientSide(message, { cc: 'dana@example.com' })).toBe(false);
+  });
+
+  it('does not match a display name', () => {
+    // Documented as an address match. Matching names too would make
+    // "Dana" match every Dana in the company.
+    expect(matchesClientSide(message, { to: 'Dana' })).toBe(false);
+  });
+
+  it('tolerates padding around the address', () => {
+    expect(matchesClientSide(message, { to: '  dana@example.com  ' })).toBe(true);
+  });
+
+  it('ANDs the client-side filters together', () => {
+    expect(matchesClientSide(message, { to: 'dana@example.com', subjectContains: 'invoice' })).toBe(
+      true
+    );
+    expect(matchesClientSide(message, { to: 'dana@example.com', subjectContains: 'receipt' })).toBe(
+      false
+    );
+  });
+
+  it('fails closed when the message carries no recipients at all', () => {
+    // A missing collection is not "matches anything" — that would hand a
+    // bulk job every message whose $select forgot the field.
+    expect(matchesClientSide({ subject: 'x' }, { to: 'dana@example.com' })).toBe(false);
+    expect(matchesClientSide({ toRecipients: 'nonsense' }, { to: 'dana@example.com' })).toBe(false);
+    expect(matchesClientSide({ toRecipients: [{}, null] }, { to: 'dana@example.com' })).toBe(false);
+  });
+});
+
+describe('clientSideSelect', () => {
+  it('adds only the fields the match will actually read', () => {
+    expect(clientSideSelect({ to: 'a@b.com' }, 'id')).toBe('id,toRecipients');
+    expect(clientSideSelect({ cc: 'a@b.com' }, 'id')).toBe('id,ccRecipients');
+    expect(clientSideSelect({ subjectContains: 'x' }, 'id')).toBe('id,subject');
+  });
+
+  it('leaves the projection alone when nothing is matched here', () => {
+    // Recipient collections are the heaviest part of a message summary; a
+    // 1000-message survey must not carry them for nothing.
+    expect(clientSideSelect({ from: 'a@b.com' }, 'id,subject')).toBe('id,subject');
+  });
+
+  it('does not duplicate a field the caller already asked for', () => {
+    expect(clientSideSelect({ subjectContains: 'x' }, 'id,subject')).toBe('id,subject');
+  });
+});
+
+describe('hasClientSideFilter', () => {
+  it('is true for exactly the filters Exchange cannot apply', () => {
+    expect(hasClientSideFilter({ to: 'a@b.com' })).toBe(true);
+    expect(hasClientSideFilter({ cc: 'a@b.com' })).toBe(true);
+    expect(hasClientSideFilter({ subjectContains: 'x' })).toBe(true);
+    expect(hasClientSideFilter({ from: 'a@b.com', isRead: true, flagStatus: 'flagged' })).toBe(
+      false
+    );
+    expect(hasClientSideFilter({})).toBe(false);
   });
 });

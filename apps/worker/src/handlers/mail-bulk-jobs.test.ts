@@ -14,6 +14,12 @@ jest.mock('@renkei/connector-microsoft', () => ({
   graphRequest: jest.fn(),
   buildMailQueryPath: jest.requireActual('@renkei/connector-microsoft/src/mail-filter')
     .buildMailQueryPath,
+  // Real, not stubbed: these decide WHICH messages a job acts on, so a
+  // fake here would test nothing that matters.
+  clientSideSelect: jest.requireActual('@renkei/connector-microsoft/src/mail-filter')
+    .clientSideSelect,
+  matchesClientSide: jest.requireActual('@renkei/connector-microsoft/src/mail-filter')
+    .matchesClientSide,
   withCategoryChanges: jest.requireActual('@renkei/connector-microsoft/src/mail-batch')
     .withCategoryChanges,
 }));
@@ -155,6 +161,41 @@ describe('createMailBulkJobHandler', () => {
     const [, requests] = graphBatchMock.mock.calls[0];
     expect(requests.map((request: { id: string }) => request.id)).toEqual(['a', 'c']);
     expect(updates.some((update) => update.total === 2)).toBe(true);
+  });
+
+  it('expands a to filter client-side, and asks Graph for the field to match on', async () => {
+    // The stakes here are higher than in a search. If the expansion ignores
+    // a filter the job still runs — over the wrong messages — and then
+    // deletes or moves them. So this asserts the SELECTED ids, not just
+    // that a call went out.
+    jobRow = job({
+      selection: { filters: { isRead: false, to: 'dana@example.com' }, maxMessages: 10 },
+    });
+    const addressed = (id: string, address: string) => ({
+      id,
+      subject: id,
+      toRecipients: [{ emailAddress: { address } }],
+    });
+    graphRequestMock.mockResolvedValue({
+      ok: true,
+      val: {
+        value: [
+          addressed('a', 'Dana@example.com'),
+          addressed('b', 'someone@example.com'),
+          addressed('c', 'dana@example.com'),
+        ],
+      },
+    });
+
+    await createMailBulkJobHandler()(claimedEvent());
+
+    const [, path] = graphRequestMock.mock.calls[0];
+    // Selected, never filtered: a toRecipients clause is not something
+    // Exchange accepts.
+    expect(path).toContain('toRecipients');
+    expect(decodeURIComponent(path)).not.toContain('toRecipients/any');
+    const [, requests] = graphBatchMock.mock.calls[0];
+    expect(requests.map((request: { id: string }) => request.id)).toEqual(['a', 'c']);
   });
 
   it('marks archive jobs read first and never moves a mark-failure', async () => {

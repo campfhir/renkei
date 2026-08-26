@@ -68,6 +68,14 @@ const filtersSchema = z
       .optional(),
     hasAttachments: z.boolean().describe('Only messages with (or without) attachments').optional(),
     from: z.string().describe('Exact sender address').optional(),
+    to: z
+      .string()
+      .describe('Exact address on the To line (matched while selecting, not by Exchange)')
+      .optional(),
+    cc: z
+      .string()
+      .describe('Exact address on the Cc line (matched while selecting, not by Exchange)')
+      .optional(),
     subjectContains: z
       .string()
       .describe('Substring match on the subject (matched while selecting)')

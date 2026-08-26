@@ -19,7 +19,9 @@ import { getDatabase } from '@renkei/db';
 import {
   graphBatch,
   buildMailQueryPath,
+  clientSideSelect,
   graphRequest,
+  matchesClientSide,
   withCategoryChanges,
   GRAPH_BASE_URL,
   type BatchRequestItem,
@@ -80,10 +82,12 @@ async function expandSelection(
       ? { hasAttachments: filtersRaw.hasAttachments }
       : {}),
     from: str(filtersRaw.from) || undefined,
+    to: str(filtersRaw.to) || undefined,
+    cc: str(filtersRaw.cc) || undefined,
+    subjectContains: str(filtersRaw.subjectContains) || undefined,
     receivedAfter: str(filtersRaw.receivedAfter) || undefined,
     receivedBefore: str(filtersRaw.receivedBefore) || undefined,
   };
-  const subjectContains = str(filtersRaw.subjectContains).toLowerCase();
   const maxMessages = Math.min(
     typeof selection.maxMessages === 'number' && selection.maxMessages > 0
       ? selection.maxMessages
@@ -92,7 +96,13 @@ async function expandSelection(
   );
 
   const ids: string[] = [];
-  let next: string | null = buildMailQueryPath(filters, { top: 100, select: 'id,subject' });
+  // The $select has to carry whatever the client-side matcher reads, or a
+  // filter this job was given silently matches nothing and the action runs
+  // over the wrong set. clientSideSelect adds exactly those fields.
+  let next: string | null = buildMailQueryPath(filters, {
+    top: 100,
+    select: clientSideSelect(filters, 'id,subject'),
+  });
   for (let page = 0; page < EXPANSION_PAGE_BUDGET && next && ids.length < maxMessages; page += 1) {
     const result = await graphRequest(accessToken, next, { lane: 'background' });
     if (!result.ok) {
@@ -104,9 +114,12 @@ async function expandSelection(
       if (!isRecord(row)) continue;
       const id = str(row.id);
       if (!id) continue;
-      // subjectContains matches client-side — Graph's mail $filter has no
-      // working contains() for subject (see MailSearchFilters).
-      if (subjectContains && !str(row.subject).toLowerCase().includes(subjectContains)) continue;
+      // subject/to/cc match client-side — Exchange cannot filter mail
+      // subjects or recipient collections at all (see MailSearchFilters).
+      // Shared with the interactive search on purpose: the two used to
+      // carry separate copies of this rule, and a job whose copy fell
+      // behind would select the wrong messages and then act on them.
+      if (!matchesClientSide(row, filters)) continue;
       ids.push(id);
       if (ids.length >= maxMessages) break;
     }

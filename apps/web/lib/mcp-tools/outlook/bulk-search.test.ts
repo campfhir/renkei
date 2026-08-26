@@ -54,6 +54,12 @@ jest.mock('@renkei/connector-microsoft', () => ({
     .withCategoryChanges,
   buildMailQueryPath: jest.requireActual('@renkei/connector-microsoft/src/mail-filter')
     .buildMailQueryPath,
+  clientSideSelect: jest.requireActual('@renkei/connector-microsoft/src/mail-filter')
+    .clientSideSelect,
+  hasClientSideFilter: jest.requireActual('@renkei/connector-microsoft/src/mail-filter')
+    .hasClientSideFilter,
+  matchesClientSide: jest.requireActual('@renkei/connector-microsoft/src/mail-filter')
+    .matchesClientSide,
 }));
 jest.mock('@/lib/microsoft-app', () => ({ getMicrosoftApp: async () => null }));
 jest.mock('@renkei/knowledge', () => ({
@@ -243,6 +249,96 @@ describe('outlook_bulk_search_messages filters that used to 400', () => {
     // and a bare $orderby is not a combination Exchange objects to.
     await bulkSearch({ subjectContains: 'Salesforce', max: 5 });
     expect(firstFilter()).toBe('');
+  });
+});
+
+/**
+ * Recipient filters, which Exchange cannot answer.
+ *
+ * There is no $filter form of "who was this addressed to" on mail — not
+ * equality, not a toRecipients/any lambda. Compiling one would recreate the
+ * 400 the rest of this file exists to prevent, so the whole value of these
+ * cases is the negative one: the clause must never appear.
+ */
+describe('outlook_bulk_search_messages to/cc', () => {
+  const addressed = (id: string, to: string[], cc: string[] = []) => ({
+    ...message(id, `message ${id}`, 'dana'),
+    toRecipients: to.map((address) => ({ emailAddress: { name: address, address } })),
+    ccRecipients: cc.map((address) => ({ emailAddress: { name: address, address } })),
+  });
+
+  const selectOf = () => new URL(calls[0]?.url ?? 'https://x.test').searchParams.get('$select');
+
+  it('never compiles a recipient clause into $filter', async () => {
+    await bulkSearch({ to: 'dana@example.com', cc: 'ops@example.com' });
+    // $filter only — the names DO belong in $select, which is how the
+    // client-side match gets something to read.
+    for (const call of calls) {
+      const filter = new URL(call.url).searchParams.get('$filter') ?? '';
+      expect(filter).not.toContain('toRecipients');
+      expect(filter).not.toContain('ccRecipients');
+    }
+    expect(firstFilter()).not.toContain('Recipients');
+  });
+
+  it('asks Graph for the recipient collections it has to match on', async () => {
+    // Without these in $select the match reads undefined and silently
+    // returns nothing — the exact silent-empty this is meant to avoid.
+    await bulkSearch({ to: 'dana@example.com' });
+    expect(selectOf()).toContain('toRecipients');
+
+    calls = [];
+    await bulkSearch({ cc: 'ops@example.com' });
+    expect(selectOf()).toContain('ccRecipients');
+  });
+
+  it('leaves the projection alone when no recipient filter is set', async () => {
+    await bulkSearch({ isRead: false });
+    expect(selectOf()).not.toContain('toRecipients');
+    expect(selectOf()).not.toContain('ccRecipients');
+  });
+
+  it('returns only the messages actually addressed to that person', async () => {
+    pages = [
+      {
+        value: [
+          addressed('1', ['dana@example.com']),
+          addressed('2', ['someone@example.com']),
+          addressed('3', ['ops@example.com', 'dana@example.com']),
+        ],
+      },
+    ];
+    const result = await bulkSearch({ to: 'DANA@example.com' });
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('id: 1');
+    expect(text).toContain('id: 3');
+    expect(text).not.toContain('id: 2');
+  });
+
+  it('does not treat a Cc as a To', async () => {
+    pages = [{ value: [addressed('1', ['ops@example.com'], ['dana@example.com'])] }];
+    expect((await bulkSearch({ to: 'dana@example.com' })).content[0]?.text).toContain(
+      'No messages'
+    );
+
+    calls = [];
+    pages = [{ value: [addressed('1', ['ops@example.com'], ['dana@example.com'])] }];
+    expect((await bulkSearch({ cc: 'dana@example.com' })).content[0]?.text).toContain('id: 1');
+  });
+
+  it('scans several pages for a recipient, as it does for a subject', async () => {
+    // A recipient filter thins a page exactly as a subject filter does, so
+    // it has to earn the same scan budget rather than giving up after one.
+    pages = [
+      {
+        value: [addressed('1', ['someone@example.com'])],
+        '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/messages?$skiptoken=p2',
+      },
+      { value: [addressed('2', ['dana@example.com'])] },
+    ];
+    const result = await bulkSearch({ to: 'dana@example.com' });
+    expect(calls.length).toBeGreaterThan(1);
+    expect(result.content[0]?.text ?? '').toContain('id: 2');
   });
 });
 
