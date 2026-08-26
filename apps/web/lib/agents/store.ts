@@ -26,6 +26,7 @@ import {
   isBlackoutEntry,
   parseScheduleConfig,
   serializeScheduleConfig,
+  normalizeMatchForEvent,
   triggerEventById,
   type AgentStepsDoc,
   type BlackoutEntry,
@@ -99,7 +100,7 @@ function iso(value: Date | null): string | null {
  */
 function draftOfRow(row: TriggerRow): { draft: TriggerDraft; keyHint: string | null } | null {
   const config: {
-    match?: { fromDomain?: string; subjectContains?: string };
+    match?: unknown;
     callerAgentId?: unknown;
     inputs?: unknown;
     keyHint?: unknown;
@@ -115,7 +116,10 @@ function draftOfRow(row: TriggerRow): { draft: TriggerDraft; keyHint: string | n
         draft: {
           kind: 'event',
           eventId,
-          match: config.match,
+          // Re-parsed, not cast: jsonb strips the type on the way out, and a
+          // row written by an older deploy (or by hand) must not be able to
+          // hand the builder a shape it will then write back verbatim.
+          match: normalizeMatchForEvent(eventId, config.match),
         },
         keyHint: null,
       };
@@ -322,7 +326,10 @@ function rowFieldsOf(
       return {
         event_source: event?.source ?? null,
         event_type: event?.type ?? null,
-        config: JSON.stringify({ match: draft.match ?? {} }),
+        // Normalised on the way in too, so the stored form is canonical:
+        // the fan-out compares against it on every inbound event and should
+        // not be folding case or trimming entries in that hot path.
+        config: JSON.stringify({ match: normalizeMatchForEvent(draft.eventId, draft.match) }),
         next_run_at: null,
         mintedKey: null,
       };

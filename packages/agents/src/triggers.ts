@@ -18,7 +18,8 @@ import {
   MAX_SCHEDULE_RULES,
   type ScheduleConfig,
 } from './recurrence';
-import { triggerEventById } from './trigger-catalog';
+import { triggerEventById, validateMatchForEvent } from './trigger-catalog';
+import { isTriggerMatch, type TriggerMatch } from './trigger-filters';
 import { VARIABLE_NAME_PATTERN } from './steps';
 import type { VariableDescriptor } from './variables';
 
@@ -33,7 +34,13 @@ export type TriggerDraft =
       kind: 'event';
       /** TRIGGER_EVENT_CATALOG id, e.g. 'microsoft/mail.received'. */
       eventId: string;
-      match?: { fromDomain?: string; subjectContains?: string };
+      /**
+       * Deterministic narrowing, keyed by the event's filter field ids. The
+       * shape is open because the fields are catalog data, not a type — see
+       * `trigger-filters.ts` for the rules and `trigger-catalog.ts` for what
+       * each event offers.
+       */
+      match?: TriggerMatch;
     }
   | ({ kind: 'schedule' } & ScheduleConfig)
   | { kind: 'agent'; callerAgentId: string }
@@ -54,9 +61,10 @@ function validateOne(draft: TriggerDraft, index: number): TriggerIssue[] {
       if (!triggerEventById(draft.eventId)) {
         issues.push({ index, message: 'Choose an event from the list.' });
       }
-      const fromDomain = draft.match?.fromDomain;
-      if (fromDomain !== undefined && !/^[A-Za-z0-9.-]{1,255}$/.test(fromDomain)) {
-        issues.push({ index, message: 'The sender domain filter is not a valid domain.' });
+      // Field-level filter rules are catalog data, so the messages come from
+      // there rather than from a check per field kept in step with it here.
+      for (const message of validateMatchForEvent(draft.eventId, draft.match)) {
+        issues.push({ index, message });
       }
       break;
     }
@@ -150,7 +158,14 @@ export function isTriggerDraft(value: unknown): value is TriggerDraft {
   } = value;
   switch (draft.kind) {
     case 'event':
-      return typeof draft.eventId === 'string';
+      // `match` is checked structurally here, not field by field: this runs
+      // on a wire payload, and letting an arbitrary object through as a
+      // filter is how junk reaches the fan-out's hot path. validateOne
+      // carries the field-level messages.
+      return (
+        typeof draft.eventId === 'string' &&
+        (draft.match === undefined || isTriggerMatch(draft.match))
+      );
     case 'schedule':
       // Shape only (payload boundary); validateOne carries the field-level
       // messages. Optional members are checked there too.

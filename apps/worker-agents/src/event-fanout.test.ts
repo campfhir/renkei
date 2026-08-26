@@ -65,7 +65,7 @@ maybe('agent event fan-out', () => {
     ownerSubject: string,
     options: {
       enabled?: boolean;
-      match?: Record<string, string>;
+      match?: Record<string, string | string[]>;
       eventSource?: string;
       eventType?: string;
     } = {}
@@ -151,6 +151,76 @@ maybe('agent event fan-out', () => {
     const firedAgents = runs.map((run) => run.agent_id);
     expect(firedAgents).toContain(filtered);
     expect(firedAgents).not.toContain(other);
+  });
+
+  /**
+   * The negative direction, end to end. The unit tests in
+   * packages/agents/src/trigger-filters.test.ts cover the matcher itself;
+   * these prove the stored jsonb, the catalog lookup and the fan-out query
+   * agree — a filter that fails to narrow here looks exactly like no filter,
+   * and the run row is the only place that shows the difference.
+   */
+  async function firedAgentsFor(event: Parameters<typeof fanOutAgentEvents>[2]): Promise<string[]> {
+    const queue = new InMemoryQueue();
+    const started = await fanOutAgentEvents(db, queue.producer, event);
+    if (started.length === 0) return [];
+    const runs = await db
+      .selectFrom('agent_runs')
+      .select('agent_id')
+      .where('id', 'in', started)
+      .execute();
+    return runs.map((run) => run.agent_id);
+  }
+
+  it('narrows mail to exact senders, and refuses the rest', async () => {
+    const scoped = await seedEventAgent(owner, {
+      match: { fromAddresses: ['reporter@customer.example', 'other@customer.example'] },
+    });
+    const fired = await firedAgentsFor(mailEvent(owner));
+    expect(fired).toContain(scoped);
+
+    const missed = await firedAgentsFor(
+      mailEvent(owner, { from: 'stranger@customer.example', messageId: 'msg-miss-1' })
+    );
+    expect(missed).not.toContain(scoped);
+  });
+
+  it('narrows WebEx to chosen spaces, and refuses a third space', async () => {
+    const webexEvent = (roomId: string, messageId: string) => ({
+      tenantId,
+      source: 'webex',
+      type: 'message.received',
+      ownerSubject: owner,
+      payload: { text: 'hi', sender: 'bob@corp.example', roomId, messageId },
+    });
+    const scoped = await seedEventAgent(owner, {
+      eventSource: 'webex',
+      eventType: 'message.received',
+      match: { roomIds: ['ROOM-A', 'ROOM-B'] },
+    });
+
+    expect(await firedAgentsFor(webexEvent('ROOM-A', 'wx-1'))).toContain(scoped);
+    // The case the whole feature exists for: a message in a space nobody
+    // opted into must cost no run and no model call.
+    expect(await firedAgentsFor(webexEvent('ROOM-Z', 'wx-2'))).not.toContain(scoped);
+  });
+
+  it('fails closed when a constrained key is missing from the payload', async () => {
+    const scoped = await seedEventAgent(owner, { match: { fromAddresses: ['a@b.example'] } });
+    const fired = await firedAgentsFor(mailEvent(owner, { from: '', messageId: 'msg-nokey' }));
+    expect(fired).not.toContain(scoped);
+  });
+
+  it('ignores an unknown filter id but still applies its siblings', async () => {
+    // The rollback case, against a real row: deploy N-1 reading a filter
+    // that deploy N wrote. Silencing the agent would be the worse outcome.
+    const scoped = await seedEventAgent(owner, {
+      match: { somethingNewer: 'x', subjectContains: 'PROJ-42' },
+    });
+    expect(await firedAgentsFor(mailEvent(owner, { messageId: 'msg-fwd-1' }))).toContain(scoped);
+    expect(
+      await firedAgentsFor(mailEvent(owner, { subject: 'Holiday party', messageId: 'msg-fwd-2' }))
+    ).not.toContain(scoped);
   });
 
   it('fires a source event at most once per trigger, however often it is delivered', async () => {

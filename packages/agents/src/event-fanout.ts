@@ -19,6 +19,7 @@ import type { DB } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 import { isAgentStepsDoc } from './steps';
 import { createAgentRun } from './runs';
+import { matchesTriggerEvent } from './trigger-catalog';
 
 export interface AgentEventInput {
   tenantId: string;
@@ -52,23 +53,6 @@ function dedupeKeyFor(event: AgentEventInput): string | null {
   return event.eventId ? `event:${event.eventId}` : null;
 }
 
-interface MatchFilters {
-  fromDomain?: string;
-  subjectContains?: string;
-}
-
-function matches(filters: MatchFilters, payload: Record<string, unknown>): boolean {
-  if (filters.fromDomain) {
-    const from = typeof payload.from === 'string' ? payload.from : '';
-    if (!from.toLowerCase().endsWith(`@${filters.fromDomain.toLowerCase()}`)) return false;
-  }
-  if (filters.subjectContains) {
-    const subject = typeof payload.subject === 'string' ? payload.subject : '';
-    if (!subject.toLowerCase().includes(filters.subjectContains.toLowerCase())) return false;
-  }
-  return true;
-}
-
 /** Fire every enabled trigger matching this event. Returns run ids started. */
 export async function fanOutAgentEvents(
   db: Kysely<DB>,
@@ -96,15 +80,20 @@ export async function fanOutAgentEvents(
     .execute();
 
   const dedupeKey = dedupeKeyFor(event);
+  const eventId = `${event.source}/${event.type}`;
   const started: string[] = [];
   for (const trigger of triggers) {
-    const config: { match?: MatchFilters } =
+    const config: { match?: unknown } =
       typeof trigger.config === 'object' &&
       trigger.config !== null &&
       !Array.isArray(trigger.config)
         ? trigger.config
         : {};
-    if (!matches(config.match ?? {}, event.payload)) continue;
+    // The deterministic gate, before the firing lock and before any run row
+    // exists: a filtered-out event costs this comparison and nothing else.
+    // The rules live in trigger-filters.ts so the builder that renders a
+    // filter and the worker that applies it cannot drift.
+    if (!matchesTriggerEvent(eventId, config.match, event.payload)) continue;
     if (!isAgentStepsDoc(trigger.steps)) continue;
 
     // The firing lock: one run per (trigger, source event), across every
