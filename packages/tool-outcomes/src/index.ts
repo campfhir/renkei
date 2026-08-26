@@ -30,3 +30,15 @@ export {
 export { connectorKeyForTool } from './tool-connector';
 
 export { KIND_META_KEY, toolKindOf, type ToolKind } from './tool-kind';
+
+export {
+  ACT_CATEGORIES,
+  ACT_META_KEY,
+  ACT_OUTCOMES,
+  actResult,
+  resolveAct,
+  type ActCategory,
+  type ActOutcomeDescriptor,
+  type ActReceipt,
+  type ResolvedAct,
+} from './act-outcomes';

@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@campfhir/safe-functions": "^0.1.3",
-    "@renkei/db": "workspace:*"
+    "@renkei/db": "workspace:*",
+    "@renkei/tool-outcomes": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

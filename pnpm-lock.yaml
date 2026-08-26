@@ -910,6 +910,9 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../db
+      '@renkei/tool-outcomes':
+        specifier: workspace:*
+        version: link:../tool-outcomes
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0

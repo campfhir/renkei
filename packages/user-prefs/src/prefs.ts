@@ -15,22 +15,12 @@ export const NOTIFICATIONS_KEY = 'notifications';
 export type ToastCorner = 'bottom-left' | 'bottom-right';
 
 /**
- * What an act DID, coarsely — the axis a person actually has an opinion
- * about. "Tell me when something gets created, don't tell me when something
- * gets read" is a sentence people say; "tell me about jira_add_attachment"
- * is not, which is why the per-tool switch is an override rather than the
- * main control.
+ * The categories a person can have an opinion about come from the acts
+ * themselves (@renkei/tool-outcomes), re-exported here so a preferences UI
+ * needs only one import. Defining them twice would eventually mean a switch
+ * for a category nothing emits, or a category with no switch.
  */
-export type ActCategory = 'created' | 'sent' | 'updated' | 'deleted' | 'scheduled' | 'other';
-
-export const ACT_CATEGORIES: ActCategory[] = [
-  'created',
-  'sent',
-  'updated',
-  'deleted',
-  'scheduled',
-  'other',
-];
+export { ACT_CATEGORIES, type ActCategory } from '@renkei/tool-outcomes';
 
 export interface NotificationPrefs {
   /**

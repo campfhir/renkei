@@ -12,7 +12,8 @@
     "skipLibCheck": true,
     "types": ["node", "jest"],
     "paths": {
-      "@renkei/db": ["../../packages/db/src/index.ts"]
+      "@renkei/db": ["../../packages/db/src/index.ts"],
+      "@renkei/tool-outcomes": ["../../packages/tool-outcomes/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"],

@@ -5,6 +5,7 @@ export default {
   testMatch: ['**/*.test.ts'],
   moduleNameMapper: {
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
+    '^@renkei/tool-outcomes$': '<rootDir>/../../packages/tool-outcomes/src/index.ts',
   },
   transform: {
     '^.+\\.tsx?$': [
