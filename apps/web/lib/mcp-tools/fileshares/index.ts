@@ -21,7 +21,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import { extractText, DEFAULT_MAX_INPUT_BYTES } from '@renkei/document-text';
 import {
   annotateEntries,
@@ -29,7 +28,6 @@ import {
   childPath,
   effectiveAccess,
   hasAllowedDescendant,
-  listRulePathsUnder,
   normalizePath,
   openBackend,
   parentPath,
@@ -44,6 +42,7 @@ import type {
 } from '@renkei/connector-fileshares';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { MCPToolContext } from '../common';
+import { destructiveRefusal } from '@/lib/file-shares/access';
 import { createUploadSlot } from '../upload-slots';
 import {
   APP_ONLY_META,
@@ -397,42 +396,9 @@ export function registerFileshareTools(
     }
   );
 
-  /**
-   * The destructive-operation gate, shared by move, rename and delete:
-   * read/write on the target, and NO rule — any layer, ANY subject —
-   * anchored at or under it. Rules govern paths, not objects; a rename
-   * that slid ruled content to an unruled path would be an ACL bypass, so
-   * anchored content stays put until an admin removes the rules. Errors
-   * fail closed, and the refusal names the anchored paths so the admin
-   * knows what to clear.
-   */
-  async function destructiveRefusal(
-    resolved: ResolvedShare,
-    path: string,
-    verb: string
-  ): Promise<string | null> {
-    if (effectiveAccess(resolved.ctx, path) !== 'read_write') {
-      return `You do not have read/write access to ${verb} that path.`;
-    }
-    const dbResult = getDatabase();
-    if (!dbResult.ok) return 'Database unavailable.';
-    const anchored = await listRulePathsUnder(
-      dbResult.val,
-      context.tenantId,
-      resolved.ctx.share.id,
-      path,
-      resolved.ctx.share.caseInsensitive
-    );
-    if (!anchored.ok) return 'Could not verify the path rules here.';
-    if (anchored.val.length > 0) {
-      return (
-        `Access rules are anchored at or under that path (${anchored.val.join(', ')}), so it ` +
-        `cannot be ${verb === 'delete' ? 'deleted' : 'moved or renamed'} — an administrator ` +
-        'must remove those rules first.'
-      );
-    }
-    return null;
-  }
+  /** The shared destructive gate, bound to this caller's tenant. */
+  const destructive = (resolved: ResolvedShare, path: string, verb: 'move' | 'rename' | 'delete') =>
+    destructiveRefusal(context.tenantId, resolved.ctx, path, verb);
 
   server.registerTool(
     'fileshare_move_entry',
@@ -463,7 +429,7 @@ export function registerFileshareTools(
       const destination = childPath(toFolder.path, name);
       if (destination === source.path) return errText('That is already where it lives.');
 
-      const refusal = await destructiveRefusal(resolved, source.path, 'move');
+      const refusal = await destructive(resolved, source.path, 'move');
       if (refusal) return errText(refusal);
       if (effectiveAccess(resolved.ctx, destination) !== 'read_write') {
         return errText('You do not have read/write access at the destination.');
@@ -506,7 +472,7 @@ export function registerFileshareTools(
       const destination = childPath(parentPath(source.path), newName);
       if (destination === source.path) return errText('That is already its name.');
 
-      const refusal = await destructiveRefusal(resolved, source.path, 'rename');
+      const refusal = await destructive(resolved, source.path, 'rename');
       if (refusal) return errText(refusal);
       if (effectiveAccess(resolved.ctx, destination) !== 'read_write') {
         return errText('You do not have read/write access at the new name.');
@@ -541,7 +507,7 @@ export function registerFileshareTools(
     if (!path.ok) return errText(path.error);
     if (path.path === '/') return errText('The share root cannot be deleted.');
 
-    const refusal = await destructiveRefusal(resolved, path.path, 'delete');
+    const refusal = await destructive(resolved, path.path, 'delete');
     if (refusal) return errText(refusal);
 
     const removed = await withShareSession(resolved, async (backend) => {
@@ -578,7 +544,7 @@ export function registerFileshareTools(
       if (!path.ok) return errText(path.error);
       if (path.path === '/') return errText('The share root cannot be deleted.');
 
-      const refusal = await destructiveRefusal(resolved, path.path, 'delete');
+      const refusal = await destructive(resolved, path.path, 'delete');
       if (refusal) return errText(refusal);
 
       // Read-only enrichment: what exactly is on the card. A non-empty

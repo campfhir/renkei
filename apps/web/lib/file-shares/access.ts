@@ -12,7 +12,9 @@ import { parseEncryptionKey } from '@renkei/crypto';
 import { getDatabase } from '@renkei/db';
 import {
   decryptCredentials,
+  effectiveAccess,
   getAclContext,
+  listRulePathsUnder,
   readCredentialCiphertext,
 } from '@renkei/connector-fileshares';
 import type { AclContext, ShareCredentials } from '@renkei/connector-fileshares';
@@ -71,8 +73,47 @@ export function backendStatus(tag: string): number {
     case 'timeout':
       return 504;
     case 'exists':
+    case 'not_empty':
       return 409;
     default:
       return 502;
   }
+}
+
+/**
+ * The destructive-operation gate, shared by the MCP tools and the REST
+ * routes so move, rename and delete answer identically everywhere:
+ * read/write on the target, and NO rule — any layer, ANY subject —
+ * anchored at or under it. Rules govern paths, not objects; a rename that
+ * slid ruled content to an unruled path would be an ACL bypass, so
+ * anchored content stays put until an admin removes the rules. Errors
+ * fail closed, and the refusal names the anchored paths.
+ */
+export async function destructiveRefusal(
+  tenantId: string,
+  ctx: AclContext,
+  path: string,
+  verb: 'move' | 'rename' | 'delete'
+): Promise<string | null> {
+  if (effectiveAccess(ctx, path) !== 'read_write') {
+    return `You do not have read/write access to ${verb} that path.`;
+  }
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return 'Database unavailable.';
+  const anchored = await listRulePathsUnder(
+    dbResult.val,
+    tenantId,
+    ctx.share.id,
+    path,
+    ctx.share.caseInsensitive
+  );
+  if (!anchored.ok) return 'Could not verify the path rules here.';
+  if (anchored.val.length > 0) {
+    return (
+      `Access rules are anchored at or under that path (${anchored.val.join(', ')}), so it ` +
+      `cannot be ${verb === 'delete' ? 'deleted' : 'moved or renamed'} — an administrator ` +
+      'must remove those rules first.'
+    );
+  }
+  return null;
 }

@@ -24,6 +24,7 @@ jest.mock('@renkei/connector-fileshares', () => {
     ...actual,
     getAclContext: jest.fn(),
     listGrantedShares: jest.fn(),
+    listRulePathsUnder: jest.fn(async () => ({ ok: true, val: [] })),
     readCredentialCiphertext: jest.fn(async () => ({ ok: true, val: 'sealed' })),
     decryptCredentials: jest.fn(() => ({
       ok: true,
@@ -39,13 +40,15 @@ import { GET as listShares } from './route';
 import { GET as listFolder } from './[shareId]/folder/route';
 import { GET as downloadFile, PUT as uploadFile } from './[shareId]/file/route';
 import { POST as createFolder } from './[shareId]/folders/route';
+import { DELETE as deleteEntry, POST as mutateEntry } from './[shareId]/entries/route';
 
 const { getSessionFromRequest } = jest.requireMock<{ getSessionFromRequest: jest.Mock }>(
   '@/lib/session'
 );
-const { getAclContext, listGrantedShares, openBackend } = jest.requireMock<{
+const { getAclContext, listGrantedShares, listRulePathsUnder, openBackend } = jest.requireMock<{
   getAclContext: jest.Mock;
   listGrantedShares: jest.Mock;
+  listRulePathsUnder: jest.Mock;
   openBackend: jest.Mock;
 }>('@renkei/connector-fileshares');
 
@@ -81,6 +84,7 @@ function reqOf(url: string, init?: RequestInit): NextRequest {
 beforeEach(() => {
   jest.clearAllMocks();
   getSessionFromRequest.mockResolvedValue({ subject: 'auth0|alice' });
+  listRulePathsUnder.mockResolvedValue({ ok: true, val: [] });
 });
 
 test('every route answers a signed-out request with 401', async () => {
@@ -228,4 +232,107 @@ test('folder creation authorizes on the parent', async () => {
   );
   expect(allowed.status).toBe(200);
   expect(mkdir).toHaveBeenCalledWith('/drafts/new');
+});
+
+test('entry deletion requires read/write and refuses anchored rules', async () => {
+  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read') });
+  const refused = await deleteEntry(reqOf('http://x/api?path=/old.txt', { method: 'DELETE' }), {
+    params: shareParamsOf(SHARE_ID),
+  });
+  expect(refused.status).toBe(403);
+  expect(openBackend).not.toHaveBeenCalled();
+
+  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read_write') });
+  listRulePathsUnder.mockResolvedValue({ ok: true, val: ['/old.txt'] });
+  const anchored = await deleteEntry(reqOf('http://x/api?path=/old.txt', { method: 'DELETE' }), {
+    params: shareParamsOf(SHARE_ID),
+  });
+  expect(anchored.status).toBe(403);
+  const body = await anchored.json();
+  expect(String(body.error)).toContain('administrator');
+  expect(openBackend).not.toHaveBeenCalled();
+});
+
+test('a non-empty folder answers 409, and a clean delete succeeds', async () => {
+  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read_write') });
+  const remove = jest
+    .fn()
+    .mockResolvedValueOnce({ ok: false, err: { type: 'not_empty' } })
+    .mockResolvedValueOnce({ ok: true, val: undefined });
+  openBackend.mockResolvedValue({
+    ok: true,
+    val: {
+      stat: async () => ({
+        ok: true,
+        val: { name: 'stuff', kind: 'dir', size: null, modifiedAt: null },
+      }),
+      remove,
+      close: async () => undefined,
+    },
+  });
+
+  const notEmpty = await deleteEntry(reqOf('http://x/api?path=/stuff', { method: 'DELETE' }), {
+    params: shareParamsOf(SHARE_ID),
+  });
+  expect(notEmpty.status).toBe(409);
+
+  const emptied = await deleteEntry(reqOf('http://x/api?path=/stuff', { method: 'DELETE' }), {
+    params: shareParamsOf(SHARE_ID),
+  });
+  expect(emptied.status).toBe(200);
+  expect(remove).toHaveBeenLastCalledWith('/stuff', 'dir');
+});
+
+test('move requires read/write on both ends and never clobbers', async () => {
+  getAclContext.mockResolvedValue({
+    ok: true,
+    val: aclContext('read_write', [{ path: '/readonly', access: 'read' }]),
+  });
+  const rename = jest.fn().mockResolvedValue({ ok: false, err: { type: 'exists' } });
+  openBackend.mockResolvedValue({ ok: true, val: { rename, close: async () => undefined } });
+
+  const refused = await mutateEntry(
+    reqOf('http://x/api', {
+      method: 'POST',
+      body: JSON.stringify({ op: 'move', from: '/a.txt', toFolder: '/readonly' }),
+    }),
+    { params: shareParamsOf(SHARE_ID) }
+  );
+  expect(refused.status).toBe(403);
+  expect(rename).not.toHaveBeenCalled();
+
+  const clobber = await mutateEntry(
+    reqOf('http://x/api', {
+      method: 'POST',
+      body: JSON.stringify({ op: 'move', from: '/a.txt', toFolder: '/archive' }),
+    }),
+    { params: shareParamsOf(SHARE_ID) }
+  );
+  expect(clobber.status).toBe(409);
+  expect(rename).toHaveBeenCalledWith('/a.txt', '/archive/a.txt');
+});
+
+test('rename validates the new name and lands on the sibling path', async () => {
+  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read_write') });
+  const rename = jest.fn().mockResolvedValue({ ok: true, val: undefined });
+  openBackend.mockResolvedValue({ ok: true, val: { rename, close: async () => undefined } });
+
+  const traversal = await mutateEntry(
+    reqOf('http://x/api', {
+      method: 'POST',
+      body: JSON.stringify({ op: 'rename', from: '/docs/a.txt', newName: '../up.txt' }),
+    }),
+    { params: shareParamsOf(SHARE_ID) }
+  );
+  expect(traversal.status).toBe(400);
+
+  const renamed = await mutateEntry(
+    reqOf('http://x/api', {
+      method: 'POST',
+      body: JSON.stringify({ op: 'rename', from: '/docs/a.txt', newName: 'b.txt' }),
+    }),
+    { params: shareParamsOf(SHARE_ID) }
+  );
+  expect(renamed.status).toBe(200);
+  expect(rename).toHaveBeenCalledWith('/docs/a.txt', '/docs/b.txt');
 });
