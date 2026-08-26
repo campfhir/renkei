@@ -60,6 +60,32 @@ export {
 } from './limits';
 
 export {
+  resolveAccess,
+  serviceAdminList,
+  serviceListFolder,
+  serviceMakeFolder,
+  serviceMoveEntry,
+  servicePreviewRemove,
+  serviceReadFile,
+  serviceRemoveEntry,
+  serviceRenameEntry,
+  serviceStatEntry,
+  serviceTestConnection,
+  serviceWriteFile,
+  type ConnectionTest,
+  type EntryDetails,
+  type FileContent,
+  type FolderListing,
+  type RelocationOutcome,
+  type RemovePreview,
+  type ResolvedAccess,
+  type ServiceDeps,
+  type ServiceError,
+  type ShareRef,
+  type SubjectTarget,
+} from './service';
+
+export {
   ACL_CACHE_TTL_MS,
   clearFileShareCache,
   createShare,
