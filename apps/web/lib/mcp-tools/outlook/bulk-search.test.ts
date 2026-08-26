@@ -89,6 +89,8 @@ interface FetchCall {
 let calls: FetchCall[] = [];
 /** Pages the fake Graph serves, in order; each is one response body. */
 let pages: Record<string, unknown>[] = [];
+/** When set, every call answers this status with this body instead. */
+let failWith: { status: number; body: unknown } | null = null;
 
 function message(id: string, subject: string, from: string): Record<string, unknown> {
   return {
@@ -103,12 +105,22 @@ function message(id: string, subject: string, from: string): Record<string, unkn
 beforeEach(() => {
   calls = [];
   pages = [{ value: [] }];
+  failWith = null;
   let pageIndex = 0;
   global.fetch = (async (url: string, init?: RequestInit) => {
     calls.push({
       url: String(url),
       headers: (init?.headers ?? {}) as Record<string, string>,
     });
+    if (failWith) {
+      const text = JSON.stringify(failWith.body);
+      return {
+        ok: false,
+        status: failWith.status,
+        text: async () => text,
+        json: async () => failWith?.body,
+      };
+    }
     const body = pages[Math.min(pageIndex, pages.length - 1)] ?? { value: [] };
     pageIndex += 1;
     return {
@@ -192,6 +204,86 @@ describe('outlook_bulk_search_messages query construction', () => {
   });
 });
 
+/**
+ * The shapes that were reported broken, as queries.
+ *
+ * Live reproduction on 2026-08-26: `{from}`, `{from, hasAttachments}` and
+ * `{flagStatus}` each came back a bare 400, while `{isRead}` alone and
+ * `{subjectContains}` alone worked. What separates them is that the failing
+ * three restrict on a COMPLEX path — from/…, flag/… — and the query carried
+ * `$orderby=receivedDateTime desc` over a $filter that never mentioned
+ * receivedDateTime.
+ *
+ * Exchange is the only thing that can actually reject a query, so these
+ * cannot assert the 400 is gone. What they can do is pin the shape that
+ * caused it, which is the part this repo controls.
+ */
+describe('outlook_bulk_search_messages filters that used to 400', () => {
+  it.each([
+    ['from alone', { from: 'scott.eremia-roden@nems.org' }],
+    ['from with attachments', { from: 'a@example.com', hasAttachments: true }],
+    ['flagStatus alone', { flagStatus: 'flagged' as const, max: 10 }],
+    ['categories alone', { categories: ['Newsletters'] }],
+  ])('names receivedDateTime first in the filter for %s', async (_name, args) => {
+    await bulkSearch(args);
+    const filter = firstFilter();
+    expect(filter).toContain('receivedDateTime ge');
+    expect(filter.indexOf('receivedDateTime ge')).toBe(0);
+  });
+
+  it('keeps the caller’s own date range rather than stacking a second one', async () => {
+    await bulkSearch({ from: 'a@example.com', receivedAfter: '2026-08-01T00:00:00Z' });
+    const filter = firstFilter();
+    expect(filter.match(/receivedDateTime ge/g)).toHaveLength(1);
+    expect(filter).toContain('receivedDateTime ge 2026-08-01T00:00:00Z');
+  });
+
+  it('leaves an unfiltered search unfiltered', async () => {
+    // subjectContains is matched client-side, so it contributes no clause —
+    // and a bare $orderby is not a combination Exchange objects to.
+    await bulkSearch({ subjectContains: 'Salesforce', max: 5 });
+    expect(firstFilter()).toBe('');
+  });
+});
+
+describe('outlook_bulk_search_messages error reporting', () => {
+  it('repeats what Graph said, not just the status', async () => {
+    // The bug above took a session of bisecting parameters because the
+    // reply was "Microsoft Graph answered 400" and nothing else — Graph had
+    // named the problem and the tool dropped it on the floor.
+    failWith = {
+      status: 400,
+      body: {
+        error: {
+          code: 'InefficientFilter',
+          message: 'The restriction or sort order is too complex for this operation.',
+        },
+      },
+    };
+    const result = await bulkSearch({ from: 'a@example.com' });
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('InefficientFilter');
+    expect(text).toContain('too complex for this operation');
+  });
+
+  it('still says something useful when the body is not Graph-shaped', async () => {
+    failWith = { status: 400, body: 'not json at all' };
+    const result = await bulkSearch({ from: 'a@example.com' });
+    expect(result.content[0]?.text ?? '').toContain('400');
+  });
+
+  it('keeps the reconnect advice on a 403 and adds the reason', async () => {
+    failWith = {
+      status: 403,
+      body: { error: { code: 'ErrorAccessDenied', message: 'Access is denied.' } },
+    };
+    const result = await bulkSearch({ isRead: false });
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('Reconnect Microsoft');
+    expect(text).toContain('ErrorAccessDenied');
+  });
+});
+
 describe('outlook_bulk_search_messages subject filtering', () => {
   it('matches subjects case-insensitively as a true substring', async () => {
     pages = [
@@ -214,6 +306,42 @@ describe('outlook_bulk_search_messages subject filtering', () => {
     pages = [{ value: [message('1', 'keep me', 'dana'), message('2', 'drop me', 'dana')] }];
     const result = await bulkSearch({ subjectContains: 'keep' });
     expect(result.content[0]?.text ?? '').toContain('out of 2 scanned');
+  });
+
+  it('keeps every match in a scanned page rather than truncating to max', async () => {
+    // The continuation token advances a WHOLE page, so a match dropped for
+    // being over `max` was unreachable by any later call — it is not on the
+    // page just returned and not on the next one either. Over-returning is
+    // the lesser evil, and the only one that loses nothing.
+    pages = [
+      {
+        value: [
+          message('1', 'invoice one', 'ap'),
+          message('2', 'invoice two', 'ap'),
+          message('3', 'invoice three', 'ap'),
+        ],
+        '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/messages?$skiptoken=next',
+      },
+    ];
+    const result = await bulkSearch({ subjectContains: 'invoice', max: 1 });
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('id: 1');
+    expect(text).toContain('id: 2');
+    expect(text).toContain('id: 3');
+  });
+
+  it('still stops fetching further pages once max is met', async () => {
+    // Keeping a whole page is not licence to keep scanning: one page that
+    // satisfies `max` ends the loop.
+    pages = [
+      {
+        value: [message('1', 'invoice one', 'ap'), message('2', 'invoice two', 'ap')],
+        '@odata.nextLink': 'https://graph.microsoft.com/v1.0/me/messages?$skiptoken=next',
+      },
+      { value: [message('3', 'invoice three', 'ap')] },
+    ];
+    await bulkSearch({ subjectContains: 'invoice', max: 1 });
+    expect(calls).toHaveLength(1);
   });
 });
 

@@ -59,15 +59,50 @@ import { extractText } from '@renkei/document-text';
 
 export const OUTLOOK_MCP_CONNECTOR = 'microsoft';
 
-function describeStatus(status: number): string {
+function describeStatus(status: number, responseBody = ''): string {
+  const detail = graphErrorDetail(responseBody);
+  const suffix = detail ? ` — ${detail}` : '';
   if (status === 403) {
     return (
       'Graph refused (403) — the grant likely lacks the needed scope, or the Entra app is ' +
-      'missing the delegated permission. Reconnect Microsoft after the admin fixes the app.'
+      'missing the delegated permission. Reconnect Microsoft after the admin fixes the app.' +
+      suffix
     );
   }
-  if (status === 429) return 'Graph is rate limiting (429); try again shortly.';
-  return `Microsoft Graph answered ${status}`;
+  if (status === 429) return `Graph is rate limiting (429); try again shortly.${suffix}`;
+  return `Microsoft Graph answered ${status}${suffix}`;
+}
+
+/**
+ * Graph's own account of what was wrong, pulled out of the error body.
+ *
+ * Without this a rejected query reads only "Microsoft Graph answered 400",
+ * which is what a caller sees and what gets reported — the body went to the
+ * log, where nobody triaging from the chat side can reach it. Diagnosing the
+ * InefficientFilter bug this shipped alongside took a session of bisecting
+ * parameters that Graph would have named outright.
+ *
+ * Only the code and message are taken. `innerError` carries request ids and
+ * timestamps that say nothing to the person reading, and the message itself
+ * is Microsoft's fixed prose about the QUERY, not mailbox content — nothing
+ * from a message body reaches here.
+ */
+function graphErrorDetail(responseBody: string): string {
+  if (!responseBody) return '';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(responseBody);
+  } catch {
+    return '';
+  }
+  const error = rec(rec(parsed).error);
+  const code = str(error.code);
+  const message = str(error.message);
+  if (!code && !message) return '';
+  const detail = code && message ? `${code}: ${message}` : code || message;
+  // Bounded: Graph is terse here, but a caller's reply should never be
+  // dominated by an error string.
+  return detail.length > 400 ? `${detail.slice(0, 400)}…` : detail;
 }
 
 /** Cap a logged body: enough to diagnose, bounded against megabyte payloads. */
@@ -117,7 +152,7 @@ async function graphGet(
       status: response.status,
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status) };
+    return { ok: false, error: describeStatus(response.status, responseBody) };
   }
   let body: unknown = null;
   try {
@@ -179,7 +214,7 @@ async function graphPost(
       requestBody: secure(truncateForLog(requestBody)),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status) };
+    return { ok: false, error: describeStatus(response.status, responseBody) };
   }
   let body: unknown = null;
   try {
@@ -241,7 +276,7 @@ async function graphPatch(
       requestBody: secure(truncateForLog(requestBody)),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status) };
+    return { ok: false, error: describeStatus(response.status, responseBody) };
   }
   return { ok: true };
 }
@@ -317,7 +352,7 @@ async function graphDeleteChecked(
       status: response.status,
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
-    return { ok: false, error: describeStatus(response.status) };
+    return { ok: false, error: describeStatus(response.status, responseBody) };
   }
   return { ok: true };
 }
@@ -1337,7 +1372,16 @@ export async function registerOutlookTools(
               '— makes it far easier to spot automated/noise senders in a large unread pile'
           )
           .optional(),
-        max: z.number().int().min(1).max(100).describe('Page size (default 25)').optional(),
+        max: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .describe(
+            'Page size (default 25). With subjectContains a page may come back slightly over ' +
+              'this, because every match found while scanning is returned rather than dropped.'
+          )
+          .optional(),
         pageToken: z
           .string()
           .describe(
@@ -1432,6 +1476,14 @@ export async function registerOutlookTools(
       // pulling pages until one page's worth of MATCHES is collected (or the
       // scan budget runs out). Without that filter this is a single call and
       // the loop exits immediately.
+      //
+      // Every match in a page we fetched is kept, even once `max` is met, so
+      // a subject scan can return a little more than the page size asked
+      // for. That is deliberate and it is a bug fix: capping mid-page used
+      // to DISCARD the rest of that page's matches and then hand back a
+      // pageToken pointing at the page AFTER it, so those messages were
+      // unreachable by any later call. Since `next` always advances a whole
+      // page, keeping the whole page is what makes the continuation honest.
       const collected: Record<string, unknown>[] = [];
       let scanned = 0;
       let next: string | null = pageToken || buildQuery(subjectContains ? 100 : max, false);
@@ -1447,7 +1499,7 @@ export async function registerOutlookTools(
           if (subjectContains && !str(message.subject).toLowerCase().includes(subjectContains)) {
             continue;
           }
-          if (collected.length < max) collected.push(message);
+          collected.push(message);
         }
         const nextLink = str(result.body['@odata.nextLink']);
         next = nextLink ? nextLink.replace(GRAPH_BASE_URL, '') : null;

@@ -37,12 +37,36 @@ export interface MailQueryOptions {
 }
 
 /**
+ * A lower bound old enough to exclude nothing.
+ *
+ * Its only job is to put `receivedDateTime` INTO the filter — see the rule
+ * below — for a search that did not ask for a date range. Exchange's own
+ * minimum is far earlier, so no real message is cut off by it.
+ */
+const OPEN_LOWER_BOUND = '1970-01-01T00:00:00Z';
+
+/**
  * Filter clause order is load-bearing, not cosmetic: Graph documents that
  * when $filter and $orderby are combined on messages, every $orderby
  * property must also appear in $filter AND must come before any property
  * that isn't in the $orderby — otherwise Exchange answers 400
  * InefficientFilter ("The restriction or sort order is too complex for this
  * operation"). Since we always order by receivedDateTime, its clauses lead.
+ *
+ * Both halves of that rule matter, and only the ORDER half used to be
+ * implemented. When no date range was asked for there was no
+ * receivedDateTime clause to lead with, so the $orderby property was absent
+ * from $filter entirely and Exchange refused the query. Live reproduction,
+ * 2026-08-26: `{from}` alone, `{from, hasAttachments}` and `{flagStatus}`
+ * each answered a bare 400, while `{isRead}` alone succeeded — a plain
+ * scalar restriction survives the combination where a restriction on a
+ * complex path (from/…, flag/…, a categories/any lambda) does not.
+ *
+ * So the fix is to satisfy the rule for EVERY filtered query rather than
+ * only the ones that happen to name a date. Doing it uniformly is the
+ * point: the alternative is classifying each clause as scalar-or-complex,
+ * which silently reintroduces this bug the first time somebody adds a
+ * filter and classifies it wrong.
  */
 export function buildMailQueryPath(filters: MailSearchFilters, options: MailQueryOptions): string {
   const quote = (value: string) => value.replace(/'/g, "''");
@@ -67,6 +91,14 @@ export function buildMailQueryPath(filters: MailSearchFilters, options: MailQuer
   }
   if (filters.from) otherFilters.push(`from/emailAddress/address eq '${quote(filters.from)}'`);
   // subjectContains is deliberately absent — see the field's doc comment.
+
+  // The $orderby property has to be in the filter whenever the filter
+  // exists at all. An unfiltered query is left alone: with no $filter there
+  // is no combination for Exchange to object to, and a bare $orderby is
+  // fine on its own.
+  if (dateFilters.length === 0 && otherFilters.length > 0) {
+    dateFilters.push(`receivedDateTime ge ${OPEN_LOWER_BOUND}`);
+  }
   const clauses = [...dateFilters, ...otherFilters];
 
   const parts = [
