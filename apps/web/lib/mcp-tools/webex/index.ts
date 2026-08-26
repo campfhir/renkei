@@ -21,6 +21,7 @@ import { randomUUID } from 'crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
 import { logger } from '@/lib/logger';
+import { recordSentWebexMessage } from './sent-ledger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
 import {
@@ -412,6 +413,9 @@ export async function registerWebexUserTools(
           ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
             (body as Record<string, unknown>)
           : {};
+      // Recorded BEFORE the tool answers, so the ledger row is in place well
+      // ahead of the webhook round-trip that will ask about it.
+      await recordSentWebexMessage(context.tenantId, str(sent.id), context.accountId);
       logger.info('webex_send_message sent', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
@@ -508,6 +512,7 @@ export async function registerWebexUserTools(
           ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
             (sentBody as Record<string, unknown>)
           : {};
+      await recordSentWebexMessage(context.tenantId, str(sent.id), context.accountId);
       logger.info('webex_note_to_self sent', {
         component: 'mcp/tool',
         tenantId: context.tenantId,
@@ -636,6 +641,7 @@ export async function registerWebexUserTools(
           ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
             (body as Record<string, unknown>)
           : {};
+      await recordSentWebexMessage(context.tenantId, str(sent.id), context.accountId);
       logger.info('webex_send_message_confirm sent', {
         component: 'mcp/tool',
         tenantId: context.tenantId,

@@ -50,6 +50,15 @@ export interface AttemptView {
 export interface RunDetail extends RunSummary {
   stepsSnapshot: Json;
   attempts: AttemptView[];
+  /**
+   * What the trigger handed the run — the `trigger.*` variables it started
+   * with. Absent when redacted, which follows the SAME rule the per-attempt
+   * detail does: the owner always, an admin only on a failed run. It is
+   * content (an email's subject, a message's text), so it cannot be treated
+   * as the content-free status columns are.
+   */
+  initialState?: Json;
+  initialStateRedacted: boolean;
 }
 
 function iso(value: Date | null): string | null {
@@ -118,6 +127,19 @@ const FAILED_SNAPSHOT = sql<Json | null>`
   case when error_kind = 'step_failed' then steps_snapshot end
 `.as('failed_snapshot');
 
+/**
+ * The trigger payload, for the admin path only — and only on a failed run.
+ *
+ * A CASE rather than a filter in TypeScript, for the same reason
+ * FAILED_SNAPSHOT is one: content an admin may not see never leaves the
+ * database, so no later refactor can accidentally surface it. `runDetail`
+ * applies the same rule again when it sets `initialStateRedacted`; the two
+ * agreeing is the point, not duplication to remove.
+ */
+const FAILED_INITIAL_STATE = sql<Json | null>`
+  case when status = 'failed' then initial_state end
+`.as('initial_state');
+
 export async function listRunsForOwner(
   db: Kysely<DB>,
   tenantId: string,
@@ -145,7 +167,7 @@ export async function listRunsForOwner(
 
 async function runDetail(
   db: Kysely<DB>,
-  runRow: RunRow & { steps_snapshot: Json },
+  runRow: RunRow & { steps_snapshot: Json; initial_state: Json | null },
   audience: 'owner' | 'admin'
 ): Promise<RunDetail> {
   const attemptRows = await db
@@ -172,9 +194,18 @@ async function runDetail(
     .orderBy('attempt')
     .execute();
 
+  // The run-level equivalent of the per-attempt rule below: an admin sees
+  // what a run started with only when it failed. A working agent's inbound
+  // mail is not theirs to read.
+  const initialVisible = audience === 'owner' || runRow.status === 'failed';
+
   return {
     ...summaryOf(runRow, runRow.steps_snapshot),
     stepsSnapshot: runRow.steps_snapshot,
+    ...(initialVisible && runRow.initial_state !== null
+      ? { initialState: runRow.initial_state }
+      : {}),
+    initialStateRedacted: !initialVisible,
     attempts: attemptRows.map((row) => {
       // THE visibility rule: content for the owner always; for an admin
       // only when the attempt failed (troubleshooting is their job,
@@ -208,7 +239,7 @@ export async function getRunForOwner(
   if (!isUuid(agentId) || !isUuid(runId)) return null;
   const row = await db
     .selectFrom('agent_runs')
-    .select([...RUN_COLUMNS, 'steps_snapshot'])
+    .select([...RUN_COLUMNS, 'steps_snapshot', 'initial_state'])
     .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', ownerSubject)
     .where('agent_id', '=', agentId)
@@ -246,7 +277,7 @@ export async function getRunForAdmin(
   if (!isUuid(agentId) || !isUuid(runId)) return null;
   const row = await db
     .selectFrom('agent_runs')
-    .select([...RUN_COLUMNS, 'steps_snapshot'])
+    .select([...RUN_COLUMNS, 'steps_snapshot', FAILED_INITIAL_STATE])
     .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('id', '=', runId)

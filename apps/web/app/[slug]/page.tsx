@@ -5,6 +5,7 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import ActionableCards from './cards';
+import AutoRefresh from '@/components/auto-refresh';
 
 /**
  * Where a signed-in user lands: the actionable-item feed, which is the point
@@ -46,6 +47,14 @@ export default async function HomePage({
           ? 'The full history, archived cards included.'
           : 'Suggestions from your connected tools. Approving executes the action as you.'}
       </p>
+      {/*
+        The feed changes from OUTSIDE this page — a connector sweep, an
+        agent finishing, a colleague's approval — so a view opened five
+        minutes ago is quietly wrong. Refreshing the server component keeps
+        the cards a direct database read rather than a duplicated query
+        behind an API route.
+      */}
+      <AutoRefresh />
       <ActionableCards
         tenantId={tenant.id}
         slug={slug}

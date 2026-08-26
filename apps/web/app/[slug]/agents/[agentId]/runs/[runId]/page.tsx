@@ -8,6 +8,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { getAgent } from '@/lib/agents/store';
 import { getRunForOwner } from '@/lib/agents/runs-view';
 import { RunTimeline, StatusPill } from '../../../run-timeline';
+import RunActivitySection from '../../../run-activity';
 import ApprovalActions from '../../../../approval-actions';
 import LocalTime from '@/components/local-time';
 import CopyDebugButton from '@/components/copy-debug-button';
@@ -69,9 +70,10 @@ export default async function AgentRunDetailPage({
         <span className="text-sm text-gray-500">
           via {run.triggerKind} · <LocalTime at={run.createdAt} />
         </span>
-        {run.status === 'failed' || run.attempts.some((a) => a.status === 'failed') ? (
-          <CopyDebugButton text={renderRunDebugMarkdown(agent.name, run)} />
-        ) : null}
+        {/* Offered on EVERY run, not only failed ones. An agent that
+            "misbehaved" has usually succeeded at doing the wrong thing, and
+            that is exactly the run someone needs to paste somewhere. */}
+        <CopyDebugButton text={renderRunDebugMarkdown(agent.name, run)} />
         {/* Only once the run is settled — a rerun while it is still going
             would put two runs on the same message at once. */}
         {run.status === 'queued' || run.status === 'running' || run.status === 'waiting' ? null : (
@@ -89,6 +91,7 @@ export default async function AgentRunDetailPage({
           {run.error}
         </p>
       ) : null}
+      <RunActivitySection run={run} />
       <RunTimeline run={run} />
     </div>
   );

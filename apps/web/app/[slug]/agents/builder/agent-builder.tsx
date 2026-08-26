@@ -13,7 +13,7 @@
  * description; enabling is its own deliberate act.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   BUILTIN_VARIABLES,
@@ -28,7 +28,6 @@ import {
   type AgentStepNode,
   type AgentStepsDoc,
   type InstructionSegment,
-  type TriggerDraft,
   type ValidationIssue,
 } from '@renkei/agents';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
@@ -188,6 +187,11 @@ export function AgentBuilder({
   // ten seconds reads as "hung" — staged messages read as "working".
   const [draftSeconds, setDraftSeconds] = useState(0);
   const [draftMode, setDraftMode] = useState<'create' | 'revise'>('create');
+  // The running job. Held so the poll below knows what to watch; a reload
+  // loses it, which is exactly what the on-open offer is for.
+  const [draftId, setDraftId] = useState<string | null>(null);
+  // A draft that finished while nobody was here, waiting to be taken.
+  const [pendingDraft, setPendingDraft] = useState<{ id: string; createdAt: string } | null>(null);
   const [drafted, setDrafted] = useState(false);
   // What the drafting loop could not settle on its own: questions only the
   // user can answer (answered in the description box, then draft again)
@@ -229,6 +233,72 @@ export function AgentBuilder({
     return () => clearInterval(timer);
   }, [review?.pending, agentId, tenantId]);
 
+  /**
+   * Watch a running draft.
+   *
+   * Two seconds, like the description poll above. The job outlives this
+   * page, so a failure to poll is a cosmetic problem rather than a lost
+   * draft — the on-open offer picks up anything this misses.
+   */
+  useEffect(() => {
+    if (!draftId) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      const result = await getJson<{
+        draft?: {
+          status: string;
+          result?: { name?: unknown; steps?: unknown } | null;
+          error?: string | null;
+          errorDetail?: string | null;
+        };
+      }>(`/api/tenant/${tenantId}/agents/draft/${draftId}`);
+      if (cancelled) return;
+      const draft = result.data?.draft;
+      if (!draft || draft.status === 'queued' || draft.status === 'running') return;
+
+      clearInterval(timer);
+      setDraftId(null);
+      setDrafting(false);
+
+      if (draft.status === 'failed' || !draft.result) {
+        setDraftError(draft.error ?? 'Drafting failed — try again.');
+        if (draft.errorDetail) setDraftDetail(draft.errorDetail);
+        return;
+      }
+      if (!applyRef.current(draft.result)) {
+        setDraftError('The draft came back in a shape this build does not understand.');
+        return;
+      }
+      // Taken, so it is not offered again on the next open.
+      void fetch(`/api/tenant/${tenantId}/agents/draft/${draftId}/consume`, { method: 'POST' });
+    }, 2_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [draftId, tenantId]);
+
+  /**
+   * Offer a draft that finished while this page was closed.
+   *
+   * Runs once on open. It does not apply the draft on its own — arriving to
+   * find your steps silently replaced would be worse than losing the draft.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const query = agentId ? `?agentId=${encodeURIComponent(agentId)}` : '';
+      const result = await getJson<{ draft?: { id: string; createdAt: string } | null }>(
+        `/api/tenant/${tenantId}/agents/draft${query}`
+      );
+      if (cancelled || !result.data?.draft) return;
+      setPendingDraft({ id: result.data.draft.id, createdAt: result.data.draft.createdAt });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, agentId]);
+
   useEffect(() => {
     if (!drafting) return;
     setDraftSeconds(0);
@@ -242,10 +312,99 @@ export function AgentBuilder({
       return draftMode === 'revise'
         ? 'Revising your steps — applying the change you described…'
         : 'Splitting it into steps and picking the skills…';
-    if (draftSeconds < 60)
-      return `Still thinking (${draftSeconds}s) — matching skills, then reviewing the draft for gaps…`;
-    return `Still working (${draftSeconds}s) — drafting and gap-checking can take a few minutes (up to five). Hang tight.`;
+    // Past twenty seconds the useful thing to say is no longer "hang tight".
+    // The work runs in the background now: leaving is safe, and saying so is
+    // the whole point of having moved it there.
+    return (
+      `Still working (${draftSeconds}s). This runs in the background — you can leave this page ` +
+      'and the draft will be waiting when you come back.'
+    );
   })();
+
+  /**
+   * Put a drafted document into the builder.
+   *
+   * Shared by the poll that finishes a job started here and the offer that
+   * picks up one finished after the page was closed — the two arrive by
+   * different routes and must land identically.
+   */
+  const applyDraftResult = (data: {
+    name?: unknown;
+    steps?: unknown;
+    triggers?: unknown;
+    questions?: unknown;
+    concerns?: unknown;
+    guardrails?: unknown;
+  }): boolean => {
+    if (!Array.isArray(data.steps)) return false;
+    const draftedSteps: AgentStepNode[] = data.steps;
+    setSteps(draftedSteps);
+    setSelection(null);
+    setDraftQuestions(
+      Array.isArray(data.questions)
+        ? data.questions.filter(
+            (question): question is string => typeof question === 'string' && question.length > 0
+          )
+        : []
+    );
+    setDraftConcerns(parseReviewNotes(data.concerns));
+    // A proposed guardrails doc only ever fills an empty panel — the model
+    // never rewrites rules the owner wrote.
+    if (!guardrails.trim() && typeof data.guardrails === 'string') {
+      setGuardrails(data.guardrails);
+    }
+    if (!name.trim() && typeof data.name === 'string' && data.name) setName(data.name);
+    if (triggers.length === 0 && Array.isArray(data.triggers)) {
+      // A drafted schedule with no stated timezone means "the prose never
+      // said" — the user's own zone is the only sensible reading, and only
+      // the browser knows it.
+      const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const draftedTriggers = data.triggers.filter(isTriggerDraft);
+      if (draftedTriggers.length > 0) {
+        setTriggers(
+          draftedTriggers.map((draftTrigger) => ({
+            draft:
+              draftTrigger.kind === 'schedule' && !draftTrigger.timezone
+                ? { ...draftTrigger, timezone: localTimezone }
+                : draftTrigger,
+            enabled: true,
+          }))
+        );
+      }
+    }
+    setDrafted(true);
+    setServerIssues([]);
+    return true;
+  };
+
+  /**
+   * Take the draft that was waiting.
+   *
+   * Confirmed when there is real work on screen, for the same reason
+   * drafting over existing steps is: this replaces them.
+   */
+  const loadPendingDraft = async () => {
+    const waiting = pendingDraft;
+    if (!waiting) return;
+    const result = await getJson<{
+      draft?: { result?: { name?: unknown; steps?: unknown } | null };
+    }>(`/api/tenant/${tenantId}/agents/draft/${waiting.id}`);
+    const drafted = result.data?.draft?.result;
+    if (!drafted || !applyDraftResult(drafted)) {
+      setDraftError('That draft could not be loaded.');
+      setPendingDraft(null);
+      return;
+    }
+    setPendingDraft(null);
+    void fetch(`/api/tenant/${tenantId}/agents/draft/${waiting.id}/consume`, { method: 'POST' });
+  };
+
+  // The effects below poll on a timer and must not re-subscribe every time
+  // the user types — but they must also not call a stale applier, which
+  // would drop guardrails or triggers edited since the draft started. A ref
+  // holds the current one without entering the dependency list.
+  const applyRef = useRef(applyDraftResult);
+  applyRef.current = applyDraftResult;
 
   const draftFromProse = async () => {
     if (drafting || prose.trim().length < 10) return;
@@ -294,71 +453,35 @@ export function AgentBuilder({
     setDraftDetail(null);
     setDraftQuestions([]);
     setDraftConcerns([]);
-    const result = await sendJsonFull<{
-      name: string;
-      steps: AgentStepNode[];
-      triggers?: TriggerDraft[];
-      questions?: unknown;
-      concerns?: unknown;
-      guardrails?: unknown;
-      detail?: string;
-    }>(`/api/tenant/${tenantId}/agents/draft`, 'POST', {
-      text: prose,
-      // Existing guardrails constrain the draft; an empty slot invites the
-      // model to propose some from the description.
-      guardrails: guardrails.trim() ? guardrails : null,
-      ...(hasRealSteps ? { steps: stepsDoc } : {}),
-      // Trigger suggestions only while NONE are configured — the draft
-      // fills an empty slot, it never rewrites what the user set up.
-      ...(triggers.length === 0 ? { suggestTriggers: true } : {}),
-      // Names WITH their catalog descriptions, so the drafting model knows
-      // what each trigger variable is and how to use it.
-      triggerVars: triggerVariableDescriptors(triggers.map((trigger) => trigger.draft)).map(
-        ({ name: varName, description }) => ({ name: varName, description })
-      ),
-    });
-    setDrafting(false);
-    if (result.error || !result.data?.steps) {
-      setDraftError(result.error ?? 'Drafting failed — try again.');
-      if (typeof result.data?.detail === 'string') setDraftDetail(result.data.detail);
+    const result = await sendJsonFull<{ draftId?: string }>(
+      `/api/tenant/${tenantId}/agents/draft`,
+      'POST',
+      {
+        text: prose,
+        // Existing guardrails constrain the draft; an empty slot invites the
+        // model to propose some from the description.
+        guardrails: guardrails.trim() ? guardrails : null,
+        ...(hasRealSteps ? { steps: stepsDoc } : {}),
+        // Trigger suggestions only while NONE are configured — the draft
+        // fills an empty slot, it never rewrites what the user set up.
+        ...(triggers.length === 0 ? { suggestTriggers: true } : {}),
+        // Names WITH their catalog descriptions, so the drafting model knows
+        // what each trigger variable is and how to use it.
+        triggerVars: triggerVariableDescriptors(triggers.map((trigger) => trigger.draft)).map(
+          ({ name: varName, description }) => ({ name: varName, description })
+        ),
+        // Scopes the draft, so it is offered when this agent is next opened.
+        ...(agentId ? { agentId } : {}),
+      }
+    );
+    if (result.error || !result.data?.draftId) {
+      setDrafting(false);
+      setDraftError(result.error ?? 'Drafting could not be started — try again.');
       return;
     }
-    setSteps(result.data.steps);
-    setSelection(null);
-    setDraftQuestions(
-      Array.isArray(result.data.questions)
-        ? result.data.questions.filter(
-            (question): question is string => typeof question === 'string' && question.length > 0
-          )
-        : []
-    );
-    setDraftConcerns(parseReviewNotes(result.data.concerns));
-    // A proposed guardrails doc only ever fills an empty panel — the model
-    // never rewrites rules the owner wrote.
-    if (!guardrails.trim() && typeof result.data.guardrails === 'string') {
-      setGuardrails(result.data.guardrails);
-    }
-    if (!name.trim() && result.data.name) setName(result.data.name);
-    if (triggers.length === 0 && Array.isArray(result.data.triggers)) {
-      // A drafted schedule with no stated timezone means "the prose never
-      // said" — the user's own zone is the only sensible reading, and only
-      // the browser knows it.
-      const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      const draftedTriggers = result.data.triggers.filter(isTriggerDraft);
-      if (draftedTriggers.length > 0) {
-        setTriggers(
-          draftedTriggers.map((draftTrigger) => ({
-            draft:
-              draftTrigger.kind === 'schedule' && !draftTrigger.timezone
-                ? { ...draftTrigger, timezone: localTimezone }
-                : draftTrigger,
-            enabled: true,
-          }))
-        );
-      }
-    }
-    setDrafted(true);
-    setServerIssues([]);
+    // The job is running in the worker now. Polling is the ONLY thing left
+    // on this page, and closing the tab does not stop it.
+    setDraftId(result.data.draftId);
   };
 
   const recheck = async () => {
@@ -971,6 +1094,27 @@ export function AgentBuilder({
             <p aria-live="polite" className="mt-2 text-xs text-gray-600 dark:text-gray-400">
               {draftStatus}
             </p>
+          ) : null}
+          {pendingDraft && !drafting ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-blue-300 bg-blue-50 p-2 text-xs dark:border-blue-800 dark:bg-blue-950">
+              <span className="text-blue-800 dark:text-blue-200">
+                A draft you started earlier is ready.
+              </span>
+              <button
+                type="button"
+                onClick={() => void loadPendingDraft()}
+                className="rounded-md bg-blue-600 px-2 py-1 font-medium text-white hover:bg-blue-700"
+              >
+                Load it
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingDraft(null)}
+                className="text-blue-700 hover:underline dark:text-blue-300"
+              >
+                Not now
+              </button>
+            </div>
           ) : null}
           {draftDetail && !drafting ? (
             <details className="mt-2">

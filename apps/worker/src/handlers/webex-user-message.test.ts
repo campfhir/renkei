@@ -1,0 +1,125 @@
+/**
+ * The all-spaces ingest's one hard guard.
+ *
+ * What must hold: a message the WATCHER typed reaches the pipeline, and a
+ * message RENKEI sent as them does not. Those used to be the same case —
+ * the guard skipped by authorship — and collapsing them threw away every
+ * message the person actually wrote.
+ *
+ * The negative direction is the one worth pinning. A guard that lets Renkei's
+ * own posts through looks identical to a working pipeline right up until an
+ * agent replies to itself in a loop.
+ */
+
+import { ok } from '@campfhir/safe-functions/helpers';
+import { createWebexUserMessageHandler } from './webex-user-message';
+import type { ClaimedEvent } from '../queue';
+
+const WATCHER_ACCOUNT = 'watcher-account-id';
+const TENANT = 'tenant-1';
+
+function event(messageId: string): ClaimedEvent {
+  // Only the fields the handler reads; the queue row carries more.
+  const claimed: unknown = {
+    id: 'queue-row-1',
+    tenant_id: TENANT,
+    source: 'webex',
+    type: 'user-message.created',
+    payload: { id: messageId, accountId: WATCHER_ACCOUNT },
+  };
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  return claimed as ClaimedEvent;
+}
+
+function handlerWith(options: {
+  personId: string;
+  sentByRenkei?: boolean;
+  text?: string | null;
+  published: unknown[];
+}) {
+  return createWebexUserMessageHandler({
+    resolveAccess: async () => ({
+      accessToken: 'token',
+      subject: 'watcher@example.com',
+      accountId: WATCHER_ACCOUNT,
+    }),
+    makeClient: () => ({
+      getMessage: async (id: string) =>
+        ok({
+          id,
+          roomId: 'room-1',
+          roomType: 'group',
+          parentId: null,
+          personId: options.personId,
+          personEmail: 'someone@example.com',
+          text: options.text === undefined ? 'hello there' : options.text,
+          created: '2026-08-25T10:00:00.000Z',
+        }),
+    }),
+    wasSentByRenkei: async () => options.sentByRenkei ?? false,
+    publish: async (payload: unknown) => {
+      options.published.push(payload);
+    },
+  });
+}
+
+describe('webex all-spaces ingest', () => {
+  it('publishes a message the watcher typed themselves', async () => {
+    // The regression this exists for: watcher-authored used to mean skipped,
+    // so an agent could never trigger on something its owner posted.
+    const published: unknown[] = [];
+    const handler = handlerWith({ personId: WATCHER_ACCOUNT, published });
+
+    const result = await handler(event('msg-typed-by-watcher'));
+
+    expect(result).toBeUndefined();
+    expect(published).toHaveLength(1);
+  });
+
+  it('publishes a message someone else posted', async () => {
+    const published: unknown[] = [];
+    const handler = handlerWith({ personId: 'somebody-else', published });
+
+    await handler(event('msg-from-colleague'));
+
+    expect(published).toHaveLength(1);
+  });
+
+  it('skips a message Renkei sent as the watcher', async () => {
+    // The loop guard. Without it an agent that replies in a space answers
+    // its own reply until the daily run cap intervenes.
+    const published: unknown[] = [];
+    const handler = handlerWith({
+      personId: WATCHER_ACCOUNT,
+      sentByRenkei: true,
+      published,
+    });
+
+    const result = await handler(event('msg-renkei-sent'));
+
+    expect(result).toBe('skipped');
+    expect(published).toHaveLength(0);
+  });
+
+  it('skips a message with no text', async () => {
+    const published: unknown[] = [];
+    const handler = handlerWith({ personId: 'somebody-else', text: null, published });
+
+    expect(await handler(event('msg-empty'))).toBe('skipped');
+    expect(published).toHaveLength(0);
+  });
+
+  it('names the watcher as the owner, whoever sent it', async () => {
+    const published: unknown[] = [];
+    const handler = handlerWith({ personId: 'somebody-else', published });
+
+    await handler(event('msg-1'));
+
+    expect(published[0]).toMatchObject({
+      tenantId: TENANT,
+      provider: 'webex',
+      type: 'message.received',
+      ownerSubject: 'watcher@example.com',
+    });
+  });
+});

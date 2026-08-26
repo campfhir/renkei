@@ -10,6 +10,7 @@
 
 import { findNodeById, instructionPreview, isAgentStepsDoc, walkSteps } from '@renkei/agents';
 import { statusLabel, outcomeCodeLabel } from '@/lib/agents/run-labels';
+import { activityHeadline, runActivity } from '@/lib/agents/run-actions';
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
 
 function str(value: unknown): string {
@@ -42,6 +43,57 @@ function stepNameOf(run: RunDetail, stepId: string, stepIndex: number): string {
     }
   }
   return `Step ${stepIndex + 1}`;
+}
+
+/**
+ * What the trigger handed the run.
+ *
+ * First section after the header on purpose: when an agent misbehaves, the
+ * answer is very often that it was given something other than what the
+ * author pictured — a space NAME where a step wanted a room id, an empty
+ * subject, a body that arrived truncated. Reading the steps without this is
+ * reading half the problem.
+ */
+function initialStateLines(run: RunDetail): string[] {
+  if (run.initialStateRedacted) {
+    return ['## Trigger input', '', '(hidden for this audience)', ''];
+  }
+  const state = run.initialState;
+  if (typeof state !== 'object' || state === null || Array.isArray(state)) return [];
+  const entries = Object.entries(state);
+  if (entries.length === 0) return [];
+  const lines = ['## Trigger input', ''];
+  for (const [key, value] of entries) {
+    const rendered = typeof value === 'string' ? value : JSON.stringify(value);
+    // Multi-line values (an email body) are indented so the markdown stays
+    // one list rather than collapsing into the surrounding prose.
+    lines.push(`- ${key}: ${String(rendered ?? '').replace(/\n/g, '\n    ')}`);
+  }
+  lines.push('');
+  return lines;
+}
+
+/** Every tool call in order — the "what did it touch" half of the paste. */
+function activityLines(run: RunDetail): string[] {
+  const activity = runActivity(run, (stepId, stepIndex) => stepNameOf(run, stepId, stepIndex));
+  const lines = ['## What it did', '', activityHeadline(activity), ''];
+  if (activity.toolsUsed.length > 0) {
+    lines.push(`Tools used: ${activity.toolsUsed.join(', ')}`, '');
+  }
+  for (const action of activity.actions) {
+    const where =
+      `${action.stepName}` + (action.iteration > 0 ? ` (iteration ${action.iteration})` : '');
+    lines.push(
+      `${action.ordinal}. ${action.tool}${action.failed ? ' — FAILED' : ''} — in ${where}` +
+        (action.durationMs !== null ? ` (${action.durationMs}ms)` : '')
+    );
+    if (action.argsPreview) lines.push(`   args: ${action.argsPreview}`);
+  }
+  if (activity.hiddenAttempts > 0) {
+    lines.push(`(${activity.hiddenAttempts} attempt(s) had their calls hidden for this audience)`);
+  }
+  lines.push('');
+  return lines;
 }
 
 /** The drafted steps as an outline — the "agent context" half of the paste. */
@@ -168,6 +220,8 @@ export function renderRunDebugMarkdown(agentName: string, run: RunDetail): strin
     ...(run.failedStepName ? [`- Failed step: ${run.failedStepName}`] : []),
     ...(run.error ? [`- Error: ${run.error}`] : []),
     '',
+    ...initialStateLines(run),
+    ...activityLines(run),
     ...snapshotLines(run),
     '## Timeline',
     '',

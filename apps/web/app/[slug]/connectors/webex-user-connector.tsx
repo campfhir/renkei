@@ -149,7 +149,9 @@ export default function WebexUserConnector({
                 including ones you join later. Renkei reacts to new messages in real time (for
                 example, agents you&apos;ve given a message trigger) and indexes them into org
                 knowledge, where a message is only ever readable by people who are currently members
-                of its space. Your own messages are never reacted to (that would loop).
+                of its space. <strong>This includes messages you send yourself</strong>, so an agent
+                can act on something you post. Messages Renkei sent on your behalf are excluded —
+                otherwise an agent that replies would answer itself.
               </p>
             </div>
             <button
