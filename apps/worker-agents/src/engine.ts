@@ -57,6 +57,7 @@ import {
   type ResolvedLlm,
 } from '@renkei/agent-llm';
 import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
+import { toolKindOf } from '@renkei/tool-outcomes';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { AgentMcpClient } from './mcp-client';
 import { mintRunToken, revokeRunToken } from './token';
@@ -251,6 +252,18 @@ interface ToolCallRecord {
   resultPreview: string;
   isError: boolean;
   durationMs: number;
+  /**
+   * Whether the call read or changed something, stamped by the MCP layer at
+   * registration time (`kind-stamp.ts`). Recorded here rather than inferred
+   * later because it CANNOT be inferred later: read-vs-act is decided from
+   * a tool's annotations during a per-user registration against a database,
+   * and guessing from the tool's name would mislabel eventually. See the
+   * note at the top of apps/web/lib/agents/run-actions.ts.
+   *
+   * Absent on a record written before the stamp existed, so a reader must
+   * treat "no kind" as "not known", never as "read".
+   */
+  kind?: 'read' | 'act';
   /**
    * An in-process call that cost no budget (resolve_time). Recorded so the
    * timeline can show what was computed, excluded from tool_call_count so
@@ -2966,12 +2979,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
         } else {
           logger.debug('agent "{agentName}" ({userName}): {toolLabel} ok', toolFields);
         }
+        const kind = toolKindOf(result.meta);
         toolCalls.push({
           tool: use.name,
           argsPreview: clip(JSON.stringify(args), PREVIEW_CHARS),
           resultPreview: clip(textOf(result), PREVIEW_CHARS),
           isError: result.isError,
           durationMs,
+          ...(kind ? { kind } : {}),
         });
         if (use.name === primaryTool) primaryResults.push(result);
         results.push({

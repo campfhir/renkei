@@ -24,6 +24,7 @@ import { WEBEX_USER, ATLASSIAN_CONFLUENCE, MICROSOFT, ZOOM } from '@renkei/provi
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { registerAllTools } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
+import { withKindStamp } from '@/lib/mcp-tools/kind-stamp';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
 import { registerCardTools, CARDS_CONNECTOR } from '@/lib/mcp-tools/cards';
 import { registerAgentTools, AGENTS_CONNECTOR } from '@/lib/mcp-tools/agents';
@@ -186,11 +187,22 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
  * usage tracking and the tools page can hand in one that only collects names.
  */
 export async function registerRenkeiTools(
-  server: McpServer,
+  rawServer: McpServer,
   context: MCPToolContext,
   availability: ConnectorAvailability,
   projection: CapabilityProjection
 ): Promise<void> {
+  /*
+    Every tool registered below stamps its own results with read-or-act,
+    derived from the same `readOnlyHint` rule the capability gate reads.
+    Applied once, innermost — the capability gate wraps THIS, so a tool the
+    projection refuses is never registered and never stamped.
+
+    Registration is the only place that knows: `run-actions.ts` explains
+    why nothing downstream can work it out, and asks for exactly this.
+  */
+  const server = withKindStamp(rawServer);
+
   const {
     webexAvailable,
     microsoftAvailable,

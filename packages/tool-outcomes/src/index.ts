@@ -28,3 +28,5 @@ export {
 } from './outcomes';
 
 export { connectorKeyForTool } from './tool-connector';
+
+export { KIND_META_KEY, toolKindOf, type ToolKind } from './tool-kind';
