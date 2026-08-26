@@ -26,7 +26,7 @@ export async function getJson<T>(url: string): Promise<{ data: T | null; error: 
 
 export async function sendJson(
   url: string,
-  method: 'POST' | 'PUT' | 'DELETE',
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   body?: unknown
 ): Promise<string | null> {
   const result = await sendJsonFull(url, method, body);
@@ -35,7 +35,7 @@ export async function sendJson(
 
 export async function sendJsonFull<T = unknown>(
   url: string,
-  method: 'POST' | 'PUT' | 'DELETE',
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   body?: unknown
 ): Promise<{ data: T | null; status: number; error: string | null }> {
   try {
