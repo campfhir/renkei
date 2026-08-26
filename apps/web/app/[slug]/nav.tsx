@@ -99,6 +99,7 @@ export default function AppNav({
       items: [
         { href: `/${slug}`, label: 'Home' },
         { href: `/${slug}/connectors`, label: 'Connectors' },
+        { href: `/${slug}/files`, label: 'Files' },
         { href: `/${slug}/knowledge`, label: 'Knowledge' },
         { href: `/${slug}/agents`, label: 'Agents' },
         { href: `/${slug}/usage`, label: 'Tools' },
@@ -115,6 +116,7 @@ export default function AppNav({
             label: 'Organization',
             items: [
               { href: `/${slug}/admin/connectors`, label: 'Connector setup' },
+              { href: `/${slug}/admin/file-shares`, label: 'File shares' },
               { href: `/${slug}/admin/agents`, label: 'Agent oversight' },
               { href: `/${slug}/admin/llm-models`, label: 'Agent models' },
               { href: `/${slug}/admin/calendars`, label: 'Holiday calendars' },

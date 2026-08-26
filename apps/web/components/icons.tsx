@@ -22,9 +22,10 @@ export const ICONS = {
   /** A chip with legs — "this runs as fixed code, not as a model call". */
   chip: 'M8 8h8v8H8zM9 4v3M15 4v3M9 17v3M15 17v3M4 9h3M4 15h3M17 9h3M17 15h3',
   bell: 'M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16zM10 22h4',
-  /** Vertical three-dot "more" trigger for per-item menus. */
-  ellipsis:
-    'M12 5.5a.6.6 0 1 0 0-1.2.6.6 0 0 0 0 1.2zM12 12.6a.6.6 0 1 0 0-1.2.6.6 0 0 0 0 1.2zM12 19.7a.6.6 0 1 0 0-1.2.6.6 0 0 0 0 1.2z',
+  /** Vertical kebab — "more actions on this row". Dots via round linecaps. */
+  more: 'M12 5.2h.01M12 12h.01M12 18.8h.01',
+  arrowRight: 'M4 12h14M13 6l6 6-6 6',
+  search: 'M10.5 17.5a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM15.5 15.5 21 21',
   /** Arrow leaving a box — opens in the connector / a new tab. */
   externalLink: 'M14 4h6v6M20 4l-9 9M20 14v6H4V4h6',
 };

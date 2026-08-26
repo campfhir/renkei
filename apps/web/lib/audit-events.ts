@@ -33,7 +33,17 @@ export type AuditAction =
   | 'agent.copied'
   | 'settings.updated'
   | 'sanitizer.script_saved'
-  | 'sanitizer.script_deleted';
+  | 'sanitizer.script_deleted'
+  | 'fileshare.created'
+  | 'fileshare.updated'
+  | 'fileshare.deleted'
+  | 'fileshare.credentials_updated'
+  | 'fileshare.grant_added'
+  | 'fileshare.grant_updated'
+  | 'fileshare.grant_removed'
+  | 'fileshare.rule_added'
+  | 'fileshare.rule_updated'
+  | 'fileshare.rule_removed';
 
 export interface AuditEventInput {
   tenantId: string;

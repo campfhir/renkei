@@ -1,0 +1,35 @@
+{
+  "name": "@renkei/connector-fileshares",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./pure": "./src/pure.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@campfhir/safe-functions": "^0.1.3",
+    "@renkei/crypto": "workspace:*",
+    "@renkei/db": "workspace:*",
+    "@renkei/rate-limit": "workspace:*",
+    "@tryjsky/v9u-smb2": "^1.1.0",
+    "kysely": "^0.29.4",
+    "ssh2-sftp-client": "^12.1.1"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24",
+    "@types/pg": "^8.20.3",
+    "@types/ssh2-sftp-client": "^9.0.6",
+    "jest": "^30.4.2",
+    "pg": "^8.22.0",
+    "ts-jest": "^29.4.12",
+    "typescript": "^5"
+  }
+}

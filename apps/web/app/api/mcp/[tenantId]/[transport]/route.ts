@@ -61,6 +61,7 @@ function getCacheKey(
   onedriveAvailable: boolean,
   zoomAvailable: boolean,
   confluenceAvailable: boolean,
+  filesharesAvailable: boolean,
   userEmail: string | null,
   disabledConnectors: readonly string[],
   redaction: string
@@ -74,7 +75,7 @@ function getCacheKey(
     `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:` +
     `${webexAvailable ? 'w' : 'nw'}:${microsoftAvailable ? 'm' : 'nm'}:${zoomAvailable ? 'z' : 'nz'}:` +
     `${sharepointAvailable ? 's' : 'ns'}:${onedriveAvailable ? 'o' : 'no'}:` +
-    `${confluenceAvailable ? 'c' : 'nc'}:${userEmail ?? ''}:` +
+    `${confluenceAvailable ? 'c' : 'nc'}:${filesharesAvailable ? 'f' : 'nf'}:${userEmail ?? ''}:` +
     // Sorted, so the same set in a different order is the same key rather
     // than a needless cache miss.
     `${[...disabledConnectors].sort().join(',')}:` +
@@ -229,7 +230,8 @@ const handler = async (
       availability.webexAvailable ||
       availability.microsoftAvailable ||
       availability.zoomAvailable ||
-      availability.confluenceAvailable;
+      availability.confluenceAvailable ||
+      availability.filesharesAvailable;
 
     if (grants.length === 0 && !anyOtherConnector) {
       // Nothing connected at all — serve only the jira_connect pointer.
@@ -334,6 +336,7 @@ const handler = async (
       zoomScopes,
       confluenceAvailable,
       confluenceScopes,
+      filesharesAvailable,
     } = availability;
     // No Jira grant → an empty scope list, which the scope gate reads as
     // "register no Jira/JSM tools" (never undefined — that means a legacy
@@ -381,6 +384,7 @@ const handler = async (
         onedriveAvailable,
         zoomAvailable,
         confluenceAvailable,
+        filesharesAvailable,
         userEmail,
         settings.disabledConnectors,
         redactionFingerprint
@@ -530,7 +534,9 @@ const handler = async (
             '"Connector · Read|Act". Connectors: Jira (jira_*), Jira Service Management ' +
             '(jsm_*, jsm_ops_*), WebEx (webex_*), Outlook/Microsoft 365 (outlook_*), ' +
             'SharePoint (sharepoint_*), OneDrive (onedrive_*), Confluence (confluence_*), ' +
-            'Zoom (zoom_*), plus search_knowledge (org knowledge, access-verified per user), ' +
+            'Zoom (zoom_*), org network file shares (fileshare_*, SMB/SFTP, access granted ' +
+            'per user inside Renkei), plus search_knowledge (org knowledge, access-verified ' +
+            'per user), ' +
             'analyze_transcript (meeting transcript to suggested Jira actions) and whoami. ' +
             'Read tools are safe anywhere; Act tools change systems and are disabled in org ' +
             'read-only mode. Some Act tools have *_preview variants that render an ' +

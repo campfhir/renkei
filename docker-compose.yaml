@@ -112,6 +112,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # The file-share I/O worker: the only process that opens SMB/SFTP
+  # sessions or decrypts share credentials. Its own image (not the shared
+  # worker one), so the SMB/SSH protocol stack ships apart from the queue
+  # workers and this service rolls out independently. The web app reaches
+  # it over HTTP on the compose network (FILESHARES_WORKER_URL below) with
+  # the shared FILESHARES_WORKER_API_KEY from .env — generate one with
+  # `openssl rand -base64 32`. No published ports on purpose: nothing
+  # outside the compose network may speak to it.
+  worker-fileshares:
+    image: scotteremiaroden/renkei-fileshares:latest
+    container_name: renkei-worker-fileshares
+    command: ['pnpm', '--filter', '@renkei/worker-fileshares', 'start']
+    env_file:
+      - .env
+    environment: *database-urls
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   renkei:
     image: scotteremiaroden/renkei:latest
     container_name: renkei-app
@@ -119,6 +139,9 @@ services:
       - .env
     environment:
       <<: *database-urls
+      # Where the web app reaches the file-share worker; the bearer key
+      # (FILESHARES_WORKER_API_KEY) comes from the shared .env.
+      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
       # PUBLIC_BASE_URL in .env is the authoritative origin when set — it is
       # the address registered with every OAuth provider. Without it, the app
       # falls back to X-Forwarded-Proto/Host from the reverse proxy, which it

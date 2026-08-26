@@ -380,7 +380,7 @@ export default function NotificationsList({
                         }}
                         className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-300"
                       >
-                        <Icon path={ICONS.ellipsis} className="h-4 w-4" />
+                        <Icon path={ICONS.more} className="h-4 w-4" />
                       </button>
                       {menuFor === row.id ? (
                         <div

@@ -864,6 +864,33 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Removed an agent’s knowledge note',
     short: 'Removed a knowledge note',
   },
+  fileshare_request_file_upload: {
+    category: 'created',
+    entity: 'file',
+    label: 'Requested a file upload to a network share',
+    short: 'Requested a share upload',
+  },
+  fileshare_create_folder: {
+    category: 'created',
+    entity: 'folder',
+    label: 'Created a folder on a network share',
+    short: 'Created a share folder',
+  },
+  fileshare_move_entry: {
+    category: 'updated',
+    entity: 'file',
+    label: 'Moved a file or folder on a network share',
+    short: 'Moved a share entry',
+  },
+  fileshare_rename_entry: {
+    category: 'updated',
+    entity: 'file',
+    label: 'Renamed a file or folder on a network share',
+    short: 'Renamed a share entry',
+  },
+  // fileshare_delete_entry_preview / _confirm are deliberately absent: the
+  // confirm is the app's own card button, which an agent run never calls
+  // (see the note above the Jira preview/confirm exclusions).
 };
 
 /** One connector's acts, in the order the preferences page lists them. */

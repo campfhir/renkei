@@ -1,0 +1,29 @@
+{
+  "name": "@renkei/worker-fileshares",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@campfhir/bored-logs": "^0.7.1",
+    "@campfhir/safe-functions": "^0.1.3",
+    "@renkei/connector-fileshares": "workspace:*",
+    "@renkei/crypto": "workspace:*",
+    "@renkei/db": "workspace:*",
+    "@renkei/settings": "workspace:*",
+    "kysely": "^0.29.4",
+    "tsx": "^4.23.5"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
+    "typescript": "^5"
+  }
+}

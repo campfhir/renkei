@@ -34,6 +34,15 @@ jest.mock('@/lib/mcp-tools/confluence/client', () => ({
   confluenceUpload: jest.fn(),
   resolveConfluenceAccess: jest.fn(),
 }));
+jest.mock('@/lib/file-shares/service-client', () => {
+  const actual = jest.requireActual<typeof import('@/lib/file-shares/service-client')>(
+    '@/lib/file-shares/service-client'
+  );
+  return {
+    ...actual,
+    fsWriteFile: jest.fn(),
+  };
+});
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
@@ -259,4 +268,61 @@ it('refuses an unknown kind', async () => {
   const outcome = await executeUpload(db, slotOf('mystery', {}), Buffer.from('bytes'));
   expect(outcome.ok).toBe(false);
   expect(outcome.detail).toContain('mystery');
+});
+
+describe('fileshare-file', () => {
+  const { fsWriteFile } = jest.requireMock<{ fsWriteFile: jest.Mock }>(
+    '@/lib/file-shares/service-client'
+  );
+
+  it('relays the worker refusal when the grant was narrowed after minting', async () => {
+    // The slot was minted when the caller held read_write; by POST time the
+    // grant says read. The worker re-runs the ACL at byte arrival and says no.
+    fsWriteFile.mockResolvedValue({
+      ok: false,
+      err: { kind: 'op' as const, type: 'forbidden', message: undefined, status: 403 },
+    });
+
+    const outcome = await executeUpload(
+      db,
+      slotOf('fileshare-file', { shareId: 'share-1', path: '/reports' }),
+      Buffer.from('bytes')
+    );
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toContain('no longer have read/write');
+  });
+
+  it('refuses when the share is no longer visible to the subject', async () => {
+    fsWriteFile.mockResolvedValue({
+      ok: false,
+      err: { kind: 'op' as const, type: 'no_share', message: undefined, status: 404 },
+    });
+
+    const outcome = await executeUpload(
+      db,
+      slotOf('fileshare-file', { shareId: 'share-1', path: '/reports' }),
+      Buffer.from('bytes')
+    );
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toContain('no longer available');
+  });
+
+  it('writes to the slot destination as the slot subject', async () => {
+    fsWriteFile.mockResolvedValue({ ok: true, val: { path: '/reports/report.pdf' } });
+
+    const outcome = await executeUpload(
+      db,
+      slotOf('fileshare-file', { shareId: 'share-1', path: '/reports' }),
+      Buffer.from('bytes')
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(fsWriteFile).toHaveBeenCalledWith(
+      { tenantId: 'tenant-1', shareId: 'share-1', subject: 'subject-1' },
+      '/reports/report.pdf',
+      expect.any(Uint8Array)
+    );
+  });
 });
