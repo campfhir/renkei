@@ -16,6 +16,7 @@
       "@renkei/crypto": ["../../packages/crypto/src/index.ts"],
       "@renkei/queue": ["../../packages/queue/src/index.ts"],
       "@renkei/settings": ["../../packages/settings/src/index.ts"],
+      "@renkei/tool-outcomes": ["../../packages/tool-outcomes/src/index.ts"],
       "@renkei/agents": ["../../packages/agents/src/index.ts"],
       "@renkei/agents/runs": ["../../packages/agents/src/runs.ts"],
       "@renkei/agents/event-fanout": ["../../packages/agents/src/event-fanout.ts"],

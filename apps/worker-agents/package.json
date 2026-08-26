@@ -18,6 +18,7 @@
     "@renkei/db": "workspace:*",
     "@renkei/queue": "workspace:*",
     "@renkei/settings": "workspace:*",
+    "@renkei/tool-outcomes": "workspace:*",
     "@renkei/worker-loop": "workspace:*",
     "kysely": "^0.29.4",
     "tsx": "^4.23.5"
