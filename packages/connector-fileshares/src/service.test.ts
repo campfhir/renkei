@@ -32,6 +32,7 @@ import type { AclContext, RawEntry } from './types';
 import type { ShareBackend } from './backend';
 import { encryptCredentials } from './credentials';
 import {
+  serviceAdminSearch,
   serviceListFolder,
   serviceMakeFolder,
   serviceMoveEntry,
@@ -44,8 +45,9 @@ import {
   type ServiceDeps,
 } from './service';
 
-const { getAclContext, readCredentialCiphertext, listRulePathsUnder } = jest.requireMock<{
+const { getAclContext, getShare, readCredentialCiphertext, listRulePathsUnder } = jest.requireMock<{
   getAclContext: jest.Mock;
+  getShare: jest.Mock;
   readCredentialCiphertext: jest.Mock;
   listRulePathsUnder: jest.Mock;
 }>('./store');
@@ -380,5 +382,73 @@ describe('destructive operations', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.err.type).toBe('bad_path');
     }
+  });
+});
+
+describe('admin search', () => {
+  const TREE: Record<string, RawEntry[] | Uint8Array> = {
+    '/': [
+      { name: 'hr', kind: 'dir', size: null, modifiedAt: null },
+      { name: 'it', kind: 'dir', size: null, modifiedAt: null },
+      { name: 'welcome.txt', kind: 'file', size: 3, modifiedAt: null },
+    ],
+    '/hr': [{ name: 'contractors', kind: 'dir', size: null, modifiedAt: null }],
+    '/hr/contractors': [],
+    '/it': [{ name: 'Policies', kind: 'dir', size: null, modifiedAt: null }],
+    '/it/Policies': [{ name: 'vpn.md', kind: 'file', size: 5, modifiedAt: null }],
+  };
+
+  function armSearch(tree: Record<string, RawEntry[] | Uint8Array>) {
+    getShare.mockResolvedValue({ ok: true, val: { summary: aclContext().share } });
+    readCredentialCiphertext.mockResolvedValue({
+      ok: true,
+      val: encryptCredentials({ protocol: 'sftp', username: 'svc', password: 'pw' }, KEY),
+    });
+    const { backend } = fakeBackend(tree);
+    openBackend.mockResolvedValue({ ok: true, val: backend });
+  }
+
+  it('finds entries anywhere by case-folded path substring', async () => {
+    armSearch(TREE);
+    const byPath = await serviceAdminSearch(deps(), 'tenant-1', SHARE_ID, '/it/policies');
+    expect(byPath.ok).toBe(true);
+    if (byPath.ok) {
+      // Descendants of a matching folder match too — their paths carry it.
+      expect(byPath.val.results.map((hit) => hit.path)).toEqual([
+        '/it/Policies',
+        '/it/Policies/vpn.md',
+      ]);
+      expect(byPath.val.truncated).toBe(false);
+    }
+
+    const byName = await serviceAdminSearch(deps(), 'tenant-1', SHARE_ID, 'POLICIES');
+    expect(byName.ok).toBe(true);
+    if (byName.ok) {
+      expect(byName.val.results.map((hit) => hit.path).sort()).toEqual([
+        '/it/Policies',
+        '/it/Policies/vpn.md',
+      ]);
+    }
+  });
+
+  it('skips an unreadable subtree instead of failing the search', async () => {
+    const tree = { ...TREE };
+    delete tree['/hr'];
+    armSearch(tree);
+    const result = await serviceAdminSearch(deps(), 'tenant-1', SHARE_ID, 'vpn');
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.val.results.map((hit) => hit.path)).toEqual(['/it/Policies/vpn.md']);
+  });
+
+  it('answers no_share for a missing share and empty for an empty query', async () => {
+    getShare.mockResolvedValue({ ok: true, val: null });
+    const missing = await serviceAdminSearch(deps(), 'tenant-1', SHARE_ID, 'x');
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.err.type).toBe('no_share');
+
+    armSearch(TREE);
+    const empty = await serviceAdminSearch(deps(), 'tenant-1', SHARE_ID, '   ');
+    expect(empty.ok).toBe(true);
+    if (empty.ok) expect(empty.val.results).toEqual([]);
   });
 });

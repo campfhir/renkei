@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { getJson, sendJson } from '@/lib/fetch-json';
+import { Icon, ICONS } from '@/components/icons';
 import { inputClass } from '../share-config-fields';
 
 /** Window event announcing a grant mutation on the current share page. */
@@ -128,11 +129,12 @@ export default function GrantManager({
                 </select>
                 <button
                   type="button"
+                  aria-label={`Remove ${labelFor(grant.subject)}'s access`}
                   disabled={busy}
                   onClick={() => void remove(grant.subject)}
-                  className="text-sm text-red-600 hover:underline dark:text-red-400"
+                  className="rounded-md p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-950/30"
                 >
-                  Remove
+                  <Icon path={ICONS.trash} className="h-4 w-4" />
                 </button>
               </div>
             </li>

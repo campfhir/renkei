@@ -85,12 +85,12 @@ export default async function AdminFileSharePage({
       </section>
 
       <section>
-        <h2 className="mb-1 text-lg font-semibold">Path rules</h2>
+        <h2 className="mb-1 text-lg font-semibold">Permissions</h2>
         <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
-          Browse the share, select a file or folder, and set below what everyone — or one person —
-          may do there. Per-person rules can never widen what the share-wide layer allows; the
-          longest matching path wins, so a deeper rule overrides a shallower one, allow and deny
-          alike.
+          Browse or search the share, select a file or folder, and check below what everyone — or
+          one person — may do there. Levels above are ceilings: where the share allows only read,
+          nobody below can hold or be granted write, and the write box grays out. Deeper settings
+          override shallower ones, allow and deny alike.
         </p>
         <RulesEditor
           slug={slug}

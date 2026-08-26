@@ -34,7 +34,7 @@ import type {
   ShareEntry,
   ShareSummary,
 } from './types';
-import { childPath, normalizePath, parentPath, type PathError } from './paths';
+import { childPath, normalizePath, parentPath, windowsToUnix, type PathError } from './paths';
 import { annotateEntries, canListFolder, effectiveAccess, hasAllowedDescendant } from './acl';
 import { decryptCredentials, type ShareCredentials } from './credentials';
 import { openBackend, type BackendError, type ShareBackend } from './backend';
@@ -517,6 +517,89 @@ export async function serviceAdminList(
   });
   if (!listed.ok) return listed;
   return ok({ path: path.val, entries: listed.val });
+}
+
+export interface SearchHit {
+  name: string;
+  path: string;
+  kind: EntryKind;
+}
+
+/** Bounds on the search walk — a NAS tree can be arbitrarily deep. */
+const SEARCH_MAX_DIRS = 200;
+const SEARCH_MAX_RESULTS = 50;
+const SEARCH_DEADLINE_MS = 8_000;
+
+/**
+ * Find entries anywhere on the share whose path contains the query — the
+ * admin permissions navigator's jump-to-path box. Operator surface like
+ * serviceAdminList: unfiltered, gated by the web app's role check plus the
+ * worker's service token. One backend session serves the whole walk
+ * (breadth-first from the root), and the walk is hard-capped in folders
+ * visited, results returned and wall time, reporting `truncated` when it
+ * stopped early; an unreadable subtree is skipped, not fatal.
+ */
+export async function serviceAdminSearch(
+  deps: ServiceDeps,
+  tenantId: string,
+  shareId: string,
+  rawQuery: string
+): Promise<Result<{ results: SearchHit[]; truncated: boolean }, ServiceError>> {
+  const share = await getShare(deps.db, tenantId, shareId);
+  if (!share.ok) return err('store' as const, { message: 'Could not read the share.' });
+  if (!share.val) return err('no_share' as const);
+  const summary = share.val.summary;
+  if (!summary.hasCredentials) return err('no_credentials' as const);
+
+  // Search is a finding aid, so matching folds case regardless of the
+  // share's rule-matching flag; Windows spellings fold to Unix first.
+  const query = windowsToUnix(rawQuery).trim().toLowerCase();
+  if (!query) return ok({ results: [], truncated: false });
+
+  const ciphertext = await readCredentialCiphertext(deps.db, tenantId, shareId);
+  if (!ciphertext.ok) return err('store' as const, { message: 'Could not read the share.' });
+  if (ciphertext.val === null) return err('no_credentials' as const);
+  const credentials = decryptCredentials(ciphertext.val, deps.encryptionKey);
+  if (!credentials.ok) return err('bad_credentials' as const);
+
+  return withSessionLimits(shareId, 'interactive', async () => {
+    const opened = await openBackend(summary, credentials.val);
+    if (!opened.ok) return opened;
+    const backend = opened.val;
+    try {
+      const results: SearchHit[] = [];
+      const queue = ['/'];
+      const deadline = Date.now() + SEARCH_DEADLINE_MS;
+      let visited = 0;
+      while (
+        queue.length > 0 &&
+        visited < SEARCH_MAX_DIRS &&
+        results.length < SEARCH_MAX_RESULTS &&
+        Date.now() < deadline
+      ) {
+        const dir = queue.shift();
+        if (dir === undefined) break;
+        visited += 1;
+        const listed = await backend.list(dir);
+        if (!listed.ok) {
+          // The root failing is the share failing; a deeper subtree that
+          // cannot be listed just does not participate in the search.
+          if (dir === '/') return listed;
+          continue;
+        }
+        for (const entry of listed.val) {
+          const entryPath = childPath(dir, entry.name);
+          if (entryPath.toLowerCase().includes(query) && results.length < SEARCH_MAX_RESULTS) {
+            results.push({ name: entry.name, path: entryPath, kind: entry.kind });
+          }
+          if (entry.kind === 'dir') queue.push(entryPath);
+        }
+      }
+      return ok({ results, truncated: queue.length > 0 });
+    } finally {
+      await backend.close();
+    }
+  });
 }
 
 export interface ConnectionTest {

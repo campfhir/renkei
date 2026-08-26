@@ -25,6 +25,7 @@ export const ICONS = {
   /** Vertical kebab — "more actions on this row". Dots via round linecaps. */
   more: 'M12 5.2h.01M12 12h.01M12 18.8h.01',
   arrowRight: 'M4 12h14M13 6l6 6-6 6',
+  search: 'M10.5 17.5a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM15.5 15.5 21 21',
 };
 
 export function Icon({ path, className }: { path: string; className?: string }) {

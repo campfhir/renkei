@@ -391,6 +391,31 @@ export async function fsAdminList(
   return { ok: true, val: { path: str(value.path), entries } };
 }
 
+export interface WireSearchHit {
+  name: string;
+  path: string;
+  kind: EntryKind;
+}
+
+export async function fsAdminSearch(
+  tenantId: string,
+  shareId: string,
+  query: string
+): Promise<ClientResult<{ results: WireSearchHit[]; truncated: boolean }>> {
+  const result = await callJson('admin-search', { tenantId, shareId, query });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || !Array.isArray(value.results)) return malformed();
+  const results: WireSearchHit[] = [];
+  for (const raw of value.results) {
+    if (!isRecord(raw)) return malformed();
+    const kind = kindOf(raw.kind);
+    if (!kind) return malformed();
+    results.push({ name: str(raw.name), path: str(raw.path), kind });
+  }
+  return { ok: true, val: { results, truncated: value.truncated === true } };
+}
+
 export interface TestConnectionPayload {
   tenantId: string;
   /** Where the worker reads the stored credential when none is supplied. */

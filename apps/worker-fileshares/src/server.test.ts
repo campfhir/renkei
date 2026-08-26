@@ -23,6 +23,7 @@ jest.mock('@renkei/connector-fileshares', () => {
     serviceMoveEntry: jest.fn(),
     serviceRenameEntry: jest.fn(),
     serviceAdminList: jest.fn(),
+    serviceAdminSearch: jest.fn(),
     serviceTestConnection: jest.fn(),
   };
 });
@@ -40,6 +41,7 @@ const mocked = jest.requireMock<{
   serviceWriteFile: jest.Mock;
   serviceRemoveEntry: jest.Mock;
   serviceMoveEntry: jest.Mock;
+  serviceAdminSearch: jest.Mock;
   serviceTestConnection: jest.Mock;
 }>('@renkei/connector-fileshares');
 
@@ -262,6 +264,34 @@ describe('file bytes', () => {
     });
     expect(response.status).toBe(400);
     expect(mocked.serviceWriteFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('admin search', () => {
+  it('dispatches the query and serializes hits with the truncation flag', async () => {
+    mocked.serviceAdminSearch.mockResolvedValue({
+      ok: true,
+      val: {
+        results: [{ name: 'Policies', path: '/it/Policies', kind: 'dir' }],
+        truncated: true,
+      },
+    });
+    const response = await post('/v1/admin-search', {
+      tenantId: 'tenant-1',
+      shareId: 'share-1',
+      query: 'policies',
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      results: [{ name: 'Policies', path: '/it/Policies', kind: 'dir' }],
+      truncated: true,
+    });
+    expect(mocked.serviceAdminSearch).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-1',
+      'share-1',
+      'policies'
+    );
   });
 });
 

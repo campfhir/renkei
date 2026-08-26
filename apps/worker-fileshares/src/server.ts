@@ -32,6 +32,7 @@ import {
   isShareProtocol,
   parseShareCredentials,
   serviceAdminList,
+  serviceAdminSearch,
   serviceListFolder,
   serviceMakeFolder,
   serviceMoveEntry,
@@ -339,6 +340,15 @@ function makeJsonHandlers(transferLimit: (tenantId: string) => Promise<number>):
           modifiedAt: iso(entry.modifiedAt),
         })),
       });
+    },
+
+    async 'admin-search'(deps, body, response) {
+      const tenantId = str(body.tenantId);
+      const shareId = str(body.shareId);
+      if (!tenantId || !shareId) return sendJson(response, 400, { error: { type: 'bad_request' } });
+      const found = await serviceAdminSearch(deps, tenantId, shareId, str(body.query));
+      if (!found.ok) return sendServiceError(response, found.err);
+      sendJson(response, 200, { results: found.val.results, truncated: found.val.truncated });
     },
 
     async 'test-connection'(deps, body, response) {

@@ -63,6 +63,7 @@ export {
 export {
   resolveAccess,
   serviceAdminList,
+  serviceAdminSearch,
   serviceListFolder,
   serviceMakeFolder,
   serviceMoveEntry,
@@ -80,6 +81,7 @@ export {
   type RelocationOutcome,
   type RemovePreview,
   type ResolvedAccess,
+  type SearchHit,
   type ServiceDeps,
   type ServiceError,
   type ShareRef,
