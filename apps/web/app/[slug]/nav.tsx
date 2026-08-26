@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import RenkeiMark from '@/components/renkei-mark';
+import { useNotifications } from '@/components/notification-center';
 
 interface NavProps {
   slug: string;
@@ -49,6 +50,10 @@ export default function AppNav({
 }: NavProps) {
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Reads the layout's poller. Outside a NotificationCenter — the
+  // signed-out shell — the context default is 0, so the badge simply
+  // never appears rather than the nav failing to render.
+  const { unread } = useNotifications();
   const [signingOut, setSigningOut] = useState(false);
   const pathname = usePathname();
   const router = useRouter();
@@ -177,6 +182,19 @@ export default function AppNav({
               >
                 {initials}
               </button>
+              {/*
+                Blue, not red. Red means an error everywhere else in this app
+                — the issue counts on every builder node — and an unread
+                notification is not one. Capped at 9+ so the dot stays a dot.
+              */}
+              {unread > 0 ? (
+                <span
+                  aria-label={`${unread} unread notification${unread === 1 ? '' : 's'}`}
+                  className="pointer-events-none absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-semibold text-white ring-2 ring-white dark:ring-gray-950"
+                >
+                  {unread > 9 ? '9+' : unread}
+                </span>
+              ) : null}
 
               {menuOpen && (
                 <div
@@ -193,16 +211,25 @@ export default function AppNav({
                       </p>
                     )}
                   </div>
-                  {/* Placeholder until user preferences exist to edit. */}
-                  <button
-                    type="button"
+                  <Link
+                    href={`/${slug}/notifications`}
                     role="menuitem"
-                    disabled
-                    title="Coming soon"
-                    className="block w-full cursor-not-allowed px-4 py-2 text-left text-sm text-gray-400 dark:text-gray-600"
+                    className="flex w-full items-center justify-between px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
+                  >
+                    Notifications
+                    {unread > 0 ? (
+                      <span className="rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                        {unread > 9 ? '9+' : unread}
+                      </span>
+                    ) : null}
+                  </Link>
+                  <Link
+                    href={`/${slug}/preferences`}
+                    role="menuitem"
+                    className="block w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
                   >
                     Preferences
-                  </button>
+                  </Link>
                   <Link
                     href={`/${slug}/about`}
                     role="menuitem"

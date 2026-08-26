@@ -33,6 +33,8 @@ const nextConfig: NextConfig = {
     '@renkei/connector-microsoft',
     '@renkei/connector-zoom',
     '@renkei/settings',
+    '@renkei/tool-outcomes',
+    '@renkei/user-prefs',
     '@renkei/gates',
     '@renkei/document-text',
     '@renkei/knowledge',

@@ -20,5 +20,9 @@
     "jest": "^30.4.2",
     "ts-jest": "^29.4.12",
     "typescript": "^5"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./prefs": "./src/prefs.ts"
   }
 }

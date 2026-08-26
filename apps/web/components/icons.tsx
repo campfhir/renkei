@@ -21,6 +21,7 @@ export const ICONS = {
   approval: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM8.5 12.5l2.5 2.5 4.5-5.5',
   /** A chip with legs — "this runs as fixed code, not as a model call". */
   chip: 'M8 8h8v8H8zM9 4v3M15 4v3M9 17v3M15 17v3M4 9h3M4 15h3M17 9h3M17 15h3',
+  bell: 'M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16zM10 22h4',
 };
 
 export function Icon({ path, className }: { path: string; className?: string }) {
