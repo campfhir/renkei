@@ -3,15 +3,15 @@
  * grant/rule store is the ACL authority (there is no provider to delegate
  * to: the backend connection uses one admin-held service credential).
  *
- * Two rules carried through every handler:
- *
- *  - Enforcement happens here, per call, through the pure ACL engine over a
- *    freshly-resolved context. The capability gate only decides whether the
- *    tools exist for a caller; it cannot substitute for the per-path check.
- *  - Every path a model supplies is normalized before use, and a traversal
- *    spelling is a refusal with a reason, never a resolution. The backends
- *    re-verify containment again below — but this boundary is the one that
- *    can phrase the refusal for the model.
+ * Since the dedicated fileshare worker took over all share I/O, these
+ * handlers hold no protocol session and decrypt no credential: every
+ * operation crosses the authenticated seam to apps/worker-fileshares,
+ * which resolves the caller's ACL context fresh and enforces the per-path
+ * check itself. What stays here is the model-facing boundary — path
+ * normalization phrased as refusals a model can act on, the upload-slot
+ * mint, the preview card — plus the store-only discovery reads. The
+ * capability gate only decides whether the tools exist for a caller; it
+ * never substitutes for the worker's per-path check.
  *
  * No scope gate: fileshares has no OAuth scopes (the cards/agents
  * precedent), so registration wraps only the capability gate the registry
@@ -22,27 +22,20 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { extractText, DEFAULT_MAX_INPUT_BYTES } from '@renkei/document-text';
-import {
-  annotateEntries,
-  canListFolder,
-  childPath,
-  effectiveAccess,
-  hasAllowedDescendant,
-  normalizePath,
-  openBackend,
-  parentPath,
-  withSessionLimits,
-} from '@renkei/connector-fileshares';
-import type {
-  AccessLevel,
-  BackendError,
-  GrantedShare,
-  ShareBackend,
-  ShareEntry,
-} from '@renkei/connector-fileshares';
-import type { Result } from '@campfhir/safe-functions/types';
+import { childPath, effectiveAccess, normalizePath } from '@renkei/connector-fileshares';
+import type { AccessLevel, GrantedShare } from '@renkei/connector-fileshares';
 import type { MCPToolContext } from '../common';
-import { destructiveRefusal } from '@/lib/file-shares/access';
+import {
+  fsListFolder,
+  fsMakeFolder,
+  fsMoveEntry,
+  fsPreviewRemove,
+  fsReadFile,
+  fsRemoveEntry,
+  fsRenameEntry,
+  fsStatEntry,
+} from '@/lib/file-shares/service-client';
+import type { FileshareClientError, WireEntry } from '@/lib/file-shares/service-client';
 import { createUploadSlot } from '../upload-slots';
 import {
   APP_ONLY_META,
@@ -51,7 +44,8 @@ import {
   newPreviewId,
   previewToolMeta,
 } from '../widgets';
-import type { FileshareAuth, ResolvedShare } from './fileshare-auth';
+import { NO_STORED_CREDENTIALS, NO_SUCH_SHARE } from './fileshare-auth';
+import type { FileshareAuth } from './fileshare-auth';
 
 /** The connector key the fileshare capabilities register under. */
 export const FILESHARES_MCP_CONNECTOR = 'fileshares';
@@ -87,11 +81,11 @@ function inputPath(raw: unknown): { ok: true; path: string } | { ok: false; erro
   return { ok: true, path: normalized.val };
 }
 
-function entryLine(entry: ShareEntry): string {
+function entryLine(entry: WireEntry): string {
   const marker = entry.access === 'traverse' ? '[folders below]' : `[${accessWord(entry.access)}]`;
   if (entry.kind === 'dir') return `${entry.path}/ ${marker}`;
   const size = entry.size !== null ? ` · ${entry.size} bytes` : '';
-  const when = entry.modifiedAt ? ` · modified ${entry.modifiedAt.toISOString()}` : '';
+  const when = entry.modifiedAt ? ` · modified ${entry.modifiedAt}` : '';
   return `${entry.path} ${marker}${size}${when}`;
 }
 
@@ -106,6 +100,50 @@ function shareLine(granted: GrantedShare): string {
       : accessWord(granted.grant.defaultAccess);
   const rules = granted.hasRules ? ' (path rules apply)' : '';
   return `${granted.share.name} — id ${granted.share.id} — ${target} — your access: ${access}${rules}`;
+}
+
+/**
+ * Phrase a worker refusal or failure for the model. The worker's own
+ * messages (ACL refusals, gate refusals, path complaints) pass through —
+ * they are written user-facing at the source, once, so REST and MCP agree.
+ */
+function clientMessage(what: string, error: FileshareClientError): string {
+  if (error.kind === 'unconfigured') {
+    return 'File shares are unavailable: the file share service is not configured on this deployment.';
+  }
+  if (error.kind === 'unreachable') {
+    return `Could not reach the file share service to ${what}.`;
+  }
+  switch (error.type) {
+    case 'no_share':
+      return NO_SUCH_SHARE;
+    case 'no_credentials':
+      return NO_STORED_CREDENTIALS;
+    case 'bad_credentials':
+      return 'The stored credentials for this share cannot be read — an administrator must re-enter them.';
+    case 'store':
+      return 'Could not read your file share access.';
+    case 'forbidden':
+      return error.message ?? 'You do not have access to that.';
+    case 'bad_path':
+      return error.message ?? 'That is not a usable path.';
+    case 'not_found':
+      return 'Nothing exists at that path.';
+    case 'access_denied':
+      return `The file server refused to ${what} with the share's service credential.`;
+    case 'timeout':
+      return `The file server did not answer in time trying to ${what}.`;
+    case 'too_large':
+      return error.message ?? 'The file is too large to read here.';
+    case 'connection':
+      return `Could not reach the file server to ${what}.`;
+    case 'exists':
+      return error.message ?? 'Something already exists at the destination.';
+    case 'not_empty':
+      return 'The folder is not empty — only empty folders can be deleted (delete its contents first).';
+    default:
+      return `Could not ${what}: ${error.message ?? error.type}.`;
+  }
 }
 
 export function registerFileshareTools(
@@ -154,25 +192,20 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const resolved = await auth.resolve(str(args.shareId));
-      if (typeof resolved === 'string') return errText(resolved);
+      const target = auth.target();
+      if (typeof target === 'string') return errText(target);
       const path = inputPath(args.path ?? '/');
       if (!path.ok) return errText(path.error);
 
-      if (!canListFolder(resolved.ctx, path.path)) {
-        return errText('You do not have access to that folder.');
-      }
+      const listed = await fsListFolder({ ...target, shareId: str(args.shareId) }, path.path);
+      if (!listed.ok) return errText(clientMessage('list the folder', listed.err));
 
-      const listed = await withShareSession(resolved, (backend) => backend.list(path.path));
-      if (!listed.ok) return errText(backendMessage('list the folder', listed.err));
-
-      const visible = annotateEntries(resolved.ctx, path.path, listed.val);
-      if (visible.length === 0) {
-        return textResult(`${path.path} has no entries you can access.`);
+      if (listed.val.entries.length === 0) {
+        return textResult(`${listed.val.path} has no entries you can access.`);
       }
       return textResult(
-        `${path.path} on "${resolved.ctx.share.name}":\n` +
-          visible.map((entry) => entryLine(entry)).join('\n')
+        `${listed.val.path} on "${listed.val.share.name}":\n` +
+          listed.val.entries.map((entry) => entryLine(entry)).join('\n')
       );
     }
   );
@@ -191,26 +224,25 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const resolved = await auth.resolve(str(args.shareId));
-      if (typeof resolved === 'string') return errText(resolved);
+      const target = auth.target();
+      if (typeof target === 'string') return errText(target);
       const path = inputPath(args.path);
       if (!path.ok) return errText(path.error);
 
-      const access = effectiveAccess(resolved.ctx, path.path);
-      const traversable = access === 'none' && hasAllowedDescendant(resolved.ctx, path.path);
-      if (access === 'none' && !traversable) {
-        return errText('You do not have access to that path.');
-      }
+      const stats = await fsStatEntry({ ...target, shareId: str(args.shareId) }, path.path);
+      if (!stats.ok) return errText(clientMessage('read that path', stats.err));
 
-      const stats = await withShareSession(resolved, (backend) => backend.stat(path.path));
-      if (!stats.ok) return errText(backendMessage('read that path', stats.err));
-
+      const entry = stats.val;
       const lines = [
-        `${path.path} on "${resolved.ctx.share.name}"`,
-        `Type: ${stats.val.kind === 'dir' ? 'folder' : 'file'}`,
-        ...(stats.val.size !== null ? [`Size: ${stats.val.size} bytes`] : []),
-        ...(stats.val.modifiedAt ? [`Modified: ${stats.val.modifiedAt.toISOString()}`] : []),
-        `Your access: ${traversable ? 'traverse only (folders below are granted)' : accessWord(access)}`,
+        `${entry.path} on "${entry.share.name}"`,
+        `Type: ${entry.kind === 'dir' ? 'folder' : 'file'}`,
+        ...(entry.size !== null ? [`Size: ${entry.size} bytes`] : []),
+        ...(entry.modifiedAt ? [`Modified: ${entry.modifiedAt}`] : []),
+        `Your access: ${
+          entry.access === 'traverse'
+            ? 'traverse only (folders below are granted)'
+            : accessWord(entry.access)
+        }`,
       ];
       return textResult(lines.join('\n'));
     }
@@ -237,23 +269,21 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const resolved = await auth.resolve(str(args.shareId));
-      if (typeof resolved === 'string') return errText(resolved);
+      const target = auth.target();
+      if (typeof target === 'string') return errText(target);
       const path = inputPath(args.path);
       if (!path.ok) return errText(path.error);
-
-      if (effectiveAccess(resolved.ctx, path.path) === 'none') {
-        return errText('You do not have access to that file.');
-      }
 
       const maxBytes = Math.min(
         DEFAULT_MAX_INPUT_BYTES,
         context.maxAttachmentBytes ?? DEFAULT_MAX_INPUT_BYTES
       );
-      const content = await withShareSession(resolved, (backend) =>
-        backend.read(path.path, maxBytes)
+      const content = await fsReadFile(
+        { ...target, shareId: str(args.shareId) },
+        path.path,
+        maxBytes
       );
-      if (!content.ok) return errText(backendMessage('read the file', content.err));
+      if (!content.ok) return errText(clientMessage('read the file', content.err));
 
       const fileName = path.path.slice(path.path.lastIndexOf('/') + 1);
       const maxChars = typeof args.maxChars === 'number' ? args.maxChars : 60_000;
@@ -285,17 +315,13 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const resolved = await auth.resolve(str(args.shareId));
-      if (typeof resolved === 'string') return errText(resolved);
+      const target = auth.target();
+      if (typeof target === 'string') return errText(target);
       const path = inputPath(args.path);
       if (!path.ok) return errText(path.error);
 
-      if (effectiveAccess(resolved.ctx, path.path) === 'none') {
-        return errText('You do not have access to that file.');
-      }
-
-      const stats = await withShareSession(resolved, (backend) => backend.stat(path.path));
-      if (!stats.ok) return errText(backendMessage('find the file', stats.err));
+      const stats = await fsStatEntry({ ...target, shareId: str(args.shareId) }, path.path);
+      if (!stats.ok) return errText(clientMessage('find the file', stats.err));
       if (stats.val.kind === 'dir') {
         return errText(
           `"${path.path}" is a folder — download its files individually ` +
@@ -305,7 +331,7 @@ export function registerFileshareTools(
 
       const base = context.origin;
       if (!base) return errText('This deployment has no public URL configured for links.');
-      const url = `${base}/api/tenant/${context.tenantId}/fileshares/${resolved.ctx.share.id}/file?path=${encodeURIComponent(path.path)}`;
+      const url = `${base}/api/tenant/${context.tenantId}/fileshares/${stats.val.share.id}/file?path=${encodeURIComponent(path.path)}`;
       return textResult(
         `Download link for "${path.path}" (${stats.val.size ?? 'unknown'} bytes):\n${url}\n` +
           'Opening it requires being signed in to this Renkei org in the browser; access is ' +
@@ -334,6 +360,9 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      // The one Act tool that stays store-side: minting a slot writes no
+      // bytes, so it checks the ACL context directly for an early, clear
+      // refusal — the worker re-runs the full check when the bytes arrive.
       const resolved = await auth.resolve(str(args.shareId));
       if (typeof resolved === 'string') return errText(resolved);
       const folder = inputPath(args.path ?? '/');
@@ -376,29 +405,21 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const resolved = await auth.resolve(str(args.shareId));
-      if (typeof resolved === 'string') return errText(resolved);
+      const target = auth.target();
+      if (typeof target === 'string') return errText(target);
       const path = inputPath(args.path);
       if (!path.ok) return errText(path.error);
       if (path.path === '/') return errText('The share root already exists.');
 
-      if (effectiveAccess(resolved.ctx, parentPath(path.path)) !== 'read_write') {
-        return errText('You do not have read/write access in the parent folder.');
-      }
-
-      const made = await withShareSession(resolved, (backend) => backend.mkdir(path.path));
+      const made = await fsMakeFolder({ ...target, shareId: str(args.shareId) }, path.path);
       if (!made.ok) {
-        return made.err.type === 'exists'
+        return made.err.kind === 'op' && made.err.type === 'exists'
           ? errText(`"${path.path}" already exists.`)
-          : errText(backendMessage('create the folder', made.err));
+          : errText(clientMessage('create the folder', made.err));
       }
-      return textResult(`Created ${path.path} on "${resolved.ctx.share.name}".`);
+      return textResult(`Created ${made.val.path} on "${made.val.share.name}".`);
     }
   );
-
-  /** The shared destructive gate, bound to this caller's tenant. */
-  const destructive = (resolved: ResolvedShare, path: string, verb: 'move' | 'rename' | 'delete') =>
-    destructiveRefusal(context.tenantId, resolved.ctx, path, verb);
 
   server.registerTool(
     'fileshare_move_entry',
@@ -417,29 +438,24 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const resolved = await auth.resolve(str(args.shareId));
-      if (typeof resolved === 'string') return errText(resolved);
+      const target = auth.target();
+      if (typeof target === 'string') return errText(target);
       const source = inputPath(args.path);
       if (!source.ok) return errText(source.error);
       if (source.path === '/') return errText('The share root cannot be moved.');
       const toFolder = inputPath(args.toFolder ?? '/');
       if (!toFolder.ok) return errText(toFolder.error);
 
-      const name = source.path.slice(source.path.lastIndexOf('/') + 1);
-      const destination = childPath(toFolder.path, name);
-      if (destination === source.path) return errText('That is already where it lives.');
-
-      const refusal = await destructive(resolved, source.path, 'move');
-      if (refusal) return errText(refusal);
-      if (effectiveAccess(resolved.ctx, destination) !== 'read_write') {
-        return errText('You do not have read/write access at the destination.');
-      }
-
-      const renamed = await withShareSession(resolved, (backend) =>
-        backend.rename(source.path, destination)
+      const moved = await fsMoveEntry(
+        { ...target, shareId: str(args.shareId) },
+        source.path,
+        toFolder.path
       );
-      if (!renamed.ok) return errText(backendMessage('move it', renamed.err));
-      return textResult(`Moved ${source.path} to ${destination} on "${resolved.ctx.share.name}".`);
+      if (!moved.ok) return errText(clientMessage('move it', moved.err));
+      if (moved.val.unchanged) return errText('That is already where it lives.');
+      return textResult(
+        `Moved ${source.path} to ${moved.val.path} on "${moved.val.share.name}".`
+      );
     }
   );
 
@@ -459,31 +475,21 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const resolved = await auth.resolve(str(args.shareId));
-      if (typeof resolved === 'string') return errText(resolved);
+      const target = auth.target();
+      if (typeof target === 'string') return errText(target);
       const source = inputPath(args.path);
       if (!source.ok) return errText(source.error);
       if (source.path === '/') return errText('The share root cannot be renamed.');
 
-      const newName = str(args.newName).trim();
-      if (!newName || newName.includes('/') || newName.includes('\\') || newName === '..') {
-        return errText('The new name must be a plain name with no path separators.');
-      }
-      const destination = childPath(parentPath(source.path), newName);
-      if (destination === source.path) return errText('That is already its name.');
-
-      const refusal = await destructive(resolved, source.path, 'rename');
-      if (refusal) return errText(refusal);
-      if (effectiveAccess(resolved.ctx, destination) !== 'read_write') {
-        return errText('You do not have read/write access at the new name.');
-      }
-
-      const renamed = await withShareSession(resolved, (backend) =>
-        backend.rename(source.path, destination)
+      const renamed = await fsRenameEntry(
+        { ...target, shareId: str(args.shareId) },
+        source.path,
+        str(args.newName)
       );
-      if (!renamed.ok) return errText(backendMessage('rename it', renamed.err));
+      if (!renamed.ok) return errText(clientMessage('rename it', renamed.err));
+      if (renamed.val.unchanged) return errText('That is already its name.');
       return textResult(
-        `Renamed ${source.path} to ${destination} on "${resolved.ctx.share.name}".`
+        `Renamed ${source.path} to ${renamed.val.path} on "${renamed.val.share.name}".`
       );
     }
   );
@@ -491,9 +497,10 @@ export function registerFileshareTools(
   /*
     Deletion is preview + confirm only (the outlook_cancel_event shape):
     file-server deletes have no recycle bin, so the card puts a human click
-    between the model and the irreversible act. One schema and one handler
-    serve both registrations — the confirm path IS the delete path, and it
-    re-runs every check itself rather than trusting anything the card sends.
+    between the model and the irreversible act. Both registrations delete
+    through the worker's single delete operation — the confirm path IS the
+    delete path, and the worker re-runs every check itself rather than
+    trusting anything the card sends.
   */
   const deleteEntrySchema = z.object({
     shareId: z.string().uuid().describe('From fileshare_list_shares.'),
@@ -501,22 +508,15 @@ export function registerFileshareTools(
   });
 
   const deleteEntryHandler = async (args: Record<string, unknown>) => {
-    const resolved = await auth.resolve(str(args.shareId));
-    if (typeof resolved === 'string') return errText(resolved);
+    const target = auth.target();
+    if (typeof target === 'string') return errText(target);
     const path = inputPath(args.path);
     if (!path.ok) return errText(path.error);
     if (path.path === '/') return errText('The share root cannot be deleted.');
 
-    const refusal = await destructive(resolved, path.path, 'delete');
-    if (refusal) return errText(refusal);
-
-    const removed = await withShareSession(resolved, async (backend) => {
-      const stats = await backend.stat(path.path);
-      if (!stats.ok) return stats;
-      return backend.remove(path.path, stats.val.kind);
-    });
-    if (!removed.ok) return errText(backendMessage('delete it', removed.err));
-    return textResult(`Deleted ${path.path} from "${resolved.ctx.share.name}".`);
+    const removed = await fsRemoveEntry({ ...target, shareId: str(args.shareId) }, path.path);
+    if (!removed.ok) return errText(clientMessage('delete it', removed.err));
+    return textResult(`Deleted ${removed.val.path} from "${removed.val.share.name}".`);
   };
 
   const previewGuidance = (what: string) =>
@@ -538,35 +538,18 @@ export function registerFileshareTools(
       inputSchema: deleteEntrySchema,
     },
     async (args: Record<string, unknown>) => {
-      const resolved = await auth.resolve(str(args.shareId));
-      if (typeof resolved === 'string') return errText(resolved);
+      const target = auth.target();
+      if (typeof target === 'string') return errText(target);
       const path = inputPath(args.path);
       if (!path.ok) return errText(path.error);
       if (path.path === '/') return errText('The share root cannot be deleted.');
 
-      const refusal = await destructive(resolved, path.path, 'delete');
-      if (refusal) return errText(refusal);
-
-      // Read-only enrichment: what exactly is on the card. A non-empty
-      // folder is refused here rather than at confirm time — the card must
-      // never promise a deletion the confirm path would refuse.
-      const looked = await withShareSession(resolved, async (backend) => {
-        const stats = await backend.stat(path.path);
-        if (!stats.ok) return stats;
-        if (stats.val.kind === 'dir') {
-          const children = await backend.list(path.path);
-          if (!children.ok) return children;
-          if (children.val.length > 0) {
-            return {
-              ok: false as const,
-              val: undefined,
-              err: { type: 'not_empty' as const, message: undefined },
-            };
-          }
-        }
-        return { ok: true as const, val: stats.val };
-      });
-      if (!looked.ok) return errText(backendMessage('delete it', looked.err));
+      // Read-only enrichment: what exactly is on the card. The worker runs
+      // the same gates the delete will, plus a non-empty-folder refusal —
+      // the card must never promise a deletion the confirm path would
+      // refuse.
+      const looked = await fsPreviewRemove({ ...target, shareId: str(args.shareId) }, path.path);
+      if (!looked.ok) return errText(clientMessage('delete it', looked.err));
       const entry = looked.val;
 
       const name = path.path.slice(path.path.lastIndexOf('/') + 1);
@@ -576,18 +559,16 @@ export function registerFileshareTools(
           kind: 'issue',
           previewId: newPreviewId(),
           title: `Delete ${name} permanently`,
-          subtitle: `${resolved.ctx.share.name} · ${path.path}`,
+          subtitle: `${entry.share.name} · ${path.path}`,
           confirmTool: 'fileshare_delete_entry_confirm',
           confirmLabel: 'Delete permanently',
           confirmArgs: args,
           fields: [
-            { label: 'Share', value: resolved.ctx.share.name },
+            { label: 'Share', value: entry.share.name },
             { label: 'Path', value: path.path },
             { label: 'Type', value: entry.kind === 'dir' ? 'Empty folder' : 'File' },
             ...(entry.size !== null ? [{ label: 'Size', value: `${entry.size} bytes` }] : []),
-            ...(entry.modifiedAt
-              ? [{ label: 'Modified', value: entry.modifiedAt.toISOString() }]
-              : []),
+            ...(entry.modifiedAt ? [{ label: 'Modified', value: entry.modifiedAt }] : []),
             { label: 'Undo', value: 'None — deletion on the file server is permanent' },
           ],
         },
@@ -608,41 +589,4 @@ export function registerFileshareTools(
     },
     deleteEntryHandler
   );
-}
-
-/** One bounded backend session: open, run, always close. */
-async function withShareSession<T>(
-  resolved: ResolvedShare,
-  work: (backend: ShareBackend) => Promise<Result<T, BackendError>>
-): Promise<Result<T, BackendError>> {
-  return withSessionLimits(resolved.ctx.share.id, 'interactive', async () => {
-    const opened = await openBackend(resolved.ctx.share, resolved.credentials);
-    if (!opened.ok) return opened;
-    try {
-      return await work(opened.val);
-    } finally {
-      await opened.val.close();
-    }
-  });
-}
-
-function backendMessage(what: string, error: { type: string; message?: string }): string {
-  switch (error.type) {
-    case 'not_found':
-      return 'Nothing exists at that path.';
-    case 'access_denied':
-      return `The file server refused to ${what} with the share's service credential.`;
-    case 'timeout':
-      return `The file server did not answer in time trying to ${what}.`;
-    case 'too_large':
-      return error.message ?? 'The file is too large to read here.';
-    case 'connection':
-      return `Could not reach the file server to ${what}.`;
-    case 'exists':
-      return error.message ?? 'Something already exists at the destination.';
-    case 'not_empty':
-      return 'The folder is not empty — only empty folders can be deleted (delete its contents first).';
-    default:
-      return `Could not ${what}: ${error.message ?? error.type}.`;
-  }
 }

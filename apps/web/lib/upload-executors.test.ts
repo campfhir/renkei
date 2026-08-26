@@ -34,17 +34,13 @@ jest.mock('@/lib/mcp-tools/confluence/client', () => ({
   confluenceUpload: jest.fn(),
   resolveConfluenceAccess: jest.fn(),
 }));
-jest.mock('@renkei/connector-fileshares', () => {
-  const actual = jest.requireActual<typeof import('@renkei/connector-fileshares')>(
-    '@renkei/connector-fileshares'
+jest.mock('@/lib/file-shares/service-client', () => {
+  const actual = jest.requireActual<typeof import('@/lib/file-shares/service-client')>(
+    '@/lib/file-shares/service-client'
   );
   return {
     ...actual,
-    getAclContext: jest.fn(),
-    readCredentialCiphertext: jest.fn(),
-    decryptCredentials: jest.fn(),
-    openBackend: jest.fn(),
-    withSessionLimits: (_shareId: string, _lane: string, work: () => Promise<unknown>) => work(),
+    fsWriteFile: jest.fn(),
   };
 });
 
@@ -275,39 +271,17 @@ it('refuses an unknown kind', async () => {
 });
 
 describe('fileshare-file', () => {
-  const { getAclContext, readCredentialCiphertext, decryptCredentials, openBackend } =
-    jest.requireMock<{
-      getAclContext: jest.Mock;
-      readCredentialCiphertext: jest.Mock;
-      decryptCredentials: jest.Mock;
-      openBackend: jest.Mock;
-    }>('@renkei/connector-fileshares');
+  const { fsWriteFile } = jest.requireMock<{ fsWriteFile: jest.Mock }>(
+    '@/lib/file-shares/service-client'
+  );
 
-  function shareAclContext(defaultAccess: 'read' | 'read_write') {
-    return {
-      share: {
-        id: 'share-1',
-        name: 'Accounting',
-        protocol: 'sftp',
-        host: 'nas.example.test',
-        port: null,
-        shareName: null,
-        rootPath: '/srv',
-        caseInsensitive: false,
-        maxAccess: 'read_write',
-        enabled: true,
-        hasCredentials: true,
-      },
-      grant: { subject: 'subject-1', defaultAccess },
-      shareRules: [],
-      userRules: [],
-    };
-  }
-
-  it('re-runs the ACL at byte-arrival time and refuses a narrowed grant', async () => {
+  it('relays the worker refusal when the grant was narrowed after minting', async () => {
     // The slot was minted when the caller held read_write; by POST time the
-    // grant says read. The write must not happen.
-    getAclContext.mockResolvedValue({ ok: true, val: shareAclContext('read') });
+    // grant says read. The worker re-runs the ACL at byte arrival and says no.
+    fsWriteFile.mockResolvedValue({
+      ok: false,
+      err: { kind: 'op' as const, type: 'forbidden', message: undefined, status: 403 },
+    });
 
     const outcome = await executeUpload(
       db,
@@ -317,11 +291,13 @@ describe('fileshare-file', () => {
 
     expect(outcome.ok).toBe(false);
     expect(outcome.detail).toContain('no longer have read/write');
-    expect(openBackend).not.toHaveBeenCalled();
   });
 
   it('refuses when the share is no longer visible to the subject', async () => {
-    getAclContext.mockResolvedValue({ ok: true, val: null });
+    fsWriteFile.mockResolvedValue({
+      ok: false,
+      err: { kind: 'op' as const, type: 'no_share', message: undefined, status: 404 },
+    });
 
     const outcome = await executeUpload(
       db,
@@ -333,18 +309,8 @@ describe('fileshare-file', () => {
     expect(outcome.detail).toContain('no longer available');
   });
 
-  it('writes to the slot destination under a still-valid grant', async () => {
-    getAclContext.mockResolvedValue({ ok: true, val: shareAclContext('read_write') });
-    readCredentialCiphertext.mockResolvedValue({ ok: true, val: 'sealed' });
-    decryptCredentials.mockReturnValue({
-      ok: true,
-      val: { protocol: 'sftp', username: 'svc', password: 'pw' },
-    });
-    const write = jest.fn().mockResolvedValue({ ok: true, val: undefined });
-    openBackend.mockResolvedValue({
-      ok: true,
-      val: { write, close: jest.fn().mockResolvedValue(undefined) },
-    });
+  it('writes to the slot destination as the slot subject', async () => {
+    fsWriteFile.mockResolvedValue({ ok: true, val: { path: '/reports/report.pdf' } });
 
     const outcome = await executeUpload(
       db,
@@ -353,6 +319,10 @@ describe('fileshare-file', () => {
     );
 
     expect(outcome.ok).toBe(true);
-    expect(write).toHaveBeenCalledWith('/reports/report.pdf', expect.any(Uint8Array));
+    expect(fsWriteFile).toHaveBeenCalledWith(
+      { tenantId: 'tenant-1', shareId: 'share-1', subject: 'subject-1' },
+      '/reports/report.pdf',
+      expect.any(Uint8Array)
+    );
   });
 });

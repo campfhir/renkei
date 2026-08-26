@@ -5,26 +5,26 @@
  * access and whether that value comes from an explicit rule on the entry
  * itself or is inherited from above. `subject` empty = the share-wide
  * layer; set = that subject's layer, whose default is their grant.
+ *
+ * The listing itself comes from the fileshare worker (the process that
+ * owns every SMB/SFTP session); the layer computation stays here — it is
+ * pure rule evaluation over store rows, no I/O.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
 import {
   childPath,
-  decryptCredentials,
   getShare,
   layerAccess,
   listGrants,
   listRules,
   normalizePath,
-  openBackend,
-  readCredentialCiphertext,
-  withSessionLimits,
 } from '@renkei/connector-fileshares';
 import type { AccessLevel, PathRule } from '@renkei/connector-fileshares';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
+import { clientFailure, fsAdminList } from '@/lib/file-shares/service-client';
 
 export async function GET(
   request: NextRequest,
@@ -73,42 +73,19 @@ export async function GET(
     layerDefault = grant.defaultAccess;
   }
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    return NextResponse.json({ error: 'Encryption key unavailable' }, { status: 500 });
-  }
-  const ciphertext = await readCredentialCiphertext(dbResult.val, tenant.id, shareId);
-  if (!ciphertext.ok || ciphertext.val === null) {
-    return NextResponse.json({ error: 'No credentials stored yet' }, { status: 503 });
-  }
-  const credentials = decryptCredentials(ciphertext.val, keyResult.val);
-  if (!credentials.ok) {
-    return NextResponse.json({ error: 'Stored credentials cannot be read' }, { status: 503 });
-  }
-
-  const listed = await withSessionLimits(shareId, 'interactive', async () => {
-    const backend = await openBackend(summary, credentials.val);
-    if (!backend.ok) return backend;
-    try {
-      return await backend.val.list(path.val);
-    } finally {
-      await backend.val.close();
-    }
-  });
+  const listed = await fsAdminList(tenant.id, shareId, path.val);
   if (!listed.ok) {
-    return NextResponse.json(
-      { error: listed.err.message ?? listed.err.type },
-      { status: listed.err.type === 'not_found' ? 404 : 502 }
-    );
+    const failure = clientFailure(listed.err);
+    return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
 
   const ci = summary.caseInsensitive;
   const explicitPaths = new Set(rules.map((rule) => (ci ? rule.path.toLowerCase() : rule.path)));
   return NextResponse.json({
-    path: path.val,
+    path: listed.val.path,
     layerDefault,
-    entries: listed.val.map((entry) => {
-      const entryPath = childPath(path.val, entry.name);
+    entries: listed.val.entries.map((entry) => {
+      const entryPath = childPath(listed.val.path, entry.name);
       return {
         name: entry.name,
         path: entryPath,

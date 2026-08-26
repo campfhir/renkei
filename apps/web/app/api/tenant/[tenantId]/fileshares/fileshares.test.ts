@@ -1,18 +1,16 @@
 /**
- * The file-share REST routes, against a stubbed backend and a REAL ACL
- * engine — what these pin is enforcement equivalence with the MCP tools:
- * the same context that hides an entry from fileshare_list_folder must
- * hide it here, an ungranted share must 404 exactly like a nonexistent
- * one, and a PUT to a read-only path must never reach the backend.
+ * The file-share REST routes as thin proxies onto the fileshare worker.
+ * ACL enforcement itself is pinned in the package's service.test.ts (the
+ * worker's authority); what these tests pin is the seam: session-gated
+ * entry, faithful forwarding of the caller's subject and paths, and the
+ * worker-error → HTTP mapping that keeps this surface answering exactly
+ * like the MCP tools — an ungranted share still 404s like a missing one.
  */
 
 jest.mock('@/lib/session', () => ({
   getSessionFromRequest: jest.fn(async () => ({ subject: 'auth0|alice' })),
 }));
 jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
-jest.mock('@renkei/crypto', () => ({
-  parseEncryptionKey: () => ({ ok: true, val: Buffer.alloc(32) }),
-}));
 jest.mock('@renkei/settings', () => ({
   getOrgSettings: async () => ({ ok: true, val: { maxAttachmentBytes: 1024 } }),
 }));
@@ -22,16 +20,22 @@ jest.mock('@renkei/connector-fileshares', () => {
   );
   return {
     ...actual,
-    getAclContext: jest.fn(),
     listGrantedShares: jest.fn(),
-    listRulePathsUnder: jest.fn(async () => ({ ok: true, val: [] })),
-    readCredentialCiphertext: jest.fn(async () => ({ ok: true, val: 'sealed' })),
-    decryptCredentials: jest.fn(() => ({
-      ok: true,
-      val: { protocol: 'sftp', username: 'svc', password: 'pw' },
-    })),
-    openBackend: jest.fn(),
-    withSessionLimits: (_shareId: string, _lane: string, work: () => Promise<unknown>) => work(),
+  };
+});
+jest.mock('@/lib/file-shares/service-client', () => {
+  const actual = jest.requireActual<typeof import('@/lib/file-shares/service-client')>(
+    '@/lib/file-shares/service-client'
+  );
+  return {
+    ...actual,
+    fsListFolder: jest.fn(),
+    fsReadFile: jest.fn(),
+    fsWriteFile: jest.fn(),
+    fsMakeFolder: jest.fn(),
+    fsRemoveEntry: jest.fn(),
+    fsMoveEntry: jest.fn(),
+    fsRenameEntry: jest.fn(),
   };
 });
 
@@ -45,46 +49,36 @@ import { DELETE as deleteEntry, POST as mutateEntry } from './[shareId]/entries/
 const { getSessionFromRequest } = jest.requireMock<{ getSessionFromRequest: jest.Mock }>(
   '@/lib/session'
 );
-const { getAclContext, listGrantedShares, listRulePathsUnder, openBackend } = jest.requireMock<{
-  getAclContext: jest.Mock;
-  listGrantedShares: jest.Mock;
-  listRulePathsUnder: jest.Mock;
-  openBackend: jest.Mock;
-}>('@renkei/connector-fileshares');
+const { listGrantedShares } = jest.requireMock<{ listGrantedShares: jest.Mock }>(
+  '@renkei/connector-fileshares'
+);
+const client = jest.requireMock<{
+  fsListFolder: jest.Mock;
+  fsReadFile: jest.Mock;
+  fsWriteFile: jest.Mock;
+  fsMakeFolder: jest.Mock;
+  fsRemoveEntry: jest.Mock;
+  fsMoveEntry: jest.Mock;
+  fsRenameEntry: jest.Mock;
+}>('@/lib/file-shares/service-client');
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
+const SHARE = { id: SHARE_ID, name: 'Accounting' };
+const TARGET = { tenantId: 'tenant-1', shareId: SHARE_ID, subject: 'auth0|alice' };
 const paramsOf = () => Promise.resolve({ tenantId: 'tenant-1' });
 const shareParamsOf = (shareId: string) => Promise.resolve({ tenantId: 'tenant-1', shareId });
-
-function aclContext(defaultAccess: 'none' | 'read' | 'read_write', userRules: unknown[] = []) {
-  return {
-    share: {
-      id: SHARE_ID,
-      name: 'Accounting',
-      protocol: 'sftp',
-      host: 'nas.example.test',
-      port: null,
-      shareName: null,
-      rootPath: '/srv',
-      caseInsensitive: false,
-      maxAccess: 'read_write',
-      enabled: true,
-      hasCredentials: true,
-    },
-    grant: { subject: 'auth0|alice', defaultAccess },
-    shareRules: [],
-    userRules,
-  };
-}
 
 function reqOf(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(new Request(url, init));
 }
 
+function opError(type: string, message: string | undefined, status: number) {
+  return { ok: false as const, err: { kind: 'op' as const, type, message, status } };
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   getSessionFromRequest.mockResolvedValue({ subject: 'auth0|alice' });
-  listRulePathsUnder.mockResolvedValue({ ok: true, val: [] });
 });
 
 test('every route answers a signed-out request with 401', async () => {
@@ -99,22 +93,23 @@ test('every route answers a signed-out request with 401', async () => {
     params: shareParamsOf(SHARE_ID),
   });
   expect(file.status).toBe(401);
+  expect(client.fsListFolder).not.toHaveBeenCalled();
+  expect(client.fsReadFile).not.toHaveBeenCalled();
 });
 
-test('an ungranted share answers 404, indistinguishable from a missing one', async () => {
-  getAclContext.mockResolvedValue({ ok: true, val: null });
-  const response = await listFolder(reqOf('http://x/api?path=/'), {
-    params: shareParamsOf(SHARE_ID),
-  });
-  expect(response.status).toBe(404);
-});
-
-test('the share list is the grants list, verbatim', async () => {
+test('the share list is the grants list, verbatim (store-side, no worker)', async () => {
   listGrantedShares.mockResolvedValue({
     ok: true,
     val: [
       {
-        share: aclContext('read').share,
+        share: {
+          id: SHARE_ID,
+          name: 'Accounting',
+          protocol: 'sftp',
+          host: 'nas.example.test',
+          shareName: null,
+          hasCredentials: true,
+        },
         grant: { subject: 'auth0|alice', defaultAccess: 'read' },
         hasRules: true,
       },
@@ -127,22 +122,32 @@ test('the share list is the grants list, verbatim', async () => {
   expect(body.shares[0]).toMatchObject({ id: SHARE_ID, defaultAccess: 'read', hasRules: true });
 });
 
-test('folder listings run the same annotate-and-filter pass as the tools', async () => {
-  getAclContext.mockResolvedValue({
-    ok: true,
-    val: aclContext('read', [{ path: '/secret.txt', access: 'none' }]),
+test("an ungranted share answers the worker's 404, indistinguishable from a missing one", async () => {
+  client.fsListFolder.mockResolvedValue(opError('no_share', undefined, 404));
+  const response = await listFolder(reqOf('http://x/api?path=/'), {
+    params: shareParamsOf(SHARE_ID),
   });
-  openBackend.mockResolvedValue({
+  expect(response.status).toBe(404);
+  expect((await response.json()).error).toBe('Not found');
+});
+
+test('folder listings forward the session subject and pass wire entries through', async () => {
+  client.fsListFolder.mockResolvedValue({
     ok: true,
     val: {
-      list: async () => ({
-        ok: true,
-        val: [
-          { name: 'open.txt', kind: 'file', size: 5, modifiedAt: null },
-          { name: 'secret.txt', kind: 'file', size: 5, modifiedAt: null },
-        ],
-      }),
-      close: async () => undefined,
+      share: SHARE,
+      path: '/',
+      access: 'read',
+      entries: [
+        {
+          name: 'open.txt',
+          path: '/open.txt',
+          kind: 'file',
+          size: 5,
+          modifiedAt: null,
+          access: 'read',
+        },
+      ],
     },
   });
   const response = await listFolder(reqOf('http://x/api?path=/'), {
@@ -150,147 +155,137 @@ test('folder listings run the same annotate-and-filter pass as the tools', async
   });
   expect(response.status).toBe(200);
   const body = await response.json();
-  expect(body.entries.map((entry: { name: string }) => entry.name)).toEqual(['open.txt']);
-  expect(body.entries[0].access).toBe('read');
+  expect(client.fsListFolder).toHaveBeenCalledWith(TARGET, '/');
+  expect(body.access).toBe('read');
+  expect(body.entries).toEqual([
+    { name: 'open.txt', path: '/open.txt', kind: 'file', size: 5, modifiedAt: null, access: 'read' },
+  ]);
 });
 
-test('a traversal query string is a 400, not a resolution', async () => {
-  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read') });
+test("a worker path complaint is the route's 400", async () => {
+  client.fsListFolder.mockResolvedValue(
+    opError('bad_path', 'That path climbs out of the share.', 400)
+  );
   const response = await listFolder(reqOf('http://x/api?path=/a/../../etc'), {
     params: shareParamsOf(SHARE_ID),
   });
   expect(response.status).toBe(400);
-  expect(openBackend).not.toHaveBeenCalled();
 });
 
-test('download refuses a closed path with 403 before any backend call', async () => {
-  getAclContext.mockResolvedValue({
-    ok: true,
-    val: aclContext('read', [{ path: '/closed', access: 'none' }]),
-  });
-  const response = await downloadFile(reqOf('http://x/api?path=/closed/file.txt'), {
+test('an unconfigured worker is a 503, never an open fallback', async () => {
+  client.fsListFolder.mockResolvedValue({ ok: false, err: { kind: 'unconfigured' as const } });
+  const response = await listFolder(reqOf('http://x/api?path=/'), {
     params: shareParamsOf(SHARE_ID),
   });
-  expect(response.status).toBe(403);
-  expect(openBackend).not.toHaveBeenCalled();
+  expect(response.status).toBe(503);
 });
 
-test('download streams bytes with an attachment disposition', async () => {
-  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read') });
-  openBackend.mockResolvedValue({
-    ok: true,
-    val: {
-      read: async () => ({ ok: true, val: new TextEncoder().encode('bytes!') }),
-      close: async () => undefined,
-    },
+test("download relays the worker's refusal and streams its bytes", async () => {
+  client.fsReadFile.mockResolvedValue(
+    opError('forbidden', 'You do not have access to that file.', 403)
+  );
+  const refused = await downloadFile(reqOf('http://x/api?path=/closed/file.txt'), {
+    params: shareParamsOf(SHARE_ID),
   });
+  expect(refused.status).toBe(403);
+
+  client.fsReadFile.mockResolvedValue({ ok: true, val: new TextEncoder().encode('bytes!') });
   const response = await downloadFile(reqOf('http://x/api?path=/report.pdf'), {
     params: shareParamsOf(SHARE_ID),
   });
   expect(response.status).toBe(200);
   expect(response.headers.get('content-disposition')).toContain('report.pdf');
   expect(await response.text()).toBe('bytes!');
+  expect(client.fsReadFile).toHaveBeenCalledWith(TARGET, '/report.pdf');
 });
 
-test('PUT requires read_write on the exact destination', async () => {
-  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read') });
-  const response = await uploadFile(
-    reqOf('http://x/api?path=/new.txt', { method: 'PUT', body: 'data' }),
-    { params: shareParamsOf(SHARE_ID) }
-  );
-  expect(response.status).toBe(403);
-  expect(openBackend).not.toHaveBeenCalled();
-});
-
-test('PUT refuses bodies over the org attachment limit with 413', async () => {
-  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read_write') });
+test('PUT refuses bodies over the org attachment limit before any worker call', async () => {
   const response = await uploadFile(
     reqOf('http://x/api?path=/new.txt', { method: 'PUT', body: 'x'.repeat(2048) }),
     { params: shareParamsOf(SHARE_ID) }
   );
   expect(response.status).toBe(413);
-  expect(openBackend).not.toHaveBeenCalled();
+  expect(client.fsWriteFile).not.toHaveBeenCalled();
 });
 
-test('folder creation authorizes on the parent', async () => {
-  getAclContext.mockResolvedValue({
-    ok: true,
-    val: aclContext('read', [{ path: '/drafts', access: 'read_write' }]),
-  });
-  const mkdir = jest.fn(async () => ({ ok: true, val: undefined }));
-  openBackend.mockResolvedValue({ ok: true, val: { mkdir, close: async () => undefined } });
+test('PUT forwards the exact bytes and destination to the worker', async () => {
+  client.fsWriteFile.mockResolvedValue({ ok: true, val: { path: '/new.txt' } });
+  const response = await uploadFile(
+    reqOf('http://x/api?path=/new.txt', { method: 'PUT', body: 'data' }),
+    { params: shareParamsOf(SHARE_ID) }
+  );
+  expect(response.status).toBe(200);
+  const [target, path, bytes] = client.fsWriteFile.mock.calls[0];
+  expect(target).toEqual(TARGET);
+  expect(path).toBe('/new.txt');
+  expect(new TextDecoder().decode(bytes)).toBe('data');
+});
 
+test("PUT surfaces the worker's read/write refusal as 403", async () => {
+  client.fsWriteFile.mockResolvedValue(
+    opError('forbidden', 'You do not have read/write access at that destination.', 403)
+  );
+  const response = await uploadFile(
+    reqOf('http://x/api?path=/new.txt', { method: 'PUT', body: 'data' }),
+    { params: shareParamsOf(SHARE_ID) }
+  );
+  expect(response.status).toBe(403);
+});
+
+test('folder creation forwards to the worker and relays parent refusals', async () => {
+  client.fsMakeFolder.mockResolvedValue(
+    opError('forbidden', 'You do not have read/write access in the parent folder.', 403)
+  );
   const refused = await createFolder(
     reqOf('http://x/api', { method: 'POST', body: JSON.stringify({ path: '/reports/new' }) }),
     { params: shareParamsOf(SHARE_ID) }
   );
   expect(refused.status).toBe(403);
 
+  client.fsMakeFolder.mockResolvedValue({ ok: true, val: { share: SHARE, path: '/drafts/new' } });
   const allowed = await createFolder(
     reqOf('http://x/api', { method: 'POST', body: JSON.stringify({ path: '/drafts/new' }) }),
     { params: shareParamsOf(SHARE_ID) }
   );
   expect(allowed.status).toBe(200);
-  expect(mkdir).toHaveBeenCalledWith('/drafts/new');
+  expect(client.fsMakeFolder).toHaveBeenCalledWith(TARGET, '/drafts/new');
 });
 
-test('entry deletion requires read/write and refuses anchored rules', async () => {
-  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read') });
-  const refused = await deleteEntry(reqOf('http://x/api?path=/old.txt', { method: 'DELETE' }), {
-    params: shareParamsOf(SHARE_ID),
-  });
-  expect(refused.status).toBe(403);
-  expect(openBackend).not.toHaveBeenCalled();
-
-  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read_write') });
-  listRulePathsUnder.mockResolvedValue({ ok: true, val: ['/old.txt'] });
+test("entry deletion relays the worker's gate refusals with their reasons", async () => {
+  client.fsRemoveEntry.mockResolvedValue(
+    opError(
+      'forbidden',
+      'Access rules are anchored at or under that path (/old.txt), so it cannot be deleted — ' +
+        'an administrator must remove those rules first.',
+      403
+    )
+  );
   const anchored = await deleteEntry(reqOf('http://x/api?path=/old.txt', { method: 'DELETE' }), {
     params: shareParamsOf(SHARE_ID),
   });
   expect(anchored.status).toBe(403);
-  const body = await anchored.json();
-  expect(String(body.error)).toContain('administrator');
-  expect(openBackend).not.toHaveBeenCalled();
+  expect(String((await anchored.json()).error)).toContain('administrator');
 });
 
 test('a non-empty folder answers 409, and a clean delete succeeds', async () => {
-  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read_write') });
-  const remove = jest
-    .fn()
-    .mockResolvedValueOnce({ ok: false, err: { type: 'not_empty' } })
-    .mockResolvedValueOnce({ ok: true, val: undefined });
-  openBackend.mockResolvedValue({
-    ok: true,
-    val: {
-      stat: async () => ({
-        ok: true,
-        val: { name: 'stuff', kind: 'dir', size: null, modifiedAt: null },
-      }),
-      remove,
-      close: async () => undefined,
-    },
-  });
-
+  client.fsRemoveEntry.mockResolvedValue(opError('not_empty', undefined, 409));
   const notEmpty = await deleteEntry(reqOf('http://x/api?path=/stuff', { method: 'DELETE' }), {
     params: shareParamsOf(SHARE_ID),
   });
   expect(notEmpty.status).toBe(409);
 
+  client.fsRemoveEntry.mockResolvedValue({ ok: true, val: { share: SHARE, path: '/stuff' } });
   const emptied = await deleteEntry(reqOf('http://x/api?path=/stuff', { method: 'DELETE' }), {
     params: shareParamsOf(SHARE_ID),
   });
   expect(emptied.status).toBe(200);
-  expect(remove).toHaveBeenLastCalledWith('/stuff', 'dir');
+  expect(client.fsRemoveEntry).toHaveBeenCalledWith(TARGET, '/stuff');
 });
 
-test('move requires read/write on both ends and never clobbers', async () => {
-  getAclContext.mockResolvedValue({
-    ok: true,
-    val: aclContext('read_write', [{ path: '/readonly', access: 'read' }]),
-  });
-  const rename = jest.fn().mockResolvedValue({ ok: false, err: { type: 'exists' } });
-  openBackend.mockResolvedValue({ ok: true, val: { rename, close: async () => undefined } });
-
+test('move forwards both ends; clobber and destination refusals keep their statuses', async () => {
+  client.fsMoveEntry.mockResolvedValue(
+    opError('forbidden', 'You do not have read/write access at the destination.', 403)
+  );
   const refused = await mutateEntry(
     reqOf('http://x/api', {
       method: 'POST',
@@ -299,8 +294,10 @@ test('move requires read/write on both ends and never clobbers', async () => {
     { params: shareParamsOf(SHARE_ID) }
   );
   expect(refused.status).toBe(403);
-  expect(rename).not.toHaveBeenCalled();
 
+  client.fsMoveEntry.mockResolvedValue(
+    opError('exists', 'Something already exists at the destination.', 409)
+  );
   const clobber = await mutateEntry(
     reqOf('http://x/api', {
       method: 'POST',
@@ -309,14 +306,13 @@ test('move requires read/write on both ends and never clobbers', async () => {
     { params: shareParamsOf(SHARE_ID) }
   );
   expect(clobber.status).toBe(409);
-  expect(rename).toHaveBeenCalledWith('/a.txt', '/archive/a.txt');
+  expect(client.fsMoveEntry).toHaveBeenCalledWith(TARGET, '/a.txt', '/archive');
 });
 
-test('rename validates the new name and lands on the sibling path', async () => {
-  getAclContext.mockResolvedValue({ ok: true, val: aclContext('read_write') });
-  const rename = jest.fn().mockResolvedValue({ ok: true, val: undefined });
-  openBackend.mockResolvedValue({ ok: true, val: { rename, close: async () => undefined } });
-
+test('rename forwards the new name; a worker name complaint is a 400', async () => {
+  client.fsRenameEntry.mockResolvedValue(
+    opError('bad_path', 'The new name must be a plain name with no path separators.', 400)
+  );
   const traversal = await mutateEntry(
     reqOf('http://x/api', {
       method: 'POST',
@@ -326,6 +322,10 @@ test('rename validates the new name and lands on the sibling path', async () => 
   );
   expect(traversal.status).toBe(400);
 
+  client.fsRenameEntry.mockResolvedValue({
+    ok: true,
+    val: { share: SHARE, path: '/docs/b.txt', unchanged: false },
+  });
   const renamed = await mutateEntry(
     reqOf('http://x/api', {
       method: 'POST',
@@ -334,5 +334,16 @@ test('rename validates the new name and lands on the sibling path', async () => 
     { params: shareParamsOf(SHARE_ID) }
   );
   expect(renamed.status).toBe(200);
-  expect(rename).toHaveBeenCalledWith('/docs/a.txt', '/docs/b.txt');
+  expect((await renamed.json()).path).toBe('/docs/b.txt');
+  expect(client.fsRenameEntry).toHaveBeenCalledWith(TARGET, '/docs/a.txt', 'b.txt');
+});
+
+test('an unknown entry op is a 400 without a worker call', async () => {
+  const response = await mutateEntry(
+    reqOf('http://x/api', { method: 'POST', body: JSON.stringify({ op: 'copy', from: '/a' }) }),
+    { params: shareParamsOf(SHARE_ID) }
+  );
+  expect(response.status).toBe(400);
+  expect(client.fsMoveEntry).not.toHaveBeenCalled();
+  expect(client.fsRenameEntry).not.toHaveBeenCalled();
 });

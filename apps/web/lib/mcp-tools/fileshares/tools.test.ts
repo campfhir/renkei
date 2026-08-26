@@ -1,37 +1,45 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
- * The fileshare tools' contract, driven through real registration with a
- * fake backend and a fake auth: the ACL engine runs for real (that is the
- * point — these tests pin enforcement, not formatting), while the protocol
- * session is an in-memory tree.
+ * The fileshare tools' contract at the model boundary. Since the fileshare
+ * worker took over all I/O and ACL enforcement (pinned in the package's
+ * service.test.ts), what these tools own is narrower and is what this
+ * suite pins: traversal refusals before any network call, faithful
+ * forwarding of the caller's target to the worker client, the mapping of
+ * worker refusals onto model-readable messages, the upload-slot mint's
+ * store-side pre-check, and the delete preview/confirm card.
  */
 
-jest.mock('@renkei/connector-fileshares', () => {
-  const actual = jest.requireActual<typeof import('@renkei/connector-fileshares')>(
-    '@renkei/connector-fileshares'
-  );
-  return {
-    ...actual,
-    openBackend: jest.fn(),
-    listRulePathsUnder: jest.fn(async () => ({ ok: true, val: [] })),
-    withSessionLimits: (_shareId: string, _lane: string, work: () => Promise<unknown>) => work(),
-  };
-});
+jest.mock('@/lib/file-shares/service-client', () => ({
+  fsListFolder: jest.fn(),
+  fsStatEntry: jest.fn(),
+  fsReadFile: jest.fn(),
+  fsMakeFolder: jest.fn(),
+  fsMoveEntry: jest.fn(),
+  fsRenameEntry: jest.fn(),
+  fsRemoveEntry: jest.fn(),
+  fsPreviewRemove: jest.fn(),
+}));
 jest.mock('../upload-slots', () => ({
   createUploadSlot: jest.fn(),
 }));
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
-import type { AclContext, RawEntry, ShareBackend } from '@renkei/connector-fileshares';
+import type { AclContext } from '@renkei/connector-fileshares';
 import { registerFileshareTools } from './index';
+import { NO_SUCH_SHARE } from './fileshare-auth';
 import type { FileshareAuth } from './fileshare-auth';
 import type { MCPToolContext } from '../common';
 
-const { openBackend, listRulePathsUnder } = jest.requireMock<{
-  openBackend: jest.Mock;
-  listRulePathsUnder: jest.Mock;
-}>('@renkei/connector-fileshares');
+const client = jest.requireMock<{
+  fsListFolder: jest.Mock;
+  fsStatEntry: jest.Mock;
+  fsReadFile: jest.Mock;
+  fsMakeFolder: jest.Mock;
+  fsMoveEntry: jest.Mock;
+  fsRenameEntry: jest.Mock;
+  fsRemoveEntry: jest.Mock;
+  fsPreviewRemove: jest.Mock;
+}>('@/lib/file-shares/service-client');
 const { createUploadSlot } = jest.requireMock<{ createUploadSlot: jest.Mock }>('../upload-slots');
 
 type Handler = (args: Record<string, unknown>) => Promise<{
@@ -40,6 +48,8 @@ type Handler = (args: Record<string, unknown>) => Promise<{
 }>;
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
+const SHARE = { id: SHARE_ID, name: 'Accounting' };
+const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice', shareId: SHARE_ID };
 
 function contextOf(): MCPToolContext {
   return {
@@ -75,91 +85,20 @@ function aclContext(overrides?: Partial<AclContext>): AclContext {
 function authOf(ctx: AclContext): FileshareAuth {
   return {
     kind: 'user',
+    target() {
+      return { tenantId: 'tenant-1', subject: 'auth0|alice' };
+    },
     async listGranted() {
       return [{ share: ctx.share, grant: ctx.grant, hasRules: ctx.userRules.length > 0 }];
     },
     async resolve(shareId: string) {
-      if (shareId !== ctx.share.id) return 'No file share with that id is available to you.';
-      return { ctx, credentials: { protocol: 'sftp', username: 'svc', password: 'pw' } };
+      if (shareId !== ctx.share.id) return NO_SUCH_SHARE;
+      return { ctx };
     },
   };
 }
 
-/** An in-memory backend over a flat path → entry map. */
-function fakeBackend(tree: Map<string, RawEntry & { content?: string }>): ShareBackend & {
-  writes: Array<{ path: string; bytes: Uint8Array }>;
-  mkdirs: string[];
-  removes: string[];
-  renames: Array<{ from: string; to: string }>;
-} {
-  const writes: Array<{ path: string; bytes: Uint8Array }> = [];
-  const mkdirs: string[] = [];
-  const removes: string[] = [];
-  const renames: Array<{ from: string; to: string }> = [];
-  return {
-    writes,
-    mkdirs,
-    removes,
-    renames,
-    async list(path) {
-      const prefix = path === '/' ? '/' : `${path}/`;
-      const entries: RawEntry[] = [];
-      for (const [entryPath, entry] of tree) {
-        if (!entryPath.startsWith(prefix)) continue;
-        if (entryPath.slice(prefix.length).includes('/')) continue;
-        entries.push(entry);
-      }
-      return { ok: true, val: entries };
-    },
-    async stat(path) {
-      const entry = tree.get(path);
-      if (!entry) return { ok: false, val: undefined, err: { type: 'not_found' } };
-      return { ok: true, val: entry };
-    },
-    async read(path, maxBytes) {
-      const entry = tree.get(path);
-      if (!entry || entry.content === undefined) {
-        return { ok: false, val: undefined, err: { type: 'not_found' } };
-      }
-      const bytes = new TextEncoder().encode(entry.content);
-      if (bytes.byteLength > maxBytes) {
-        return { ok: false, val: undefined, err: { type: 'too_large' } };
-      }
-      return { ok: true, val: bytes };
-    },
-    async write(path, bytes) {
-      writes.push({ path, bytes });
-      return { ok: true, val: undefined };
-    },
-    async mkdir(path) {
-      mkdirs.push(path);
-      return { ok: true, val: undefined };
-    },
-    async remove(path) {
-      removes.push(path);
-      if (!tree.has(path)) return { ok: false, val: undefined, err: { type: 'not_found' } };
-      tree.delete(path);
-      return { ok: true, val: undefined };
-    },
-    async rename(fromPath, toPath) {
-      renames.push({ from: fromPath, to: toPath });
-      const entry = tree.get(fromPath);
-      if (!entry) return { ok: false, val: undefined, err: { type: 'not_found' } };
-      if (tree.has(toPath)) return { ok: false, val: undefined, err: { type: 'exists' } };
-      tree.delete(fromPath);
-      tree.set(toPath, { ...entry, name: toPath.slice(toPath.lastIndexOf('/') + 1) });
-      return { ok: true, val: undefined };
-    },
-    async close() {},
-  } as ShareBackend & {
-    writes: Array<{ path: string; bytes: Uint8Array }>;
-    mkdirs: string[];
-    removes: string[];
-    renames: Array<{ from: string; to: string }>;
-  };
-}
-
-function register(ctx: AclContext): Map<string, Handler> {
+function register(ctx: AclContext = aclContext()): Map<string, Handler> {
   const handlers = new Map<string, Handler>();
   const server = {
     registerTool: (name: string, _config: unknown, handler: Handler) => {
@@ -172,13 +111,14 @@ function register(ctx: AclContext): Map<string, Handler> {
 
 const textOf = (result: { content: { text: string }[] }): string => result.content[0]?.text ?? '';
 
-beforeEach(() => {
-  jest.clearAllMocks();
-  listRulePathsUnder.mockResolvedValue({ ok: true, val: [] });
-});
+function opError(type: string, message?: string, status = 400) {
+  return { ok: false as const, err: { kind: 'op' as const, type, message, status } };
+}
+
+beforeEach(() => jest.clearAllMocks());
 
 test('list_shares reports name, id and access level', async () => {
-  const handlers = register(aclContext());
+  const handlers = register();
   const result = await handlers.get('fileshare_list_shares')!({});
   expect(result.isError).toBeUndefined();
   expect(textOf(result)).toContain('Accounting');
@@ -186,49 +126,51 @@ test('list_shares reports name, id and access level', async () => {
   expect(textOf(result)).toContain('your access: read');
 });
 
-test('list_folder hides denied entries, marks corridors, stamps levels', async () => {
-  const ctx = aclContext({
-    grant: { subject: 'auth0|alice', defaultAccess: 'read' },
-    userRules: [
-      { path: '/secret.txt', access: 'none' },
-      { path: '/vault', access: 'none' },
-      { path: '/vault/open', access: 'read' },
-      { path: '/drafts', access: 'read_write' },
-    ],
+test('list_folder forwards the caller and renders wire entries', async () => {
+  client.fsListFolder.mockResolvedValue({
+    ok: true,
+    val: {
+      share: SHARE,
+      path: '/',
+      access: 'read',
+      entries: [
+        {
+          name: 'notes.txt',
+          path: '/notes.txt',
+          kind: 'file',
+          size: 5,
+          modifiedAt: '2026-01-01T00:00:00.000Z',
+          access: 'read',
+        },
+        { name: 'vault', path: '/vault', kind: 'dir', size: null, modifiedAt: null, access: 'traverse' },
+        { name: 'drafts', path: '/drafts', kind: 'dir', size: null, modifiedAt: null, access: 'read_write' },
+      ],
+    },
   });
-  const backend = fakeBackend(
-    new Map([
-      ['/notes.txt', { name: 'notes.txt', kind: 'file', size: 5, modifiedAt: null }],
-      ['/secret.txt', { name: 'secret.txt', kind: 'file', size: 5, modifiedAt: null }],
-      ['/vault', { name: 'vault', kind: 'dir', size: null, modifiedAt: null }],
-      ['/drafts', { name: 'drafts', kind: 'dir', size: null, modifiedAt: null }],
-    ])
-  );
-  openBackend.mockResolvedValue({ ok: true, val: backend });
-
-  const handlers = register(ctx);
+  const handlers = register();
   const result = await handlers.get('fileshare_list_folder')!({ shareId: SHARE_ID, path: '/' });
   const text = textOf(result);
   expect(result.isError).toBeUndefined();
+  expect(client.fsListFolder).toHaveBeenCalledWith(TARGET, '/');
   expect(text).toContain('/notes.txt [read]');
-  expect(text).not.toContain('secret.txt');
   expect(text).toContain('/vault/ [folders below]');
   expect(text).toContain('/drafts/ [read/write]');
 });
 
-test('a traversal path is refused with a reason, never resolved', async () => {
-  const handlers = register(aclContext());
+test('a traversal path is refused with a reason, never sent to the worker', async () => {
+  const handlers = register();
   const result = await handlers.get('fileshare_list_folder')!({
     shareId: SHARE_ID,
     path: '/reports/../../etc',
   });
   expect(result.isError).toBe(true);
   expect(textOf(result)).toContain('climbs out of the share');
-  expect(openBackend).not.toHaveBeenCalled();
+  expect(client.fsListFolder).not.toHaveBeenCalled();
 });
 
-test('an unknown share id and an ungranted share read identically', async () => {
-  const handlers = register(aclContext());
+test("the worker's no_share answer becomes the shared no-such-share refusal", async () => {
+  client.fsListFolder.mockResolvedValue(opError('no_share', undefined, 404));
+  const handlers = register();
   const result = await handlers.get('fileshare_list_folder')!({
     shareId: '99999999-9999-9999-9999-999999999999',
     path: '/',
@@ -237,38 +179,83 @@ test('an unknown share id and an ungranted share read identically', async () => 
   expect(textOf(result)).toContain('No file share with that id is available to you');
 });
 
-test('read_file refuses paths the ACL closes without touching the backend', async () => {
-  const ctx = aclContext({ userRules: [{ path: '/closed', access: 'none' }] });
-  const handlers = register(ctx);
+test("a worker ACL refusal passes through in the worker's words", async () => {
+  client.fsReadFile.mockResolvedValue(
+    opError('forbidden', 'You do not have access to that file.', 403)
+  );
+  const handlers = register();
   const result = await handlers.get('fileshare_read_file')!({
     shareId: SHARE_ID,
     path: '/closed/file.txt',
   });
   expect(result.isError).toBe(true);
-  expect(openBackend).not.toHaveBeenCalled();
+  expect(textOf(result)).toBe('You do not have access to that file.');
 });
 
-test('read_file returns text for an allowed plain file', async () => {
-  const backend = fakeBackend(
-    new Map([
-      [
-        '/notes.txt',
-        { name: 'notes.txt', kind: 'file', size: 12, modifiedAt: null, content: 'hello world' },
-      ],
-    ])
-  );
-  openBackend.mockResolvedValue({ ok: true, val: backend });
-  const handlers = register(aclContext());
+test('an unconfigured service is a clear refusal, not a crash', async () => {
+  client.fsStatEntry.mockResolvedValue({ ok: false, err: { kind: 'unconfigured' } });
+  const handlers = register();
+  const result = await handlers.get('fileshare_stat')!({ shareId: SHARE_ID, path: '/x' });
+  expect(result.isError).toBe(true);
+  expect(textOf(result)).toContain('not configured');
+});
+
+test('read_file decodes the returned bytes and caps them', async () => {
+  client.fsReadFile.mockResolvedValue({
+    ok: true,
+    val: new TextEncoder().encode('hello world'),
+  });
+  const handlers = register();
   const result = await handlers.get('fileshare_read_file')!({
     shareId: SHARE_ID,
     path: '/notes.txt',
   });
   expect(result.isError).toBeUndefined();
   expect(textOf(result)).toContain('hello world');
+  // The requested cap honors the org attachment limit from the context.
+  expect(client.fsReadFile).toHaveBeenCalledWith(TARGET, '/notes.txt', 1024 * 1024);
 });
 
-test('request_file_upload requires read_write at the destination', async () => {
-  const handlers = register(aclContext()); // default access: read
+test('stat renders traverse-only access honestly', async () => {
+  client.fsStatEntry.mockResolvedValue({
+    ok: true,
+    val: { share: SHARE, path: '/vault', kind: 'dir', size: null, modifiedAt: null, access: 'traverse' },
+  });
+  const handlers = register();
+  const result = await handlers.get('fileshare_stat')!({ shareId: SHARE_ID, path: '/vault' });
+  expect(result.isError).toBeUndefined();
+  expect(textOf(result)).toContain('traverse only (folders below are granted)');
+});
+
+test('download_file hands out the session-guarded REST link, folders refused', async () => {
+  client.fsStatEntry.mockResolvedValue({
+    ok: true,
+    val: { share: SHARE, path: '/report.pdf', kind: 'file', size: 9, modifiedAt: null, access: 'read' },
+  });
+  const handlers = register();
+  const result = await handlers.get('fileshare_download_file')!({
+    shareId: SHARE_ID,
+    path: '/report.pdf',
+  });
+  expect(result.isError).toBeUndefined();
+  expect(textOf(result)).toContain(
+    `https://renkei.example.test/api/tenant/tenant-1/fileshares/${SHARE_ID}/file?path=%2Freport.pdf`
+  );
+
+  client.fsStatEntry.mockResolvedValue({
+    ok: true,
+    val: { share: SHARE, path: '/folder', kind: 'dir', size: null, modifiedAt: null, access: 'read' },
+  });
+  const folder = await handlers.get('fileshare_download_file')!({
+    shareId: SHARE_ID,
+    path: '/folder',
+  });
+  expect(folder.isError).toBe(true);
+  expect(textOf(folder)).toContain('is a folder');
+});
+
+test('request_file_upload requires read_write at the destination (store-side)', async () => {
+  const handlers = register(); // default access: read
   const result = await handlers.get('fileshare_request_file_upload')!({
     shareId: SHARE_ID,
     path: '/reports',
@@ -309,162 +296,111 @@ test('request_file_upload refuses filenames carrying separators', async () => {
   expect(createUploadSlot).not.toHaveBeenCalled();
 });
 
-test('create_folder requires read_write on the parent', async () => {
-  const ctx = aclContext({
-    grant: { subject: 'auth0|alice', defaultAccess: 'read' },
-    userRules: [{ path: '/drafts', access: 'read_write' }],
-  });
-  const backend = fakeBackend(new Map());
-  openBackend.mockResolvedValue({ ok: true, val: backend });
-  const handlers = register(ctx);
-
-  const refused = await handlers.get('fileshare_create_folder')!({
-    shareId: SHARE_ID,
-    path: '/reports/new',
-  });
-  expect(refused.isError).toBe(true);
-
-  const allowed = await handlers.get('fileshare_create_folder')!({
+test('create_folder forwards to the worker and phrases exists specially', async () => {
+  client.fsMakeFolder.mockResolvedValue({ ok: true, val: { share: SHARE, path: '/drafts/new' } });
+  const handlers = register();
+  const made = await handlers.get('fileshare_create_folder')!({
     shareId: SHARE_ID,
     path: '/drafts/new',
   });
-  expect(allowed.isError).toBeUndefined();
-  expect(backend.mkdirs).toEqual(['/drafts/new']);
-});
+  expect(made.isError).toBeUndefined();
+  expect(textOf(made)).toContain('Created /drafts/new on "Accounting"');
+  expect(client.fsMakeFolder).toHaveBeenCalledWith(TARGET, '/drafts/new');
 
-test('download_file hands out the session-guarded REST link', async () => {
-  const backend = fakeBackend(
-    new Map([['/report.pdf', { name: 'report.pdf', kind: 'file', size: 9, modifiedAt: null }]])
-  );
-  openBackend.mockResolvedValue({ ok: true, val: backend });
-  const handlers = register(aclContext());
-  const result = await handlers.get('fileshare_download_file')!({
+  client.fsMakeFolder.mockResolvedValue(opError('exists', undefined, 409));
+  const taken = await handlers.get('fileshare_create_folder')!({
     shareId: SHARE_ID,
-    path: '/report.pdf',
+    path: '/drafts/new',
   });
-  expect(result.isError).toBeUndefined();
-  expect(textOf(result)).toContain(
-    `https://renkei.example.test/api/tenant/tenant-1/fileshares/${SHARE_ID}/file?path=%2Freport.pdf`
-  );
+  expect(taken.isError).toBe(true);
+  expect(textOf(taken)).toContain('already exists');
 });
 
 // ---------------------------------------------------------------------------
-// Move / rename / delete — the destructive-operation contract.
+// Move / rename / delete — the destructive-operation surface.
 // ---------------------------------------------------------------------------
 
-function rwContext(userRules: AclContext['userRules'] = []) {
-  return aclContext({
-    grant: { subject: 'auth0|alice', defaultAccess: 'read_write' },
-    userRules,
+test('move forwards source and destination folder; refusals pass through', async () => {
+  client.fsMoveEntry.mockResolvedValue({
+    ok: true,
+    val: { share: SHARE, path: '/archive/a.txt', unchanged: false },
   });
-}
-
-test('move requires read/write on BOTH ends', async () => {
-  const ctx = aclContext({
-    grant: { subject: 'auth0|alice', defaultAccess: 'read_write' },
-    userRules: [{ path: '/readonly', access: 'read' }],
-  });
-  const backend = fakeBackend(
-    new Map([['/a.txt', { name: 'a.txt', kind: 'file', size: 1, modifiedAt: null }]])
-  );
-  openBackend.mockResolvedValue({ ok: true, val: backend });
-  const handlers = register(ctx);
-
-  const refused = await handlers.get('fileshare_move_entry')!({
-    shareId: SHARE_ID,
-    path: '/a.txt',
-    toFolder: '/readonly',
-  });
-  expect(refused.isError).toBe(true);
-  expect(backend.renames).toHaveLength(0);
-
-  const allowed = await handlers.get('fileshare_move_entry')!({
-    shareId: SHARE_ID,
-    path: '/a.txt',
-    toFolder: '/archive',
-  });
-  expect(allowed.isError).toBeUndefined();
-  expect(backend.renames).toEqual([{ from: '/a.txt', to: '/archive/a.txt' }]);
-});
-
-test('anchored rules make a path immovable and undeletable', async () => {
-  listRulePathsUnder.mockResolvedValue({ ok: true, val: ['/vault/secret'] });
-  const backend = fakeBackend(
-    new Map([['/vault', { name: 'vault', kind: 'dir', size: null, modifiedAt: null }]])
-  );
-  openBackend.mockResolvedValue({ ok: true, val: backend });
-  const handlers = register(rwContext());
-
+  const handlers = register();
   const moved = await handlers.get('fileshare_move_entry')!({
     shareId: SHARE_ID,
+    path: '/a.txt',
+    toFolder: '/archive',
+  });
+  expect(moved.isError).toBeUndefined();
+  expect(textOf(moved)).toContain('Moved /a.txt to /archive/a.txt');
+  expect(client.fsMoveEntry).toHaveBeenCalledWith(TARGET, '/a.txt', '/archive');
+
+  client.fsMoveEntry.mockResolvedValue(
+    opError(
+      'forbidden',
+      'Access rules are anchored at or under that path (/vault/secret), so it cannot be ' +
+        'moved or renamed — an administrator must remove those rules first.',
+      403
+    )
+  );
+  const anchored = await handlers.get('fileshare_move_entry')!({
+    shareId: SHARE_ID,
     path: '/vault',
     toFolder: '/archive',
   });
-  expect(moved.isError).toBe(true);
-  expect(textOf(moved)).toContain('/vault/secret');
-  expect(textOf(moved)).toContain('administrator');
-
-  const previewed = await handlers.get('fileshare_delete_entry_preview')!({
-    shareId: SHARE_ID,
-    path: '/vault',
-  });
-  expect(previewed.isError).toBe(true);
-  expect(backend.renames).toHaveLength(0);
-  expect(backend.removes).toHaveLength(0);
+  expect(anchored.isError).toBe(true);
+  expect(textOf(anchored)).toContain('/vault/secret');
+  expect(textOf(anchored)).toContain('administrator');
 });
 
-test('a store error on the rule query fails closed', async () => {
-  listRulePathsUnder.mockResolvedValue({ ok: false, err: { type: 'DB_ERROR' } });
-  const handlers = register(rwContext());
-  const result = await handlers.get('fileshare_rename_entry')!({
-    shareId: SHARE_ID,
-    path: '/a.txt',
-    newName: 'b.txt',
-  });
-  expect(result.isError).toBe(true);
+test('the share root is refused locally for move, rename and delete', async () => {
+  const handlers = register();
+  for (const [tool, args] of [
+    ['fileshare_move_entry', { shareId: SHARE_ID, path: '/', toFolder: '/x' }],
+    ['fileshare_rename_entry', { shareId: SHARE_ID, path: '/', newName: 'x' }],
+    ['fileshare_delete_entry_confirm', { shareId: SHARE_ID, path: '/' }],
+  ] as const) {
+    const result = await handlers.get(tool)!(args);
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('share root');
+  }
+  expect(client.fsMoveEntry).not.toHaveBeenCalled();
+  expect(client.fsRenameEntry).not.toHaveBeenCalled();
+  expect(client.fsRemoveEntry).not.toHaveBeenCalled();
 });
 
-test('rename validates the new name and refuses clobbering', async () => {
-  const backend = fakeBackend(
-    new Map([
-      ['/a.txt', { name: 'a.txt', kind: 'file', size: 1, modifiedAt: null }],
-      ['/taken.txt', { name: 'taken.txt', kind: 'file', size: 1, modifiedAt: null }],
-    ])
+test('rename reports clobber refusals and unchanged names', async () => {
+  client.fsRenameEntry.mockResolvedValue(
+    opError('exists', 'Something already exists at the destination.', 409)
   );
-  openBackend.mockResolvedValue({ ok: true, val: backend });
-  const handlers = register(rwContext());
-
-  const traversal = await handlers.get('fileshare_rename_entry')!({
-    shareId: SHARE_ID,
-    path: '/a.txt',
-    newName: '../up.txt',
-  });
-  expect(traversal.isError).toBe(true);
-  expect(backend.renames).toHaveLength(0);
-
+  const handlers = register();
   const clobber = await handlers.get('fileshare_rename_entry')!({
     shareId: SHARE_ID,
     path: '/a.txt',
     newName: 'taken.txt',
   });
   expect(clobber.isError).toBe(true);
+  expect(textOf(clobber)).toContain('already exists');
 
-  const renamed = await handlers.get('fileshare_rename_entry')!({
+  client.fsRenameEntry.mockResolvedValue({
+    ok: true,
+    val: { share: SHARE, path: '/a.txt', unchanged: true },
+  });
+  const unchanged = await handlers.get('fileshare_rename_entry')!({
     shareId: SHARE_ID,
     path: '/a.txt',
-    newName: 'b.txt',
+    newName: 'a.txt',
   });
-  expect(renamed.isError).toBeUndefined();
-  expect(backend.renames.at(-1)).toEqual({ from: '/a.txt', to: '/b.txt' });
+  expect(unchanged.isError).toBe(true);
+  expect(textOf(unchanged)).toContain('already its name');
 });
 
-test('delete preview stages the confirm without touching anything', async () => {
-  const backend = fakeBackend(
-    new Map([['/old.txt', { name: 'old.txt', kind: 'file', size: 42, modifiedAt: null }]])
-  );
-  openBackend.mockResolvedValue({ ok: true, val: backend });
-  const handlers = register(rwContext());
-
+test('delete preview stages the confirm from the worker preview, no delete call', async () => {
+  client.fsPreviewRemove.mockResolvedValue({
+    ok: true,
+    val: { share: SHARE, path: '/old.txt', kind: 'file', size: 42, modifiedAt: null },
+  });
+  const handlers = register();
   const result = (await handlers.get('fileshare_delete_entry_preview')!({
     shareId: SHARE_ID,
     path: '/old.txt',
@@ -473,7 +409,7 @@ test('delete preview stages the confirm without touching anything', async () => 
     structuredContent?: Record<string, unknown>;
   };
   expect(result.isError).toBeUndefined();
-  expect(backend.removes).toHaveLength(0);
+  expect(client.fsRemoveEntry).not.toHaveBeenCalled();
   const card = result.structuredContent ?? {};
   expect(card.confirmTool).toBe('fileshare_delete_entry_confirm');
   expect(card.confirmArgs).toEqual({ shareId: SHARE_ID, path: '/old.txt' });
@@ -481,16 +417,9 @@ test('delete preview stages the confirm without touching anything', async () => 
   expect(String(card.title)).toContain('permanently');
 });
 
-test('delete preview refuses a non-empty folder before any card renders', async () => {
-  const backend = fakeBackend(
-    new Map([
-      ['/stuff', { name: 'stuff', kind: 'dir', size: null, modifiedAt: null }],
-      ['/stuff/kid.txt', { name: 'kid.txt', kind: 'file', size: 1, modifiedAt: null }],
-    ])
-  );
-  openBackend.mockResolvedValue({ ok: true, val: backend });
-  const handlers = register(rwContext());
-
+test('delete preview relays the non-empty refusal before any card renders', async () => {
+  client.fsPreviewRemove.mockResolvedValue(opError('not_empty', undefined, 409));
+  const handlers = register();
   const result = await handlers.get('fileshare_delete_entry_preview')!({
     shareId: SHARE_ID,
     path: '/stuff',
@@ -499,25 +428,24 @@ test('delete preview refuses a non-empty folder before any card renders', async 
   expect(textOf(result)).toContain('not empty');
 });
 
-test('confirm re-checks authority and deletes', async () => {
-  const backend = fakeBackend(
-    new Map([['/old.txt', { name: 'old.txt', kind: 'file', size: 1, modifiedAt: null }]])
+test('confirm calls the worker delete, which re-checks authority itself', async () => {
+  client.fsRemoveEntry.mockResolvedValue(
+    opError('forbidden', 'You do not have read/write access to delete that path.', 403)
   );
-  openBackend.mockResolvedValue({ ok: true, val: backend });
-
-  const readOnly = register(aclContext()); // default access: read
-  const refused = await readOnly.get('fileshare_delete_entry_confirm')!({
+  const handlers = register();
+  const refused = await handlers.get('fileshare_delete_entry_confirm')!({
     shareId: SHARE_ID,
     path: '/old.txt',
   });
   expect(refused.isError).toBe(true);
-  expect(backend.removes).toHaveLength(0);
+  expect(textOf(refused)).toContain('read/write');
 
-  const handlers = register(rwContext());
+  client.fsRemoveEntry.mockResolvedValue({ ok: true, val: { share: SHARE, path: '/old.txt' } });
   const deleted = await handlers.get('fileshare_delete_entry_confirm')!({
     shareId: SHARE_ID,
     path: '/old.txt',
   });
   expect(deleted.isError).toBeUndefined();
-  expect(backend.removes).toEqual(['/old.txt']);
+  expect(textOf(deleted)).toContain('Deleted /old.txt from "Accounting"');
+  expect(client.fsRemoveEntry).toHaveBeenCalledWith(TARGET, '/old.txt');
 });

@@ -14,15 +14,8 @@ import type { DB } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { ATLASSIAN, ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renkei/provider-grants';
 import { graphUploadViaSession } from '@renkei/connector-microsoft';
-import {
-  childPath as fileshareChildPath,
-  decryptCredentials,
-  effectiveAccess,
-  getAclContext,
-  openBackend,
-  readCredentialCiphertext,
-  withSessionLimits,
-} from '@renkei/connector-fileshares';
+import { childPath as fileshareChildPath } from '@renkei/connector-fileshares';
+import { clientFailure, fsWriteFile } from '@/lib/file-shares/service-client';
 import { cacheTokenMetadata, jiraFetch } from '@/lib/mcp-tools/common';
 import {
   graphPost,
@@ -304,12 +297,13 @@ async function outlookDraftAttachment(slot: UploadSlotRow, bytes: Buffer): Promi
 
 /**
  * File-share write: the destination is a share Renkei itself gates, so the
- * FULL ACL evaluation re-runs here, at byte-arrival time — the grant may
- * have been narrowed between slot mint and POST, and a slot must never
- * outlive the access that minted it.
+ * FULL ACL evaluation re-runs at byte-arrival time — the grant may have
+ * been narrowed between slot mint and POST, and a slot must never outlive
+ * the access that minted it. The fileshare worker performs that check and
+ * the write in one call; this executor only names the destination.
  */
 async function fileshareFile(
-  db: Kysely<DB>,
+  _db: Kysely<DB>,
   slot: UploadSlotRow,
   bytes: Buffer
 ): Promise<UploadOutcome> {
@@ -318,38 +312,20 @@ async function fileshareFile(
   const folder = str(destination.path) || '/';
   if (!shareId) return { ok: false, detail: 'The upload slot carries no share destination.' };
 
-  const ctxResult = await getAclContext(db, slot.tenant_id, shareId, slot.subject);
-  if (!ctxResult.ok || !ctxResult.val) {
-    return { ok: false, detail: 'That share is no longer available to you.' };
-  }
-  const ctx = ctxResult.val;
   const target = fileshareChildPath(folder, slot.filename);
-  if (effectiveAccess(ctx, target) !== 'read_write') {
-    return { ok: false, detail: 'You no longer have read/write access at that destination.' };
-  }
-
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return { ok: false, detail: 'Token encryption is not configured.' };
-  const ciphertext = await readCredentialCiphertext(db, slot.tenant_id, shareId);
-  if (!ciphertext.ok || ciphertext.val === null) {
-    return { ok: false, detail: 'The share has no stored credentials.' };
-  }
-  const credentials = decryptCredentials(ciphertext.val, keyResult.val);
-  if (!credentials.ok) {
-    return { ok: false, detail: 'The stored share credentials cannot be read.' };
-  }
-
-  const written = await withSessionLimits(shareId, 'interactive', async () => {
-    const opened = await openBackend(ctx.share, credentials.val);
-    if (!opened.ok) return opened;
-    try {
-      return await opened.val.write(target, new Uint8Array(bytes));
-    } finally {
-      await opened.val.close();
-    }
-  });
+  const written = await fsWriteFile(
+    { tenantId: slot.tenant_id, shareId, subject: slot.subject },
+    target,
+    new Uint8Array(bytes)
+  );
   if (!written.ok) {
-    return { ok: false, detail: written.err.message ?? `Write failed (${written.err.type}).` };
+    if (written.err.kind === 'op' && written.err.type === 'no_share') {
+      return { ok: false, detail: 'That share is no longer available to you.' };
+    }
+    if (written.err.kind === 'op' && written.err.type === 'forbidden') {
+      return { ok: false, detail: 'You no longer have read/write access at that destination.' };
+    }
+    return { ok: false, detail: clientFailure(written.err).message };
   }
   return { ok: true, detail: `Wrote "${slot.filename}" to ${folder} on the share.` };
 }

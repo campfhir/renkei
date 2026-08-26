@@ -1,24 +1,19 @@
 /**
  * Prove a share's connection details actually reach a server — with the
  * STORED credential, or with credential fields from the body so an admin
- * can test before saving. Lists the root and reports the entry count;
- * never echoes a credential in any direction.
+ * can test before saving. The fileshare worker makes the connection (it is
+ * the only process that opens protocol sessions or reads stored
+ * credentials); unsaved credentials cross only the authenticated internal
+ * seam and are never echoed in any direction.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
-import {
-  decryptCredentials,
-  getShare,
-  openBackend,
-  readCredentialCiphertext,
-  withSessionLimits,
-} from '@renkei/connector-fileshares';
-import type { ShareCredentials } from '@renkei/connector-fileshares';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { parseSharePayload } from '@/lib/file-shares/parse';
+import { clientFailure, fsTestConnection } from '@/lib/file-shares/service-client';
+import { getShare } from '@renkei/connector-fileshares';
 
 export async function POST(
   request: NextRequest,
@@ -59,8 +54,6 @@ export async function POST(
       rootPath: parsed.input.rootPath,
       caseInsensitive: parsed.input.caseInsensitive,
       maxAccess: parsed.input.maxAccess,
-      enabled: true,
-      hasCredentials: true,
     };
   } else if (storedRow) {
     summary = storedRow.summary;
@@ -68,43 +61,34 @@ export async function POST(
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
 
-  let credentials: ShareCredentials | null = parsed?.credentials ?? null;
-  if (!credentials) {
-    const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-    if (!keyResult.ok) {
-      return NextResponse.json({ error: 'Encryption key unavailable' }, { status: 500 });
-    }
-    const ciphertext = await readCredentialCiphertext(dbResult.val, tenant.id, shareId);
-    if (!ciphertext.ok || ciphertext.val === null) {
-      return NextResponse.json({
-        ok: false,
-        error: 'No credentials stored yet — enter them first.',
-      });
-    }
-    const opened = decryptCredentials(ciphertext.val, keyResult.val);
-    if (!opened.ok) {
-      return NextResponse.json({
-        ok: false,
-        error: 'Stored credentials cannot be read — re-enter them.',
-      });
-    }
-    credentials = opened.val;
-  }
-
-  const listed = await withSessionLimits(summary.id, 'interactive', async () => {
-    const backend = await openBackend(summary, credentials);
-    if (!backend.ok) return backend;
-    try {
-      return await backend.val.list('/');
-    } finally {
-      await backend.val.close();
-    }
+  const tested = await fsTestConnection({
+    tenantId: tenant.id,
+    storedShareId: storedRow ? shareId : null,
+    summary,
+    credentials: parsed?.credentials ?? null,
   });
-  if (!listed.ok) {
-    return NextResponse.json({
-      ok: false,
-      error: listed.err.message ?? `Connection failed (${listed.err.type})`,
-    });
+  if (!tested.ok) {
+    if (tested.err.kind === 'op') {
+      switch (tested.err.type) {
+        case 'no_credentials':
+          return NextResponse.json({
+            ok: false,
+            error: 'No credentials stored yet — enter them first.',
+          });
+        case 'bad_credentials':
+          return NextResponse.json({
+            ok: false,
+            error: 'Stored credentials cannot be read — re-enter them.',
+          });
+        default:
+          return NextResponse.json({
+            ok: false,
+            error: tested.err.message ?? `Connection failed (${tested.err.type})`,
+          });
+      }
+    }
+    const failure = clientFailure(tested.err);
+    return NextResponse.json({ ok: false, error: failure.message });
   }
-  return NextResponse.json({ ok: true, entries: listed.val.length });
+  return NextResponse.json({ ok: true, entries: tested.val.entries });
 }
