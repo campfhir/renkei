@@ -88,6 +88,7 @@ export const EXPECTED_MIGRATIONS = [
   '055-banner-phrases-to-scripts',
   '056-cleaner-script-compiled',
   '057-webex-sent-messages',
+  '058-agent-drafts',
 ];
 
 export interface MigrationStatus {

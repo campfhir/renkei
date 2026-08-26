@@ -38,6 +38,9 @@ const NON_SESSION_AUTH: Record<string, string> = {
   'api/logs/route.ts': 'LOG_SHIP_API_KEY bearer gate inside lib/log-ingest',
   'api/logs/register/route.ts': 'same LOG_SHIP_API_KEY bearer gate (trust on first use)',
   'api/mcp/[tenantId]/[transport]/route.ts': 'MCP access-token bearer (resolveAccessToken)',
+  'api/tenant/[tenantId]/agents/draft/[draftId]/run/route.ts':
+    'agent-worker bearer (resolveAccessToken, application "agent"); the token names the ' +
+    'subject the draft is built for, and the row is read under that subject',
   'api/mcp/[tenantId]/oauth/token/route.ts':
     'OAuth token endpoint: client secret + PKCE code_verifier',
   'api/oauth/callback/route.ts': 'single-use OAuth state row bound to the pending authorization',

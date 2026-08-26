@@ -80,6 +80,23 @@ export interface AgentJobsDeadLetters {
   type: string;
 }
 
+export interface AgentDrafts {
+  agent_id: string | null;
+  attempts: Generated<number>;
+  consumed_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  error_detail: string | null;
+  finished_at: Timestamp | null;
+  id: Generated<string>;
+  owner_subject: string;
+  request: Json;
+  result: Json | null;
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface AgentMemories {
   agent_id: string;
   content: string;
@@ -679,6 +696,7 @@ export interface DB {
   actionable_items: ActionableItems;
   agent_jobs: AgentJobs;
   agent_jobs_dead_letters: AgentJobsDeadLetters;
+  agent_drafts: AgentDrafts;
   agent_memories: AgentMemories;
   agent_run_counters: AgentRunCounters;
   agent_run_steps: AgentRunSteps;

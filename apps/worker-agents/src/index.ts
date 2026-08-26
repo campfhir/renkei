@@ -19,6 +19,8 @@ import { getDatabase, closeDatabase } from '@renkei/db';
 import { agentJobsQueue, webhookEventsQueue } from '@renkei/queue';
 import { createEventLoop, schedulePeriodicSweep } from '@renkei/worker-loop';
 import { createAgentRunHandler } from './engine';
+import { createDraftHandler } from './draft';
+import { createDraftSweep, DRAFT_SWEEP_INTERVAL_MS } from './draft-sweep';
 import { createFinalizeHook } from './finalize';
 import { createScheduleSweep } from './schedule-sweep';
 import { createApprovalSweep, APPROVAL_SWEEP_MS } from './approval-sweep';
@@ -52,6 +54,7 @@ async function main(): Promise<void> {
   if (!dbResult.ok) throw new Error('Database unavailable at boot');
 
   const db = dbResult.val;
+  const handleDraft = createDraftHandler({ db, webBaseUrl: webBaseUrl() });
   const handleRun = createAgentRunHandler({
     db,
     webBaseUrl: webBaseUrl(),
@@ -93,6 +96,15 @@ async function main(): Promise<void> {
       JANITOR_SWEEP_MS,
       createStuckRunJanitor(db)
     ),
+    // Rescues drafts stranded by a process that died mid-flight, then
+    // prunes old ones. Both halves are idempotent.
+    schedulePeriodicSweep(
+      logger,
+      'agent drafts',
+      'worker-agents/draft-sweep',
+      DRAFT_SWEEP_INTERVAL_MS,
+      createDraftSweep(db)
+    ),
     // Replica-safe by construction (equivalent summaries, idempotent
     // deletes) — see memory-compaction.ts.
     schedulePeriodicSweep(
@@ -111,10 +123,14 @@ async function main(): Promise<void> {
     // Runs enqueue under a per-agent fairness lane (`agents:{agentId}`);
     // the bare `agents` form still matches so rows enqueued before lanes
     // existed drain normally.
-    handlerFor: (event) =>
-      (event.source === 'agents' || event.source.startsWith('agents:')) && event.type === 'run'
-        ? handleRun
-        : undefined,
+    handlerFor: (event) => {
+      const ours = event.source === 'agents' || event.source.startsWith('agents:');
+      if (!ours) return undefined;
+      if (event.type === 'run') return handleRun;
+      // Drafting from prose: durable so the browser tab need not survive it.
+      if (event.type === 'draft') return handleDraft;
+      return undefined;
+    },
     logger,
     label: 'worker-agents/loop',
   });

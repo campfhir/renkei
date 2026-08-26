@@ -40,7 +40,17 @@ export async function ensureAgentRunnerClient(db: Kysely<DB>, tenantId: string):
 
 export async function mintRunToken(
   db: Kysely<DB>,
-  params: { tenantId: string; subject: string; agentId: string; ttlSeconds: number }
+  params: {
+    tenantId: string;
+    subject: string;
+    /**
+     * The acting agent, or null when the work is the PERSON's rather than an
+     * agent's — drafting from prose is the case: there is usually no agent
+     * yet, and even when revising one the draft is the author's own work.
+     */
+    agentId: string | null;
+    ttlSeconds: number;
+  }
 ): Promise<string> {
   const clientId = await ensureAgentRunnerClient(db, params.tenantId);
   const token = generateSecret(32);
