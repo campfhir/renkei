@@ -164,122 +164,140 @@ export default async function ConnectorsPage({
       </p>
 
       {/*
-        Columns rather than one long stack: with seven connectors the stack
-        made you scroll past everything already connected to reach the one
-        you had not. Capped at three — wider than that and the cards stretch
-        far enough that the eye loses the row.
+        Two bands, because the endpoint and the connectors are different
+        kinds of thing. The endpoint is one URL you copy once; the connectors
+        are a set you scan and pick from. An earlier pass had the endpoint as
+        just another card in the column flow, which put it top-LEFT at the
+        head of the first column and squeezed a 60-character URL into a third
+        of the page — it wrapped mid-path. Its own full-width row gives the
+        URL room to sit on one line, and stops it competing with the cards
+        for a place in the packing order.
 
-        CSS multi-column rather than a grid, because these cards differ in
-        height by a factor of five. A grid puts each in a row-height cell, so
-        the endpoint card ends up with a screenful of white space beneath it
-        while Microsoft's four products set the row. Columns pack vertically
-        instead, and `break-inside-avoid` on each card is what stops one
-        being split down the middle across a column boundary.
-
-        The two layout modes also carry the ordering. Below `lg` this is a
-        flex column, where `order-last` puts the endpoint URL at the bottom —
-        on a phone the connect buttons are what you came for, and nobody
-        pastes an MCP URL from there. At `lg` the container becomes `block`
-        with columns, `order` stops applying, and the endpoint card (first in
-        the DOM) leads the first column, which is where a first-time visitor
-        should meet it.
+        `order-last` keeps the phone ordering the column flow used to carry:
+        below `lg` the connect buttons are what you came for, and nobody
+        pastes an MCP URL from a phone. From `lg` up it leads, which is where
+        a first-time visitor should meet it.
       */}
-      <div className="flex flex-col lg:block lg:columns-2 lg:gap-6 xl:columns-3">
-        <div className="order-last mb-6 break-inside-avoid">
+      <div className="flex flex-col gap-6">
+        <div className="order-last lg:order-first">
           <McpEndpoint tenantId={tenant.id} />
         </div>
 
-        <div className="mb-6 break-inside-avoid">
+        {/*
+        Columns rather than one long stack: with six connectors the stack
+        made you scroll past everything already connected to reach the one
+        you had not.
+
+        Capped at TWO. Three fit the page at `xl` but not the cards: inside
+        `max-w-6xl` a third of the width is ~350px, and Atlassian — three
+        nested product panels, each with its own capability list and connect
+        button — spent it all on padding and two-line button labels. Two
+        columns give every card ~540px, which is what the densest one needs.
+
+        CSS multi-column rather than a grid, because these cards differ in
+        height by a factor of five. A grid puts each in a row-height cell, so
+        Zoom ends up with a screenful of white space beneath it while
+        Microsoft's four products set the row. Columns pack vertically
+        instead, and `break-inside-avoid` on each card is what stops one
+        being split down the middle across a column boundary.
+
+        The `-mb-6` cancels the trailing margin of whichever card ends the
+        flow, so the gap to the endpoint row below on a phone is the same
+        `gap-6` as everywhere else.
+      */}
+        <div className="-mb-6 lg:columns-2 lg:gap-6">
           {/*
-          One Atlassian card holding all three products. Each keeps its own
-          connect/disconnect controls — they are three separate OAuth apps
-          with three separate grants, unlike Microsoft's single consent.
-        */}
-          <AtlassianConnector
-            tenantId={tenant.id}
-            jira={
-              enabled.has('atlassian')
-                ? {
-                    ceiling: atlassianCeiling,
-                    priorScopes: atlassianGrant?.requested_scopes ?? null,
-                  }
-                : undefined
-            }
-            jsm={
-              enabled.has('atlassian-jsm')
-                ? {
-                    connected: jsmGrant !== undefined && jsmGrant !== null,
-                    displayName: jsmGrant?.display_name ?? null,
-                    ceiling: jsmCeiling,
-                    priorScopes: jsmGrant?.requested_scopes ?? null,
-                  }
-                : undefined
-            }
-            confluence={
-              enabled.has('atlassian-confluence')
-                ? {
-                    connected: confluenceGrant !== undefined && confluenceGrant !== null,
-                    displayName: confluenceGrant?.display_name ?? null,
-                    ceiling: confluenceCeiling,
-                    priorScopes: confluenceGrant?.requested_scopes ?? null,
-                  }
-                : undefined
-            }
-          />
+            One Atlassian card holding all three products. Each keeps its own
+            connect/disconnect controls — they are three separate OAuth apps
+            with three separate grants, unlike Microsoft's single consent.
+          */}
+          <div className="mb-6 break-inside-avoid">
+            <AtlassianConnector
+              tenantId={tenant.id}
+              jira={
+                enabled.has('atlassian')
+                  ? {
+                      ceiling: atlassianCeiling,
+                      priorScopes: atlassianGrant?.requested_scopes ?? null,
+                    }
+                  : undefined
+              }
+              jsm={
+                enabled.has('atlassian-jsm')
+                  ? {
+                      connected: jsmGrant !== undefined && jsmGrant !== null,
+                      displayName: jsmGrant?.display_name ?? null,
+                      ceiling: jsmCeiling,
+                      priorScopes: jsmGrant?.requested_scopes ?? null,
+                    }
+                  : undefined
+              }
+              confluence={
+                enabled.has('atlassian-confluence')
+                  ? {
+                      connected: confluenceGrant !== undefined && confluenceGrant !== null,
+                      displayName: confluenceGrant?.display_name ?? null,
+                      ceiling: confluenceCeiling,
+                      priorScopes: confluenceGrant?.requested_scopes ?? null,
+                    }
+                  : undefined
+              }
+            />
+          </div>
+
+          {enabled.has(WEBEX_USER_CONNECTOR) && (
+            <div className="mb-6 break-inside-avoid">
+              <WebexUserConnector
+                tenantId={tenant.id}
+                connected={webexGrant !== undefined && webexGrant !== null}
+                displayName={webexGrant?.display_name ?? null}
+                allSpaces={
+                  typeof webexGrant?.metadata === 'object' &&
+                  webexGrant.metadata !== null &&
+                  !Array.isArray(webexGrant.metadata) &&
+                  'allSpaces' in webexGrant.metadata &&
+                  webexGrant.metadata.allSpaces === true
+                }
+                ceiling={webexCeiling}
+                priorScopes={webexGrant?.requested_scopes ?? null}
+              />
+            </div>
+          )}
+
+          {enabled.has(MICROSOFT_CONNECTOR) && (
+            <div className="mb-6 break-inside-avoid">
+              <MicrosoftConnector
+                tenantId={tenant.id}
+                connected={microsoftGrant !== undefined && microsoftGrant !== null}
+                displayName={microsoftGrant?.display_name ?? null}
+                ceiling={microsoftCeiling}
+                priorScopes={microsoftGrant?.requested_scopes ?? null}
+              />
+            </div>
+          )}
+
+          {/* Scope drift the Marketplace app hides: Zoom silently drops any
+              requested scope the app doesn't carry, and the only symptom is
+              tools quietly not registering. Surface the difference here. */}
+          {enabled.has(ZOOM_CONNECTOR) && (
+            <div className="mb-6 break-inside-avoid">
+              <ZoomConnector
+                missingScopes={
+                  zoomGrant?.granted_scopes
+                    ? (zoomGrant.requested_scopes ?? []).filter(
+                        (scope) => !zoomGrant.granted_scopes?.includes(scope)
+                      )
+                    : []
+                }
+                tenantId={tenant.id}
+                connected={zoomGrant !== undefined && zoomGrant !== null}
+                displayName={zoomGrant?.display_name ?? null}
+                ceiling={zoomCeiling}
+                priorScopes={zoomGrant?.requested_scopes ?? null}
+              />
+            </div>
+          )}
         </div>
-
-        {enabled.has(WEBEX_USER_CONNECTOR) && (
-          <div className="mb-6 break-inside-avoid">
-            <WebexUserConnector
-              tenantId={tenant.id}
-              connected={webexGrant !== undefined && webexGrant !== null}
-              displayName={webexGrant?.display_name ?? null}
-              allSpaces={
-                typeof webexGrant?.metadata === 'object' &&
-                webexGrant.metadata !== null &&
-                !Array.isArray(webexGrant.metadata) &&
-                'allSpaces' in webexGrant.metadata &&
-                webexGrant.metadata.allSpaces === true
-              }
-              ceiling={webexCeiling}
-              priorScopes={webexGrant?.requested_scopes ?? null}
-            />
-          </div>
-        )}
-
-        {enabled.has(MICROSOFT_CONNECTOR) && (
-          <div className="mb-6 break-inside-avoid">
-            <MicrosoftConnector
-              tenantId={tenant.id}
-              connected={microsoftGrant !== undefined && microsoftGrant !== null}
-              displayName={microsoftGrant?.display_name ?? null}
-              ceiling={microsoftCeiling}
-              priorScopes={microsoftGrant?.requested_scopes ?? null}
-            />
-          </div>
-        )}
-
-        {/* Scope drift the Marketplace app hides: Zoom silently drops any
-            requested scope the app doesn't carry, and the only symptom is
-            tools quietly not registering. Surface the difference here. */}
-        {enabled.has(ZOOM_CONNECTOR) && (
-          <div className="mb-6 break-inside-avoid">
-            <ZoomConnector
-              missingScopes={
-                zoomGrant?.granted_scopes
-                  ? (zoomGrant.requested_scopes ?? []).filter(
-                      (scope) => !zoomGrant.granted_scopes?.includes(scope)
-                    )
-                  : []
-              }
-              tenantId={tenant.id}
-              connected={zoomGrant !== undefined && zoomGrant !== null}
-              displayName={zoomGrant?.display_name ?? null}
-              ceiling={zoomCeiling}
-              priorScopes={zoomGrant?.requested_scopes ?? null}
-            />
-          </div>
-        )}
       </div>
     </div>
   );
