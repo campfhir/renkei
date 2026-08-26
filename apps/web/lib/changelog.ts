@@ -44,8 +44,25 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: '2026-08-26',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'The step limit on an agent is now yours to set',
+        detail:
+          'How many steps one agent may hold was fixed at twenty. It is now an organization setting on the admin settings page, adjustable from one to a hundred. Checked when an agent is saved; agents already over a lowered limit keep running until they are next edited.',
+      },
+    ],
+  },
+  {
+    date: '2026-08-26',
     heading: 'Narrowing what wakes a WebEx agent',
     entries: [
+      {
+        kind: 'added',
+        title: 'A WebEx trigger can keep to direct messages, or keep them out',
+        detail:
+          'A trigger on posted messages can now watch only one-to-one conversations, only group spaces, or both — alongside the space, sender and keyword filters, and checked the same way, before the agent starts.',
+      },
       {
         kind: 'added',
         title: 'Agents can wait for particular words in a WebEx message',
