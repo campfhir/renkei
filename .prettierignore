@@ -16,7 +16,10 @@ yarn.lock
 # evaluates each one as `const __fn = ( <file> );`, so the statement
 # semicolon Prettier appends turns every script into a syntax error. Their
 # exact text is what an admin copies into the editor.
-packages/email-sanitizer/scripts/cleaner-library/*.ts
+#
+# Numbered, so this covers the payloads and NOT cleaner-globals.d.ts beside
+# them, which is ordinary source and wants ordinary formatting.
+packages/email-sanitizer/scripts/cleaner-library/[0-9]*.ts
 
 # Widget bundles are build output (lib/mcp-widgets/build.mjs). Prettier
 # rewrites the generator's quoting, so every build and every commit fought

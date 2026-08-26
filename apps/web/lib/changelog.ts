@@ -43,8 +43,80 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
-    date: null,
-    heading: 'On the way',
+    date: '2026-08-26',
+    heading: 'Knowing what your agents did',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Renkei tells you what your agents did',
+        detail:
+          'A ticket filed, an email sent, a page written, a meeting booked — each one arrives as a card in the corner while you work, and stays on a Notifications page with an unread count in the menu. Previously a finished run said only how many tools it called.',
+      },
+      {
+        kind: 'added',
+        title: 'Choose which of those you hear about',
+        detail:
+          'Preferences lists the real actions each application can take — created a page, declined an invitation, transitioned an issue — and you tick the ones worth interrupting you. Anything you switch off is never recorded, so turning it back on is not retroactive.',
+      },
+      {
+        kind: 'changed',
+        title: 'A notification opens the thing it is about',
+        detail:
+          'Clicking the card goes straight to the Jira issue, the email, the Confluence page or the meeting. Destructive actions carry no link, because there is nothing left to open.',
+      },
+      {
+        kind: 'added',
+        title: 'Notifications are kept for a set number of days',
+        detail:
+          'An organization setting, fourteen days by default. Older ones are swept away; the runs they came from are unaffected.',
+      },
+    ],
+  },
+  {
+    date: '2026-08-26',
+    heading: 'Deciding when an agent runs',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Agents can be scoped to a space, a sender or a subject',
+        detail:
+          'An event trigger gains "Only run when…" — particular WebEx spaces, named senders, a sender domain, words in a subject. The check happens before the agent starts, so a filtered event costs nothing at all and no model is asked to judge it.',
+      },
+      {
+        kind: 'changed',
+        title: 'Describing a filter in prose keeps it',
+        detail:
+          'Saying "when Priya emails about invoices" used to produce an agent that ran on every email. The filter now survives into the draft.',
+      },
+      {
+        kind: 'changed',
+        title: 'The canvas says which steps call a model',
+        detail:
+          'Steps that run as fixed code carry a small chip in their corner. Most of a flow is code; the marker makes it obvious where the cost and the uncertainty actually are.',
+      },
+    ],
+  },
+  {
+    date: '2026-08-26',
+    heading: 'Jira components',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Components land on Jira tickets',
+        detail:
+          'Asking for a component on a new or updated issue used to be dropped in silence — Jira refused the field, Renkei retried without it, and reported success on a ticket that had no component. Both create and update now set it, and a name the project does not have is reported back alongside the ones it does.',
+      },
+      {
+        kind: 'added',
+        title: 'Service Management requests can carry components too',
+        detail:
+          'And there is now a way to ask which components a given request type will accept, since a service desk form does not necessarily offer every component its project has.',
+      },
+    ],
+  },
+  {
+    date: '2026-08-25',
+    heading: 'UI consistency and silent failures',
     entries: [
       {
         kind: 'fixed',
@@ -68,7 +140,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'changed',
         title: 'Connectors are laid out as a grid',
         detail:
-          'Up to three across on a wide screen, with the MCP endpoint URL leading rather than buried beneath every card.',
+          'Two across on a wide screen, each card wide enough for the products nested inside it, with the MCP endpoint URL on a full-width row above them rather than buried in the flow.',
       },
       {
         kind: 'changed',

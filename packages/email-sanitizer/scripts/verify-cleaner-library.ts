@@ -97,7 +97,20 @@ function stressBody(): string {
 }
 
 async function main(): Promise<void> {
-  const scripts = readdirSync(LIBRARY).filter((file) => file.endsWith('.ts'));
+  // Payloads are the NUMBERED files — the same convention .prettierignore
+  // and eslint.config.js carve out, and the order the README says to
+  // install them in. `cleaner-globals.d.ts` sits beside them as the ambient
+  // types they annotate against; it is source, not something to paste, and
+  // esbuild would reject it as an expression.
+  //
+  // Anything else in the folder is named out loud rather than dropped
+  // quietly, so a payload that misses the convention cannot slip through
+  // unverified.
+  const files = readdirSync(LIBRARY).filter((file) => file.endsWith('.ts'));
+  const scripts = files.filter((file) => /^\d+-/.test(file));
+  for (const skipped of files.filter((file) => !scripts.includes(file))) {
+    console.log(`\n${skipped}\n  – not a numbered payload, not verified`);
+  }
   const cases = loadCases();
   let failures = 0;
 

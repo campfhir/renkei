@@ -367,10 +367,6 @@ function CreateOrganizationContent() {
             Once configured, your team can access this MCP using their work account.
           </p>
         </div>
-
-        <p className="text-center text-sm text-gray-500 dark:text-gray-500 mt-12">
-          Renkei — Jira work item gateway
-        </p>
       </main>
     </div>
   );

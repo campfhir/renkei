@@ -76,10 +76,6 @@ export default function Home() {
           </a>{' '}
           instead.
         </p>
-
-        <p className="text-center text-sm text-gray-500 dark:text-gray-500 mt-12">
-          Renkei — Jira work item gateway
-        </p>
       </main>
     </div>
   );

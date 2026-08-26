@@ -76,3 +76,70 @@ describe('cleaner type declarations', () => {
     }
   });
 });
+
+/**
+ * The third rendering of the same shape.
+ *
+ * The checked-in cleaner library is pasteable payloads — no imports, so
+ * `email: CleanerMessage` resolves against ambient declarations rather than
+ * anything they bring with them. `cleaner-globals.d.ts` is that ambient
+ * environment for `tsc`, exactly as `CLEANER_TYPES` is for Monaco.
+ *
+ * `tsc` catches a payload that reads a field the DECLARATIONS lack. Nothing
+ * but this catches declarations that drift from what the sandbox actually
+ * marshals — and that direction is the dangerous one, because it typechecks
+ * cleanly and then reads `undefined` in production, where a script error is
+ * a recorded no-op that indexes the message uncleaned.
+ */
+describe('cleaner library ambient declarations', () => {
+  const GLOBALS = join(
+    __dirname,
+    '../../../../packages/email-sanitizer/scripts/cleaner-library/cleaner-globals.d.ts'
+  );
+  const globals = readFileSync(GLOBALS, 'utf8');
+
+  it('declares exactly the fields the editor does', () => {
+    for (const field of CLEANER_FIELDS) {
+      expect(globals).toContain(`${field}:`);
+    }
+  });
+
+  it('declares no field the editor does not', () => {
+    // Property lines only — the doc comments above them mention plenty of
+    // names that are not fields.
+    const declared = new Set(
+      [...globals.matchAll(/^ {2}([a-zA-Z]+)[?]?:/gm)].map((match) => match[1])
+    );
+    expect([...declared].sort()).toEqual([...CLEANER_FIELDS].sort());
+  });
+
+  it('gives each kind the same type the editor promises', () => {
+    for (const name of [
+      'interface CleanerItemBase',
+      'interface CleanerMessage extends CleanerItemBase',
+      'interface CleanerEvent extends CleanerItemBase',
+      'interface CleanerTask extends CleanerItemBase',
+      'interface CleanerEmail extends CleanerItemBase',
+      'type CleanerItem = CleanerMessage | CleanerEvent | CleanerTask',
+    ]) {
+      expect(globals).toContain(name);
+    }
+  });
+
+  it('keeps the calendar-only fields off the base here too', () => {
+    const base = globals.slice(
+      globals.indexOf('interface CleanerItemBase'),
+      globals.indexOf('interface CleanerMessage')
+    );
+    for (const field of CALENDAR_ONLY_FIELDS) {
+      expect(base).not.toContain(`${field}:`);
+    }
+  });
+
+  it('stays ambient, with no import or export to make it a module', () => {
+    // One `export` turns the file into a module, its declarations stop
+    // being global, and every payload goes back to "Cannot find name
+    // 'CleanerMessage'" — the failure this file was added to fix.
+    expect(globals).not.toMatch(/^\s*(import|export)\b/m);
+  });
+});

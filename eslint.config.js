@@ -17,7 +17,10 @@ export default [
       // definition, and their exact text is what an admin copies into the
       // editor. Correctness is enforced by `verify:cleaners`, which runs
       // each one in the real sandbox against recorded cases.
-      'packages/email-sanitizer/scripts/cleaner-library/*.ts',
+      //
+      // Numbered, so this covers the payloads and NOT cleaner-globals.d.ts
+      // beside them, which is ordinary source and wants ordinary linting.
+      'packages/email-sanitizer/scripts/cleaner-library/[0-9]*.ts',
       'packages/db/scripts/build-migrations.js',
       'apps/web/scripts/fix-async-warnings.ts',
       'apps/web/scripts/generate-log-ship-keys.mjs',

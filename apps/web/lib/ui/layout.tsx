@@ -46,7 +46,6 @@ const STYLES = `
   code, .mono { font-family: ui-monospace, monospace; font-size: .9rem }
 
   .sub { margin: 0 0 1.5rem; color: #555; font-size: .9rem }
-  .footer { font-size: .85rem; color: #777; margin: 2.5rem 0 0 }
 
   .notice, .warn {
     margin: 0 0 1rem; padding: .6rem .8rem; color: #1a1a1a;
@@ -121,7 +120,6 @@ export function Page(props: PageProps): ReactNode {
           <h1 className={tone === 'problem' ? 'problem' : undefined}>{heading}</h1>
           {subheading === undefined ? null : <p className="sub">{subheading}</p>}
           {children}
-          <p className="footer">Renkei — Jira work item gateway</p>
         </main>
       </body>
     </html>
