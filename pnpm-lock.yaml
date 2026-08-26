@@ -71,6 +71,9 @@ importers:
       '@renkei/connector-config':
         specifier: workspace:*
         version: link:../../packages/connector-config
+      '@renkei/connector-fileshares':
+        specifier: workspace:*
+        version: link:../../packages/connector-fileshares
       '@renkei/connector-microsoft':
         specifier: workspace:*
         version: link:../../packages/connector-microsoft
@@ -116,6 +119,9 @@ importers:
       '@renkei/user-prefs':
         specifier: workspace:*
         version: link:../../packages/user-prefs
+      '@tryjsky/v9u-smb2':
+        specifier: ^1.1.0
+        version: 1.1.0
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -152,6 +158,9 @@ importers:
       react-dom:
         specifier: 19.2.4
         version: 19.2.4(react@19.2.4)
+      ssh2-sftp-client:
+        specifier: ^12.1.1
+        version: 12.1.1
       zod:
         specifier: ^4.4.3
         version: 4.4.3

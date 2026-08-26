@@ -34,6 +34,19 @@ jest.mock('@/lib/mcp-tools/confluence/client', () => ({
   confluenceUpload: jest.fn(),
   resolveConfluenceAccess: jest.fn(),
 }));
+jest.mock('@renkei/connector-fileshares', () => {
+  const actual = jest.requireActual<typeof import('@renkei/connector-fileshares')>(
+    '@renkei/connector-fileshares'
+  );
+  return {
+    ...actual,
+    getAclContext: jest.fn(),
+    readCredentialCiphertext: jest.fn(),
+    decryptCredentials: jest.fn(),
+    openBackend: jest.fn(),
+    withSessionLimits: (_shareId: string, _lane: string, work: () => Promise<unknown>) => work(),
+  };
+});
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
@@ -259,4 +272,87 @@ it('refuses an unknown kind', async () => {
   const outcome = await executeUpload(db, slotOf('mystery', {}), Buffer.from('bytes'));
   expect(outcome.ok).toBe(false);
   expect(outcome.detail).toContain('mystery');
+});
+
+describe('fileshare-file', () => {
+  const { getAclContext, readCredentialCiphertext, decryptCredentials, openBackend } =
+    jest.requireMock<{
+      getAclContext: jest.Mock;
+      readCredentialCiphertext: jest.Mock;
+      decryptCredentials: jest.Mock;
+      openBackend: jest.Mock;
+    }>('@renkei/connector-fileshares');
+
+  function shareAclContext(defaultAccess: 'read' | 'read_write') {
+    return {
+      share: {
+        id: 'share-1',
+        name: 'Accounting',
+        protocol: 'sftp',
+        host: 'nas.example.test',
+        port: null,
+        shareName: null,
+        rootPath: '/srv',
+        caseInsensitive: false,
+        maxAccess: 'read_write',
+        enabled: true,
+        hasCredentials: true,
+      },
+      grant: { subject: 'subject-1', defaultAccess },
+      shareRules: [],
+      userRules: [],
+    };
+  }
+
+  it('re-runs the ACL at byte-arrival time and refuses a narrowed grant', async () => {
+    // The slot was minted when the caller held read_write; by POST time the
+    // grant says read. The write must not happen.
+    getAclContext.mockResolvedValue({ ok: true, val: shareAclContext('read') });
+
+    const outcome = await executeUpload(
+      db,
+      slotOf('fileshare-file', { shareId: 'share-1', path: '/reports' }),
+      Buffer.from('bytes')
+    );
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toContain('no longer have read/write');
+    expect(openBackend).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the share is no longer visible to the subject', async () => {
+    getAclContext.mockResolvedValue({ ok: true, val: null });
+
+    const outcome = await executeUpload(
+      db,
+      slotOf('fileshare-file', { shareId: 'share-1', path: '/reports' }),
+      Buffer.from('bytes')
+    );
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.detail).toContain('no longer available');
+  });
+
+  it('writes to the slot destination under a still-valid grant', async () => {
+    getAclContext.mockResolvedValue({ ok: true, val: shareAclContext('read_write') });
+    readCredentialCiphertext.mockResolvedValue({ ok: true, val: 'sealed' });
+    decryptCredentials.mockReturnValue({
+      ok: true,
+      val: { protocol: 'sftp', username: 'svc', password: 'pw' },
+    });
+    const write = jest.fn().mockResolvedValue({ ok: true, val: undefined });
+    openBackend.mockResolvedValue({
+      ok: true,
+      val: { write, close: jest.fn().mockResolvedValue(undefined) },
+    });
+
+    const outcome = await executeUpload(
+      db,
+      slotOf('fileshare-file', { shareId: 'share-1', path: '/reports' }),
+      Buffer.from('bytes')
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(write).toHaveBeenCalledWith('/reports/report.pdf', expect.any(Uint8Array));
+  });
 });

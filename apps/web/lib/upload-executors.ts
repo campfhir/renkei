@@ -12,13 +12,17 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
-import {
-  ATLASSIAN,
-  ATLASSIAN_JSM,
-  getGrant,
-  readAtlassianMetadata,
-} from '@renkei/provider-grants';
+import { ATLASSIAN, ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renkei/provider-grants';
 import { graphUploadViaSession } from '@renkei/connector-microsoft';
+import {
+  childPath as fileshareChildPath,
+  decryptCredentials,
+  effectiveAccess,
+  getAclContext,
+  openBackend,
+  readCredentialCiphertext,
+  withSessionLimits,
+} from '@renkei/connector-fileshares';
 import { cacheTokenMetadata, jiraFetch } from '@/lib/mcp-tools/common';
 import {
   graphPost,
@@ -27,10 +31,7 @@ import {
   str,
   rec,
 } from '@/lib/mcp-tools/graph/client';
-import {
-  confluenceUpload,
-  resolveConfluenceAccess,
-} from '@/lib/mcp-tools/confluence/client';
+import { confluenceUpload, resolveConfluenceAccess } from '@/lib/mcp-tools/confluence/client';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 
 /** Graph's simple-PUT ceiling for drive items; past it → upload session. */
@@ -111,7 +112,11 @@ function graphContextOf(slot: UploadSlotRow): { tenantId: string; subject: strin
   return { tenantId: slot.tenant_id, subject: slot.subject };
 }
 
-async function jiraAttachment(db: Kysely<DB>, slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
+async function jiraAttachment(
+  db: Kysely<DB>,
+  slot: UploadSlotRow,
+  bytes: Buffer
+): Promise<UploadOutcome> {
   const issueKey = str(destinationOf(slot).issueKey);
   if (!issueKey) return { ok: false, detail: 'The upload slot carries no issue key.' };
   const access = await resolveAtlassian(db, slot, false);
@@ -132,7 +137,11 @@ async function jiraAttachment(db: Kysely<DB>, slot: UploadSlotRow, bytes: Buffer
   }
 }
 
-async function jsmAttachment(db: Kysely<DB>, slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
+async function jsmAttachment(
+  db: Kysely<DB>,
+  slot: UploadSlotRow,
+  bytes: Buffer
+): Promise<UploadOutcome> {
   const requestKey = str(destinationOf(slot).requestKey);
   if (!requestKey) return { ok: false, detail: 'The upload slot carries no request key.' };
   const access = await resolveAtlassian(db, slot, true);
@@ -293,6 +302,58 @@ async function outlookDraftAttachment(slot: UploadSlotRow, bytes: Buffer): Promi
   return { ok: true, detail: `Attached "${slot.filename}" to the draft.` };
 }
 
+/**
+ * File-share write: the destination is a share Renkei itself gates, so the
+ * FULL ACL evaluation re-runs here, at byte-arrival time — the grant may
+ * have been narrowed between slot mint and POST, and a slot must never
+ * outlive the access that minted it.
+ */
+async function fileshareFile(
+  db: Kysely<DB>,
+  slot: UploadSlotRow,
+  bytes: Buffer
+): Promise<UploadOutcome> {
+  const destination = destinationOf(slot);
+  const shareId = str(destination.shareId);
+  const folder = str(destination.path) || '/';
+  if (!shareId) return { ok: false, detail: 'The upload slot carries no share destination.' };
+
+  const ctxResult = await getAclContext(db, slot.tenant_id, shareId, slot.subject);
+  if (!ctxResult.ok || !ctxResult.val) {
+    return { ok: false, detail: 'That share is no longer available to you.' };
+  }
+  const ctx = ctxResult.val;
+  const target = fileshareChildPath(folder, slot.filename);
+  if (effectiveAccess(ctx, target) !== 'read_write') {
+    return { ok: false, detail: 'You no longer have read/write access at that destination.' };
+  }
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) return { ok: false, detail: 'Token encryption is not configured.' };
+  const ciphertext = await readCredentialCiphertext(db, slot.tenant_id, shareId);
+  if (!ciphertext.ok || ciphertext.val === null) {
+    return { ok: false, detail: 'The share has no stored credentials.' };
+  }
+  const credentials = decryptCredentials(ciphertext.val, keyResult.val);
+  if (!credentials.ok) {
+    return { ok: false, detail: 'The stored share credentials cannot be read.' };
+  }
+
+  const written = await withSessionLimits(shareId, 'interactive', async () => {
+    const opened = await openBackend(ctx.share, credentials.val);
+    if (!opened.ok) return opened;
+    try {
+      return await opened.val.write(target, new Uint8Array(bytes));
+    } finally {
+      await opened.val.close();
+    }
+  });
+  if (!written.ok) {
+    return { ok: false, detail: written.err.message ?? `Write failed (${written.err.type}).` };
+  }
+  return { ok: true, detail: `Wrote "${slot.filename}" to ${folder} on the share.` };
+}
+
 export async function executeUpload(
   db: Kysely<DB>,
   slot: UploadSlotRow,
@@ -310,6 +371,8 @@ export async function executeUpload(
       return driveDocument(slot, bytes);
     case 'outlook-draft-attachment':
       return outlookDraftAttachment(slot, bytes);
+    case 'fileshare-file':
+      return fileshareFile(db, slot, bytes);
     default:
       return { ok: false, detail: `Unknown upload kind "${slot.kind}".` };
   }

@@ -452,7 +452,7 @@ export async function updateShare(
     return isDuplicateName(updated.err.cause) ? err('DUPLICATE_NAME' as const) : updated;
   }
   clearFileShareCache();
-  return ok(updated.val.numUpdatedRows > 0n);
+  return ok(updated.val.numUpdatedRows > BigInt(0));
 }
 
 export async function deleteShare(
@@ -471,7 +471,7 @@ export async function deleteShare(
   );
   if (!deleted.ok) return deleted;
   clearFileShareCache();
-  return ok(deleted.val.numDeletedRows > 0n);
+  return ok(deleted.val.numDeletedRows > BigInt(0));
 }
 
 function isDuplicateName(cause: unknown): boolean {
@@ -567,7 +567,7 @@ export async function deleteGrant(
   );
   if (!deleted.ok) return deleted;
   clearFileShareCache();
-  return ok(deleted.val.numDeletedRows > 0n);
+  return ok(deleted.val.numDeletedRows > BigInt(0));
 }
 
 export async function listRules(
@@ -630,7 +630,7 @@ export async function upsertRule(
   }, 'DB_ERROR' as const);
   if (!updated.ok) return updated;
 
-  if (updated.val.numUpdatedRows === 0n) {
+  if (updated.val.numUpdatedRows === BigInt(0)) {
     const inserted = await wrapAsync(
       () =>
         db
@@ -670,5 +670,5 @@ export async function deleteRule(
   );
   if (!deleted.ok) return deleted;
   clearFileShareCache();
-  return ok(deleted.val.numDeletedRows > 0n);
+  return ok(deleted.val.numDeletedRows > BigInt(0));
 }
