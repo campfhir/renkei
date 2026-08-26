@@ -572,6 +572,8 @@ describe('nodeUsesModel', () => {
         onApproved: { id: id(), name: 'Approved', steps: [] },
         onDeclined: { id: id(), name: 'Declined', steps: [] },
         onTimeout: { id: id(), name: 'Timed out', steps: [] },
+        notifyEmail: false,
+        notifyWebex: false,
       })
     ).toBe(false);
   });
@@ -584,6 +586,8 @@ describe('nodeUsesModel', () => {
         name: 'End',
         result: 'success',
         message: [{ t: 'text', v: 'done' }],
+        notifyEmail: false,
+        notifyWebex: false,
       })
     ).toBe(false);
   });

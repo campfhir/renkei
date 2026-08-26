@@ -8,7 +8,7 @@
 
 import { useMemo } from 'react';
 import { instructionPreview, type ApprovalStep } from '@renkei/agents';
-import { FixedPill, FixedRail } from './fixed-marker';
+import { FixedMark } from './fixed-marker';
 
 function waitLabel(hours: number): string {
   if (hours % 24 === 0) {
@@ -47,7 +47,6 @@ export function ApprovalNode({
           : 'border-sky-300 bg-sky-50 dark:border-sky-900 dark:bg-sky-950/40'
       }`}
     >
-      <FixedRail />
       {issueCount > 0 ? (
         <span
           aria-label={`${issueCount} problem${issueCount === 1 ? '' : 's'}`}
@@ -64,6 +63,7 @@ export function ApprovalNode({
         <span className="min-w-0 truncate text-sm font-medium">
           {approval.name || 'Ask for approval'}
         </span>
+        <FixedMark />
       </span>
       {preview ? (
         <span className="mt-1 block truncate text-xs text-gray-600 dark:text-gray-400">
@@ -73,7 +73,6 @@ export function ApprovalNode({
         <span className="mt-1 block text-xs italic text-gray-400">No message yet</span>
       )}
       <span className="mt-1.5 flex flex-wrap items-center gap-1">
-        <FixedPill />
         <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700 dark:bg-sky-900 dark:text-sky-300">
           {approval.mode === 'input' ? 'asks for an answer' : 'approve / decline'}
         </span>

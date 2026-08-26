@@ -4,40 +4,55 @@ import { useState } from 'react';
 // The PURE half of the package, not its index: the index reaches the
 // database, and a client component that pulls it in drags `pg` — and then
 // `dns` — into the browser bundle. That split is what prefs.ts is for.
-import {
-  ACT_CATEGORIES,
-  defaultForCategory,
-  type NotificationPrefs,
-  type ToastCorner,
-} from '@renkei/user-prefs/prefs';
+import { wantsAct, type NotificationPrefs, type ToastCorner } from '@renkei/user-prefs/prefs';
 import ConnectorIcon from '@/components/connector-icon';
 
 /**
  * What to be told about, and where.
  *
- * The grid is connector × category rather than one switch per tool. "Tell
- * me when something gets created" is a sentence people say; "tell me about
- * jira_add_attachment" is not, and there are well over a hundred act tools.
- * Per-tool control exists as an override, and lives behind a disclosure so
- * it does not compete with the control most people want.
+ * ## Why this is a list per connector and not a grid
  *
- * The one thing this page MUST say out loud: preferences apply when a
- * notification is written, so switching something on is not retroactive.
- * Without that sentence the first person to flip a switch and find
- * yesterday still empty reads it as a bug.
+ * The first version was connector × category — Jira across, "Created /
+ * Sent / Changed / Deleted / Scheduled" down. It looked tidy and it could
+ * not be read: the Jira row offered a checkbox for "Scheduled", and there
+ * is no such thing as scheduling in Jira. Most of the cells were like
+ * that. A grid asserts that every connector does every kind of thing, and
+ * connectors do not; each one does its own specific handful.
+ *
+ * So each connector lists the acts it can actually perform, in the words
+ * of the act — "Commented on an issue", "Accepted or declined an
+ * invitation". That is a list somebody can go down and answer. Categories
+ * did not disappear; they order the list and supply the default for a row
+ * nobody has touched, which is what they were always good for.
+ *
+ * ## What is stored
+ *
+ * A curated row writes `prefs.tools[tool]`, which is the most specific
+ * layer of `wantsAct` and therefore wins outright. The "anything else"
+ * row per connector writes `prefs.acts[connector].other`, the middle
+ * layer, covering every act with no wording yet — a hundred-odd of them,
+ * which is why it starts off.
+ *
+ * Nothing about the stored shape changed when the grid did. A grid entry
+ * saved by the old page still applies underneath, so nobody's earlier
+ * choices were silently discarded by a redesign of the page that made
+ * them.
+ *
+ * ## The one thing this page MUST say out loud
+ *
+ * Preferences apply when a notification is WRITTEN, so switching
+ * something on is not retroactive. Without that sentence the first person
+ * to flip a switch and find yesterday still empty reads it as a bug.
  */
 
 /** Both corners, typed without an assertion. */
 const TOAST_CORNERS: readonly ToastCorner[] = ['bottom-left', 'bottom-right'];
 
-const CATEGORY_LABELS: Record<string, string> = {
-  created: 'Created',
-  sent: 'Sent',
-  updated: 'Changed',
-  deleted: 'Deleted',
-  scheduled: 'Scheduled',
-  other: 'Anything else',
-};
+interface ConnectorRow {
+  key: string;
+  label: string;
+  acts: { tool: string; short: string; category: string }[];
+}
 
 export default function PreferencesForm({
   tenantId,
@@ -45,7 +60,7 @@ export default function PreferencesForm({
   initial,
 }: {
   tenantId: string;
-  connectors: { key: string; label: string }[];
+  connectors: ConnectorRow[];
   initial: NotificationPrefs;
 }) {
   const [prefs, setPrefs] = useState<NotificationPrefs>(initial);
@@ -56,27 +71,38 @@ export default function PreferencesForm({
     setStatus('idle');
   }
 
-  function toggleCell(connector: string, category: string, on: boolean) {
-    const forConnector = { ...(prefs.acts[connector] ?? {}) };
-    // An explicit choice is stored even when it equals the default: the
-    // default can change, and somebody who chose should not be moved.
-    forConnector[category] = on;
-    update({ ...prefs, acts: { ...prefs.acts, [connector]: forConnector } });
-  }
-
-  function cellValue(connector: string, category: string): boolean {
-    return prefs.acts[connector]?.[category] ?? defaultForCategory(category);
-  }
-
-  function toggleTool(tool: string, on: boolean) {
+  /** One act. An explicit choice is stored even when it matches the
+   *  default: the default can change, and somebody who chose should not be
+   *  quietly moved when it does. */
+  function setTool(tool: string, on: boolean) {
     update({ ...prefs, tools: { ...prefs.tools, [tool]: on } });
   }
 
-  function removeTool(tool: string) {
+  /** The per-connector catch-all, which is the 'other' category. */
+  function setCatchAll(connector: string, on: boolean) {
+    const forConnector = { ...(prefs.acts[connector] ?? {}), other: on };
+    update({ ...prefs, acts: { ...prefs.acts, [connector]: forConnector } });
+  }
+
+  function setWholeConnector(row: ConnectorRow, on: boolean) {
     const tools = { ...prefs.tools };
-    delete tools[tool];
+    for (const act of row.acts) tools[act.tool] = on;
     update({ ...prefs, tools });
   }
+
+  const wanted = (connector: string, category: string, tool: string | null) =>
+    wantsAct(prefs, connector, category, tool);
+
+  /** Curated rows only — the catch-all is counted separately because it
+   *  stands for a hundred tools, not one. */
+  const countOn = (row: ConnectorRow) =>
+    row.acts.filter((act) => wanted(row.key, act.category, act.tool)).length;
+
+  /** Tool switches for tools this build no longer has wording for — an
+   *  older page's saves, or a tool that was renamed. Shown only when there
+   *  are some, so nobody's choice is stranded invisibly. */
+  const known = new Set(connectors.flatMap((row) => row.acts.map((act) => act.tool)));
+  const strays = Object.entries(prefs.tools).filter(([tool]) => !known.has(tool));
 
   async function save() {
     setStatus('saving');
@@ -91,8 +117,6 @@ export default function PreferencesForm({
       setStatus('failed');
     }
   }
-
-  const overrides = Object.entries(prefs.tools);
 
   return (
     <div className="space-y-6">
@@ -131,92 +155,124 @@ export default function PreferencesForm({
         <h2 className="font-semibold">Things your agents do</h2>
         <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
           Only actions that change something are ever offered here — reading is never announced.
-        </p>
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 text-left dark:border-gray-800">
-                <th className="py-2 pr-3 font-medium">Connector</th>
-                {ACT_CATEGORIES.map((category) => (
-                  <th key={category} className="px-2 py-2 text-center text-xs font-medium">
-                    {CATEGORY_LABELS[category] ?? category}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {connectors.map((connector) => (
-                <tr key={connector.key} className="border-b border-gray-100 dark:border-gray-900">
-                  <td className="py-2 pr-3">
-                    <span className="flex items-center gap-2">
-                      <ConnectorIcon
-                        capabilityKey={connector.key}
-                        label={connector.label}
-                        size={16}
-                      />
-                      <span className="truncate">{connector.label}</span>
-                    </span>
-                  </td>
-                  {ACT_CATEGORIES.map((category) => (
-                    <td key={category} className="px-2 py-2 text-center">
-                      <input
-                        type="checkbox"
-                        aria-label={`${connector.label}: ${CATEGORY_LABELS[category] ?? category}`}
-                        checked={cellValue(connector.key, category)}
-                        onChange={(event) =>
-                          toggleCell(connector.key, category, event.target.checked)
-                        }
-                      />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-          “Anything else” covers actions Renkei has no specific wording for yet. It is off to start
-          with, because it is by far the largest group.
+          Open a connector to choose which of its actions you hear about.
         </p>
 
-        <details className="mt-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
-          <summary className="cursor-pointer text-sm font-medium">
-            Exceptions for particular skills
-            {overrides.length > 0 ? (
-              <span className="ml-2 font-normal text-gray-500">{overrides.length}</span>
-            ) : null}
-          </summary>
-          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-            An exception wins over the grid above, in either direction.
-          </p>
-          {overrides.length === 0 ? (
-            <p className="mt-2 text-xs italic text-gray-500">
-              None. Add one from a notification when you want to hear more, or less, about one
-              particular thing.
+        <div className="mt-3 space-y-1.5">
+          {connectors.map((row) => {
+            const on = countOn(row);
+            const catchAll = wanted(row.key, 'other', null);
+            return (
+              <details
+                key={row.key}
+                className="rounded-lg border border-gray-200 dark:border-gray-800"
+              >
+                <summary className="flex cursor-pointer list-none items-center gap-2 p-3 text-sm">
+                  <ConnectorIcon capabilityKey={row.key} label={row.label} size={16} />
+                  <span className="min-w-0 flex-1 truncate font-medium">{row.label}</span>
+                  <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
+                    {on} of {row.acts.length}
+                    {catchAll ? ', plus anything else' : ''}
+                  </span>
+                  <span aria-hidden="true" className="shrink-0 text-gray-400">
+                    ▾
+                  </span>
+                </summary>
+
+                <div className="border-t border-gray-200 p-3 dark:border-gray-800">
+                  <div className="mb-2 flex items-center gap-3 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setWholeConnector(row, true)}
+                      className="text-blue-600 hover:underline dark:text-blue-400"
+                    >
+                      Select all
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWholeConnector(row, false)}
+                      className="text-gray-500 hover:underline"
+                    >
+                      Select none
+                    </button>
+                  </div>
+
+                  <ul className="space-y-1">
+                    {row.acts.map((act) => (
+                      <li key={act.tool}>
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            className="shrink-0"
+                            checked={wanted(row.key, act.category, act.tool)}
+                            onChange={(event) => setTool(act.tool, event.target.checked)}
+                          />
+                          <span className="min-w-0">{act.short}</span>
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* Visually separated because it is not one more act: it
+                      stands for every act in this connector that Renkei has
+                      no wording for yet, which is most of them by count. */}
+                  <label className="mt-2 flex items-start gap-2 border-t border-gray-100 pt-2 text-sm dark:border-gray-900">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 shrink-0"
+                      checked={catchAll}
+                      onChange={(event) => setCatchAll(row.key, event.target.checked)}
+                    />
+                    <span>
+                      Anything else in {row.label}
+                      <span className="block text-xs text-gray-500 dark:text-gray-400">
+                        Actions with no specific wording yet. Off to start with — it is by far the
+                        largest group, and it reads as “Ran jira add attachment”.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </details>
+            );
+          })}
+        </div>
+
+        {strays.length > 0 ? (
+          <details className="mt-3 rounded-lg border border-dashed border-gray-300 p-3 dark:border-gray-700">
+            <summary className="cursor-pointer text-sm font-medium">
+              Choices for actions this version no longer lists
+              <span className="ml-2 font-normal text-gray-500">{strays.length}</span>
+            </summary>
+            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+              Saved against a tool that has since been renamed or removed. They still apply if it
+              comes back; clearing one hands it to the settings above.
             </p>
-          ) : (
             <ul className="mt-2 space-y-1">
-              {overrides.map(([tool, wanted]) => (
+              {strays.map(([tool, on]) => (
                 <li key={tool} className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     aria-label={tool}
-                    checked={wanted}
-                    onChange={(event) => toggleTool(tool, event.target.checked)}
+                    checked={on}
+                    onChange={(event) => setTool(tool, event.target.checked)}
                   />
                   <code className="min-w-0 flex-1 truncate font-mono text-xs">{tool}</code>
                   <button
                     type="button"
-                    onClick={() => removeTool(tool)}
+                    onClick={() => {
+                      const tools = { ...prefs.tools };
+                      delete tools[tool];
+                      update({ ...prefs, tools });
+                    }}
                     className="shrink-0 text-xs text-gray-500 hover:underline"
                   >
-                    Use the grid
+                    Clear
                   </button>
                 </li>
               ))}
             </ul>
-          )}
-        </details>
+          </details>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">

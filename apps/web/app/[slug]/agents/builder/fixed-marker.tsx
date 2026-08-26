@@ -12,44 +12,32 @@ import { Icon, ICONS } from '@/components/icons';
  * point of this pass is that a person can see, without opening anything,
  * where the model's judgement stops and fixed logic begins.
  *
- * Two parts, because either alone is not enough. The rail is a colour-only
- * signal, which disappears at low zoom and for a colourblind reader; the
- * pill carries the same claim as a word. The word is "fixed" rather than
- * "deterministic" — five characters, legible at 10px, and the natural
- * opposite of the "thinks" pill an action step wears when it has no tool.
+ * ONE GLYPH, in the corner, and nothing else. The first version of this
+ * also drew a rail down the card's left edge and spelled out the word
+ * "fixed" in the badge row — three marks making one claim. On a canvas
+ * where every card already carries an ordinal, a kind glyph, a name, a
+ * summary line and two or three coloured pills, that was the loudest thing
+ * on screen in service of the quietest fact. A glyph a person notices once,
+ * asks about once, and thereafter reads at a glance is the whole job.
+ *
+ * It sits as the last item of the card's header row rather than absolutely
+ * positioned, so a long name truncates BEFORE it instead of running
+ * underneath it. The tooltip carries the sentence the pill used to spend
+ * five characters on, and `aria-label` carries it for a screen reader —
+ * which the rail, being colour on an empty span, never did.
  *
  * Truth comes from `nodeUsesModel` in @renkei/agents, which mirrors the
  * engine's dispatch switch. Nothing here decides anything.
  */
-
-/**
- * A rail down the card's left inner edge. `inset-y-2` rather than
- * `inset-y-0` so it clears the rounded corners and reads as a rail rather
- * than as a broken border. Neutral gray at 70%: every node kind already
- * has a tint (indigo, amber, slate, sky, green, red) and a coloured rail
- * would fight one of them in either theme.
- *
- * Every node card is already `relative`, so this needs no positioning
- * change at the call site.
- */
-export function FixedRail() {
-  return (
-    <span
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-y-2 left-0 w-1 rounded-full bg-gray-400/70 dark:bg-gray-500/70"
-    />
-  );
-}
-
-/** The badge, first in a card's existing pill row. */
-export function FixedPill() {
+export function FixedMark() {
   return (
     <span
       title="Runs as fixed code — no model call"
-      className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+      aria-label="Runs as fixed code — no model call"
+      role="img"
+      className="ml-auto shrink-0 text-gray-400 dark:text-gray-600"
     >
-      <Icon path={ICONS.chip} className="h-3 w-3" />
-      fixed
+      <Icon path={ICONS.chip} className="h-3.5 w-3.5" />
     </span>
   );
 }

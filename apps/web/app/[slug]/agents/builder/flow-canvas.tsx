@@ -933,16 +933,13 @@ export function FlowCanvas({
         </span>
 
         {/*
-          One line, because the rail is a new convention and an unexplained
-          mark is just decoration. It sits under the flow rather than above
+          One line, because the mark is a new convention and an unexplained
+          glyph is just decoration. It sits under the flow rather than above
           it: somebody reading the canvas top-down meets the cards first and
           only needs the key once they have noticed the mark.
         */}
         <p className="mt-3 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
-          <span
-            aria-hidden="true"
-            className="inline-block h-3 w-1 rounded-full bg-gray-400/70 dark:bg-gray-500/70"
-          />
+          <Icon path={ICONS.chip} className="h-3.5 w-3.5 shrink-0 text-gray-400" />
           marks a step that runs as fixed code — no model call
         </p>
 

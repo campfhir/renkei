@@ -10,6 +10,7 @@ import {
   ACT_META_KEY,
   ACT_OUTCOMES,
   actResult,
+  actsByConnector,
   connectorKeyForTool,
   resolveAct,
 } from './index';
@@ -54,6 +55,75 @@ describe('the curated catalog', () => {
       expect(descriptor.entity).toBe(descriptor.entity.toLowerCase());
     }
   });
+
+  it('gives every act a short form for the preferences list', () => {
+    // An empty short label renders as a checkbox with no question next to
+    // it — unusable, and invisible to a typecheck since '' is a string.
+    const missing = Object.entries(ACT_OUTCOMES)
+      .filter(([, d]) => d.short.trim() === '')
+      .map(([tool]) => tool);
+    expect(missing).toEqual([]);
+  });
+
+  it('keeps the connector name out of the short form', () => {
+    // The short form sits UNDER a connector heading, so repeating the name
+    // there is the stutter the two-field split exists to avoid.
+    const names = ['Jira', 'Confluence', 'WebEx', 'Zoom', 'SharePoint', 'OneDrive', 'Outlook'];
+    const stutters = Object.entries(ACT_OUTCOMES)
+      .filter(([, d]) => names.some((name) => d.short.includes(name)))
+      .map(([tool]) => tool);
+    expect(stutters).toEqual([]);
+  });
+});
+
+describe('actsByConnector', () => {
+  it('groups every curated act under the catalog key for its tool', () => {
+    const groups = actsByConnector();
+    const flattened = groups.flatMap((group) =>
+      group.acts.map((act) => [act.tool, group.connector])
+    );
+    expect(flattened.length).toBe(Object.keys(ACT_OUTCOMES).length);
+    for (const [tool, connector] of flattened) {
+      expect({ tool, connector }).toEqual({ tool, connector: connectorKeyForTool(tool) });
+    }
+  });
+
+  it('orders a connector by category, created first', () => {
+    const jira = actsByConnector().find((group) => group.connector === 'jira');
+    const ranks = jira?.acts.map((act) => ACT_CATEGORIES.indexOf(act.category)) ?? [];
+    expect(ranks.length).toBeGreaterThan(0);
+    expect([...ranks].sort((a, b) => a - b)).toEqual(ranks);
+  });
+
+  it('lists the connectors a person would expect to find', () => {
+    // Not an exhaustive pin — new connectors should not break this — but
+    // the shared document family is generated, so a broken prefix would
+    // silently drop OneDrive from the page entirely.
+    const keys = actsByConnector().map((group) => group.connector);
+    for (const expected of [
+      'jira',
+      'atlassian-confluence',
+      'microsoft',
+      'onedrive',
+      'sharepoint',
+    ]) {
+      expect(keys).toContain(expected);
+    }
+  });
+
+  it('gives the two document namespaces the same acts under different names', () => {
+    const groups = actsByConnector();
+    const suffixes = (key: string) =>
+      groups
+        .find((group) => group.connector === key)
+        ?.acts.map((act) => act.tool.replace(/^[a-z]+_/, ''))
+        .sort();
+    // SharePoint has pages of its own on top, so it is a superset.
+    for (const suffix of suffixes('onedrive') ?? []) {
+      expect(suffixes('sharepoint')).toContain(suffix);
+    }
+    expect(suffixes('onedrive')).toContain('delete_document');
+  });
 });
 
 describe('resolveAct', () => {
@@ -82,11 +152,13 @@ describe('resolveAct', () => {
   });
 
   it('falls through to a plain sentence for an uncurated act', () => {
-    const generic = resolveAct('jira_add_attachment', 'act');
+    // Deliberately uncurated: an upload slot hands back a URL and changes
+    // nothing until bytes follow, so it is plumbing rather than news.
+    const generic = resolveAct('jira_request_attachment_upload', 'act');
     expect(generic?.category).toBe('other');
     expect(generic?.connector).toBe('jira');
     expect(generic?.curated).toBe(false);
-    expect(generic?.headline).toBe('Ran jira add attachment');
+    expect(generic?.headline).toBe('Ran jira request attachment upload');
   });
 
   it('still takes a receipt from an uncurated tool', () => {
@@ -131,6 +203,42 @@ describe('resolveAct', () => {
     expect(found?.id).toBeNull();
     expect(found?.url).toBeNull();
     expect(found?.entity).toBe('issue');
+  });
+
+  it('lets a receipt say which of several acts a tool performed', () => {
+    // The case the override exists for: one tool, opposite outcomes, and
+    // only the handler knows which one the caller asked for.
+    const declined = resolveAct('outlook_respond_event', 'act', {
+      [ACT_META_KEY]: { label: 'Declined a meeting invitation' },
+    });
+    expect(declined?.headline).toBe('Declined a meeting invitation');
+    // The category still comes from the descriptor — a label override
+    // changes the wording, never which switch turns it off.
+    expect(declined?.category).toBe('sent');
+    expect(declined?.curated).toBe(true);
+  });
+
+  it('keeps an overridden label to one bounded line', () => {
+    // A handler builds these from its own arguments, which can reach it
+    // from a model. A headline is one line and fits on a toast.
+    const sneaky = resolveAct('outlook_send_mail', 'act', {
+      [ACT_META_KEY]: { label: 'Sent an email\nAND SOMETHING ELSE\r\nentirely' },
+    });
+    expect(sneaky?.headline).toBe('Sent an email AND SOMETHING ELSE entirely');
+
+    const long = resolveAct('outlook_send_mail', 'act', {
+      [ACT_META_KEY]: { label: 'x'.repeat(500) },
+    });
+    expect(long?.headline.length).toBe(120);
+    expect(long?.headline.endsWith('…')).toBe(true);
+  });
+
+  it('falls back to the descriptor when the override is unusable', () => {
+    for (const label of ['', '   ', 42, null, {}]) {
+      expect(resolveAct('outlook_send_mail', 'act', { [ACT_META_KEY]: { label } })?.headline).toBe(
+        'Sent an email'
+      );
+    }
   });
 });
 

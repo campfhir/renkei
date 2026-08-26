@@ -102,10 +102,14 @@ export default async function NotificationsPage({
                 {day.rows.map((row) => (
                   <li
                     key={row.id}
-                    className={`flex items-start gap-3 rounded-lg border p-3 ${
+                    className={`relative flex items-start gap-3 rounded-lg border p-3 ${
                       row.read_at === null
                         ? 'border-blue-200 bg-blue-50/40 dark:border-blue-900 dark:bg-blue-950/20'
                         : 'border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950'
+                    } ${
+                      row.ref_url
+                        ? 'transition-colors hover:border-blue-400 dark:hover:border-blue-700'
+                        : ''
                     }`}
                   >
                     <span className="mt-0.5 shrink-0">
@@ -122,22 +126,46 @@ export default async function NotificationsPage({
                       )}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">{row.headline}</p>
+                      {/*
+                        The headline IS the link, stretched over the whole
+                        row by a pseudo-element. A notification is about one
+                        thing, so the obvious click — anywhere on the card —
+                        should go to that thing rather than to a small "Open"
+                        at the far right. Doing it this way keeps exactly one
+                        link in the accessibility tree, named by the
+                        headline, where wrapping the row in an anchor would
+                        have swallowed the Run link inside it.
+                      */}
+                      <p className="text-sm font-medium">
+                        {row.ref_url ? (
+                          <a
+                            href={row.ref_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="hover:underline after:absolute after:inset-0 after:rounded-lg"
+                          >
+                            {row.headline}
+                          </a>
+                        ) : (
+                          row.headline
+                        )}
+                      </p>
                       <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                         {row.agent_name ?? 'An agent'} ·{' '}
                         <LocalTime at={row.created_at} format="datetime" />
                       </p>
                     </div>
-                    <div className="flex shrink-0 items-center gap-3 text-xs">
+                    {/* `relative` puts this above the stretched pseudo-element,
+                        so the run link stays reachable on a linked card. */}
+                    <div className="relative flex shrink-0 items-center gap-3 text-xs">
                       {row.ref_url ? (
-                        <a
-                          href={row.ref_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-medium text-blue-600 hover:underline dark:text-blue-400"
+                        <span
+                          aria-hidden="true"
+                          title="Opens in the connector"
+                          className="text-blue-600 dark:text-blue-400"
                         >
-                          Open ↗
-                        </a>
+                          ↗
+                        </span>
                       ) : null}
                       {row.run_id ? (
                         <Link

@@ -125,15 +125,38 @@ export default function ToastStack({ corner }: { corner: 'bottom-left' | 'bottom
         {shown.map(({ entry, extra }, index) => (
           <article
             key={entry.id}
-            className={`${fanned ? 'relative mb-2' : `absolute inset-x-0 bottom-0 ${LAYERS[index] ?? LAYERS[2]}`} rounded-lg border border-gray-200 bg-white p-3 shadow-lg transition-all motion-reduce:transition-none dark:border-gray-700 dark:bg-gray-950`}
+            className={`${fanned ? 'relative mb-2' : `absolute inset-x-0 bottom-0 ${LAYERS[index] ?? LAYERS[2]}`} rounded-lg border border-gray-200 bg-white p-3 shadow-lg transition-all motion-reduce:transition-none dark:border-gray-700 dark:bg-gray-950 ${
+              entry.refUrl ? 'hover:border-blue-400 dark:hover:border-blue-700' : ''
+            }`}
           >
             <div className="flex items-start gap-2">
               <span className="mt-0.5 shrink-0 text-gray-400">
                 <Icon path={ICONS.bell} className="h-4 w-4" />
               </span>
               <div className="min-w-0 flex-1">
+                {/*
+                  The card is the link, stretched from the headline by a
+                  pseudo-element rather than wrapped around everything — an
+                  anchor around the whole card would swallow the dismiss
+                  button inside it, and a toast you cannot dismiss without
+                  navigating is worse than one with no link at all.
+
+                  "and N more" stays OUTSIDE the anchor: the link goes to
+                  one thing, and it should not be named after several.
+                */}
                 <p className="text-sm font-medium">
-                  {entry.headline}
+                  {entry.refUrl ? (
+                    <a
+                      href={entry.refUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:underline after:absolute after:inset-0 after:rounded-lg"
+                    >
+                      {entry.headline}
+                    </a>
+                  ) : (
+                    entry.headline
+                  )}
                   {extra > 0 ? (
                     <span className="ml-1 font-normal text-gray-500">and {extra} more</span>
                   ) : null}
@@ -141,24 +164,23 @@ export default function ToastStack({ corner }: { corner: 'bottom-left' | 'bottom
                 <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
                   {entry.agentName ?? 'An agent'}
                 </p>
-                {entry.refUrl ? (
-                  <a
-                    href={entry.refUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-1 inline-block text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                  >
-                    Open it ↗
-                  </a>
-                ) : null}
               </div>
+              {entry.refUrl ? (
+                <span
+                  aria-hidden="true"
+                  className="mt-0.5 shrink-0 text-xs text-blue-600 dark:text-blue-400"
+                >
+                  ↗
+                </span>
+              ) : null}
               {/* A plain close, NOT RemoveButton: that one is red and means
-                  destructive, and dismissing a toast destroys nothing. */}
+                  destructive, and dismissing a toast destroys nothing.
+                  `relative` keeps it above the stretched link. */}
               <button
                 type="button"
                 aria-label="Dismiss"
                 onClick={() => dismiss(entry.id)}
-                className="shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800"
+                className="relative shrink-0 rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800"
               >
                 <Icon path={ICONS.close} className="h-3.5 w-3.5" />
               </button>

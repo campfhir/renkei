@@ -1,6 +1,7 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getNotificationPrefs } from '@renkei/user-prefs';
+import { actsByConnector } from '@renkei/tool-outcomes';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -26,15 +27,33 @@ export default async function PreferencesPage({
 
   const notifications = await getNotificationPrefs(tenant.id, session.subject, { fresh: true });
 
-  // One row per capability key, not per catalog entry: Jira and Jira
-  // Service Management share a key, so two rows would be two switches for
-  // one thing that disagree with each other the moment somebody uses them.
+  /*
+    The acts each connector can perform, resolved HERE rather than in the
+    form: the catalog is pure data, so shipping the whole of it to the
+    browser to be grouped there would be work done twice — once at build,
+    once per visit — for a list the server already has in memory.
+
+    One row per capability key, not per catalog entry: Jira and Jira
+    Service Management share a key, so two rows would be two switches for
+    one thing that disagree with each other the moment somebody uses them.
+    That is also why JSM's acts read "service request" — they sit in the
+    Jira group and still have to be tellable apart.
+
+    A connector with no curated acts is dropped rather than shown empty.
+    Everything it does still reaches the "anything else" default, so
+    nothing goes unreported; there is simply nothing here to decide yet.
+  */
+  const acts = new Map(actsByConnector().map((group) => [group.connector, group.acts]));
   const seen = new Set<string>();
   const connectors = CONNECTOR_CATALOG.filter((entry) => {
     if (seen.has(entry.capabilityKey)) return false;
     seen.add(entry.capabilityKey);
-    return true;
-  }).map((entry) => ({ key: entry.capabilityKey, label: entry.label }));
+    return acts.has(entry.capabilityKey);
+  }).map((entry) => ({
+    key: entry.capabilityKey,
+    label: entry.label,
+    acts: acts.get(entry.capabilityKey) ?? [],
+  }));
 
   return (
     <div className="mx-auto max-w-3xl">

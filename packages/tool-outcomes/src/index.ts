@@ -37,9 +37,11 @@ export {
   actMeta,
   ACT_OUTCOMES,
   actResult,
+  actsByConnector,
   resolveAct,
   type ActCategory,
   type ActOutcomeDescriptor,
   type ActReceipt,
+  type ConnectorActs,
   type ResolvedAct,
 } from './act-outcomes';
