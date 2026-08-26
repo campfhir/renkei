@@ -34,6 +34,17 @@ RUN pnpm install --frozen-lockfile
 COPY apps ./apps
 COPY packages ./packages
 
+# Belt and braces with .dockerignore's `**/.next`.
+#
+# A production build writes into apps/web/.next WITHOUT clearing it, so
+# anything already there survives — and a developer's tree holds ~1GB of
+# Turbopack dev output under .next/dev. That went into the builder here and
+# then into the runtime image via `COPY --from=builder .../.next`, which is
+# how the image quietly grew by a gigabyte of files that never serve a
+# request. The ignore rule is the real fix; this line means a regression in
+# that file costs a slow build instead of a broken image.
+RUN rm -rf apps/web/.next
+
 # Compile the migrate CLI and migration files for the migrate stage
 RUN node packages/db/scripts/build-migrations.js
 
@@ -81,23 +92,34 @@ RUN pnpm install --frozen-lockfile --prod --filter renkei... && \
 # each one's "main" points into src/.
 COPY --parents packages/*/src ./
 
+# Create the non-root user BEFORE anything it needs to own.
+#
+# Ordering matters more than it looks. `RUN chown -R nextjs:nodejs /app` at
+# the end of the stage rewrote the metadata of every file above it, and in
+# overlayfs a metadata change copies the file into a new layer — so that one
+# line duplicated the whole application and weighed 697MB on its own, more
+# than a third of the image. `COPY --chown` sets ownership as the bytes are
+# written and costs nothing.
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nextjs -u 1001
+
 # Copy built application from builder stage
-COPY --from=builder /app/apps/web/.next ./apps/web/.next
-COPY --from=builder /app/apps/web/public ./apps/web/public
-COPY --from=builder /app/apps/web/next.config.ts /app/apps/web/tsconfig.json /app/apps/web/proxy.ts ./apps/web/
+COPY --chown=nextjs:nodejs --from=builder /app/apps/web/.next ./apps/web/.next
+COPY --chown=nextjs:nodejs --from=builder /app/apps/web/public ./apps/web/public
+COPY --chown=nextjs:nodejs --from=builder /app/apps/web/next.config.ts /app/apps/web/tsconfig.json /app/apps/web/proxy.ts ./apps/web/
 
 # The log-shipping key generator, runnable as a one-off container on a target
 # machine (no repo checkout there):
 #   docker compose -f docker-compose.yaml run --rm --no-deps renkei \
 #     pnpm --filter renkei generate:log-ship-keys
-COPY --from=builder /app/apps/web/scripts/generate-log-ship-keys.mjs ./apps/web/scripts/
+COPY --chown=nextjs:nodejs --from=builder /app/apps/web/scripts/generate-log-ship-keys.mjs ./apps/web/scripts/
 
-# Create a non-root user for security
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nextjs -u 1001
-
-# Change ownership of app directory
-RUN chown -R nextjs:nodejs /app
+# node_modules and the workspace sources stay root-owned and world-readable.
+# The app only ever READS them, and a running service that cannot rewrite its
+# own dependencies is the better arrangement anyway. Only the directories Next
+# writes to at runtime need to belong to the user.
+RUN mkdir -p /app/apps/web/.next/cache && \
+    chown -R nextjs:nodejs /app/apps/web/.next/cache
 
 # Switch to non-root user
 USER nextjs
@@ -135,6 +157,12 @@ WORKDIR /app
 
 RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 
+# Created before anything it owns — a trailing `chown -R /app` rewrites every
+# file's metadata, and overlayfs copies each one into a new layer. See the
+# runtime stage above for what that cost there.
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S worker -u 1001
+
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional \
@@ -142,16 +170,15 @@ RUN pnpm install --frozen-lockfile --prod --no-optional \
     rm -rf /root/.pnpm-store /root/.npm
 
 # The workers run TypeScript directly through tsx, so they ship source —
-# their own and that of every workspace package they import.
-COPY --parents packages/*/src ./
-COPY apps/worker/src ./apps/worker/src
-COPY apps/worker/tsconfig.json ./apps/worker/
-COPY apps/worker-agents/src ./apps/worker-agents/src
-COPY apps/worker-agents/tsconfig.json ./apps/worker-agents/
+# their own and that of every workspace package they import. Owned by the
+# runtime user at copy time; node_modules stays root-owned and readable,
+# which is all a worker needs of it.
+COPY --chown=worker:nodejs --parents packages/*/src ./
+COPY --chown=worker:nodejs apps/worker/src ./apps/worker/src
+COPY --chown=worker:nodejs apps/worker/tsconfig.json ./apps/worker/
+COPY --chown=worker:nodejs apps/worker-agents/src ./apps/worker-agents/src
+COPY --chown=worker:nodejs apps/worker-agents/tsconfig.json ./apps/worker-agents/
 
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S worker -u 1001 && \
-    chown -R worker:nodejs /app
 USER worker
 
 ARG GIT_COMMIT

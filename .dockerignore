@@ -1,12 +1,24 @@
+# Every pattern here is matched against the WHOLE path relative to the build
+# context, using Go's filepath.Match plus `**`. That has one consequence worth
+# stating loudly, because getting it wrong is invisible until an image is a
+# gigabyte too big:
+#
+#   `node_modules` excludes ONLY the root node_modules.
+#   `**/node_modules` excludes every node_modules at every depth.
+#
+# This file used to say `.next`, which excluded the root one and let
+# `apps/web/.next` through — around a gigabyte of Turbopack DEV output, copied
+# into the builder by `COPY apps ./apps` and then into the runtime image by
+# `COPY --from=builder /app/apps/web/.next`. The production build writes into
+# the same directory without clearing it, so the dev artefacts simply rode
+# along. Keep the `**/` prefixes.
+
 .git
 .gitignore
-.next
 *.md
 .env
 .env.local
 .env.*.local
-node_modules
-npm-debug.log
 .DS_Store
 .vscode
 .idea
@@ -14,3 +26,29 @@ npm-debug.log
 *.swo
 .legacy
 .claude
+
+# Build output. The builder stage CREATES .next; it must never receive one,
+# least of all a dev server's.
+**/.next
+**/dist
+**/*.tsbuildinfo
+
+# Dependencies. Every stage runs its own `pnpm install`, so a copied
+# node_modules is at best ignored and at worst the wrong platform's binaries.
+**/node_modules
+npm-debug.log
+*.log
+
+# pnpm's local content-addressable store — hundreds of megabytes that only
+# slow the context transfer down; the install inside each stage fetches its
+# own.
+.pnpm-store
+
+# Test and screenshot output.
+**/test-results
+**/playwright-report
+**/coverage
+
+# Vendored API specifications and design notes. Read by a test and by people,
+# never by a build — and the PDFs and OpenAPI dumps are tens of megabytes.
+docs
