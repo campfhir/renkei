@@ -74,16 +74,43 @@ than anonymously connected. Connections happen exclusively server-side.
 - SMB: `@tryjsky/v9u-smb2` — pure JS, so `node:24-alpine` needs no samba
   packages. The fork specifically, because upstream `v9u-smb2` hashes NTLM
   credentials with OpenSSL MD4, which OpenSSL 3 removed: it cannot
-  authenticate on Node 22+ at all. The fork vendors js-md4. Both backends
-  sit behind the `ShareBackend` seam, so a swap (e.g. to an smbclient
-  wrapper) touches one file. Verified against live servers; the
+  authenticate on Node 22+ at all. The fork vendors js-md4. The library is
+  additionally patched (`patches/@tryjsky__v9u-smb2.patch`): it treated
+  SMB2's interim async response (STATUS_PENDING — "still working", real
+  answer follows) as a terminal error, which under server load failed
+  healthy requests and desynced the connection; the patch drops the
+  interim in the dispatch and waits for the final response. The backend
+  also keeps a bounded fresh-connection retry (pending / sharing-violation
+  / double-timeout) as defense in depth. Both backends sit behind the
+  `ShareBackend` seam, so a swap (e.g. to an smbclient wrapper) touches
+  one file. Verified against live servers; the
   integration suites (`FILESHARE_TEST_*` env, self-skipping) and
   `docker-compose.fileshares-test.yaml` keep that check repeatable.
 
-## What deliberately did not ship in v1
+## Destructive operations (added after v1)
 
-- **Delete/rename** — the OnBase precedent: destructive primitives on a
-  model's say-so are not a first-cut capability.
+Move, rename and delete shipped as a follow-up, under three rules:
+
+- **Delete is preview-confirmed over MCP.** There is no plain delete tool:
+  `fileshare_delete_entry_preview` renders the shared issue-preview card and
+  the app-only `fileshare_delete_entry_confirm` — the same handler, re-running
+  every check itself — executes only on the user's click. File-server deletion
+  has no recycle bin, so a human sits between the model and the irreversible
+  act. Folder deletion removes EMPTY folders only; a non-empty folder is
+  refused ('not_empty'), never tree-deleted.
+- **Anchored rules are immovable.** Move/rename/delete refuse when any path
+  rule — either layer, ANY subject — sits at or under the source
+  (`listRulePathsUnder`). Rules govern paths, not objects: a rename that slid
+  deny-ruled content to an unruled path would be an ACL bypass, so anchored
+  content stays put until an admin removes the rules.
+- **Both ends need read/write, and nothing clobbers.** Move/rename require
+  effective `read_write` on source and destination, and probe the destination
+  first so every server answers 'exists' uniformly. On SMB the operations are
+  made convergent under the wedge-retry: a retried remove treats absence as
+  success, and a retried rename disambiguates through the destination.
+
+## What deliberately did not ship
+
 - **Knowledge indexing** — retrieval-only. Indexing would need this
   connector's `verifyAccess` against Renkei's own ACL plus a change-poll
   strategy for servers with no change feed; it layers on later without

@@ -45,10 +45,14 @@ describeLive('smb backend (live)', () => {
 
     try {
       const dir = `/itest-${Date.now()}`;
-      expect((await backend.mkdir(dir)).ok).toBe(true);
+      const made = await backend.mkdir(dir);
+      if (!made.ok) console.log('MKDIR ERR', made.err.type, made.err.message);
+      expect(made.ok).toBe(true);
 
       const body = new TextEncoder().encode('hello from renkei');
-      expect((await backend.write(`${dir}/hello.txt`, body)).ok).toBe(true);
+      const wrote = await backend.write(`${dir}/hello.txt`, body);
+      if (!wrote.ok) console.log('WRITE ERR', wrote.err.type, wrote.err.message);
+      expect(wrote.ok).toBe(true);
 
       const listed = await backend.list(dir);
       expect(listed.ok).toBe(true);
@@ -85,11 +89,20 @@ describeLive('smb backend (live)', () => {
     try {
       const dir = `/mvtest-${Date.now()}`;
       const sub = `${dir}/sub`;
-      expect((await backend.mkdir(dir)).ok).toBe(true);
-      expect((await backend.mkdir(sub)).ok).toBe(true);
+      // Failures print their tags: this suite doubles as the live check on
+      // the SMB retry policy, and a bare boolean hides what the server said.
+      const report = (
+        label: string,
+        result: { ok: boolean; err?: { type?: string; message?: string } }
+      ) => {
+        if (!result.ok) console.log(label, 'ERR', result.err?.type, result.err?.message);
+        return result.ok;
+      };
+      expect(report('mkdir', await backend.mkdir(dir))).toBe(true);
+      expect(report('mkdir sub', await backend.mkdir(sub))).toBe(true);
       const body = new TextEncoder().encode('payload');
-      expect((await backend.write(`${dir}/a.txt`, body)).ok).toBe(true);
-      expect((await backend.write(`${dir}/blocker.txt`, body)).ok).toBe(true);
+      expect(report('write a', await backend.write(`${dir}/a.txt`, body))).toBe(true);
+      expect(report('write blocker', await backend.write(`${dir}/blocker.txt`, body))).toBe(true);
 
       // Rename in place, then move into a subfolder.
       expect((await backend.rename(`${dir}/a.txt`, `${dir}/b.txt`)).ok).toBe(true);

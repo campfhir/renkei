@@ -136,6 +136,46 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
     await loadFolder(share, path);
   };
 
+  const renameEntry = async (entry: EntryView) => {
+    if (!share) return;
+    const newName = window.prompt(`New name for ${entry.name}:`, entry.name)?.trim();
+    if (!newName || newName === entry.name) return;
+    const opError = await sendJson(
+      `/api/tenant/${tenantId}/fileshares/${share.id}/entries`,
+      'POST',
+      { op: 'rename', from: entry.path, newName }
+    );
+    if (opError) setError(opError);
+    await loadFolder(share, path);
+  };
+
+  const moveEntry = async (entry: EntryView) => {
+    if (!share) return;
+    const toFolder = window
+      .prompt(`Move ${entry.name} to which folder? (path from the share root)`, path)
+      ?.trim();
+    if (toFolder === undefined || toFolder === null || toFolder === '') return;
+    const opError = await sendJson(
+      `/api/tenant/${tenantId}/fileshares/${share.id}/entries`,
+      'POST',
+      { op: 'move', from: entry.path, toFolder }
+    );
+    if (opError) setError(opError);
+    await loadFolder(share, path);
+  };
+
+  const deleteEntry = async (entry: EntryView) => {
+    if (!share) return;
+    const what = entry.kind === 'dir' ? 'folder (must be empty)' : 'file';
+    if (!window.confirm(`Delete this ${what} permanently? ${entry.path}`)) return;
+    const opError = await sendJson(
+      `/api/tenant/${tenantId}/fileshares/${share.id}/entries?path=${encodeURIComponent(entry.path)}`,
+      'DELETE'
+    );
+    if (opError) setError(opError);
+    await loadFolder(share, path);
+  };
+
   if (shares === null) {
     return <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>;
   }
@@ -259,6 +299,34 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
               <span className="shrink-0 rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
                 {ACCESS_BADGE[entry.access]}
               </span>
+              {entry.access === 'read_write' ? (
+                <span className="flex shrink-0 gap-2 text-xs">
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => void renameEntry(entry)}
+                    className="text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => void moveEntry(entry)}
+                    className="text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    Move
+                  </button>
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => void deleteEntry(entry)}
+                    className="text-red-600 hover:underline dark:text-red-400"
+                  >
+                    Delete
+                  </button>
+                </span>
+              ) : null}
             </li>
           ))}
         </ul>

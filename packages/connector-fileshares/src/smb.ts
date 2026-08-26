@@ -106,8 +106,31 @@ function toSmbRelative(joined: string): string {
 const PENDING_RETRIES = 3;
 const PENDING_RETRY_DELAY_MS = 150;
 
-function isPendingStatus(cause: unknown): boolean {
-  return isRecord(cause) && cause.code === 'STATUS_PENDING';
+/**
+ * Statuses worth a fresh connection and a reissue. STATUS_PENDING per the
+ * note above; STATUS_SHARING_VIOLATION because the library opens every
+ * file with FILE_SHARE_NONE, so a handle left dangling on a wedged
+ * connection (whose CREATE landed server-side before the wedge) blocks
+ * the very retry that follows — the stale handle dies when the old socket
+ * closes, which the retry's disconnect forces.
+ */
+function isRetryableStatus(cause: unknown): boolean {
+  return (
+    isRecord(cause) &&
+    (cause.code === 'STATUS_PENDING' || cause.code === 'STATUS_SHARING_VIOLATION')
+  );
+}
+
+/** Hard-close a client's TCP socket (the .d.ts does not declare it). */
+function destroySocket(client: unknown): void {
+  if (!isRecord(client)) return;
+  const socket = client.socket;
+  if (!isRecord(socket) || typeof socket.destroy !== 'function') return;
+  try {
+    socket.destroy();
+  } catch {
+    // A socket that cannot even be destroyed is already gone.
+  }
 }
 
 export function openSmbBackend(
@@ -141,19 +164,27 @@ export function openSmbBackend(
    * also be swallowed entirely, leaving the request unresolved and the
    * client's dispatch state poisoned for everything after it. Pending
    * retries a few times (cheap, definitely transient); a timeout retries
-   * once, because it may equally mean the server is simply down and each
-   * attempt costs the full window.
+   * twice — it may equally mean the server is simply down (each attempt
+   * costs the full window, so the budget stays small), but under heavy
+   * CPU contention a healthy server can miss two windows in a row.
    */
   async function run<T>(operation: string, ms: number, work: (c: SMB2) => Promise<T>): Promise<T> {
     let lastCause: unknown;
     let timeouts = 0;
     for (let attempt = 0; attempt <= PENDING_RETRIES; attempt += 1) {
       if (attempt > 0) {
+        // disconnect() only socket.end()s — a graceful FIN a wedged
+        // connection can sit in for ages, during which the server keeps the
+        // session and its dangling open handles alive, and every retry's
+        // CREATE queues behind them as more STATUS_PENDING. Destroying the
+        // socket makes the server tear the session (and its handles) down
+        // NOW, which is the whole point of retrying on a fresh connection.
         try {
           client.disconnect();
         } catch {
           // The wedged client may not even close cleanly.
         }
+        destroySocket(client);
         client = makeClient();
         await new Promise((resolveDelay) =>
           setTimeout(resolveDelay, PENDING_RETRY_DELAY_MS * attempt)
@@ -164,8 +195,8 @@ export function openSmbBackend(
       } catch (cause) {
         if (cause instanceof OperationTimeout) {
           timeouts += 1;
-          if (timeouts > 1) throw cause;
-        } else if (!isPendingStatus(cause)) {
+          if (timeouts > 2) throw cause;
+        } else if (!isRetryableStatus(cause)) {
           throw cause;
         }
         lastCause = cause;
