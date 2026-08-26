@@ -12,13 +12,10 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
-import {
-  ATLASSIAN,
-  ATLASSIAN_JSM,
-  getGrant,
-  readAtlassianMetadata,
-} from '@renkei/provider-grants';
+import { ATLASSIAN, ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renkei/provider-grants';
 import { graphUploadViaSession } from '@renkei/connector-microsoft';
+import { childPath as fileshareChildPath } from '@renkei/connector-fileshares';
+import { clientFailure, fsWriteFile } from '@/lib/file-shares/service-client';
 import { cacheTokenMetadata, jiraFetch } from '@/lib/mcp-tools/common';
 import {
   graphPost,
@@ -27,10 +24,7 @@ import {
   str,
   rec,
 } from '@/lib/mcp-tools/graph/client';
-import {
-  confluenceUpload,
-  resolveConfluenceAccess,
-} from '@/lib/mcp-tools/confluence/client';
+import { confluenceUpload, resolveConfluenceAccess } from '@/lib/mcp-tools/confluence/client';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 
 /** Graph's simple-PUT ceiling for drive items; past it → upload session. */
@@ -111,7 +105,11 @@ function graphContextOf(slot: UploadSlotRow): { tenantId: string; subject: strin
   return { tenantId: slot.tenant_id, subject: slot.subject };
 }
 
-async function jiraAttachment(db: Kysely<DB>, slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
+async function jiraAttachment(
+  db: Kysely<DB>,
+  slot: UploadSlotRow,
+  bytes: Buffer
+): Promise<UploadOutcome> {
   const issueKey = str(destinationOf(slot).issueKey);
   if (!issueKey) return { ok: false, detail: 'The upload slot carries no issue key.' };
   const access = await resolveAtlassian(db, slot, false);
@@ -132,7 +130,11 @@ async function jiraAttachment(db: Kysely<DB>, slot: UploadSlotRow, bytes: Buffer
   }
 }
 
-async function jsmAttachment(db: Kysely<DB>, slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
+async function jsmAttachment(
+  db: Kysely<DB>,
+  slot: UploadSlotRow,
+  bytes: Buffer
+): Promise<UploadOutcome> {
   const requestKey = str(destinationOf(slot).requestKey);
   if (!requestKey) return { ok: false, detail: 'The upload slot carries no request key.' };
   const access = await resolveAtlassian(db, slot, true);
@@ -293,6 +295,41 @@ async function outlookDraftAttachment(slot: UploadSlotRow, bytes: Buffer): Promi
   return { ok: true, detail: `Attached "${slot.filename}" to the draft.` };
 }
 
+/**
+ * File-share write: the destination is a share Renkei itself gates, so the
+ * FULL ACL evaluation re-runs at byte-arrival time — the grant may have
+ * been narrowed between slot mint and POST, and a slot must never outlive
+ * the access that minted it. The fileshare worker performs that check and
+ * the write in one call; this executor only names the destination.
+ */
+async function fileshareFile(
+  _db: Kysely<DB>,
+  slot: UploadSlotRow,
+  bytes: Buffer
+): Promise<UploadOutcome> {
+  const destination = destinationOf(slot);
+  const shareId = str(destination.shareId);
+  const folder = str(destination.path) || '/';
+  if (!shareId) return { ok: false, detail: 'The upload slot carries no share destination.' };
+
+  const target = fileshareChildPath(folder, slot.filename);
+  const written = await fsWriteFile(
+    { tenantId: slot.tenant_id, shareId, subject: slot.subject },
+    target,
+    new Uint8Array(bytes)
+  );
+  if (!written.ok) {
+    if (written.err.kind === 'op' && written.err.type === 'no_share') {
+      return { ok: false, detail: 'That share is no longer available to you.' };
+    }
+    if (written.err.kind === 'op' && written.err.type === 'forbidden') {
+      return { ok: false, detail: 'You no longer have read/write access at that destination.' };
+    }
+    return { ok: false, detail: clientFailure(written.err).message };
+  }
+  return { ok: true, detail: `Wrote "${slot.filename}" to ${folder} on the share.` };
+}
+
 export async function executeUpload(
   db: Kysely<DB>,
   slot: UploadSlotRow,
@@ -310,6 +347,8 @@ export async function executeUpload(
       return driveDocument(slot, bytes);
     case 'outlook-draft-attachment':
       return outlookDraftAttachment(slot, bytes);
+    case 'fileshare-file':
+      return fileshareFile(db, slot, bytes);
     default:
       return { ok: false, detail: `Unknown upload kind "${slot.kind}".` };
   }

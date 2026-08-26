@@ -1,0 +1,26 @@
+diff --git a/lib/tools/smb2-forge.js b/lib/tools/smb2-forge.js
+index ab1247ec0e28552e220f7de1febdd68ca70d8862..68208e8c286dfa0810d5b70536522d1142d8ff47 100644
+--- a/lib/tools/smb2-forge.js
++++ b/lib/tools/smb2-forge.js
+@@ -82,9 +82,20 @@ SMB2Forge.response = function(c) {
+           }
+           // get the message id
+           var mId = message.getHeaders().MessageId.toString('hex');
++          // An interim async response (Status STATUS_PENDING, 0x00000103)
++          // means "still working" — the REAL response for this MessageId
++          // follows. Dispatching it as a result both errors the request and
++          // desyncs the connection, so it is dropped here instead.
++          var statusBuf = message.getHeaders().Status;
++          var isInterimPending =
++            statusBuf &&
++            statusBuf.length === 4 &&
++            statusBuf.readUInt32LE(0) === 0x00000103;
+           // check if the message can be dispatched
+           // or store it
+-          if (c.responsesCB[mId]) {
++          if (isInterimPending) {
++            // keep waiting for the final response
++          } else if (c.responsesCB[mId]) {
+             c.responsesCB[mId](message);
+             delete c.responsesCB[mId];
+           } else {

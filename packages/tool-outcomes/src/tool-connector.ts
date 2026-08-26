@@ -41,6 +41,7 @@ const PREFIXES: [string, string][] = [
   ['webex_', 'webex'],
   ['zoom_', 'zoom'],
   ['knowledge_', 'knowledge'],
+  ['fileshare_', 'fileshares'],
   ['card_', 'cards'],
   ['agent_', 'agents'],
 ];

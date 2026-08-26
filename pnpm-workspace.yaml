@@ -1,6 +1,10 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+allowBuilds:
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
 catalog:
   # pdfjs is imported dynamically, by bare specifier, from
   # packages/document-text/src/pdf.ts. Next.js compiles that file INTO the web
@@ -11,9 +15,7 @@ catalog:
   # from drifting apart: one exact pin, so `pnpm audit` has a single version to
   # talk about and no app can silently resolve a different one.
   pdfjs-dist: 6.2.108
-allowBuilds:
-  esbuild: true
-  sharp: true
-  unrs-resolver: true
 minimumReleaseAgeExclude:
   - '@campfhir/safe-functions@0.1.3'
+patchedDependencies:
+  '@tryjsky/v9u-smb2': patches/@tryjsky__v9u-smb2.patch

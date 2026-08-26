@@ -9,6 +9,8 @@ import WebexUserConnector from './webex-user-connector';
 import MicrosoftConnector from './microsoft-connector';
 import ZoomConnector from './zoom-connector';
 import McpEndpoint from './mcp-endpoint';
+import FilesharesConnector from './fileshares-connector';
+import { listGrantedShares } from '@renkei/connector-fileshares';
 import {
   WEBEX_USER,
   ATLASSIAN,
@@ -80,6 +82,24 @@ export default async function ConnectorsPage({
         .execute()
     : [];
   const enabled = new Set(configs.map((c) => c.connector));
+
+  // File shares have no connector_configs row and nothing to connect: the
+  // caller's grants ARE the provisioning, so the card renders only when at
+  // least one exists (the same rule that mounts the fileshare_* tools).
+  const fileshareGrants = dbResult.ok
+    ? await listGrantedShares(dbResult.val, tenant.id, session.subject)
+    : null;
+  const grantedShares =
+    fileshareGrants && fileshareGrants.ok
+      ? fileshareGrants.val.map((entry) => ({
+          id: entry.share.id,
+          name: entry.share.name,
+          protocol: entry.share.protocol,
+          host: entry.share.host,
+          defaultAccess: entry.grant.defaultAccess,
+          hasRules: entry.hasRules,
+        }))
+      : [];
   const settingsOf = (connector: string) =>
     configs.find((c) => c.connector === connector)?.settings;
 
@@ -295,6 +315,12 @@ export default async function ConnectorsPage({
                 ceiling={zoomCeiling}
                 priorScopes={zoomGrant?.requested_scopes ?? null}
               />
+            </div>
+          )}
+
+          {grantedShares.length > 0 && (
+            <div className="mb-6 break-inside-avoid">
+              <FilesharesConnector slug={slug} shares={grantedShares} />
             </div>
           )}
         </div>

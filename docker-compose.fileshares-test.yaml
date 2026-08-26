@@ -1,0 +1,48 @@
+# docker-compose.fileshares-test.yaml — throwaway SMB + SFTP servers for the
+# connector-fileshares integration tests and for manual admin-UI testing.
+#
+#   docker compose -f docker-compose.fileshares-test.yaml up -d
+#
+#   FILESHARE_TEST_SMB_HOST=localhost \
+#   FILESHARE_TEST_SMB_SHARE=renkei \
+#   FILESHARE_TEST_SMB_USER=renkei \
+#   FILESHARE_TEST_SMB_PASSWORD=renkei-test \
+#   FILESHARE_TEST_SFTP_HOST=localhost \
+#   FILESHARE_TEST_SFTP_PORT=2222 \
+#   FILESHARE_TEST_SFTP_USER=renkei \
+#   FILESHARE_TEST_SFTP_PASSWORD=renkei-test \
+#   FILESHARE_TEST_SFTP_ROOT=/upload \
+#   pnpm --filter @renkei/connector-fileshares test
+#
+# Without those variables the integration suites skip themselves — same
+# convention as the Atlassian sandbox tests. This file is separate from
+# docker-compose.yml on purpose: the dev stack should not drag two file
+# servers up for people not working on this connector.
+
+services:
+  samba:
+    image: dperson/samba
+    container_name: renkei-test-samba
+    command: >-
+      -u "renkei;renkei-test"
+      -s "renkei;/share;no;no;no;renkei"
+      -p
+    ports:
+      - '1445:445'
+    volumes:
+      - fileshares-smb:/share
+    restart: unless-stopped
+
+  sftp:
+    image: atmoz/sftp
+    container_name: renkei-test-sftp
+    command: 'renkei:renkei-test:::upload'
+    ports:
+      - '2222:22'
+    volumes:
+      - fileshares-sftp:/home/renkei/upload
+    restart: unless-stopped
+
+volumes:
+  fileshares-smb:
+  fileshares-sftp:

@@ -25,6 +25,10 @@ RUN npm install -g pnpm@${PNPM_VERSION}
 # a workspace package was added, and a missing manifest fails the install with a
 # module-not-found much further along, in the Next build.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# pnpm-workspace.yaml declares patchedDependencies; without the patch files
+# themselves every install below fails against the frozen lockfile. Each
+# stage that runs pnpm install copies patches/ alongside the manifests.
+COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 
 # Install dependencies
@@ -67,6 +71,7 @@ RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
 # downloads it from npm on every boot — slow, and broken on an offline host.
 # pnpm's os/cpu fields mean only the matching platform binary is installed.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 # next declares @playwright/test as an OPTIONAL peer dependency (its opt-in
 # experimental/testmode/playwright integration, which nothing here uses —
@@ -145,11 +150,14 @@ ENTRYPOINT ["dumb-init", "--"]
 CMD ["pnpm", "--filter", "renkei", "start"]
 
 # Worker stage - every long-running queue consumer, one image. The three
-# worker processes (interactive events, embeddings, agent runs) are compose
-# services over this single image with different commands — the embeddings
-# precedent, extended when apps/worker-agents arrived. That is why BOTH
-# worker apps are installed and copied here: the agents worker is a separate
-# app (its own deps and entry point), not a second script in apps/worker.
+# queue-consuming processes (interactive events, embeddings, agent runs) are
+# compose services over this single image with different commands — the
+# embeddings precedent, extended when apps/worker-agents arrived. That is why
+# BOTH worker apps are installed and copied here: the agents worker is a
+# separate app (its own deps and entry point), not a second script in
+# apps/worker. The file-share worker is NOT here: it ships as its own image
+# (the `fileshares` stage below), so this image never carries the SMB/SSH
+# protocol stack and the fileshare container never carries the agents' deps.
 FROM node:24-alpine AS worker
 ARG PNPM_VERSION
 
@@ -164,6 +172,7 @@ RUN addgroup -g 1001 -S nodejs && \
     adduser -S worker -u 1001
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional \
       --filter @renkei/worker... --filter @renkei/worker-agents... && \
@@ -188,6 +197,52 @@ ENV NODE_ENV=production \
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["pnpm", "--filter", "@renkei/worker", "start"]
 
+# Fileshares stage - the file-share I/O service, its own image on purpose:
+# it is the only process that opens SMB/SFTP sessions or decrypts share
+# credentials, so its container carries exactly the protocol stack (the
+# patched @tryjsky/v9u-smb2 among it) and nothing of the queue workers' LLM
+# and connector dependencies — and it rolls out independently of them.
+FROM node:24-alpine AS fileshares
+ARG PNPM_VERSION
+
+WORKDIR /app
+
+RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+
+# Created before anything it owns — see the runtime stage for why a trailing
+# chown -R would double the image.
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S worker -u 1001
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
+COPY --parents apps/*/package.json packages/*/package.json ./
+RUN pnpm install --frozen-lockfile --prod --no-optional \
+      --filter @renkei/worker-fileshares... && \
+    rm -rf /root/.pnpm-store /root/.npm
+
+# tsx runs TypeScript source directly; workspace links need the package
+# sources present (only the filtered deps' node_modules were installed).
+COPY --chown=worker:nodejs --parents packages/*/src ./
+COPY --chown=worker:nodejs apps/worker-fileshares/src ./apps/worker-fileshares/src
+COPY --chown=worker:nodejs apps/worker-fileshares/tsconfig.json ./apps/worker-fileshares/
+
+USER worker
+
+ARG GIT_COMMIT
+ENV NODE_ENV=production \
+    GIT_COMMIT=${GIT_COMMIT}
+
+EXPOSE 8090
+
+# The service's own unauthenticated liveness endpoint (everything else on
+# the port requires the bearer key).
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:' + (process.env.FILESHARES_WORKER_PORT || 8090) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["pnpm", "--filter", "@renkei/worker-fileshares", "start"]
+
 # Migration stage - runs migrations only
 FROM node:24-alpine AS migrate
 ARG PNPM_VERSION
@@ -198,6 +253,7 @@ WORKDIR /app
 RUN npm install -g pnpm@${PNPM_VERSION}
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional --filter @renkei/db... && \
     rm -rf /root/.pnpm-store /root/.npm

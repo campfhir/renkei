@@ -33,6 +33,8 @@ services:
       PORT: 3000
       HOST: 0.0.0.0
       NODE_ENV: production
+      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
+      FILESHARES_WORKER_API_KEY: ${FILESHARES_WORKER_API_KEY:-renkei-dev-fileshares-key}
     ports:
       - "3000:3000"
     depends_on:
@@ -102,6 +104,32 @@ services:
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       RENKEI_WEB_INTERNAL_URL: http://app:3000
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # The file-share I/O service — its own image (target `fileshares`), the
+  # only container holding the SMB/SFTP stack or decrypting share
+  # credentials. The app reaches it via FILESHARES_WORKER_URL with the
+  # shared bearer key; the dev default below keeps the stack turnkey —
+  # export FILESHARES_WORKER_API_KEY to override both sides at once.
+  worker-fileshares:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: fileshares
+    image: renkei-fileshares:latest
+    container_name: renkei-worker-fileshares
+    # TOKEN_ENCRYPTION_KEY must match the app's — it opens the stored share
+    # credentials — so both read the same env file.
+    env_file:
+      - apps/web/.env.development
+    environment:
+      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      FILESHARES_WORKER_API_KEY: ${FILESHARES_WORKER_API_KEY:-renkei-dev-fileshares-key}
       NODE_ENV: production
     depends_on:
       postgres:

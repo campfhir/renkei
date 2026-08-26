@@ -31,7 +31,8 @@ export type UploadSlotKind =
   | 'confluence-attachment'
   | 'onedrive-document'
   | 'sharepoint-document'
-  | 'outlook-draft-attachment';
+  | 'outlook-draft-attachment'
+  | 'fileshare-file';
 
 export function hashUploadToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
@@ -115,7 +116,10 @@ export function registerUploadStatusTool(server: McpServer, context: MCPToolCont
     async (args: Record<string, unknown>) => {
       const uploadId = typeof args.uploadId === 'string' ? args.uploadId : '';
       if (!uploadId) {
-        return { content: [{ type: 'text' as const, text: 'uploadId is required' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'uploadId is required' }],
+          isError: true,
+        };
       }
       if (!context.subject) {
         return {
@@ -125,7 +129,10 @@ export function registerUploadStatusTool(server: McpServer, context: MCPToolCont
       }
       const dbResult = getDatabase();
       if (!dbResult.ok) {
-        return { content: [{ type: 'text' as const, text: 'Database unavailable.' }], isError: true };
+        return {
+          content: [{ type: 'text' as const, text: 'Database unavailable.' }],
+          isError: true,
+        };
       }
       const slot = await dbResult.val
         .selectFrom('upload_slots')
@@ -137,8 +144,7 @@ export function registerUploadStatusTool(server: McpServer, context: MCPToolCont
       if (!slot) {
         return { content: [{ type: 'text' as const, text: 'No such upload.' }], isError: true };
       }
-      const expired =
-        slot.status === 'pending' && new Date(slot.expires_at).getTime() < Date.now();
+      const expired = slot.status === 'pending' && new Date(slot.expires_at).getTime() < Date.now();
       const lines = [
         `Upload ${slot.id} ("${slot.filename}", ${slot.kind}): ${expired ? 'expired' : slot.status}.`,
         ...(slot.result ? [slot.result] : []),
