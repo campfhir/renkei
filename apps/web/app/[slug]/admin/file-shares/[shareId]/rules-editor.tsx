@@ -38,10 +38,10 @@ import {
 } from '@renkei/connector-fileshares/pure';
 import type { PathRule } from '@renkei/connector-fileshares/pure';
 import { Icon, ICONS } from '@/components/icons';
-import Modal from '@/components/modal';
 import { useDismiss } from '@/lib/use-dismiss';
 import { inputClass } from '../share-config-fields';
 import { AccessCheckboxes } from './access-checkboxes';
+import GrantAccessModal from './grant-access-modal';
 import { GRANTS_CHANGED_EVENT } from './grant-manager';
 
 type Access = 'none' | 'read' | 'read_write';
@@ -506,13 +506,14 @@ export default function RulesEditor({
       </div>
 
       {addUserOpen ? (
-        <AddUserModal
+        <GrantAccessModal
           slug={slug}
           shareId={shareId}
           ceiling={share.maxAccess}
           people={people.filter(
             (person) => !grants.some((grant) => grant.subject === person.subject)
           )}
+          onDone={() => window.dispatchEvent(new CustomEvent(GRANTS_CHANGED_EVENT))}
           onClose={() => setAddUserOpen(false)}
         />
       ) : null}
@@ -594,110 +595,5 @@ function PermissionCheckboxes({
         <span className="w-6" />
       )}
     </span>
-  );
-}
-
-/**
- * Put a person on the share from the org directory — selection only, no
- * pasted subject identifiers. Adding here creates their GRANT (the panel
- * lists grantees); their per-path limits are then set by selection above.
- */
-function AddUserModal({
-  slug,
-  shareId,
-  ceiling,
-  people,
-  onClose,
-}: {
-  slug: string;
-  shareId: string;
-  ceiling: 'read' | 'read_write';
-  people: { subject: string; label: string }[];
-  onClose: () => void;
-}) {
-  const [subject, setSubject] = useState('');
-  const [level, setLevel] = useState<Access>('read');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const add = async () => {
-    if (!subject) return;
-    setBusy(true);
-    setError(null);
-    const saveError = await sendJson(`/api/admin/${slug}/file-shares/${shareId}/grants`, 'POST', {
-      subject,
-      defaultAccess: level,
-    });
-    setBusy(false);
-    if (saveError) {
-      setError(saveError);
-      return;
-    }
-    window.dispatchEvent(new CustomEvent(GRANTS_CHANGED_EVENT));
-    onClose();
-  };
-
-  return (
-    <Modal title="Add user" onClose={onClose}>
-      <div className="space-y-3 text-sm">
-        <label className="block">
-          <span className="mb-1 block text-gray-600 dark:text-gray-400">Person</span>
-          <select
-            autoFocus
-            className={`${inputClass} w-full`}
-            value={subject}
-            onChange={(event) => setSubject(event.target.value)}
-          >
-            <option value="">Pick a person…</option>
-            {people.map((person) => (
-              <option key={person.subject} value={person.subject}>
-                {person.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div>
-          <span className="mb-1 block text-gray-600 dark:text-gray-400">
-            Access across the share
-          </span>
-          <div className="flex items-center gap-3">
-            <AccessCheckboxes
-              name="New user default"
-              level={level}
-              ceiling={ceiling}
-              onLevel={setLevel}
-            />
-            {level === 'none' ? (
-              <span className="text-xs text-gray-400 dark:text-gray-500">
-                specific folders only — check folders in below
-              </span>
-            ) : null}
-          </div>
-        </div>
-        {people.length === 0 ? (
-          <p className="text-gray-500 dark:text-gray-400">
-            Everyone the org knows about already has access to this share.
-          </p>
-        ) : null}
-        {error ? <p className="text-red-600 dark:text-red-400">{error}</p> : null}
-        <div className="flex justify-end gap-2 pt-1">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-md border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-800 dark:hover:bg-gray-900"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={!subject || busy}
-            onClick={() => void add()}
-            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {busy ? 'Adding…' : 'Add user'}
-          </button>
-        </div>
-      </div>
-    </Modal>
   );
 }

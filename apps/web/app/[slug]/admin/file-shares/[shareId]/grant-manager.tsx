@@ -13,8 +13,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { getJson, sendJson } from '@/lib/fetch-json';
 import { Icon, ICONS } from '@/components/icons';
-import { inputClass } from '../share-config-fields';
 import { AccessCheckboxes } from './access-checkboxes';
+import GrantAccessModal from './grant-access-modal';
 
 /** Window event announcing a grant mutation on the current share page. */
 export const GRANTS_CHANGED_EVENT = 'fileshare-grants-changed';
@@ -37,8 +37,7 @@ export default function GrantManager({
   share: { maxAccess: 'read' | 'read_write' };
 }) {
   const [grants, setGrants] = useState<GrantRowView[]>([]);
-  const [subject, setSubject] = useState('');
-  const [level, setLevel] = useState<GrantRowView['defaultAccess']>('read');
+  const [grantOpen, setGrantOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -79,7 +78,6 @@ export default function GrantManager({
       await load();
       return;
     }
-    setSubject('');
     window.dispatchEvent(new CustomEvent(GRANTS_CHANGED_EVENT));
   };
 
@@ -147,41 +145,27 @@ export default function GrantManager({
         </ul>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
-        <select
-          aria-label="Person to grant"
-          className={inputClass}
-          value={subject}
-          onChange={(event) => setSubject(event.target.value)}
-        >
-          <option value="">Pick a person…</option>
-          {people
-            .filter((person) => !known.has(person.subject))
-            .map((person) => (
-              <option key={person.subject} value={person.subject}>
-                {person.label}
-              </option>
-            ))}
-        </select>
-        <AccessCheckboxes
-          name="Default access"
-          level={level}
-          ceiling={share.maxAccess}
-          disabled={busy}
-          onLevel={setLevel}
-        />
-        {level === 'none' ? (
-          <span className="text-xs text-gray-400 dark:text-gray-500">specific folders only</span>
-        ) : null}
+      <div className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-800">
         <button
           type="button"
-          disabled={busy || !subject}
-          onClick={() => void save(subject, level)}
+          disabled={busy}
+          onClick={() => setGrantOpen(true)}
           className="text-sm font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
         >
           + Grant access
         </button>
       </div>
+
+      {grantOpen ? (
+        <GrantAccessModal
+          slug={slug}
+          shareId={shareId}
+          ceiling={share.maxAccess}
+          people={people.filter((person) => !known.has(person.subject))}
+          onDone={() => window.dispatchEvent(new CustomEvent(GRANTS_CHANGED_EVENT))}
+          onClose={() => setGrantOpen(false)}
+        />
+      ) : null}
 
       {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
     </div>
