@@ -65,7 +65,6 @@ export default async function TenantLayout({
       {/* Wide enough for the log and grant tables; narrow pages center a
           max-w-3xl block of their own inside it. */}
       <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">{children}</main>
-      <p className="pb-8 text-center text-sm text-gray-500">Renkei — Jira work item gateway</p>
       {prefs?.toastsEnabled ? <ToastStack corner={prefs.toastCorner} /> : null}
     </div>
   );
