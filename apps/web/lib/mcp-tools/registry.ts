@@ -39,6 +39,9 @@ import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
 import { oauthZoomAuth } from '@/lib/mcp-tools/zoom/zoom-auth';
 import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
 import { oauthConfluenceAuth } from '@/lib/mcp-tools/confluence/confluence-auth';
+import { hasAnyGrant } from '@renkei/connector-fileshares';
+import { registerFileshareTools, FILESHARES_MCP_CONNECTOR } from '@/lib/mcp-tools/fileshares';
+import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
 import { registerSummaryTools, type SummaryProvider } from '@/lib/mcp-tools/summary';
 import { collectCalendar, collectUnreadMail } from '@/lib/mcp-tools/summary/collect-outlook';
 import { collectSprint, collectWorkItems } from '@/lib/mcp-tools/summary/collect-jira';
@@ -63,6 +66,7 @@ export interface ConnectorAvailability {
   zoomScopes: string[];
   confluenceAvailable: boolean;
   confluenceScopes: string[];
+  filesharesAvailable: boolean;
 }
 
 async function grantRow(
@@ -140,6 +144,13 @@ export async function resolveConnectorAvailability(
     ? (confluenceGrantRow.granted_scopes ?? confluenceGrantRow.requested_scopes)
     : [];
 
+  // File shares are the one connector with no provider_grants row: Renkei
+  // itself is the ACL authority, so provisioning IS the existence of a
+  // grant row on an enabled share. Any error reads as "not provisioned" —
+  // the fail-closed direction.
+  const filesharesGrant = await hasAnyGrant(db, tenantId, subject);
+  const filesharesAvailable = filesharesGrant.ok && filesharesGrant.val;
+
   return {
     knowledgeAvailable,
     webexAvailable,
@@ -152,6 +163,7 @@ export async function resolveConnectorAvailability(
     zoomScopes,
     confluenceAvailable,
     confluenceScopes,
+    filesharesAvailable,
   };
 }
 
@@ -176,6 +188,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.onedriveAvailable ? [ONEDRIVE_MCP_CONNECTOR] : []),
     ...(availability.zoomAvailable ? [ZOOM_MCP_CONNECTOR] : []),
     ...(availability.confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
+    ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
   ];
 }
 
@@ -210,6 +223,7 @@ export async function registerRenkeiTools(
     onedriveAvailable,
     zoomAvailable,
     confluenceAvailable,
+    filesharesAvailable,
   } = availability;
 
   await registerAllTools(withCapabilityGate(server, projection), context);
@@ -370,6 +384,15 @@ export async function registerRenkeiTools(
       withCapabilityGate(server, projection, CONFLUENCE_MCP_CONNECTOR),
       context,
       oauthConfluenceAuth(context)
+    );
+  }
+  if (filesharesAvailable) {
+    // No scope gate: fileshares has no OAuth scopes — per-path authorization
+    // is the package's ACL engine, evaluated inside every handler.
+    registerFileshareTools(
+      withCapabilityGate(server, projection, FILESHARES_MCP_CONNECTOR),
+      context,
+      userFileshareAuth(context)
     );
   }
 }

@@ -88,6 +88,16 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     toolPrefix: 'zoom_*',
   },
   {
+    capabilityKey: 'fileshares',
+    // No connector_configs row: each share carries its own host and
+    // credential in file_shares — the key exists so the identifier stays
+    // consistent.
+    configKey: 'fileshares',
+    label: 'File shares',
+    summary: 'Org SMB and SFTP network shares, with per-user access managed in Renkei.',
+    toolPrefix: 'fileshare_*',
+  },
+  {
     capabilityKey: 'cards',
     // No connector_configs row: cards are Renkei's own feed and need no
     // credentials — the key exists so the identifier stays consistent.

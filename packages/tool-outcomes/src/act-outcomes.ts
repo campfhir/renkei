@@ -864,6 +864,18 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Removed an agent’s knowledge note',
     short: 'Removed a knowledge note',
   },
+  fileshare_request_file_upload: {
+    category: 'created',
+    entity: 'file',
+    label: 'Requested a file upload to a network share',
+    short: 'Requested a share upload',
+  },
+  fileshare_create_folder: {
+    category: 'created',
+    entity: 'folder',
+    label: 'Created a folder on a network share',
+    short: 'Created a share folder',
+  },
 };
 
 /** One connector's acts, in the order the preferences page lists them. */
