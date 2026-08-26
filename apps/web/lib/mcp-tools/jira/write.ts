@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
+import { actMeta } from '@renkei/tool-outcomes';
 import type { MCPToolContext } from '../common';
 import { getCachedDisplayName } from '../common';
 import { markdownToAdf } from './markdown';
@@ -365,7 +366,16 @@ export async function registerWriteTools(
         `Created issue ${resultKey}` +
         describeOutcome(applied, unwritten, commented) +
         `\n\n${await issueLinksMarkdown(context.siteUrl, auth, resultKey)}`;
-      return { content: [{ type: 'text' as const, text }] };
+      // The receipt turns the owner's notification from "Created a Jira
+      // issue" into "Created a Jira issue SCRUM-42", with a link. Only the
+      // handler ever sees the key, which is why it has to be attached here.
+      return {
+        content: [{ type: 'text' as const, text }],
+        _meta: actMeta({
+          id: resultKey,
+          ...(context.siteUrl ? { url: `${context.siteUrl}/browse/${resultKey}` } : {}),
+        }),
+      };
     } catch (error) {
       return {
         content: [
@@ -767,7 +777,13 @@ export async function registerWriteTools(
         if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
         const text = `Comment added to ${issueKey}\n\n${await issueLinksMarkdown(context.siteUrl, auth, issueKey)}`;
-        return { content: [{ type: 'text' as const, text }] };
+        return {
+          content: [{ type: 'text' as const, text }],
+          _meta: actMeta({
+            id: issueKey,
+            ...(context.siteUrl ? { url: `${context.siteUrl}/browse/${issueKey}` } : {}),
+          }),
+        };
       } catch (error) {
         return {
           content: [
@@ -888,7 +904,13 @@ export async function registerWriteTools(
         if (!execResponse.ok) return errText(await describeJiraAuthFailure(execResponse));
 
         const text = `Transitioned ${issueKey} to ${transitionName}\n\n${await issueLinksMarkdown(context.siteUrl, auth, issueKey)}`;
-        return { content: [{ type: 'text' as const, text }] };
+        return {
+          content: [{ type: 'text' as const, text }],
+          _meta: actMeta({
+            id: issueKey,
+            ...(context.siteUrl ? { url: `${context.siteUrl}/browse/${issueKey}` } : {}),
+          }),
+        };
       } catch (error) {
         return {
           content: [

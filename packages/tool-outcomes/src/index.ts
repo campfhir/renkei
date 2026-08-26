@@ -34,6 +34,7 @@ export { KIND_META_KEY, toolKindOf, type ToolKind } from './tool-kind';
 export {
   ACT_CATEGORIES,
   ACT_META_KEY,
+  actMeta,
   ACT_OUTCOMES,
   actResult,
   resolveAct,

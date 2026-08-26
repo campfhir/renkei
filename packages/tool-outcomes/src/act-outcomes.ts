@@ -121,8 +121,19 @@ export function actResult(
 } {
   return {
     content: [{ type: 'text', text }],
-    _meta: { [ACT_META_KEY]: { ...receipt } },
+    _meta: actMeta(receipt),
   };
+}
+
+/**
+ * Just the `_meta` fragment, for a handler that already returns one.
+ *
+ * Plenty do — the Jira and JSM tools return a widget URI via
+ * `previewToolMeta` — so `actResult` would clobber it. Those handlers
+ * spread this instead: `_meta: { ...previewToolMeta(URI), ...actMeta({id}) }`.
+ */
+export function actMeta(receipt: ActReceipt): Record<string, unknown> {
+  return { [ACT_META_KEY]: { ...receipt } };
 }
 
 /**
