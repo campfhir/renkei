@@ -141,6 +141,7 @@ export {
   type FilterMatchKind,
   type FilterMatchMode,
   type FilterOptionSource,
+  type FilterSelectOption,
   type TriggerFilterField,
   type TriggerMatch,
   type TriggerMatchValue,

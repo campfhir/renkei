@@ -75,6 +75,18 @@ describe('the catalog binds filters to the payload', () => {
     }
   });
 
+  it('gives every select field fixed options, one of them the empty "any"', () => {
+    // The empty option is how the panel offers "no constraint"; a select
+    // without one is a filter that can be set but never cleared.
+    for (const event of TRIGGER_EVENT_CATALOG) {
+      for (const field of event.filters) {
+        if (field.input !== 'select') continue;
+        expect((field.options ?? []).length).toBeGreaterThan(1);
+        expect((field.options ?? []).some((option) => option.value === '')).toBe(true);
+      }
+    }
+  });
+
   it('yields no filters for an unknown event, rather than throwing', () => {
     expect(triggerFilterFields('nope/at-all')).toEqual([]);
     expect(matchesTriggerEvent('nope/at-all', { anything: 'x' }, {})).toBe(true);
@@ -591,10 +603,11 @@ describe('negated filters', () => {
 });
 
 describe('the webex catalog entry offers both directions', () => {
-  it('carries a keyword filter and both exclusions', () => {
+  it('carries a keyword filter, both exclusions and the space-type choice', () => {
     const ids = triggerFilterFields(WEBEX).map((field) => field.id);
     expect(ids).toEqual(
       expect.arrayContaining([
+        'spaceType',
         'roomIds',
         'exceptRoomIds',
         'senderAddresses',
@@ -630,5 +643,77 @@ describe('the webex catalog entry offers both directions', () => {
     expect(
       matchesTriggerEvent(WEBEX, match, post('deploy then rollback', 'builds@example.com'))
     ).toBe(false);
+  });
+});
+
+/**
+ * The space-type filter: direct messages in, or direct messages out.
+ *
+ * One select over WebEx's two room types covers both asks — "only my DMs"
+ * is {spaceType: 'direct'}, "never my DMs" is {spaceType: 'group'} — so
+ * the negative direction is pinned for each reading.
+ */
+describe('the space-type filter separates direct messages from group spaces', () => {
+  it('set to direct, fires on a DM and not on a group space', () => {
+    const match = { spaceType: 'direct' };
+    expect(matchesTriggerEvent(WEBEX, match, webex({ roomType: 'direct' }))).toBe(true);
+    expect(matchesTriggerEvent(WEBEX, match, webex({ roomType: 'group' }))).toBe(false);
+  });
+
+  it('set to group, keeps direct messages out', () => {
+    const match = { spaceType: 'group' };
+    expect(matchesTriggerEvent(WEBEX, match, webex({ roomType: 'group' }))).toBe(true);
+    expect(matchesTriggerEvent(WEBEX, match, webex({ roomType: 'direct' }))).toBe(false);
+  });
+
+  it('fails closed when the payload carries no room type', () => {
+    // A stated inclusion an event cannot positively satisfy turns it away —
+    // same rule as every other inclusion here.
+    expect(matchesTriggerEvent(WEBEX, { spaceType: 'direct' }, webex())).toBe(false);
+    expect(matchesTriggerEvent(WEBEX, { spaceType: 'group' }, webex({ roomType: '' }))).toBe(false);
+  });
+
+  it('empty means both kinds, and counts as no filter', () => {
+    expect(matchesTriggerEvent(WEBEX, { spaceType: '' }, webex({ roomType: 'group' }))).toBe(true);
+    expect(matchesTriggerEvent(WEBEX, { spaceType: '' }, webex())).toBe(true);
+    expect(isEmptyMatch(triggerFilterFields(WEBEX), { spaceType: '' })).toBe(true);
+  });
+
+  it('folds case both ways, like the other human-entered matchers', () => {
+    const stored = normalizeMatchForEvent(WEBEX, { spaceType: 'Direct' });
+    expect(stored).toEqual({ spaceType: 'direct' });
+    expect(matchesTriggerEvent(WEBEX, stored, webex({ roomType: 'direct' }))).toBe(true);
+  });
+
+  it('rejects a value that is neither kind', () => {
+    expect(validateMatchForEvent(WEBEX, { spaceType: 'huddle' })).toEqual([
+      'The space-type filter must be "direct" or "group".',
+    ]);
+    expect(validateMatchForEvent(WEBEX, { spaceType: 'direct' })).toEqual([]);
+    expect(validateMatchForEvent(WEBEX, { spaceType: '' })).toEqual([]);
+  });
+
+  it('composes with the other webex filters, both narrowing', () => {
+    const match = normalizeMatchForEvent(WEBEX, {
+      spaceType: 'direct',
+      textKeywords: ['deploy'],
+    });
+    expect(
+      matchesTriggerEvent(WEBEX, match, webex({ roomType: 'direct', text: 'deploy now' }))
+    ).toBe(true);
+    expect(
+      matchesTriggerEvent(WEBEX, match, webex({ roomType: 'group', text: 'deploy now' }))
+    ).toBe(false);
+    expect(matchesTriggerEvent(WEBEX, match, webex({ roomType: 'direct', text: 'lunch?' }))).toBe(
+      false
+    );
+  });
+
+  it('reads as its option in the summary, never as a raw value', () => {
+    const fields = triggerFilterFields(WEBEX);
+    expect(describeFilters(fields, { spaceType: 'direct' })).toBe('in a direct message');
+    expect(describeFilters(fields, { spaceType: 'group' })).toBe(
+      'in a group space, never a direct message'
+    );
   });
 });

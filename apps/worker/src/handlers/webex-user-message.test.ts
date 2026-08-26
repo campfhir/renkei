@@ -35,6 +35,7 @@ function handlerWith(options: {
   personId: string;
   sentByRenkei?: boolean;
   text?: string | null;
+  roomType?: string | null;
   published: unknown[];
 }) {
   return createWebexUserMessageHandler({
@@ -48,7 +49,7 @@ function handlerWith(options: {
         ok({
           id,
           roomId: 'room-1',
-          roomType: 'group',
+          roomType: options.roomType === undefined ? 'group' : options.roomType,
           parentId: null,
           personId: options.personId,
           personEmail: 'someone@example.com',
@@ -121,5 +122,26 @@ describe('webex all-spaces ingest', () => {
       type: 'message.received',
       ownerSubject: 'watcher@example.com',
     });
+  });
+
+  it('carries the room type, so a direct-message filter has something to read', async () => {
+    const published: unknown[] = [];
+    const handler = handlerWith({ personId: 'somebody-else', roomType: 'direct', published });
+
+    await handler(event('msg-dm'));
+
+    expect(published[0]).toMatchObject({ data: { roomType: 'direct' } });
+  });
+
+  it('publishes an empty room type when the API omits it, never dropping the message', async () => {
+    // The filter side fails closed on ''; the ingest side must not add a
+    // second, silent drop of its own.
+    const published: unknown[] = [];
+    const handler = handlerWith({ personId: 'somebody-else', roomType: null, published });
+
+    await handler(event('msg-untyped-room'));
+
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({ data: { roomType: '' } });
   });
 });

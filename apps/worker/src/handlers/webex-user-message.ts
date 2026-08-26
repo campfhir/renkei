@@ -123,6 +123,9 @@ export function createWebexUserMessageHandler(
         text: message.text.slice(0, BODY_PREVIEW_CHARS),
         sender: message.personEmail ?? '',
         roomId: message.roomId,
+        // 'direct' or 'group' per WebEx; '' when the API omits it, which a
+        // space-type filter then fails closed on (see trigger-filters.ts).
+        roomType: message.roomType ?? '',
         messageId: message.id,
       },
       occurredAt: message.created ?? undefined,

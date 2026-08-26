@@ -189,12 +189,39 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
         'The identifier of the space the message was posted in; pass it to webex_send_message to reply in that space.'
       ),
       trigger(
+        'roomType',
+        'Space type',
+        'Where the message was posted: "direct" for a one-to-one conversation, "group" for a group space.'
+      ),
+      trigger(
         'messageId',
         'Message id',
         'The identifier of the triggering message; pass it to webex_get_message to fetch it.'
       ),
     ],
     filters: [
+      {
+        // One field rather than an include/exclude pair: WebEx has exactly
+        // two room types, so "only direct messages" and "keep direct
+        // messages out" are the same choice seen from opposite ends.
+        id: 'spaceType',
+        payloadKey: 'roomType',
+        match: 'equals-any',
+        input: 'select',
+        label: 'Direct messages',
+        hint: 'Watch only one-to-one (direct) messages, keep them out, or take both.',
+        invalidMessage: 'The space-type filter must be "direct" or "group".',
+        options: [
+          { value: '', label: 'Direct and group', describe: '' },
+          { value: 'direct', label: 'Direct messages only', describe: 'in a direct message' },
+          {
+            value: 'group',
+            label: 'Group spaces only',
+            describe: 'in a group space, never a direct message',
+          },
+        ],
+        describeOne: 'in a {value} conversation',
+      },
       {
         id: 'roomIds',
         payloadKey: 'roomId',
