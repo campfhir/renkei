@@ -29,7 +29,14 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;
 }
 
-function parseCredentials(value: unknown): ShareCredentials | null {
+/**
+ * Validate an untrusted value into a credential document, or null. Exposed
+ * for the fileshare worker's test-connection endpoint, which receives an
+ * admin's unsaved credentials over the internal HTTP seam and must
+ * re-validate them at the trust boundary rather than assume the caller's
+ * parsing.
+ */
+export function parseShareCredentials(value: unknown): ShareCredentials | null {
   if (!isRecord(value)) return null;
   const username = optionalString(value.username);
   if (!username) return null;
@@ -76,7 +83,7 @@ export function decryptCredentials(
     return err('MALFORMED_CREDENTIALS' as const);
   }
 
-  const credentials = parseCredentials(parsed);
+  const credentials = parseShareCredentials(parsed);
   if (!credentials) return err('MALFORMED_CREDENTIALS' as const);
   return ok(credentials);
 }

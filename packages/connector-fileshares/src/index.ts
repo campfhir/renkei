@@ -46,6 +46,7 @@ export {
 export {
   decryptCredentials,
   encryptCredentials,
+  parseShareCredentials,
   type CredentialError,
   type ShareCredentials,
 } from './credentials';
