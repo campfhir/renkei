@@ -293,14 +293,23 @@ function promptOf(
       'tool step differently, add it to that step\'s "failures" array using one of the tool\'s ' +
       'listed failure codes: {"outcome": code, "action": "stop"} stops deliberately, ' +
       '{"outcome": code, "action": "retry", "guidance": "corrective instruction"} retries with ' +
-      'that guidance, and {"outcome": code, "action": "stop-quiet"} declares the condition NOT ' +
-      'an error (e.g. "nothing found" just means there is nothing to do) — the run ends ' +
-      'silently and shows as stopped rather than failed. Guidance may use {{var:...}} and ' +
+      'that guidance, {"outcome": code, "action": "stop-quiet"} declares the condition NOT ' +
+      'an error (e.g. "nothing found" can mean the automation does not apply) — the run ends ' +
+      'silently and shows as skipped rather than failed — and {"outcome": code, "action": ' +
+      '"continue"} notes the failure and moves on to the next step (the step\'s saved result ' +
+      'becomes the failure summary). Guidance may use {{var:...}} and ' +
       '{{tool:...}} chips — guidance tools become available to the step ONLY on retries (the ' +
       'corrective set). Unlisted codes stop.',
     '- When the user\'s description implies retrying (e.g. "search again with different ' +
       'keywords"), express it as a "retry" failure handling with that guidance, and set "tries" ' +
-      'to how many total attempts make sense (1-10, default 5).',
+      'to how many total attempts make sense (1-10, default 5). On a retry entry, ' +
+      '"onExhausted" says what happens when every try fails: "stop" (default), "continue" ' +
+      '(move on anyway), or "stop-quiet" (end silently).',
+    "- When a SEARCH step's results feed a later decision or creation step, and the tool " +
+      'lists a "no-results" code, prefer {"outcome": "no-results", "action": "retry", ' +
+      '"guidance": "reword the search — broaden terms or try another identifier", ' +
+      '"onExhausted": "continue"} so an empty first search is retried differently and a ' +
+      'genuinely empty result still lets the automation decide what to do next.',
     ...(revising
       ? [
           '- Every returned step carries "from": the sN id of the existing step it is based on (kept or tweaked), or null for a brand-new step. Unchanged and tweaked steps MUST carry their id — it preserves the owner\'s retry settings.',
@@ -419,10 +428,12 @@ function promptOf(
     '      or "stop-quiet" (ends silently: no reply, no follow-up automations),',
     '    "failures": array or omitted — only meaningful on tool steps; each entry:',
     '      { "outcome": one of the tool\'s failure codes,',
-    '        "action": "stop", "retry", or "stop-quiet" (not an error — end the run',
-    '          silently),',
+    '        "action": "stop", "retry", "stop-quiet" (not an error — end the run',
+    '          silently), or "continue" (note the failure and move on to the next step),',
     '        "guidance": string (required when action is "retry"; plain words, may use',
-    '          {{tool:...}} and {{var:...}} tokens) or null }' + (revising ? ',' : ''),
+    '          {{tool:...}} and {{var:...}} tokens) or null,',
+    '        "onExhausted": "stop" (default), "continue", or "stop-quiet" — only with',
+    '          action "retry": what happens when every try fails }' + (revising ? ',' : ''),
     ...(revising
       ? [
           '    "from": string or null — the sN id of the existing step this one is based',
@@ -633,8 +644,9 @@ const STEP_SHAPE = z.object({
     .array(
       z.object({
         outcome: z.string().min(1, 'must be a failure code'),
-        action: z.enum(['stop', 'retry', 'stop-quiet']),
+        action: z.enum(['stop', 'retry', 'stop-quiet', 'continue']),
         guidance: z.string().nullable().optional(),
+        onExhausted: z.enum(['stop', 'continue', 'stop-quiet']).optional(),
       })
     )
     .optional(),
@@ -1668,10 +1680,17 @@ function parseActionEntry(
                 outcome: failure.outcome,
                 action: 'retry',
                 guidance: segmentsOf(guidanceText, validTools, knownVars, true),
+                // 'stop' is the wire word for the default; only a
+                // deliberate departure is carried onto the handling.
+                ...(failure.onExhausted && failure.onExhausted !== 'stop'
+                  ? { exhausted: failure.onExhausted }
+                  : {}),
               }
             : failure.action === 'stop-quiet'
               ? { outcome: failure.outcome, action: 'stop-quiet' }
-              : { outcome: failure.outcome, action: 'exit' }
+              : failure.action === 'continue'
+                ? { outcome: failure.outcome, action: 'continue' }
+                : { outcome: failure.outcome, action: 'exit' }
         );
       }
     }

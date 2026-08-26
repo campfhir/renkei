@@ -127,7 +127,7 @@ function snapshotLines(run: RunDetail): string[] {
           node.result === 'failure'
             ? 'fails the run'
             : node.result === 'stop'
-              ? 'stops the run (nothing to do)'
+              ? 'stops the run (skipped)'
               : 'finishes the run';
         const channels = [
           ...(node.notifyEmail ? ['email'] : []),
@@ -182,6 +182,15 @@ function attemptLines(attempt: AttemptView): string[] {
       ? attempt.detail
       : {};
   if (str(detail.chosenPathName)) lines.push(`  Took path: ${str(detail.chosenPathName)}`);
+  // A skip ends the WHOLE run from inside a "Succeeded" attempt — without
+  // this line the debug paste shows a green attempt and then an
+  // unexplained stop ('nothing-to-do' is the pre-rename stored spelling).
+  const declared = str(detail.declaredOutcome);
+  if (declared === 'skipped' || declared === 'nothing-to-do') {
+    lines.push(
+      '  Declared skipped — the step judged the automation does not apply; the run stopped here.'
+    );
+  }
   if (str(detail.llmSummary)) lines.push(`  Summary: ${str(detail.llmSummary)}`);
   if (str(detail.guidanceUsed)) lines.push(`  Guidance used: ${str(detail.guidanceUsed)}`);
   if (str(detail.saveValue)) lines.push(`  Saved result: ${str(detail.saveValue)}`);

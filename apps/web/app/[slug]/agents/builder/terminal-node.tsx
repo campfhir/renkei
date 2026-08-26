@@ -2,7 +2,7 @@
 
 /**
  * The terminal (end marker) node card. Color says the result at a glance —
- * green finish, red failure, amber "nothing to do" — and badges say which
+ * green finish, red failure, amber skip — and badges say which
  * notification channels fire when the run ends here.
  */
 
@@ -12,7 +12,7 @@ import { FixedMark } from './fixed-marker';
 const RESULT_WORDING: Record<TerminalStep['result'], string> = {
   success: 'Finishes the run',
   failure: 'Fails the run',
-  stop: 'Stops — nothing to do',
+  stop: 'Skips the rest of the run',
 };
 
 export function TerminalNode({

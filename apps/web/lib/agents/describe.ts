@@ -164,7 +164,10 @@ function nodeLines(
             channels.length > 0
               ? `${indent}   at the pause the owner gets ${channels.join(' and ')} with the message and a link`
               : `${indent}   no notification — the owner sees the card on their home page`,
-            pathBlock(node.onApproved, node.mode === 'input' ? 'if answered, path' : 'if approved, path'),
+            pathBlock(
+              node.onApproved,
+              node.mode === 'input' ? 'if answered, path' : 'if approved, path'
+            ),
             pathBlock(node.onDeclined, 'if declined, path'),
             pathBlock(node.onTimeout, 'if nobody acts in time, path'),
             `${indent}   after a path finishes, the automation continues below the approval`,
@@ -175,7 +178,7 @@ function nodeLines(
             node.result === 'failure'
               ? 'the whole run ends here AS A FAILURE (a deliberate failure exit)'
               : node.result === 'stop'
-                ? 'the whole run ends here gracefully as "nothing to do"'
+                ? 'the whole run ends here gracefully as skipped'
                 : 'the whole run finishes successfully here';
           const channels = [
             ...(node.notifyEmail ? ['an email to the owner'] : []),
@@ -243,10 +246,10 @@ export function buildAgentReviewPrompt(
     'How the engine behaves — take this as given, and never raise a concern the engine already prevents:',
     '- Steps run in document order. Inside a branch, exactly ONE path runs (the engine forces a choice; the last path is the fallback). A loop repeats its body up to its stated round limit; a for-each loop over an empty list simply skips. After a branch or loop finishes, execution continues below it.',
     '- A later step runs ONLY if everything before it on its route succeeded.',
-    '- A failure handled with "stop", an unhandled failure, or exhausted retries STOPS the whole automation immediately — later steps never run, so they can safely assume earlier steps succeeded. Missing "fallbacks" for exhausted retries are not a flaw. A branch\'s failure route (when present) already covers the decision itself erroring.',
+    '- A failure handled with "stop", an unhandled failure, or exhausted retries STOPS the whole automation immediately — later steps never run, so they can safely assume earlier steps succeeded. The exceptions are explicit: a failure handled with "continue" (or a retry whose after-every-try choice is "continue") records the failure and moves on, binding the step\'s saved result to the failure summary. Missing "fallbacks" for exhausted retries are not a flaw. A branch\'s failure route (when present) already covers the decision itself erroring.',
     "- The runner checks each step's tool is available before running, and verifies tool errors against the declared success.",
     '- Loop round limits and the collected-list size are engine-enforced ceilings with truncation notes — do not flag them as missing safeguards.',
-    '- An end marker ends the WHOLE run exactly as configured (success, failure, or nothing-to-do) and delivers only its own configured notifications — the editor already prevents steps after it, and a failure ending without notifications is a deliberate choice, not a flaw.',
+    '- An end marker ends the WHOLE run exactly as configured (success, failure, or a graceful skip) and delivers only its own configured notifications — the editor already prevents steps after it, and a failure ending without notifications is a deliberate choice, not a flaw.',
     '- An approval pauses the run safely for the owner: exactly one of its three paths runs (approved/answered, declined, or timed out — every wait has an engine-enforced ceiling), and an empty path just continues below. Do not flag the pause, the wait, or an empty outcome path as problems.',
     '',
     'Reply with JSON only, no code fences: {"summary": "...", "concerns": [{"issue": "...", "fix": "..."}]}.',

@@ -31,7 +31,7 @@ const RESULTS: { value: TerminalResult; label: string; hint: string }[] = [
   },
   {
     value: 'stop',
-    label: 'Stop — nothing to do',
+    label: 'Skip the rest',
     hint: 'The graceful early exit: not a success, emphatically not a failure. Nothing chains afterward.',
   },
 ];

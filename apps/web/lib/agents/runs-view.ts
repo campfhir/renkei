@@ -140,13 +140,40 @@ const FAILED_INITIAL_STATE = sql<Json | null>`
   case when status = 'failed' then initial_state end
 `.as('initial_state');
 
+/**
+ * Every status a run can be in — the one authoritative list. The runs
+ * pages' filter tabs, the MCP surface, and the query options all read
+ * this so a status added later cannot be missed by one of them.
+ */
+export const RUN_STATUSES = [
+  'queued',
+  'running',
+  'waiting',
+  'succeeded',
+  'failed',
+  'stopped',
+  'canceled',
+] as const;
+export type RunStatus = (typeof RUN_STATUSES)[number];
+
+export function isRunStatus(value: string | undefined): value is RunStatus {
+  return RUN_STATUSES.some((status) => status === value);
+}
+
+/** A user's search text as a literal ILIKE pattern — wildcards escaped. */
+function likePattern(q: string): string {
+  return `%${q.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+}
+
 export async function listRunsForOwner(
   db: Kysely<DB>,
   tenantId: string,
   ownerSubject: string,
   agentId: string,
   options: {
-    status?: 'succeeded' | 'failed' | 'stopped' | 'waiting' | 'running' | 'queued' | 'canceled';
+    status?: RunStatus;
+    /** Free-text search; see the predicate below for what it matches. */
+    q?: string;
     limit?: number;
   } = {}
 ): Promise<RunSummary[]> {
@@ -158,6 +185,24 @@ export async function listRunsForOwner(
     .where('owner_subject', '=', ownerSubject)
     .where('agent_id', '=', agentId);
   if (options.status) query = query.where('status', '=', options.status);
+  const q = options.q?.trim();
+  if (q) {
+    // The owner sees everything about their own runs, so the search may
+    // read content: the error text, the trigger kind, and the trigger
+    // input (the payload the run started from — the thing a person
+    // actually remembers about "that particular run"). A pasted run id
+    // matches exactly. Unindexed ILIKE on purpose: one agent's retained
+    // runs are bounded by the retention sweep and the LIMIT below.
+    const pattern = likePattern(q);
+    query = query.where((eb) =>
+      eb.or([
+        eb('error', 'ilike', pattern),
+        eb('trigger_kind', 'ilike', pattern),
+        eb(sql<string>`initial_state::text`, 'ilike', pattern),
+        ...(isUuid(q) ? [eb('id', '=', q)] : []),
+      ])
+    );
+  }
   const rows = await query
     .orderBy('created_at', 'desc')
     .limit(options.limit ?? 50)
@@ -254,14 +299,32 @@ export async function listRunsForAdmin(
   db: Kysely<DB>,
   tenantId: string,
   agentId: string,
-  options: { limit?: number } = {}
+  options: { status?: RunStatus; q?: string; limit?: number } = {}
 ): Promise<RunSummary[]> {
   if (!isUuid(agentId)) return [];
-  const rows = await db
+  let query = db
     .selectFrom('agent_runs')
     .select([...RUN_COLUMNS, FAILED_SNAPSHOT])
     .where('tenant_id', '=', tenantId)
-    .where('agent_id', '=', agentId)
+    .where('agent_id', '=', agentId);
+  if (options.status) query = query.where('status', '=', options.status);
+  const q = options.q?.trim();
+  if (q) {
+    // The admin search obeys the same content rule as FAILED_INITIAL_STATE:
+    // trigger input is matched only on failed runs — a match count over
+    // healthy runs' content would leak by side channel what the admin
+    // cannot read. Error text and a pasted run id are always fair game.
+    const pattern = likePattern(q);
+    query = query.where((eb) =>
+      eb.or([
+        eb('error', 'ilike', pattern),
+        eb('trigger_kind', 'ilike', pattern),
+        eb(sql<string>`case when status = 'failed' then initial_state::text end`, 'ilike', pattern),
+        ...(isUuid(q) ? [eb('id', '=', q)] : []),
+      ])
+    );
+  }
+  const rows = await query
     .orderBy('created_at', 'desc')
     .limit(options.limit ?? 50)
     .execute();

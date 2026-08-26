@@ -46,8 +46,8 @@ function statusTone(status: string): string {
       return 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300';
     case 'running':
       return 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300';
-    // A graceful "nothing to do" end — neutral on purpose: not the green of
-    // work done, and emphatically not the red of a failure.
+    // A graceful skip — neutral on purpose: not the green of work done,
+    // and emphatically not the red of a failure.
     case 'stopped':
       return 'bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300';
     // Parked on a human decision — amber says "your move", not "broken".
@@ -109,6 +109,7 @@ interface DetailShape {
   chosenPathName?: unknown;
   terminalMessage?: unknown;
   approvalMessage?: unknown;
+  declaredOutcome?: unknown;
 }
 
 /**
@@ -150,6 +151,14 @@ function AttemptDetail({ attempt }: { attempt: AttemptView }) {
       {attempt.outcome === 'path_chosen' && typeof detail.chosenPathName === 'string' ? (
         <p className="font-medium text-indigo-700 dark:text-indigo-300">
           Took path: {detail.chosenPathName}
+        </p>
+      ) : null}
+      {/* A skip ends the WHOLE run from inside a "Succeeded" attempt —
+          say so, or the timeline shows a green pill and an unexplained
+          stop ('nothing-to-do' is the pre-rename stored spelling). */}
+      {detail.declaredOutcome === 'skipped' || detail.declaredOutcome === 'nothing-to-do' ? (
+        <p className="font-medium text-amber-700 dark:text-amber-300">
+          Declared skipped — the automation does not apply to this input; the run stopped here.
         </p>
       ) : null}
       {typeof detail.llmSummary === 'string' && detail.llmSummary ? (

@@ -97,12 +97,13 @@ export const FINISH_STEP_DEF: LlmToolDef = {
     properties: {
       outcome: {
         type: 'string',
-        enum: ['success', 'failure', 'nothing-to-do'],
+        enum: ['success', 'failure', 'skipped'],
         description:
           "'success' when the step's work is done; 'failure' when it could not be done; " +
-          "'nothing-to-do' when the step determined the automation does not apply to this " +
+          "'skipped' when the step determined the automation does not apply to this " +
           'input at all (out of scope, no valid target, already handled) — the WHOLE run ' +
-          'ends there gracefully, as a non-failure, with summary saying why.',
+          'ends there gracefully, as a non-failure, with summary saying why. An empty ' +
+          "search result is never 'skipped' — that is an answer.",
       },
       code: {
         type: 'string',
@@ -156,7 +157,8 @@ export const SYSTEM_PROMPT = [
   'You may call only the tools provided. When the step’s work is done, or it is clear it cannot be done, call finish_step exactly once with the outcome.',
   'Aim to finish: when what you have satisfies the step’s intent, declare success rather than double-checking with more calls.',
   'When the instruction says the whole automation should end at this step ("…and stop here"), set stop: true on finish_step; when it says to end silently or do nothing, also set quiet: true.',
-  'When the work turns out not to apply to this input at all — out of scope, no valid target, nothing left to do — that is not a failure: declare outcome "nothing-to-do" with a summary saying why, and the automation ends there gracefully.',
+  'When the automation turns out not to apply to this input at all — out of scope, no valid target, already handled — that is not a failure: declare outcome "skipped" with a summary saying why, and the automation ends there gracefully.',
+  'An empty result is NOT a skip: a search or lookup that runs cleanly but finds nothing has produced an answer — declare success and save that nothing was found (or, when the step lists a failure code for it, declare failure with that code so the configured handling decides). Skip only when the triggering input itself is out of scope for the whole automation.',
   'Declare failure honestly: a tool error you could not work around, or a result that clearly does not match the step’s intent, is a failure, not a success.',
   'You may be shown "What you remember" (notes from this agent’s earlier runs) and "Your knowledge notes". Use them to avoid repeating work already done — e.g. do not act again on a message an earlier run already handled — and record anything future runs must know via finish_step’s remember field.',
 ].join(' ');
@@ -421,6 +423,13 @@ export interface AttemptPromptInput {
   guardrailsText?: string;
   /** True when this step's saveAs is a loop's items source — nudge saveItems. */
   savesItemsForLoop?: boolean;
+  /**
+   * The failure codes this step's handling can route, rendered as prose by
+   * the engine — so a declared failure lands on the code the author
+   * planned for instead of an unroutable 'other'. Absent when the step
+   * handles nothing.
+   */
+  outcomeGuide?: string;
 }
 
 export function buildAttemptMessages(input: AttemptPromptInput): {
@@ -451,6 +460,7 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
             : `When you succeed, include saveValue in finish_step — it becomes "${input.step.saveAs}" for later use.`,
         ]
       : []),
+    ...(input.outcomeGuide ? [input.outcomeGuide] : []),
     ...(variableLines ? [`Known information:\n${variableLines}`] : []),
     ...(input.memoryText
       ? [

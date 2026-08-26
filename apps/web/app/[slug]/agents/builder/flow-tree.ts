@@ -98,7 +98,7 @@ export function newTerminal(): TerminalStep {
     kind: 'terminal',
     name: '',
     // A fresh end marker reads as "finish here"; the editor flips it to a
-    // failure or nothing-to-do ending when that's what it marks.
+    // failure or skip ending when that's what it marks.
     result: 'success',
     message: [],
     notifyEmail: false,

@@ -51,7 +51,7 @@
  * VERSION 4 adds one construct:
  *   - `TerminalStep` — an explicit end marker. Reaching it ends the WHOLE
  *     run (inside a branch path or loop body too) with a configured result
- *     — success, failure, or a graceful "nothing to do" — and delivers the
+ *     — success, failure, or a graceful skip — and delivers the
  *     node's own notification (email and/or WebEx, message rendered with
  *     the run's variables). It is the opt-in replacement for the implicit
  *     context-free failure mail: the endpoint says what to send and where.
@@ -68,10 +68,16 @@
  *     through, and the node counts toward the same nesting budgets as a
  *     branch.
  *
- * `requiredVersion` is the single version rule: 5 iff an approval node is
- * present, else 4 iff a terminal node is, else 3 iff any v3 construct is,
- * else 2 iff a branch exists, else 1 — so every document any older writer
- * could produce keeps its exact old version and bytes.
+ * VERSION 7 adds no construct — it widens FAILURE HANDLING: an entry may
+ * carry `action: 'continue'` (record the failure, move on to the next
+ * step) and, on retry entries, an `exhausted` choice for when the attempt
+ * budget runs out ('continue' or 'stop-quiet' instead of failing the run).
+ *
+ * `requiredVersion` is the single version rule: 7 iff any failure handling
+ * uses the v7 vocabulary, else 6 iff a date chip is present, else 5 iff an
+ * approval node is, else 4 iff a terminal node is, else 3 iff any v3
+ * construct is, else 2 iff a branch exists, else 1 — so every document any
+ * older writer could produce keeps its exact old version and bytes.
  */
 
 /**
@@ -120,17 +126,30 @@ export interface FailureHandling {
   /**
    * 'exit' fails the run (the default for unhandled codes); 'retry' tries
    * again with guidance; 'stop-quiet' declares the outcome NOT an error —
-   * "ticket not found" is sometimes just "nothing to do" — and ends the run
-   * gracefully as 'stopped': silent like onSuccess 'stop-quiet' (no reply,
-   * no notification, no chained agents), recorded in run history only.
+   * "ticket not found" is sometimes a reason to skip the rest — and ends
+   * the run gracefully as 'stopped': silent like onSuccess 'stop-quiet'
+   * (no reply, no notification, no chained agents), recorded in run
+   * history only. 'continue' (version 7) records the failure on the
+   * attempt row but moves on to the next step anyway — the step's saved
+   * result, when it names one, binds to the failure summary so later
+   * steps and branches can see what happened.
    */
-  action: 'retry' | 'exit' | 'stop-quiet';
+  action: 'retry' | 'exit' | 'stop-quiet' | 'continue';
   /**
    * Corrective guidance shown to the model on retry attempts. Required for
    * 'retry'. MAY contain tool chips — several, deliberately laxer than the
    * step body — which become the extra tools offered while correcting.
    */
   guidance?: InstructionSegment[];
+  /**
+   * Version 7, meaningful only with action 'retry': what to do when the
+   * attempt budget runs out with this condition still the last failure.
+   * Absent/'exit' fails the run (the pre-v7 behavior); 'continue' moves on
+   * to the next step; 'stop-quiet' ends the run gracefully as 'stopped'.
+   * The normalizer strips an explicit 'exit' so documents that keep the
+   * default stay byte-identical with what older writers produce.
+   */
+  exhausted?: 'exit' | 'stop-quiet' | 'continue';
 }
 
 export interface ActionStep {
@@ -276,7 +295,7 @@ export interface GroupStep {
  * How a terminal node ends the run: 'success' finishes it as intended
  * (chained agents still fire); 'failure' is the DELIBERATE failure — the
  * run records as failed with the node's rendered message as the error;
- * 'stop' is the graceful "nothing to do" ending (run status 'stopped').
+ * 'stop' is the graceful skip ending (run status 'stopped').
  */
 export type TerminalResult = 'success' | 'failure' | 'stop';
 
@@ -341,8 +360,8 @@ export type AgentStepNode =
   ActionStep | BranchStep | LoopStep | GroupStep | TerminalStep | ApprovalStep;
 
 export interface AgentStepsDoc {
-  /** See requiredVersion: 5 approval, 4 terminal, 3 v3 constructs, 2 plain branches, else 1. */
-  version: 1 | 2 | 3 | 4 | 5 | 6;
+  /** See requiredVersion: 7 continue-handling, 6 date chips, 5 approval, 4 terminal, 3 v3 constructs, 2 plain branches, else 1. */
+  version: 1 | 2 | 3 | 4 | 5 | 6 | 7;
   /** Array order is execution order; success is linear within a list. */
   steps: AgentStepNode[];
 }
@@ -463,16 +482,38 @@ export function isInstructionSegment(value: unknown): value is InstructionSegmen
   return false;
 }
 
+/**
+ * Structural check for a failure-handling entry. Shared across the version
+ * arms like the segment guard above (see isDateSegment's comment): the v7
+ * vocabulary ('continue', `exhausted`) is admitted here, and a document
+ * carrying it is labeled version 7 by requiredVersion — an older worker
+ * rejects the unknown version outright, which is the guarantee that
+ * protects it from a handling it would silently ignore.
+ */
 function isFailureHandling(value: unknown): value is FailureHandling {
   if (typeof value !== 'object' || value === null) return false;
-  const entry: { outcome?: unknown; action?: unknown; guidance?: unknown } = value;
+  const entry: { outcome?: unknown; action?: unknown; guidance?: unknown; exhausted?: unknown } =
+    value;
   if (typeof entry.outcome !== 'string' || entry.outcome.length === 0) return false;
-  if (entry.action !== 'retry' && entry.action !== 'exit' && entry.action !== 'stop-quiet') {
+  if (
+    entry.action !== 'retry' &&
+    entry.action !== 'exit' &&
+    entry.action !== 'stop-quiet' &&
+    entry.action !== 'continue'
+  ) {
     return false;
   }
   if (entry.guidance !== undefined) {
     if (!Array.isArray(entry.guidance)) return false;
     if (!entry.guidance.every(isInstructionSegment)) return false;
+  }
+  if (
+    entry.exhausted !== undefined &&
+    entry.exhausted !== 'exit' &&
+    entry.exhausted !== 'stop-quiet' &&
+    entry.exhausted !== 'continue'
+  ) {
+    return false;
   }
   return true;
 }
@@ -871,10 +912,11 @@ export function isAgentStepsDoc(value: unknown): value is AgentStepsDoc {
     const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
     return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV4(step, root));
   }
-  if (doc.version === 5 || doc.version === 6) {
-    // Version 6 differs only in what an INSTRUCTION may contain (a date
-    // chip), which the shared segment guard already covers — the node
-    // shapes are v5's.
+  if (doc.version === 5 || doc.version === 6 || doc.version === 7) {
+    // Versions 6 and 7 differ only in what a LEAF may contain (a date chip
+    // in an instruction; the continue/exhausted failure-handling
+    // vocabulary), which the shared guards already cover — the node shapes
+    // are v5's.
     const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
     return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV5(step, root));
   }
@@ -1157,13 +1199,28 @@ export function containsDateChip(nodes: AgentStepNode[]): boolean {
 }
 
 /**
+ * Whether any failure handling uses the v7 vocabulary — a 'continue'
+ * action, or an `exhausted` choice (any value: the normalizer strips the
+ * default 'exit', so one that survives is deliberate). The version-7 test.
+ */
+export function containsContinueHandling(nodes: AgentStepNode[]): boolean {
+  return walkSteps(nodes).some(({ node }) => {
+    if (node.kind !== undefined && node.kind !== 'action') return false;
+    return node.failureHandling.some(
+      (handling) => handling.action === 'continue' || handling.exhausted !== undefined
+    );
+  });
+}
+
+/**
  * THE version rule — normalizeAgentDraft is its only writer. Anything an
  * older writer could have produced keeps its exact old version, which is
  * what keeps old snapshots byte-stable.
  */
-export function requiredVersion(nodes: AgentStepNode[]): 1 | 2 | 3 | 4 | 5 | 6 {
-  // Highest first: a date chip renders to a literal only in code that knows
-  // what it is, so it outranks every construct below it.
+export function requiredVersion(nodes: AgentStepNode[]): 1 | 2 | 3 | 4 | 5 | 6 | 7 {
+  // Highest first: a leaf construct only an aware reader can honor (a
+  // continue handling, a date chip) outranks every structure below it.
+  if (containsContinueHandling(nodes)) return 7;
   if (containsDateChip(nodes)) return 6;
   if (containsApproval(nodes)) return 5;
   if (containsTerminal(nodes)) return 4;

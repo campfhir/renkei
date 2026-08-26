@@ -16,6 +16,38 @@ const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
 const labelClass = 'block text-sm font-medium mb-1';
 
+/**
+ * The handling a freshly chosen tool starts with. Searches that can come
+ * back empty get the search rule seeded — an empty result retries with a
+ * reworded query, and exhausting every try moves on instead of failing —
+ * because "found nothing on the first phrasing" ending a run is the single
+ * most common way an automation quietly does nothing. Opt-out, not
+ * mandatory: it is an ordinary row in the failure panel.
+ */
+function seededHandlingFor(
+  tool: string | null,
+  toolDescriptors: Map<string, ToolDescriptor>
+): AgentStep['failureHandling'] {
+  const descriptor = tool ? toolDescriptors.get(tool) : undefined;
+  const noResults = descriptor?.outcomes.failures.find(
+    (failure) => failure.code === 'no-results' && failure.retriable
+  );
+  if (!noResults) return [];
+  return [
+    {
+      outcome: 'no-results',
+      action: 'retry',
+      guidance: [
+        {
+          t: 'text',
+          v: 'The search ran but found nothing — reword it: broaden the terms, try synonyms, or search by another identifier.',
+        },
+      ],
+      exhausted: 'continue',
+    },
+  ];
+}
+
 export interface StepEditorProps {
   step: AgentStep;
   ordinal: number;
@@ -50,7 +82,12 @@ export function StepEditor({
       instruction,
       tool,
       // Handling for a tool that is gone would name conditions of nothing.
-      failureHandling: tool === step.tool ? step.failureHandling : [],
+      // A fresh tool that can come back empty ('no-results') is seeded
+      // with the search rule — retry with a reworded query, keep going
+      // when every try finds nothing — a default the author can opt out
+      // of in the panel below.
+      failureHandling:
+        tool === step.tool ? step.failureHandling : seededHandlingFor(tool, toolDescriptors),
     });
   };
 
@@ -59,6 +96,9 @@ export function StepEditor({
   const failureHint = (() => {
     const retries = step.failureHandling.filter((entry) => entry.action === 'retry').length;
     const benign = step.failureHandling.filter((entry) => entry.action === 'stop-quiet').length;
+    const carriesOn = step.failureHandling.filter(
+      (entry) => entry.action === 'continue' || entry.exhausted === 'continue'
+    ).length;
     const stop =
       step.onSuccess === 'stop'
         ? ' · stops when done'
@@ -68,6 +108,7 @@ export function StepEditor({
     const parts = [
       ...(retries > 0 ? [`${retries} ${retries === 1 ? 'retry' : 'retries'} configured`] : []),
       ...(benign > 0 ? [`${benign} treated as not an error`] : []),
+      ...(carriesOn > 0 ? [`${carriesOn} carry on past failure`] : []),
     ];
     if (parts.length === 0) return `every failure stops the agent${stop}`;
     return `${parts.join(', ')}${stop}`;
