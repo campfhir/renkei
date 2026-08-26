@@ -6,6 +6,7 @@
  */
 
 import type { GroupStep } from '@renkei/agents';
+import { FixedMark } from './fixed-marker';
 
 export function GroupNode({
   group,
@@ -47,6 +48,7 @@ export function GroupNode({
         <span className="min-w-0 truncate text-sm font-medium">
           {group.name || 'Unnamed group'}
         </span>
+        <FixedMark />
       </span>
       <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">
         {group.steps.length === 0

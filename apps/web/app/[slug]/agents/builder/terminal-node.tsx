@@ -7,6 +7,7 @@
  */
 
 import type { TerminalStep } from '@renkei/agents';
+import { FixedMark } from './fixed-marker';
 
 const RESULT_WORDING: Record<TerminalStep['result'], string> = {
   success: 'Finishes the run',
@@ -55,9 +56,12 @@ export function TerminalNode({
           {ordinal}
         </span>
         <span aria-hidden="true">⏹</span>
-        <span className="min-w-0 truncate text-sm font-medium">
-          {terminal.name || 'End here'}
-        </span>
+        <span className="min-w-0 truncate text-sm font-medium">{terminal.name || 'End here'}</span>
+        {/*
+          An ending does call tools — the email, the WebEx note — but it
+          calls them directly, with no model deciding anything.
+        */}
+        <FixedMark />
       </span>
       <span className="mt-1 block text-xs text-gray-600 dark:text-gray-400">
         {RESULT_WORDING[terminal.result]}

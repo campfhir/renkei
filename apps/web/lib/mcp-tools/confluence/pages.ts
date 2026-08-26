@@ -14,10 +14,32 @@ import {
   rec,
   type ConfluenceAccess,
 } from './client';
+import { actMeta } from '@renkei/tool-outcomes';
 import { markdownToConfluenceBody, confluenceBodyToMarkdown, isBlankMarkdown } from './markdown';
 import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
 import type { ConfluenceAuth } from './confluence-auth';
+
+/**
+ * The receipt for a page Confluence just handed back: its title, and an
+ * absolute link to it.
+ *
+ * `_links.webui` is a SITE-RELATIVE path ('/spaces/ENG/pages/123/Title'),
+ * which is useless on its own in a notification — a link has to survive
+ * being clicked from an email or a toast. Confluence's v2 responses carry
+ * `_links.base` alongside it for exactly this join. When either half is
+ * missing the receipt simply carries no link rather than a broken one.
+ */
+export function pageReceipt(page: Record<string, unknown>): Record<string, unknown> {
+  const links = rec(page._links);
+  const base = str(links.base);
+  const webui = str(links.webui);
+  const title = str(page.title);
+  return actMeta({
+    ...(title ? { id: `“${title}”` } : {}),
+    ...(base && webui ? { url: `${base}${webui}` } : {}),
+  });
+}
 
 function pageLine(page: Record<string, unknown>): string {
   const version = rec(page.version);
@@ -190,10 +212,13 @@ export async function registerPageTools(
       });
       if (!result.ok) return errText(result.error);
       const page = result.body ?? {};
-      return textResult(
-        `Created "${str(page.title) || title}" (id ${str(page.id) || 'unknown'}).` +
-          (str(page.id) ? `\n[Open in Confluence](${str(rec(page._links).webui) || ''})` : '')
-      );
+      return {
+        ...textResult(
+          `Created "${str(page.title) || title}" (id ${str(page.id) || 'unknown'}).` +
+            (str(page.id) ? `\n[Open in Confluence](${str(rec(page._links).webui) || ''})` : '')
+        ),
+        _meta: pageReceipt(page),
+      };
     }
   );
 
@@ -244,9 +269,14 @@ export async function registerPageTools(
         }
       );
       if (!result.ok) return errText(result.error);
-      return textResult(
-        `Updated "${str(args.title) || current.title}" — now v${current.versionNumber + 1}.`
-      );
+      return {
+        ...textResult(
+          `Updated "${str(args.title) || current.title}" — now v${current.versionNumber + 1}.`
+        ),
+        // The PUT answers with the page it just wrote, links and all — so
+        // an edit gets the same "open it" a creation does.
+        _meta: pageReceipt(result.body ?? {}),
+      };
     }
   );
 

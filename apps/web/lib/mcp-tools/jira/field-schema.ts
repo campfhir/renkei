@@ -234,12 +234,28 @@ export function isRequestTypeField(field: JiraField): boolean {
 }
 
 /** A field whose valid values are an enumerable option set worth fetching. */
+/**
+ * Whether it is worth a createmeta/editmeta round trip to learn what this
+ * field accepts.
+ *
+ * COMPONENTS AND VERSIONS BELONG HERE, and their absence was a silent bug.
+ * They are closed sets exactly like a select — a project has the components
+ * it has — but because they never triggered enrichment, a name was wrapped
+ * as `{name: "backend"}` and sent unchecked. Jira answers 400 for a name it
+ * does not have, `writeWithFieldFallback` drops the field and retries, and
+ * the issue is created WITHOUT the component. From the caller's side the
+ * write succeeded; the loss is a line in a comment nobody reads. That is
+ * the whole of "components are not being set on created tickets".
+ */
 function isOptionBearing(field: JiraField): boolean {
   return (
     field.type === 'option' ||
     field.type === 'option-with-child' ||
     isRequestTypeField(field) ||
-    (field.type === 'array' && field.itemType === 'option')
+    (field.type === 'array' &&
+      (field.itemType === 'option' ||
+        field.itemType === 'component' ||
+        field.itemType === 'version'))
   );
 }
 
@@ -453,6 +469,59 @@ function userValue(field: JiraField, value: unknown): Coercion {
   return { ok: true, value: { accountId: text } };
 }
 
+/**
+ * Members of a closed set — select options, versions, components — matched
+ * against what the field actually accepts.
+ *
+ * The single-value twin of this is `validateOptionValue`, and the two now
+ * behave the same way for the same reason: an id when the option set has
+ * one, since ids cannot be near-missed on case or a trailing space, and a
+ * message naming the real options when nothing matches. Refusing HERE turns
+ * a silent drop into a sentence the caller can act on — the caller being a
+ * model, which will simply write the correct name on the next attempt.
+ *
+ * With no option set (enrichment failed, or the field is genuinely open)
+ * the old pass-through stands: shape it and let Jira be the judge.
+ */
+function closedSetMembers(field: JiraField, members: readonly unknown[]): Coercion {
+  const key = field.itemType === 'option' ? 'value' : 'name';
+  const options = field.allowedValues ?? [];
+  if (options.length === 0) {
+    return {
+      ok: true,
+      value: members.map((member) => (isRecord(member) ? member : { [key]: String(member) })),
+    };
+  }
+
+  const resolved: unknown[] = [];
+  const missing: string[] = [];
+  for (const member of members) {
+    // An object is the caller being explicit about the shape; leave it.
+    if (isRecord(member)) {
+      resolved.push(member);
+      continue;
+    }
+    const text = String(member).trim();
+    if (!text) continue;
+    const lower = text.toLowerCase();
+    const match = options.find(
+      (option) => option.value.toLowerCase() === lower || option.id?.toLowerCase() === lower
+    );
+    if (match) resolved.push(match.id ? { id: match.id } : { [key]: match.value });
+    else missing.push(text);
+  }
+
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      message:
+        `${field.name} does not have ${missing.map((name) => `"${name}"`).join(', ')}. ` +
+        optionsHint(field),
+    };
+  }
+  return { ok: true, value: resolved };
+}
+
 function arrayValue(field: JiraField, value: unknown): Coercion {
   // A comma-separated string is how these get written in practice.
   const members = Array.isArray(value)
@@ -468,14 +537,7 @@ function arrayValue(field: JiraField, value: unknown): Coercion {
     case 'option':
     case 'version':
     case 'component':
-      return {
-        ok: true,
-        value: members.map((member) =>
-          isRecord(member)
-            ? member
-            : { [field.itemType === 'option' ? 'value' : 'name']: String(member) }
-        ),
-      };
+      return closedSetMembers(field, members);
     case 'user': {
       // Same silent-no-op hazard as the single-user case: an unresolved
       // email wrapped as an accountId is accepted and discarded.

@@ -31,6 +31,7 @@ import {
   withCategoryChanges,
   type MailSearchFilters,
 } from '@renkei/connector-microsoft';
+import { actMeta } from '@renkei/tool-outcomes';
 import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
 import { withheldNote } from '@renkei/gates';
 import { logger, secure } from '@/lib/logger';
@@ -46,6 +47,11 @@ import {
   newPreviewId,
 } from '../widgets';
 import type { GraphAuth } from '../graph/graph-auth';
+import {
+  DIRECTORY_SEARCH_HEADERS,
+  DIRECTORY_USER_SELECT,
+  searchDirectoryUsers,
+} from '../graph/directory';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
 import { registerBulkJobTools } from './bulk-jobs';
 import { createUploadSlot } from '../upload-slots';
@@ -514,6 +520,16 @@ interface DraftInfo {
   subject: string;
   /** Graph's plain-text bodyPreview — the comment atop the quoted thread. */
   bodyPreview: string;
+  /**
+   * Outlook-on-the-web link to the message, taken straight from Graph.
+   *
+   * A draft KEEPS its id when it is sent — the message moves to Sent Items
+   * rather than being recreated — so the link captured here still resolves
+   * afterwards, and it is the only moment a link is available at all:
+   * `/send` answers 202 with an empty body. This is what puts an "open it"
+   * on the notification for a reply.
+   */
+  webLink: string;
 }
 
 async function createDraftAction(
@@ -576,6 +592,7 @@ async function createDraftAction(
     bcc: bccRecipients,
     subject: str(draft.subject),
     bodyPreview: str(draft.bodyPreview),
+    webLink: str(draft.webLink),
   };
 }
 
@@ -609,10 +626,29 @@ async function sendDraftAction(
     cc: readonly string[];
     bcc: readonly string[];
   }
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; webLink: string; subject: string } | { ok: false; error: string }> {
   const created = await createDraftAction(context, accessToken, messageId, action, options);
   if (!created.ok) return created;
-  return sendDraft(context, accessToken, created.draftId);
+  const sent = await sendDraft(context, accessToken, created.draftId);
+  if (!sent.ok) return sent;
+  return { ok: true, webLink: created.webLink, subject: created.subject };
+}
+
+/**
+ * The receipt for a message that has just gone out, so its notification can
+ * name it and link to it.
+ *
+ * The SUBJECT is the identifier, not the message id. A person says "the one
+ * about the invoice"; nobody has ever read a Graph message id aloud, and a
+ * notification reading "Sent an email AAMkAGI2…" is worse than one that
+ * just says "Sent an email". Quoted so it reads as a title rather than as
+ * the rest of the sentence.
+ */
+function sentMailMeta(sent: { webLink: string; subject: string }): Record<string, unknown> {
+  return actMeta({
+    ...(sent.subject ? { id: `“${sent.subject}”` } : {}),
+    ...(sent.webLink ? { url: sent.webLink } : {}),
+  });
 }
 
 function eventLine(event: Record<string, unknown>): string {
@@ -682,12 +718,10 @@ function outlookScopeFor(toolName: string): string[] {
   }
 }
 
-/** `$search` against the directory requires the eventual-consistency header. */
-const DIRECTORY_SEARCH_HEADERS = { ConsistencyLevel: 'eventual' };
-
-const USER_SELECT =
-  '$select=id,displayName,jobTitle,department,officeLocation,mail,userPrincipalName,' +
-  'businessPhones,mobilePhone';
+// The directory query, its required header and its $select live in
+// ../graph/directory.ts — the people picker in the builder needs the same
+// three and they are each a silent-failure waiting to drift.
+const USER_SELECT = DIRECTORY_USER_SELECT;
 
 function userLine(user: Record<string, unknown>): string {
   const phones = [
@@ -1749,18 +1783,11 @@ export async function registerOutlookTools(
     async (args: Record<string, any>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const query = str(args.query).replace(/"/g, '');
-      if (!query) return errText('query is required');
+      if (!str(args.query).replace(/"/g, '').trim()) return errText('query is required');
       const max = typeof args.max === 'number' ? args.max : 15;
-      const search = encodeURIComponent(`"displayName:${query}" OR "mail:${query}"`);
-      const result = await graphGet(
-        context,
-        access.accessToken,
-        `/users?$search=${search}&$count=true&$top=${max}&${USER_SELECT}`,
-        DIRECTORY_SEARCH_HEADERS
-      );
-      if (!result.ok) return errText(result.error);
-      const lines = values(result.body).map((user) => `${userLine(user)} — id: ${str(user.id)}`);
+      const found = await searchDirectoryUsers(context, access.accessToken, str(args.query), max);
+      if (typeof found === 'string') return errText(found);
+      const lines = found.map((user) => `${userLine(user)} — id: ${str(user.id)}`);
       if (lines.length === 0) return textResult('No directory matches.');
       return textResult(
         withPresentationHint(
@@ -1951,7 +1978,34 @@ export async function registerOutlookTools(
         tenantId: context.tenantId,
         recipients: to.length + cc.length,
       });
-      return textResult(`Sent to ${[...to, ...cc].join(', ')}.`);
+      /*
+        The subject, and NO link — the one send in this file that cannot
+        offer one.
+
+        `/me/sendMail` answers 202 with an empty body, so there is no id to
+        link to. Drafting first (POST /me/messages, then /send) WOULD yield
+        a webLink, and it is tempting because reply/reply-all/forward
+        already work that way — but creating a message resource needs
+        Mail.ReadWrite, and this tool stands on Mail.Send alone (see
+        `outlookScopeFor`, and `MICROSOFT_SCOPE_OPTIONS`, where
+        Mail.ReadWrite is off by default and warns that anyone already
+        connected must reconnect to gain it). Buying a link with a 403 for
+        every default grant is not a trade worth making.
+
+        Hunting Sent Items for the message afterwards is the other tempting
+        option and is worse: sendMail is asynchronous, so the match is
+        racy, and a notification linking to somebody else's email is the
+        exact failure this module refuses to risk.
+
+        The subject still goes in, because it is not inferred from anything
+        — it is what the caller asked to send. "Sent an email" alone tells
+        you nothing; "Sent an email “Q3 invoice follow-up”" tells you what
+        happened even without somewhere to click.
+      */
+      return {
+        ...textResult(`Sent to ${[...to, ...cc].join(', ')}.`),
+        _meta: sentMailMeta({ webLink: '', subject: str(args.subject) }),
+      };
     }
   );
 
@@ -2003,12 +2057,15 @@ export async function registerOutlookTools(
         tenantId: context.tenantId,
         messageId,
       });
-      return textResult(
-        'Reply sent.' +
-          (additionalTo.length > 0 ? ` Also to: ${additionalTo.join(', ')}.` : '') +
-          (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
-          (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
-      );
+      return {
+        ...textResult(
+          'Reply sent.' +
+            (additionalTo.length > 0 ? ` Also to: ${additionalTo.join(', ')}.` : '') +
+            (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
+            (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
+        ),
+        _meta: sentMailMeta(result),
+      };
     }
   );
 
@@ -2067,12 +2124,15 @@ export async function registerOutlookTools(
         tenantId: context.tenantId,
         messageId,
       });
-      return textResult(
-        'Reply-all sent.' +
-          (additionalTo.length > 0 ? ` Also to: ${additionalTo.join(', ')}.` : '') +
-          (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
-          (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
-      );
+      return {
+        ...textResult(
+          'Reply-all sent.' +
+            (additionalTo.length > 0 ? ` Also to: ${additionalTo.join(', ')}.` : '') +
+            (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
+            (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
+        ),
+        _meta: sentMailMeta(result),
+      };
     }
   );
 
@@ -2124,11 +2184,14 @@ export async function registerOutlookTools(
         tenantId: context.tenantId,
         messageId,
       });
-      return textResult(
-        `Forwarded to ${to.join(', ')}.` +
-          (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
-          (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
-      );
+      return {
+        ...textResult(
+          `Forwarded to ${to.join(', ')}.` +
+            (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
+            (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
+        ),
+        _meta: sentMailMeta(result),
+      };
     }
   );
 
@@ -2200,7 +2263,16 @@ export async function registerOutlookTools(
         tenantId: context.tenantId,
         recipients: to.length + cc.length + bcc.length,
       });
-      const draft: DraftInfo = { ok: true, draftId, to, cc, bcc, subject, bodyPreview: body };
+      const draft: DraftInfo = {
+        ok: true,
+        draftId,
+        to,
+        cc,
+        bcc,
+        subject,
+        bodyPreview: body,
+        webLink: str((created.body ?? {}).webLink),
+      };
       return {
         ...textResult(previewResultText(draft, 'The email')),
         structuredContent: draftStructured('compose', draft, body),
@@ -2783,13 +2855,23 @@ export async function registerOutlookTools(
         tenantId: context.tenantId,
         eventId: str(event.id),
       });
-      return textResult(
-        `Created "${str(event.subject) || str(args.subject)}" (id ${str(event.id) || 'unknown'})` +
-          (requiredAttendees.length > 0 ? `; required: ${requiredAttendees.join(', ')}` : '') +
-          (optionalAttendees.length > 0 ? `; optional: ${optionalAttendees.join(', ')}` : '') +
-          '.' +
-          (str(event.webLink) ? `\n[Open in Outlook](${str(event.webLink)})` : '')
-      );
+      const title = str(event.subject) || str(args.subject);
+      return {
+        ...textResult(
+          `Created "${title}" (id ${str(event.id) || 'unknown'})` +
+            (requiredAttendees.length > 0 ? `; required: ${requiredAttendees.join(', ')}` : '') +
+            (optionalAttendees.length > 0 ? `; optional: ${optionalAttendees.join(', ')}` : '') +
+            '.' +
+            (str(event.webLink) ? `\n[Open in Outlook](${str(event.webLink)})` : '')
+        ),
+        // The meeting's own title, for the same reason a sent mail carries
+        // its subject: it is the half of "Scheduled a meeting" a person
+        // needs in order to know WHICH meeting.
+        _meta: actMeta({
+          ...(title ? { id: `“${title}”` } : {}),
+          ...(str(event.webLink) ? { url: str(event.webLink) } : {}),
+        }),
+      };
     }
   );
 
@@ -3002,10 +3084,41 @@ export async function registerOutlookTools(
         eventId,
         response,
       });
-      return textResult(
-        `Responded "${response}"${str(args.comment) ? ' with a comment' : ''}` +
-          (proposedStart ? `, proposing ${proposedStart} → ${proposedEnd} (${timezone}).` : '.')
+      /*
+        Accepting and declining are opposite news, and one tool name cannot
+        say which happened — so the handler says it, in the receipt. This is
+        the case ActReceipt.label exists for.
+
+        The link is best-effort and deliberately AFTER the response: Graph's
+        accept/decline endpoints answer 202 with no body, and a declined
+        event is often gone from the calendar by the time we ask, which
+        yields no link. That is the right outcome rather than a bug — a
+        notification about turning something down has nothing to open.
+      */
+      const answered =
+        response === 'accept'
+          ? 'Accepted a meeting invitation'
+          : response === 'tentative'
+            ? 'Tentatively accepted a meeting invitation'
+            : 'Declined a meeting invitation';
+      const still = await graphGet(
+        context,
+        access.accessToken,
+        `/me/events/${encodeURIComponent(eventId)}?$select=subject,webLink`
       );
+      const event = still.ok ? (still.body ?? {}) : {};
+      const title = str(event.subject);
+
+      return {
+        ...textResult(
+          `Responded "${response}"${str(args.comment) ? ' with a comment' : ''}` +
+            (proposedStart ? `, proposing ${proposedStart} → ${proposedEnd} (${timezone}).` : '.')
+        ),
+        _meta: actMeta({
+          label: title ? `${answered} to “${title}”` : answered,
+          ...(str(event.webLink) ? { url: str(event.webLink) } : {}),
+        }),
+      };
     }
   );
 

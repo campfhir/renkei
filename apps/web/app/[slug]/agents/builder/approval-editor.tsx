@@ -67,8 +67,8 @@ export function ApprovalEditor({
           onChange={(event) => onChange({ ...approval, name: event.target.value })}
         />
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          The run PAUSES here and puts a card on your home page. It continues down one of the
-          paths below when you act — or down the timed-out path when the wait runs out.
+          The run PAUSES here and puts a card on your home page. It continues down one of the paths
+          below when you act — or down the timed-out path when the wait runs out.
         </p>
       </div>
 
@@ -153,9 +153,7 @@ export function ApprovalEditor({
             value={approval.saveAs ?? ''}
             maxLength={64}
             placeholder="e.g. the decision"
-            onChange={(event) =>
-              onChange({ ...approval, saveAs: event.target.value || undefined })
-            }
+            onChange={(event) => onChange({ ...approval, saveAs: event.target.value || undefined })}
           />
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Later steps reference it as a chip, like any saved result.
@@ -171,9 +169,7 @@ export function ApprovalEditor({
           id={`approval-wait-${approval.id}`}
           className={inputClass}
           value={approval.timeoutHours}
-          onChange={(event) =>
-            onChange({ ...approval, timeoutHours: Number(event.target.value) })
-          }
+          onChange={(event) => onChange({ ...approval, timeoutHours: Number(event.target.value) })}
         >
           {!presetValues.has(approval.timeoutHours) ? (
             <option value={approval.timeoutHours}>{approval.timeoutHours} hours</option>
@@ -185,8 +181,8 @@ export function ApprovalEditor({
           ))}
         </select>
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          When the wait runs out, the run takes the timed-out path instead of stalling forever.
-          Your organization caps the wait; longer choices are clipped to that cap on save.
+          When the wait runs out, the run takes the timed-out path instead of stalling forever. Your
+          organization caps the wait; longer choices are clipped to that cap on save.
         </p>
       </div>
 

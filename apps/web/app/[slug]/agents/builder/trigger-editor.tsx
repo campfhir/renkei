@@ -11,10 +11,16 @@
  * once, in the save response, and never again.
  */
 
-import { useState } from 'react';
-import { TRIGGER_EVENT_CATALOG, triggerEventById, type TriggerDraft } from '@renkei/agents';
+import {
+  TRIGGER_EVENT_CATALOG,
+  VARIABLE_NAME_PATTERN,
+  triggerEventById,
+  type TriggerDraft,
+} from '@renkei/agents';
+import ChipListInput from '@/components/chip-list-input';
 import { ScheduleEditor, type CalendarOption } from './schedule-picker';
 import { providesOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
+import TriggerFilterPanel from './trigger-filter-panel';
 
 const inputClass =
   'rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -103,11 +109,14 @@ export function TriggerChooser({
 
 /** Detail mode — edit one attached trigger. */
 export function TriggerEditor({
+  tenantId,
   trigger,
   otherAgents,
   calendars,
   onChange,
 }: {
+  /** For the filter pickers, which list the caller's own spaces and people. */
+  tenantId: string;
   trigger: BuilderTrigger;
   otherAgents: AgentChoice[];
   calendars: CalendarOption[];
@@ -134,9 +143,17 @@ export function TriggerEditor({
       ) : null}
 
       {draft.kind === 'event' ? (
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          {triggerEventById(draft.eventId)?.description ?? 'Runs when this event happens.'}
-        </p>
+        <>
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            {triggerEventById(draft.eventId)?.description ?? 'Runs when this event happens.'}
+          </p>
+          <TriggerFilterPanel
+            tenantId={tenantId}
+            eventId={draft.eventId}
+            match={draft.match ?? {}}
+            onChange={(match) => onChange({ kind: 'event', eventId: draft.eventId, match })}
+          />
+        </>
       ) : null}
 
       {draft.kind === 'agent' ? (
@@ -184,6 +201,12 @@ export function TriggerEditor({
   );
 }
 
+/**
+ * On ChipListInput rather than its own chip row: this had the only bare `×`
+ * left in the builder, which said "remove" to a sighted reader and nothing
+ * at all to anyone else. An input's `label` tracks its `name` because
+ * nothing here lets the two be edited apart.
+ */
 function ApiInputsEditor({
   inputs,
   onChange,
@@ -191,43 +214,23 @@ function ApiInputsEditor({
   inputs: { name: string; label: string }[];
   onChange: (inputs: { name: string; label: string }[]) => void;
 }) {
-  const [name, setName] = useState('');
   return (
-    <div>
-      <p className="text-xs text-gray-500 dark:text-gray-400">
-        Name the pieces of information a caller will send; your steps can then use them.
-      </p>
-      <div className="mt-1 flex flex-wrap items-center gap-2">
-        {inputs.map((input) => (
-          <span
-            key={input.name}
-            className="inline-flex items-center gap-1 rounded-full border border-violet-300 bg-violet-50 px-2 py-0.5 text-xs text-violet-700 dark:border-violet-800 dark:bg-violet-950 dark:text-violet-300"
-          >
-            {input.name}
-            <button
-              type="button"
-              aria-label={`Remove ${input.name}`}
-              onClick={() => onChange(inputs.filter((entry) => entry.name !== input.name))}
-            >
-              ×
-            </button>
-          </span>
-        ))}
-        <input
-          className={inputClass}
-          value={name}
-          placeholder="e.g. workItem"
-          onChange={(event) => setName(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter') return;
-            event.preventDefault();
-            const trimmed = name.trim();
-            if (!trimmed || inputs.some((entry) => entry.name === trimmed)) return;
-            onChange([...inputs, { name: trimmed, label: trimmed }]);
-            setName('');
-          }}
-        />
-      </div>
-    </div>
+    <ChipListInput
+      label="Inputs the caller sends"
+      hint="Name the pieces of information a caller will send; your steps can then use them."
+      placeholder="e.g. workItem"
+      values={inputs.map((input) => input.name)}
+      onChange={(names) =>
+        onChange(
+          names.map((name) => inputs.find((entry) => entry.name === name) ?? { name, label: name })
+        )
+      }
+      validate={(value) =>
+        VARIABLE_NAME_PATTERN.test(value)
+          ? null
+          : 'Start with a letter, then letters, numbers, spaces, ".", "-" or "_".'
+      }
+      emptyMeans="No inputs — the caller sends nothing but the request itself."
+    />
   );
 }

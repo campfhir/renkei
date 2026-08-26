@@ -65,9 +65,8 @@ export function TerminalEditor({
           onChange={(event) => onChange({ ...terminal, name: event.target.value })}
         />
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          When the flow reaches this marker the WHOLE run ends here — inside a branch path or a
-          loop too. Useful as a deliberate exit on a path that means “we’re done” or “this went
-          wrong”.
+          When the flow reaches this marker the WHOLE run ends here — inside a branch path or a loop
+          too. Useful as a deliberate exit on a path that means “we’re done” or “this went wrong”.
         </p>
       </div>
 

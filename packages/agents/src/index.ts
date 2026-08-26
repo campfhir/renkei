@@ -53,6 +53,7 @@ export {
   isLoopStep,
   isTerminalStep,
   nodeKind,
+  nodeUsesModel,
   requiredVersion,
   toolSegments,
   varSegments,
@@ -117,9 +118,30 @@ export {
 export { BUILTIN_VARIABLES, type VariableDescriptor } from './variables';
 export {
   TRIGGER_EVENT_CATALOG,
+  describeTriggerMatch,
+  isEmptyTriggerMatch,
+  matchesTriggerEvent,
+  normalizeMatchForEvent,
   triggerEventById,
+  triggerFilterFields,
+  validateMatchForEvent,
   type TriggerEventDescriptor,
 } from './trigger-catalog';
+export {
+  MAX_FILTER_ENTRIES,
+  describeFilters,
+  isEmptyMatch,
+  isTriggerMatch,
+  matchesFilters,
+  normalizeMatch,
+  validateMatch,
+  type FilterInputKind,
+  type FilterMatchKind,
+  type FilterOptionSource,
+  type TriggerFilterField,
+  type TriggerMatch,
+  type TriggerMatchValue,
+} from './trigger-filters';
 export {
   isTriggerDraft,
   triggerVariableDescriptors,

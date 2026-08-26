@@ -961,6 +961,40 @@ export function countNodes(nodes: AgentStepNode[]): number {
   return walkSteps(nodes).length;
 }
 
+/**
+ * Whether running this node calls a model.
+ *
+ * The ONE place any surface may read this from. It mirrors the engine's
+ * dispatch switch (apps/worker-agents/src/engine.ts), and it exists as a
+ * function rather than as a note on each node type because no test can span
+ * the app boundary to catch the two drifting — so the canvas must at least
+ * be reading the same table the runtime does, in the same package.
+ *
+ * The one node whose answer depends on a FIELD rather than its kind is the
+ * loop: `foreach` counts items in code, `until` asks the model after every
+ * iteration.
+ *
+ * An action step with `tool === null` is TRUE, and it is the case most
+ * likely to be got backwards: a step with no tool is not a smaller step, it
+ * is a step with nothing but the model in it — pure reasoning, with no tool
+ * call to ground what comes back.
+ */
+export function nodeUsesModel(node: AgentStepNode): boolean {
+  switch (node.kind) {
+    // `undefined` is a v1 action step, from before nodes carried a kind.
+    case undefined:
+    case 'action':
+    case 'branch':
+      return true;
+    case 'loop':
+      return node.mode === 'until';
+    case 'group':
+    case 'approval':
+    case 'terminal':
+      return false;
+  }
+}
+
 /** One enclosing container of a found node, outermost first. */
 export type FoundAncestor =
   | { kind: 'branch'; branch: BranchStep; path: BranchPath; isFailurePath: boolean }

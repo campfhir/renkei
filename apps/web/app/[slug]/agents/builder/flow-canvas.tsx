@@ -416,10 +416,7 @@ function ApprovalBlock({
   return (
     <div className="mt-2 w-max min-w-72 max-w-full rounded-lg border border-sky-200 bg-sky-50/30 dark:border-sky-900 dark:bg-sky-950/20">
       {outcomes.map(({ path, caption }) => (
-        <div
-          key={path.id}
-          className="border-t border-sky-100 px-3 py-2 dark:border-sky-900"
-        >
+        <div key={path.id} className="border-t border-sky-100 px-3 py-2 dark:border-sky-900">
           <span
             className="inline-block max-w-full truncate rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-xs font-medium text-sky-700 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300"
             aria-label={`${caption}: ${path.name}`}
@@ -934,6 +931,17 @@ export function FlowCanvas({
         <span className="rounded-full bg-gray-200 px-3 py-1 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400">
           Finish
         </span>
+
+        {/*
+          One line, because the mark is a new convention and an unexplained
+          glyph is just decoration. It sits under the flow rather than above
+          it: somebody reading the canvas top-down meets the cards first and
+          only needs the key once they have noticed the mark.
+        */}
+        <p className="mt-3 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+          <Icon path={ICONS.chip} className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+          marks a step that runs as fixed code — no model call
+        </p>
 
         {stepsIssues.length > 0 ? (
           <ul className="mt-3 space-y-1">

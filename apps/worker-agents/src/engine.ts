@@ -57,6 +57,8 @@ import {
   type ResolvedLlm,
 } from '@renkei/agent-llm';
 import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
+import { toolKindOf } from '@renkei/tool-outcomes';
+import { notifierFor, type Notifier } from './notifications';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { AgentMcpClient } from './mcp-client';
 import { mintRunToken, revokeRunToken } from './token';
@@ -252,6 +254,18 @@ interface ToolCallRecord {
   isError: boolean;
   durationMs: number;
   /**
+   * Whether the call read or changed something, stamped by the MCP layer at
+   * registration time (`kind-stamp.ts`). Recorded here rather than inferred
+   * later because it CANNOT be inferred later: read-vs-act is decided from
+   * a tool's annotations during a per-user registration against a database,
+   * and guessing from the tool's name would mislabel eventually. See the
+   * note at the top of apps/web/lib/agents/run-actions.ts.
+   *
+   * Absent on a record written before the stamp existed, so a reader must
+   * treat "no kind" as "not known", never as "read".
+   */
+  kind?: 'read' | 'act';
+  /**
    * An in-process call that cost no budget (resolve_time). Recorded so the
    * timeline can show what was computed, excluded from tool_call_count so
    * the number still means "calls against the step's budget".
@@ -291,7 +305,27 @@ interface RunContextText {
    * and injected IN FULL into every model call. '' = none.
    */
   guardrailsText: string;
+  /**
+   * Where this run's acts get recorded for its owner. Rides in the context
+   * bag because that bag is already threaded to every place a tool is
+   * called, and adding a parameter to executeStep/runAttempt/evaluateBranch
+   * to carry one object would be a worse trade.
+   *
+   * Filled by the caller, like guardrailsText — loadRunContext returns a
+   * silent one so the field is never undefined mid-run.
+   */
+  notifier: Notifier;
 }
+
+/**
+ * A notifier that records nothing, for the window before the real one is
+ * attached and for paths that legitimately have no owner to tell.
+ */
+const SILENT_NOTIFIER: Notifier = {
+  act: async () => undefined,
+  runStarted: async () => undefined,
+  runFinished: async () => undefined,
+};
 
 /** agents.blocked_tools jsonb → the runtime's refusal set. */
 function blockedToolsOf(value: unknown): Set<string> {
@@ -874,6 +908,19 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // row read above — deliberately unbounded (see RunContextText).
       const context = await loadRunContext(run);
       context.guardrailsText = agentRow.guardrails ?? '';
+      // One preference read per run, beside the org settings — not one per
+      // tool call, which a forty-item loop would turn into forty.
+      context.notifier = await notifierFor(db, {
+        tenantId: run.tenant_id,
+        subject: run.owner_subject,
+        agentId: run.agent_id,
+        agentName: await agentNameOf(run.tenant_id, run.agent_id),
+        runId: run.id,
+      });
+      // Only on a genuinely NEW run. A crash-resume or a wake from an
+      // approval pause re-enters here, and "started" arriving twice for one
+      // run would be worse than not having it at all. Off by default.
+      if (run.status === 'queued') void context.notifier.runStarted();
       const blockedTools = blockedToolsOf(agentRow.blocked_tools);
 
       // Crash-resume rebuilds the frame stack from where current_step_id
@@ -935,6 +982,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // Exhaustive dispatch on the node kind: a kind this switch does not
         // handle is a compile error, never a silent fall-through into the
         // action path.
+        //
+        // WHICH ARMS CALL A MODEL is mirrored by `nodeUsesModel` in
+        // @renkei/agents, which the builder canvas reads to mark the
+        // deterministic nodes. Nothing can span the app boundary to catch
+        // the two drifting, so changing whether an arm reaches an LLM means
+        // changing that function in the same commit.
         switch (node.kind) {
           case 'branch': {
             const decided = await evaluateBranch(
@@ -1188,7 +1241,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     }
     // guardrailsText is filled by the caller from the agents row it
     // already read — one query, not two.
-    return { memoryText, knowledgeText, guardrailsText: '' };
+    return { memoryText, knowledgeText, guardrailsText: '', notifier: SILENT_NOTIFIER };
   }
 
   /** Builtins + trigger.* from initial_state; list-valued inputs also land in `lists`. */
@@ -2960,12 +3013,17 @@ export function createAgentRunHandler(deps: EngineDeps) {
         } else {
           logger.debug('agent "{agentName}" ({userName}): {toolLabel} ok', toolFields);
         }
+        const kind = toolKindOf(result.meta);
+        // Only a call that WORKED is worth telling anyone about: a failed
+        // act did not happen, and the run record is where a failure belongs.
+        if (!result.isError) void context.notifier.act(use.name, kind, result.meta, step.id);
         toolCalls.push({
           tool: use.name,
           argsPreview: clip(JSON.stringify(args), PREVIEW_CHARS),
           resultPreview: clip(textOf(result), PREVIEW_CHARS),
           isError: result.isError,
           durationMs,
+          ...(kind ? { kind } : {}),
         });
         if (use.name === primaryTool) primaryResults.push(result);
         results.push({
@@ -3173,6 +3231,24 @@ export function createAgentRunHandler(deps: EngineDeps) {
       status,
       errorKind: errorKind ?? undefined,
     };
+    // 'stopped' is a quiet outcome by construction — an agent that decided
+    // there was nothing to do. Announcing it would make the quiet ending
+    // the loudest thing in the feed.
+    //
+    // Its own notifier rather than the run context's: finalizeRun is also
+    // reached from paths that never built a context (a run refused before
+    // it started), and the names it needs are already in hand above.
+    if (status !== 'stopped') {
+      const notifier = await notifierFor(db, {
+        tenantId: run.tenant_id,
+        subject: run.owner_subject,
+        agentId: run.agent_id,
+        agentName,
+        runId: run.id,
+      });
+      void notifier.runFinished(status, error);
+    }
+
     if (status === 'failed') {
       // The only one worth an unprompted read: it names the agent, the
       // person, and the step that stopped it.

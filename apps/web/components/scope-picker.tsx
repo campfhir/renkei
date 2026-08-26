@@ -20,8 +20,14 @@ import { optionWithin } from '@/lib/scope-catalog';
  * option's id. `available` is
  * the ceiling: an option renders only when EVERY scope it needs is inside
  * it — a user must not even see a capability the org withheld, and an empty
- * group disappears with its options. Columns go 1 → 2 → 3 with viewport
- * width.
+ * group disappears with its options.
+ *
+ * Columns go 1 → 2 → 3 against the width of THIS picker, not the viewport,
+ * which is the whole reason for the `@container` here. Viewport breakpoints
+ * were actively wrong: the connectors page nests a picker inside a card
+ * inside a page column, so on a 1440px screen `xl:grid-cols-3` split roughly
+ * 290px of usable width three ways and rendered a checkbox label one word
+ * per line. The container reads the space the picker actually has.
  */
 export default function ScopePicker({
   groups,
@@ -44,7 +50,7 @@ export default function ScopePicker({
   const visible = options.filter((option) => allowed === null || optionWithin(option, allowed));
 
   return (
-    <div className="space-y-4">
+    <div className="@container space-y-4">
       {groups.map((group) => {
         const groupOptions = visible.filter((option) => option.group === group.id);
         if (groupOptions.length === 0) return null;
@@ -53,7 +59,7 @@ export default function ScopePicker({
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
               {group.label}
             </p>
-            <div className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid grid-cols-1 gap-x-6 gap-y-2 @md:grid-cols-2 @2xl:grid-cols-3">
               {groupOptions.map((option) => (
                 <label key={option.id} className="flex items-start gap-2 text-sm">
                   <input

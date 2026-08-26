@@ -5,6 +5,9 @@ import { getSessionFromCookies } from '@/lib/session';
 import { ROLE_OPERATOR } from '@/lib/access';
 import { getIdentityDisplay } from '@/lib/identity';
 import { signInUrl } from '@/lib/sign-in-url';
+import { getNotificationPrefs } from '@renkei/user-prefs';
+import { NotificationCenter } from '@/components/notification-center';
+import ToastStack from '@/components/toast-stack';
 import AppNav from './nav';
 
 /**
@@ -36,7 +39,20 @@ export default async function TenantLayout({
   const identity = session ? await getIdentityDisplay(tenant.id, session.subject) : null;
   const userName = identity?.displayName ?? identity?.email ?? session?.subject ?? null;
 
-  return (
+  const prefs = session
+    ? await getNotificationPrefs(tenant.id, session.subject, { fresh: true })
+    : null;
+
+  /*
+    The notification centre wraps the nav AND the page, because both read
+    the same poll: the nav wants the unread count, the toast stack wants
+    what has arrived since this tab opened. One poller, two readers.
+
+    Only for a signed-in visitor. This layout deliberately does not redirect
+    when there is no session (the admin sign-in flow lives under it), so
+    everything here has to tolerate its absence.
+  */
+  const shell = (
     <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
       <AppNav
         slug={tenant.slug}
@@ -50,6 +66,10 @@ export default async function TenantLayout({
           max-w-3xl block of their own inside it. */}
       <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">{children}</main>
       <p className="pb-8 text-center text-sm text-gray-500">Renkei — Jira work item gateway</p>
+      {prefs?.toastsEnabled ? <ToastStack corner={prefs.toastCorner} /> : null}
     </div>
   );
+
+  if (!session) return shell;
+  return <NotificationCenter tenantId={tenant.id}>{shell}</NotificationCenter>;
 }

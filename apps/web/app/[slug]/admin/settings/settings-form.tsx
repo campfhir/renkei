@@ -19,6 +19,7 @@ export interface EditableSettings {
   agentApprovalMaxWaitDays: number;
   contentPollMinutes: number;
   logRetentionDays: number;
+  agentNotificationRetentionDays: number;
 }
 
 const inputClass =
@@ -192,6 +193,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How stale watched Jira projects, Confluence spaces and document libraries may get before they are polled again. Lower = fresher search results and more provider API calls."
         >
           {numberInput('contentPollMinutes', '5–1,440')}
+        </Row>
+        <Row
+          label="Agent notification retention (days)"
+          hint="How long the record of what an agent did — filed this ticket, sent that email — is kept before it is pruned. This is the ceiling; each person chooses which of those they want to be told about at all."
+        >
+          {numberInput('agentNotificationRetentionDays', '1–365')}
         </Row>
         <Row
           label="Log retention (days)"

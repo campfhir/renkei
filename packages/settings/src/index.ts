@@ -65,6 +65,18 @@ export interface OrgSettings {
    */
   agentRunRetentionDays: number;
   /**
+   * How long an agent's notifications are kept before the sweep prunes
+   * them. The ceiling on what a person can choose to keep, not a per-user
+   * setting: notifications name what an employee's automations did and to
+   * what, so how long that record lives is the org's call, the same reason
+   * `agentRunRetentionDays` is here.
+   *
+   * There is no "keep forever" value on purpose. This feed is high-volume
+   * ambient record, not the audit trail — that is `audit_events` and the
+   * card archive, both of which are kept.
+   */
+  agentNotificationRetentionDays: number;
+  /**
    * How deep an agent-triggers-agent chain may go. The queue's attempt
    * budget bounds retries, not fan-out; this is the fan-out bound.
    */
@@ -121,6 +133,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   redactionDetectors: ['ssn', 'card', 'mrn', 'dob'],
   redactionMrnFormats: [],
   agentRunRetentionDays: 30,
+  agentNotificationRetentionDays: 14,
   agentMaxChainDepth: 3,
   agentRunTimeoutMinutes: 15,
   agentMaxStepAttempts: 10,
@@ -202,6 +215,9 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
       stored.get('redaction_mrn_formats'),
       d.redactionMrnFormats
     ),
+    agentNotificationRetentionDays: Number(
+      coerce(stored.get('agent_notification_retention_days'), d.agentNotificationRetentionDays)
+    ),
     agentRunRetentionDays: Number(
       coerce(stored.get('agent_run_retention_days'), d.agentRunRetentionDays)
     ),
@@ -247,6 +263,7 @@ export async function setOrgSettings(
     ['redaction_detectors', updates.redactionDetectors],
     ['redaction_mrn_formats', updates.redactionMrnFormats],
     ['agent_run_retention_days', updates.agentRunRetentionDays],
+    ['agent_notification_retention_days', updates.agentNotificationRetentionDays],
     ['agent_max_chain_depth', updates.agentMaxChainDepth],
     ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
     ['agent_max_step_attempts', updates.agentMaxStepAttempts],

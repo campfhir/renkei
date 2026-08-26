@@ -51,6 +51,23 @@ export interface ActionableItems {
   updated_at: Generated<Timestamp>;
 }
 
+export interface AgentDrafts {
+  agent_id: string | null;
+  attempts: Generated<number>;
+  consumed_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  error_detail: string | null;
+  finished_at: Timestamp | null;
+  id: Generated<string>;
+  owner_subject: string;
+  request: Json;
+  result: Json | null;
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface AgentJobs {
   attempts: Generated<number>;
   created_at: Generated<Timestamp>;
@@ -80,23 +97,6 @@ export interface AgentJobsDeadLetters {
   type: string;
 }
 
-export interface AgentDrafts {
-  agent_id: string | null;
-  attempts: Generated<number>;
-  consumed_at: Timestamp | null;
-  created_at: Generated<Timestamp>;
-  error: string | null;
-  error_detail: string | null;
-  finished_at: Timestamp | null;
-  id: Generated<string>;
-  owner_subject: string;
-  request: Json;
-  result: Json | null;
-  status: Generated<string>;
-  tenant_id: string;
-  updated_at: Generated<Timestamp>;
-}
-
 export interface AgentMemories {
   agent_id: string;
   content: string;
@@ -106,6 +106,26 @@ export interface AgentMemories {
   run_id: string | null;
   tenant_id: string;
   updated_at: Generated<Timestamp>;
+}
+
+export interface AgentNotifications {
+  agent_id: string | null;
+  agent_name: string | null;
+  category: string | null;
+  connector: string | null;
+  created_at: Generated<Timestamp>;
+  entity: string | null;
+  headline: string;
+  id: string;
+  kind: string;
+  read_at: Timestamp | null;
+  ref_id: string | null;
+  ref_url: string | null;
+  run_id: string | null;
+  step_id: string | null;
+  subject: string;
+  tenant_id: string;
+  tool: string | null;
 }
 
 export interface AgentRunCounters {
@@ -385,44 +405,6 @@ export interface JiraSessions {
   user_agent: string | null;
 }
 
-export interface MailBulkJobs {
-  account_id: string;
-  action: string;
-  created_at: Generated<Timestamp>;
-  failed: Generated<number>;
-  failures: Generated<Json>;
-  finished_at: Timestamp | null;
-  id: string;
-  last_error: string | null;
-  params: Generated<Json>;
-  selection: Json;
-  started_at: Timestamp | null;
-  status: Generated<string>;
-  subject: string;
-  succeeded: Generated<number>;
-  tenant_id: string;
-  total: number | null;
-  updated_at: Generated<Timestamp>;
-}
-
-export interface UploadSlots {
-  account_id: string;
-  completed_at: Timestamp | null;
-  content_type: string | null;
-  created_at: Generated<Timestamp>;
-  destination: Json;
-  expires_at: Timestamp;
-  filename: string;
-  id: string;
-  kind: string;
-  max_bytes: number;
-  result: string | null;
-  status: Generated<string>;
-  subject: string;
-  tenant_id: string;
-  token_hash: string;
-}
-
 export interface KnowledgeChunks {
   content: string;
   created_at: Generated<Timestamp>;
@@ -474,6 +456,26 @@ export interface Logs {
   log_id: Generated<Int8>;
   logged_timestamp: Timestamp;
   message: string;
+}
+
+export interface MailBulkJobs {
+  account_id: string;
+  action: string;
+  created_at: Generated<Timestamp>;
+  failed: Generated<number>;
+  failures: Generated<Json>;
+  finished_at: Timestamp | null;
+  id: string;
+  last_error: string | null;
+  params: Generated<Json>;
+  selection: Json;
+  started_at: Timestamp | null;
+  status: Generated<string>;
+  subject: string;
+  succeeded: Generated<number>;
+  tenant_id: string;
+  total: number | null;
+  updated_at: Generated<Timestamp>;
 }
 
 export interface OauthAccessTokens {
@@ -666,6 +668,32 @@ export interface ToolCalls {
   tool: string;
 }
 
+export interface UploadSlots {
+  account_id: string;
+  completed_at: Timestamp | null;
+  content_type: string | null;
+  created_at: Generated<Timestamp>;
+  destination: Json;
+  expires_at: Timestamp;
+  filename: string;
+  id: string;
+  kind: string;
+  max_bytes: number;
+  result: string | null;
+  status: Generated<string>;
+  subject: string;
+  tenant_id: string;
+  token_hash: string;
+}
+
+export interface UserPreferences {
+  key: string;
+  subject: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+  value: Json;
+}
+
 export interface WebexSentMessages {
   account_id: string | null;
   created_at: Generated<Timestamp>;
@@ -694,10 +722,11 @@ export interface WebhookSubscriptions {
 
 export interface DB {
   actionable_items: ActionableItems;
+  agent_drafts: AgentDrafts;
   agent_jobs: AgentJobs;
   agent_jobs_dead_letters: AgentJobsDeadLetters;
-  agent_drafts: AgentDrafts;
   agent_memories: AgentMemories;
+  agent_notifications: AgentNotifications;
   agent_run_counters: AgentRunCounters;
   agent_run_steps: AgentRunSteps;
   agent_runs: AgentRuns;
@@ -743,6 +772,7 @@ export interface DB {
   tenants: Tenants;
   tool_calls: ToolCalls;
   upload_slots: UploadSlots;
+  user_preferences: UserPreferences;
   webex_sent_messages: WebexSentMessages;
   webhook_subscriptions: WebhookSubscriptions;
 }

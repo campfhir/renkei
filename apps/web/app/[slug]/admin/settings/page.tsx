@@ -71,6 +71,7 @@ export default async function SettingsPage({
     agentApprovalMaxWaitDays: settings.agentApprovalMaxWaitDays,
     contentPollMinutes: settings.contentPollMinutes,
     logRetentionDays: settings.logRetentionDays,
+    agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
   };
 
   return (

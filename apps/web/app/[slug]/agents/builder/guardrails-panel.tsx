@@ -60,8 +60,8 @@ export function GuardrailsPanel({
     // Blocked entries float to the top so the current policy reads at a
     // glance even when the list is long.
     return [...matches].sort(
-      (a, b) => Number(blocked.has(b.name)) - Number(blocked.has(a.name)) ||
-        a.name.localeCompare(b.name)
+      (a, b) =>
+        Number(blocked.has(b.name)) - Number(blocked.has(a.name)) || a.name.localeCompare(b.name)
     );
   }, [actTools, filter, blocked]);
 
@@ -97,7 +97,9 @@ export function GuardrailsPanel({
           onClick={() => setPickerOpen((current) => !current)}
           className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
         >
-          {pickerOpen ? 'Hide blocked skills' : `Block skills… ${blockedTools.length > 0 ? `(${blockedTools.length} blocked)` : ''}`}
+          {pickerOpen
+            ? 'Hide blocked skills'
+            : `Block skills… ${blockedTools.length > 0 ? `(${blockedTools.length} blocked)` : ''}`}
         </button>
         {pickerOpen ? (
           <div className="mt-2">

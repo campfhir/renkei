@@ -7,7 +7,8 @@
  */
 
 import { useMemo } from 'react';
-import { instructionPreview, type LoopStep } from '@renkei/agents';
+import { instructionPreview, nodeUsesModel, type LoopStep } from '@renkei/agents';
+import { FixedMark } from './fixed-marker';
 
 export function LoopNode({
   loop,
@@ -55,6 +56,13 @@ export function LoopNode({
           ↻
         </span>
         <span className="min-w-0 truncate text-sm font-medium">{loop.name || 'Unnamed loop'}</span>
+        {/*
+          The one node whose answer depends on a field, not its kind: a
+          foreach counts items in code, an until asks the model after every
+          single iteration — which is the more expensive fact about a loop
+          and the one worth being able to see from the canvas.
+        */}
+        {nodeUsesModel(loop) ? null : <FixedMark />}
       </span>
       <span className="mt-1 block truncate text-xs text-gray-600 dark:text-gray-400">
         {summary}

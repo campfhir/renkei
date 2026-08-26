@@ -536,6 +536,85 @@ describe('draftAgentFromProse retry loop', () => {
     expect(requests).toHaveLength(1);
   });
 
+  it('keeps a filter the prose stated, normalized', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'Billing watch',
+        steps: [
+          {
+            name: 'Search',
+            instruction: 'Search with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+          },
+        ],
+        triggers: [
+          {
+            kind: 'event',
+            eventId: 'microsoft/mail.received',
+            match: { fromAddresses: ['Billing@ACME.example'], subjectContains: 'invoice' },
+          },
+        ],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(
+      db,
+      't1',
+      'when an email from Billing@ACME.example about an invoice arrives, search jira',
+      TOOLS,
+      { suggestTriggers: true }
+    );
+    if ('error' in result) throw new Error(result.error);
+    expect(result.triggers).toEqual([
+      {
+        kind: 'event',
+        eventId: 'microsoft/mail.received',
+        match: { fromAddresses: ['billing@acme.example'], subjectContains: 'invoice' },
+      },
+    ]);
+
+    // The prompt has to offer the fields, and has to say not to invent one:
+    // a filter nobody asked for stops the agent firing and says nothing.
+    const prompt = JSON.stringify(requests[0].messages);
+    expect(prompt).toContain('match.fromAddresses');
+    expect(prompt).toContain('match.roomIds');
+    expect(prompt).toContain('silently never run');
+  });
+
+  it('asks again about a malformed filter, then keeps the trigger without it', async () => {
+    const badFilter = JSON.stringify({
+      name: 'Billing watch',
+      steps: [
+        {
+          name: 'Search',
+          instruction: 'Search with {{tool:jira_search_issues}}',
+          tool: 'jira_search_issues',
+        },
+      ],
+      triggers: [
+        {
+          kind: 'event',
+          eventId: 'microsoft/mail.received',
+          match: { fromAddresses: ['not-an-address'] },
+        },
+      ],
+    });
+    // The same mistake every round, so the corrective loop runs out.
+    replies = [badFilter, badFilter, badFilter];
+
+    const result = await draftAgentFromProse(db, 't1', 'watch billing mail', TOOLS, {
+      suggestTriggers: true,
+    });
+    if ('error' in result) throw new Error(result.error);
+
+    // A bad filter is worth one correction — the model can usually fix an
+    // address — but it is never fatal: the trigger and the steps survive
+    // without it rather than the whole draft being refused.
+    expect(result.triggers).toEqual([{ kind: 'event', eventId: 'microsoft/mail.received' }]);
+    expect(requests.length).toBeGreaterThan(1);
+    expect(JSON.stringify(requests[1].messages)).toContain('filter was dropped');
+  });
+
   it('drops an invented event id and an unknown agent name with corrective feedback', async () => {
     const inventing = JSON.stringify({
       name: 'x',

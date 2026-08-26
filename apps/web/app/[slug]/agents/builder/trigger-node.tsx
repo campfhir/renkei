@@ -7,8 +7,14 @@
  * also teach the trigger.* chip vocabulary via the violet provides-chips.
  */
 
-import { describeSchedule, triggerEventById, type TriggerDraft } from '@renkei/agents';
+import {
+  describeSchedule,
+  describeTriggerMatch,
+  triggerEventById,
+  type TriggerDraft,
+} from '@renkei/agents';
 import type { TriggerPayload } from '@/lib/agents/store';
+import { FixedMark } from './fixed-marker';
 
 export interface AgentChoice {
   id: string;
@@ -32,6 +38,17 @@ export function providesOf(draft: TriggerDraft): string[] {
     case 'schedule':
       return ['The scheduled time'];
   }
+}
+
+/**
+ * The trigger's deterministic narrowing, as a phrase, or null when it runs
+ * on everything. The same sentence the filter panel prints — one
+ * implementation in `@renkei/agents`, so the card and the editor cannot
+ * describe one filter two ways.
+ */
+export function filterSummaryOf(draft: TriggerDraft): string | null {
+  if (draft.kind !== 'event') return null;
+  return describeTriggerMatch(draft.eventId, draft.match ?? {});
 }
 
 export function summaryOf(draft: TriggerDraft, otherAgents: AgentChoice[]): string {
@@ -67,9 +84,16 @@ export function TriggerNode({
   onAdd: () => void;
 }) {
   return (
-    <div className="w-80 rounded-xl border border-gray-300 bg-gray-50 p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+    <div className="relative w-80 rounded-xl border border-gray-300 bg-gray-50 p-3 shadow-sm dark:border-gray-700 dark:bg-gray-900">
+      {/*
+        The whole trigger layer is deterministic — a schedule, a webhook, a
+        filter — so the mark belongs on the cluster rather than on each row.
+        It also makes the shape of a run legible down the canvas: a fixed
+        head, a model-calling body, fixed ends.
+      */}
       <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
         <span aria-hidden="true">⚡</span> When should it run?
+        <FixedMark />
       </p>
       {triggers.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">Nothing starts this agent yet.</p>
@@ -101,6 +125,19 @@ export function TriggerNode({
                   <span className="shrink-0">gives:</span>
                   <span className="truncate">{providesOf(trigger.draft).join(' · ') || '—'}</span>
                 </span>
+                {/*
+                  Only when the trigger is actually narrowed. An unfiltered
+                  trigger saying "only when: everything" would be a line of
+                  chrome on every card that never means anything.
+                */}
+                {filterSummaryOf(trigger.draft) ? (
+                  <span className="mt-0.5 flex items-center gap-1 overflow-hidden text-xs text-gray-500">
+                    <span aria-hidden="true" className="shrink-0">
+                      ▽
+                    </span>
+                    <span className="truncate">only {filterSummaryOf(trigger.draft)}</span>
+                  </span>
+                ) : null}
               </button>
             </li>
           ))}

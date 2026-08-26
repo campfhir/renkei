@@ -38,7 +38,9 @@ import {
   isBranchStep,
   isValidTimezone,
   requiredVersion,
+  normalizeMatchForEvent,
   triggerEventById,
+  validateMatchForEvent,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
@@ -326,10 +328,24 @@ function promptOf(
             '"at": "HH:MM"} | {"every": "weekday", "at": "HH:MM"} (weekday = Monday-Friday) | ' +
             '{"every": "week", "weekday": 0-6 (0 = Sunday), "at": "HH:MM"} | {"every": "month", ' +
             '"day": 1-31, "at": "HH:MM"}. Times are 24-hour.',
-          '  {"kind": "event", "eventId": one of EXACTLY these ids}:',
-          ...TRIGGER_EVENT_CATALOG.map(
-            (event) => `    - ${event.id}: ${event.label} — ${event.description}`
-          ),
+          '  {"kind": "event", "eventId": one of EXACTLY these ids, "match": OPTIONAL filters}:',
+          ...TRIGGER_EVENT_CATALOG.flatMap((event) => [
+            `    - ${event.id}: ${event.label} — ${event.description}`,
+            ...event.filters.map(
+              (field) =>
+                `        match.${field.id}: ${
+                  field.input === 'text' ? 'one string' : 'a list of strings'
+                } — ${field.label.toLowerCase()}. ${field.hint}`
+            ),
+          ]),
+          // The filters are deterministic and cheap, so a stated one is
+          // worth capturing — but an INVENTED one silently stops an agent
+          // firing, and nothing downstream ever reports why. Guessing here
+          // is strictly worse than omitting.
+          '  Include "match" ONLY for a narrowing the description states outright ("emails from ' +
+            'billing@acme.com", "messages in the #support space"). Never infer one from context, ' +
+            'never guess an address or an id, and omit "match" entirely when in doubt. A filter ' +
+            'the user did not ask for makes the automation silently never run.',
           ...(triggerOffer.otherAgents.length > 0
             ? [
                 '  {"kind": "agent", "agentName": EXACTLY one of the user\'s other automations} — ' +
@@ -694,6 +710,12 @@ const SCHEDULE_TRIGGER_SHAPE = z.object({
 const EVENT_TRIGGER_SHAPE = z.object({
   kind: z.literal('event'),
   eventId: z.string().min(1, 'is required'),
+  /**
+   * Deterministic filters. Loosely typed here on purpose — the legal field
+   * ids are catalog data that varies per event, so the shape gate is
+   * structural and `normalizeMatchForEvent` does the real narrowing.
+   */
+  match: z.record(z.string(), z.union([z.string(), z.array(z.string())])).optional(),
 });
 
 const AGENT_TRIGGER_SHAPE = z.object({
@@ -820,7 +842,25 @@ function parseTriggerEntries(
           );
           break;
         }
-        drafts.push({ kind: 'event', eventId: checked.data.eventId });
+        // A filter the model got wrong is DROPPED, not fatal. Drafting is
+        // advisory — the builder is where a trigger is finished — and
+        // refusing the whole draft over a mistyped address would throw away
+        // the steps too. The soft problem carries it into the next round.
+        const eventId = checked.data.eventId;
+        const filterProblems = validateMatchForEvent(eventId, checked.data.match);
+        for (const problem of filterProblems) {
+          state.softProblems.push(`${label}'s filter was dropped: ${problem}`);
+        }
+        const match =
+          filterProblems.length > 0 ? {} : normalizeMatchForEvent(eventId, checked.data.match);
+        // Omitted when empty rather than sent as {}: a draft should say only
+        // what the prose said, and an empty match is indistinguishable from
+        // no match to everything downstream anyway.
+        drafts.push({
+          kind: 'event',
+          eventId,
+          ...(Object.keys(match).length > 0 ? { match } : {}),
+        });
         break;
       }
       case 'agent': {

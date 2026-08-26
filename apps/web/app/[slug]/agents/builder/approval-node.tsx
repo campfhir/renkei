@@ -8,6 +8,7 @@
 
 import { useMemo } from 'react';
 import { instructionPreview, type ApprovalStep } from '@renkei/agents';
+import { FixedMark } from './fixed-marker';
 
 function waitLabel(hours: number): string {
   if (hours % 24 === 0) {
@@ -62,6 +63,7 @@ export function ApprovalNode({
         <span className="min-w-0 truncate text-sm font-medium">
           {approval.name || 'Ask for approval'}
         </span>
+        <FixedMark />
       </span>
       {preview ? (
         <span className="mt-1 block truncate text-xs text-gray-600 dark:text-gray-400">

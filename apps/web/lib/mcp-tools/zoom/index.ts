@@ -19,6 +19,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { ZoomClient, encodeZoomMeetingId, vttToText } from '@renkei/connector-zoom';
+import { actMeta } from '@renkei/tool-outcomes';
 import { logger } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
@@ -334,10 +335,18 @@ export async function registerZoomTools(
         tenantId: context.tenantId,
         meetingId: String(body.id ?? ''),
       });
-      return textResult(
-        `Scheduled "${str(body.topic)}" at ${str(body.start_time)} (id ${String(body.id ?? 'unknown')}).` +
-          (str(body.join_url) ? `\nJoin: ${str(body.join_url)}` : '')
-      );
+      return {
+        ...textResult(
+          `Scheduled "${str(body.topic)}" at ${str(body.start_time)} (id ${String(body.id ?? 'unknown')}).` +
+            (str(body.join_url) ? `\nJoin: ${str(body.join_url)}` : '')
+        ),
+        // The join URL, not the numeric meeting id: what a person wants
+        // from "an agent scheduled a meeting" is the way into it.
+        _meta: actMeta({
+          ...(str(body.topic) ? { id: `“${str(body.topic)}”` } : {}),
+          ...(str(body.join_url) ? { url: str(body.join_url) } : {}),
+        }),
+      };
     }
   );
 

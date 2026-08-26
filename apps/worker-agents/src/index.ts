@@ -24,7 +24,11 @@ import { createDraftSweep, DRAFT_SWEEP_INTERVAL_MS } from './draft-sweep';
 import { createFinalizeHook } from './finalize';
 import { createScheduleSweep } from './schedule-sweep';
 import { createApprovalSweep, APPROVAL_SWEEP_MS } from './approval-sweep';
-import { createRetentionSweep, createStuckRunJanitor } from './maintenance';
+import {
+  createNotificationRetentionSweep,
+  createRetentionSweep,
+  createStuckRunJanitor,
+} from './maintenance';
 import { createMemoryCompactionSweep, MEMORY_COMPACTION_SWEEP_MS } from './memory-compaction';
 import { logger, attachPersistentLogging } from './logger';
 
@@ -88,6 +92,13 @@ async function main(): Promise<void> {
       'worker-agents/retention',
       RETENTION_SWEEP_MS,
       createRetentionSweep(db)
+    ),
+    schedulePeriodicSweep(
+      logger,
+      'agent notification retention',
+      'worker-agents/notification-retention',
+      RETENTION_SWEEP_MS,
+      createNotificationRetentionSweep(db)
     ),
     schedulePeriodicSweep(
       logger,
