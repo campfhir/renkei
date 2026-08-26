@@ -1,15 +1,21 @@
 'use client';
 
 /**
- * Who holds a grant on this share, and at what default level. The picker
- * offers the org's known identities (passed from the server page) plus a
- * free-text subject field for principals that have not signed in yet —
- * a grant may precede its person.
+ * Who holds a grant on this share, and at what default level. People are
+ * chosen from the org's known identities (passed from the server page) —
+ * selection only, never a pasted subject identifier.
+ *
+ * Grants are also editable from the rules navigator's permissions panel
+ * below; both surfaces announce mutations on GRANTS_CHANGED_EVENT and
+ * reload on hearing it, so they stay in sync without a page refresh.
  */
 
 import { useCallback, useEffect, useState } from 'react';
 import { getJson, sendJson } from '@/lib/fetch-json';
 import { inputClass } from '../share-config-fields';
+
+/** Window event announcing a grant mutation on the current share page. */
+export const GRANTS_CHANGED_EVENT = 'fileshare-grants-changed';
 
 interface GrantRowView {
   subject: string;
@@ -48,6 +54,9 @@ export default function GrantManager({
 
   useEffect(() => {
     void load();
+    const onChanged = () => void load();
+    window.addEventListener(GRANTS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(GRANTS_CHANGED_EVENT, onChanged);
   }, [load]);
 
   const labelFor = (grantSubject: string): string =>
@@ -66,7 +75,7 @@ export default function GrantManager({
       return;
     }
     setSubject('');
-    await load();
+    window.dispatchEvent(new CustomEvent(GRANTS_CHANGED_EVENT));
   };
 
   const remove = async (grantSubject: string) => {
@@ -84,7 +93,7 @@ export default function GrantManager({
       setError(removeError);
       return;
     }
-    await load();
+    window.dispatchEvent(new CustomEvent(GRANTS_CHANGED_EVENT));
   };
 
   const known = new Set(grants.map((grant) => grant.subject));
@@ -135,7 +144,7 @@ export default function GrantManager({
         <select
           aria-label="Person to grant"
           className={inputClass}
-          value={people.some((person) => person.subject === subject) ? subject : ''}
+          value={subject}
           onChange={(event) => setSubject(event.target.value)}
         >
           <option value="">Pick a person…</option>
@@ -147,13 +156,6 @@ export default function GrantManager({
               </option>
             ))}
         </select>
-        <input
-          aria-label="Or enter a subject"
-          className={`${inputClass} min-w-56 flex-1`}
-          placeholder="…or paste an OIDC subject"
-          value={subject}
-          onChange={(event) => setSubject(event.target.value)}
-        />
         <select
           aria-label="Default access"
           className={inputClass}
@@ -174,9 +176,9 @@ export default function GrantManager({
         </select>
         <button
           type="button"
-          disabled={busy || !subject.trim()}
-          onClick={() => void save(subject.trim(), level)}
-          className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+          disabled={busy || !subject}
+          onClick={() => void save(subject, level)}
+          className="text-sm font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
         >
           + Grant access
         </button>

@@ -13,17 +13,25 @@
  * "inherit" is exactly what the worker would enforce. Setting a value
  * upserts a rule at the selected path; choosing inherit deletes it.
  *
- * A collapsed "All rules" list keeps the one thing browsing cannot reach —
- * rules anchored on paths that no longer exist — plus add-by-path for
- * folders yet to be created.
+ * Below the panel, a flat "Permissions in this folder" list shows every
+ * explicit rule anchored at or under the folder being browsed — at the
+ * share root that is every rule on the share, which also keeps rules on
+ * paths that no longer exist on disk reachable and removable.
+ *
+ * People join the share from here too: Add user picks from the org
+ * directory (selection only — subject identifiers are never typed) and
+ * creates the grant; grant changes are announced on GRANTS_CHANGED_EVENT
+ * so the Access section above stays in sync.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getJson, sendJson } from '@/lib/fetch-json';
-import { layerAccess, minAccess } from '@renkei/connector-fileshares/pure';
+import { isBoundaryPrefix, layerAccess, minAccess } from '@renkei/connector-fileshares/pure';
 import type { PathRule } from '@renkei/connector-fileshares/pure';
 import { Icon, ICONS } from '@/components/icons';
-import { inputClass, pathPreview } from '../share-config-fields';
+import Modal from '@/components/modal';
+import { inputClass } from '../share-config-fields';
+import { GRANTS_CHANGED_EVENT } from './grant-manager';
 
 type Access = 'none' | 'read' | 'read_write';
 
@@ -76,9 +84,7 @@ export default function RulesEditor({
   const [selected, setSelected] = useState<Selected>({ name: 'Share root', path: '/', kind: 'dir' });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [rulePath, setRulePath] = useState('');
-  const [ruleSubject, setRuleSubject] = useState('');
-  const [ruleAccess, setRuleAccess] = useState<Access>('read');
+  const [addUserOpen, setAddUserOpen] = useState(false);
 
   const base = `/api/admin/${slug}/file-shares/${shareId}`;
   const fold = useCallback(
@@ -123,6 +129,15 @@ export default function RulesEditor({
   useEffect(() => {
     void loadRules();
     void loadGrants();
+    // Grant edits from either surface (the Access section above, or this
+    // panel's Add user) announce themselves; a removal also cascades that
+    // person's rules, so both reload together.
+    const onChanged = () => {
+      void loadGrants();
+      void loadRules();
+    };
+    window.addEventListener(GRANTS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(GRANTS_CHANGED_EVENT, onChanged);
   }, [loadRules, loadGrants]);
   useEffect(() => {
     void loadBrowse(path);
@@ -186,15 +201,20 @@ export default function RulesEditor({
   };
 
   const crumbs = path === '/' ? [] : path.slice(1).split('/');
-  const rulePreview = pathPreview(rulePath || '/');
   const selectedShareValue = shareValueAt(selected.path);
+  /** Every explicit rule anchored at or under the folder being browsed. */
+  const nestedRules = rules.filter((rule) =>
+    isBoundaryPrefix(path, rule.path, share.caseInsensitive)
+  );
 
   const accessSelect = (
+    label: string,
     value: Access | 'inherit',
     inheritedLabel: string,
     onChange: (value: Access | 'inherit') => void
   ) => (
     <select
+      aria-label={label}
       className={inputClass}
       value={value}
       onChange={(event) => {
@@ -290,11 +310,10 @@ export default function RulesEditor({
 
       {/* ── The permissions panel for the selection ────────────────────── */}
       <div className="border-t border-gray-200 p-3 dark:border-gray-800">
-        <p className="text-sm font-semibold">
+        <p className="mb-2 text-sm font-semibold">
           {selected.name}
           {selected.kind === 'dir' && selected.path !== '/' ? '/' : ''} permissions
         </p>
-        <p className="mb-2 font-mono text-xs text-gray-500 dark:text-gray-400">{selected.path}</p>
 
         <ul className="max-h-56 space-y-2 overflow-y-auto text-sm">
           <li className="flex items-center justify-between gap-2">
@@ -305,6 +324,7 @@ export default function RulesEditor({
               </span>
             </span>
             {accessSelect(
+              'Everyone granted access here',
               exactRule(null, selected.path)?.access ?? 'inherit',
               ACCESS_LABEL[
                 layerAccess(
@@ -340,115 +360,83 @@ export default function RulesEditor({
                     </span>
                   ) : null}
                 </span>
-                {accessSelect(explicit?.access ?? 'inherit', ACCESS_LABEL[inherited], (value) =>
-                  void setRule(grant.subject, selected.path, value)
+                {accessSelect(
+                  `${labelFor(grant.subject)} access here`,
+                  explicit?.access ?? 'inherit',
+                  ACCESS_LABEL[inherited],
+                  (value) => void setRule(grant.subject, selected.path, value)
                 )}
               </li>
             );
           })}
           {grants.length === 0 ? (
             <li className="text-sm text-gray-500 dark:text-gray-400">
-              No one is granted yet — add people under Access above, then set their limits here.
+              No one is granted yet — Add user below puts someone on this share.
             </li>
           ) : null}
         </ul>
+        <button
+          type="button"
+          onClick={() => setAddUserOpen(true)}
+          className="mt-3 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+        >
+          + Add user
+        </button>
       </div>
 
-      {/* ── The audit list: every rule, reachable even off the filesystem ─ */}
-      <details className="border-t border-gray-200 p-3 dark:border-gray-800">
-        <summary className="cursor-pointer text-sm font-medium">
-          All rules ({rules.length})
-        </summary>
-        <ul className="mt-2 space-y-2 text-sm">
-          {rules.map((rule) => (
-            <li key={rule.id} className="flex flex-wrap items-center gap-2">
-              <span className="min-w-0 truncate text-gray-600 dark:text-gray-400">
-                {rule.subject === null ? 'Everyone' : labelFor(rule.subject)}
-              </span>
-              <span className="min-w-0 truncate font-mono text-xs">{rule.path}</span>
-              <span className="ml-auto flex items-center gap-2">
-                <select
-                  className={inputClass}
-                  value={rule.access}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    if (next === 'none' || next === 'read' || next === 'read_write') {
-                      void setRule(rule.subject, rule.path, next);
-                    }
-                  }}
-                >
-                  <option value="none">no access</option>
-                  <option value="read">read</option>
-                  <option value="read_write">read/write</option>
-                </select>
-                <button
-                  type="button"
-                  onClick={() => void setRule(rule.subject, rule.path, 'inherit')}
-                  className="text-sm text-red-600 hover:underline dark:text-red-400"
-                >
-                  Remove
-                </button>
-              </span>
-            </li>
-          ))}
-          {rules.length === 0 ? (
-            <li className="text-sm text-gray-500 dark:text-gray-400">No rules yet.</li>
-          ) : null}
-        </ul>
+      {addUserOpen ? (
+        <AddUserModal
+          slug={slug}
+          shareId={shareId}
+          people={people.filter(
+            (person) => !grants.some((grant) => grant.subject === person.subject)
+          )}
+          onClose={() => setAddUserOpen(false)}
+        />
+      ) : null}
 
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
-          <input
-            value={rulePath}
-            onChange={(event) => setRulePath(event.target.value)}
-            placeholder="/folder/subfolder — or paste \\server\share\folder"
-            className={`${inputClass} min-w-56 flex-1`}
-          />
-          <select
-            aria-label="Rule layer"
-            className={inputClass}
-            value={ruleSubject}
-            onChange={(event) => setRuleSubject(event.target.value)}
-          >
-            <option value="">Everyone granted</option>
-            {grants.map((grant) => (
-              <option key={grant.subject} value={grant.subject}>
-                Only: {labelFor(grant.subject)}
-              </option>
+      {/* ── Every permission set at or under this folder, flat ──────────── */}
+      {nestedRules.length > 0 ? (
+        <div className="border-t border-gray-200 p-3 dark:border-gray-800">
+          <p className="mb-2 text-sm font-semibold">Permissions in this folder</p>
+          <ul className="space-y-2 text-sm">
+            {nestedRules.map((rule) => (
+              <li key={rule.id} className="flex flex-wrap items-center gap-2">
+                <span className="min-w-0 truncate">
+                  {rule.subject === null ? 'Everyone granted' : labelFor(rule.subject)}
+                </span>
+                <span className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
+                  {rule.path === '/' ? 'Share root' : rule.path.slice(1)}
+                </span>
+                <span className="ml-auto flex items-center gap-2">
+                  <select
+                    aria-label={`Access for ${rule.subject === null ? 'everyone' : labelFor(rule.subject)} at ${rule.path}`}
+                    className={inputClass}
+                    value={rule.access}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      if (next === 'none' || next === 'read' || next === 'read_write') {
+                        void setRule(rule.subject, rule.path, next);
+                      }
+                    }}
+                  >
+                    <option value="none">no access</option>
+                    <option value="read">read</option>
+                    <option value="read_write">read/write</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => void setRule(rule.subject, rule.path, 'inherit')}
+                    className="text-sm text-red-600 hover:underline dark:text-red-400"
+                  >
+                    Remove
+                  </button>
+                </span>
+              </li>
             ))}
-          </select>
-          <select
-            aria-label="Rule access"
-            className={inputClass}
-            value={ruleAccess}
-            onChange={(event) => {
-              const next = event.target.value;
-              if (next === 'none' || next === 'read' || next === 'read_write') setRuleAccess(next);
-            }}
-          >
-            <option value="none">no access</option>
-            <option value="read">read</option>
-            <option value="read_write">read/write</option>
-          </select>
-          <button
-            type="button"
-            disabled={!rulePath.trim() || rulePreview.error}
-            onClick={() => {
-              void setRule(ruleSubject || null, rulePath, ruleAccess);
-              setRulePath('');
-            }}
-            className="text-sm font-medium text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
-          >
-            + Add rule
-          </button>
-          <span
-            className={`w-full text-xs ${
-              rulePreview.error ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'
-            }`}
-          >
-            {rulePath.trim() ? rulePreview.text : 'Rules may name folders that do not exist yet.'}
-          </span>
+          </ul>
         </div>
-      </details>
+      ) : null}
 
       {error ? (
         <p className="border-t border-gray-200 p-3 text-sm text-red-600 dark:border-gray-800 dark:text-red-400">
@@ -456,5 +444,107 @@ export default function RulesEditor({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Put a person on the share from the org directory — selection only, no
+ * pasted subject identifiers. Adding here creates their GRANT (the panel
+ * lists grantees); their per-path limits are then set by selection above.
+ */
+function AddUserModal({
+  slug,
+  shareId,
+  people,
+  onClose,
+}: {
+  slug: string;
+  shareId: string;
+  people: { subject: string; label: string }[];
+  onClose: () => void;
+}) {
+  const [subject, setSubject] = useState('');
+  const [level, setLevel] = useState<Access>('read');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const add = async () => {
+    if (!subject) return;
+    setBusy(true);
+    setError(null);
+    const saveError = await sendJson(`/api/admin/${slug}/file-shares/${shareId}/grants`, 'POST', {
+      subject,
+      defaultAccess: level,
+    });
+    setBusy(false);
+    if (saveError) {
+      setError(saveError);
+      return;
+    }
+    window.dispatchEvent(new CustomEvent(GRANTS_CHANGED_EVENT));
+    onClose();
+  };
+
+  return (
+    <Modal title="Add user" onClose={onClose}>
+      <div className="space-y-3 text-sm">
+        <label className="block">
+          <span className="mb-1 block text-gray-600 dark:text-gray-400">Person</span>
+          <select
+            autoFocus
+            className={`${inputClass} w-full`}
+            value={subject}
+            onChange={(event) => setSubject(event.target.value)}
+          >
+            <option value="">Pick a person…</option>
+            {people.map((person) => (
+              <option key={person.subject} value={person.subject}>
+                {person.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-gray-600 dark:text-gray-400">
+            Access across the share
+          </span>
+          <select
+            className={`${inputClass} w-full`}
+            value={level}
+            onChange={(event) => {
+              const next = event.target.value;
+              if (next === 'none' || next === 'read' || next === 'read_write') setLevel(next);
+            }}
+          >
+            <option value="none">specific folders only</option>
+            <option value="read">read</option>
+            <option value="read_write">read/write</option>
+          </select>
+        </label>
+        {people.length === 0 ? (
+          <p className="text-gray-500 dark:text-gray-400">
+            Everyone the org knows about already has access to this share.
+          </p>
+        ) : null}
+        {error ? <p className="text-red-600 dark:text-red-400">{error}</p> : null}
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-800 dark:hover:bg-gray-900"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!subject || busy}
+            onClick={() => void add()}
+            className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {busy ? 'Adding…' : 'Add user'}
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 }
