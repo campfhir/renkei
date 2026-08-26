@@ -114,8 +114,12 @@ Move, rename and delete shipped as a follow-up, under three rules:
 ## The dedicated worker process (added after v1)
 
 File-share I/O moved out of the web app into `apps/worker-fileshares`, a
-small internal HTTP service over the same worker image as the queue
-consumers. Two reasons: SMB/SFTP sessions are heavy, slow I/O against
+small internal HTTP service on its own image (`renkei-fileshares` — the
+`fileshares` Dockerfile target), so the container carries exactly the
+protocol stack (the patched SMB library included) and none of the queue
+workers' dependencies, and the service versions and rolls out
+independently of them. Two reasons for the move itself: SMB/SFTP sessions
+are heavy, slow I/O against
 servers that cannot defend themselves — a wedged NAS was tying up web
 request handlers — and isolation: the protocol libraries (a patched SMB2
 implementation among them) and the credential plaintext now live in one

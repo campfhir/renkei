@@ -113,13 +113,15 @@ services:
     restart: unless-stopped
 
   # The file-share I/O worker: the only process that opens SMB/SFTP
-  # sessions or decrypts share credentials. The web app reaches it over
-  # HTTP on the compose network (FILESHARES_WORKER_URL below) with the
-  # shared FILESHARES_WORKER_API_KEY from .env — generate one with
+  # sessions or decrypts share credentials. Its own image (not the shared
+  # worker one), so the SMB/SSH protocol stack ships apart from the queue
+  # workers and this service rolls out independently. The web app reaches
+  # it over HTTP on the compose network (FILESHARES_WORKER_URL below) with
+  # the shared FILESHARES_WORKER_API_KEY from .env — generate one with
   # `openssl rand -base64 32`. No published ports on purpose: nothing
   # outside the compose network may speak to it.
   worker-fileshares:
-    image: scotteremiaroden/renkei-worker:latest
+    image: scotteremiaroden/renkei-fileshares:latest
     container_name: renkei-worker-fileshares
     command: ['pnpm', '--filter', '@renkei/worker-fileshares', 'start']
     env_file:
