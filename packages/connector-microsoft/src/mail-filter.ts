@@ -27,6 +27,100 @@ export interface MailSearchFilters {
    * word/prefix tokenization.
    */
   subjectContains?: string;
+  /**
+   * A recipient address on the To line. Client-side for a harder reason
+   * than subject: Exchange does not support $filter on the recipient
+   * COLLECTIONS at all — no `toRecipients/any(...)`, no equality — so there
+   * is no server-side form of this question to get right. $search can ask
+   * it (`to:someone@example.com`), but $search and $filter are mutually
+   * exclusive on mail, so reaching for it would cost every other filter in
+   * this type. Matching over the pages keeps them all.
+   */
+  to?: string;
+  /** A recipient address on the Cc line. Client-side, exactly as `to`. */
+  cc?: string;
+}
+
+/**
+ * Whether anything here has to be matched after fetching rather than by
+ * Exchange. Callers use it to widen their page size and scan budget, since
+ * a client-side filter can discard most of a page.
+ */
+export function hasClientSideFilter(filters: MailSearchFilters): boolean {
+  return Boolean(filters.subjectContains || filters.to || filters.cc);
+}
+
+/**
+ * The $select a client-side match needs on top of what the caller wanted.
+ *
+ * Recipient collections are only pulled when a recipient filter is
+ * actually set: they are the heaviest thing on a message summary, and a
+ * survey of 1000 messages should not carry them for nothing.
+ */
+export function clientSideSelect(filters: MailSearchFilters, base: string): string {
+  const fields = base.split(',').filter(Boolean);
+  const need = (field: string) => {
+    if (!fields.includes(field)) fields.push(field);
+  };
+  if (filters.subjectContains) need('subject');
+  if (filters.to) need('toRecipients');
+  if (filters.cc) need('ccRecipients');
+  return fields.join(',');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+/**
+ * Every address on a recipient collection, lowercased.
+ *
+ * Narrowed at each hop rather than asserted: this reads Graph's JSON, and a
+ * $select that forgot the field or a shape that changed should yield no
+ * addresses — which fails the match closed — instead of throwing.
+ */
+function addressesOf(entries: unknown): string[] {
+  if (!Array.isArray(entries)) return [];
+  const addresses: string[] = [];
+  for (const entry of entries) {
+    if (!isRecord(entry)) continue;
+    const emailAddress = entry.emailAddress;
+    if (!isRecord(emailAddress)) continue;
+    const address = emailAddress.address;
+    if (typeof address === 'string' && address) addresses.push(address.toLowerCase());
+  }
+  return addresses;
+}
+
+/**
+ * The filters Exchange could not apply, applied here.
+ *
+ * ONE implementation on purpose. This used to be written out separately in
+ * the web tool and in the worker's job expansion, which is survivable for a
+ * search — the worst case is a thin page — and is not survivable for a bulk
+ * job: a filter the expansion ignores selects the wrong messages, and the
+ * job then deletes or moves them. A caller that forgets to run this at all
+ * still gets that, so the field docs above say client-side out loud.
+ *
+ * Recipient matches are exact on the address and case-insensitive, the same
+ * semantic `from` carries server-side. A display name is not an address and
+ * does not match.
+ */
+export function matchesClientSide(
+  message: Record<string, unknown>,
+  filters: MailSearchFilters
+): boolean {
+  if (filters.subjectContains) {
+    const subject = typeof message.subject === 'string' ? message.subject : '';
+    if (!subject.toLowerCase().includes(filters.subjectContains.toLowerCase())) return false;
+  }
+  if (filters.to) {
+    if (!addressesOf(message.toRecipients).includes(filters.to.trim().toLowerCase())) return false;
+  }
+  if (filters.cc) {
+    if (!addressesOf(message.ccRecipients).includes(filters.cc.trim().toLowerCase())) return false;
+  }
+  return true;
 }
 
 export interface MailQueryOptions {
