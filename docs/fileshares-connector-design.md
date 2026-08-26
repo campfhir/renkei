@@ -19,9 +19,11 @@ below follows from taking that seriously:
   the files page, and a direct request answers exactly like a nonexistent
   id (no existence oracle).
 - **Enforcement is per call, in deterministic code** (Decision #16's
-  spirit): every tool handler and REST route evaluates the pure ACL engine
-  over a freshly-read context. The capability gate only decides whether the
-  tools exist for a caller; it never substitutes for the per-path check.
+  spirit): every operation evaluates the pure ACL engine over a
+  freshly-read context — since the worker split (below), inside the
+  fileshare worker's service layer, the one place that also holds the
+  sockets. The capability gate only decides whether the tools exist for a
+  caller; it never substitutes for the per-path check.
 - **Fail closed, everywhere.** A missing grant, an unreadable rule row, a
   decryption failure, or a DB error all mean `none`. A malformed rule
   poisons its whole context rather than being skipped — the skipped row
@@ -109,6 +111,47 @@ Move, rename and delete shipped as a follow-up, under three rules:
   made convergent under the wedge-retry: a retried remove treats absence as
   success, and a retried rename disambiguates through the destination.
 
+## The dedicated worker process (added after v1)
+
+File-share I/O moved out of the web app into `apps/worker-fileshares`, a
+small internal HTTP service over the same worker image as the queue
+consumers. Two reasons: SMB/SFTP sessions are heavy, slow I/O against
+servers that cannot defend themselves — a wedged NAS was tying up web
+request handlers — and isolation: the protocol libraries (a patched SMB2
+implementation among them) and the credential plaintext now live in one
+small process instead of the web app's.
+
+How the seam is cut:
+
+- **The package grew a service layer** (`service.ts`): one function per
+  operation, each resolving the caller's context, running the ACL engine
+  and destructive gate, and opening a bounded backend session itself. The
+  worker's HTTP endpoints are thin wrappers over these functions; a bug in
+  the wrapper can produce a wrong status code but not a wrong permission.
+- **The web app holds a client, not a library.** REST routes, the
+  fileshare MCP tools and the upload-slot executor call the worker
+  (`FILESHARES_WORKER_URL`, bearer `FILESHARES_WORKER_API_KEY` —
+  comma-separated for overlapping rotation, timing-safe compare, no key
+  means no service). Every call carries the authenticated `subject`; the
+  worker re-runs the full ACL per call, so an admin's narrowing takes
+  effect on the next operation regardless of which process observed it.
+  The web app no longer decrypts share credentials at all — its remaining
+  store reads are discovery (grant listings) and the upload-slot mint's
+  pre-flight check, both I/O-free.
+- **Trust boundary:** the bearer key marks the caller as the web app,
+  which has already authenticated its user (and, for the admin-list and
+  test-connection endpoints, its operator role). The worker is the
+  authority for the per-path data-plane ACL; identity and role stay
+  web-side. File bytes travel as raw HTTP bodies — never base64 in JSON.
+- **The bounds got better.** The per-share session cap and lane limiter
+  used to be per-web-process (N replicas = N× the cap); in the single
+  worker they are actually global. The org attachment ceiling is enforced
+  worker-side per tenant, with the web routes keeping only a cheap
+  declared-length pre-check.
+- HTTP/JSON was chosen over gRPC deliberately: eleven endpoints on
+  node:http, no proto toolchain, and the payloads are either small JSON or
+  raw file bytes — nothing gRPC would improve.
+
 ## What deliberately did not ship
 
 - **Knowledge indexing** — retrieval-only. Indexing would need this
@@ -136,6 +179,7 @@ Move, rename and delete shipped as a follow-up, under three rules:
 - Bounds: reads/extracts capped by `@renkei/document-text`'s input limit,
   transfers by the org's `maxAttachmentBytes`; 10s connect / 15s op / 60s
   transfer timeouts; a lane limiter plus a per-share session cap (a NAS
-  has no 429s to defend itself with).
+  has no 429s to defend itself with). All enforced in the fileshare
+  worker, so they hold globally however many web replicas run.
 - Admin mutations write `fileshare.*` audit events (subjects, paths,
   levels — never file content).

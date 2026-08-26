@@ -11,7 +11,7 @@
  * the same functions the server validates with, so the preview is honest.
  */
 
-import { normalizePath, windowsToUnix } from '@renkei/connector-fileshares';
+import { normalizePath, windowsToUnix } from '@renkei/connector-fileshares/pure';
 
 export const inputClass =
   'rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
