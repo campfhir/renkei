@@ -42,3 +42,19 @@ export {
   hasAllowedDescendant,
   layerAccess,
 } from './acl';
+
+export {
+  decryptCredentials,
+  encryptCredentials,
+  type CredentialError,
+  type ShareCredentials,
+} from './credentials';
+
+export { openBackend, type BackendError, type ShareBackend } from './backend';
+
+export {
+  CONNECT_TIMEOUT_MS,
+  OP_TIMEOUT_MS,
+  TRANSFER_TIMEOUT_MS,
+  withSessionLimits,
+} from './limits';
