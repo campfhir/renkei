@@ -95,6 +95,36 @@ describe('normalizeAgentDraft', () => {
   });
 });
 
+describe('the step ceiling is the org setting', () => {
+  const manySteps = (count: number) => ({
+    version: 1 as const,
+    steps: Array.from({ length: count }, () => step()),
+  });
+
+  it('refuses a draft over the default when no cap is in hand', () => {
+    const issues = validateAgentDraft(draft({ steps: manySteps(21) }), TOOLS);
+    expect(messagesOf(issues)).toContain('Keep the agent to 20 steps or fewer.');
+    expect(validateAgentDraft(draft({ steps: manySteps(20) }), TOOLS)).toEqual([]);
+  });
+
+  it('honors a raised org cap', () => {
+    expect(validateAgentDraft(draft({ steps: manySteps(21) }), TOOLS, { maxSteps: 30 })).toEqual(
+      []
+    );
+  });
+
+  it('honors a lowered org cap, naming the org number', () => {
+    const issues = validateAgentDraft(draft({ steps: manySteps(6) }), TOOLS, { maxSteps: 5 });
+    expect(messagesOf(issues)).toContain('Keep the agent to 5 steps or fewer.');
+  });
+
+  it('never lets a junk cap forbid every agent', () => {
+    // The floor mirrors normalizeAgentDraft's attempts clamp: a cap of zero
+    // would make one step illegal, which no org can have meant.
+    expect(validateAgentDraft(draft({ steps: manySteps(1) }), TOOLS, { maxSteps: 0 })).toEqual([]);
+  });
+});
+
 describe('validateAgentDraft', () => {
   it('accepts a well-formed draft', () => {
     expect(validateAgentDraft(draft(), TOOLS)).toEqual([]);
@@ -724,9 +754,7 @@ describe('terminal nodes (version 4)', () => {
       TOOLS
     );
     expect(messagesOf(issues).some((message) => message.includes('skill'))).toBe(true);
-    expect(messagesOf(issues).some((message) => message.includes('nothing saved this'))).toBe(
-      true
-    );
+    expect(messagesOf(issues).some((message) => message.includes('nothing saved this'))).toBe(true);
   });
 
   it('flags steps placed after an ending as unreachable', () => {
@@ -757,10 +785,7 @@ describe('guardrails and blocked skills', () => {
   });
 
   it('rejects a step whose skill is blocked by the guardrails', () => {
-    const issues = validateAgentDraft(
-      draft({ blockedTools: ['jira_get_issue'] }),
-      TOOLS
-    );
+    const issues = validateAgentDraft(draft({ blockedTools: ['jira_get_issue'] }), TOOLS);
     expect(issues.some((issue) => issue.path === 'steps.0.tool')).toBe(true);
     expect(messagesOf(issues).some((message) => message.includes('blocked'))).toBe(true);
   });
@@ -828,16 +853,18 @@ describe('approval nodes (validation + normalize)', () => {
 
   it('requires a named answer in input mode, and binds it for later steps', () => {
     const unnamed = approval({ mode: 'input' });
-    const issues = validateAgentDraft(
-      draft({ steps: { version: 5, steps: [unnamed] } }),
-      TOOLS
-    );
+    const issues = validateAgentDraft(draft({ steps: { version: 5, steps: [unnamed] } }), TOOLS);
     expect(issues.some((issue) => issue.path.endsWith('.saveAs'))).toBe(true);
 
     const named = approval({ mode: 'input', saveAs: 'the decision' });
     const consumer = step({
       tool: null,
-      instruction: [text('Act on '), varChip('the decision'), text(' via '), varChip('approval.link')],
+      instruction: [
+        text('Act on '),
+        varChip('the decision'),
+        text(' via '),
+        varChip('approval.link'),
+      ],
     });
     expect(
       validateAgentDraft(draft({ steps: { version: 5, steps: [named, consumer] } }), TOOLS)
@@ -846,28 +873,24 @@ describe('approval nodes (validation + normalize)', () => {
 
   it('clamps the wait ceiling to the org cap', () => {
     const eager = approval({ timeoutHours: 24 * 90 });
-    const normalized = normalizeAgentDraft(
-      draft({ steps: { version: 5, steps: [eager] } }),
-      { approvalWaitCapHours: 7 * 24 }
-    );
+    const normalized = normalizeAgentDraft(draft({ steps: { version: 5, steps: [eager] } }), {
+      approvalWaitCapHours: 7 * 24,
+    });
     const first = normalized.steps.steps[0];
     expect(first && 'timeoutHours' in first ? first.timeoutHours : null).toBe(7 * 24);
 
     // Default cap = 14 days when no org settings are in hand.
     const defaulted = normalizeAgentDraft(draft({ steps: { version: 5, steps: [eager] } }));
     const firstDefault = defaulted.steps.steps[0];
-    expect(
-      firstDefault && 'timeoutHours' in firstDefault ? firstDefault.timeoutHours : null
-    ).toBe(14 * 24);
+    expect(firstDefault && 'timeoutHours' in firstDefault ? firstDefault.timeoutHours : null).toBe(
+      14 * 24
+    );
   });
 
   it('validates steps inside outcome paths', () => {
     const badInner = step({ tool: 'nonsense_tool', instruction: [text('do')] });
     const node = approval({ onDeclined: { id: uuid(), name: 'Rejected', steps: [badInner] } });
-    const issues = validateAgentDraft(
-      draft({ steps: { version: 5, steps: [node] } }),
-      TOOLS
-    );
+    const issues = validateAgentDraft(draft({ steps: { version: 5, steps: [node] } }), TOOLS);
     expect(issues.some((issue) => issue.path.includes('.onDeclined.steps.0'))).toBe(true);
   });
 });

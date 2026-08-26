@@ -15,6 +15,7 @@ export interface EditableSettings {
   agentMaxChainDepth: number;
   agentRunTimeoutMinutes: number;
   agentMaxStepAttempts: number;
+  agentMaxSteps: number;
   agentMaxRunsPerDay: number;
   agentApprovalMaxWaitDays: number;
   contentPollMinutes: number;
@@ -172,6 +173,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="Ceiling on a step's 'give up after N tries' (default 10). Enforced at run time, so lowering it applies to existing agents immediately."
         >
           {numberInput('agentMaxStepAttempts', '1–100')}
+        </Row>
+        <Row
+          label="Max steps per agent"
+          hint="How many steps one agent may hold (default 20). Enforced when an agent is saved; agents already over a lowered limit keep running until their next edit."
+        >
+          {numberInput('agentMaxSteps', '1–100')}
         </Row>
         <Row
           label="Max chain depth"
