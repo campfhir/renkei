@@ -331,12 +331,21 @@ function promptOf(
           '  {"kind": "event", "eventId": one of EXACTLY these ids, "match": OPTIONAL filters}:',
           ...TRIGGER_EVENT_CATALOG.flatMap((event) => [
             `    - ${event.id}: ${event.label} — ${event.description}`,
-            ...event.filters.map(
-              (field) =>
-                `        match.${field.id}: ${
-                  field.input === 'text' ? 'one string' : 'a list of strings'
-                } — ${field.label.toLowerCase()}. ${field.hint}`
-            ),
+            ...event.filters.flatMap((field) => [
+              `        match.${field.id}: ${
+                field.input === 'text' ? 'one string' : 'a list of strings'
+              } — ${field.label.toLowerCase()}. ${field.hint}`,
+              // Taught explicitly rather than left to be guessed: the
+              // default is the permissive one, so the only way to get ALL
+              // wrong is to write it when the user did not ask for it.
+              ...(field.modeKey
+                ? [
+                    `        match.${field.modeKey}: "all" ONLY when the description says every ` +
+                      `one of them must appear ("mentions both X and Y"). Omit it otherwise — ` +
+                      `any one of them matching is the default.`,
+                  ]
+                : []),
+            ]),
           ]),
           // The filters are deterministic and cheap, so a stated one is
           // worth capturing — but an INVENTED one silently stops an agent

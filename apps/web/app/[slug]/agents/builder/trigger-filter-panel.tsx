@@ -2,7 +2,9 @@
 
 import {
   describeTriggerMatch,
+  filterModeOf,
   triggerFilterFields,
+  type FilterMatchMode,
   type FilterOptionSource,
   type TriggerFilterField,
   type TriggerMatch,
@@ -89,6 +91,19 @@ export default function TriggerFilterPanel({
     onChange(next);
   }
 
+  /**
+   * The mode is stored beside the entries, and only when it is ALL — ANY is
+   * what its absence already means, so writing it would put a key in every
+   * saved trigger that changes nothing.
+   */
+  function setMode(field: TriggerFilterField, mode: FilterMatchMode) {
+    if (!field.modeKey) return;
+    const next: TriggerMatch = { ...match };
+    if (mode === 'all') next[field.modeKey] = 'all';
+    else delete next[field.modeKey];
+    onChange(next);
+  }
+
   const summary = describeTriggerMatch(eventId, match);
 
   return (
@@ -123,29 +138,62 @@ export default function TriggerFilterPanel({
             );
           }
 
+          const entries = valuesOf(match, field);
+          const mode = filterModeOf(field, match);
+
           return (
-            <ChipListInput
-              key={field.id}
-              label={field.label}
-              hint={field.hint}
-              placeholder={field.placeholder}
-              max={field.maxEntries}
-              values={valuesOf(match, field)}
-              onChange={(next) => set(field, next)}
-              // Always true, picker or not: a picker that cannot list
-              // something must never make it unreachable.
-              allowFreeText
-              normalize={(raw) =>
-                field.match === 'id-equals-any' ? raw.trim() : raw.trim().toLowerCase()
-              }
-              validate={(value) =>
-                field.pattern && !field.pattern.test(value) ? field.invalidMessage : null
-              }
-              loadOptions={source ? (query) => loadOptions(tenantId, source, query) : undefined}
-              browseLabel={wording?.browse}
-              searchPlaceholder={wording?.search}
-              emptyMeans="Empty means no limit here — every one of these events gets through."
-            />
+            <div key={field.id}>
+              <ChipListInput
+                label={field.label}
+                hint={field.hint}
+                placeholder={field.placeholder}
+                max={field.maxEntries}
+                values={entries}
+                onChange={(next) => set(field, next)}
+                // Always true, picker or not: a picker that cannot list
+                // something must never make it unreachable.
+                allowFreeText
+                normalize={(raw) =>
+                  field.match === 'id-equals-any' ? raw.trim() : raw.trim().toLowerCase()
+                }
+                validate={(value) =>
+                  field.pattern && !field.pattern.test(value) ? field.invalidMessage : null
+                }
+                loadOptions={source ? (query) => loadOptions(tenantId, source, query) : undefined}
+                browseLabel={wording?.browse}
+                searchPlaceholder={wording?.search}
+                emptyMeans="Empty means no limit here — every one of these events gets through."
+              />
+              {/* Only once there is more than one entry: with a single
+                  keyword the two readings are identical, and offering a
+                  choice that changes nothing invites the reader to think it
+                  does. */}
+              {field.modeKey && entries.length > 1 ? (
+                <fieldset className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <legend className="sr-only">How to combine {field.label}</legend>
+                  {(
+                    [
+                      ['any', 'Any of them'],
+                      ['all', 'All of them'],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label
+                      key={value}
+                      className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400"
+                    >
+                      <input
+                        type="radio"
+                        name={`filter-${field.id}-mode`}
+                        value={value}
+                        checked={mode === value}
+                        onChange={() => setMode(field, value)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </fieldset>
+              ) : null}
+            </div>
           );
         })}
       </div>

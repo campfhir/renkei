@@ -11,12 +11,18 @@ jest.mock('@renkei/queue', () => ({
 }));
 jest.mock('@renkei/agents/event-fanout', () => ({ fanOutAgentEvents: jest.fn() }));
 jest.mock('../enqueue', () => ({ enqueueKnowledgeEvent: jest.fn() }));
+jest.mock('../logger', () => ({
+  logger: { info: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+}));
 
 import { ok } from '@campfhir/safe-functions/helpers';
 import { createDomainDispatchHandler } from './domain-dispatch';
 import type { ClaimedEvent } from '../queue';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+const { logger: mockLogger } = jest.requireMock<{
+  logger: { info: jest.Mock; debug: jest.Mock };
+}>('../logger');
 const { fanOutAgentEvents: mockFanOut } = jest.requireMock<{ fanOutAgentEvents: jest.Mock }>(
   '@renkei/agents/event-fanout'
 );
@@ -63,7 +69,7 @@ function mailEvent(): ClaimedEvent {
 beforeEach(() => {
   jest.clearAllMocks();
   mockGetDatabase.mockReturnValue(ok({ fake: 'db' }));
-  mockFanOut.mockResolvedValue([]);
+  mockFanOut.mockResolvedValue({ started: [], filtered: 0 });
   mockEnqueueKnowledge.mockResolvedValue(undefined);
 });
 
@@ -120,4 +126,26 @@ test('a malformed payload throws into the retry path', async () => {
   const event = webexEvent();
   event.payload = { provider: 'webex' };
   await expect(createDomainDispatchHandler()(event)).rejects.toThrow(/ownerSubject/);
+});
+
+/**
+ * A filtered event used to vanish: no run row, and no line anywhere. That
+ * makes "my agent didn't fire" unanswerable — a filter working exactly as
+ * written and a filter that is quietly wrong look identical from outside.
+ */
+test('a trigger turned away by its own filters is logged as filtered', async () => {
+  mockFanOut.mockResolvedValue({ started: [], filtered: 2 });
+  await createDomainDispatchHandler()(webexEvent());
+
+  const [message, fields] = mockLogger.info.mock.calls.at(-1) ?? [];
+  expect(String(message)).toContain('filtered');
+  expect(fields).toMatchObject({ count: 2, source: 'webex', type: 'message.received' });
+});
+
+test('an event nothing was listening for stays quiet', async () => {
+  // The other half: no filter turned anything away, so there is nothing to
+  // report and the log must not imply otherwise.
+  mockFanOut.mockResolvedValue({ started: [], filtered: 0 });
+  await createDomainDispatchHandler()(webexEvent());
+  expect(mockLogger.info).not.toHaveBeenCalled();
 });

@@ -44,6 +44,60 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: '2026-08-26',
+    heading: 'Narrowing what wakes a WebEx agent',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Agents can wait for particular words in a WebEx message',
+        detail:
+          'List the keywords that should wake an agent, and choose whether any one of them is enough or all of them have to appear. Checked before the agent starts, so a message that does not match costs nothing.',
+      },
+      {
+        kind: 'added',
+        title: 'A WebEx trigger can leave out a space or a person',
+        detail:
+          '"Every space except this noisy one", or "anyone except the build bot" — exclusions sit alongside the existing "only these" lists and can be combined with them.',
+      },
+      {
+        kind: 'changed',
+        title: 'Activity says when a trigger filtered an event away',
+        detail:
+          'An event turned away by a trigger\'s own filters used to leave no trace, which made "why did my agent not run?" unanswerable. It is now recorded, so a filter doing its job is distinguishable from a filter that is wrong.',
+      },
+    ],
+  },
+  {
+    date: '2026-08-26',
+    heading: 'Searching your mail',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Filtering mail by sender, flag or category works again',
+        detail:
+          'Every one of those searches came back as an error from Microsoft rather than results, unless a date range happened to be set as well. Bulk mail jobs that selected messages the same way were failing for the same reason, and are fixed with it.',
+      },
+      {
+        kind: 'added',
+        title: 'Mail can be filtered by who it was sent to',
+        detail:
+          'New To and Cc filters on the structured mail search and on bulk mail jobs. They are matched while scanning rather than by Exchange, which cannot filter on recipients, so pair them with a folder or date range when looking further back.',
+      },
+      {
+        kind: 'fixed',
+        title: 'A subject search stops dropping matches',
+        detail:
+          'When a page filled up, the remaining matches on that page were discarded and no later page could reach them. Every match found while scanning is now returned.',
+      },
+      {
+        kind: 'changed',
+        title: 'Microsoft errors say what was actually wrong',
+        detail:
+          'A rejected mail query reported only "Microsoft Graph answered 400". It now repeats the reason Microsoft gave.',
+      },
+    ],
+  },
+  {
+    date: '2026-08-26',
     heading: 'Knowing what your agents did',
     entries: [
       {

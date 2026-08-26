@@ -210,6 +210,23 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
         describeOne: 'in 1 chosen space',
         describeMany: 'in {count} chosen spaces',
       },
+      {
+        // The mirror of roomIds. Both can be set: "only these ten spaces,
+        // except the noisy one" is a real thing to want, and since fields
+        // AND together it already reads correctly with no special case.
+        id: 'exceptRoomIds',
+        payloadKey: 'roomId',
+        match: 'id-equals-any',
+        input: 'picker-list',
+        label: 'Except these spaces',
+        hint: 'Messages in these spaces never wake this agent, whatever the other filters say.',
+        maxEntries: 25,
+        invalidMessage: 'That does not look like a space id.',
+        picker: 'webex-rooms',
+        negate: true,
+        describeOne: 'but not in 1 chosen space',
+        describeMany: 'but not in {count} chosen spaces',
+      },
       addressList(
         'senderAddresses',
         'sender',
@@ -218,6 +235,50 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
         'posted by {value}',
         'posted by any of {count} people'
       ),
+      {
+        // Named separately from senderAddresses rather than sharing a
+        // field with a toggle: the two compose, and the commonest use is
+        // "everyone except the build bot", which needs no positive list at
+        // all.
+        id: 'exceptSenderAddresses',
+        payloadKey: 'sender',
+        match: 'equals-any',
+        input: 'text-list',
+        label: 'Except from these people',
+        hint: 'Exact addresses to ignore — a noisy integration account, or yourself.',
+        placeholder: 'builds@example.com',
+        maxEntries: 25,
+        pattern: EMAIL_PATTERN,
+        invalidMessage: 'That is not an address this filter can use.',
+        suggest: 'microsoft-people',
+        negate: true,
+        describeOne: 'but not from {value}',
+        describeMany: 'but not from {count} people',
+      },
+      {
+        // The message text really is the message, unlike mail's body, which
+        // reaches the fan-out as Outlook's short preview — which is why this
+        // filter exists on WebEx and not there. Long messages are still
+        // truncated to BODY_PREVIEW_CHARS before the event is published, so
+        // a keyword past ~1000 characters will not be seen; the hint says so
+        // rather than leaving a silently-never-firing agent to explain.
+        id: 'textKeywords',
+        payloadKey: 'text',
+        match: 'contains',
+        input: 'text-list',
+        label: 'Mentions these keywords',
+        hint: 'Case-insensitive, matched anywhere in the message. Very long messages are only matched over their first ~1000 characters.',
+        placeholder: 'deploy',
+        maxEntries: 25,
+        maxLength: 100,
+        // No pattern: a keyword is whatever somebody types, punctuation and
+        // spaces included — "on call" is a legitimate phrase to watch for.
+        invalidMessage: 'That keyword cannot be used.',
+        modeKey: 'textKeywordsMode',
+        describeOne: 'mentioning "{value}"',
+        describeMany: 'mentioning any of {count} keywords',
+        describeAll: 'mentioning all {count} keywords',
+      },
     ],
   },
   {

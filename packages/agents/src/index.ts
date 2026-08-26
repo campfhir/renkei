@@ -128,8 +128,10 @@ export {
   type TriggerEventDescriptor,
 } from './trigger-catalog';
 export {
+  DEFAULT_FILTER_MODE,
   MAX_FILTER_ENTRIES,
   describeFilters,
+  filterModeOf,
   isEmptyMatch,
   isTriggerMatch,
   matchesFilters,
@@ -137,6 +139,7 @@ export {
   validateMatch,
   type FilterInputKind,
   type FilterMatchKind,
+  type FilterMatchMode,
   type FilterOptionSource,
   type TriggerFilterField,
   type TriggerMatch,
