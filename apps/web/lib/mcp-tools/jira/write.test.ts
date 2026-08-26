@@ -62,6 +62,15 @@ const DECISION = {
   clauseNames: ['cf[12013]'],
 };
 
+/** The system Components field, exactly as Jira describes one. */
+const COMPONENTS = {
+  id: 'components',
+  name: 'Components',
+  custom: false,
+  schema: { type: 'array', items: 'component' },
+  clauseNames: ['component'],
+};
+
 /** Jira's 400 for a field the project will not accept, as jiraFetch surfaces it. */
 class FakeJiraApiError extends Error {
   constructor(
@@ -81,6 +90,15 @@ interface ServeOptions {
   refuseInProse?: string[];
   /** Fail the comment endpoint, to prove the write still stands. */
   breakComments?: boolean;
+  /**
+   * Components the project offers, served through createmeta and editmeta.
+   *
+   * Omitted means the meta call answers with nothing, which is the real
+   * "option set unknown" case — a site this cannot read, or a field the
+   * meta endpoint does not describe. Values then pass through for Jira to
+   * judge, and writes that work today keep working.
+   */
+  components?: { id: string; name: string }[];
 }
 
 let options: ServeOptions = {};
@@ -98,6 +116,32 @@ function serve(schema: unknown[], serveOptions: ServeOptions = {}): void {
 
       if (url.endsWith('/field')) {
         return { ok: true, status: 200, json: async () => schema };
+      }
+
+      // The allowed-value endpoints. An update reads editmeta (this exact
+      // issue); a create reads createmeta (project + issue type).
+      const allowed = options.components ?? [];
+      if (url.includes('/editmeta')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ fields: { components: { allowedValues: allowed } } }),
+        };
+      }
+      if (url.includes('/createmeta')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            projects: [
+              {
+                issuetypes: [
+                  { id: '10001', name: 'Task', fields: { components: { allowedValues: allowed } } },
+                ],
+              },
+            ],
+          }),
+        };
       }
 
       if (url.endsWith('/comment')) {
@@ -448,6 +492,180 @@ describe('fields a project will not accept', () => {
     expect(result.isError).toBeUndefined();
     expect(putBodies()[1]).toEqual({ fields: { summary: 'Kept' } });
     expect(result.content[0].text).toContain('the comment recording them also failed');
+  });
+});
+
+/**
+ * Components, through BOTH write tools, all the way to the REST payload.
+ *
+ * These exist because the failure they cover was invisible from every
+ * other vantage point: the tool answered success, the issue existed, and
+ * the component was simply not on it. Asserting the body Jira actually
+ * receives is the only check that would have caught it.
+ */
+describe('components on both write tools', () => {
+  const BILLING = { id: '10042', name: 'Billing' };
+  const PLATFORM = { id: '10043', name: 'Platform' };
+
+  it('create sends resolved ids for the names it was given', async () => {
+    serve([COMPONENTS], { components: [BILLING, PLATFORM] });
+    const create = await createIssue();
+
+    const result = await create({
+      projectKey: 'CHG',
+      issueType: 'Task',
+      summary: 'Billing change',
+      components: ['Billing', 'Platform'],
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(postBodies('/issue')[0]).toEqual({
+      fields: {
+        project: { key: 'CHG' },
+        issuetype: { name: 'Task' },
+        summary: 'Billing change',
+        components: [{ id: '10042' }, { id: '10043' }],
+      },
+    });
+  });
+
+  it('update sends them too, replacing what was there', async () => {
+    serve([COMPONENTS], { components: [BILLING] });
+    const update = await updateIssue();
+
+    const result = await update({ issueKey: 'CHG-20', components: ['Billing'] });
+
+    expect(result.isError).toBeUndefined();
+    expect(putFields()).toEqual({ components: [{ id: '10042' }] });
+  });
+
+  it('matches a name whose case is wrong — the near miss that used to vanish', async () => {
+    serve([COMPONENTS], { components: [BILLING] });
+    const create = await createIssue();
+
+    await create({
+      projectKey: 'CHG',
+      issueType: 'Task',
+      summary: 'x',
+      components: ['  billing '],
+    });
+
+    const fields = postBodies('/issue')[0]?.fields as Record<string, unknown>;
+    expect(fields.components).toEqual([{ id: '10042' }]);
+  });
+
+  it('accepts an id as readily as a name', async () => {
+    serve([COMPONENTS], { components: [BILLING] });
+    const update = await updateIssue();
+
+    await update({ issueKey: 'CHG-20', components: ['10042'] });
+
+    expect(putFields()).toEqual({ components: [{ id: '10042' }] });
+  });
+
+  it('keeps the issue and names the real components when one does not exist', async () => {
+    serve([COMPONENTS], { components: [BILLING, PLATFORM] });
+    const create = await createIssue();
+
+    const result = await create({
+      projectKey: 'CHG',
+      issueType: 'Task',
+      summary: 'Billing change',
+      components: ['Billling'],
+    });
+
+    // The issue is still worth creating — that posture does not change.
+    expect(result.isError).toBeUndefined();
+    const fields = postBodies('/issue')[0]?.fields as Record<string, unknown>;
+    expect(fields.components).toBeUndefined();
+    // What changes is that the reply answers "then what?".
+    expect(result.content[0].text).toContain('Billing');
+    expect(result.content[0].text).toContain('Platform');
+  });
+
+  it('reads the same from the fields escape hatch, by display name', async () => {
+    // Both spellings must land identically; a caller should not have to
+    // know which door it came through.
+    serve([COMPONENTS], { components: [BILLING] });
+    const create = await createIssue();
+
+    await create({
+      projectKey: 'CHG',
+      issueType: 'Task',
+      summary: 'x',
+      fields: { Components: ['Billing'] },
+    });
+
+    const fields = postBodies('/issue')[0]?.fields as Record<string, unknown>;
+    expect(fields.components).toEqual([{ id: '10042' }]);
+  });
+
+  it('lets the named argument win over a conflicting fields entry', async () => {
+    serve([COMPONENTS], { components: [BILLING, PLATFORM] });
+    const create = await createIssue();
+
+    await create({
+      projectKey: 'CHG',
+      issueType: 'Task',
+      summary: 'x',
+      components: ['Platform'],
+      fields: { Components: ['Billing'] },
+    });
+
+    const fields = postBodies('/issue')[0]?.fields as Record<string, unknown>;
+    expect(fields.components).toEqual([{ id: '10043' }]);
+  });
+
+  it('still writes a name through when the option set is unknown', async () => {
+    // Enrichment failing must never become a refusal: Jira remains a
+    // perfectly good validator, and refusing here would break writes that
+    // work today against a site whose meta this cannot read.
+    serve([COMPONENTS]);
+    const create = await createIssue();
+
+    await create({
+      projectKey: 'CHG',
+      issueType: 'Task',
+      summary: 'x',
+      components: ['Billing'],
+    });
+
+    const fields = postBodies('/issue')[0]?.fields as Record<string, unknown>;
+    expect(fields.components).toEqual([{ name: 'Billing' }]);
+  });
+
+  it('drops the components rather than the issue when the project refuses them', async () => {
+    // The old behaviour, now reached only when Jira refuses a component
+    // this DID validate — a screen configuration rather than a bad name.
+    serve([COMPONENTS], { components: [BILLING], refuse: ['components'] });
+    const create = await createIssue();
+
+    const result = await create({
+      projectKey: 'CHG',
+      issueType: 'Task',
+      summary: 'Billing change',
+      components: ['Billing'],
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain('Created issue CHG-25');
+    // Second attempt goes without them, and the loss is recorded.
+    const attempts = postBodies('/issue');
+    expect(attempts[attempts.length - 1]?.fields).toEqual({
+      project: { key: 'CHG' },
+      issuetype: { name: 'Task' },
+      summary: 'Billing change',
+    });
+    expect(commentText()).toContain('Components');
+  });
+
+  it('does not spend a meta call when no components were asked for', async () => {
+    serve([STORY_POINTS], { components: [BILLING] });
+    const create = await createIssue();
+
+    await create({ projectKey: 'CHG', issueType: 'Task', summary: 'x' });
+
+    expect(calls.some((call) => call.url.includes('createmeta'))).toBe(false);
   });
 });
 
