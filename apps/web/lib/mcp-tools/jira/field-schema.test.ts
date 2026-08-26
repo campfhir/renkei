@@ -604,6 +604,186 @@ describe('buildFieldUpdates option enrichment', () => {
   });
 });
 
+/**
+ * Components are a closed set, and used not to be treated as one.
+ *
+ * The chain that made this invisible: `isOptionBearing` excluded
+ * array/component, so createmeta was never fetched, so `allowedValues` was
+ * empty, so a name went to Jira unchecked, so Jira answered 400, so the
+ * write fallback dropped the field and created the issue without it. Every
+ * assertion here pins one link of that chain.
+ */
+describe('components resolve against the project, not hope', () => {
+  const RAW_WITH_COMPONENTS = [
+    ...RAW,
+    {
+      id: 'components',
+      name: 'Components',
+      custom: false,
+      schema: { type: 'array', items: 'component' },
+      clauseNames: ['component'],
+    },
+  ];
+
+  function serveByUrl(routes: Record<string, unknown>): void {
+    jiraFetchMock.mockReset();
+    jiraFetchMock.mockImplementation(async (url: unknown) => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        for (const [needle, payload] of Object.entries(routes)) {
+          if (String(url).includes(needle)) return payload;
+        }
+        throw new Error(`unrouted URL in test: ${String(url)}`);
+      },
+    }));
+  }
+
+  const createmeta = (allowed: { id: string; name: string }[]) => ({
+    projects: [
+      {
+        issuetypes: [
+          { id: '10001', name: 'Task', fields: { components: { allowedValues: allowed } } },
+        ],
+      },
+    ],
+  });
+
+  it('fetches allowed values at all — the link that was missing', async () => {
+    serveByUrl({
+      '/rest/api/3/issue/createmeta': createmeta([{ id: '10042', name: 'Billing' }]),
+      '/rest/api/3/field': RAW_WITH_COMPONENTS,
+    });
+
+    await buildFieldUpdates(
+      context,
+      auth,
+      { Components: ['Billing'] },
+      { projectKey: 'ENG', issueType: 'Task' }
+    );
+
+    // Without components in isOptionBearing this call never happened, and
+    // everything downstream followed from its absence.
+    expect(jiraFetchMock.mock.calls.some((call) => String(call[0]).includes('createmeta'))).toBe(
+      true
+    );
+  });
+
+  it('sends the id, so a name off by a case cannot miss', async () => {
+    serveByUrl({
+      '/rest/api/3/issue/createmeta': createmeta([
+        { id: '10042', name: 'Billing' },
+        { id: '10043', name: 'Platform' },
+      ]),
+      '/rest/api/3/field': RAW_WITH_COMPONENTS,
+    });
+
+    const updates = await buildFieldUpdates(
+      context,
+      auth,
+      { Components: ['billing', 'PLATFORM'] },
+      { projectKey: 'ENG', issueType: 'Task' }
+    );
+
+    expect(updates.fields).toEqual({ components: [{ id: '10042' }, { id: '10043' }] });
+    expect(updates.problems).toEqual([]);
+  });
+
+  it('matches an id as readily as a name', async () => {
+    serveByUrl({
+      '/rest/api/3/issue/createmeta': createmeta([{ id: '10042', name: 'Billing' }]),
+      '/rest/api/3/field': RAW_WITH_COMPONENTS,
+    });
+
+    const updates = await buildFieldUpdates(
+      context,
+      auth,
+      { components: ['10042'] },
+      { projectKey: 'ENG', issueType: 'Task' }
+    );
+
+    expect(updates.fields).toEqual({ components: [{ id: '10042' }] });
+  });
+
+  it('names the real components when one does not exist', async () => {
+    serveByUrl({
+      '/rest/api/3/issue/createmeta': createmeta([{ id: '10042', name: 'Billing' }]),
+      '/rest/api/3/field': RAW_WITH_COMPONENTS,
+    });
+
+    const updates = await buildFieldUpdates(
+      context,
+      auth,
+      { Components: ['Billling'] },
+      { projectKey: 'ENG', issueType: 'Task' }
+    );
+
+    // Refused rather than sent — and the refusal answers "then what?",
+    // which is the difference between a model retrying correctly and a
+    // person discovering the gap a week later.
+    expect(updates.fields).toEqual({});
+    expect(updates.problems).toHaveLength(1);
+    expect(updates.problems[0]).toContain('"Billling"');
+    expect(updates.problems[0]).toContain('Billing');
+  });
+
+  it('reports every bad name at once, not just the first', async () => {
+    serveByUrl({
+      '/rest/api/3/issue/createmeta': createmeta([{ id: '10042', name: 'Billing' }]),
+      '/rest/api/3/field': RAW_WITH_COMPONENTS,
+    });
+
+    const updates = await buildFieldUpdates(
+      context,
+      auth,
+      { Components: ['Nope', 'Billing', 'AlsoNope'] },
+      { projectKey: 'ENG', issueType: 'Task' }
+    );
+
+    expect(updates.problems[0]).toContain('"Nope"');
+    expect(updates.problems[0]).toContain('"AlsoNope"');
+  });
+
+  it('still passes a name through when the project list is unknown', async () => {
+    // Enrichment failing must not become a refusal: Jira is still a
+    // perfectly good validator, and refusing here would break writes that
+    // work today on a site whose createmeta this cannot read.
+    serveByUrl({
+      '/rest/api/3/issue/createmeta': { projects: [] },
+      '/rest/api/3/field': RAW_WITH_COMPONENTS,
+    });
+
+    const updates = await buildFieldUpdates(
+      context,
+      auth,
+      { Components: ['Billing'] },
+      { projectKey: 'ENG', issueType: 'Task' }
+    );
+
+    expect(updates.fields).toEqual({ components: [{ name: 'Billing' }] });
+    expect(updates.problems).toEqual([]);
+  });
+
+  it('takes a comma-separated string, which is how these get written', async () => {
+    serveByUrl({
+      '/rest/api/3/issue/createmeta': createmeta([
+        { id: '10042', name: 'Billing' },
+        { id: '10043', name: 'Platform' },
+      ]),
+      '/rest/api/3/field': RAW_WITH_COMPONENTS,
+    });
+
+    const updates = await buildFieldUpdates(
+      context,
+      auth,
+      { Components: 'Billing, Platform' },
+      { projectKey: 'ENG', issueType: 'Task' }
+    );
+
+    expect(updates.fields).toEqual({ components: [{ id: '10042' }, { id: '10043' }] });
+  });
+});
+
 describe('rich text fields', () => {
   // What Jira reports for a multi-line text custom field: type "string", and a
   // write API that then refuses a string.

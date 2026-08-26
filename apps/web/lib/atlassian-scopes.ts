@@ -140,7 +140,9 @@ export const ATLASSIAN_JSM_SCOPE_OPTIONS: ScopeOption[] = [
   {
     id: 'jsm-read',
     label: 'Read requests',
-    hint: 'Requests, comments, participants, approvals, SLAs, request types, service desks',
+    hint:
+      'Requests, comments, participants, approvals, SLAs, request types, service desks, ' +
+      'and the project components a request can be filed under',
     group: 'jsm',
     defaultChecked: true,
     scopes: [
@@ -157,6 +159,13 @@ export const ATLASSIAN_JSM_SCOPE_OPTIONS: ScopeOption[] = [
       // servicedeskapi endpoints — so the JSM app carries this one Jira-API
       // scope too.
       'read:user:jira',
+      // The second cross-family one, and for the same kind of reason: the
+      // servicedeskapi has no components endpoint at all, so jsm_list_components
+      // has to ask the platform for the desk's project. A grant made before
+      // this was added simply lacks it — the tool still registers, and only
+      // its whole-project listing answers "reconnect with that scope",
+      // naming it. Passing requestTypeId takes the JSM-only path instead.
+      'read:project.component:jira',
     ],
   },
   {

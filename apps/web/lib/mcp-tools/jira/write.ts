@@ -71,6 +71,26 @@ function isNumber(value: unknown): value is number {
 
 /** The extra-field arguments jira_create_issue and jira_update_issue both accept. */
 const extraFieldSchema = {
+  /*
+    First-class, next to `labels`, rather than left to the `fields` escape
+    hatch below. It WAS reachable there — `{"fields": {"Components": [...]}}`
+    resolves — but a model choosing between a named `labels` parameter and a
+    generic map it has to know the field name for will take the named one
+    and simply not set components at all. Which is what happened.
+
+    Names, not ids, because a person asking for a ticket says "put it under
+    Billing". The name is resolved against the project's real component list
+    before the write, so a near miss comes back as a sentence naming the
+    real ones instead of being dropped after Jira's 400.
+  */
+  components: z
+    .array(z.string())
+    .describe(
+      'Component names, as they appear in the project — jira_list_components shows them. ' +
+        'Ids work too. On an update this REPLACES the components on the issue, the same way ' +
+        'labels does.'
+    )
+    .optional(),
   storyPoints: z
     .number()
     .describe(
@@ -149,8 +169,25 @@ async function collectExtraFields(
     }
   }
 
-  if (isRecord(args.fields)) {
-    const updates = await buildFieldUpdates(context, auth, args.fields, options);
+  /*
+    `components` rides the SAME path as an entry in `fields`, rather than
+    getting a resolver of its own. That is the whole reason it is folded in
+    here: it inherits the name lookup, the allowed-value check, the applied
+    label, the option hint on refusal and the unwritten-value comment,
+    without a second implementation of any of them to drift.
+
+    Spread first so an explicit `components` argument wins over a
+    `{"fields": {"Components": …}}` saying something different — both
+    resolve to the same field id, and the named parameter is the more
+    deliberate of the two.
+  */
+  const requested: Record<string, unknown> = { ...(isRecord(args.fields) ? args.fields : {}) };
+  if (isArray(args.components)) {
+    requested.components = args.components.map((entry) => String(entry)).filter(Boolean);
+  }
+
+  if (Object.keys(requested).length > 0) {
+    const updates = await buildFieldUpdates(context, auth, requested, options);
     Object.assign(fields, updates.fields);
     Object.assign(hints, updates.optionHints);
     for (const [id, value] of Object.entries(updates.fields)) {
@@ -569,6 +606,9 @@ export async function registerWriteTools(
     if (isArray(args.labels) && args.labels.length > 0) {
       rows.push({ label: 'Labels', value: args.labels.map(String).join(', ') });
     }
+    if (isArray(args.components) && args.components.length > 0) {
+      rows.push({ label: 'Components', value: args.components.map(String).join(', ') });
+    }
     if (isNumber(args.storyPoints)) {
       rows.push({ label: 'Story points', value: String(args.storyPoints) });
     }
@@ -659,9 +699,14 @@ export async function registerWriteTools(
     async (args: Record<string, unknown>) => {
       const { issueKey } = args;
       if (!isString(issueKey) || !issueKey) return errText('issueKey is required');
-      const changed = ['summary', 'description', 'priority', 'assignee', 'labels'].some(
-        (key) => args[key] !== undefined
-      );
+      const changed = [
+        'summary',
+        'description',
+        'priority',
+        'assignee',
+        'labels',
+        'components',
+      ].some((key) => args[key] !== undefined);
       if (!changed && !isRecord(args.fields) && !isNumber(args.storyPoints)) {
         return errText(`Nothing to update on ${issueKey}`);
       }
@@ -673,7 +718,7 @@ export async function registerWriteTools(
       try {
         const response = await auth.fetch(
           granularJiraScopes('jira_get_issue', true),
-          `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=summary,priority,assignee,labels`
+          `/rest/api/3/issue/${encodeURIComponent(issueKey)}?fields=summary,priority,assignee,labels,components`
         );
         const body: unknown = response.ok ? await response.json().catch(() => null) : null;
         if (isRecord(body) && isRecord(body.fields)) current = body.fields;
@@ -683,6 +728,14 @@ export async function registerWriteTools(
       const priorityOld = isRecord(current.priority) ? current.priority.name : undefined;
       const assigneeOld = isRecord(current.assignee) ? current.assignee.displayName : undefined;
       const labelsOld = isArray(current.labels) ? current.labels.map(String).join(', ') : '';
+      // Components come back as objects; the card wants the names a person
+      // would recognise, not `[object Object]`.
+      const componentsOld = isArray(current.components)
+        ? current.components
+            .map((entry) => (isRecord(entry) && isString(entry.name) ? entry.name : ''))
+            .filter(Boolean)
+            .join(', ')
+        : '';
 
       const fields = argFieldRows(args).map((row) => {
         if (row.label === 'Priority' && isString(priorityOld)) {
@@ -692,6 +745,9 @@ export async function registerWriteTools(
           return { ...row, oldValue: assigneeOld };
         }
         if (row.label === 'Labels' && labelsOld) return { ...row, oldValue: labelsOld };
+        if (row.label === 'Components' && componentsOld) {
+          return { ...row, oldValue: componentsOld };
+        }
         return row;
       });
 

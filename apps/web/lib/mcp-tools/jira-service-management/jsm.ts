@@ -18,6 +18,13 @@ import {
   newPreviewId,
 } from '../widgets';
 import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
+import {
+  describeComponents,
+  loadProjectComponents,
+  loadRequestTypeComponents,
+  matchComponents,
+  resolveServiceDesk,
+} from './components';
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -407,6 +414,81 @@ export async function registerJsmTools(
     }
   );
 
+  // jsm_list_components
+  server.registerTool(
+    'jsm_list_components',
+    {
+      title: 'JSM · Read — List the components on a service desk',
+      description:
+        "List a service desk's components, so a request can be filed under the right one. " +
+        'Pass requestTypeId to get the components THAT request type can actually set — a ' +
+        'request form does not always carry the components field, and when it does its list ' +
+        'is what jsm_create_request accepts. Without it you get every component on the ' +
+        "desk's project, which needs the Jira project-component scope on this connection.",
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        serviceDeskId: z.string().describe('Service desk id, or the project key'),
+        requestTypeId: z
+          .string()
+          .describe('Limit to what this request type accepts (from jsm_list_request_types)')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const displayName = getCachedDisplayName(context.accountId);
+      logger.debug('jsm_list_components invoked', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        accountId: context.accountId,
+        displayName,
+      });
+      try {
+        const desk = await resolveServiceDesk(auth, str(args.serviceDeskId));
+        if (!desk.ok) return errText(desk.message);
+
+        const requestTypeId = str(args.requestTypeId);
+        if (requestTypeId) {
+          const found = await loadRequestTypeComponents(auth, desk.desk.id, requestTypeId);
+          if (!found.ok) return errText(found.message);
+          if (!found.components.present) {
+            // Not an error — a form without the field is a normal, and
+            // important, answer: nothing can set a component on this
+            // request type, so a caller should stop trying rather than
+            // retry with a different name.
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text:
+                    `Request type ${requestTypeId} has no components field on its form, so ` +
+                    `a request of this type cannot carry one. Set it on the issue afterwards ` +
+                    `with jira_update_issue if it needs one.`,
+                },
+              ],
+            };
+          }
+          const lines = [
+            `Request type ${requestTypeId} accepts ${found.components.options.length} components:`,
+            ...found.components.options.map((option) => `• ${option.name} (id ${option.id})`),
+          ];
+          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        }
+
+        const all = await loadProjectComponents(auth, desk.desk.projectKey);
+        if (!all.ok) return errText(all.message);
+        const lines = [
+          `Project ${desk.desk.projectKey} has ${all.options.length} components:`,
+          ...all.options.map((option) => `• ${option.name} (id ${option.id})`),
+          '',
+          'Whether a given request type can SET one depends on its form — pass requestTypeId.',
+        ];
+        return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+      } catch (error) {
+        return errText(error instanceof Error ? error.message : String(error));
+      }
+    }
+  );
+
   // jsm_create_request — schema and handler shared with the card-invoked
   // jsm_create_request_confirm below, so the confirm path IS the create path.
   const createRequestSchema = z.object({
@@ -414,6 +496,13 @@ export async function registerJsmTools(
     requestTypeId: z.string().describe('Request type ID'),
     summary: z.string().describe('Request summary/title'),
     description: z.string().describe('Request description (optional)').optional(),
+    components: z
+      .array(z.string())
+      .describe(
+        'Component names (or ids) to file the request under — jsm_list_components shows what ' +
+          'this request type accepts. Names are matched case-insensitively.'
+      )
+      .optional(),
   });
   const createRequestHandler = async (args: Record<string, any>) => {
     const displayName = getCachedDisplayName(context.accountId);
@@ -424,7 +513,7 @@ export async function registerJsmTools(
       displayName,
     });
     try {
-      const { serviceDeskId, requestTypeId, summary, description } = args;
+      const { serviceDeskId, requestTypeId, summary, description, components } = args;
 
       if (!serviceDeskId || !requestTypeId || !summary) {
         return {
@@ -445,21 +534,46 @@ export async function registerJsmTools(
       // desk lookup accepts the key and echoes its id.
       let deskId = String(serviceDeskId).trim();
       if (!/^\d+$/.test(deskId)) {
-        const deskResponse = await auth.fetch(
-          serviceDeskScopes('jsm_list_service_desks', true),
-          `/rest/servicedeskapi/servicedesk/${encodeURIComponent(deskId)}`
-        );
-        if (!deskResponse.ok) {
-          return errText(
-            `Service desk "${deskId}" could not be resolved to its numeric id — ` +
-              `jsm_list_service_desks shows every desk with its serviceDeskId.`
+        const desk = await resolveServiceDesk(auth, deskId);
+        if (!desk.ok) return errText(desk.message);
+        deskId = desk.desk.id;
+      }
+
+      /*
+        Components, resolved against the REQUEST TYPE's own form rather than
+        the project's component list.
+
+        The servicedeskapi rejects the whole payload for a field the form
+        does not declare, so sending components blindly would turn "the
+        component did not stick" into "the request was never created" —
+        strictly worse. And a name that is off by a case or a space is
+        rejected the same way. So both are checked here, and neither costs
+        the request: an unusable component becomes a NOTE on an otherwise
+        successful create, which is the same posture jira_create_issue takes
+        with a field it could not write.
+      */
+      const wanted = Array.isArray(components) ? components.map((c: unknown) => String(c)) : [];
+      let componentValues: { id: string }[] = [];
+      const componentNotes: string[] = [];
+      if (wanted.length > 0) {
+        const found = await loadRequestTypeComponents(auth, deskId, String(requestTypeId));
+        if (!found.ok) {
+          componentNotes.push(`Components were not set — ${found.message}`);
+        } else if (!found.components.present) {
+          componentNotes.push(
+            `Components were not set: request type ${requestTypeId} has no components field ` +
+              `on its form. Set them on the issue afterwards with jira_update_issue.`
           );
+        } else {
+          const matched = matchComponents(wanted, found.components.options);
+          componentValues = matched.resolved.map((option) => ({ id: option.id }));
+          if (matched.missing.length > 0) {
+            componentNotes.push(
+              `Not set: ${matched.missing.map((name) => `"${name}"`).join(', ')} — ` +
+                `this request type accepts ${describeComponents(found.components.options)}.`
+            );
+          }
         }
-        const desk = (await deskResponse.json().catch(() => null)) as any;
-        if (!str(desk?.id)) {
-          return errText(`Service desk "${deskId}" answered without an id.`);
-        }
-        deskId = str(desk.id);
       }
 
       // The servicedeskapi wants issue fields nested under
@@ -473,6 +587,7 @@ export async function registerJsmTools(
         requestFieldValues: {
           summary,
           ...(description ? { description } : {}),
+          ...(componentValues.length > 0 ? { components: componentValues } : {}),
         },
       };
 
@@ -496,8 +611,13 @@ export async function registerJsmTools(
             // Both views: whoever works it needs the Jira issue, whoever
             // reported it can only open the portal.
             text:
-              `Created request ${key}\n\n` +
-              `[Open in Jira](${issueUrl(context.siteUrl, key)}) · ` +
+              `Created request ${key}` +
+              (componentValues.length > 0 ? `\nComponents: ${componentValues.length} set` : '') +
+              // Said out loud, never swallowed: a component that did not
+              // land is the exact failure this whole change exists to stop
+              // being invisible.
+              (componentNotes.length > 0 ? `\n\n${componentNotes.join('\n')}` : '') +
+              `\n\n[Open in Jira](${issueUrl(context.siteUrl, key)}) · ` +
               `[Customer portal](${requestUrl(context.siteUrl, key)})`,
           },
         ],
@@ -601,6 +721,12 @@ export async function registerJsmTools(
           fields: [
             { label: 'Service desk', value: deskName || serviceDeskId },
             { label: 'Request type', value: typeName || requestTypeId },
+            // Only when asked for. A card row reading "Components: —" on
+            // every request would be noise; the point of showing it is that
+            // somebody approving the card can see where it will be filed.
+            ...(Array.isArray(args.components) && args.components.length > 0
+              ? [{ label: 'Components', value: args.components.map(String).join(', ') }]
+              : []),
           ],
         },
       };
