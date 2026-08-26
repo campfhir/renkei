@@ -49,6 +49,51 @@ export function createRetentionSweep(db: Kysely<DB>) {
 }
 
 /**
+ * Delete notifications older than each tenant's
+ * agentNotificationRetentionDays — the same shape as the run sweep above,
+ * and unwrapped by `withSweepLock` for the same reason: a bounded DELETE is
+ * idempotent, so two replicas running it cost a duplicate read and never a
+ * wrong write.
+ *
+ * A notification is deleted whether or not it was ever read. Retention is
+ * about how long the record of an act lives, not about whether somebody got
+ * round to looking — and an unread notification from three weeks ago is not
+ * going to be read now.
+ */
+export function createNotificationRetentionSweep(db: Kysely<DB>) {
+  return async function sweep(): Promise<void> {
+    const tenants = await db
+      .selectFrom('agent_notifications')
+      .select('tenant_id')
+      .distinct()
+      .execute();
+
+    for (const { tenant_id: tenantId } of tenants) {
+      const settingsResult = await getOrgSettings(tenantId);
+      if (!settingsResult.ok) continue;
+      const days = settingsResult.val.agentNotificationRetentionDays;
+
+      const deleted = await sql<{ id: string }>`
+        DELETE FROM agent_notifications WHERE id IN (
+          SELECT id FROM agent_notifications
+          WHERE tenant_id = ${tenantId}
+            AND created_at < NOW() - make_interval(days => ${days})
+          ORDER BY created_at
+          LIMIT ${RETENTION_BATCH}
+        ) RETURNING id
+      `.execute(db);
+      if (deleted.rows.length > 0) {
+        logger.info('retention pruned {count} notifications for tenant {tenantId}', {
+          component: 'worker-agents/notification-retention',
+          tenantId,
+          count: deleted.rows.length,
+        });
+      }
+    }
+  };
+}
+
+/**
  * Close runs the queue has forgotten. A 'running' run whose wall clock is
  * spent AND whose agent_jobs row no longer exists (completed, dead-lettered
  * with a stale payload, or manually purged) will never be claimed again —

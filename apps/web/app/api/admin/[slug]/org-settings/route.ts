@@ -37,6 +37,10 @@ const NUMERIC_BOUNDS = {
   contentPollMinutes: [5, 1_440],
   // 0 = keep forever; a year of logs is the typo guard on the other end.
   logRetentionDays: [0, 3_650],
+  // Floor 1, not 0: "delete instantly" is a footgun with no use case, and
+  // switching notifications OFF is the per-user preference's job, not this
+  // ceiling's. A year is the typo guard.
+  agentNotificationRetentionDays: [1, 365],
 } as const;
 
 const NUMERIC_KEYS = [
@@ -53,6 +57,7 @@ const NUMERIC_KEYS = [
   'agentApprovalMaxWaitDays',
   'contentPollMinutes',
   'logRetentionDays',
+  'agentNotificationRetentionDays',
 ] as const;
 
 const BOOLEAN_KEYS = ['readOnly', 'enableDcr'] as const;
@@ -76,6 +81,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     agentApprovalMaxWaitDays: settings.agentApprovalMaxWaitDays,
     contentPollMinutes: settings.contentPollMinutes,
     logRetentionDays: settings.logRetentionDays,
+    agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
   };
 }
 

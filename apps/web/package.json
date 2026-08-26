@@ -39,6 +39,7 @@
     "@renkei/redaction": "workspace:*",
     "@renkei/settings": "workspace:*",
     "@renkei/tool-outcomes": "workspace:*",
+    "@renkei/user-prefs": "workspace:*",
     "dotenv": "^17.4.2",
     "jose": "^6.2.5",
     "kysely": "^0.29.4",
