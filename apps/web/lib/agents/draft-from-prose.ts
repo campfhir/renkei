@@ -333,7 +333,14 @@ function promptOf(
             `    - ${event.id}: ${event.label} — ${event.description}`,
             ...event.filters.flatMap((field) => [
               `        match.${field.id}: ${
-                field.input === 'text' ? 'one string' : 'a list of strings'
+                field.input === 'select'
+                  ? `EXACTLY one of ${(field.options ?? [])
+                      .filter((option) => option.value)
+                      .map((option) => `"${option.value}"`)
+                      .join(' | ')}`
+                  : field.input === 'text'
+                    ? 'one string'
+                    : 'a list of strings'
               } — ${field.label.toLowerCase()}. ${field.hint}`,
               // Taught explicitly rather than left to be guessed: the
               // default is the permissive one, so the only way to get ALL

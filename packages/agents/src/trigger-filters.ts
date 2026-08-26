@@ -37,7 +37,23 @@
  */
 
 /** How the builder renders a field. */
-export type FilterInputKind = 'text' | 'text-list' | 'picker-list';
+export type FilterInputKind = 'text' | 'text-list' | 'picker-list' | 'select';
+
+/**
+ * One fixed choice of a 'select' field. The empty value renders as the
+ * "no constraint" choice: the panel already deletes an empty value from
+ * the stored match, so picking it IS removing the filter.
+ */
+export interface FilterSelectOption {
+  value: string;
+  label: string;
+  /**
+   * The summary fragment for this choice, whole rather than templated —
+   * "in a direct message" and "in a group space" do not share a sentence
+   * shape the way two addresses do.
+   */
+  describe: string;
+}
 
 /**
  * How the runtime compares. A new connector adds catalog entries; only a
@@ -106,6 +122,8 @@ export interface TriggerFilterField {
   invalidMessage: string;
   /** Required for 'picker-list': the option list IS the input. */
   picker?: FilterOptionSource;
+  /** Required for 'select': the fixed choices, one of them empty for "any". */
+  options?: FilterSelectOption[];
   /**
    * A NON-EXCLUSIVE typeahead for a 'text-list'. Suggestions help; a typed
    * value is always accepted, because a directory never has every address
@@ -290,6 +308,9 @@ export function validateMatch(fields: TriggerFilterField[], raw: unknown): strin
     if (field.pattern && !field.pattern.test(cleaned)) {
       problems.push(field.invalidMessage);
     }
+    if (field.options && !field.options.some((option) => option.value === cleaned)) {
+      problems.push(field.invalidMessage);
+    }
   }
   return problems;
 }
@@ -380,8 +401,12 @@ export function describeFilters(fields: TriggerFilterField[], match: unknown): s
         ? field.describeAll
         : field.describeMany;
     const template = entries.length === 1 || !many ? field.describeOne : many;
+    // A select choice carries its own whole fragment — two fixed options
+    // rarely share a sentence shape the way two addresses do.
+    const chosen = field.options?.find((option) => option.value === entries[0])?.describe;
     parts.push(
-      template.replace('{value}', entries[0] ?? '').replace('{count}', String(entries.length))
+      chosen ??
+        template.replace('{value}', entries[0] ?? '').replace('{count}', String(entries.length))
     );
   }
   if (parts.length === 0) return null;

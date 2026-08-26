@@ -119,6 +119,35 @@ export default function TriggerFilterPanel({
           const source = field.picker ?? field.suggest;
           const wording = source ? BROWSE_LABELS[source] : null;
 
+          if (field.input === 'select') {
+            // The empty option is the "no constraint" choice: set() removes
+            // an empty value, so picking it deletes the filter outright.
+            const selected = scalarOf(match, field);
+            return (
+              <fieldset key={field.id}>
+                <legend className="text-sm font-medium">{field.label}</legend>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{field.hint}</p>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                  {(field.options ?? []).map((option) => (
+                    <label
+                      key={option.value}
+                      className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300"
+                    >
+                      <input
+                        type="radio"
+                        name={`filter-${field.id}`}
+                        value={option.value}
+                        checked={selected === option.value}
+                        onChange={() => set(field, option.value)}
+                      />
+                      {option.label}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            );
+          }
+
           if (field.input === 'text') {
             return (
               <div key={field.id}>
