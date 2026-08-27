@@ -18,6 +18,13 @@ export interface ModelPayload {
     reasoningEffort?: string;
   };
   apiKey: string | null;
+  /**
+   * Reuse the key already stored on another config row instead of typing
+   * one — how several model rows share one provider connection. The routes
+   * copy the encrypted blob row-to-row (same deployment key, so no decrypt
+   * round-trip); an explicit apiKey outranks it.
+   */
+  apiKeyFromId: string | null;
   enabled: boolean;
   isDefault: boolean;
 }
@@ -34,6 +41,7 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
     apiVersion?: unknown;
     reasoningEffort?: unknown;
     apiKey?: unknown;
+    apiKeyFromId?: unknown;
     enabled?: unknown;
     isDefault?: unknown;
   } = body;
@@ -69,6 +77,10 @@ export function parseModelPayload(body: unknown): ModelPayload | { error: string
         : {}),
     },
     apiKey: typeof payload.apiKey === 'string' && payload.apiKey ? payload.apiKey : null,
+    apiKeyFromId:
+      typeof payload.apiKeyFromId === 'string' && payload.apiKeyFromId
+        ? payload.apiKeyFromId
+        : null,
     enabled: payload.enabled !== false,
     isDefault: payload.isDefault === true,
   };

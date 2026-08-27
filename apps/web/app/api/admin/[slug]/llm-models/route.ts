@@ -76,7 +76,9 @@ export async function POST(
   const body: unknown = await request.json().catch(() => null);
   const parsed = parseModelPayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
-  if (!parsed.apiKey) return NextResponse.json({ error: 'apiKey is required' }, { status: 400 });
+  if (!parsed.apiKey && !parsed.apiKeyFromId) {
+    return NextResponse.json({ error: 'apiKey is required' }, { status: 400 });
+  }
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
@@ -84,6 +86,30 @@ export async function POST(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
+
+  // One connection, many model rows: the key can be borrowed from a sibling
+  // config instead of retyped. Copying the encrypted blob is enough — every
+  // row seals with the same deployment key — and the tenant predicate makes
+  // someone else's config id come back empty, not copied.
+  let encryptedSecrets = parsed.apiKey
+    ? encrypt(JSON.stringify({ apiKey: parsed.apiKey }), keyResult.val)
+    : null;
+  if (!encryptedSecrets && parsed.apiKeyFromId) {
+    const source = await db
+      .selectFrom('llm_model_configs')
+      .select(['encrypted_secrets'])
+      .where('tenant_id', '=', tenant.id)
+      .where('id', '=', parsed.apiKeyFromId)
+      .executeTakeFirst();
+    if (!source?.encrypted_secrets) {
+      return NextResponse.json(
+        { error: 'The model to reuse the key from has no key stored.' },
+        { status: 400 }
+      );
+    }
+    encryptedSecrets = source.encrypted_secrets;
+  }
+  if (!encryptedSecrets) return NextResponse.json({ error: 'apiKey is required' }, { status: 400 });
 
   const id = randomUUID();
   try {
@@ -105,7 +131,7 @@ export async function POST(
         model: parsed.model,
         base_url: parsed.baseUrl,
         settings: JSON.stringify(parsed.settings),
-        encrypted_secrets: encrypt(JSON.stringify({ apiKey: parsed.apiKey }), keyResult.val),
+        encrypted_secrets: encryptedSecrets,
         enabled: parsed.enabled,
         is_default: parsed.isDefault,
       })

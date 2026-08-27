@@ -62,6 +62,8 @@ interface ModelDraft {
   apiVersion: string;
   reasoningEffort: string;
   apiKey: string;
+  /** '' = type/keep a key; a config id = reuse that config's stored key. */
+  apiKeyFromId: string;
   enabled: boolean;
   isDefault: boolean;
 }
@@ -76,9 +78,16 @@ const emptyDraft: ModelDraft = {
   apiVersion: '',
   reasoningEffort: '',
   apiKey: '',
+  apiKeyFromId: '',
   enabled: true,
   isDefault: false,
 };
+
+/** One row of the provider's answer to "what models do you offer?". */
+interface AvailableModelRow {
+  id: string;
+  displayName: string | null;
+}
 
 function draftOf(row: ModelRow): ModelDraft {
   return {
@@ -94,6 +103,7 @@ function draftOf(row: ModelRow): ModelDraft {
     reasoningEffort:
       typeof row.settings?.reasoningEffort === 'string' ? row.settings.reasoningEffort : '',
     apiKey: '',
+    apiKeyFromId: '',
     enabled: row.enabled,
     isDefault: row.isDefault,
   };
@@ -106,6 +116,22 @@ export default function ModelForms({ slug }: { slug: string }) {
   const [draft, setDraft] = useState<ModelDraft>(emptyDraft);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  /*
+    The provider's live model list, fetched on demand with whichever key
+    the form can reach — a freshly typed one, a sibling config's, or the
+    stored key of the row being edited. Cleared whenever the credentials it
+    was fetched with change: a list from the old key is not a smaller
+    inconvenience than no list, it is wrong with confidence.
+  */
+  const [available, setAvailable] = useState<AvailableModelRow[] | null>(null);
+  const [listing, setListing] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+
+  const clearAvailable = () => {
+    setAvailable(null);
+    setListError(null);
+  };
 
   const reload = useCallback(async () => {
     const result = await getJson<{ models: ModelRow[] }>(`/api/admin/${slug}/llm-models`);
@@ -124,12 +150,54 @@ export default function ModelForms({ slug }: { slug: string }) {
     setDraft({ ...emptyDraft, isDefault: (models ?? []).length === 0 });
     setEditingId('new');
     setFormError(null);
+    clearAvailable();
   };
 
   const startEdit = (row: ModelRow) => {
     setDraft(draftOf(row));
     setEditingId(row.id);
     setFormError(null);
+    clearAvailable();
+  };
+
+  /*
+    Which stored config the listing (and a keyless save) can borrow a key
+    from: the reuse choice when one is made, else the row being edited —
+    its stored key is what a blank field means on save, so it is what the
+    list should answer for too.
+  */
+  const editingRow =
+    editingId !== 'new' ? (models ?? []).find((row) => row.id === editingId) : undefined;
+  const borrowFromId = draft.apiKeyFromId || (editingRow?.hasApiKey ? editingRow.id : '');
+  const canList = Boolean(draft.apiKey || borrowFromId);
+
+  /** Other configs whose stored key can be reused — the same connection
+   *  serving another model row. */
+  const keyedSiblings = (models ?? []).filter((row) => row.hasApiKey && row.id !== editingId);
+
+  const listModels = async () => {
+    setListing(true);
+    setListError(null);
+    const result = await sendJsonFull<{ models: AvailableModelRow[] }>(
+      `/api/admin/${slug}/llm-models/available`,
+      'POST',
+      {
+        provider: draft.provider,
+        baseUrl: draft.baseUrl || null,
+        ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
+        // A typed key wins — it is what a save would store; otherwise the
+        // server lends the borrowed config's stored key without it ever
+        // reaching this page.
+        ...(draft.apiKey ? { apiKey: draft.apiKey } : { modelConfigId: borrowFromId }),
+      }
+    );
+    setListing(false);
+    if (result.error || !result.data) {
+      setAvailable(null);
+      setListError(result.error ?? 'Could not list models');
+      return;
+    }
+    setAvailable(result.data.models);
   };
 
   const submit = async () => {
@@ -145,6 +213,7 @@ export default function ModelForms({ slug }: { slug: string }) {
       ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
       ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
       ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
+      ...(draft.apiKeyFromId && !draft.apiKey ? { apiKeyFromId: draft.apiKeyFromId } : {}),
       enabled: draft.enabled,
       isDefault: draft.isDefault,
     };
@@ -273,7 +342,10 @@ export default function ModelForms({ slug }: { slug: string }) {
               id="model-provider"
               className={inputClass}
               value={draft.provider}
-              onChange={(event) => setDraft({ ...draft, provider: event.target.value })}
+              onChange={(event) => {
+                setDraft({ ...draft, provider: event.target.value });
+                clearAvailable();
+              }}
             >
               <option value="anthropic">Anthropic (Claude)</option>
               <option value="openai">OpenAI-compatible (OpenAI, Azure AI Foundry)</option>
@@ -298,36 +370,131 @@ export default function ModelForms({ slug }: { slug: string }) {
               onChange={(event) => setDraft({ ...draft, model: event.target.value })}
             />
             <datalist id="model-suggestions">
-              {(MODEL_SUGGESTIONS[draft.provider] ?? []).map((suggestion) => (
-                <option key={suggestion} value={suggestion} />
-              ))}
+              {/* Live answers replace the hardcoded guesses once fetched. */}
+              {(available ?? MODEL_SUGGESTIONS[draft.provider]?.map((id) => ({ id })) ?? []).map(
+                (suggestion) => (
+                  <option key={suggestion.id} value={suggestion.id} />
+                )
+              )}
             </datalist>
             <p className={hintClass}>
               {PROVIDER_HINTS[draft.provider]?.model ?? 'The provider’s model identifier.'}
             </p>
+
+            {/*
+              Ask the connection itself instead of the provider's docs. The
+              button needs a key to ask with, so it stays disabled until
+              the form has one — typed, borrowed, or stored on this row —
+              and the hint says which is missing rather than looking broken.
+            */}
+            <div className="mt-2">
+              <button
+                type="button"
+                disabled={!canList || listing}
+                onClick={() => void listModels()}
+                className="text-xs font-medium text-blue-600 hover:underline disabled:cursor-not-allowed disabled:text-gray-400 disabled:no-underline dark:text-blue-400 dark:disabled:text-gray-600"
+              >
+                {listing ? 'Asking the provider…' : 'List available models'}
+              </button>
+              {!canList ? (
+                <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
+                  Enter an API key (or pick one to reuse) first.
+                </span>
+              ) : null}
+            </div>
+            {listError ? (
+              <p className="mt-1 text-xs text-red-600 dark:text-red-400">{listError}</p>
+            ) : null}
+            {available !== null && available.length === 0 ? (
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                The provider answered with an empty list.
+              </p>
+            ) : null}
+            {available !== null && available.length > 0 ? (
+              <ul className="mt-2 max-h-48 divide-y divide-gray-100 overflow-y-auto rounded-md border border-gray-200 dark:divide-gray-800 dark:border-gray-700">
+                {available.map((entry) => (
+                  <li key={entry.id}>
+                    <button
+                      type="button"
+                      onClick={() => setDraft({ ...draft, model: entry.id })}
+                      aria-pressed={draft.model === entry.id}
+                      className={`flex w-full items-baseline gap-2 px-3 py-1.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900 ${
+                        draft.model === entry.id
+                          ? 'bg-blue-50 font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+                          : ''
+                      }`}
+                    >
+                      <span className="min-w-0 truncate font-mono text-xs">{entry.id}</span>
+                      {entry.displayName ? (
+                        <span className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
+                          {entry.displayName}
+                        </span>
+                      ) : null}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </div>
 
           <div>
             <label className={labelClass} htmlFor="model-key">
               API key
             </label>
-            <input
-              id="model-key"
-              className={inputClass}
-              type="password"
-              value={draft.apiKey}
-              required={editingId === 'new'}
-              placeholder={
-                editingId === 'new'
-                  ? draft.provider === 'openai'
-                    ? 'sk-… or an Azure API key'
-                    : 'sk-ant-…'
-                  : 'Leave blank to keep the stored key'
-              }
-              autoComplete="off"
-              onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
-            />
-            <p className={hintClass}>Stored encrypted; never shown again after saving.</p>
+            {/*
+              One connection can serve every model row: when sibling configs
+              already hold a key, the field grows a source picker and
+              "reuse" copies the stored key server-side — it never rides
+              through the browser, and nobody retypes it per model.
+            */}
+            {keyedSiblings.length > 0 ? (
+              <select
+                aria-label="API key source"
+                className={`${inputClass} mb-2`}
+                value={draft.apiKeyFromId}
+                onChange={(event) => {
+                  setDraft({ ...draft, apiKeyFromId: event.target.value, apiKey: '' });
+                  clearAvailable();
+                }}
+              >
+                <option value="">
+                  {editingId === 'new' ? 'Enter a key' : 'Keep the stored key (or enter a new one)'}
+                </option>
+                {keyedSiblings.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    Reuse the key stored on “{row.label}”
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            {draft.apiKeyFromId === '' ? (
+              <>
+                <input
+                  id="model-key"
+                  className={inputClass}
+                  type="password"
+                  value={draft.apiKey}
+                  required={editingId === 'new'}
+                  placeholder={
+                    editingId === 'new'
+                      ? draft.provider === 'openai'
+                        ? 'sk-… or an Azure API key'
+                        : 'sk-ant-…'
+                      : 'Leave blank to keep the stored key'
+                  }
+                  autoComplete="off"
+                  onChange={(event) => {
+                    setDraft({ ...draft, apiKey: event.target.value });
+                    clearAvailable();
+                  }}
+                />
+                <p className={hintClass}>Stored encrypted; never shown again after saving.</p>
+              </>
+            ) : (
+              <p className={hintClass}>
+                Saving copies that key onto this model — still encrypted, never shown.
+              </p>
+            )}
           </div>
 
           <div>
@@ -343,7 +510,10 @@ export default function ModelForms({ slug }: { slug: string }) {
                   ? 'https://{resource}.openai.azure.com/openai/v1'
                   : 'https://api.anthropic.com'
               }
-              onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })}
+              onChange={(event) => {
+                setDraft({ ...draft, baseUrl: event.target.value });
+                clearAvailable();
+              }}
             />
             <p className={hintClass}>
               {PROVIDER_HINTS[draft.provider]?.baseUrl ??
@@ -417,7 +587,10 @@ export default function ModelForms({ slug }: { slug: string }) {
               className={inputClass}
               value={draft.apiVersion}
               placeholder="e.g. 2024-05-01-preview"
-              onChange={(event) => setDraft({ ...draft, apiVersion: event.target.value })}
+              onChange={(event) => {
+                setDraft({ ...draft, apiVersion: event.target.value });
+                clearAvailable();
+              }}
             />
             <p className={hintClass}>
               Appended as ?api-version=… — only when the Azure surface demands it (a &quot;Missing
