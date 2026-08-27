@@ -98,11 +98,24 @@ export interface OnBaseQueryKeyword {
 
 export type QueryTargetKind = 'DocumentType' | 'DocumentTypeGroup' | 'CustomQuery';
 
+export type DisplayColumnType =
+  | 'Keyword'
+  | 'DocumentId'
+  | 'DocumentName'
+  | 'DocumentDate'
+  | 'ArchivalDate'
+  | 'AuthorId'
+  | 'Batch'
+  | 'DocumentTypeGroup'
+  | 'DocumentTypeName';
+
 export interface OnBaseQueryInformation {
   queryType: { type: QueryTargetKind; ids: string[] }[];
   maxResults?: number;
   queryKeywordCollection?: OnBaseQueryKeyword[];
   documentDateRangeCollection?: { start?: string; end?: string }[];
+  /** Overrides any preconfigured columns, making result shape predictable. */
+  userDisplayColumns?: { keywordTypeId?: string; displayColumnType: DisplayColumnType }[];
 }
 
 /** OIDC endpoints Renkei needs from a Hyland IdP discovery document. */

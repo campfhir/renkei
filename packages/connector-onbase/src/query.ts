@@ -8,7 +8,12 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import type { OnBaseQueryInformation, OnBaseQueryKeyword, QueryTargetKind } from './types';
+import type {
+  DisplayColumnType,
+  OnBaseQueryInformation,
+  OnBaseQueryKeyword,
+  QueryTargetKind,
+} from './types';
 
 export type QueryBuildError = 'NO_QUERY_TARGET';
 
@@ -22,6 +27,7 @@ export function buildQueryInformation(options: {
   keywords?: OnBaseQueryKeyword[];
   documentDateRange?: { start?: string; end?: string };
   maxResults?: number;
+  displayColumns?: { keywordTypeId?: string; displayColumnType: DisplayColumnType }[];
 }): Result<OnBaseQueryInformation, QueryBuildError> {
   const targets = options.targets.filter((target) => target.ids.length > 0);
   // The API refuses a query without a scope; failing here gives the caller
@@ -34,6 +40,9 @@ export function buildQueryInformation(options: {
   if (options.maxResults !== undefined) query.maxResults = options.maxResults;
   if (options.keywords && options.keywords.length > 0) {
     query.queryKeywordCollection = options.keywords;
+  }
+  if (options.displayColumns && options.displayColumns.length > 0) {
+    query.userDisplayColumns = options.displayColumns;
   }
   if (options.documentDateRange?.start || options.documentDateRange?.end) {
     query.documentDateRangeCollection = [

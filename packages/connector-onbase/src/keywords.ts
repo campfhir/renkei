@@ -39,7 +39,10 @@ const CANDIDATE_LIMIT = 15;
  */
 export function resolveKeywordTypeRef(
   catalog: readonly OnBaseKeywordType[],
-  ref: string
+  ref: string,
+  // The same resolution serves document types, groups, custom queries and
+  // note types — everything OnBase names with {id, name, systemName}.
+  noun = 'keyword type'
 ): Result<string, KeywordResolveError> {
   const trimmed = ref.trim();
   const byId = catalog.find((t) => t.id === trimmed);
@@ -52,11 +55,11 @@ export function resolveKeywordTypeRef(
   if (matches.length === 1) return ok(matches[0].id);
   if (matches.length > 1) {
     return err('AMBIGUOUS_KEYWORD_TYPE' as const, {
-      message: `"${ref}" matches ${matches.length} keyword types: ${describe(matches)}. Use the id.`,
+      message: `"${ref}" matches ${matches.length} ${noun}s: ${describe(matches)}. Use the id.`,
     });
   }
   return err('UNKNOWN_KEYWORD_TYPE' as const, {
-    message: `No keyword type is named "${ref}". Known types: ${describe(catalog)}${
+    message: `No ${noun} is named "${ref}". Known: ${describe(catalog)}${
       catalog.length > CANDIDATE_LIMIT ? ` and ${catalog.length - CANDIDATE_LIMIT} more` : ''
     }.`,
   });
