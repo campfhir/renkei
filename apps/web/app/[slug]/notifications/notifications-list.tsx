@@ -81,6 +81,7 @@ export default function NotificationsList({
 
   const selectionMode = selected.size > 0;
   const visible = rows.filter((row) => !removed.has(row.id));
+  const allSelected = selectionMode && selected.size === visible.length;
 
   // One open menu at a time; outside click or Escape closes it — the same
   // choreography as the nav's avatar menu.
@@ -437,33 +438,49 @@ export default function NotificationsList({
         </section>
       ))}
 
-      {/* Sticky multi-select footer — appears with the first selected card. */}
+      {/* Sticky multi-select footer — appears with the first selected card.
+          Three rows, three visual weights: the primary-tinted actions
+          (select all/none, mark read/unread) share one look, Cancel is a
+          quiet ghost so it cannot be mistaken for one of them, and Delete
+          alone is red. */}
       {selectionMode ? (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-950/95">
-          <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3">
-            <span className="text-sm text-gray-600 dark:text-gray-400">
-              {selected.size} selected
-            </span>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setSelected(new Set(visible.map((row) => row.id)))}
-                disabled={selected.size === visible.length}
-                className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
-              >
-                <Icon path={ICONS.checkboxChecked} className="h-4 w-4" />
-                Select all
-              </button>
+          <div className="mx-auto max-w-3xl space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-gray-600 dark:text-gray-400">
+                {selected.size} selected
+              </span>
+              {allSelected ? (
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set())}
+                  className="flex items-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/70"
+                >
+                  <Icon path={ICONS.checkbox} className="h-4 w-4" />
+                  Select none
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set(visible.map((row) => row.id)))}
+                  className="flex items-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/70"
+                >
+                  <Icon path={ICONS.checkboxChecked} className="h-4 w-4" />
+                  Select all
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => {
                   void setRead([...selected], true);
                   setSelected(new Set());
                 }}
-                className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+                className="flex items-center justify-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/70"
               >
                 <Icon path={ICONS.check} className="h-4 w-4" />
-                Mark read
+                Mark as read
               </button>
               <button
                 type="button"
@@ -471,22 +488,22 @@ export default function NotificationsList({
                   void setRead([...selected], false);
                   setSelected(new Set());
                 }}
-                className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+                className="flex items-center justify-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/70"
               >
                 <Icon path={ICONS.unreadDot} className="h-4 w-4" />
-                Mark unread
+                Mark as unread
               </button>
               <button
                 type="button"
                 onClick={() => setSelected(new Set())}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+                className="rounded-md px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={() => setConfirming([...selected])}
-                className="flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
+                className="flex items-center justify-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
               >
                 <Icon path={ICONS.trash} className="h-4 w-4" />
                 Delete
