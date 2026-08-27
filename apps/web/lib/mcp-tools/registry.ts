@@ -39,7 +39,7 @@ import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
 import { oauthZoomAuth } from '@/lib/mcp-tools/zoom/zoom-auth';
 import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
 import { oauthConfluenceAuth } from '@/lib/mcp-tools/confluence/confluence-auth';
-import { hasAnyGrant } from '@renkei/connector-fileshares';
+import { resolveToolExposure } from '@renkei/connector-fileshares';
 import { registerFileshareTools, FILESHARES_MCP_CONNECTOR } from '@/lib/mcp-tools/fileshares';
 import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
 import { registerSummaryTools, type SummaryProvider } from '@/lib/mcp-tools/summary';
@@ -67,6 +67,9 @@ export interface ConnectorAvailability {
   confluenceAvailable: boolean;
   confluenceScopes: string[];
   filesharesAvailable: boolean;
+  /** Whether any connected share exposes write tools / delete to the LLM. */
+  fileshareWrite: boolean;
+  fileshareDelete: boolean;
 }
 
 async function grantRow(
@@ -144,12 +147,16 @@ export async function resolveConnectorAvailability(
     ? (confluenceGrantRow.granted_scopes ?? confluenceGrantRow.requested_scopes)
     : [];
 
-  // File shares are the one connector with no provider_grants row: Renkei
-  // itself is the ACL authority, so provisioning IS the existence of a
-  // grant row on an enabled share. Any error reads as "not provisioned" —
-  // the fail-closed direction.
-  const filesharesGrant = await hasAnyGrant(db, tenantId, subject);
-  const filesharesAvailable = filesharesGrant.ok && filesharesGrant.val;
+  // File shares are the one connector with no provider_grants row: the
+  // caller's own stored connections stand in for the OAuth grant, and the
+  // exposure they chose per share decides which tool FAMILIES register —
+  // any connection mounts the read tools; write and delete each need an
+  // explicit opt-in somewhere. Any error reads as "not provisioned" — the
+  // fail-closed direction.
+  const fileshareExposure = await resolveToolExposure(db, tenantId, subject);
+  const filesharesAvailable = fileshareExposure.ok && fileshareExposure.val.read;
+  const fileshareWrite = fileshareExposure.ok && fileshareExposure.val.write;
+  const fileshareDelete = fileshareExposure.ok && fileshareExposure.val.del;
 
   return {
     knowledgeAvailable,
@@ -164,6 +171,8 @@ export async function resolveConnectorAvailability(
     confluenceAvailable,
     confluenceScopes,
     filesharesAvailable,
+    fileshareWrite,
+    fileshareDelete,
   };
 }
 
@@ -387,12 +396,16 @@ export async function registerRenkeiTools(
     );
   }
   if (filesharesAvailable) {
-    // No scope gate: fileshares has no OAuth scopes — per-path authorization
-    // is the package's ACL engine, evaluated inside every handler.
+    // No scope gate: fileshares has no OAuth scopes. The caller's per-share
+    // exposure choice shapes which families register (write/delete only on
+    // opt-in), and every act handler re-checks the choice fresh per call;
+    // authorization itself is the file server judging the caller's own
+    // account.
     registerFileshareTools(
       withCapabilityGate(server, projection, FILESHARES_MCP_CONNECTOR),
       context,
-      userFileshareAuth(context)
+      userFileshareAuth(context),
+      { write: availability.fileshareWrite, del: availability.fileshareDelete }
     );
   }
 }

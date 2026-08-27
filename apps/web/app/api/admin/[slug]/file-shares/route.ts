@@ -1,13 +1,12 @@
 /**
- * Share registry CRUD — operator-only. GETs report `hasCredentials` and
- * never a credential value; POST requires a complete credential or none
- * (a share without one stays unusable until an admin supplies it).
+ * Share registry CRUD — operator-only, connection details only. No
+ * credential ever passes through here: each person connects a share with
+ * their own account on the connectors page.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
-import { createShare, encryptCredentials, listShares } from '@renkei/connector-fileshares';
+import { createShare, listShares } from '@renkei/connector-fileshares';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -52,16 +51,10 @@ export async function POST(
   const parsed = parseSharePayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) {
-    return NextResponse.json({ error: 'Encryption key unavailable' }, { status: 500 });
-  }
-  const sealed = parsed.credentials ? encryptCredentials(parsed.credentials, keyResult.val) : null;
-
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const created = await createShare(dbResult.val, tenant.id, parsed.input, sealed);
+  const created = await createShare(dbResult.val, tenant.id, parsed.input);
   if (!created.ok) {
     if (created.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'A share with that name exists' }, { status: 409 });

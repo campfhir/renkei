@@ -386,36 +386,24 @@ export interface EventsDeadLetters {
   type: string;
 }
 
-export interface FileShareGrants {
+export interface FileShareConnections {
+  allow_delete: Generated<boolean>;
   created_at: Generated<Timestamp>;
-  created_by: string;
-  default_access: string;
+  encrypted_credentials: string;
   share_id: string;
   subject: string;
   tenant_id: string;
+  tool_access: string;
   updated_at: Generated<Timestamp>;
-}
-
-export interface FileSharePathRules {
-  access: string;
-  created_at: Generated<Timestamp>;
-  created_by: string;
-  id: Generated<string>;
-  path: string;
-  share_id: string;
-  subject: string | null;
-  tenant_id: string;
-  updated_at: Generated<Timestamp>;
+  username: string;
 }
 
 export interface FileShares {
   case_insensitive: boolean;
   created_at: Generated<Timestamp>;
   enabled: Generated<boolean>;
-  encrypted_credentials: string | null;
   host: string;
   id: Generated<string>;
-  max_access: Generated<string>;
   name: string;
   port: number | null;
   protocol: string;
@@ -784,8 +772,7 @@ export interface DB {
   embedding_jobs_dead_letters: EmbeddingJobsDeadLetters;
   events: Events;
   events_dead_letters: EventsDeadLetters;
-  file_share_grants: FileShareGrants;
-  file_share_path_rules: FileSharePathRules;
+  file_share_connections: FileShareConnections;
   file_shares: FileShares;
   identities: Identities;
   jira_sessions: JiraSessions;

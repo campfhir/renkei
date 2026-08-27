@@ -37,13 +37,8 @@ export type AuditAction =
   | 'fileshare.created'
   | 'fileshare.updated'
   | 'fileshare.deleted'
-  | 'fileshare.credentials_updated'
-  | 'fileshare.grant_added'
-  | 'fileshare.grant_updated'
-  | 'fileshare.grant_removed'
-  | 'fileshare.rule_added'
-  | 'fileshare.rule_updated'
-  | 'fileshare.rule_removed';
+  | 'fileshare.connected'
+  | 'fileshare.disconnected';
 
 export interface AuditEventInput {
   tenantId: string;

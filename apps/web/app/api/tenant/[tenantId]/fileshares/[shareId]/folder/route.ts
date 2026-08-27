@@ -1,9 +1,11 @@
 /**
- * ACL-filtered folder listing for the files browser — the REST twin of
+ * Folder listing for the files browser — the REST twin of
  * fileshare_list_folder. The listing itself happens in the fileshare
- * worker (the process that owns every SMB/SFTP session and enforces the
- * ACL per call); this route contributes exactly one thing the worker
- * cannot: who the caller is, from the browser session.
+ * worker (the process that owns every SMB/SFTP session and resolves the
+ * caller's own stored credential per call); this route contributes exactly
+ * one thing the worker cannot: who the caller is, from the browser
+ * session. What the caller may see or do is the file server's verdict on
+ * their account.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -30,9 +32,6 @@ export async function GET(
   return NextResponse.json({
     path: listed.val.path,
     share: listed.val.share,
-    // The listed folder's own level, so the browser can offer (or not)
-    // upload and new-folder controls without guessing from children.
-    access: listed.val.access,
     entries: listed.val.entries,
   });
 }

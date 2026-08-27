@@ -1,9 +1,9 @@
 /**
  * Destructive entry operations from the files browser — the REST twins of
  * fileshare_move_entry / fileshare_rename_entry / the delete confirm. The
- * fileshare worker runs the shared destructive gate (read/write on every
- * end, no anchored rules, no clobbering, empty folders only), so what a
- * person may do here is exactly what a model acting for them could.
+ * fileshare worker runs every operation on the caller's own credential,
+ * so what a person may do here is exactly what their account may do on
+ * the file server (and never clobbers; empty folders only for delete).
  *
  * DELETE removes a file or an EMPTY folder (a non-empty one is a 409, not
  * a tree delete). POST carries {op:'move'|'rename'} — one route because

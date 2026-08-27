@@ -6,14 +6,12 @@ import { getShare } from '@renkei/connector-fileshares';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import ShareConfigForm from './share-config-form';
-import GrantManager from './grant-manager';
-import RulesEditor from './rules-editor';
 
 /**
- * One share's management page: origin and credentials, who may see it,
- * and the two-layer path rules. The people picker is fed server-side from
- * the same identities union the People page renders, so the grant form
- * offers everyone the org knows about without a second directory API.
+ * One share's management page: connection details, nothing else. There is
+ * deliberately no access management here — every person connects the share
+ * with their own credentials on the connectors page, and the file server
+ * decides what that account may do.
  */
 export default async function AdminFileSharePage({
   params,
@@ -39,17 +37,6 @@ export default async function AdminFileSharePage({
   const share = await getShare(dbResult.val, tenantRef.id, shareId);
   if (!share.ok || !share.val) notFound();
 
-  const identities = await dbResult.val
-    .selectFrom('identities')
-    .select(['subject', 'display_name', 'email'])
-    .where('tenant_id', '=', tenantRef.id)
-    .orderBy('display_name')
-    .execute();
-  const people = identities.map((identity) => ({
-    subject: identity.subject,
-    label: identity.display_name || identity.email || identity.subject,
-  }));
-
   const summary = share.val.summary;
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -70,40 +57,12 @@ export default async function AdminFileSharePage({
       </div>
 
       <section>
-        <h2 className="mb-2 text-lg font-semibold">Connection</h2>
+        <h2 className="mb-1 text-lg font-semibold">Connection</h2>
+        <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
+          Where the share lives. Who can use it is not decided here: everyone connects it with
+          their own credentials from the Connectors page, and the file server judges each account.
+        </p>
         <ShareConfigForm slug={slug} shareId={shareId} />
-      </section>
-
-      <section>
-        <h2 className="mb-1 text-lg font-semibold">Access</h2>
-        <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
-          Only people granted here can see or use this share — from the files page, from models over
-          MCP, anywhere. A grant&apos;s default applies from the share root — neither box checked
-          means specific folders only; the permissions below narrow it further. Removing a grant
-          also removes that person&apos;s folder permissions.
-        </p>
-        <GrantManager
-          slug={slug}
-          shareId={shareId}
-          people={people}
-          share={{ maxAccess: summary.maxAccess }}
-        />
-      </section>
-
-      <section>
-        <h2 className="mb-1 text-lg font-semibold">Permissions</h2>
-        <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
-          Browse or search the share, select a file or folder, and check below what everyone — or
-          one person — may do there. Levels above are ceilings: where the share allows only read,
-          nobody below can hold or be granted write, and the write box grays out. Deeper settings
-          override shallower ones, allow and deny alike.
-        </p>
-        <RulesEditor
-          slug={slug}
-          shareId={shareId}
-          people={people}
-          share={{ maxAccess: summary.maxAccess, caseInsensitive: summary.caseInsensitive }}
-        />
       </section>
     </div>
   );

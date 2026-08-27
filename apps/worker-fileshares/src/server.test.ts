@@ -22,8 +22,6 @@ jest.mock('@renkei/connector-fileshares', () => {
     servicePreviewRemove: jest.fn(),
     serviceMoveEntry: jest.fn(),
     serviceRenameEntry: jest.fn(),
-    serviceAdminList: jest.fn(),
-    serviceAdminSearch: jest.fn(),
     serviceTestConnection: jest.fn(),
   };
 });
@@ -41,7 +39,6 @@ const mocked = jest.requireMock<{
   serviceWriteFile: jest.Mock;
   serviceRemoveEntry: jest.Mock;
   serviceMoveEntry: jest.Mock;
-  serviceAdminSearch: jest.Mock;
   serviceTestConnection: jest.Mock;
 }>('@renkei/connector-fileshares');
 
@@ -124,7 +121,6 @@ describe('dispatch and serialization', () => {
       val: {
         share: { id: 'share-1', name: 'Accounting' },
         path: '/docs',
-        access: 'read',
         entries: [
           {
             name: 'a.txt',
@@ -132,7 +128,6 @@ describe('dispatch and serialization', () => {
             kind: 'file',
             size: 5,
             modifiedAt: new Date('2026-01-02T03:04:05.000Z'),
-            access: 'read',
           },
         ],
       },
@@ -142,7 +137,6 @@ describe('dispatch and serialization', () => {
     expect(await response.json()).toEqual({
       share: { id: 'share-1', name: 'Accounting' },
       path: '/docs',
-      access: 'read',
       entries: [
         {
           name: 'a.txt',
@@ -150,7 +144,6 @@ describe('dispatch and serialization', () => {
           kind: 'file',
           size: 5,
           modifiedAt: '2026-01-02T03:04:05.000Z',
-          access: 'read',
         },
       ],
     });
@@ -164,10 +157,11 @@ describe('dispatch and serialization', () => {
   it('maps service error tags onto statuses and keeps the message', async () => {
     const cases: Array<[string, number]> = [
       ['no_share', 404],
-      ['forbidden', 403],
+      ['access_denied', 403],
+      ['not_connected', 403],
       ['not_empty', 409],
       ['bad_path', 400],
-      ['no_credentials', 503],
+      ['bad_credentials', 503],
       ['timeout', 504],
     ];
     for (const [tag, status] of cases) {
@@ -267,73 +261,33 @@ describe('file bytes', () => {
   });
 });
 
-describe('admin search', () => {
-  it('dispatches the query and serializes hits with the truncation flag', async () => {
-    mocked.serviceAdminSearch.mockResolvedValue({
-      ok: true,
-      val: {
-        results: [{ name: 'Policies', path: '/it/Policies', kind: 'dir' }],
-        truncated: true,
-      },
-    });
-    const response = await post('/v1/admin-search', {
-      tenantId: 'tenant-1',
-      shareId: 'share-1',
-      query: 'policies',
-    });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({
-      results: [{ name: 'Policies', path: '/it/Policies', kind: 'dir' }],
-      truncated: true,
-    });
-    expect(mocked.serviceAdminSearch).toHaveBeenCalledWith(
-      expect.anything(),
-      'tenant-1',
-      'share-1',
-      'policies'
-    );
-  });
-});
-
 describe('test-connection payload validation', () => {
-  const summary = {
-    id: 'share-1',
-    name: 'Accounting',
-    protocol: 'sftp',
-    host: 'nas.example.test',
-    port: null,
-    shareName: null,
-    rootPath: '/srv/share',
-    caseInsensitive: false,
-    maxAccess: 'read_write',
-  };
-
-  it('accepts a valid summary with explicit credentials', async () => {
+  it('dispatches a valid credential against the stored share', async () => {
     mocked.serviceTestConnection.mockResolvedValue({ ok: true, val: { entries: 3 } });
     const response = await post('/v1/test-connection', {
       tenantId: 'tenant-1',
-      storedShareId: null,
-      summary,
-      credentials: { protocol: 'sftp', username: 'svc', password: 'pw' },
+      shareId: 'share-1',
+      credentials: { protocol: 'sftp', username: 'alice', password: 'pw' },
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ entries: 3 });
+    expect(mocked.serviceTestConnection).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-1',
+      'share-1',
+      { protocol: 'sftp', username: 'alice', password: 'pw' }
+    );
   });
 
-  it('refuses a summary with a bad protocol or malformed credentials', async () => {
-    const badSummary = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
-      summary: { ...summary, protocol: 'ftp' },
-      credentials: null,
-    });
-    expect(badSummary.status).toBe(400);
-
-    const badCredentials = await post('/v1/test-connection', {
-      tenantId: 'tenant-1',
-      summary,
-      credentials: { protocol: 'sftp' },
-    });
-    expect(badCredentials.status).toBe(400);
+  it('refuses malformed or missing credentials before touching the service', async () => {
+    for (const credentials of [undefined, { protocol: 'sftp' }, { protocol: 'ftp', username: 'x' }]) {
+      const response = await post('/v1/test-connection', {
+        tenantId: 'tenant-1',
+        shareId: 'share-1',
+        credentials,
+      });
+      expect(response.status).toBe(400);
+    }
     expect(mocked.serviceTestConnection).not.toHaveBeenCalled();
   });
 });
