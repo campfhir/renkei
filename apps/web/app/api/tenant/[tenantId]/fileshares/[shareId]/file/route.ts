@@ -1,9 +1,10 @@
 /**
  * File bytes in and out of a share, session-guarded — this URL is what
- * fileshare_download_file hands to models, precisely because it re-checks
- * the caller's ACL at click time instead of minting an anonymous link.
- * The bytes themselves move through the fileshare worker, which re-runs
- * the ACL for this subject on every call.
+ * fileshare_download_file hands to models, precisely because it requires
+ * the caller's own signed-in session at click time instead of minting an
+ * anonymous link. The bytes move through the fileshare worker on the
+ * caller's own stored credential, so the file server authorizes every
+ * transfer as that account.
  *
  * GET streams the bytes down with Content-Disposition: attachment; PUT is
  * the web UI's direct upload path (MCP writes stay on the upload-slot

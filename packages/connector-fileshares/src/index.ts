@@ -1,28 +1,27 @@
 /**
- * @renkei/connector-fileshares — org-registered SMB/SFTP shares where
- * Renkei, not a provider, is the ACL authority.
+ * @renkei/connector-fileshares — org-registered SMB/SFTP shares where each
+ * person connects with their OWN credentials and the file server is the
+ * authorization authority, the same delegation every OAuth connector
+ * practices. Renkei stores connection details (admin), a sealed per-user
+ * credential, and the person's LLM-exposure choice — never an ACL.
  *
- * The export surface is deliberate: the pure path/ACL engine (safe
- * anywhere, including client components for the admin UI's live path
- * preview), the credential envelope, the protocol backends, and the
- * Kysely store. Consumers in apps/web and the workers share exactly this
- * code so an ACL decision is the same decision on every surface.
+ * The export surface is deliberate: the pure path grammar and types (safe
+ * anywhere, including client components), the credential envelope, the
+ * protocol backends, the service operation layer the fileshare worker
+ * runs, and the Kysely store. Consumers in apps/web and the workers share
+ * exactly this code so an answer is the same answer on every surface.
  */
 
 export {
-  isAccessLevel,
   isShareProtocol,
-  minAccess,
-  atLeast,
-  type AccessLevel,
-  type AclContext,
+  isToolAccess,
   type EntryKind,
-  type PathRule,
   type RawEntry,
+  type ShareConnection,
   type ShareEntry,
-  type ShareGrant,
   type ShareProtocol,
   type ShareSummary,
+  type ToolAccess,
 } from './types';
 
 export {
@@ -34,14 +33,6 @@ export {
   windowsToUnix,
   type PathError,
 } from './paths';
-
-export {
-  annotateEntries,
-  canListFolder,
-  effectiveAccess,
-  hasAllowedDescendant,
-  layerAccess,
-} from './acl';
 
 export {
   decryptCredentials,
@@ -61,9 +52,7 @@ export {
 } from './limits';
 
 export {
-  resolveAccess,
-  serviceAdminList,
-  serviceAdminSearch,
+  resolveConnection,
   serviceListFolder,
   serviceMakeFolder,
   serviceMoveEntry,
@@ -74,14 +63,12 @@ export {
   serviceStatEntry,
   serviceTestConnection,
   serviceWriteFile,
-  type ConnectionTest,
   type EntryDetails,
   type FileContent,
   type FolderListing,
   type RelocationOutcome,
   type RemovePreview,
-  type ResolvedAccess,
-  type SearchHit,
+  type ResolvedConnection,
   type ServiceDeps,
   type ServiceError,
   type ShareRef,
@@ -89,29 +76,24 @@ export {
 } from './service';
 
 export {
-  ACL_CACHE_TTL_MS,
-  clearFileShareCache,
   createShare,
-  deleteGrant,
-  deleteRule,
+  deleteConnection,
   deleteShare,
-  getAclContext,
+  getConnection,
   getShare,
-  hasAnyGrant,
-  listAllRules,
-  listGrantedShares,
-  listGrants,
-  listRulePathsUnder,
-  listRules,
+  listConnectedShares,
   listShares,
-  readCredentialCiphertext,
+  listSharesWithConnection,
+  readConnectionCiphertext,
+  resolveToolExposure,
+  updateConnectionExposure,
   updateShare,
-  upsertGrant,
-  upsertRule,
-  type GrantedShare,
-  type GrantRow,
-  type RuleRow,
+  upsertConnection,
+  type ConnectedShare,
+  type ConnectionInput,
   type ShareInput,
   type ShareRow,
+  type ShareWithConnection,
   type StoreError,
+  type ToolExposure,
 } from './store';

@@ -61,7 +61,7 @@ function getCacheKey(
   onedriveAvailable: boolean,
   zoomAvailable: boolean,
   confluenceAvailable: boolean,
-  filesharesAvailable: boolean,
+  fileshareTools: string,
   onbaseAvailable: boolean,
   userEmail: string | null,
   disabledConnectors: readonly string[],
@@ -76,7 +76,7 @@ function getCacheKey(
     `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:` +
     `${webexAvailable ? 'w' : 'nw'}:${microsoftAvailable ? 'm' : 'nm'}:${zoomAvailable ? 'z' : 'nz'}:` +
     `${sharepointAvailable ? 's' : 'ns'}:${onedriveAvailable ? 'o' : 'no'}:` +
-    `${confluenceAvailable ? 'c' : 'nc'}:${filesharesAvailable ? 'f' : 'nf'}:` +
+    `${confluenceAvailable ? 'c' : 'nc'}:${fileshareTools}:` +
     `${onbaseAvailable ? 'ob' : 'nob'}:${userEmail ?? ''}:` +
     // Sorted, so the same set in a different order is the same key rather
     // than a needless cache miss.
@@ -340,6 +340,8 @@ const handler = async (
       confluenceAvailable,
       confluenceScopes,
       filesharesAvailable,
+      fileshareWrite,
+      fileshareDelete,
       onbaseAvailable,
     } = availability;
     // No Jira grant → an empty scope list, which the scope gate reads as
@@ -388,7 +390,11 @@ const handler = async (
         onedriveAvailable,
         zoomAvailable,
         confluenceAvailable,
-        filesharesAvailable,
+        // The registered fileshare tool set varies with the caller's
+        // per-share exposure opt-ins, so they are part of the key — an
+        // opt-in on the connectors page must not be served a handler built
+        // without the write tools.
+        `${filesharesAvailable ? 'f' : 'nf'}${fileshareWrite ? 'w' : ''}${fileshareDelete ? 'd' : ''}`,
         onbaseAvailable,
         userEmail,
         settings.disabledConnectors,
@@ -539,11 +545,11 @@ const handler = async (
             '"Connector · Read|Act". Connectors: Jira (jira_*), Jira Service Management ' +
             '(jsm_*, jsm_ops_*), WebEx (webex_*), Outlook/Microsoft 365 (outlook_*), ' +
             'SharePoint (sharepoint_*), OneDrive (onedrive_*), Confluence (confluence_*), ' +
-            'Zoom (zoom_*), org network file shares (fileshare_*, SMB/SFTP, access granted ' +
-            'per user inside Renkei), OnBase document management (onbase_*, no free-text ' +
-            'search: queries scope to a document type or saved custom query and constrain ' +
-            'keyword values — the tools resolve keyword/document-type NAMES to ids ' +
-            'themselves), plus search_knowledge (org knowledge, access-verified ' +
+            'Zoom (zoom_*), org network file shares (fileshare_*, SMB/SFTP, connected with ' +
+            "the user's own credentials per share), OnBase document management (onbase_*, " +
+            'no free-text search: queries scope to a document type or saved custom query ' +
+            'and constrain keyword values — the tools resolve keyword/document-type NAMES ' +
+            'to ids themselves), plus search_knowledge (org knowledge, access-verified ' +
             'per user), ' +
             'analyze_transcript (meeting transcript to suggested Jira actions) and whoami. ' +
             'Read tools are safe anywhere; Act tools change systems and are disabled in org ' +

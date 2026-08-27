@@ -96,12 +96,12 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
   },
   {
     capabilityKey: 'fileshares',
-    // No connector_configs row: each share carries its own host and
-    // credential in file_shares — the key exists so the identifier stays
-    // consistent.
+    // No connector_configs row: shares are many-per-tenant rows in
+    // file_shares, and each person connects with their own credentials —
+    // the key exists so the identifier stays consistent.
     configKey: 'fileshares',
     label: 'File shares',
-    summary: 'Org SMB and SFTP network shares, with per-user access managed in Renkei.',
+    summary: 'Org SMB and SFTP network shares — everyone connects with their own credentials.',
     toolPrefix: 'fileshare_*',
   },
   {

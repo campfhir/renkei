@@ -1,9 +1,9 @@
 'use client';
 
 /**
- * Share registry list plus one draft form for creation — the rule-forms
- * shape. Editing an existing share happens on its own page (the drill-down
- * rules editor needs the room), so the draft here only ever creates.
+ * Share registry list plus one draft form for creation. Editing an
+ * existing share happens on its own page; the draft here only ever
+ * creates.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -19,9 +19,7 @@ interface ShareRow {
   host: string;
   shareName: string | null;
   rootPath: string;
-  maxAccess: 'read' | 'read_write';
   enabled: boolean;
-  hasCredentials: boolean;
 }
 
 function targetOf(share: ShareRow): string {
@@ -80,17 +78,9 @@ export default function ShareList({ slug }: { slug: string }) {
                       disabled
                     </span>
                   ) : null}
-                  {!share.hasCredentials ? (
-                    <span className="ml-2 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-300">
-                      no credentials
-                    </span>
-                  ) : null}
                 </p>
                 <p className="mt-1 truncate font-mono text-xs text-gray-500 dark:text-gray-400">
                   {targetOf(share)}
-                </p>
-                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                  Ceiling: {share.maxAccess === 'read_write' ? 'read/write' : 'read only'}
                 </p>
               </div>
               <Link
@@ -107,7 +97,7 @@ export default function ShareList({ slug }: { slug: string }) {
       {draft ? (
         <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
           <p className="mb-3 text-sm font-medium">New share</p>
-          <ShareConfigFields draft={draft} onChange={setDraft} hasStoredCredentials={false} />
+          <ShareConfigFields draft={draft} onChange={setDraft} />
           <div className="mt-3 flex gap-2">
             <button
               type="button"

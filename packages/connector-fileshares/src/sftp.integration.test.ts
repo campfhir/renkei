@@ -23,9 +23,7 @@ function share(): ShareSummary {
     shareName: null,
     rootPath: process.env.FILESHARE_TEST_SFTP_ROOT ?? '/upload',
     caseInsensitive: false,
-    maxAccess: 'read_write',
     enabled: true,
-    hasCredentials: true,
   };
 }
 

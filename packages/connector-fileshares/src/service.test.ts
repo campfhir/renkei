@@ -1,20 +1,19 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
- * The service layer's contract: ACL enforcement, the destructive gate, and
- * error tagging — the exact seam the fileshare worker serves over HTTP.
- * The store and protocol backends are mocked; the ACL engine and the
- * credential envelope run for real, because those decisions are what the
- * worker's callers rely on being identical everywhere.
+ * The service layer's contract: per-user credential resolution, path
+ * discipline, and error tagging — the exact seam the fileshare worker
+ * serves over HTTP. The store and protocol backends are mocked; the
+ * credential envelope runs for real. There is deliberately no
+ * authorization to test here beyond resolution: the file server judges
+ * every operation by the caller's own account.
  */
 
 jest.mock('./store', () => {
   const actual = jest.requireActual<typeof import('./store')>('./store');
   return {
     ...actual,
-    getAclContext: jest.fn(),
-    readCredentialCiphertext: jest.fn(),
-    listRulePathsUnder: jest.fn(async () => ({ ok: true, val: [] })),
     getShare: jest.fn(),
+    readConnectionCiphertext: jest.fn(),
   };
 });
 jest.mock('./backend', () => ({ openBackend: jest.fn() }));
@@ -28,11 +27,10 @@ jest.mock('./limits', () => {
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import type { AclContext, RawEntry } from './types';
+import type { RawEntry, ShareSummary } from './types';
 import type { ShareBackend } from './backend';
 import { encryptCredentials } from './credentials';
 import {
-  serviceAdminSearch,
   serviceListFolder,
   serviceMakeFolder,
   serviceMoveEntry,
@@ -41,15 +39,14 @@ import {
   serviceRemoveEntry,
   serviceRenameEntry,
   serviceStatEntry,
+  serviceTestConnection,
   serviceWriteFile,
   type ServiceDeps,
 } from './service';
 
-const { getAclContext, getShare, readCredentialCiphertext, listRulePathsUnder } = jest.requireMock<{
-  getAclContext: jest.Mock;
+const { getShare, readConnectionCiphertext } = jest.requireMock<{
   getShare: jest.Mock;
-  readCredentialCiphertext: jest.Mock;
-  listRulePathsUnder: jest.Mock;
+  readConnectionCiphertext: jest.Mock;
 }>('./store');
 const { openBackend } = jest.requireMock<{ openBackend: jest.Mock }>('./backend');
 
@@ -64,25 +61,30 @@ function target() {
   return { tenantId: 'tenant-1', shareId: SHARE_ID, subject: 'auth0|alice' };
 }
 
-function aclContext(overrides?: Partial<AclContext>): AclContext {
+function summary(overrides?: Partial<ShareSummary>): ShareSummary {
   return {
-    share: {
-      id: SHARE_ID,
-      name: 'Accounting',
-      protocol: 'sftp',
-      host: 'nas.example.test',
-      port: null,
-      shareName: null,
-      rootPath: '/srv/accounting',
-      caseInsensitive: false,
-      maxAccess: 'read_write',
-      enabled: true,
-      hasCredentials: true,
-    },
-    grant: { subject: 'auth0|alice', defaultAccess: 'read_write' },
-    shareRules: [],
-    userRules: [],
+    id: SHARE_ID,
+    name: 'Accounting',
+    protocol: 'sftp',
+    host: 'nas.example.test',
+    port: null,
+    shareName: null,
+    rootPath: '/srv/accounting',
+    caseInsensitive: false,
+    enabled: true,
     ...overrides,
+  };
+}
+
+function shareRow(overrides?: Partial<ShareSummary>) {
+  return {
+    ok: true,
+    val: {
+      summary: summary(overrides),
+      settings: {},
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    },
   };
 }
 
@@ -141,314 +143,226 @@ function fakeBackend(tree: Record<string, RawEntry[] | Uint8Array>): {
   return { backend, calls };
 }
 
-function arm(ctx: AclContext, tree: Record<string, RawEntry[] | Uint8Array>): FakeCalls {
-  getAclContext.mockResolvedValue({ ok: true, val: ctx });
-  readCredentialCiphertext.mockResolvedValue({
+function arm(tree: Record<string, RawEntry[] | Uint8Array>): FakeCalls {
+  getShare.mockResolvedValue(shareRow());
+  readConnectionCiphertext.mockResolvedValue({
     ok: true,
-    val: encryptCredentials({ protocol: 'sftp', username: 'svc', password: 'pw' }, KEY),
+    val: encryptCredentials({ protocol: 'sftp', username: 'alice', password: 'pw' }, KEY),
   });
   const { backend, calls } = fakeBackend(tree);
   openBackend.mockResolvedValue({ ok: true, val: backend });
   return calls;
 }
 
-beforeEach(() => {
-  jest.clearAllMocks();
-  listRulePathsUnder.mockResolvedValue({ ok: true, val: [] });
-});
+beforeEach(() => jest.clearAllMocks());
 
 describe('resolution failures', () => {
   it('answers no_share alike for a missing share and a disabled one', async () => {
-    getAclContext.mockResolvedValue({ ok: true, val: null });
+    getShare.mockResolvedValue({ ok: true, val: null });
     const missing = await serviceListFolder(deps(), target(), '/');
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.err.type).toBe('no_share');
+    expect(missing).toMatchObject({ ok: false, err: { type: 'no_share' } });
 
-    getAclContext.mockResolvedValue({
-      ok: true,
-      val: aclContext({ share: { ...aclContext().share, enabled: false } }),
-    });
+    getShare.mockResolvedValue(shareRow({ enabled: false }));
     const disabled = await serviceListFolder(deps(), target(), '/');
-    expect(disabled.ok).toBe(false);
-    if (!disabled.ok) expect(disabled.err.type).toBe('no_share');
+    expect(disabled).toMatchObject({ ok: false, err: { type: 'no_share' } });
   });
 
-  it('reports a missing credential and an unreadable one distinctly', async () => {
-    getAclContext.mockResolvedValue({ ok: true, val: aclContext() });
-    readCredentialCiphertext.mockResolvedValue({ ok: true, val: null });
-    const missing = await serviceStatEntry(deps(), target(), '/x');
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.err.type).toBe('no_credentials');
+  it('reports an unconnected caller and an unreadable credential distinctly', async () => {
+    getShare.mockResolvedValue(shareRow());
+    readConnectionCiphertext.mockResolvedValue({ ok: true, val: null });
+    const unconnected = await serviceListFolder(deps(), target(), '/');
+    expect(unconnected).toMatchObject({ ok: false, err: { type: 'not_connected' } });
 
-    readCredentialCiphertext.mockResolvedValue({ ok: true, val: 'garbage' });
-    const unreadable = await serviceStatEntry(deps(), target(), '/x');
-    expect(unreadable.ok).toBe(false);
-    if (!unreadable.ok) expect(unreadable.err.type).toBe('bad_credentials');
+    readConnectionCiphertext.mockResolvedValue({ ok: true, val: 'not-a-ciphertext' });
+    const garbled = await serviceListFolder(deps(), target(), '/');
+    expect(garbled).toMatchObject({ ok: false, err: { type: 'bad_credentials' } });
   });
 
   it('fails closed on a store error', async () => {
-    getAclContext.mockResolvedValue({ ok: false, val: undefined, err: { type: 'DB_ERROR' } });
+    getShare.mockResolvedValue({ ok: false, err: { type: 'DB_ERROR' } });
     const result = await serviceListFolder(deps(), target(), '/');
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.err.type).toBe('store');
+    expect(result).toMatchObject({ ok: false, err: { type: 'store' } });
+  });
+
+  it('resolves the CALLER as the credential owner', async () => {
+    arm({ '/': [] });
+    await serviceListFolder(deps(), target(), '/');
+    expect(readConnectionCiphertext).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-1',
+      SHARE_ID,
+      'auth0|alice'
+    );
   });
 });
 
 describe('path discipline', () => {
   it('refuses traversal spellings with the traversal message', async () => {
-    arm(aclContext(), {});
-    const result = await serviceReadFile(deps(), target(), '/a/../etc/passwd', 1024);
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.err.type).toBe('bad_path');
-      expect(result.err.message).toContain('climbs out of the share');
-    }
+    arm({ '/': [] });
+    const result = await serviceListFolder(deps(), target(), '/../etc');
+    expect(result).toMatchObject({ ok: false, err: { type: 'bad_path' } });
+    if (!result.ok) expect(result.err.message).toContain('".."');
+    expect(openBackend).not.toHaveBeenCalled();
   });
 
   it('folds backslashes before deciding', async () => {
-    const calls = arm(aclContext(), { '/docs/a.txt': new Uint8Array([1]) });
-    const result = await serviceWriteFile(
-      deps(),
-      target(),
-      '\\docs\\a.txt',
-      new Uint8Array([1]),
-      1024
-    );
+    arm({ '/reports': [] });
+    const result = await serviceListFolder(deps(), target(), '\\reports\\');
     expect(result.ok).toBe(true);
-    expect(calls.writes).toEqual(['/docs/a.txt']);
+    if (result.ok) expect(result.val.path).toBe('/reports');
   });
 });
 
-describe('ACL enforcement', () => {
-  it('filters listings and marks traverse-only folders', async () => {
-    const ctx = aclContext({
-      grant: { subject: 'auth0|alice', defaultAccess: 'none' },
-      userRules: [{ path: '/open/deep', access: 'read' }],
-    });
-    arm(ctx, {
-      '/': [
-        { name: 'open', kind: 'dir', size: null, modifiedAt: null },
-        { name: 'closed', kind: 'dir', size: null, modifiedAt: null },
-      ],
-    });
-    const result = await serviceListFolder(deps(), target(), '/');
+describe('operations', () => {
+  const ENTRIES: RawEntry[] = [
+    { name: 'q4.xlsx', kind: 'file', size: 10, modifiedAt: null },
+    { name: 'archive', kind: 'dir', size: null, modifiedAt: null },
+  ];
+
+  it('lists a folder and roots every entry path at the share', async () => {
+    arm({ '/reports': ENTRIES });
+    const result = await serviceListFolder(deps(), target(), '/reports');
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.val.entries.map((entry) => `${entry.name}:${entry.access}`)).toEqual([
-        'open:traverse',
-      ]);
-      expect(result.val.access).toBe('none');
       expect(result.val.share).toEqual({ id: SHARE_ID, name: 'Accounting' });
+      expect(result.val.entries.map((entry) => entry.path)).toEqual([
+        '/reports/q4.xlsx',
+        '/reports/archive',
+      ]);
     }
   });
 
-  it('stat reports traverse for a shielding folder and refuses a fully closed one', async () => {
-    const ctx = aclContext({
-      grant: { subject: 'auth0|alice', defaultAccess: 'none' },
-      userRules: [{ path: '/open/deep', access: 'read' }],
-    });
-    arm(ctx, { '/open': [], '/closed': [] });
-    const shielding = await serviceStatEntry(deps(), target(), '/open');
-    expect(shielding.ok).toBe(true);
-    if (shielding.ok) expect(shielding.val.access).toBe('traverse');
-
-    const closed = await serviceStatEntry(deps(), target(), '/closed');
-    expect(closed.ok).toBe(false);
-    if (!closed.ok) expect(closed.err.type).toBe('forbidden');
+  it('stat reports kind and size', async () => {
+    arm({ '/reports/q4.xlsx': new Uint8Array(10) });
+    const result = await serviceStatEntry(deps(), target(), '/reports/q4.xlsx');
+    expect(result).toMatchObject({ ok: true, val: { kind: 'file', size: 10 } });
   });
 
-  it('read requires any access; write requires read_write', async () => {
-    const ctx = aclContext({ grant: { subject: 'auth0|alice', defaultAccess: 'read' } });
-    arm(ctx, { '/a.txt': new Uint8Array([1, 2]) });
-    const read = await serviceReadFile(deps(), target(), '/a.txt', 1024);
-    expect(read.ok).toBe(true);
+  it('read refuses the root and returns bytes for a file', async () => {
+    arm({ '/notes.txt': new Uint8Array([1, 2, 3]) });
+    const root = await serviceReadFile(deps(), target(), '/', 100);
+    expect(root).toMatchObject({ ok: false, err: { type: 'bad_path' } });
 
-    const write = await serviceWriteFile(deps(), target(), '/a.txt', new Uint8Array([1]), 1024);
-    expect(write.ok).toBe(false);
-    if (!write.ok) expect(write.err.type).toBe('forbidden');
+    const file = await serviceReadFile(deps(), target(), '/notes.txt', 100);
+    expect(file.ok).toBe(true);
+    if (file.ok) expect(file.val.bytes).toEqual(new Uint8Array([1, 2, 3]));
   });
 
   it('caps writes at the supplied limit', async () => {
-    arm(aclContext(), {});
+    const calls = arm({});
     const result = await serviceWriteFile(deps(), target(), '/big.bin', new Uint8Array(11), 10);
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.err.type).toBe('too_large');
+    expect(result).toMatchObject({ ok: false, err: { type: 'too_large' } });
+    expect(calls.writes).toEqual([]);
   });
 
-  it('mkdir authorizes on the parent folder', async () => {
-    const ctx = aclContext({
-      grant: { subject: 'auth0|alice', defaultAccess: 'read' },
-      userRules: [{ path: '/drop', access: 'read_write' }],
-    });
-    arm(ctx, {});
-    const allowed = await serviceMakeFolder(deps(), target(), '/drop/new');
-    expect(allowed.ok).toBe(true);
-
-    const refused = await serviceMakeFolder(deps(), target(), '/elsewhere/new');
-    expect(refused.ok).toBe(false);
-    if (!refused.ok) expect(refused.err.type).toBe('forbidden');
-  });
-});
-
-describe('destructive operations', () => {
-  it('refuses when any rule is anchored at or under the source', async () => {
-    const calls = arm(aclContext(), { '/vault': [] });
-    listRulePathsUnder.mockResolvedValue({ ok: true, val: ['/vault/secret'] });
-    const result = await serviceRemoveEntry(deps(), target(), '/vault');
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.err.type).toBe('forbidden');
-      expect(result.err.message).toContain('/vault/secret');
-    }
-    expect(calls.removes).toEqual([]);
+  it('writes within the limit', async () => {
+    const calls = arm({});
+    const result = await serviceWriteFile(deps(), target(), '/ok.bin', new Uint8Array(5), 10);
+    expect(result.ok).toBe(true);
+    expect(calls.writes).toEqual(['/ok.bin']);
   });
 
-  it('deletes a file after the gate, with the kind from its stat', async () => {
-    const calls = arm(aclContext(), { '/old.txt': new Uint8Array([1]) });
+  it('mkdir refuses the root', async () => {
+    arm({});
+    const result = await serviceMakeFolder(deps(), target(), '/');
+    expect(result).toMatchObject({ ok: false, err: { type: 'bad_path' } });
+  });
+
+  it('deletes with the kind from its stat', async () => {
+    const calls = arm({ '/old.txt': new Uint8Array(1) });
     const result = await serviceRemoveEntry(deps(), target(), '/old.txt');
     expect(result.ok).toBe(true);
     expect(calls.removes).toEqual([{ path: '/old.txt', kind: 'file' }]);
   });
 
   it('preview refuses a non-empty folder without touching remove', async () => {
-    const calls = arm(aclContext(), {
-      '/full': [{ name: 'x', kind: 'file', size: 1, modifiedAt: null }],
+    const calls = arm({
+      '/stash': [{ name: 'keep.txt', kind: 'file', size: 1, modifiedAt: null }],
     });
-    const result = await servicePreviewRemove(deps(), target(), '/full');
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.err.type).toBe('not_empty');
+    const result = await servicePreviewRemove(deps(), target(), '/stash');
+    expect(result).toMatchObject({ ok: false, err: { type: 'not_empty' } });
     expect(calls.removes).toEqual([]);
   });
 
   it('preview describes an empty folder and never removes it', async () => {
-    const calls = arm(aclContext(), { '/empty': [] });
-    const result = await servicePreviewRemove(deps(), target(), '/empty');
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.val.kind).toBe('dir');
+    const calls = arm({ '/stash': [] });
+    const result = await servicePreviewRemove(deps(), target(), '/stash');
+    expect(result).toMatchObject({ ok: true, val: { kind: 'dir', path: '/stash' } });
     expect(calls.removes).toEqual([]);
   });
 
-  it('move requires read/write on the destination too', async () => {
-    const ctx = aclContext({
-      userRules: [{ path: '/readonly', access: 'read' }],
-    });
-    arm(ctx, { '/a.txt': new Uint8Array([1]) });
-    const refused = await serviceMoveEntry(deps(), target(), '/a.txt', '/readonly');
-    expect(refused.ok).toBe(false);
-    if (!refused.ok) expect(refused.err.type).toBe('forbidden');
-  });
-
   it('move keeps the name and reports the new path', async () => {
-    const calls = arm(aclContext(), { '/a.txt': new Uint8Array([1]) });
-    const result = await serviceMoveEntry(deps(), target(), '/a.txt', '/archive');
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.val.path).toBe('/archive/a.txt');
-      expect(result.val.unchanged).toBe(false);
-    }
-    expect(calls.renames).toEqual([{ from: '/a.txt', to: '/archive/a.txt' }]);
+    const calls = arm({});
+    const result = await serviceMoveEntry(deps(), target(), '/reports/q4.xlsx', '/archive');
+    expect(result).toMatchObject({ ok: true, val: { path: '/archive/q4.xlsx', unchanged: false } });
+    expect(calls.renames).toEqual([{ from: '/reports/q4.xlsx', to: '/archive/q4.xlsx' }]);
   });
 
   it('a move to where it already lives is unchanged, with no I/O', async () => {
-    const calls = arm(aclContext(), {});
-    const result = await serviceMoveEntry(deps(), target(), '/docs/a.txt', '/docs');
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.val.unchanged).toBe(true);
+    const calls = arm({});
+    const result = await serviceMoveEntry(deps(), target(), '/reports/q4.xlsx', '/reports');
+    expect(result).toMatchObject({ ok: true, val: { unchanged: true } });
     expect(calls.renames).toEqual([]);
   });
 
-  it('rename validates the new name as a plain name', async () => {
-    arm(aclContext(), {});
-    const result = await serviceRenameEntry(deps(), target(), '/a.txt', 'x/y');
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.err.type).toBe('bad_path');
-  });
+  it('rename validates the new name as a plain name and stays in the folder', async () => {
+    const calls = arm({});
+    const bad = await serviceRenameEntry(deps(), target(), '/reports/q4.xlsx', 'a/b');
+    expect(bad).toMatchObject({ ok: false, err: { type: 'bad_path' } });
 
-  it('rename stays in the source folder', async () => {
-    const calls = arm(aclContext(), {});
-    const result = await serviceRenameEntry(deps(), target(), '/docs/a.txt', 'b.txt');
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.val.path).toBe('/docs/b.txt');
-    expect(calls.renames).toEqual([{ from: '/docs/a.txt', to: '/docs/b.txt' }]);
+    const good = await serviceRenameEntry(deps(), target(), '/reports/q4.xlsx', 'final.xlsx');
+    expect(good).toMatchObject({ ok: true, val: { path: '/reports/final.xlsx' } });
+    expect(calls.renames).toEqual([{ from: '/reports/q4.xlsx', to: '/reports/final.xlsx' }]);
   });
 
   it('the share root is not movable, renamable, or deletable', async () => {
-    arm(aclContext(), {});
-    for (const result of [
-      await serviceMoveEntry(deps(), target(), '/', '/x'),
-      await serviceRenameEntry(deps(), target(), '/', 'x'),
-      await serviceRemoveEntry(deps(), target(), '/'),
+    arm({});
+    for (const attempt of [
+      serviceMoveEntry(deps(), target(), '/', '/x'),
+      serviceRenameEntry(deps(), target(), '/', 'x'),
+      serviceRemoveEntry(deps(), target(), '/'),
     ]) {
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.err.type).toBe('bad_path');
+      expect(await attempt).toMatchObject({ ok: false, err: { type: 'bad_path' } });
     }
   });
 });
 
-describe('admin search', () => {
-  const TREE: Record<string, RawEntry[] | Uint8Array> = {
-    '/': [
-      { name: 'hr', kind: 'dir', size: null, modifiedAt: null },
-      { name: 'it', kind: 'dir', size: null, modifiedAt: null },
-      { name: 'welcome.txt', kind: 'file', size: 3, modifiedAt: null },
-    ],
-    '/hr': [{ name: 'contractors', kind: 'dir', size: null, modifiedAt: null }],
-    '/hr/contractors': [],
-    '/it': [{ name: 'Policies', kind: 'dir', size: null, modifiedAt: null }],
-    '/it/Policies': [{ name: 'vpn.md', kind: 'file', size: 5, modifiedAt: null }],
-  };
-
-  function armSearch(tree: Record<string, RawEntry[] | Uint8Array>) {
-    getShare.mockResolvedValue({ ok: true, val: { summary: aclContext().share } });
-    readCredentialCiphertext.mockResolvedValue({
-      ok: true,
-      val: encryptCredentials({ protocol: 'sftp', username: 'svc', password: 'pw' }, KEY),
+describe('test connection', () => {
+  it('opens a session with the supplied credential and counts the root', async () => {
+    getShare.mockResolvedValue(shareRow());
+    const { backend } = fakeBackend({
+      '/': [{ name: 'a.txt', kind: 'file', size: 1, modifiedAt: null }],
     });
-    const { backend } = fakeBackend(tree);
     openBackend.mockResolvedValue({ ok: true, val: backend });
-  }
-
-  it('finds entries anywhere by case-folded path substring', async () => {
-    armSearch(TREE);
-    const byPath = await serviceAdminSearch(deps(), 'tenant-1', SHARE_ID, '/it/policies');
-    expect(byPath.ok).toBe(true);
-    if (byPath.ok) {
-      // Descendants of a matching folder match too — their paths carry it.
-      expect(byPath.val.results.map((hit) => hit.path)).toEqual([
-        '/it/Policies',
-        '/it/Policies/vpn.md',
-      ]);
-      expect(byPath.val.truncated).toBe(false);
-    }
-
-    const byName = await serviceAdminSearch(deps(), 'tenant-1', SHARE_ID, 'POLICIES');
-    expect(byName.ok).toBe(true);
-    if (byName.ok) {
-      expect(byName.val.results.map((hit) => hit.path).sort()).toEqual([
-        '/it/Policies',
-        '/it/Policies/vpn.md',
-      ]);
-    }
+    const result = await serviceTestConnection(deps(), 'tenant-1', SHARE_ID, {
+      protocol: 'sftp',
+      username: 'alice',
+      password: 'pw',
+    });
+    expect(result).toMatchObject({ ok: true, val: { entries: 1 } });
+    // The stored credential is never consulted: the test is of the
+    // credential the person just typed.
+    expect(readConnectionCiphertext).not.toHaveBeenCalled();
   });
 
-  it('skips an unreadable subtree instead of failing the search', async () => {
-    const tree = { ...TREE };
-    delete tree['/hr'];
-    armSearch(tree);
-    const result = await serviceAdminSearch(deps(), 'tenant-1', SHARE_ID, 'vpn');
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.val.results.map((hit) => hit.path)).toEqual(['/it/Policies/vpn.md']);
+  it('refuses a credential whose protocol does not match the share', async () => {
+    getShare.mockResolvedValue(shareRow());
+    const result = await serviceTestConnection(deps(), 'tenant-1', SHARE_ID, {
+      protocol: 'smb',
+      username: 'alice',
+      password: 'pw',
+    });
+    expect(result).toMatchObject({ ok: false, err: { type: 'bad_credentials' } });
+    expect(openBackend).not.toHaveBeenCalled();
   });
 
-  it('answers no_share for a missing share and empty for an empty query', async () => {
+  it('answers no_share for a missing or disabled share', async () => {
     getShare.mockResolvedValue({ ok: true, val: null });
-    const missing = await serviceAdminSearch(deps(), 'tenant-1', SHARE_ID, 'x');
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.err.type).toBe('no_share');
-
-    armSearch(TREE);
-    const empty = await serviceAdminSearch(deps(), 'tenant-1', SHARE_ID, '   ');
-    expect(empty.ok).toBe(true);
-    if (empty.ok) expect(empty.val.results).toEqual([]);
+    const missing = await serviceTestConnection(deps(), 'tenant-1', SHARE_ID, {
+      protocol: 'sftp',
+      username: 'alice',
+      password: 'pw',
+    });
+    expect(missing).toMatchObject({ ok: false, err: { type: 'no_share' } });
   });
 });

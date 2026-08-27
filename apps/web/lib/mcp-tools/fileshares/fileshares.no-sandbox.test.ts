@@ -35,7 +35,7 @@ function tools(): Map<string, Handler> {
       registered.set(name, handler);
     },
   } as unknown as McpServer;
-  registerFileshareTools(server, context(), deniedFileshareAuth());
+  registerFileshareTools(server, context(), deniedFileshareAuth(), { write: true, del: true });
   return registered;
 }
 

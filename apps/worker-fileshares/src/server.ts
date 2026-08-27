@@ -2,21 +2,23 @@
  * The fileshare worker's HTTP surface — how the web app reaches SMB/SFTP
  * without ever opening a protocol session in a request handler.
  *
- * Plain node:http on purpose: eleven POST endpoints and a health check
- * need no framework, and this process's whole point is to stay small and
- * isolated. Two rules shape everything here:
+ * Plain node:http on purpose: a handful of POST endpoints and a health
+ * check need no framework, and this process's whole point is to stay small
+ * and isolated. Two rules shape everything here:
  *
  *  - The service layer (@renkei/connector-fileshares) is the authority.
- *    This file parses, dispatches, and serializes; every ACL decision,
- *    destructive gate, and byte cap runs inside the service functions, so
- *    a bug here can produce a wrong status code but not a wrong
+ *    This file parses, dispatches, and serializes; credential resolution
+ *    and byte caps run inside the service functions, and authorization
+ *    itself belongs to the file server judging the caller's own account —
+ *    so a bug here can produce a wrong status code but not a wrong
  *    permission.
  *  - The bearer key is the trust boundary. Callers holding
  *    FILESHARES_WORKER_API_KEY are the web app, which has already
- *    authenticated its user (`subject`) and, for the admin endpoints, its
- *    operator. No key configured means no service — fail closed, never
- *    open. Keys are comma-separated so a rotation can overlap, the
- *    LOG_SHIP_API_KEY convention.
+ *    authenticated its user (`subject`) — every operation runs on that
+ *    person's own stored credential, which only THIS process decrypts. No
+ *    key configured means no service — fail closed, never open. Keys are
+ *    comma-separated so a rotation can overlap, the LOG_SHIP_API_KEY
+ *    convention.
  *
  * File bytes travel as raw request/response bodies (read answers
  * octet-stream, write accepts it), never as JSON-wrapped base64 — the same
@@ -29,10 +31,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import {
-  isShareProtocol,
   parseShareCredentials,
-  serviceAdminList,
-  serviceAdminSearch,
   serviceListFolder,
   serviceMakeFolder,
   serviceMoveEntry,
@@ -44,12 +43,7 @@ import {
   serviceTestConnection,
   serviceWriteFile,
 } from '@renkei/connector-fileshares';
-import type {
-  ServiceDeps,
-  ServiceError,
-  ShareSummary,
-  SubjectTarget,
-} from '@renkei/connector-fileshares';
+import type { ServiceDeps, ServiceError, SubjectTarget } from '@renkei/connector-fileshares';
 import { logger } from './logger';
 
 export interface FileshareServerDeps {
@@ -80,8 +74,8 @@ export function statusForServiceError(tag: ServiceError): number {
     case 'no_share':
     case 'not_found':
       return 404;
-    case 'forbidden':
     case 'access_denied':
+    case 'not_connected':
       return 403;
     case 'bad_path':
       return 400;
@@ -92,7 +86,6 @@ export function statusForServiceError(tag: ServiceError): number {
     case 'exists':
     case 'not_empty':
       return 409;
-    case 'no_credentials':
     case 'bad_credentials':
       return 503;
     case 'store':
@@ -173,41 +166,6 @@ function iso(date: Date | null): string | null {
   return date ? date.toISOString() : null;
 }
 
-/**
- * Validate an untrusted summary from the test-connection body. The admin
- * form's unsaved state crosses the seam as plain JSON; re-checking every
- * field here keeps a compromised or buggy caller from smuggling, say, a
- * traversal into rootPath.
- */
-function parseSummary(value: unknown): ShareSummary | null {
-  if (!isRecord(value)) return null;
-  const id = str(value.id);
-  const name = str(value.name);
-  const host = str(value.host);
-  const rootPath = str(value.rootPath);
-  if (!id || !name || !host || !rootPath) return null;
-  if (!isShareProtocol(value.protocol)) return null;
-  const maxAccess = value.maxAccess;
-  if (maxAccess !== 'read' && maxAccess !== 'read_write') return null;
-  const port = value.port;
-  if (port !== null && (typeof port !== 'number' || !Number.isInteger(port))) return null;
-  const shareName = value.shareName;
-  if (shareName !== null && typeof shareName !== 'string') return null;
-  return {
-    id,
-    name,
-    protocol: value.protocol,
-    host,
-    port,
-    shareName,
-    rootPath,
-    caseInsensitive: value.caseInsensitive === true,
-    maxAccess,
-    enabled: true,
-    hasCredentials: true,
-  };
-}
-
 type JsonHandler = (
   deps: ServiceDeps,
   body: Record<string, unknown>,
@@ -224,14 +182,12 @@ function makeJsonHandlers(transferLimit: (tenantId: string) => Promise<number>):
       sendJson(response, 200, {
         share: listed.val.share,
         path: listed.val.path,
-        access: listed.val.access,
         entries: listed.val.entries.map((entry) => ({
           name: entry.name,
           path: entry.path,
           kind: entry.kind,
           size: entry.size,
           modifiedAt: iso(entry.modifiedAt),
-          access: entry.access,
         })),
       });
     },
@@ -247,7 +203,9 @@ function makeJsonHandlers(transferLimit: (tenantId: string) => Promise<number>):
         kind: stats.val.kind,
         size: stats.val.size,
         modifiedAt: iso(stats.val.modifiedAt),
-        access: stats.val.access,
+        createdAt: iso(stats.val.createdAt),
+        owner: stats.val.owner,
+        group: stats.val.group,
       });
     },
 
@@ -325,52 +283,18 @@ function makeJsonHandlers(transferLimit: (tenantId: string) => Promise<number>):
       });
     },
 
-    async 'admin-list'(deps, body, response) {
-      const tenantId = str(body.tenantId);
-      const shareId = str(body.shareId);
-      if (!tenantId || !shareId) return sendJson(response, 400, { error: { type: 'bad_request' } });
-      const listed = await serviceAdminList(deps, tenantId, shareId, str(body.path) || '/');
-      if (!listed.ok) return sendServiceError(response, listed.err);
-      sendJson(response, 200, {
-        path: listed.val.path,
-        entries: listed.val.entries.map((entry) => ({
-          name: entry.name,
-          kind: entry.kind,
-          size: entry.size,
-          modifiedAt: iso(entry.modifiedAt),
-        })),
-      });
-    },
-
-    async 'admin-search'(deps, body, response) {
-      const tenantId = str(body.tenantId);
-      const shareId = str(body.shareId);
-      if (!tenantId || !shareId) return sendJson(response, 400, { error: { type: 'bad_request' } });
-      const found = await serviceAdminSearch(deps, tenantId, shareId, str(body.query));
-      if (!found.ok) return sendServiceError(response, found.err);
-      sendJson(response, 200, { results: found.val.results, truncated: found.val.truncated });
-    },
-
     async 'test-connection'(deps, body, response) {
+      // The connect flow's validation: a person's unsaved credential
+      // crosses the authenticated seam once, is re-validated here at the
+      // trust boundary, and is tried against the STORED share before the
+      // web app seals and saves it.
       const tenantId = str(body.tenantId);
-      const summary = parseSummary(body.summary);
-      if (!tenantId || !summary) {
+      const shareId = str(body.shareId);
+      const credentials = parseShareCredentials(body.credentials);
+      if (!tenantId || !shareId || !credentials) {
         return sendJson(response, 400, { error: { type: 'bad_request' } });
       }
-      const storedShareId = str(body.storedShareId) || null;
-      const credentials =
-        body.credentials === null || body.credentials === undefined
-          ? null
-          : parseShareCredentials(body.credentials);
-      if (body.credentials && !credentials) {
-        return sendJson(response, 400, { error: { type: 'bad_request' } });
-      }
-      const tested = await serviceTestConnection(deps, {
-        tenantId,
-        storedShareId,
-        summary,
-        credentials,
-      });
+      const tested = await serviceTestConnection(deps, tenantId, shareId, credentials);
       if (!tested.ok) return sendServiceError(response, tested.err);
       sendJson(response, 200, { entries: tested.val.entries });
     },

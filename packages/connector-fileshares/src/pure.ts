@@ -1,26 +1,21 @@
 /**
- * The browser-safe slice of the package: the path grammar, the pure ACL
- * evaluator, and the domain types — nothing that touches a socket, the
- * database, or a credential. The admin UI's live path preview imports
- * THIS entry ('@renkei/connector-fileshares/pure') so the client bundle
- * never walks into the protocol backends; the full barrel (index.ts) is
- * for server code and the fileshare worker.
+ * The browser-safe slice of the package: the path grammar and the domain
+ * types — nothing that touches a socket, the database, or a credential.
+ * Client components import THIS entry ('@renkei/connector-fileshares/pure')
+ * so their bundles never walk into the protocol backends; the full barrel
+ * (index.ts) is for server code and the fileshare worker.
  */
 
 export {
-  isAccessLevel,
   isShareProtocol,
-  minAccess,
-  atLeast,
-  type AccessLevel,
-  type AclContext,
+  isToolAccess,
   type EntryKind,
-  type PathRule,
   type RawEntry,
+  type ShareConnection,
   type ShareEntry,
-  type ShareGrant,
   type ShareProtocol,
   type ShareSummary,
+  type ToolAccess,
 } from './types';
 
 export {
@@ -32,11 +27,3 @@ export {
   windowsToUnix,
   type PathError,
 } from './paths';
-
-export {
-  annotateEntries,
-  canListFolder,
-  effectiveAccess,
-  hasAllowedDescendant,
-  layerAccess,
-} from './acl';

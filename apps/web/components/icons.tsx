@@ -32,6 +32,14 @@ export const ICONS = {
   externalLink: 'M14 4h6v6M20 4l-9 9M20 14v6H4V4h6',
   /** An empty checkbox — "start selecting". */
   checkbox: 'M6 5h12a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z',
+  folder: 'M3 19V5h6l2 3h10v11z',
+  folderPlus: 'M3 19V5h6l2 3h10v11zM12 10.5v5M9.5 13h5',
+  upload: 'M12 16V4M8 8l4-4 4 4M5 16v4h14v-4',
+  /** Plain sheet with a folded corner — the fallback file glyph. */
+  file: 'M6 21V3h8l4 4v14zM14 3v4h4',
+  fileText: 'M6 21V3h8l4 4v14zM14 3v4h4M9 12h6M9 16h6',
+  fileSheet: 'M6 21V3h8l4 4v14zM14 3v4h4M9 11h6v7H9zM9 14.5h6M12 11v7',
+  fileImage: 'M6 21V3h8l4 4v14zM14 3v4h4M9.5 11h.01M8 17.5l3-3.5 2 2 1.5-1.5 1.5 2',
 };
 
 export function Icon({ path, className }: { path: string; className?: string }) {

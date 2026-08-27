@@ -45,22 +45,22 @@ let grants: Record<string, GrantRow | undefined> = {};
 let embeddingProvider: string | null = null;
 let readOnly = false;
 let disabledConnectors: string[] = [];
-let fileshareGranted = false;
+/** The caller's file_share_connections rows the exposure aggregate reads. */
+let fileshareConnections: Array<{ tool_access: string; allow_delete: boolean }> = [];
 
 jest.mock('@renkei/db', () => ({
   getDatabase: () => ({
     ok: true,
     val: {
       selectFrom: (table: string) => {
-        // File shares are grant rows in Renkei's own table, not
-        // provider_grants — availability is a joined existence query.
-        if (table === 'file_share_grants') {
+        // File shares are connection rows in Renkei's own table, not
+        // provider_grants — availability is the joined exposure aggregate.
+        if (table === 'file_share_connections') {
           const shareChain = {
             innerJoin: () => shareChain,
             select: () => shareChain,
             where: () => shareChain,
-            limit: () => shareChain,
-            executeTakeFirst: async () => (fileshareGranted ? { share_id: 'share-1' } : undefined),
+            execute: async () => fileshareConnections,
           };
           return shareChain;
         }
@@ -124,7 +124,7 @@ beforeEach(() => {
   embeddingProvider = null;
   readOnly = false;
   disabledConnectors = [];
-  fileshareGranted = false;
+  fileshareConnections = [];
   fetchSpy.mockReset();
   global.fetch = fetchSpy as unknown as typeof fetch;
 });
@@ -222,17 +222,25 @@ describe('listAvailableTools', () => {
     expect(tools.every((tool) => tool.kind === 'read')).toBe(true);
   });
 
-  it('omits every fileshare tool for a caller holding no share grant', async () => {
+  it('omits every fileshare tool for a caller with no connected share', async () => {
     const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
     expect(tools.some((name) => name.startsWith('fileshare_'))).toBe(false);
   });
 
-  it('mounts the fileshare tools on the first grant row', async () => {
-    // No provider_grants involvement: Renkei's own grant table IS the
-    // provisioning signal for this connector.
-    fileshareGranted = true;
+  it('mounts only the read tools for a read-only connection', async () => {
+    // No provider_grants involvement: Renkei's own connections table IS
+    // the provisioning signal for this connector.
+    fileshareConnections = [{ tool_access: 'read', allow_delete: false }];
     const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
     expect(tools).toContain('fileshare_list_shares');
+    expect(tools).toContain('fileshare_read_file');
+    expect(tools).not.toContain('fileshare_request_file_upload');
+    expect(tools).not.toContain('fileshare_delete_entry_preview');
+  });
+
+  it('write and delete opt-ins mount their tool families', async () => {
+    fileshareConnections = [{ tool_access: 'read_write', allow_delete: true }];
+    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
     expect(tools).toContain('fileshare_request_file_upload');
     expect(tools).toContain('fileshare_move_entry');
     expect(tools).toContain('fileshare_rename_entry');
@@ -240,7 +248,7 @@ describe('listAvailableTools', () => {
   });
 
   it('marks the fileshare delete confirm app-only, like every card button', async () => {
-    fileshareGranted = true;
+    fileshareConnections = [{ tool_access: 'read_write', allow_delete: true }];
     const tools = await listAvailableTools('tenant-1', 'subject-1');
     const confirm = tools.find((tool) => tool.name === 'fileshare_delete_entry_confirm');
     expect(confirm?.appOnly).toBe(true);
@@ -249,7 +257,7 @@ describe('listAvailableTools', () => {
   });
 
   it('drops the fileshare act tools in org read-only mode, keeps the reads', async () => {
-    fileshareGranted = true;
+    fileshareConnections = [{ tool_access: 'read_write', allow_delete: true }];
     readOnly = true;
     const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
     expect(tools).toContain('fileshare_list_folder');
@@ -258,7 +266,7 @@ describe('listAvailableTools', () => {
   });
 
   it('drops the fileshare tools when the org admin switches the connector off', async () => {
-    fileshareGranted = true;
+    fileshareConnections = [{ tool_access: 'read_write', allow_delete: true }];
     disabledConnectors = ['fileshares'];
     const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
     expect(tools.some((name) => name.startsWith('fileshare_'))).toBe(false);

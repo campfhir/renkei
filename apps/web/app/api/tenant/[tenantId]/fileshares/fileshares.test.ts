@@ -1,10 +1,10 @@
 /**
  * The file-share REST routes as thin proxies onto the fileshare worker.
- * ACL enforcement itself is pinned in the package's service.test.ts (the
- * worker's authority); what these tests pin is the seam: session-gated
- * entry, faithful forwarding of the caller's subject and paths, and the
- * worker-error → HTTP mapping that keeps this surface answering exactly
- * like the MCP tools — an ungranted share still 404s like a missing one.
+ * Credential resolution itself is pinned in the package's service.test.ts
+ * (the worker's authority); what these tests pin is the seam: session-
+ * gated entry, faithful forwarding of the caller's subject and paths, and
+ * the worker-error → HTTP mapping that keeps this surface answering
+ * exactly like the MCP tools.
  */
 
 jest.mock('@/lib/session', () => ({
@@ -20,7 +20,7 @@ jest.mock('@renkei/connector-fileshares', () => {
   );
   return {
     ...actual,
-    listGrantedShares: jest.fn(),
+    listSharesWithConnection: jest.fn(),
   };
 });
 jest.mock('@/lib/file-shares/service-client', () => {
@@ -49,7 +49,7 @@ import { DELETE as deleteEntry, POST as mutateEntry } from './[shareId]/entries/
 const { getSessionFromRequest } = jest.requireMock<{ getSessionFromRequest: jest.Mock }>(
   '@/lib/session'
 );
-const { listGrantedShares } = jest.requireMock<{ listGrantedShares: jest.Mock }>(
+const { listSharesWithConnection } = jest.requireMock<{ listSharesWithConnection: jest.Mock }>(
   '@renkei/connector-fileshares'
 );
 const client = jest.requireMock<{
@@ -97,8 +97,8 @@ test('every route answers a signed-out request with 401', async () => {
   expect(client.fsReadFile).not.toHaveBeenCalled();
 });
 
-test('the share list is the grants list, verbatim (store-side, no worker)', async () => {
-  listGrantedShares.mockResolvedValue({
+test('the share list marks connections, verbatim (store-side, no worker)', async () => {
+  listSharesWithConnection.mockResolvedValue({
     ok: true,
     val: [
       {
@@ -108,27 +108,39 @@ test('the share list is the grants list, verbatim (store-side, no worker)', asyn
           protocol: 'sftp',
           host: 'nas.example.test',
           shareName: null,
-          hasCredentials: true,
         },
-        grant: { subject: 'auth0|alice', defaultAccess: 'read' },
-        hasRules: true,
+        connection: { username: 'alice', toolAccess: 'read_write', allowDelete: false },
+      },
+      {
+        share: {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'Engineering',
+          protocol: 'smb',
+          host: 'nas2.example.test',
+          shareName: 'eng',
+        },
+        connection: null,
       },
     ],
   });
   const response = await listShares(reqOf('http://x/api'), { params: paramsOf() });
   expect(response.status).toBe(200);
   const body = await response.json();
-  expect(body.shares).toHaveLength(1);
-  expect(body.shares[0]).toMatchObject({ id: SHARE_ID, defaultAccess: 'read', hasRules: true });
+  expect(body.shares).toHaveLength(2);
+  expect(body.shares[0]).toMatchObject({
+    id: SHARE_ID,
+    connection: { username: 'alice', toolAccess: 'read_write', allowDelete: false },
+  });
+  expect(body.shares[1]).toMatchObject({ name: 'Engineering', connection: null });
 });
 
-test("an ungranted share answers the worker's 404, indistinguishable from a missing one", async () => {
-  client.fsListFolder.mockResolvedValue(opError('no_share', undefined, 404));
+test('a share the caller never connected answers 403 with the connect pointer', async () => {
+  client.fsListFolder.mockResolvedValue(opError('not_connected', undefined, 403));
   const response = await listFolder(reqOf('http://x/api?path=/'), {
     params: shareParamsOf(SHARE_ID),
   });
-  expect(response.status).toBe(404);
-  expect((await response.json()).error).toBe('Not found');
+  expect(response.status).toBe(403);
+  expect((await response.json()).error).toContain('Connectors page');
 });
 
 test('folder listings forward the session subject and pass wire entries through', async () => {
@@ -137,7 +149,6 @@ test('folder listings forward the session subject and pass wire entries through'
     val: {
       share: SHARE,
       path: '/',
-      access: 'read',
       entries: [
         {
           name: 'open.txt',
@@ -145,7 +156,6 @@ test('folder listings forward the session subject and pass wire entries through'
           kind: 'file',
           size: 5,
           modifiedAt: null,
-          access: 'read',
         },
       ],
     },
@@ -156,9 +166,8 @@ test('folder listings forward the session subject and pass wire entries through'
   expect(response.status).toBe(200);
   const body = await response.json();
   expect(client.fsListFolder).toHaveBeenCalledWith(TARGET, '/');
-  expect(body.access).toBe('read');
   expect(body.entries).toEqual([
-    { name: 'open.txt', path: '/open.txt', kind: 'file', size: 5, modifiedAt: null, access: 'read' },
+    { name: 'open.txt', path: '/open.txt', kind: 'file', size: 5, modifiedAt: null },
   ]);
 });
 
@@ -181,9 +190,7 @@ test('an unconfigured worker is a 503, never an open fallback', async () => {
 });
 
 test("download relays the worker's refusal and streams its bytes", async () => {
-  client.fsReadFile.mockResolvedValue(
-    opError('forbidden', 'You do not have access to that file.', 403)
-  );
+  client.fsReadFile.mockResolvedValue(opError('access_denied', undefined, 403));
   const refused = await downloadFile(reqOf('http://x/api?path=/closed/file.txt'), {
     params: shareParamsOf(SHARE_ID),
   });
@@ -221,10 +228,8 @@ test('PUT forwards the exact bytes and destination to the worker', async () => {
   expect(new TextDecoder().decode(bytes)).toBe('data');
 });
 
-test("PUT surfaces the worker's read/write refusal as 403", async () => {
-  client.fsWriteFile.mockResolvedValue(
-    opError('forbidden', 'You do not have read/write access at that destination.', 403)
-  );
+test("PUT surfaces the file server's refusal as 403", async () => {
+  client.fsWriteFile.mockResolvedValue(opError('access_denied', undefined, 403));
   const response = await uploadFile(
     reqOf('http://x/api?path=/new.txt', { method: 'PUT', body: 'data' }),
     { params: shareParamsOf(SHARE_ID) }
@@ -232,10 +237,8 @@ test("PUT surfaces the worker's read/write refusal as 403", async () => {
   expect(response.status).toBe(403);
 });
 
-test('folder creation forwards to the worker and relays parent refusals', async () => {
-  client.fsMakeFolder.mockResolvedValue(
-    opError('forbidden', 'You do not have read/write access in the parent folder.', 403)
-  );
+test('folder creation forwards to the worker and relays server refusals', async () => {
+  client.fsMakeFolder.mockResolvedValue(opError('access_denied', undefined, 403));
   const refused = await createFolder(
     reqOf('http://x/api', { method: 'POST', body: JSON.stringify({ path: '/reports/new' }) }),
     { params: shareParamsOf(SHARE_ID) }
@@ -251,20 +254,13 @@ test('folder creation forwards to the worker and relays parent refusals', async 
   expect(client.fsMakeFolder).toHaveBeenCalledWith(TARGET, '/drafts/new');
 });
 
-test("entry deletion relays the worker's gate refusals with their reasons", async () => {
-  client.fsRemoveEntry.mockResolvedValue(
-    opError(
-      'forbidden',
-      'Access rules are anchored at or under that path (/old.txt), so it cannot be deleted — ' +
-        'an administrator must remove those rules first.',
-      403
-    )
-  );
-  const anchored = await deleteEntry(reqOf('http://x/api?path=/old.txt', { method: 'DELETE' }), {
+test("entry deletion relays the file server's refusal", async () => {
+  client.fsRemoveEntry.mockResolvedValue(opError('access_denied', undefined, 403));
+  const refused = await deleteEntry(reqOf('http://x/api?path=/old.txt', { method: 'DELETE' }), {
     params: shareParamsOf(SHARE_ID),
   });
-  expect(anchored.status).toBe(403);
-  expect(String((await anchored.json()).error)).toContain('administrator');
+  expect(refused.status).toBe(403);
+  expect(String((await refused.json()).error)).toContain('credentials');
 });
 
 test('a non-empty folder answers 409, and a clean delete succeeds', async () => {
@@ -283,9 +279,7 @@ test('a non-empty folder answers 409, and a clean delete succeeds', async () => 
 });
 
 test('move forwards both ends; clobber and destination refusals keep their statuses', async () => {
-  client.fsMoveEntry.mockResolvedValue(
-    opError('forbidden', 'You do not have read/write access at the destination.', 403)
-  );
+  client.fsMoveEntry.mockResolvedValue(opError('access_denied', undefined, 403));
   const refused = await mutateEntry(
     reqOf('http://x/api', {
       method: 'POST',

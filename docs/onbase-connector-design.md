@@ -257,4 +257,4 @@ One decision this document did not anticipate: multi-environment support
 complicated — the connector is single-instance per tenant, exactly the
 `connector_configs`/`provider_grants` shape described above. The only
 schema change was additive: `pending_oidc_signin.code_verifier`
-(migration 062) so the PKCE verifier survives the authorize redirect.
+(migration 063) so the PKCE verifier survives the authorize redirect.

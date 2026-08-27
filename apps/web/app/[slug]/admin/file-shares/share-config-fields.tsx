@@ -3,9 +3,9 @@
 /**
  * The share config form fields, shared by the create form (list page) and
  * the edit form (detail page) so the two can never drift. Pure controlled
- * fields over a ShareDraft; the credential inputs are WRITE-ONLY — they
- * start empty even when a credential is stored, and leaving them empty
- * means "keep what is saved" (the placeholder says so).
+ * fields over a ShareDraft — connection details only: no credential ever
+ * appears on the admin surface, because every person connects a share with
+ * their own account from the connectors page.
  *
  * The root path input translates pasted Windows/UNC spellings live via
  * the same functions the server validates with, so the preview is honest.
@@ -24,13 +24,7 @@ export interface ShareDraft {
   shareName: string;
   rootPath: string;
   caseInsensitive: boolean;
-  maxAccess: 'read' | 'read_write';
   enabled: boolean;
-  username: string;
-  password: string;
-  domain: string;
-  privateKey: string;
-  passphrase: string;
 }
 
 export function emptyDraft(): ShareDraft {
@@ -42,17 +36,11 @@ export function emptyDraft(): ShareDraft {
     shareName: '',
     rootPath: '/',
     caseInsensitive: true,
-    maxAccess: 'read',
     enabled: true,
-    username: '',
-    password: '',
-    domain: '',
-    privateKey: '',
-    passphrase: '',
   };
 }
 
-/** What the admin routes accept — credential fields only when filled. */
+/** What the admin routes accept. */
 export function draftPayload(draft: ShareDraft): Record<string, unknown> {
   return {
     name: draft.name,
@@ -62,13 +50,7 @@ export function draftPayload(draft: ShareDraft): Record<string, unknown> {
     shareName: draft.shareName || undefined,
     rootPath: draft.rootPath,
     caseInsensitive: draft.caseInsensitive,
-    maxAccess: draft.maxAccess,
     enabled: draft.enabled,
-    ...(draft.username ? { username: draft.username } : {}),
-    ...(draft.password ? { password: draft.password } : {}),
-    ...(draft.domain ? { domain: draft.domain } : {}),
-    ...(draft.privateKey ? { privateKey: draft.privateKey } : {}),
-    ...(draft.passphrase ? { passphrase: draft.passphrase } : {}),
   };
 }
 
@@ -83,16 +65,12 @@ export function pathPreview(raw: string): { text: string; error: boolean } {
 export default function ShareConfigFields({
   draft,
   onChange,
-  hasStoredCredentials,
 }: {
   draft: ShareDraft;
   onChange: (draft: ShareDraft) => void;
-  /** True on the edit form when a credential is already sealed away. */
-  hasStoredCredentials: boolean;
 }) {
   const set = (patch: Partial<ShareDraft>) => onChange({ ...draft, ...patch });
   const preview = pathPreview(draft.rootPath);
-  const credentialPlaceholder = hasStoredCredentials ? '•••••• (saved — leave blank to keep)' : '';
 
   return (
     <div className="space-y-3">
@@ -166,93 +144,14 @@ export default function ShareConfigFields({
             {preview.text} — Windows paths (\\server\share\folder, C:\folder) are translated.
           </span>
         </label>
-        <label className="block text-sm font-medium">
-          Share-wide ceiling
-          <select
-            className={`${inputClass} mt-1 block w-full`}
-            value={draft.maxAccess}
-            onChange={(event) =>
-              set({ maxAccess: event.target.value === 'read_write' ? 'read_write' : 'read' })
-            }
-          >
-            <option value="read">Read only</option>
-            <option value="read_write">Read and write</option>
-          </select>
-        </label>
         <label className="mt-6 flex items-center gap-2 text-sm font-medium">
           <input
             type="checkbox"
             checked={draft.caseInsensitive}
             onChange={(event) => set({ caseInsensitive: event.target.checked })}
           />
-          Match rule paths case-insensitively
+          Paths on this server match case-insensitively
         </label>
-      </div>
-
-      <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
-        <p className="text-sm font-medium">Service credential</p>
-        <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
-          Stored encrypted; used only server-side. Renkei&apos;s own grants decide who may use it.
-          {hasStoredCredentials ? ' Leave every field blank to keep the saved credential.' : ''}
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block text-sm font-medium">
-            Username
-            <input
-              className={`${inputClass} mt-1 block w-full`}
-              value={draft.username}
-              placeholder={credentialPlaceholder}
-              autoComplete="off"
-              onChange={(event) => set({ username: event.target.value })}
-            />
-          </label>
-          <label className="block text-sm font-medium">
-            Password
-            <input
-              type="password"
-              className={`${inputClass} mt-1 block w-full`}
-              value={draft.password}
-              placeholder={credentialPlaceholder}
-              autoComplete="new-password"
-              onChange={(event) => set({ password: event.target.value })}
-            />
-          </label>
-          {draft.protocol === 'smb' ? (
-            <label className="block text-sm font-medium">
-              Domain (optional)
-              <input
-                className={`${inputClass} mt-1 block w-full`}
-                value={draft.domain}
-                autoComplete="off"
-                onChange={(event) => set({ domain: event.target.value })}
-              />
-            </label>
-          ) : (
-            <>
-              <label className="block text-sm font-medium sm:col-span-2">
-                Private key (optional, instead of a password)
-                <textarea
-                  className={`${inputClass} mt-1 block h-24 w-full font-mono text-xs`}
-                  value={draft.privateKey}
-                  placeholder={
-                    hasStoredCredentials ? credentialPlaceholder : '-----BEGIN ... KEY-----'
-                  }
-                  onChange={(event) => set({ privateKey: event.target.value })}
-                />
-              </label>
-              <label className="block text-sm font-medium">
-                Key passphrase (optional)
-                <input
-                  type="password"
-                  className={`${inputClass} mt-1 block w-full`}
-                  value={draft.passphrase}
-                  autoComplete="new-password"
-                  onChange={(event) => set({ passphrase: event.target.value })}
-                />
-              </label>
-            </>
-          )}
-        </div>
       </div>
     </div>
   );

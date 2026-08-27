@@ -1,9 +1,9 @@
 /**
  * Store round-trip against a real Postgres with the migrated schema —
  * FILESHARE_TEST_DATABASE_URL (or DATABASE_URL) points at it; without one
- * the suite skips itself. Live SQL is the point: the rule upsert leans on
- * an expression index ON CONFLICT cannot name, and grant deletion leans on
- * a MATCH SIMPLE composite FK — both behaviors a mocked chain would just
+ * the suite skips itself. Live SQL is the point: the connection upsert
+ * leans on a named PK constraint for ON CONFLICT, and share deletion leans
+ * on the connections FK cascade — behaviors a mocked chain would just
  * restate rather than verify.
  */
 
@@ -12,22 +12,19 @@ import { Kysely, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
 import type { DB } from '@renkei/db';
 import {
-  ACL_CACHE_TTL_MS,
-  clearFileShareCache,
   createShare,
-  deleteGrant,
-  deleteRule,
+  deleteConnection,
   deleteShare,
-  getAclContext,
+  getConnection,
   getShare,
-  hasAnyGrant,
-  listGrantedShares,
-  listGrants,
-  listRulePathsUnder,
-  listAllRules,
-  listRules,
-  upsertGrant,
-  upsertRule,
+  listConnectedShares,
+  listShares,
+  listSharesWithConnection,
+  readConnectionCiphertext,
+  resolveToolExposure,
+  updateConnectionExposure,
+  updateShare,
+  upsertConnection,
 } from './store';
 import type { ShareInput } from './store';
 
@@ -45,8 +42,16 @@ function shareInput(name: string): ShareInput {
     shareName: null,
     rootPath: '/srv/data',
     caseInsensitive: false,
-    maxAccess: 'read_write',
     enabled: true,
+  };
+}
+
+function connectionInput(username = 'alice') {
+  return {
+    encryptedCredentials: `sealed-${username}`,
+    username,
+    toolAccess: 'read' as const,
+    allowDelete: false,
   };
 }
 
@@ -71,187 +76,152 @@ describeLive('file-share store (live database)', () => {
     await db.destroy();
   });
 
-  beforeEach(() => clearFileShareCache());
-
-  it('creates, reads, updates and deletes a share', async () => {
-    const created = await createShare(db, tenantId, shareInput('crud'), 'sealed-credential');
+  it('round-trips a share through create, update, list and get', async () => {
+    const created = await createShare(db, tenantId, shareInput('Finance'));
     expect(created.ok).toBe(true);
     if (!created.ok) return;
+    const shareId = created.val;
 
-    const fetched = await getShare(db, tenantId, created.val);
+    const listed = await listShares(db, tenantId);
+    expect(listed.ok).toBe(true);
+    if (listed.ok) {
+      expect(listed.val.map((row) => row.summary.name)).toContain('Finance');
+    }
+
+    const updated = await updateShare(db, tenantId, shareId, {
+      ...shareInput('Finance'),
+      host: 'nas2.example.test',
+      enabled: false,
+    });
+    expect(updated).toMatchObject({ ok: true, val: true });
+
+    const fetched = await getShare(db, tenantId, shareId);
     expect(fetched.ok).toBe(true);
     if (fetched.ok) {
-      expect(fetched.val?.summary.name).toBe('crud');
-      expect(fetched.val?.summary.hasCredentials).toBe(true);
+      expect(fetched.val?.summary.host).toBe('nas2.example.test');
+      expect(fetched.val?.summary.enabled).toBe(false);
     }
 
-    const duplicate = await createShare(db, tenantId, shareInput('crud'), null);
-    expect(duplicate.ok).toBe(false);
-    if (!duplicate.ok) expect(duplicate.err.type).toBe('DUPLICATE_NAME');
-
-    const deleted = await deleteShare(db, tenantId, created.val);
-    expect(deleted.ok).toBe(true);
-    if (deleted.ok) expect(deleted.val).toBe(true);
+    const removed = await deleteShare(db, tenantId, shareId);
+    expect(removed).toMatchObject({ ok: true, val: true });
   });
 
-  it('grants gate discovery and availability', async () => {
-    const created = await createShare(db, tenantId, shareInput('discovery'), 'cred');
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    const shareId = created.val;
-
-    const before = await hasAnyGrant(db, tenantId, SUBJECT);
-    expect(before.ok && before.val).toBe(false);
-
-    const noContext = await getAclContext(db, tenantId, shareId, SUBJECT);
-    expect(noContext.ok).toBe(true);
-    if (noContext.ok) expect(noContext.val).toBeNull();
-
-    await upsertGrant(db, tenantId, shareId, SUBJECT, 'read', 'admin-subject');
-
-    const after = await hasAnyGrant(db, tenantId, SUBJECT);
-    expect(after.ok && after.val).toBe(true);
-
-    const granted = await listGrantedShares(db, tenantId, SUBJECT);
-    expect(granted.ok).toBe(true);
-    if (granted.ok) {
-      expect(granted.val).toHaveLength(1);
-      expect(granted.val[0]?.grant.defaultAccess).toBe('read');
-      expect(granted.val[0]?.hasRules).toBe(false);
-    }
-
-    await deleteShare(db, tenantId, shareId);
-  });
-
-  it('splits rule layers, upserts against the expression index, cascades on revoke', async () => {
-    const created = await createShare(db, tenantId, shareInput('rules'), 'cred');
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    const shareId = created.val;
-    await upsertGrant(db, tenantId, shareId, SUBJECT, 'read_write', 'admin-subject');
-
-    // One rule per layer at the same path; the layers must not collide.
-    await upsertRule(db, tenantId, shareId, null, '/finance', 'none', 'admin-subject');
-    await upsertRule(db, tenantId, shareId, SUBJECT, '/finance', 'read', 'admin-subject');
-
-    // Upsert on the same (layer, path) must update, not duplicate.
-    await upsertRule(db, tenantId, shareId, null, '/finance', 'read', 'admin-subject');
-    const shareLayer = await listRules(db, tenantId, shareId, null);
-    expect(shareLayer.ok).toBe(true);
-    if (shareLayer.ok) {
-      expect(shareLayer.val).toHaveLength(1);
-      expect(shareLayer.val[0]?.access).toBe('read');
-    }
-
-    clearFileShareCache();
-    const context = await getAclContext(db, tenantId, shareId, SUBJECT);
-    expect(context.ok).toBe(true);
-    if (context.ok && context.val) {
-      expect(context.val.shareRules).toEqual([{ path: '/finance', access: 'read' }]);
-      expect(context.val.userRules).toEqual([{ path: '/finance', access: 'read' }]);
-    }
-
-    // The all-layers read returns both rows at once, subjects attached.
-    const allRules = await listAllRules(db, tenantId, shareId);
-    expect(allRules.ok).toBe(true);
-    if (allRules.ok) {
-      expect(allRules.val.map((rule) => rule.subject).sort()).toEqual([SUBJECT, null].sort());
-    }
-
-    // Revoking the grant must cascade the user layer and leave the share layer.
-    await deleteGrant(db, tenantId, shareId, SUBJECT);
-    const userLayer = await listRules(db, tenantId, shareId, SUBJECT);
-    const shareLayerAfter = await listRules(db, tenantId, shareId, null);
-    expect(userLayer.ok && userLayer.val.length).toBe(0);
-    expect(shareLayerAfter.ok && shareLayerAfter.val.length).toBe(1);
-
-    const grants = await listGrants(db, tenantId, shareId);
-    expect(grants.ok && grants.val.length).toBe(0);
-
-    await deleteShare(db, tenantId, shareId);
-  });
-
-  it('serves the ACL context from cache within the TTL and clears on demand', async () => {
-    const created = await createShare(db, tenantId, shareInput('cache'), 'cred');
-    expect(created.ok).toBe(true);
-    if (!created.ok) return;
-    const shareId = created.val;
-    await upsertGrant(db, tenantId, shareId, SUBJECT, 'read', 'admin-subject');
-
-    const first = await getAclContext(db, tenantId, shareId, SUBJECT);
+  it('rejects a duplicate share name per tenant', async () => {
+    const first = await createShare(db, tenantId, shareInput('Dupe'));
     expect(first.ok).toBe(true);
-
-    // A direct DB write (no cache clear) must NOT show up within the TTL…
-    await db
-      .updateTable('file_share_grants')
-      .set({ default_access: 'read_write' })
-      .where('share_id', '=', shareId)
-      .where('subject', '=', SUBJECT)
-      .execute();
-    const stale = await getAclContext(db, tenantId, shareId, SUBJECT);
-    expect(stale.ok && stale.val?.grant.defaultAccess).toBe('read');
-    expect(ACL_CACHE_TTL_MS).toBeGreaterThan(0);
-
-    // …and must show up the moment the cache is dropped.
-    clearFileShareCache();
-    const fresh = await getAclContext(db, tenantId, shareId, SUBJECT);
-    expect(fresh.ok && fresh.val?.grant.defaultAccess).toBe('read_write');
-
-    await deleteShare(db, tenantId, shareId);
+    const second = await createShare(db, tenantId, shareInput('Dupe'));
+    expect(second).toMatchObject({ ok: false, err: { type: 'DUPLICATE_NAME' } });
+    if (first.ok) await deleteShare(db, tenantId, first.val);
   });
 
-  it('finds every subject’s rules anchored under a path', async () => {
-    const created = await createShare(db, tenantId, shareInput('anchored'), 'cred');
+  it('round-trips a connection and updates exposure in place', async () => {
+    const created = await createShare(db, tenantId, shareInput('Engineering'));
     expect(created.ok).toBe(true);
     if (!created.ok) return;
     const shareId = created.val;
-    await upsertGrant(db, tenantId, shareId, SUBJECT, 'read_write', 'admin-subject');
-    await upsertGrant(db, tenantId, shareId, 'other-subject', 'read', 'admin-subject');
 
-    // One share-layer rule, one rule belonging to ANOTHER subject — the
-    // move/delete guard must see both, not just the caller's layers.
-    await upsertRule(db, tenantId, shareId, null, '/vault/shared', 'read', 'admin-subject');
-    await upsertRule(
+    const stored = await upsertConnection(db, tenantId, shareId, SUBJECT, connectionInput());
+    expect(stored.ok).toBe(true);
+
+    const connection = await getConnection(db, tenantId, shareId, SUBJECT);
+    expect(connection).toMatchObject({
+      ok: true,
+      val: { username: 'alice', toolAccess: 'read', allowDelete: false },
+    });
+
+    const ciphertext = await readConnectionCiphertext(db, tenantId, shareId, SUBJECT);
+    expect(ciphertext).toMatchObject({ ok: true, val: 'sealed-alice' });
+
+    // Re-upsert replaces the credential and choice in one statement.
+    const replaced = await upsertConnection(db, tenantId, shareId, SUBJECT, {
+      ...connectionInput('alice2'),
+      toolAccess: 'read_write',
+    });
+    expect(replaced.ok).toBe(true);
+    const after = await getConnection(db, tenantId, shareId, SUBJECT);
+    expect(after).toMatchObject({
+      ok: true,
+      val: { username: 'alice2', toolAccess: 'read_write' },
+    });
+
+    const exposureOnly = await updateConnectionExposure(
       db,
       tenantId,
       shareId,
-      'other-subject',
-      '/Vault/secret',
-      'none',
-      'admin-subject'
+      SUBJECT,
+      'read_write',
+      true
     );
-    await upsertRule(db, tenantId, shareId, SUBJECT, '/elsewhere', 'read', 'admin-subject');
+    expect(exposureOnly).toMatchObject({ ok: true, val: true });
+    const kept = await readConnectionCiphertext(db, tenantId, shareId, SUBJECT);
+    expect(kept).toMatchObject({ ok: true, val: 'sealed-alice2' });
 
-    const anchored = await listRulePathsUnder(db, tenantId, shareId, '/vault', true);
-    expect(anchored.ok).toBe(true);
-    if (anchored.ok) {
-      expect(anchored.val).toEqual(['/Vault/secret', '/vault/shared']);
-    }
-
-    // Case folding is the share's choice: sensitive matching drops /Vault.
-    const sensitive = await listRulePathsUnder(db, tenantId, shareId, '/vault', false);
-    expect(sensitive.ok && sensitive.val).toEqual(['/vault/shared']);
-
-    const clean = await listRulePathsUnder(db, tenantId, shareId, '/clean', true);
-    expect(clean.ok && clean.val).toEqual([]);
+    const gone = await deleteConnection(db, tenantId, shareId, SUBJECT);
+    expect(gone).toMatchObject({ ok: true, val: true });
+    const missing = await getConnection(db, tenantId, shareId, SUBJECT);
+    expect(missing).toMatchObject({ ok: true, val: null });
 
     await deleteShare(db, tenantId, shareId);
   });
 
-  it('lets a rule delete round-trip', async () => {
-    const created = await createShare(db, tenantId, shareInput('rule-del'), 'cred');
+  it('lists all enabled shares with this subject connection-marked', async () => {
+    const a = await createShare(db, tenantId, shareInput('Alpha'));
+    const b = await createShare(db, tenantId, shareInput('Beta'));
+    const off = await createShare(db, tenantId, { ...shareInput('Gamma'), enabled: false });
+    expect(a.ok && b.ok && off.ok).toBe(true);
+    if (!a.ok || !b.ok || !off.ok) return;
+
+    await upsertConnection(db, tenantId, a.val, SUBJECT, {
+      ...connectionInput(),
+      toolAccess: 'read_write',
+      allowDelete: true,
+    });
+
+    const withConnection = await listSharesWithConnection(db, tenantId, SUBJECT);
+    expect(withConnection.ok).toBe(true);
+    if (withConnection.ok) {
+      const names = withConnection.val.map((entry) => entry.share.name);
+      expect(names).toEqual(expect.arrayContaining(['Alpha', 'Beta']));
+      expect(names).not.toContain('Gamma');
+      const alpha = withConnection.val.find((entry) => entry.share.name === 'Alpha');
+      const beta = withConnection.val.find((entry) => entry.share.name === 'Beta');
+      expect(alpha?.connection).toMatchObject({ toolAccess: 'read_write', allowDelete: true });
+      expect(beta?.connection).toBeNull();
+    }
+
+    const connected = await listConnectedShares(db, tenantId, SUBJECT);
+    expect(connected.ok).toBe(true);
+    if (connected.ok) {
+      expect(connected.val.map((entry) => entry.share.name)).toEqual(['Alpha']);
+    }
+
+    const exposure = await resolveToolExposure(db, tenantId, SUBJECT);
+    expect(exposure).toMatchObject({ ok: true, val: { read: true, write: true, del: true } });
+
+    // A disabled share's connection stops counting toward exposure.
+    await updateShare(db, tenantId, a.val, { ...shareInput('Alpha'), enabled: false });
+    const afterDisable = await resolveToolExposure(db, tenantId, SUBJECT);
+    expect(afterDisable).toMatchObject({
+      ok: true,
+      val: { read: false, write: false, del: false },
+    });
+
+    for (const id of [a.val, b.val, off.val]) await deleteShare(db, tenantId, id);
+  });
+
+  it('share deletion cascades to its connections', async () => {
+    const created = await createShare(db, tenantId, shareInput('Doomed'));
     expect(created.ok).toBe(true);
     if (!created.ok) return;
-    const shareId = created.val;
-    await upsertGrant(db, tenantId, shareId, SUBJECT, 'read', 'admin-subject');
-    await upsertRule(db, tenantId, shareId, SUBJECT, '/x', 'none', 'admin-subject');
+    await upsertConnection(db, tenantId, created.val, SUBJECT, connectionInput());
 
-    const rules = await listRules(db, tenantId, shareId, SUBJECT);
-    expect(rules.ok).toBe(true);
-    if (!rules.ok || rules.val.length !== 1) return;
-
-    const removed = await deleteRule(db, tenantId, shareId, rules.val[0].id);
-    expect(removed.ok && removed.val).toBe(true);
-    await deleteShare(db, tenantId, shareId);
+    await deleteShare(db, tenantId, created.val);
+    const orphan = await db
+      .selectFrom('file_share_connections')
+      .select('share_id')
+      .where('tenant_id', '=', tenantId)
+      .where('share_id', '=', created.val)
+      .executeTakeFirst();
+    expect(orphan).toBeUndefined();
   });
 });

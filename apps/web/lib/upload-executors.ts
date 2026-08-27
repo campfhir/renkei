@@ -298,11 +298,11 @@ async function outlookDraftAttachment(slot: UploadSlotRow, bytes: Buffer): Promi
 }
 
 /**
- * File-share write: the destination is a share Renkei itself gates, so the
- * FULL ACL evaluation re-runs at byte-arrival time — the grant may have
- * been narrowed between slot mint and POST, and a slot must never outlive
- * the access that minted it. The fileshare worker performs that check and
- * the write in one call; this executor only names the destination.
+ * File-share write: the fileshare worker resolves the CALLER'S own stored
+ * credential at byte-arrival time — a connection removed between slot mint
+ * and POST means the write fails, since a slot must never outlive the
+ * access that minted it — and the file server judges the write as that
+ * account. This executor only names the destination.
  */
 async function fileshareFile(
   _db: Kysely<DB>,
@@ -321,11 +321,14 @@ async function fileshareFile(
     new Uint8Array(bytes)
   );
   if (!written.ok) {
-    if (written.err.kind === 'op' && written.err.type === 'no_share') {
-      return { ok: false, detail: 'That share is no longer available to you.' };
+    if (
+      written.err.kind === 'op' &&
+      (written.err.type === 'no_share' || written.err.type === 'not_connected')
+    ) {
+      return { ok: false, detail: 'That share is no longer connected for you.' };
     }
-    if (written.err.kind === 'op' && written.err.type === 'forbidden') {
-      return { ok: false, detail: 'You no longer have read/write access at that destination.' };
+    if (written.err.kind === 'op' && written.err.type === 'access_denied') {
+      return { ok: false, detail: 'The file server refused the write with your credentials.' };
     }
     return { ok: false, detail: clientFailure(written.err).message };
   }

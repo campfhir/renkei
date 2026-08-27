@@ -1,10 +1,10 @@
 /**
  * Reachability test for the OnBase configuration — operator-gated, and it
  * tests the UNSAVED form payload, falling back to the stored row for
- * anything the body omits (the file-shares test-connection discipline: the
- * admin is testing what they are about to save). The actual dialing
- * happens in the OnBase worker; a failed test is a successful request, so
- * failures come back as ok:false fields at HTTP 200.
+ * anything the body omits: the admin is testing what they are ABOUT to
+ * save, not what was saved last. The actual dialing happens in the OnBase
+ * worker; a failed test is a successful request, so failures come back as
+ * ok:false fields at HTTP 200.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
