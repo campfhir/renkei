@@ -189,6 +189,11 @@ export async function openSftpBackend(
           kind: stats.isDirectory ? 'dir' : 'file',
           size: stats.isDirectory ? null : stats.size,
           modifiedAt: Number.isFinite(stats.modifyTime) ? new Date(stats.modifyTime) : null,
+          // SFTPv3 attrs carry numeric ids and no birth time; report the
+          // ids as-is rather than pretending to know names.
+          createdAt: null,
+          owner: Number.isFinite(stats.uid) ? `uid ${stats.uid}` : null,
+          group: Number.isFinite(stats.gid) ? `gid ${stats.gid}` : null,
         });
       } catch (cause) {
         const info = mapError('stat', cause);

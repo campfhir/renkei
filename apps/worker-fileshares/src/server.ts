@@ -203,6 +203,9 @@ function makeJsonHandlers(transferLimit: (tenantId: string) => Promise<number>):
         kind: stats.val.kind,
         size: stats.val.size,
         modifiedAt: iso(stats.val.modifiedAt),
+        createdAt: iso(stats.val.createdAt),
+        owner: stats.val.owner,
+        group: stats.val.group,
       });
     },
 

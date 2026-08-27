@@ -61,6 +61,14 @@ export interface RawEntry {
   kind: EntryKind;
   size: number | null;
   modifiedAt: Date | null;
+  /**
+   * Stat-only extras, absent from listings and null where the protocol
+   * has nothing to say: SFTP reports numeric uid/gid but no birth time;
+   * SMB reports a creation time but no owner without a security query.
+   */
+  createdAt?: Date | null;
+  owner?: string | null;
+  group?: string | null;
 }
 
 /** A directory entry with its share-rooted path. */

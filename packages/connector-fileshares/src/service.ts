@@ -155,6 +155,10 @@ export interface EntryDetails {
   kind: EntryKind;
   size: number | null;
   modifiedAt: Date | null;
+  /** Null where the protocol has nothing to say (see RawEntry). */
+  createdAt: Date | null;
+  owner: string | null;
+  group: string | null;
 }
 
 export async function serviceStatEntry(
@@ -175,6 +179,9 @@ export async function serviceStatEntry(
     kind: stats.val.kind,
     size: stats.val.size,
     modifiedAt: stats.val.modifiedAt,
+    createdAt: stats.val.createdAt ?? null,
+    owner: stats.val.owner ?? null,
+    group: stats.val.group ?? null,
   });
 }
 

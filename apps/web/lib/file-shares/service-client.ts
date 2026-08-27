@@ -44,6 +44,9 @@ export interface WireStat {
   kind: EntryKind;
   size: number | null;
   modifiedAt: string | null;
+  createdAt: string | null;
+  owner: string | null;
+  group: string | null;
 }
 
 export interface WireRemovePreview {
@@ -218,6 +221,9 @@ export async function fsStatEntry(
       kind,
       size: sizeOf(value.size),
       modifiedAt: optStr(value.modifiedAt) ?? null,
+      createdAt: optStr(value.createdAt) ?? null,
+      owner: optStr(value.owner) ?? null,
+      group: optStr(value.group) ?? null,
     },
   };
 }

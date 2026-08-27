@@ -269,6 +269,9 @@ export function registerFileshareTools(
         `Type: ${entry.kind === 'dir' ? 'folder' : 'file'}`,
         ...(entry.size !== null ? [`Size: ${entry.size} bytes`] : []),
         ...(entry.modifiedAt ? [`Modified: ${entry.modifiedAt}`] : []),
+        ...(entry.createdAt ? [`Created: ${entry.createdAt}`] : []),
+        ...(entry.owner ? [`Owner: ${entry.owner}`] : []),
+        ...(entry.group ? [`Group: ${entry.group}`] : []),
       ];
       return textResult(lines.join('\n'));
     }

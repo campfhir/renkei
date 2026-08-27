@@ -259,6 +259,11 @@ export function openSmbBackend(
           kind: dir ? 'dir' : 'file',
           size: dir ? null : fieldNumber(stats, 'size'),
           modifiedAt: fieldDate(stats, 'mtime'),
+          // SMB2 reports a creation time; ownership would need a security
+          // descriptor query this library does not make.
+          createdAt: fieldDate(stats, 'birthtime'),
+          owner: null,
+          group: null,
         });
       } catch (cause) {
         const info = mapError('stat', cause);
