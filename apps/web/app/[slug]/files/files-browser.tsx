@@ -169,16 +169,29 @@ function PathBar({ path, onNavigate }: { path: string; onNavigate: (path: string
               }
             }}
             aria-label="Path"
-            className={`${inputClass} py-1 pr-11 font-mono text-xs ${
+            className={`${inputClass} py-1 pr-16 font-mono text-xs ${
               error ? 'border-red-400 dark:border-red-700' : ''
             }`}
           />
-          <button
-            type="submit"
-            className="absolute right-1 top-1/2 -translate-y-1/2 rounded px-2 py-0.5 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/40"
-          >
-            Go
-          </button>
+          <span className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+            <button
+              type="submit"
+              className="rounded px-1.5 py-0.5 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/40"
+            >
+              Go
+            </button>
+            <button
+              type="button"
+              aria-label="Cancel path entry"
+              onClick={() => {
+                setEditing(false);
+                setError(null);
+              }}
+              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+            >
+              <Icon path={ICONS.close} className="h-3.5 w-3.5" />
+            </button>
+          </span>
           {error ? (
             // Anchored popover, not inline text: the toolbar row must not
             // reflow around a validation message.
@@ -190,17 +203,6 @@ function PathBar({ path, onNavigate }: { path: string; onNavigate: (path: string
             </span>
           ) : null}
         </span>
-        <button
-          type="button"
-          aria-label="Cancel path entry"
-          onClick={() => {
-            setEditing(false);
-            setError(null);
-          }}
-          className="rounded-md p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-        >
-          <Icon path={ICONS.close} className="h-3.5 w-3.5" />
-        </button>
       </form>
     );
   }
