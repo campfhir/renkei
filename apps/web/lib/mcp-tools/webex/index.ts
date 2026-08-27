@@ -135,14 +135,16 @@ const PARENT_ID_HINT =
  * A browser link to a WebEx space, from the API's room id.
  *
  * The id is base64 of a `ciscospark://…/ROOM/<uuid>` URI; the web client
- * opens the space at /spaces/<uuid>. Null when the id doesn't decode to
- * that shape — a receipt with no link beats a link to the wrong place.
+ * opens the space at /space/<uuid> (singular — /spaces/<uuid> lands on the
+ * app shell), the same backend id the webexteams://im?space= deep link
+ * takes. Null when the id doesn't decode to that shape — a receipt with no
+ * link beats a link to the wrong place.
  */
 function webexSpaceUrl(roomId: string): string | null {
   try {
     const decoded = Buffer.from(roomId, 'base64').toString('utf8');
     const match = /\/ROOM\/([0-9a-f-]{36})$/i.exec(decoded);
-    return match ? `https://web.webex.com/spaces/${match[1]}` : null;
+    return match ? `https://web.webex.com/space/${match[1]}` : null;
   } catch {
     return null;
   }
