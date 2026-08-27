@@ -439,10 +439,10 @@ export default function NotificationsList({
       ))}
 
       {/* Sticky multi-select footer — appears with the first selected card.
-          Three rows, three visual weights: the primary-tinted actions
-          (select all/none, mark read/unread) share one look, Cancel is a
-          quiet ghost so it cannot be mistaken for one of them, and Delete
-          alone is red. */}
+          Three rows, three visual weights: select all/none is a neutral
+          toggle, mark read/unread wear the primary tint, Cancel is a quiet
+          ghost so it cannot be mistaken for an action, and Delete alone is
+          red. */}
       {selectionMode ? (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-950/95">
           <div className="mx-auto max-w-3xl space-y-2">
@@ -454,7 +454,7 @@ export default function NotificationsList({
                 <button
                   type="button"
                   onClick={() => setSelected(new Set())}
-                  className="flex items-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/70"
+                  className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
                 >
                   <Icon path={ICONS.checkbox} className="h-4 w-4" />
                   Select none
@@ -463,7 +463,7 @@ export default function NotificationsList({
                 <button
                   type="button"
                   onClick={() => setSelected(new Set(visible.map((row) => row.id)))}
-                  className="flex items-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/70"
+                  className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
                 >
                   <Icon path={ICONS.checkboxChecked} className="h-4 w-4" />
                   Select all
