@@ -585,6 +585,7 @@ export interface OperatorSessions {
 }
 
 export interface PendingOidcSignin {
+  code_verifier: string | null;
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
   id: string;

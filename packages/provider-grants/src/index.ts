@@ -30,6 +30,7 @@ export {
 } from './atlassian';
 export { WEBEX_USER, WebexUserAdapter } from './webex';
 export { ZOOM, ZoomAdapter } from './zoom';
+export { ONBASE, OnBaseAdapter, type OnBaseRefresh } from './onbase';
 export { MICROSOFT, MicrosoftAdapter } from './microsoft';
 export {
   outlookIndexingOf,

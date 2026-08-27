@@ -26,6 +26,7 @@
     "@renkei/connector-atlassian": "workspace:*",
     "@renkei/connector-config": "workspace:*",
     "@renkei/connector-fileshares": "workspace:*",
+    "@renkei/connector-onbase": "workspace:*",
     "@renkei/connector-microsoft": "workspace:*",
     "@renkei/connector-webex": "workspace:*",
     "@renkei/connector-zoom": "workspace:*",

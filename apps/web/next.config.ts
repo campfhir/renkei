@@ -39,6 +39,7 @@ const nextConfig: NextConfig = {
     '@renkei/document-text',
     '@renkei/knowledge',
     '@renkei/connector-fileshares',
+    '@renkei/connector-onbase',
   ],
   // The cleaner-script sandbox: left external so its .wasm file resolves
   // from node_modules at runtime instead of being lost in the bundle.
