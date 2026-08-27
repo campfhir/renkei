@@ -44,8 +44,10 @@ export async function GET(
   }
 
   const config = configResult.val;
-  const setting = (name: string): string | null =>
-    typeof config?.settings[name] === 'string' ? (config.settings[name] as string) : null;
+  const setting = (name: string): string | null => {
+    const value = config?.settings[name];
+    return typeof value === 'string' ? value : null;
+  };
   return NextResponse.json({
     connector: ONBASE_CONNECTOR,
     configured: config !== null,

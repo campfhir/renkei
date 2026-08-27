@@ -40,7 +40,7 @@ export function parseDiscoveryDocument(value: unknown): Result<OnBaseIdpEndpoint
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return err('MALFORMED_DISCOVERY' as const);
   }
-  const record = value as Record<string, unknown>;
+  const record: Record<string, unknown> = { ...value };
   const issuer = stringField(record, 'issuer');
   const authorizationEndpoint = urlField(record, 'authorization_endpoint');
   const tokenEndpoint = urlField(record, 'token_endpoint');

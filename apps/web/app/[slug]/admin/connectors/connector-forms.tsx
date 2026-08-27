@@ -1214,15 +1214,25 @@ function OnBaseForm({ slug, origin }: { slug: string; origin: string | null }) {
         }),
       });
       const data: unknown = await response.json().catch(() => null);
+      const record: Record<string, unknown> =
+        typeof data === 'object' && data !== null ? { ...data } : {};
       if (!response.ok) {
-        const message =
-          typeof data === 'object' && data !== null && 'error' in data
-            ? String((data as { error: unknown }).error)
-            : `Request failed (${response.status})`;
-        setTestResult(message);
+        setTestResult(
+          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`
+        );
         return;
       }
-      setTestResult(data as OnBaseTestResult);
+      const side = (value: unknown): { ok: boolean; error?: string; status?: number; tokenEndpoint?: string } => {
+        const raw: Record<string, unknown> =
+          typeof value === 'object' && value !== null ? { ...value } : {};
+        return {
+          ok: raw.ok === true,
+          ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+          ...(typeof raw.status === 'number' ? { status: raw.status } : {}),
+          ...(typeof raw.tokenEndpoint === 'string' ? { tokenEndpoint: raw.tokenEndpoint } : {}),
+        };
+      };
+      setTestResult({ idp: side(record.idp), api: side(record.api) });
     } catch {
       setTestResult('Could not reach the server');
     } finally {

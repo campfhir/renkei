@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * The OnBase worker exercised end-to-end over real sockets, against fake
  * in-process IdP and OnBase API servers — no containers, no network. What

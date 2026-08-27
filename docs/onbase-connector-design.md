@@ -216,3 +216,45 @@ endpoint returns real file bytes with content negotiation.
    the keyword-overwrite behaviour, that matters.
 4. **Which OnBase version(s)?** The spec is Foundation 26.1. Older servers will
    not have every endpoint here.
+
+---
+
+## As built (v1)
+
+The connector shipped per this document, with the open questions resolved
+so:
+
+1. **Reaching a private host** — none of the three options above. The
+   file-shares connector had meanwhile established a fourth: a dedicated
+   egress worker (`apps/worker-onbase`, mirroring `apps/worker-fileshares`)
+   is the only process that dials the customer's API Server or Hyland IdP —
+   OIDC discovery, the PKCE code exchange, token refresh, Document API
+   calls and content all cross an authenticated internal HTTP seam
+   (`ONBASE_WORKER_URL` / `ONBASE_WORKER_API_KEY`,
+   `apps/web/lib/onbase/service-client.ts`). The web app never resolves or
+   dials the tenant-supplied hosts, so `safe-fetch` is untouched. The
+   worker resolves URLs from the stored tenant config — a caller names a
+   tenant, never a host — and requires HTTPS unless the operator explicitly
+   saved `allowInsecureHttp`.
+2. **Session lifecycle** — still undocumented; handled defensively. Any
+   Document API 401 is treated as expiry however it happened: one forced
+   refresh and a single retry, then the failure surfaces
+   (`apps/web/lib/mcp-tools/onbase/onbase-auth.ts`).
+3. **No test instance** — unchanged. The worker's suite runs against an
+   in-process fake IdP + OnBase server; the tools' suites pin the traps
+   (read-merge-write keywords with the keywordGuid riding the PUT, the
+   3-step upload, 300-on-archive as a refusal). First deployment against a
+   real Foundation server is first contact.
+4. **Versions** — built to the Foundation 26.1 spec; older servers missing
+   endpoints surface their own problem+json detail verbatim.
+
+Deliberate scope cuts, per this document: no deletes, no locks, no
+sensitive-note-text, and knowledge indexing deferred (retrieval-only v1 —
+no content watches).
+
+One decision this document did not anticipate: multi-environment support
+(several OnBase servers per tenant) was considered and **rejected** as too
+complicated — the connector is single-instance per tenant, exactly the
+`connector_configs`/`provider_grants` shape described above. The only
+schema change was additive: `pending_oidc_signin.code_verifier`
+(migration 062) so the PKCE verifier survives the authorize redirect.

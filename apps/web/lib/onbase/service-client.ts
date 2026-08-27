@@ -28,14 +28,13 @@ export type OnBaseClientError =
 
 export type OnBaseClientResult<T> = { ok: true; val: T } | { ok: false; err: OnBaseClientError };
 
-/** The IdP token response, verbatim except for the one field we require. */
+/** The IdP token response, narrowed to the fields Renkei reads. */
 export interface WireTokenResponse {
   access_token: string;
   refresh_token?: string;
   id_token?: string;
   expires_in?: number;
   scope?: string;
-  [key: string]: unknown;
 }
 
 /** One Document API response, enveloped so the upstream status survives. */
@@ -170,7 +169,16 @@ export async function obDiscover(input: {
 
 function tokenResponseOf(value: unknown): OnBaseClientResult<WireTokenResponse> {
   if (!isRecord(value) || typeof value.access_token !== 'string') return malformed();
-  return { ok: true, val: value as WireTokenResponse };
+  return {
+    ok: true,
+    val: {
+      access_token: value.access_token,
+      ...(typeof value.refresh_token === 'string' ? { refresh_token: value.refresh_token } : {}),
+      ...(typeof value.id_token === 'string' ? { id_token: value.id_token } : {}),
+      ...(typeof value.expires_in === 'number' ? { expires_in: value.expires_in } : {}),
+      ...(typeof value.scope === 'string' ? { scope: value.scope } : {}),
+    },
+  };
 }
 
 export async function obExchangeCode(input: {

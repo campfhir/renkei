@@ -40,7 +40,6 @@ import {
   resolveKeywordTypeRef,
   type KeywordUpdate,
   type OnBaseKeywordCollection,
-  type OnBaseKeywordType,
   type OnBaseQueryKeyword,
   type QueryTargetKind,
 } from '@renkei/connector-onbase';
@@ -206,7 +205,7 @@ const keywordValuesSchema = z.object({
 async function resolveConstraints(
   context: MCPToolContext,
   auth: OnBaseAuth,
-  constraints: { type: string; value: string; operator?: string; relation?: string }[]
+  constraints: z.infer<typeof keywordConstraintSchema>[]
 ): Promise<OnBaseQueryKeyword[] | { refusal: string }> {
   const resolved: OnBaseQueryKeyword[] = [];
   for (const constraint of constraints) {
@@ -215,8 +214,8 @@ async function resolveConstraints(
     resolved.push({
       typeId,
       value: constraint.value,
-      ...(constraint.operator ? { operator: constraint.operator as OnBaseQueryKeyword['operator'] } : {}),
-      ...(constraint.relation ? { relation: constraint.relation as OnBaseQueryKeyword['relation'] } : {}),
+      ...(constraint.operator ? { operator: constraint.operator } : {}),
+      ...(constraint.relation ? { relation: constraint.relation } : {}),
     });
   }
   return resolved;
