@@ -6,7 +6,6 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import AutoRefresh from '@/components/auto-refresh';
-import MarkAllRead from './mark-all-read';
 import NotificationsList, { type NotificationCard } from './notifications-list';
 
 /**
@@ -49,10 +48,9 @@ export default async function NotificationsPage({
         .execute()
     : [];
 
-  const unread = rows.filter((row) => row.read_at === null).length;
-
   const cards: NotificationCard[] = rows.map((row) => ({
     id: row.id,
+    kind: row.kind,
     connector: row.connector,
     entity: row.entity,
     headline: row.headline,
@@ -67,10 +65,7 @@ export default async function NotificationsPage({
   return (
     <div className="mx-auto max-w-3xl">
       <AutoRefresh />
-      <div className="mb-1 flex items-center justify-between gap-4">
-        <h1 className="text-xl font-bold">Notifications</h1>
-        {unread > 0 ? <MarkAllRead tenantId={tenant.id} /> : null}
-      </div>
+      <h1 className="mb-1 text-xl font-bold">Notifications</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         What your agents did — the things that changed something, not every step they took.{' '}
         <Link

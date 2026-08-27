@@ -298,6 +298,30 @@ export async function getAgent(
 }
 
 /**
+ * The agent regardless of who is asking, plus who owns it. NOT an access
+ * check — the only legitimate callers are the access resolver in
+ * access-grants.ts (which admits a viewer only through an unexpired grant)
+ * and code that has already proven ownership. Routes go through
+ * resolveAgentAccess, never through this.
+ */
+export async function getAgentWithOwner(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string
+): Promise<{ agent: StoredAgent; ownerSubject: string } | null> {
+  if (!isUuid(agentId)) return null;
+  const row = await db
+    .selectFrom('agents')
+    .select([...AGENT_COLUMNS, 'owner_subject'])
+    .where('tenant_id', '=', tenantId)
+    .where('id', '=', agentId)
+    .executeTakeFirst();
+  if (!row) return null;
+  const agent = await toStored(db, tenantId, row);
+  return agent ? { agent, ownerSubject: row.owner_subject } : null;
+}
+
+/**
  * Extract the ScheduleConfig half of a schedule draft — the draft IS a
  * config plus the kind tag, but serializeScheduleConfig must never see the
  * tag or stray fields.

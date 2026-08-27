@@ -12,10 +12,12 @@
  * A new run, not a mutation of the old one, also keeps the history honest —
  * the failure stays on the record next to the retry.
  *
- * Owner only, like the invoke route's session path: a run executes with the
- * owner's grants, so "who may press this" and "whose credentials does it
- * spend" have to be the same person. An admin reading someone else's run
- * gets a 404 here, not a 403.
+ * Owner or grantee, like the invoke route's session path: an unexpired
+ * access grant (access-grants.ts) exists precisely for this loop — read
+ * the failed run, fix the steps, put the same message back through. The
+ * run still executes on the OWNER's grants; triggered_by_subject records
+ * who pressed the button. Anyone else — an admin reading someone else's
+ * run included — gets a 404 here, not a 403.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -24,6 +26,7 @@ import { agentJobsQueue } from '@renkei/queue';
 import { isAgentStepsDoc } from '@renkei/agents';
 import { createAgentRun } from '@renkei/agents/runs';
 import { getSessionFromRequest } from '@/lib/session';
+import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
 
@@ -43,15 +46,19 @@ export async function POST(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  // Ownership is structural on both halves: the run must be this caller's,
-  // on this agent, in this tenant.
+  // Access is structural on both halves: the caller must resolve to the
+  // agent (owner, or grantee through an unexpired grant), and the run must
+  // be that agent's, in this tenant.
+  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
   const run = await db
     .selectFrom('agent_runs')
     .select(['id', 'status', 'initial_state', 'trigger_id', 'trigger_kind'])
     .where('tenant_id', '=', tenantId)
     .where('agent_id', '=', agentId)
     .where('id', '=', runId)
-    .where('owner_subject', '=', session.subject)
+    .where('owner_subject', '=', access.ownerSubject)
     .executeTakeFirst();
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -66,7 +73,7 @@ export async function POST(
     .select(['id', 'owner_subject', 'steps', 'llm_model_id'])
     .where('tenant_id', '=', tenantId)
     .where('id', '=', agentId)
-    .where('owner_subject', '=', session.subject)
+    .where('owner_subject', '=', access.ownerSubject)
     .executeTakeFirst();
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!isAgentStepsDoc(agent.steps)) {

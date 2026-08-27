@@ -116,7 +116,11 @@ export async function GET(
   });
 }
 
-/** Mark some or all of the caller's notifications read. */
+/**
+ * Mark some or all of the caller's notifications read — or, with
+ * `unread: true`, back to unread (the feed menu's "keep this one in my
+ * face" action).
+ */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ tenantId: string }> }
@@ -129,23 +133,24 @@ export async function POST(
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return NextResponse.json({ error: 'Expected an object' }, { status: 400 });
   }
-  const payload: { ids?: unknown; all?: unknown } = body;
+  const payload: { ids?: unknown; all?: unknown; unread?: unknown } = body;
   const ids = Array.isArray(payload.ids)
     ? payload.ids.filter((id): id is string => typeof id === 'string')
     : null;
   if (!ids && payload.all !== true) {
     return NextResponse.json({ error: 'Expected ids: string[] or all: true' }, { status: 400 });
   }
+  const toUnread = payload.unread === true;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   let update = dbResult.val
     .updateTable('agent_notifications')
-    .set({ read_at: new Date() })
+    .set({ read_at: toUnread ? null : new Date() })
     .where('tenant_id', '=', tenantId)
     .where('subject', '=', session.subject)
-    .where('read_at', 'is', null);
+    .where('read_at', toUnread ? 'is not' : 'is', null);
   // Narrowing by id still carries the tenant and subject predicates, so a
   // borrowed id from someone else's feed updates nothing.
   if (ids) {

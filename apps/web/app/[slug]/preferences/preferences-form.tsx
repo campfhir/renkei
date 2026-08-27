@@ -175,10 +175,11 @@ export default function PreferencesForm({
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
           <h3 className="font-semibold">Runs</h3>
           <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
-            When an agent of yours starts and stops.
+            When an agent of yours starts and stops — and when someone you shared one with changes
+            it.
           </p>
-          {/* Three items: side by side once there is room, so this does not
-              occupy a third of the page to say very little. */}
+          {/* Side by side once there is room, so this does not occupy a
+              third of the page to say very little. */}
           <div className="@container mt-3">
             <div className="grid grid-cols-1 gap-x-6 gap-y-2 @xl:grid-cols-3">
               {(
@@ -186,6 +187,11 @@ export default function PreferencesForm({
                   ['runStarted', 'A run starts', 'Frequent, and rarely the interesting part.'],
                   ['runFinished', 'A run finishes', null],
                   ['runFailed', 'A run fails', null],
+                  [
+                    'agentEditedByOthers',
+                    'Someone edits a shared agent of yours',
+                    'People you granted access to; edits land in the audit trail either way.',
+                  ],
                 ] as const
               ).map(([key, label, hint]) => (
                 <label key={key} className="flex items-start gap-2 text-sm">

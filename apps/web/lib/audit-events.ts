@@ -30,6 +30,8 @@ export type AuditAction =
   | 'agent.deleted'
   | 'agent.shared'
   | 'agent.unshared'
+  | 'agent.access_granted'
+  | 'agent.access_revoked'
   | 'agent.copied'
   | 'settings.updated'
   | 'sanitizer.script_saved'

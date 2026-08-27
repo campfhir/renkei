@@ -13,10 +13,13 @@
  * swipe-to-delete and long-press selection; on real phones the touch
  * handlers fought scrolling and left cards stuck half-swiped, so every
  * action now lives in one place:
- *  - Click a card         → opens the thing it is about (ref_url), new tab.
- *  - The ⋯ menu           → Open <thing> / Show run / Select / Delete.
+ *  - Click a card         → opens the thing it is about (ref_url), new tab,
+ *    and marks the row read — tapping IS reading.
+ *  - The ⋯ menu           → Open <thing> / Show run / Mark read or unread /
+ *    Select / Delete.
  *  - "Select" (or shift/cmd-click on desktop) → selection mode with
- *    checkboxes and a sticky Delete footer.
+ *    checkboxes and a sticky footer: Select all / Mark read / Mark unread /
+ *    Delete.
  *  - Any Delete           → modal confirmation before the API call.
  */
 
@@ -30,6 +33,8 @@ import { useNotifications } from '@/components/notification-center';
 
 export interface NotificationCard {
   id: string;
+  /** 'run_started' | 'run_finished' | 'run_failed' | 'act' | 'agent_edited'. */
+  kind: string;
   connector: string | null;
   /** Singular noun for the linked thing — 'issue', 'note', 'meeting'. */
   entity: string | null;
@@ -76,6 +81,7 @@ export default function NotificationsList({
 
   const selectionMode = selected.size > 0;
   const visible = rows.filter((row) => !removed.has(row.id));
+  const allSelected = selectionMode && selected.size === visible.length;
 
   // One open menu at a time; outside click or Escape closes it — the same
   // choreography as the nav's avatar menu.
@@ -118,6 +124,39 @@ export default function NotificationsList({
       else next.add(id);
       return next;
     });
+  };
+
+  // Read state changed this visit — id → is now read. Applied optimistically
+  // so a tap dims the card at once; the server row catches up on refresh.
+  const [readOverride, setReadOverride] = useState<ReadonlyMap<string, boolean>>(new Map());
+  const isUnread = (row: NotificationCard) => {
+    const override = readOverride.get(row.id);
+    return override === undefined ? row.unread : !override;
+  };
+
+  async function setRead(ids: string[], read: boolean) {
+    if (ids.length === 0) return;
+    setReadOverride((current) => {
+      const next = new Map(current);
+      for (const id of ids) next.set(id, read);
+      return next;
+    });
+    try {
+      await fetch(`/api/tenant/${tenantId}/notifications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, ...(read ? {} : { unread: true }) }),
+      });
+      refresh();
+      router.refresh();
+    } catch {
+      // The next poll or refresh reconciles; the optimistic state stands.
+    }
+  }
+
+  /** Tapping a card is reading it — every open path funnels through here. */
+  const markReadOnOpen = (row: NotificationCard) => {
+    if (isUnread(row)) void setRead([row.id], true);
   };
 
   async function deleteIds(ids: string[]) {
@@ -170,10 +209,17 @@ export default function NotificationsList({
           <ul className="space-y-1.5">
             {day.rows.map((row) => {
               const isSelected = selected.has(row.id);
+              const unread = isUnread(row);
               const openLabel = `Open ${row.entity ?? 'link'}`;
               const runHref =
                 row.runId && row.agentId
                   ? `/${slug}/agents/${row.agentId}/runs/${row.runId}`
+                  : null;
+              // "Someone edited your agent" points at the agent itself —
+              // in-app, so no new tab.
+              const agentHref =
+                row.kind === 'agent_edited' && row.agentId
+                  ? `/${slug}/agents/${row.agentId}`
                   : null;
               return (
                 <li key={row.id} className="relative">
@@ -182,16 +228,18 @@ export default function NotificationsList({
                       if (selectionMode || event.shiftKey || event.metaKey || event.ctrlKey) {
                         event.preventDefault();
                         toggle(row.id);
+                        return;
                       }
+                      markReadOnOpen(row);
                     }}
                     className={`relative flex items-start gap-3 rounded-lg border p-3 ${
                       isSelected
                         ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500 dark:border-blue-600 dark:bg-blue-950/40'
-                        : row.unread
+                        : unread
                           ? 'border-blue-200 bg-blue-50/40 dark:border-blue-900 dark:bg-blue-950/20'
                           : 'border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950'
                     } ${
-                      row.refUrl
+                      row.refUrl || agentHref
                         ? 'transition-colors hover:border-blue-400 dark:hover:border-blue-700'
                         : ''
                     }`}
@@ -206,6 +254,13 @@ export default function NotificationsList({
                           aria-label={`Select "${row.headline}"`}
                           className="relative z-10 h-4 w-4"
                         />
+                      ) : row.kind === 'agent_edited' ? (
+                        <span
+                          title="Someone edited this agent"
+                          className="text-amber-600 dark:text-amber-400"
+                        >
+                          <Icon path={ICONS.pencil} className="h-[18px] w-[18px]" />
+                        </span>
                       ) : row.connector ? (
                         <ConnectorIcon
                           capabilityKey={row.connector}
@@ -245,6 +300,23 @@ export default function NotificationsList({
                           >
                             {row.headline}
                           </a>
+                        ) : agentHref ? (
+                          <Link
+                            href={agentHref}
+                            onClick={(event) => {
+                              if (
+                                selectionMode ||
+                                event.shiftKey ||
+                                event.metaKey ||
+                                event.ctrlKey
+                              ) {
+                                event.preventDefault();
+                              }
+                            }}
+                            className="hover:underline after:absolute after:inset-0 after:rounded-lg"
+                          >
+                            {row.headline}
+                          </Link>
                         ) : (
                           row.headline
                         )}
@@ -275,6 +347,7 @@ export default function NotificationsList({
                         <div
                           ref={menuRef}
                           role="menu"
+                          onClick={(event) => event.stopPropagation()}
                           className="absolute right-0 top-8 z-40 w-44 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900"
                         >
                           {row.refUrl ? (
@@ -290,6 +363,20 @@ export default function NotificationsList({
                               {openLabel}
                             </a>
                           ) : null}
+                          {agentHref ? (
+                            <Link
+                              role="menuitem"
+                              href={agentHref}
+                              onClick={() => {
+                                setMenuFor(null);
+                                markReadOnOpen(row);
+                              }}
+                              className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800"
+                            >
+                              <Icon path={ICONS.externalLink} className="h-4 w-4" />
+                              Open agent
+                            </Link>
+                          ) : null}
                           {runHref ? (
                             <Link
                               role="menuitem"
@@ -301,6 +388,21 @@ export default function NotificationsList({
                               Show run
                             </Link>
                           ) : null}
+                          <button
+                            role="menuitem"
+                            type="button"
+                            onClick={() => {
+                              setMenuFor(null);
+                              void setRead([row.id], unread);
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
+                          >
+                            <Icon
+                              path={unread ? ICONS.check : ICONS.unreadDot}
+                              className="h-4 w-4"
+                            />
+                            {unread ? 'Mark as read' : 'Mark as unread'}
+                          </button>
                           <button
                             role="menuitem"
                             type="button"
@@ -336,25 +438,72 @@ export default function NotificationsList({
         </section>
       ))}
 
-      {/* Sticky multi-select footer — appears with the first selected card. */}
+      {/* Sticky multi-select footer — appears with the first selected card.
+          Three rows, three visual weights: select all/none is a neutral
+          toggle, mark read/unread wear the primary tint, Cancel is a quiet
+          ghost so it cannot be mistaken for an action, and Delete alone is
+          red. */}
       {selectionMode ? (
         <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-950/95">
-          <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
-            <span className="text-sm text-gray-600 dark:text-gray-400">
-              {selected.size} selected
-            </span>
-            <div className="flex items-center gap-2">
+          <div className="mx-auto max-w-3xl space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-gray-600 dark:text-gray-400">
+                {selected.size} selected
+              </span>
+              {allSelected ? (
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set())}
+                  className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+                >
+                  <Icon path={ICONS.checkbox} className="h-4 w-4" />
+                  Select none
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set(visible.map((row) => row.id)))}
+                  className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+                >
+                  <Icon path={ICONS.checkboxChecked} className="h-4 w-4" />
+                  Select all
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  void setRead([...selected], true);
+                  setSelected(new Set());
+                }}
+                className="flex items-center justify-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/70"
+              >
+                <Icon path={ICONS.check} className="h-4 w-4" />
+                Mark as read
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void setRead([...selected], false);
+                  setSelected(new Set());
+                }}
+                className="flex items-center justify-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/70"
+              >
+                <Icon path={ICONS.unreadDot} className="h-4 w-4" />
+                Mark as unread
+              </button>
               <button
                 type="button"
                 onClick={() => setSelected(new Set())}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+                className="rounded-md px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={() => setConfirming([...selected])}
-                className="flex items-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
+                className="flex items-center justify-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
               >
                 <Icon path={ICONS.trash} className="h-4 w-4" />
                 Delete

@@ -31,6 +31,12 @@ export interface NotificationPrefs {
   runStarted: boolean;
   runFinished: boolean;
   runFailed: boolean;
+  /**
+   * On by default: when someone the agent was shared with saves a change
+   * to it, the owner hears about it. The audit trail records the edit
+   * either way — this switch only controls the notification.
+   */
+  agentEditedByOthers: boolean;
   /** connector key → category → wanted. Absent = the default for it. */
   acts: Record<string, Record<string, boolean>>;
   /** Tool name → wanted. Overrides `acts` in EITHER direction. */
@@ -44,6 +50,7 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   runStarted: false,
   runFinished: true,
   runFailed: true,
+  agentEditedByOthers: true,
   acts: {},
   tools: {},
   toastsEnabled: true,
@@ -118,6 +125,10 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
     runStarted: boolOr(raw.runStarted, DEFAULT_NOTIFICATION_PREFS.runStarted),
     runFinished: boolOr(raw.runFinished, DEFAULT_NOTIFICATION_PREFS.runFinished),
     runFailed: boolOr(raw.runFailed, DEFAULT_NOTIFICATION_PREFS.runFailed),
+    agentEditedByOthers: boolOr(
+      raw.agentEditedByOthers,
+      DEFAULT_NOTIFICATION_PREFS.agentEditedByOthers
+    ),
     acts: nestedBoolMap(raw.acts),
     tools: boolMap(raw.tools),
     toastsEnabled: boolOr(raw.toastsEnabled, DEFAULT_NOTIFICATION_PREFS.toastsEnabled),

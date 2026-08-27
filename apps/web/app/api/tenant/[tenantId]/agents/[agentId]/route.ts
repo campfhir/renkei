@@ -1,10 +1,13 @@
 /**
- * One agent: read, update, delete — owner only. Someone else's agentId is
- * a 404, never a 403 (server-derived authority: the row is looked up by
- * the caller's own subject, so there is no "exists but forbidden" to leak).
+ * One agent: read and update for the owner OR someone holding an unexpired
+ * access grant (access-grants.ts); delete for the owner alone. An agentId
+ * the caller may not touch is a 404, never a 403 (server-derived
+ * authority: access resolves from the caller's own subject, so there is no
+ * "exists but forbidden" to leak).
  *
  * DELETE cascades the run history by FK design: deleting an agent is the
- * owner saying the whole thing goes.
+ * owner saying the whole thing goes — which is exactly why a grantee,
+ * whose access exists to troubleshoot, cannot do it.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -13,6 +16,7 @@ import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { parseAgentPayload } from '@/lib/agents/payload';
 import { deleteAgent, getAgent } from '@/lib/agents/store';
+import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { saveAgent } from '@/lib/agents/save';
 import { recordAuditEvent } from '@/lib/audit-events';
 
@@ -27,9 +31,9 @@ export async function GET(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const agent = await getAgent(dbResult.val, tenantId, session.subject, agentId);
-  if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  return NextResponse.json({ agent });
+  const access = await resolveAgentAccess(dbResult.val, tenantId, session.subject, agentId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  return NextResponse.json({ agent: access.agent });
 }
 
 export async function PUT(
@@ -47,11 +51,17 @@ export async function PUT(
   const parsed = parseAgentPayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
+  const access = await resolveAgentAccess(dbResult.val, tenantId, session.subject, agentId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
   // The shared save path (normalize → validate → persist → audit); the
   // summary is written AFTER the response — the builder polls meanwhile.
+  // A grantee's save is scoped to the owner: audited as the actor, and the
+  // owner is notified per their preference (edit-notification.ts).
   const result = await saveAgent(dbResult.val, tenantId, session.subject, parsed, {
     agentId,
     defer: after,
+    ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),
   });
   if (result.outcome === 'not-found') {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -64,7 +74,7 @@ export async function PUT(
     );
   }
 
-  const agent = await getAgent(dbResult.val, tenantId, session.subject, agentId);
+  const agent = await getAgent(dbResult.val, tenantId, access.ownerSubject, agentId);
   return NextResponse.json({
     agent,
     apiKeys: result.apiKeys,

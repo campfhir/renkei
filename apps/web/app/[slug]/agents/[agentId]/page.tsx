@@ -8,7 +8,9 @@ import { getOrgSettings } from '@renkei/settings';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
-import { getAgent, readShareToken } from '@/lib/agents/store';
+import { readShareToken } from '@/lib/agents/store';
+import { resolveAgentAccess } from '@/lib/agents/access-grants';
+import { getIdentityDisplay } from '@/lib/identity';
 import { listRunsForOwner } from '@/lib/agents/runs-view';
 import { parseReviewNotes } from '@/lib/agents/notes';
 import { Icon, ICONS } from '@/components/icons';
@@ -101,14 +103,21 @@ export default async function AgentOverviewPage({
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const agent = await getAgent(dbResult.val, tenant.id, session.subject, agentId);
-  if (!agent) notFound();
+  // Owner or grantee — a grantee sees the page exactly as the owner does
+  // (that is what the grant is for); only the sharing controls stay the
+  // owner's own.
+  const access = await resolveAgentAccess(dbResult.val, tenant.id, session.subject, agentId);
+  if (!access) notFound();
+  const agent = access.agent;
 
-  const [shareToken, recentRuns, invocations, settingsResult] = await Promise.all([
-    readShareToken(dbResult.val, tenant.id, session.subject, agentId),
-    listRunsForOwner(dbResult.val, tenant.id, session.subject, agentId, { limit: 5 }),
+  const [shareToken, recentRuns, invocations, settingsResult, ownerDisplay] = await Promise.all([
+    access.viewerIsOwner
+      ? readShareToken(dbResult.val, tenant.id, session.subject, agentId)
+      : Promise.resolve(null),
+    listRunsForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, { limit: 5 }),
     invocationCountsOf(dbResult.val, tenant.id, agentId),
     getOrgSettings(tenant.id),
+    access.viewerIsOwner ? Promise.resolve(null) : getIdentityDisplay(tenant.id, access.ownerSubject),
   ]);
   const reviewNotes = parseReviewNotes(agent.reviewNotes);
   const dailyCap = settingsResult.ok ? settingsResult.val.agentMaxRunsPerDay : null;
@@ -138,12 +147,18 @@ export default async function AgentOverviewPage({
           >
             {agent.enabled ? 'On' : 'Off'}
           </span>
-          <ShareAgentButton
-            slug={slug}
-            tenantId={tenant.id}
-            agentId={agentId}
-            initialToken={shareToken === 'NOT_FOUND' ? null : shareToken}
-          />
+          {access.viewerIsOwner ? (
+            <ShareAgentButton
+              slug={slug}
+              tenantId={tenant.id}
+              agentId={agentId}
+              initialToken={shareToken === 'NOT_FOUND' ? null : shareToken}
+            />
+          ) : (
+            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+              Shared by {ownerDisplay?.displayName || ownerDisplay?.email || 'a colleague'}
+            </span>
+          )}
           <Link
             href={`/${slug}/agents/${agentId}/edit`}
             className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700"

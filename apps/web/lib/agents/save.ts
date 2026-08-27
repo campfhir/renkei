@@ -22,6 +22,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { createAgent, getAgent, updateAgent, type SaveAgentInput } from '@/lib/agents/store';
 import { generateAgentDescription } from '@/lib/agents/describe';
+import { notifyAgentEdited } from '@/lib/agents/edit-notification';
 import { recordAuditEvent } from '@/lib/audit-events';
 
 export type SaveAgentResult =
@@ -52,16 +53,28 @@ export async function saveAgent(
      * this pass first so a confirm-gated save can show what would change.
      */
     dryRun?: boolean;
+    /**
+     * Save someone else's agent through an access grant (access-grants.ts):
+     * the agent looked up and written under THIS owner while `subject`
+     * stays the actor in the audit trail. Validation runs against the
+     * owner's tool projection too — the agent runs on the owner's grants,
+     * so "would this step's tool exist" is a question about the owner, not
+     * about whoever is doing the troubleshooting. Callers MUST have
+     * resolved an unexpired grant before setting this. Update-only: a
+     * grant is on an existing agent, so creation never carries it.
+     */
+    ownerSubject?: string;
   } = {}
 ): Promise<SaveAgentResult> {
   const defer = options.defer ?? ((task) => void task());
+  const owner = options.ownerSubject ?? subject;
 
   const settings = await getOrgSettings(tenantId);
   const normalized = normalizeAgentDraft(parsed.draft, {
     attemptsCap: settings.ok ? settings.val.agentMaxStepAttempts : undefined,
     approvalWaitCapHours: settings.ok ? settings.val.agentApprovalMaxWaitDays * 24 : undefined,
   });
-  const tools = await listAvailableTools(tenantId, subject);
+  const tools = await listAvailableTools(tenantId, owner);
   const issues = validateAgentDraft(normalized, tools, {
     maxSteps: settings.ok ? settings.val.agentMaxSteps : undefined,
   });
@@ -69,7 +82,7 @@ export async function saveAgent(
 
   if (options.dryRun) {
     if (options.agentId !== undefined) {
-      const existing = await getAgent(db, tenantId, subject, options.agentId);
+      const existing = await getAgent(db, tenantId, owner, options.agentId);
       if (!existing) return { outcome: 'not-found' };
     }
     return { outcome: 'valid-dry-run', normalized };
@@ -117,7 +130,7 @@ export async function saveAgent(
   }
 
   const agentId = options.agentId;
-  const existing = await getAgent(db, tenantId, subject, agentId);
+  const existing = await getAgent(db, tenantId, owner, agentId);
   if (!existing) return { outcome: 'not-found' };
   const describedChanged =
     existing.name !== normalized.name ||
@@ -137,12 +150,16 @@ export async function saveAgent(
   const needsDescription =
     parsed.refreshDescription || describedChanged || existing.descriptionStatus !== 'ok';
 
-  const result = await updateAgent(db, tenantId, subject, agentId, savedInput, {
+  const result = await updateAgent(db, tenantId, owner, agentId, savedInput, {
     markDescriptionStale: needsDescription,
   });
   if (result === 'NOT_FOUND') return { outcome: 'not-found' };
   if (result === 'NAME_TAKEN') return nameTaken;
 
+  // An edit through a grant carries whose agent it was: the audit trail
+  // must answer "who changed it" (the actor) AND "whose was it" (the
+  // owner) without a join.
+  const grantDetails = owner !== subject ? { details: { ownerSubject: owner } } : {};
   // A toggle and an edit are different stories in the audit trail: "turned
   // it on" is a decision to let it act, "changed it" is a change to what it
   // does. A save that flips enabled AND rewrites steps records both.
@@ -153,6 +170,7 @@ export async function saveAgent(
       action: normalized.enabled ? 'agent.enabled' : 'agent.disabled',
       targetKind: 'agent',
       targetLabel: normalized.name,
+      ...grantDetails,
     });
   }
   if (describedChanged) {
@@ -162,6 +180,16 @@ export async function saveAgent(
       action: 'agent.updated',
       targetKind: 'agent',
       targetLabel: normalized.name,
+      ...grantDetails,
+    });
+  }
+  if (owner !== subject && (describedChanged || existing.enabled !== normalized.enabled)) {
+    notifyAgentEdited({
+      tenantId,
+      ownerSubject: owner,
+      actorSubject: subject,
+      agentId,
+      agentName: normalized.name,
     });
   }
 

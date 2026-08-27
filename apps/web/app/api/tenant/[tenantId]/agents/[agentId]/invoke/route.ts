@@ -2,8 +2,10 @@
  * Starting a run by hand or by machine.
  *
  * Two auth paths, both failing closed:
- *   1. Session — the owner's "Run now" button. Ownership is structural
- *      (the agent is looked up by the caller's subject).
+ *   1. Session — the "Run now" button: the owner, or someone holding an
+ *      unexpired access grant (access-grants.ts — troubleshooting means
+ *      re-running). Either way the run executes on the OWNER's grants and
+ *      records who pressed the button in triggered_by_subject.
  *   2. Bearer key — an api-kind trigger's key, matched by SHA-256 digest
  *      with a constant-time compare (the log-ship pattern). The key names
  *      exactly one trigger row on exactly one agent; there is no
@@ -24,6 +26,7 @@ import { createAgentRun } from '@renkei/agents/runs';
 import { sha256Hex } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { digestsMatch, getBearerToken } from '@/lib/mcp-token';
+import { hasActiveGrant } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
 
 const MAX_STATE_BYTES = 64 * 1024;
@@ -113,8 +116,13 @@ export async function POST(
 
   const session = await getSessionFromRequest(request, tenantId);
   if (session) {
-    // The owner's manual run; someone else's session sees a 404, not a 403.
-    if (!agent || agent.owner_subject !== session.subject) {
+    // A manual run by the owner or a grantee; anyone else sees a 404, not
+    // a 403.
+    if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    if (
+      agent.owner_subject !== session.subject &&
+      !(await hasActiveGrant(db, tenantId, agentId, session.subject))
+    ) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
     triggeredBy = session.subject;

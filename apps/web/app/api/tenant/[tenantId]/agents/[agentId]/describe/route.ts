@@ -12,7 +12,7 @@ import { after } from 'next/server';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
-import { getAgent } from '@/lib/agents/store';
+import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { generateAgentDescription } from '@/lib/agents/describe';
 
 export async function POST(
@@ -27,8 +27,9 @@ export async function POST(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const agent = await getAgent(db, tenantId, session.subject, agentId);
-  if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const agent = access.agent;
 
   // 'stale' is what the polling clients watch; set it before the response
   // so their spinner starts on the very next poll.

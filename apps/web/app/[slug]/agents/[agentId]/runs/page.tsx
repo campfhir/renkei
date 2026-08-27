@@ -6,7 +6,7 @@ import { getDatabase } from '@renkei/db';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
-import { getAgent } from '@/lib/agents/store';
+import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { isRunStatus, listRunsForOwner } from '@/lib/agents/runs-view';
 import { StatusPill } from '../../run-timeline';
 import RunsSearch from '../../runs-search';
@@ -16,7 +16,11 @@ import LocalTime from '@/components/local-time';
 /** The status tabs the pages offer; 'queued' stays reachable via All. */
 const STATUS_TABS = ['succeeded', 'failed', 'stopped', 'waiting', 'running', 'canceled'] as const;
 
-/** The owner's run list — full visibility over their own agent's history. */
+/**
+ * The run list, full visibility: the owner, or a grantee through an
+ * unexpired access grant — the grant exists to troubleshoot, so a grantee
+ * reads the history exactly as the owner does.
+ */
 export default async function AgentRunsPage({
   params,
   searchParams,
@@ -36,12 +40,13 @@ export default async function AgentRunsPage({
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const agent = await getAgent(dbResult.val, tenant.id, session.subject, agentId);
-  if (!agent) notFound();
+  const access = await resolveAgentAccess(dbResult.val, tenant.id, session.subject, agentId);
+  if (!access) notFound();
+  const agent = access.agent;
 
   const filter = isRunStatus(status) ? status : undefined;
   const query = typeof q === 'string' && q.trim() ? q.trim() : undefined;
-  const runs = await listRunsForOwner(dbResult.val, tenant.id, session.subject, agentId, {
+  const runs = await listRunsForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, {
     status: filter,
     ...(query ? { q: query } : {}),
   });
