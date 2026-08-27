@@ -137,7 +137,7 @@ function PathBar({ path, onNavigate }: { path: string; onNavigate: (path: string
       .split('/')
       .filter((segment) => segment !== '');
     if (segments.some((segment) => segment === '.' || segment === '..')) {
-      setError('Paths cannot contain "." or ".." segments.');
+      setError('Cannot use "." or ".." in a path.');
       return;
     }
     setEditing(false);
@@ -154,22 +154,36 @@ function PathBar({ path, onNavigate }: { path: string; onNavigate: (path: string
           go();
         }}
       >
-        <input
-          autoFocus
-          value={draft}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            setError(null);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') {
-              setEditing(false);
+        <span className="relative min-w-0 flex-1">
+          <input
+            autoFocus
+            value={draft}
+            onChange={(event) => {
+              setDraft(event.target.value);
               setError(null);
-            }
-          }}
-          aria-label="Path"
-          className={`${inputClass} min-w-0 flex-1 py-1 font-mono text-xs`}
-        />
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                setEditing(false);
+                setError(null);
+              }
+            }}
+            aria-label="Path"
+            className={`${inputClass} py-1 font-mono text-xs ${
+              error ? 'border-red-400 dark:border-red-700' : ''
+            }`}
+          />
+          {error ? (
+            // Anchored popover, not inline text: the toolbar row must not
+            // reflow around a validation message.
+            <span
+              role="alert"
+              className="absolute left-2 top-full z-30 mt-1 w-max rounded-md border border-red-200 bg-white px-2 py-1 text-xs text-red-600 shadow-lg dark:border-red-900 dark:bg-gray-950 dark:text-red-400"
+            >
+              {error}
+            </span>
+          ) : null}
+        </span>
         <button type="submit" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
           Go
         </button>
@@ -184,7 +198,6 @@ function PathBar({ path, onNavigate }: { path: string; onNavigate: (path: string
         >
           <Icon path={ICONS.close} className="h-3.5 w-3.5" />
         </button>
-        {error ? <span className="text-xs text-red-600 dark:text-red-400">{error}</span> : null}
       </form>
     );
   }
@@ -432,9 +445,11 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
       </div>
 
       <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-2">
           <PathBar path={path} onNavigate={(target) => open(share, target)} />
-          <div className="relative">
+        </div>
+        <div className="mt-2 flex items-center gap-2">
+          <div className="relative min-w-0 flex-1 sm:max-w-72">
             <Icon
               path={ICONS.search}
               className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400"
@@ -444,9 +459,10 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
               onChange={(event) => setFilter(event.target.value)}
               placeholder="Filter this folder"
               aria-label="Filter this folder"
-              className={`${inputClass} w-44 py-1 pl-7 text-xs`}
+              className={`${inputClass} py-1 pl-7 text-xs`}
             />
           </div>
+          <span className="flex-1 sm:flex-none" />
           <button
             type="button"
             aria-pressed={foldersFirst}
@@ -459,7 +475,27 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
                 : 'border-gray-200 text-gray-400 hover:text-gray-600 dark:border-gray-800 dark:hover:text-gray-300'
             }`}
           >
-            <Icon path={ICONS.folder} className="h-3.5 w-3.5" />
+            <Icon path={ICONS.folder} className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            title="New folder"
+            aria-label="New folder"
+            onClick={() => setModal({ kind: 'newFolder' })}
+            className="rounded-md border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.folderPlus} className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            disabled={loading}
+            title="Upload file"
+            aria-label="Upload file"
+            onClick={() => setModal({ kind: 'upload' })}
+            className="rounded-md border border-gray-200 p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-50 dark:border-gray-800 dark:text-gray-400 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.upload} className="h-4 w-4" />
           </button>
         </div>
 
@@ -560,25 +596,6 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
             </ul>
           </>
         )}
-
-        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => setModal({ kind: 'upload' })}
-            className={secondaryButton}
-          >
-            Upload file
-          </button>
-          <button
-            type="button"
-            disabled={loading}
-            onClick={() => setModal({ kind: 'newFolder' })}
-            className={secondaryButton}
-          >
-            New folder
-          </button>
-        </div>
 
         {modal?.kind === 'newFolder' ? (
           <NewFolderModal

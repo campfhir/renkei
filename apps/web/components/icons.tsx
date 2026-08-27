@@ -33,6 +33,8 @@ export const ICONS = {
   /** An empty checkbox — "start selecting". */
   checkbox: 'M6 5h12a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z',
   folder: 'M3 19V5h6l2 3h10v11z',
+  folderPlus: 'M3 19V5h6l2 3h10v11zM12 10.5v5M9.5 13h5',
+  upload: 'M12 16V4M8 8l4-4 4 4M5 16v4h14v-4',
   /** Plain sheet with a folded corner — the fallback file glyph. */
   file: 'M6 21V3h8l4 4v14zM14 3v4h4',
   fileText: 'M6 21V3h8l4 4v14zM14 3v4h4M9 12h6M9 16h6',
