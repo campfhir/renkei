@@ -8,6 +8,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import { NotificationCenter } from '@/components/notification-center';
 import ToastStack from '@/components/toast-stack';
+import DesktopNotifications from '@/components/desktop-notifications';
 import AppNav from './nav';
 
 /**
@@ -66,6 +67,10 @@ export default async function TenantLayout({
           max-w-3xl block of their own inside it. */}
       <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">{children}</main>
       {prefs?.toastsEnabled ? <ToastStack corner={prefs.toastCorner} /> : null}
+      {/* Renders nothing — it only turns arrivals into OS banners while the
+          tab is in the background, and only for somebody who both flipped
+          the preference AND granted the browser's own permission. */}
+      {prefs?.desktopEnabled ? <DesktopNotifications /> : null}
     </div>
   );
 

@@ -36,6 +36,12 @@ describe('defaults', () => {
     expect(DEFAULT_NOTIFICATION_PREFS.runFinished).toBe(true);
     expect(DEFAULT_NOTIFICATION_PREFS.runFailed).toBe(true);
   });
+
+  it('keeps OS banners off until asked', () => {
+    // The browser demands its own permission click anyway; defaulting this
+    // on would store an intent nobody expressed and nothing could honour.
+    expect(DEFAULT_NOTIFICATION_PREFS.desktopEnabled).toBe(false);
+  });
 });
 
 describe('wantsAct precedence', () => {
@@ -109,6 +115,7 @@ describe('parseNotificationPrefs', () => {
       acts: { jira: { created: false, bogus: 'x' }, empty: {} },
       tools: { jira_create_issue: true, bogus: 1 },
       toastCorner: 'top-left',
+      desktopEnabled: 'yes',
       unknownKey: 'ignored',
     });
     expect(parsed.runStarted).toBe(true);
@@ -118,6 +125,7 @@ describe('parseNotificationPrefs', () => {
     expect(parsed.tools).toEqual({ jira_create_issue: true });
     // Only two corners exist; anything else means the default one.
     expect(parsed.toastCorner).toBe('bottom-right');
+    expect(parsed.desktopEnabled).toBe(false);
   });
 
   it('accepts the other corner', () => {
@@ -131,6 +139,7 @@ describe('parseNotificationPrefs', () => {
       tools: { webex_send_message: true },
       toastCorner: 'bottom-left',
       toastsEnabled: false,
+      desktopEnabled: true,
     });
     expect(parseNotificationPrefs(JSON.parse(JSON.stringify(once)))).toEqual(once);
   });

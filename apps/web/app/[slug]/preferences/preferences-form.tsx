@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 // The PURE half of the package, not its index: the index reaches the
 // database, and a client component that pulls it in drags `pg` — and then
 // `dns` — into the browser bundle. That split is what prefs.ts is for.
@@ -101,6 +101,48 @@ export default function PreferencesForm({
 }) {
   const [prefs, setPrefs] = useState<NotificationPrefs>(initial);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+
+  /*
+    The browser's side of the desktop-notification deal. Read in an effect,
+    not during render: this component is server-rendered first, where
+    `Notification` does not exist, and guessing would only trade a crash for
+    a hydration mismatch. Until the effect runs the card renders in its
+    supported shape — the flash is one frame, and only on browsers where the
+    pessimistic shape would have been wrong anyway.
+
+    'unsupported' covers the browsers with no Notification global at all —
+    iOS Safari outside an installed web app being the one people will
+    actually meet.
+  */
+  const [permission, setPermission] = useState<NotificationPermission | 'unsupported' | null>(null);
+  useEffect(() => {
+    setPermission('Notification' in window ? Notification.permission : 'unsupported');
+  }, []);
+
+  /*
+    Flipping the switch ON is the one moment permission can be asked for:
+    browsers only honour `requestPermission()` from a user gesture, and this
+    click is it. If the person then declines the browser's prompt, the
+    switch stays off — saving "on" with permission denied would store a
+    preference that can never fire and look exactly like a bug.
+  */
+  async function toggleDesktop(on: boolean) {
+    if (!on) {
+      update({ ...prefs, desktopEnabled: false });
+      return;
+    }
+    if (permission === 'unsupported' || permission === null) return;
+    let current: NotificationPermission = Notification.permission;
+    if (current === 'default') {
+      try {
+        current = await Notification.requestPermission();
+      } catch {
+        current = 'denied';
+      }
+      setPermission(current);
+    }
+    update({ ...prefs, desktopEnabled: current === 'granted' });
+  }
 
   function update(next: NotificationPrefs) {
     setPrefs(next);
@@ -400,6 +442,50 @@ export default function PreferencesForm({
                 </div>
               </fieldset>
             </div>
+          </div>
+        </section>
+
+        <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+          <h3 className="font-semibold">Browser notifications</h3>
+          <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
+            The other half of pop-ups: your system&rsquo;s own notifications, shown when Renkei is
+            open in a background tab. Nothing fires while you are looking at Renkei — that is what
+            the pop-ups are for.
+          </p>
+          <div className="mt-3">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-0.5 shrink-0"
+                checked={prefs.desktopEnabled}
+                disabled={permission === 'unsupported'}
+                onChange={(event) => void toggleDesktop(event.target.checked)}
+              />
+              <span className="min-w-0">
+                Show system notifications
+                <span className="block text-xs text-gray-500 dark:text-gray-400">
+                  Your browser asks its own permission the first time — both switches have to be
+                  on.
+                </span>
+              </span>
+            </label>
+            {/*
+              The states worth a sentence, not every state: 'granted' and
+              'default' need nothing beyond the hint above, and null (one
+              server-rendered frame) must claim nothing it cannot know yet.
+            */}
+            {permission === 'unsupported' ? (
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                This browser can&rsquo;t show them. On iPhone and iPad they only work once Renkei
+                is added to the Home Screen.
+              </p>
+            ) : null}
+            {permission === 'denied' ? (
+              <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                Notifications are blocked for this site in your browser&rsquo;s settings. Allow
+                them there, then flip this switch again.
+              </p>
+            ) : null}
           </div>
         </section>
       </section>
