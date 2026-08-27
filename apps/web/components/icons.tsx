@@ -24,10 +24,14 @@ export const ICONS = {
   bell: 'M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16zM10 22h4',
   /** Vertical kebab — "more actions on this row". Dots via round linecaps. */
   more: 'M12 5.2h.01M12 12h.01M12 18.8h.01',
+  /** The same dots laid flat — the horizontal "more" trigger. */
+  moreHorizontal: 'M5.2 12h.01M12 12h.01M18.8 12h.01',
   arrowRight: 'M4 12h14M13 6l6 6-6 6',
   search: 'M10.5 17.5a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM15.5 15.5 21 21',
   /** Arrow leaving a box — opens in the connector / a new tab. */
   externalLink: 'M14 4h6v6M20 4l-9 9M20 14v6H4V4h6',
+  /** An empty checkbox — "start selecting". */
+  checkbox: 'M6 5h12a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z',
 };
 
 export function Icon({ path, className }: { path: string; className?: string }) {

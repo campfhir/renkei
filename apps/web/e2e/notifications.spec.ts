@@ -165,17 +165,61 @@ test('notifications — the whole row opens the link', async ({ page }, testInfo
   await expect(page.getByRole('link', { name: /Declined a meeting invitation/ })).toHaveCount(0);
   await expect(page.getByText(/Declined a meeting invitation/)).toBeVisible();
 
-  // The run link still has to be reachable through the stretched anchor.
-  const runLink = row.getByRole('link', { name: 'Run' });
-  await expect(runLink).toBeVisible();
-  const runBox = await runLink.boundingBox();
-  const runHit = await page.evaluate(
-    ([x, y]) => document.elementFromPoint(x, y)?.closest('a')?.textContent ?? 'none',
-    [runBox!.x + runBox!.width / 2, runBox!.y + runBox!.height / 2]
+  // Every per-card action lives in the ⋯ menu now — no standalone Run
+  // link, no external-link arrow outside the menu.
+  await expect(row.getByRole('link', { name: 'Run' })).toHaveCount(0);
+  const menuButton = row.getByRole('button', { name: /Actions for/ });
+  await expect(menuButton).toBeVisible();
+  // ...and it has to be reachable through the stretched anchor.
+  const menuBox = await menuButton.boundingBox();
+  const menuHit = await page.evaluate(
+    ([x, y]) => document.elementFromPoint(x, y)?.closest('button') !== null,
+    [menuBox!.x + menuBox!.width / 2, menuBox!.y + menuBox!.height / 2]
   );
-  expect(runHit).toBe('Run');
+  expect(menuHit).toBe(true);
+
+  await menuButton.click();
+  await expect(page.getByRole('menuitem', { name: 'Open issue' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Show run' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Select' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Delete' })).toBeVisible();
+  await shot(page, testInfo, 'review-notifications-menu', false);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('menuitem', { name: 'Delete' })).toHaveCount(0);
 
   await shot(page, testInfo, 'review-notifications');
+});
+
+test('notifications — select and delete through the menu', async ({ page }, testInfo) => {
+  await seedNotifications();
+  await page.goto(`/${E2E_SLUG}/notifications`);
+  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
+
+  // "Select" in a card's menu enters selection mode: checkboxes replace
+  // the connector icons and the sticky footer appears.
+  const row = page.locator('li', { hasText: 'Created a Jira issue PROJ-1042' }).last();
+  await row.getByRole('button', { name: /Actions for/ }).click();
+  await page.getByRole('menuitem', { name: 'Select' }).click();
+  await expect(
+    page.getByRole('checkbox', { name: 'Select "Created a Jira issue PROJ-1042"' })
+  ).toBeChecked();
+  await expect(page.getByText('1 selected')).toBeVisible();
+
+  await page.getByRole('checkbox', { name: /Select "Scheduled a Zoom meeting/ }).check();
+  await expect(page.getByText('2 selected')).toBeVisible();
+  await shot(page, testInfo, 'review-notifications-selection', false);
+
+  // The footer's Delete opens the confirmation — nothing is deleted yet.
+  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Confirm delete' });
+  await expect(dialog.getByText('Delete 2 notifications?')).toBeVisible();
+  await shot(page, testInfo, 'review-notifications-confirm', false);
+
+  await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(page.getByText('Created a Jira issue PROJ-1042')).toHaveCount(0);
+  await expect(page.getByText(/Scheduled a Zoom meeting/)).toHaveCount(0);
+  // Selection mode ended with its rows.
+  await expect(page.getByText('2 selected')).toHaveCount(0);
 });
 
 test('preferences — acts enumerated per connector', async ({ page }, testInfo) => {
