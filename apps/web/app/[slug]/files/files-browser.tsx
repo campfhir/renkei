@@ -169,10 +169,16 @@ function PathBar({ path, onNavigate }: { path: string; onNavigate: (path: string
               }
             }}
             aria-label="Path"
-            className={`${inputClass} py-1 font-mono text-xs ${
+            className={`${inputClass} py-1 pr-11 font-mono text-xs ${
               error ? 'border-red-400 dark:border-red-700' : ''
             }`}
           />
+          <button
+            type="submit"
+            className="absolute right-1 top-1/2 -translate-y-1/2 rounded px-2 py-0.5 text-xs font-medium text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/40"
+          >
+            Go
+          </button>
           {error ? (
             // Anchored popover, not inline text: the toolbar row must not
             // reflow around a validation message.
@@ -184,9 +190,6 @@ function PathBar({ path, onNavigate }: { path: string; onNavigate: (path: string
             </span>
           ) : null}
         </span>
-        <button type="submit" className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400">
-          Go
-        </button>
         <button
           type="button"
           aria-label="Cancel path entry"
@@ -449,7 +452,7 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
           <PathBar path={path} onNavigate={(target) => open(share, target)} />
         </div>
         <div className="mt-2 flex items-center gap-2">
-          <div className="relative min-w-0 flex-1 sm:max-w-72">
+          <div className="relative min-w-0 flex-1">
             <Icon
               path={ICONS.search}
               className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400"
@@ -462,7 +465,6 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
               className={`${inputClass} py-1 pl-7 text-xs`}
             />
           </div>
-          <span className="flex-1 sm:flex-none" />
           <button
             type="button"
             aria-pressed={foldersFirst}
