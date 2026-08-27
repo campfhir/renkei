@@ -4,18 +4,19 @@
  * The notification feed's interactive body.
  *
  * A client component because the feed finally acts like one: cards can be
- * deleted (one from an ellipsis menu or a swipe, many from a long-press /
- * shift-click selection with a sticky footer), and every delete passes
- * through one confirmation dialog. The server page still owns the query —
- * this component only renders the rows it was handed, minus the ones the
+ * deleted (one at a time or in bulk), and every delete passes through one
+ * confirmation dialog. The server page still owns the query — this
+ * component only renders the rows it was handed, minus the ones the
  * person deleted this visit.
  *
- * Interaction map:
+ * Interaction map — deliberately click-only. An earlier draft carried
+ * swipe-to-delete and long-press selection; on real phones the touch
+ * handlers fought scrolling and left cards stuck half-swiped, so every
+ * action now lives in one place:
  *  - Click a card         → opens the thing it is about (ref_url), new tab.
- *  - Shift/Cmd/Ctrl-click → toggles selection instead (desktop multi-select).
- *  - Long-press (touch)   → toggles selection (mobile multi-select).
- *  - Swipe left (touch)   → reveals a Delete button on that card.
- *  - Ellipsis menu        → Open <thing> / Show run / Delete, with icons.
+ *  - The ⋯ menu           → Open <thing> / Show run / Select / Delete.
+ *  - "Select" (or shift/cmd-click on desktop) → selection mode with
+ *    checkboxes and a sticky Delete footer.
  *  - Any Delete           → modal confirmation before the API call.
  */
 
@@ -51,12 +52,6 @@ function dayLabel(when: Date, today: Date): string {
   return when.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
 }
 
-/** How far a swipe must travel (px) before it counts as "delete revealed". */
-const SWIPE_REVEAL_PX = 72;
-/** Movement past this (px) cancels a pending long-press. */
-const PRESS_DRIFT_PX = 10;
-const LONG_PRESS_MS = 450;
-
 export default function NotificationsList({
   tenantId,
   slug,
@@ -74,25 +69,10 @@ export default function NotificationsList({
   const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [menuFor, setMenuFor] = useState<string | null>(null);
-  /** Card whose swipe revealed its Delete button. */
-  const [revealed, setRevealed] = useState<string | null>(null);
-  /** Live swipe offset, applied as a transform while the finger is down. */
-  const [drag, setDrag] = useState<{ id: string; dx: number } | null>(null);
   const [confirming, setConfirming] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
 
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const touch = useRef<{
-    id: string;
-    startX: number;
-    startY: number;
-    moved: boolean;
-    pressTimer: ReturnType<typeof setTimeout> | null;
-    pressed: boolean;
-  } | null>(null);
-  // Set when a long-press just toggled selection, so the click that the
-  // browser fires afterwards must not also open the link.
-  const suppressClick = useRef(false);
 
   const selectionMode = selected.size > 0;
   const visible = rows.filter((row) => !removed.has(row.id));
@@ -150,7 +130,6 @@ export default function NotificationsList({
       });
       setRemoved((current) => new Set([...current, ...ids]));
       setSelected(new Set());
-      setRevealed(null);
       setConfirming(null);
       refresh();
       router.refresh();
@@ -160,53 +139,6 @@ export default function NotificationsList({
       setBusy(false);
     }
   }
-
-  const onTouchStart = (id: string) => (event: React.TouchEvent) => {
-    const point = event.touches[0];
-    if (!point) return;
-    touch.current = {
-      id,
-      startX: point.clientX,
-      startY: point.clientY,
-      moved: false,
-      pressed: false,
-      pressTimer: setTimeout(() => {
-        if (touch.current?.id === id && !touch.current.moved) {
-          touch.current.pressed = true;
-          suppressClick.current = true;
-          toggle(id);
-        }
-      }, LONG_PRESS_MS),
-    };
-  };
-
-  const onTouchMove = (id: string) => (event: React.TouchEvent) => {
-    const state = touch.current;
-    const point = event.touches[0];
-    if (!state || state.id !== id || !point) return;
-    const dx = point.clientX - state.startX;
-    const dy = point.clientY - state.startY;
-    if (!state.moved && Math.hypot(dx, dy) > PRESS_DRIFT_PX) {
-      state.moved = true;
-      if (state.pressTimer) clearTimeout(state.pressTimer);
-    }
-    // Horizontal-dominant drag to the left drags the card; vertical stays
-    // the page's scroll.
-    if (state.moved && Math.abs(dx) > Math.abs(dy) && dx < 0 && !selectionMode) {
-      setDrag({ id, dx: Math.max(dx, -SWIPE_REVEAL_PX * 1.5) });
-    }
-  };
-
-  const onTouchEnd = (id: string) => () => {
-    const state = touch.current;
-    if (state?.pressTimer) clearTimeout(state.pressTimer);
-    if (state?.moved) suppressClick.current = true;
-    const dx = drag?.id === id ? drag.dx : 0;
-    setDrag(null);
-    if (dx <= -SWIPE_REVEAL_PX) setRevealed(id);
-    else setRevealed((current) => (current === id ? null : current));
-    touch.current = null;
-  };
 
   const confirmCount = confirming?.length ?? 0;
 
@@ -238,52 +170,21 @@ export default function NotificationsList({
           <ul className="space-y-1.5">
             {day.rows.map((row) => {
               const isSelected = selected.has(row.id);
-              const dx = drag?.id === row.id ? drag.dx : revealed === row.id ? -SWIPE_REVEAL_PX : 0;
               const openLabel = `Open ${row.entity ?? 'link'}`;
               const runHref =
                 row.runId && row.agentId
                   ? `/${slug}/agents/${row.agentId}/runs/${row.runId}`
                   : null;
               return (
-                <li key={row.id} className="relative rounded-lg">
-                  {/* The swipe target: covered by the card until it slides
-                      left (no overflow clipping here — the ellipsis menu
-                      must be able to hang past the card's edge). Delete =
-                      icon AND word, never icon alone. */}
-                  <button
-                    type="button"
-                    tabIndex={revealed === row.id ? 0 : -1}
-                    aria-hidden={revealed !== row.id}
-                    onClick={() => setConfirming([row.id])}
-                    className="absolute inset-y-0 right-0 flex w-[72px] flex-col items-center justify-center gap-0.5 rounded-r-lg bg-red-600 text-[11px] font-medium text-white"
-                  >
-                    <Icon path={ICONS.trash} className="h-4 w-4" />
-                    Delete
-                  </button>
+                <li key={row.id} className="relative">
                   <div
                     onClick={(event) => {
-                      if (suppressClick.current) {
-                        suppressClick.current = false;
-                        event.preventDefault();
-                        return;
-                      }
-                      if (revealed === row.id) {
-                        setRevealed(null);
-                        event.preventDefault();
-                        return;
-                      }
                       if (selectionMode || event.shiftKey || event.metaKey || event.ctrlKey) {
                         event.preventDefault();
                         toggle(row.id);
                       }
                     }}
-                    onTouchStart={onTouchStart(row.id)}
-                    onTouchMove={onTouchMove(row.id)}
-                    onTouchEnd={onTouchEnd(row.id)}
-                    style={{ transform: dx ? `translateX(${dx}px)` : undefined }}
                     className={`relative flex items-start gap-3 rounded-lg border p-3 ${
-                      drag?.id === row.id ? '' : 'transition-transform duration-150'
-                    } ${
                       isSelected
                         ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500 dark:border-blue-600 dark:bg-blue-950/40'
                         : row.unread
@@ -321,9 +222,8 @@ export default function NotificationsList({
                       {/*
                         The headline IS the link, stretched over the whole row
                         by a pseudo-element — one link in the accessibility
-                        tree, named by the headline. Selection clicks and the
-                        post-long-press click are intercepted above before the
-                        anchor navigates.
+                        tree, named by the headline. Selection clicks are
+                        intercepted above before the anchor navigates.
                       */}
                       <p className="text-sm font-medium">
                         {row.refUrl ? (
@@ -333,9 +233,7 @@ export default function NotificationsList({
                             rel="noopener noreferrer"
                             onClick={(event) => {
                               if (
-                                suppressClick.current ||
                                 selectionMode ||
-                                revealed === row.id ||
                                 event.shiftKey ||
                                 event.metaKey ||
                                 event.ctrlKey
@@ -356,37 +254,28 @@ export default function NotificationsList({
                         <LocalTime at={row.createdAt} format="datetime" />
                       </p>
                     </div>
-                    {/* `relative` puts the controls above the stretched
-                        pseudo-element, so they stay clickable on a linked
-                        card. */}
-                    <div className="relative flex shrink-0 items-center gap-2 text-xs">
-                      {row.refUrl ? (
-                        <span
-                          aria-hidden="true"
-                          title="Opens in the connector"
-                          className="text-blue-600 dark:text-blue-400"
-                        >
-                          ↗
-                        </span>
-                      ) : null}
+                    {/* `relative` puts the menu trigger above the stretched
+                        pseudo-element, so it stays clickable on a linked
+                        card. Every per-card action lives in this one menu. */}
+                    <div className="relative shrink-0">
                       <button
                         type="button"
                         aria-haspopup="menu"
                         aria-expanded={menuFor === row.id}
-                        aria-label={`More actions for "${row.headline}"`}
+                        aria-label={`Actions for "${row.headline}"`}
                         onClick={(event) => {
                           event.stopPropagation();
                           setMenuFor((current) => (current === row.id ? null : row.id));
                         }}
-                        className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-300"
+                        className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-300"
                       >
-                        <Icon path={ICONS.more} className="h-4 w-4" />
+                        <Icon path={ICONS.moreHorizontal} className="h-4 w-4" />
                       </button>
                       {menuFor === row.id ? (
                         <div
                           ref={menuRef}
                           role="menu"
-                          className="absolute right-0 top-7 z-40 w-44 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900"
+                          className="absolute right-0 top-8 z-40 w-44 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900"
                         >
                           {row.refUrl ? (
                             <a
@@ -417,6 +306,18 @@ export default function NotificationsList({
                             type="button"
                             onClick={() => {
                               setMenuFor(null);
+                              toggle(row.id);
+                            }}
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
+                          >
+                            <Icon path={ICONS.checkbox} className="h-4 w-4" />
+                            Select
+                          </button>
+                          <button
+                            role="menuitem"
+                            type="button"
+                            onClick={() => {
+                              setMenuFor(null);
                               setConfirming([row.id]);
                             }}
                             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
@@ -425,11 +326,6 @@ export default function NotificationsList({
                             Delete
                           </button>
                         </div>
-                      ) : null}
-                      {runHref ? (
-                        <Link href={runHref} className="text-gray-500 hover:underline">
-                          Run
-                        </Link>
                       ) : null}
                     </div>
                   </div>
