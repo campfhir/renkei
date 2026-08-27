@@ -1,12 +1,12 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * The fileshare tools' contract at the model boundary. Since the fileshare
- * worker took over all I/O and ACL enforcement (pinned in the package's
- * service.test.ts), what these tools own is narrower and is what this
- * suite pins: traversal refusals before any network call, faithful
- * forwarding of the caller's target to the worker client, the mapping of
- * worker refusals onto model-readable messages, the upload-slot mint's
- * store-side pre-check, and the delete preview/confirm card.
+ * worker owns all I/O on the caller's own credentials, what these tools
+ * own is what this suite pins: traversal refusals before any network
+ * call, faithful forwarding of the caller's target to the worker client,
+ * the mapping of worker refusals onto model-readable messages, the
+ * per-share LLM-exposure gates (write and delete opt-ins), the shaped
+ * registration, the upload-slot mint, and the delete preview/confirm card.
  */
 
 jest.mock('@/lib/file-shares/service-client', () => ({
@@ -24,8 +24,8 @@ jest.mock('../upload-slots', () => ({
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
-import type { AclContext } from '@renkei/connector-fileshares';
-import { registerFileshareTools } from './index';
+import type { ShareConnection, ShareSummary } from '@renkei/connector-fileshares';
+import { registerFileshareTools, type FileshareToolExposure } from './index';
 import { NO_SUCH_SHARE } from './fileshare-auth';
 import type { FileshareAuth } from './fileshare-auth';
 import type { MCPToolContext } from '../common';
@@ -60,52 +60,51 @@ function contextOf(): MCPToolContext {
   } as unknown as MCPToolContext;
 }
 
-function aclContext(overrides?: Partial<AclContext>): AclContext {
+function summary(): ShareSummary {
   return {
-    share: {
-      id: SHARE_ID,
-      name: 'Accounting',
-      protocol: 'sftp',
-      host: 'nas.example.test',
-      port: null,
-      shareName: null,
-      rootPath: '/srv/accounting',
-      caseInsensitive: false,
-      maxAccess: 'read_write',
-      enabled: true,
-      hasCredentials: true,
-    },
-    grant: { subject: 'auth0|alice', defaultAccess: 'read' },
-    shareRules: [],
-    userRules: [],
-    ...overrides,
+    id: SHARE_ID,
+    name: 'Accounting',
+    protocol: 'sftp',
+    host: 'nas.example.test',
+    port: null,
+    shareName: null,
+    rootPath: '/srv/accounting',
+    caseInsensitive: false,
+    enabled: true,
   };
 }
 
-function authOf(ctx: AclContext): FileshareAuth {
+function connectionOf(overrides?: Partial<ShareConnection>): ShareConnection {
+  return { username: 'alice', toolAccess: 'read_write', allowDelete: true, ...overrides };
+}
+
+function authOf(connection: ShareConnection): FileshareAuth {
   return {
     kind: 'user',
     target() {
       return { tenantId: 'tenant-1', subject: 'auth0|alice' };
     },
-    async listGranted() {
-      return [{ share: ctx.share, grant: ctx.grant, hasRules: ctx.userRules.length > 0 }];
+    async listConnected() {
+      return [{ share: summary(), connection }];
     },
-    async resolve(shareId: string) {
-      if (shareId !== ctx.share.id) return NO_SUCH_SHARE;
-      return { ctx };
+    async connection(shareId: string) {
+      if (shareId !== SHARE_ID) return NO_SUCH_SHARE;
+      return connection;
     },
   };
 }
 
-function register(ctx: AclContext = aclContext()): Map<string, Handler> {
+function register(
+  connection: ShareConnection = connectionOf(),
+  exposure: FileshareToolExposure = { write: true, del: true }
+): Map<string, Handler> {
   const handlers = new Map<string, Handler>();
   const server = {
     registerTool: (name: string, _config: unknown, handler: Handler) => {
       handlers.set(name, handler);
     },
   } as unknown as McpServer;
-  registerFileshareTools(server, contextOf(), authOf(ctx));
+  registerFileshareTools(server, contextOf(), authOf(connection), exposure);
   return handlers;
 }
 
@@ -117,13 +116,47 @@ function opError(type: string, message?: string, status = 400) {
 
 beforeEach(() => jest.clearAllMocks());
 
-test('list_shares reports name, id and access level', async () => {
+// ---------------------------------------------------------------------------
+// Registration shape — the tool list reflects the caller's exposure.
+// ---------------------------------------------------------------------------
+
+test('no write exposure anywhere registers the read tools only', () => {
+  const handlers = register(connectionOf({ toolAccess: 'read' }), { write: false, del: false });
+  expect([...handlers.keys()].sort()).toEqual([
+    'fileshare_download_file',
+    'fileshare_list_folder',
+    'fileshare_list_shares',
+    'fileshare_read_file',
+    'fileshare_stat',
+  ]);
+});
+
+test('write exposure without delete registers everything but the delete pair', () => {
+  const handlers = register(connectionOf({ allowDelete: false }), { write: true, del: false });
+  expect(handlers.has('fileshare_move_entry')).toBe(true);
+  expect(handlers.has('fileshare_request_file_upload')).toBe(true);
+  expect(handlers.has('fileshare_delete_entry_preview')).toBe(false);
+  expect(handlers.has('fileshare_delete_entry_confirm')).toBe(false);
+});
+
+test('full exposure registers the delete pair too', () => {
+  const handlers = register();
+  expect(handlers.has('fileshare_delete_entry_preview')).toBe(true);
+  expect(handlers.has('fileshare_delete_entry_confirm')).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// Discovery.
+// ---------------------------------------------------------------------------
+
+test('list_shares reports name, id, account and the exposure choice', async () => {
   const handlers = register();
   const result = await handlers.get('fileshare_list_shares')!({});
   expect(result.isError).toBeUndefined();
   expect(textOf(result)).toContain('Accounting');
   expect(textOf(result)).toContain(SHARE_ID);
-  expect(textOf(result)).toContain('your access: read');
+  expect(textOf(result)).toContain('connected as alice');
+  expect(textOf(result)).toContain('tools here: read/write + delete');
 });
 
 test('list_folder forwards the caller and renders wire entries', async () => {
@@ -132,7 +165,6 @@ test('list_folder forwards the caller and renders wire entries', async () => {
     val: {
       share: SHARE,
       path: '/',
-      access: 'read',
       entries: [
         {
           name: 'notes.txt',
@@ -140,10 +172,8 @@ test('list_folder forwards the caller and renders wire entries', async () => {
           kind: 'file',
           size: 5,
           modifiedAt: '2026-01-01T00:00:00.000Z',
-          access: 'read',
         },
-        { name: 'vault', path: '/vault', kind: 'dir', size: null, modifiedAt: null, access: 'traverse' },
-        { name: 'drafts', path: '/drafts', kind: 'dir', size: null, modifiedAt: null, access: 'read_write' },
+        { name: 'drafts', path: '/drafts', kind: 'dir', size: null, modifiedAt: null },
       ],
     },
   });
@@ -152,9 +182,8 @@ test('list_folder forwards the caller and renders wire entries', async () => {
   const text = textOf(result);
   expect(result.isError).toBeUndefined();
   expect(client.fsListFolder).toHaveBeenCalledWith(TARGET, '/');
-  expect(text).toContain('/notes.txt [read]');
-  expect(text).toContain('/vault/ [folders below]');
-  expect(text).toContain('/drafts/ [read/write]');
+  expect(text).toContain('/notes.txt · 5 bytes');
+  expect(text).toContain('/drafts/');
 });
 
 test('a traversal path is refused with a reason, never sent to the worker', async () => {
@@ -168,28 +197,27 @@ test('a traversal path is refused with a reason, never sent to the worker', asyn
   expect(client.fsListFolder).not.toHaveBeenCalled();
 });
 
-test("the worker's no_share answer becomes the shared no-such-share refusal", async () => {
-  client.fsListFolder.mockResolvedValue(opError('no_share', undefined, 404));
+test("the worker's not_connected answer becomes the shared refusal", async () => {
+  client.fsListFolder.mockResolvedValue(opError('not_connected', undefined, 403));
   const handlers = register();
   const result = await handlers.get('fileshare_list_folder')!({
     shareId: '99999999-9999-9999-9999-999999999999',
     path: '/',
   });
   expect(result.isError).toBe(true);
-  expect(textOf(result)).toContain('No file share with that id is available to you');
+  expect(textOf(result)).toContain('No file share with that id is connected for you');
 });
 
-test("a worker ACL refusal passes through in the worker's words", async () => {
-  client.fsReadFile.mockResolvedValue(
-    opError('forbidden', 'You do not have access to that file.', 403)
-  );
+test('a file-server refusal names the credentials, not Renkei', async () => {
+  client.fsReadFile.mockResolvedValue(opError('access_denied', undefined, 403));
   const handlers = register();
   const result = await handlers.get('fileshare_read_file')!({
     shareId: SHARE_ID,
     path: '/closed/file.txt',
   });
   expect(result.isError).toBe(true);
-  expect(textOf(result)).toBe('You do not have access to that file.');
+  expect(textOf(result)).toContain('file server refused');
+  expect(textOf(result)).toContain('your credentials');
 });
 
 test('an unconfigured service is a clear refusal, not a crash', async () => {
@@ -216,21 +244,10 @@ test('read_file decodes the returned bytes and caps them', async () => {
   expect(client.fsReadFile).toHaveBeenCalledWith(TARGET, '/notes.txt', 1024 * 1024);
 });
 
-test('stat renders traverse-only access honestly', async () => {
-  client.fsStatEntry.mockResolvedValue({
-    ok: true,
-    val: { share: SHARE, path: '/vault', kind: 'dir', size: null, modifiedAt: null, access: 'traverse' },
-  });
-  const handlers = register();
-  const result = await handlers.get('fileshare_stat')!({ shareId: SHARE_ID, path: '/vault' });
-  expect(result.isError).toBeUndefined();
-  expect(textOf(result)).toContain('traverse only (folders below are granted)');
-});
-
 test('download_file hands out the session-guarded REST link, folders refused', async () => {
   client.fsStatEntry.mockResolvedValue({
     ok: true,
-    val: { share: SHARE, path: '/report.pdf', kind: 'file', size: 9, modifiedAt: null, access: 'read' },
+    val: { share: SHARE, path: '/report.pdf', kind: 'file', size: 9, modifiedAt: null },
   });
   const handlers = register();
   const result = await handlers.get('fileshare_download_file')!({
@@ -244,7 +261,7 @@ test('download_file hands out the session-guarded REST link, folders refused', a
 
   client.fsStatEntry.mockResolvedValue({
     ok: true,
-    val: { share: SHARE, path: '/folder', kind: 'dir', size: null, modifiedAt: null, access: 'read' },
+    val: { share: SHARE, path: '/folder', kind: 'dir', size: null, modifiedAt: null },
   });
   const folder = await handlers.get('fileshare_download_file')!({
     shareId: SHARE_ID,
@@ -254,22 +271,48 @@ test('download_file hands out the session-guarded REST link, folders refused', a
   expect(textOf(folder)).toContain('is a folder');
 });
 
-test('request_file_upload requires read_write at the destination (store-side)', async () => {
-  const handlers = register(); // default access: read
+// ---------------------------------------------------------------------------
+// The per-share exposure gates on act tools.
+// ---------------------------------------------------------------------------
+
+test('a registered write tool still refuses a share exposed read-only', async () => {
+  // Registered because ANOTHER share exposes write; this one does not.
+  const handlers = register(connectionOf({ toolAccess: 'read' }), { write: true, del: true });
+  const result = await handlers.get('fileshare_create_folder')!({
+    shareId: SHARE_ID,
+    path: '/new',
+  });
+  expect(result.isError).toBe(true);
+  expect(textOf(result)).toContain('Write tools are switched off');
+  expect(client.fsMakeFolder).not.toHaveBeenCalled();
+});
+
+test('the delete pair refuses a share without the delete opt-in', async () => {
+  const handlers = register(connectionOf({ allowDelete: false }), { write: true, del: true });
+  for (const tool of ['fileshare_delete_entry_preview', 'fileshare_delete_entry_confirm']) {
+    const result = await handlers.get(tool)!({ shareId: SHARE_ID, path: '/old.txt' });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('Deleting is switched off');
+  }
+  expect(client.fsRemoveEntry).not.toHaveBeenCalled();
+  expect(client.fsPreviewRemove).not.toHaveBeenCalled();
+});
+
+test('request_file_upload refuses without write exposure, before any slot', async () => {
+  const handlers = register(connectionOf({ toolAccess: 'read' }), { write: true, del: true });
   const result = await handlers.get('fileshare_request_file_upload')!({
     shareId: SHARE_ID,
     path: '/reports',
     filename: 'q4.xlsx',
   });
   expect(result.isError).toBe(true);
-  expect(textOf(result)).toContain('read/write');
+  expect(textOf(result)).toContain('Write tools are switched off');
   expect(createUploadSlot).not.toHaveBeenCalled();
 });
 
 test('request_file_upload mints a slot with the share destination', async () => {
   createUploadSlot.mockResolvedValue({ ok: true, uploadId: 'slot-1', instructions: 'POST here' });
-  const ctx = aclContext({ grant: { subject: 'auth0|alice', defaultAccess: 'read_write' } });
-  const handlers = register(ctx);
+  const handlers = register();
   const result = await handlers.get('fileshare_request_file_upload')!({
     shareId: SHARE_ID,
     path: '/reports',
@@ -285,8 +328,7 @@ test('request_file_upload mints a slot with the share destination', async () => 
 });
 
 test('request_file_upload refuses filenames carrying separators', async () => {
-  const ctx = aclContext({ grant: { subject: 'auth0|alice', defaultAccess: 'read_write' } });
-  const handlers = register(ctx);
+  const handlers = register();
   const result = await handlers.get('fileshare_request_file_upload')!({
     shareId: SHARE_ID,
     path: '/reports',
@@ -316,11 +358,7 @@ test('create_folder forwards to the worker and phrases exists specially', async 
   expect(textOf(taken)).toContain('already exists');
 });
 
-// ---------------------------------------------------------------------------
-// Move / rename / delete — the destructive-operation surface.
-// ---------------------------------------------------------------------------
-
-test('move forwards source and destination folder; refusals pass through', async () => {
+test('move forwards source and destination folder', async () => {
   client.fsMoveEntry.mockResolvedValue({
     ok: true,
     val: { share: SHARE, path: '/archive/a.txt', unchanged: false },
@@ -334,23 +372,6 @@ test('move forwards source and destination folder; refusals pass through', async
   expect(moved.isError).toBeUndefined();
   expect(textOf(moved)).toContain('Moved /a.txt to /archive/a.txt');
   expect(client.fsMoveEntry).toHaveBeenCalledWith(TARGET, '/a.txt', '/archive');
-
-  client.fsMoveEntry.mockResolvedValue(
-    opError(
-      'forbidden',
-      'Access rules are anchored at or under that path (/vault/secret), so it cannot be ' +
-        'moved or renamed — an administrator must remove those rules first.',
-      403
-    )
-  );
-  const anchored = await handlers.get('fileshare_move_entry')!({
-    shareId: SHARE_ID,
-    path: '/vault',
-    toFolder: '/archive',
-  });
-  expect(anchored.isError).toBe(true);
-  expect(textOf(anchored)).toContain('/vault/secret');
-  expect(textOf(anchored)).toContain('administrator');
 });
 
 test('the share root is refused locally for move, rename and delete', async () => {
@@ -420,32 +441,23 @@ test('delete preview stages the confirm from the worker preview, no delete call'
 test('delete preview relays the non-empty refusal before any card renders', async () => {
   client.fsPreviewRemove.mockResolvedValue(opError('not_empty', undefined, 409));
   const handlers = register();
-  const result = await handlers.get('fileshare_delete_entry_preview')!({
+  const result = (await handlers.get('fileshare_delete_entry_preview')!({
     shareId: SHARE_ID,
-    path: '/stuff',
-  });
+    path: '/stash',
+  })) as { isError?: boolean; structuredContent?: unknown; content: { text: string }[] };
   expect(result.isError).toBe(true);
+  expect(result.structuredContent).toBeUndefined();
   expect(textOf(result)).toContain('not empty');
 });
 
-test('confirm calls the worker delete, which re-checks authority itself', async () => {
-  client.fsRemoveEntry.mockResolvedValue(
-    opError('forbidden', 'You do not have read/write access to delete that path.', 403)
-  );
-  const handlers = register();
-  const refused = await handlers.get('fileshare_delete_entry_confirm')!({
-    shareId: SHARE_ID,
-    path: '/old.txt',
-  });
-  expect(refused.isError).toBe(true);
-  expect(textOf(refused)).toContain('read/write');
-
+test('delete confirm executes through the worker', async () => {
   client.fsRemoveEntry.mockResolvedValue({ ok: true, val: { share: SHARE, path: '/old.txt' } });
-  const deleted = await handlers.get('fileshare_delete_entry_confirm')!({
+  const handlers = register();
+  const result = await handlers.get('fileshare_delete_entry_confirm')!({
     shareId: SHARE_ID,
     path: '/old.txt',
   });
-  expect(deleted.isError).toBeUndefined();
-  expect(textOf(deleted)).toContain('Deleted /old.txt from "Accounting"');
+  expect(result.isError).toBeUndefined();
+  expect(textOf(result)).toContain('Deleted /old.txt');
   expect(client.fsRemoveEntry).toHaveBeenCalledWith(TARGET, '/old.txt');
 });

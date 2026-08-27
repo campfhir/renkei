@@ -5,9 +5,10 @@
  * idiom: per-level loading/error/empty states, breadcrumb back-navigation).
  * Rows are fully clickable — a folder opens, a file asks before
  * downloading — and every mutation (new folder, upload, rename, move,
- * delete) runs through a modal that shows its own errors. Write controls
- * appear only where the caller's effective access is read/write — the
- * buttons mirror the ACL, and the routes re-check it.
+ * delete) runs through a modal that shows its own errors. Everything runs
+ * on the caller's OWN stored credentials, so the file server decides what
+ * succeeds; the controls are always offered and a refusal reads back as
+ * the server's answer.
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
@@ -30,9 +31,7 @@ interface ShareView {
   name: string;
   protocol: 'smb' | 'sftp';
   host: string;
-  defaultAccess: 'none' | 'read' | 'read_write';
-  hasRules: boolean;
-  hasCredentials: boolean;
+  connection: { username: string } | null;
 }
 
 interface EntryView {
@@ -41,7 +40,6 @@ interface EntryView {
   kind: 'file' | 'dir';
   size: number | null;
   modifiedAt: string | null;
-  access: 'read' | 'read_write' | 'traverse';
 }
 
 type ModalState =
@@ -52,13 +50,6 @@ type ModalState =
   | { kind: 'rename'; entry: EntryView }
   | { kind: 'move'; entry: EntryView }
   | { kind: 'delete'; entry: EntryView };
-
-/** Files carry a whisper of their access; folders carry none at all. */
-const FILE_ACCESS_TEXT: Record<EntryView['access'], string> = {
-  read: 'r',
-  read_write: 'rw',
-  traverse: '',
-};
 
 function formatSize(size: number | null): string {
   if (size === null) return '';
@@ -80,7 +71,6 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
   const [share, setShare] = useState<ShareView | null>(null);
   const [path, setPath] = useState('/');
   const [entries, setEntries] = useState<EntryView[]>([]);
-  const [canWriteHere, setCanWriteHere] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
@@ -99,21 +89,16 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
     async (target: ShareView, folderPath: string) => {
       setLoading(true);
       setError(null);
-      const { data, error: loadError } = await getJson<{
-        entries: EntryView[];
-        access: 'none' | 'read' | 'read_write';
-      }>(
+      const { data, error: loadError } = await getJson<{ entries: EntryView[] }>(
         `/api/tenant/${tenantId}/fileshares/${target.id}/folder?path=${encodeURIComponent(folderPath)}`
       );
       setLoading(false);
       if (loadError || !data) {
         setError(loadError ?? 'Could not open the folder');
         setEntries([]);
-        setCanWriteHere(false);
         return;
       }
       setEntries(data.entries);
-      setCanWriteHere(data.access === 'read_write');
     },
     [tenantId]
   );
@@ -136,7 +121,7 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
   if (shares.length === 0) {
     return (
       <p className="text-sm text-gray-600 dark:text-gray-400">
-        You have not been granted access to any file shares. An administrator can grant it under
+        No file shares are registered for this org yet. An administrator can add them under
         Organization → File shares.
       </p>
     );
@@ -155,21 +140,24 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
                 </p>
               </div>
               <div className="flex shrink-0 items-center gap-3">
-                <span className="text-xs text-gray-500 dark:text-gray-400">
-                  {row.defaultAccess === 'none'
-                    ? 'specific folders'
-                    : row.defaultAccess === 'read_write'
-                      ? 'read/write'
-                      : 'read'}
-                  {row.hasRules ? ' · rules apply' : ''}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => open(row, '/')}
-                  className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
-                >
-                  Open
-                </button>
+                {row.connection ? (
+                  <>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      connected as <span className="font-mono">{row.connection.username}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => open(row, '/')}
+                      className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+                    >
+                      Open
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    not connected — add your credentials on the Connectors page
+                  </span>
+                )}
               </div>
             </div>
           </li>
@@ -222,16 +210,14 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
       {loading ? (
         <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">Loading…</p>
       ) : entries.length === 0 && !error ? (
-        <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
-          Nothing you can access in this folder.
-        </p>
+        <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">This folder is empty.</p>
       ) : (
         <ul className="mt-2 divide-y divide-gray-100 dark:divide-gray-900">
           {entries.map((entry) => (
             <li key={entry.path} className="flex items-center gap-1 py-0.5">
               <button
                 type="button"
-                disabled={loading || (entry.kind === 'file' && entry.access === 'traverse')}
+                disabled={loading}
                 onClick={() =>
                   entry.kind === 'dir'
                     ? open(share, entry.path)
@@ -247,32 +233,22 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
                   {entry.name}
                   {entry.kind === 'dir' ? '/' : ''}
                 </span>
-                {entry.kind === 'file' && FILE_ACCESS_TEXT[entry.access] ? (
-                  <span className="shrink-0 text-xs text-gray-400 dark:text-gray-500">
-                    {FILE_ACCESS_TEXT[entry.access]}
-                  </span>
-                ) : null}
                 <span className="min-w-0 flex-1" />
                 <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
                   {formatSize(entry.size)}
                 </span>
               </button>
-              {entry.access === 'read_write' ? (
-                <EntryMenu
-                  entry={entry}
-                  disabled={loading}
-                  onAction={(kind) => setModal({ kind, entry })}
-                />
-              ) : (
-                // Keeps rows with and without a menu aligned.
-                <span className="w-7 shrink-0" />
-              )}
+              <EntryMenu
+                entry={entry}
+                disabled={loading}
+                onAction={(kind) => setModal({ kind, entry })}
+              />
             </li>
           ))}
         </ul>
       )}
 
-      {canWriteHere ? (
+      {
         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
           <button
             type="button"
@@ -291,7 +267,7 @@ export default function FilesBrowser({ tenantId }: { tenantId: string }) {
             New folder
           </button>
         </div>
-      ) : null}
+      }
 
       {modal?.kind === 'newFolder' ? (
         <NewFolderModal

@@ -6,10 +6,10 @@ import { signInUrl } from '@/lib/sign-in-url';
 import FilesBrowser from './files-browser';
 
 /**
- * The files browser: the human face of the same ACL the fileshare_* tools
- * enforce. Everything on this page rides the tenant REST routes, so what a
- * person can see and do here is exactly what a model acting for them
- * could — no more, no less.
+ * The files browser: the human face of the same seam the fileshare_* tools
+ * ride. Everything on this page runs on the caller's own stored share
+ * credentials through the tenant REST routes, so what a person can see and
+ * do here is exactly what their account can do on the file server.
  */
 export default async function FilesPage({
   params,
@@ -29,8 +29,9 @@ export default async function FilesPage({
     <div className="mx-auto max-w-3xl">
       <h1 className="mb-1 text-xl font-bold">Files</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-        Org network shares you have been granted access to. Files show your access beside their
-        name (r&nbsp;·&nbsp;read, rw&nbsp;·&nbsp;read/write); open a folder to see what is inside.
+        Org network shares, browsed with your own credentials — connect a share on the Connectors
+        page and it opens here. What you can see and change is what your account may on the file
+        server.
       </p>
       <FilesBrowser tenantId={tenant.id} />
     </div>

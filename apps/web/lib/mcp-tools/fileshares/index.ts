@@ -1,29 +1,29 @@
 /**
- * The fileshare_* tools — org-registered SMB/SFTP shares where Renkei's own
- * grant/rule store is the ACL authority (there is no provider to delegate
- * to: the backend connection uses one admin-held service credential).
+ * The fileshare_* tools — org-registered SMB/SFTP shares each person
+ * connects with their OWN credentials (Connectors page). The file server
+ * is the sole authorization authority: every operation crosses the
+ * authenticated seam to apps/worker-fileshares, which resolves the
+ * caller's stored credential fresh and lets the server judge the account.
  *
- * Since the dedicated fileshare worker took over all share I/O, these
- * handlers hold no protocol session and decrypt no credential: every
- * operation crosses the authenticated seam to apps/worker-fileshares,
- * which resolves the caller's ACL context fresh and enforces the per-path
- * check itself. What stays here is the model-facing boundary — path
- * normalization phrased as refusals a model can act on, the upload-slot
- * mint, the preview card — plus the store-only discovery reads. The
- * capability gate only decides whether the tools exist for a caller; it
- * never substitutes for the worker's per-path check.
+ * What this layer enforces is the person's LLM-EXPOSURE choice, stored on
+ * the connection row: whether the model may use write tools on a share,
+ * and whether it may delete there. Exposure can hide access the person
+ * holds; it can never mint any — which is why it is checked here, per
+ * call, and deliberately not in the worker. What stays here besides that
+ * is the model-facing boundary: path normalization phrased as refusals a
+ * model can act on, the upload-slot mint, the preview card, and the
+ * store-only discovery reads.
  *
- * No scope gate: fileshares has no OAuth scopes (the cards/agents
- * precedent), so registration wraps only the capability gate the registry
- * applies. Listings annotate every entry with the caller's own permission,
- * because "what may I do here" is the question a model asks next.
+ * Registration is additionally shaped by the aggregate exposure (see
+ * registry.ts): a caller who exposed no write anywhere gets no write
+ * tools at all, and likewise for delete — the tool list tells the truth.
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { extractText, DEFAULT_MAX_INPUT_BYTES } from '@renkei/document-text';
-import { childPath, effectiveAccess, normalizePath } from '@renkei/connector-fileshares';
-import type { AccessLevel, GrantedShare } from '@renkei/connector-fileshares';
+import { normalizePath } from '@renkei/connector-fileshares';
+import type { ConnectedShare, ShareConnection } from '@renkei/connector-fileshares';
 import type { MCPToolContext } from '../common';
 import {
   fsListFolder,
@@ -44,11 +44,25 @@ import {
   newPreviewId,
   previewToolMeta,
 } from '../widgets';
-import { NO_STORED_CREDENTIALS, NO_SUCH_SHARE } from './fileshare-auth';
+import { NO_SUCH_SHARE } from './fileshare-auth';
 import type { FileshareAuth } from './fileshare-auth';
 
 /** The connector key the fileshare capabilities register under. */
 export const FILESHARES_MCP_CONNECTOR = 'fileshares';
+
+/** Which tool families the caller's aggregate exposure enables. */
+export interface FileshareToolExposure {
+  write: boolean;
+  del: boolean;
+}
+
+const WRITE_OFF =
+  'Write tools are switched off for this share — they can be enabled per share on the ' +
+  'Connectors page in Renkei.';
+
+const DELETE_OFF =
+  'Deleting is switched off for this share — it can be enabled per share on the ' +
+  'Connectors page in Renkei.';
 
 function textResult(text: string) {
   return { content: [{ type: 'text' as const, text }] };
@@ -60,10 +74,6 @@ function errText(text: string) {
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function accessWord(level: AccessLevel): string {
-  return level === 'read_write' ? 'read/write' : level;
 }
 
 /** Normalize a model-supplied path, or return the refusal to hand back. */
@@ -82,30 +92,32 @@ function inputPath(raw: unknown): { ok: true; path: string } | { ok: false; erro
 }
 
 function entryLine(entry: WireEntry): string {
-  const marker = entry.access === 'traverse' ? '[folders below]' : `[${accessWord(entry.access)}]`;
-  if (entry.kind === 'dir') return `${entry.path}/ ${marker}`;
+  if (entry.kind === 'dir') return `${entry.path}/`;
   const size = entry.size !== null ? ` · ${entry.size} bytes` : '';
   const when = entry.modifiedAt ? ` · modified ${entry.modifiedAt}` : '';
-  return `${entry.path} ${marker}${size}${when}`;
+  return `${entry.path}${size}${when}`;
 }
 
-function shareLine(granted: GrantedShare): string {
+function exposureWord(connection: ShareConnection): string {
+  if (connection.toolAccess !== 'read_write') return 'read';
+  return connection.allowDelete ? 'read/write + delete' : 'read/write';
+}
+
+function shareLine(connected: ConnectedShare): string {
   const target =
-    granted.share.protocol === 'smb'
-      ? `smb://${granted.share.host}/${granted.share.shareName ?? ''}`
-      : `sftp://${granted.share.host}`;
-  const access =
-    granted.grant.defaultAccess === 'none'
-      ? 'specific folders only'
-      : accessWord(granted.grant.defaultAccess);
-  const rules = granted.hasRules ? ' (path rules apply)' : '';
-  return `${granted.share.name} — id ${granted.share.id} — ${target} — your access: ${access}${rules}`;
+    connected.share.protocol === 'smb'
+      ? `smb://${connected.share.host}/${connected.share.shareName ?? ''}`
+      : `sftp://${connected.share.host}`;
+  return (
+    `${connected.share.name} — id ${connected.share.id} — ${target} — connected as ` +
+    `${connected.connection.username} — tools here: ${exposureWord(connected.connection)}`
+  );
 }
 
 /**
  * Phrase a worker refusal or failure for the model. The worker's own
- * messages (ACL refusals, gate refusals, path complaints) pass through —
- * they are written user-facing at the source, once, so REST and MCP agree.
+ * messages pass through — they are written user-facing at the source,
+ * once, so REST and MCP agree.
  */
 function clientMessage(what: string, error: FileshareClientError): string {
   if (error.kind === 'unconfigured') {
@@ -116,21 +128,20 @@ function clientMessage(what: string, error: FileshareClientError): string {
   }
   switch (error.type) {
     case 'no_share':
+    case 'not_connected':
+      // One answer for "no such share" and "not yours": ids must not
+      // become an existence oracle for shares others connected.
       return NO_SUCH_SHARE;
-    case 'no_credentials':
-      return NO_STORED_CREDENTIALS;
     case 'bad_credentials':
-      return 'The stored credentials for this share cannot be read — an administrator must re-enter them.';
+      return 'Your stored credentials for this share cannot be read — reconnect it on the Connectors page.';
     case 'store':
-      return 'Could not read your file share access.';
-    case 'forbidden':
-      return error.message ?? 'You do not have access to that.';
+      return 'Could not read your share connections.';
     case 'bad_path':
       return error.message ?? 'That is not a usable path.';
     case 'not_found':
       return 'Nothing exists at that path.';
     case 'access_denied':
-      return `The file server refused to ${what} with the share's service credential.`;
+      return `The file server refused to ${what} with your credentials.`;
     case 'timeout':
       return `The file server did not answer in time trying to ${what}.`;
     case 'too_large':
@@ -149,27 +160,48 @@ function clientMessage(what: string, error: FileshareClientError): string {
 export function registerFileshareTools(
   server: McpServer,
   context: MCPToolContext,
-  auth: FileshareAuth
+  auth: FileshareAuth,
+  exposure: FileshareToolExposure
 ): void {
+  /**
+   * The per-call exposure gate for act tools: the caller's own connection,
+   * read fresh, must expose the needed family on THIS share. A share the
+   * caller never connected answers the shared not-connected refusal.
+   */
+  const exposureRefusal = async (
+    shareId: string,
+    need: 'write' | 'delete'
+  ): Promise<string | null> => {
+    const connection = await auth.connection(shareId);
+    if (typeof connection === 'string') return connection;
+    if (connection.toolAccess !== 'read_write') return WRITE_OFF;
+    if (need === 'delete' && !connection.allowDelete) return DELETE_OFF;
+    return null;
+  };
+
   server.registerTool(
     'fileshare_list_shares',
     {
-      title: 'FileShares · Read — List the network shares you can use',
+      title: 'FileShares · Read — List the network shares you connected',
       description:
-        'The org file shares (SMB/SFTP) you have been granted access to, with the access ' +
-        'level you hold on each. Every other fileshare_* tool takes the shareId listed here. ' +
-        'Shares you have no grant for are not listed and cannot be reached.',
+        'The org file shares (SMB/SFTP) this user has connected with their own credentials, ' +
+        'with what the tools may do on each (their choice on the Connectors page). Every ' +
+        'other fileshare_* tool takes the shareId listed here. What each operation is ' +
+        'actually allowed to touch is decided by the file server judging their account.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({}),
     },
     async () => {
-      const granted = await auth.listGranted();
-      if (typeof granted === 'string') return errText(granted);
-      if (granted.length === 0) {
-        return textResult('You have not been granted access to any file shares.');
+      const connected = await auth.listConnected();
+      if (typeof connected === 'string') return errText(connected);
+      if (connected.length === 0) {
+        return textResult(
+          'No file shares are connected. Shares are connected with your own credentials on ' +
+            'the Connectors page in Renkei.'
+        );
       }
       return textResult(
-        `Shares you can use:\n${granted.map((entry) => shareLine(entry)).join('\n')}`
+        `Shares you can use:\n${connected.map((entry) => shareLine(entry)).join('\n')}`
       );
     }
   );
@@ -179,9 +211,8 @@ export function registerFileshareTools(
     {
       title: 'FileShares · Read — List a folder on a share',
       description:
-        'List the entries of a folder on a granted share. Each entry carries the access you ' +
-        'hold on it — [read], [read/write], or [folders below] for a folder you may only ' +
-        'traverse. Entries you cannot access at all are not shown.',
+        'List the entries of a folder on a connected share, as your account sees them — ' +
+        'what the file server hides from that account is not listed.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         shareId: z.string().uuid().describe('From fileshare_list_shares.'),
@@ -201,7 +232,7 @@ export function registerFileshareTools(
       if (!listed.ok) return errText(clientMessage('list the folder', listed.err));
 
       if (listed.val.entries.length === 0) {
-        return textResult(`${listed.val.path} has no entries you can access.`);
+        return textResult(`${listed.val.path} is empty (as your account sees it).`);
       }
       return textResult(
         `${listed.val.path} on "${listed.val.share.name}":\n` +
@@ -215,8 +246,8 @@ export function registerFileshareTools(
     {
       title: 'FileShares · Read — Details of one file or folder',
       description:
-        'Type, size, modification time and YOUR effective access for one path on a granted ' +
-        'share. Useful before reading or writing.',
+        'Type, size and modification time for one path on a connected share. Useful before ' +
+        'reading or writing.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         shareId: z.string().uuid().describe('From fileshare_list_shares.'),
@@ -238,11 +269,6 @@ export function registerFileshareTools(
         `Type: ${entry.kind === 'dir' ? 'folder' : 'file'}`,
         ...(entry.size !== null ? [`Size: ${entry.size} bytes`] : []),
         ...(entry.modifiedAt ? [`Modified: ${entry.modifiedAt}`] : []),
-        `Your access: ${
-          entry.access === 'traverse'
-            ? 'traverse only (folders below are granted)'
-            : accessWord(entry.access)
-        }`,
       ];
       return textResult(lines.join('\n'));
     }
@@ -253,7 +279,7 @@ export function registerFileshareTools(
     {
       title: 'FileShares · Read — Read a file as text',
       description:
-        'Fetch a file from a granted share and return its text — plain files decoded ' +
+        'Fetch a file from a connected share and return its text — plain files decoded ' +
         'directly, documents (pdf, docx, xlsx, pptx, html) through text extraction. For the ' +
         'raw bytes use fileshare_download_file instead.',
       annotations: { readOnlyHint: true },
@@ -334,21 +360,28 @@ export function registerFileshareTools(
       const url = `${base}/api/tenant/${context.tenantId}/fileshares/${stats.val.share.id}/file?path=${encodeURIComponent(path.path)}`;
       return textResult(
         `Download link for "${path.path}" (${stats.val.size ?? 'unknown'} bytes):\n${url}\n` +
-          'Opening it requires being signed in to this Renkei org in the browser; access is ' +
-          're-checked at download time.'
+          'Opening it requires being signed in to this Renkei org in the browser; the ' +
+          'download runs on that person\'s own share credentials.'
       );
     }
   );
+
+  // -------------------------------------------------------------------
+  // Act tools — registered only when the caller exposed the family
+  // somewhere, and re-gated per share on every call (exposureRefusal).
+  // -------------------------------------------------------------------
+  if (!exposure.write) return;
 
   server.registerTool(
     'fileshare_request_file_upload',
     {
       title: 'FileShares · Act — Request an upload slot for a file',
       description:
-        'Start writing a file to a granted share (requires read/write on the destination). ' +
-        'Returns an upload endpoint; send the raw bytes there (curl with the Authorization ' +
-        'header, or the browser link), then confirm with check_file_upload. File content ' +
-        'never travels through tool arguments.',
+        'Start writing a file to a connected share (requires write tools enabled for it on ' +
+        'the Connectors page; the file server must also accept the write). Returns an ' +
+        'upload endpoint; send the raw bytes there (curl with the Authorization header, or ' +
+        'the browser link), then confirm with check_file_upload. File content never ' +
+        'travels through tool arguments.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         shareId: z.string().uuid().describe('From fileshare_list_shares.'),
@@ -360,11 +393,8 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      // The one Act tool that stays store-side: minting a slot writes no
-      // bytes, so it checks the ACL context directly for an early, clear
-      // refusal — the worker re-runs the full check when the bytes arrive.
-      const resolved = await auth.resolve(str(args.shareId));
-      if (typeof resolved === 'string') return errText(resolved);
+      const refusal = await exposureRefusal(str(args.shareId), 'write');
+      if (refusal) return errText(refusal);
       const folder = inputPath(args.path ?? '/');
       if (!folder.ok) return errText(folder.error);
 
@@ -372,15 +402,13 @@ export function registerFileshareTools(
       if (!filename || filename.includes('/') || filename.includes('\\') || filename === '..') {
         return errText('The filename must be a plain name with no path separators.');
       }
-      const destination = childPath(folder.path, filename);
-      if (effectiveAccess(resolved.ctx, destination) !== 'read_write') {
-        return errText('You do not have read/write access at that destination.');
-      }
-
+      // The slot records the folder; the worker re-resolves the caller's
+      // credential when the bytes arrive, and the file server judges the
+      // write itself.
       const slot = await createUploadSlot(
         context,
         'fileshare-file',
-        { shareId: resolved.ctx.share.id, path: folder.path },
+        { shareId: str(args.shareId), path: folder.path },
         {
           filename,
           contentType: str(args.contentType) || undefined,
@@ -397,7 +425,8 @@ export function registerFileshareTools(
     {
       title: 'FileShares · Act — Create a folder',
       description:
-        'Create a new folder on a granted share (requires read/write on the parent folder).',
+        'Create a new folder on a connected share (requires write tools enabled for it; ' +
+        'the file server must also accept the operation).',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         shareId: z.string().uuid().describe('From fileshare_list_shares.'),
@@ -405,6 +434,8 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      const refusal = await exposureRefusal(str(args.shareId), 'write');
+      if (refusal) return errText(refusal);
       const target = auth.target();
       if (typeof target === 'string') return errText(target);
       const path = inputPath(args.path);
@@ -427,9 +458,8 @@ export function registerFileshareTools(
       title: 'FileShares · Act — Move a file or folder',
       description:
         'Move a file or folder to another folder on the SAME share, keeping its name ' +
-        '(requires read/write on both the source and the destination; use ' +
-        'fileshare_rename_entry to change the name). Never overwrites: an existing ' +
-        'destination is refused.',
+        '(requires write tools enabled for the share; use fileshare_rename_entry to change ' +
+        'the name). Never overwrites: an existing destination is refused.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         shareId: z.string().uuid().describe('From fileshare_list_shares.'),
@@ -438,6 +468,8 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      const refusal = await exposureRefusal(str(args.shareId), 'write');
+      if (refusal) return errText(refusal);
       const target = auth.target();
       if (typeof target === 'string') return errText(target);
       const source = inputPath(args.path);
@@ -464,9 +496,9 @@ export function registerFileshareTools(
     {
       title: 'FileShares · Act — Rename a file or folder',
       description:
-        'Give a file or folder a new name in its current folder (requires read/write on ' +
-        'both the old and new paths). Never overwrites: an existing name is refused. To ' +
-        'change folders, use fileshare_move_entry.',
+        'Give a file or folder a new name in its current folder (requires write tools ' +
+        'enabled for the share). Never overwrites: an existing name is refused. To change ' +
+        'folders, use fileshare_move_entry.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         shareId: z.string().uuid().describe('From fileshare_list_shares.'),
@@ -475,6 +507,8 @@ export function registerFileshareTools(
       }),
     },
     async (args: Record<string, unknown>) => {
+      const refusal = await exposureRefusal(str(args.shareId), 'write');
+      if (refusal) return errText(refusal);
       const target = auth.target();
       if (typeof target === 'string') return errText(target);
       const source = inputPath(args.path);
@@ -499,15 +533,19 @@ export function registerFileshareTools(
     file-server deletes have no recycle bin, so the card puts a human click
     between the model and the irreversible act. Both registrations delete
     through the worker's single delete operation — the confirm path IS the
-    delete path, and the worker re-runs every check itself rather than
-    trusting anything the card sends.
+    delete path — and both re-check the per-share delete opt-in, because
+    the card can outlive a change of heart on the connectors page.
   */
+  if (!exposure.del) return;
+
   const deleteEntrySchema = z.object({
     shareId: z.string().uuid().describe('From fileshare_list_shares.'),
     path: z.string().min(1).describe('The file or empty folder to delete, Unix style.'),
   });
 
   const deleteEntryHandler = async (args: Record<string, unknown>) => {
+    const refusal = await exposureRefusal(str(args.shareId), 'delete');
+    if (refusal) return errText(refusal);
     const target = auth.target();
     if (typeof target === 'string') return errText(target);
     const path = inputPath(args.path);
@@ -530,14 +568,16 @@ export function registerFileshareTools(
       title: 'FileShares · Act — Preview a deletion before it happens',
       description:
         'Show the user an interactive card to confirm or cancel deleting a file or EMPTY ' +
-        'folder from a granted share. This is the only way to delete here — file-server ' +
-        'deletion is permanent, so the user decides on the card. Requires read/write on ' +
-        'the path.',
+        'folder from a connected share. This is the only way to delete here — file-server ' +
+        'deletion is permanent, so the user decides on the card. Requires delete enabled ' +
+        'for the share on the Connectors page.',
       annotations: { readOnlyHint: false },
       _meta: previewToolMeta(ISSUE_PREVIEW_URI),
       inputSchema: deleteEntrySchema,
     },
     async (args: Record<string, unknown>) => {
+      const refusal = await exposureRefusal(str(args.shareId), 'delete');
+      if (refusal) return errText(refusal);
       const target = auth.target();
       if (typeof target === 'string') return errText(target);
       const path = inputPath(args.path);
@@ -545,9 +585,8 @@ export function registerFileshareTools(
       if (path.path === '/') return errText('The share root cannot be deleted.');
 
       // Read-only enrichment: what exactly is on the card. The worker runs
-      // the same gates the delete will, plus a non-empty-folder refusal —
-      // the card must never promise a deletion the confirm path would
-      // refuse.
+      // the stat the delete will, plus a non-empty-folder refusal — the
+      // card must never promise a deletion the confirm path would refuse.
       const looked = await fsPreviewRemove({ ...target, shareId: str(args.shareId) }, path.path);
       if (!looked.ok) return errText(clientMessage('delete it', looked.err));
       const entry = looked.val;

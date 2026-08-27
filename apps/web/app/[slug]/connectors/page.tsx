@@ -10,7 +10,7 @@ import MicrosoftConnector from './microsoft-connector';
 import ZoomConnector from './zoom-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
-import { listGrantedShares } from '@renkei/connector-fileshares';
+import { listSharesWithConnection } from '@renkei/connector-fileshares';
 import {
   WEBEX_USER,
   ATLASSIAN,
@@ -83,21 +83,27 @@ export default async function ConnectorsPage({
     : [];
   const enabled = new Set(configs.map((c) => c.connector));
 
-  // File shares have no connector_configs row and nothing to connect: the
-  // caller's grants ARE the provisioning, so the card renders only when at
-  // least one exists (the same rule that mounts the fileshare_* tools).
-  const fileshareGrants = dbResult.ok
-    ? await listGrantedShares(dbResult.val, tenant.id, session.subject)
+  // File shares have no connector_configs row: an admin registers each
+  // share's connection details, and this person connects it with their own
+  // credentials right on the card. Every enabled share is offered.
+  const fileshareRows = dbResult.ok
+    ? await listSharesWithConnection(dbResult.val, tenant.id, session.subject)
     : null;
-  const grantedShares =
-    fileshareGrants && fileshareGrants.ok
-      ? fileshareGrants.val.map((entry) => ({
+  const connectableShares =
+    fileshareRows && fileshareRows.ok
+      ? fileshareRows.val.map((entry) => ({
           id: entry.share.id,
           name: entry.share.name,
           protocol: entry.share.protocol,
           host: entry.share.host,
-          defaultAccess: entry.grant.defaultAccess,
-          hasRules: entry.hasRules,
+          shareName: entry.share.shareName,
+          connection: entry.connection
+            ? {
+                username: entry.connection.username,
+                toolAccess: entry.connection.toolAccess,
+                allowDelete: entry.connection.allowDelete,
+              }
+            : null,
         }))
       : [];
   const settingsOf = (connector: string) =>
@@ -318,9 +324,9 @@ export default async function ConnectorsPage({
             </div>
           )}
 
-          {grantedShares.length > 0 && (
+          {connectableShares.length > 0 && (
             <div className="mb-6 break-inside-avoid">
-              <FilesharesConnector slug={slug} shares={grantedShares} />
+              <FilesharesConnector tenantId={tenant.id} shares={connectableShares} />
             </div>
           )}
         </div>

@@ -2,10 +2,10 @@
  * The web app's client for the fileshare worker (apps/worker-fileshares) —
  * the ONLY way any web surface touches share bytes. SMB/SFTP sessions are
  * heavy I/O against servers with no self-defense, so they live in that
- * dedicated process; the web app holds no protocol library, decrypts no
- * share credential, and enforces no per-path ACL for I/O — the worker does
- * all three per call, which is why every function here carries the
- * caller's `subject` rather than any notion of "already authorized".
+ * dedicated process; the web app holds no protocol library and decrypts no
+ * credential — the worker resolves the CALLER'S OWN stored credential per
+ * call, which is why every function here carries the caller's `subject`:
+ * the file server then authorizes each operation as that account.
  *
  * Configuration: FILESHARES_WORKER_URL + FILESHARES_WORKER_API_KEY. Both
  * absent-or-set-together; a missing pair means every operation answers
@@ -16,7 +16,7 @@
  * mapping so a person and a model hear the same answer.
  */
 
-import type { AccessLevel, EntryKind, ShareCredentials } from '@renkei/connector-fileshares';
+import type { EntryKind, ShareCredentials } from '@renkei/connector-fileshares';
 
 export interface WireShareRef {
   id: string;
@@ -30,13 +30,11 @@ export interface WireEntry {
   kind: EntryKind;
   size: number | null;
   modifiedAt: string | null;
-  access: 'read' | 'read_write' | 'traverse';
 }
 
 export interface WireListing {
   share: WireShareRef;
   path: string;
-  access: AccessLevel;
   entries: WireEntry[];
 }
 
@@ -46,7 +44,6 @@ export interface WireStat {
   kind: EntryKind;
   size: number | null;
   modifiedAt: string | null;
-  access: 'read' | 'read_write' | 'traverse';
 }
 
 export interface WireRemovePreview {
@@ -61,13 +58,6 @@ export interface WireRelocation {
   share: WireShareRef;
   path: string;
   unchanged: boolean;
-}
-
-export interface WireRawEntry {
-  name: string;
-  kind: EntryKind;
-  size: number | null;
-  modifiedAt: string | null;
 }
 
 export type FileshareClientError =
@@ -154,10 +144,6 @@ async function callJson(op: string, body: unknown): Promise<ClientResult<unknown
   }
 }
 
-function entryAccess(value: unknown): 'read' | 'read_write' | 'traverse' | null {
-  return value === 'read' || value === 'read_write' || value === 'traverse' ? value : null;
-}
-
 function kindOf(value: unknown): EntryKind | null {
   return value === 'file' || value === 'dir' ? value : null;
 }
@@ -176,15 +162,13 @@ function shareRefOf(value: unknown): WireShareRef | null {
 function wireEntryOf(value: unknown): WireEntry | null {
   if (!isRecord(value)) return null;
   const kind = kindOf(value.kind);
-  const access = entryAccess(value.access);
-  if (!kind || !access) return null;
+  if (!kind) return null;
   return {
     name: str(value.name),
     path: str(value.path),
     kind,
     size: sizeOf(value.size),
     modifiedAt: optStr(value.modifiedAt) ?? null,
-    access,
   };
 }
 
@@ -204,10 +188,7 @@ export async function fsListFolder(
   const value = result.val;
   if (!isRecord(value)) return malformed();
   const share = shareRefOf(value.share);
-  const access = value.access;
-  if (!share || (access !== 'none' && access !== 'read' && access !== 'read_write')) {
-    return malformed();
-  }
+  if (!share) return malformed();
   const entries: WireEntry[] = [];
   if (!Array.isArray(value.entries)) return malformed();
   for (const raw of value.entries) {
@@ -215,7 +196,7 @@ export async function fsListFolder(
     if (!entry) return malformed();
     entries.push(entry);
   }
-  return { ok: true, val: { share, path: str(value.path), access, entries } };
+  return { ok: true, val: { share, path: str(value.path), entries } };
 }
 
 export async function fsStatEntry(
@@ -228,8 +209,7 @@ export async function fsStatEntry(
   if (!isRecord(value)) return malformed();
   const share = shareRefOf(value.share);
   const kind = kindOf(value.kind);
-  const access = entryAccess(value.access);
-  if (!share || !kind || !access) return malformed();
+  if (!share || !kind) return malformed();
   return {
     ok: true,
     val: {
@@ -238,7 +218,6 @@ export async function fsStatEntry(
       kind,
       size: sizeOf(value.size),
       modifiedAt: optStr(value.modifiedAt) ?? null,
-      access,
     },
   };
 }
@@ -367,71 +346,11 @@ export async function fsRenameEntry(
   return relocation ? { ok: true, val: relocation } : malformed();
 }
 
-export async function fsAdminList(
-  tenantId: string,
-  shareId: string,
-  path: string
-): Promise<ClientResult<{ path: string; entries: WireRawEntry[] }>> {
-  const result = await callJson('admin-list', { tenantId, shareId, path });
-  if (!result.ok) return result;
-  const value = result.val;
-  if (!isRecord(value) || !Array.isArray(value.entries)) return malformed();
-  const entries: WireRawEntry[] = [];
-  for (const raw of value.entries) {
-    if (!isRecord(raw)) return malformed();
-    const kind = kindOf(raw.kind);
-    if (!kind) return malformed();
-    entries.push({
-      name: str(raw.name),
-      kind,
-      size: sizeOf(raw.size),
-      modifiedAt: optStr(raw.modifiedAt) ?? null,
-    });
-  }
-  return { ok: true, val: { path: str(value.path), entries } };
-}
-
-export interface WireSearchHit {
-  name: string;
-  path: string;
-  kind: EntryKind;
-}
-
-export async function fsAdminSearch(
-  tenantId: string,
-  shareId: string,
-  query: string
-): Promise<ClientResult<{ results: WireSearchHit[]; truncated: boolean }>> {
-  const result = await callJson('admin-search', { tenantId, shareId, query });
-  if (!result.ok) return result;
-  const value = result.val;
-  if (!isRecord(value) || !Array.isArray(value.results)) return malformed();
-  const results: WireSearchHit[] = [];
-  for (const raw of value.results) {
-    if (!isRecord(raw)) return malformed();
-    const kind = kindOf(raw.kind);
-    if (!kind) return malformed();
-    results.push({ name: str(raw.name), path: str(raw.path), kind });
-  }
-  return { ok: true, val: { results, truncated: value.truncated === true } };
-}
-
 export interface TestConnectionPayload {
   tenantId: string;
-  /** Where the worker reads the stored credential when none is supplied. */
-  storedShareId: string | null;
-  summary: {
-    id: string;
-    name: string;
-    protocol: 'smb' | 'sftp';
-    host: string;
-    port: number | null;
-    shareName: string | null;
-    rootPath: string;
-    caseInsensitive: boolean;
-    maxAccess: 'read' | 'read_write';
-  };
-  credentials: ShareCredentials | null;
+  /** The stored share the credential is tried against. */
+  shareId: string;
+  credentials: ShareCredentials;
 }
 
 export async function fsTestConnection(
@@ -447,9 +366,9 @@ export async function fsTestConnection(
 /**
  * The REST routes' one mapping from a client error to an HTTP answer, so a
  * person in the files browser and a model over MCP hear the same refusal.
- * Resolution tags keep the pre-worker wording (the shared 404 for "no such
- * share" and "no grant" is deliberate — status codes must not become an
- * existence oracle); backend tags fall back to the worker's message.
+ * Resolution tags get their own phrasings; backend tags fall back to the
+ * worker's message. 'access_denied' is the file server's own verdict on the
+ * caller's account — Renkei adds no verdicts of its own.
  */
 export function clientFailure(error: FileshareClientError): { status: number; message: string } {
   if (error.kind === 'unconfigured') {
@@ -461,10 +380,18 @@ export function clientFailure(error: FileshareClientError): { status: number; me
   switch (error.type) {
     case 'no_share':
       return { status: 404, message: 'Not found' };
-    case 'no_credentials':
-      return { status: 503, message: 'The share has no stored credentials yet' };
+    case 'not_connected':
+      return {
+        status: 403,
+        message: 'You have not connected this share — add your credentials on the Connectors page',
+      };
     case 'bad_credentials':
-      return { status: 503, message: 'The stored share credentials cannot be read' };
+      return {
+        status: 503,
+        message: 'Your stored credentials for this share cannot be read — reconnect it',
+      };
+    case 'access_denied':
+      return { status: 403, message: 'The file server refused this with your credentials' };
     case 'store':
       return { status: 500, message: 'Could not read share access' };
     default:

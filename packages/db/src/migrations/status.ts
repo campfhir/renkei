@@ -92,6 +92,7 @@ export const EXPECTED_MIGRATIONS = [
   '059-agent-notifications',
   '060-user-preferences',
   '061-file-shares',
+  '062-file-share-user-credentials',
 ];
 
 export interface MigrationStatus {

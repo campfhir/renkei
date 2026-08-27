@@ -275,12 +275,12 @@ describe('fileshare-file', () => {
     '@/lib/file-shares/service-client'
   );
 
-  it('relays the worker refusal when the grant was narrowed after minting', async () => {
-    // The slot was minted when the caller held read_write; by POST time the
-    // grant says read. The worker re-runs the ACL at byte arrival and says no.
+  it('relays the file server refusal at byte-arrival time', async () => {
+    // The slot was minted earlier; by POST time the server says no — the
+    // worker runs the write on the caller's own credential and relays it.
     fsWriteFile.mockResolvedValue({
       ok: false,
-      err: { kind: 'op' as const, type: 'forbidden', message: undefined, status: 403 },
+      err: { kind: 'op' as const, type: 'access_denied', message: undefined, status: 403 },
     });
 
     const outcome = await executeUpload(
@@ -290,13 +290,13 @@ describe('fileshare-file', () => {
     );
 
     expect(outcome.ok).toBe(false);
-    expect(outcome.detail).toContain('no longer have read/write');
+    expect(outcome.detail).toContain('refused the write');
   });
 
-  it('refuses when the share is no longer visible to the subject', async () => {
+  it('refuses when the caller disconnected the share after minting', async () => {
     fsWriteFile.mockResolvedValue({
       ok: false,
-      err: { kind: 'op' as const, type: 'no_share', message: undefined, status: 404 },
+      err: { kind: 'op' as const, type: 'not_connected', message: undefined, status: 403 },
     });
 
     const outcome = await executeUpload(
@@ -306,7 +306,7 @@ describe('fileshare-file', () => {
     );
 
     expect(outcome.ok).toBe(false);
-    expect(outcome.detail).toContain('no longer available');
+    expect(outcome.detail).toContain('no longer connected');
   });
 
   it('writes to the slot destination as the slot subject', async () => {
