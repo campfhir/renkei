@@ -138,7 +138,7 @@ function PeopleWithAccess({ tenantId, agentId }: { tenantId: string; agentId: st
           aria-label="Colleague to share with"
           value={pickedSubject}
           onChange={(event) => setPickedSubject(event.target.value)}
-          className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 dark:border-gray-700 dark:bg-gray-950"
+          className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 sm:w-auto sm:min-w-0 sm:flex-1 dark:border-gray-700 dark:bg-gray-950"
         >
           <option value="">Choose a colleague…</option>
           {pickablePeople.map((person) => (
