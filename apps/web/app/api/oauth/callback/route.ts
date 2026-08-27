@@ -16,7 +16,10 @@ import {
   WEBEX_USER,
   MICROSOFT,
   ZOOM,
+  ONBASE,
 } from '@renkei/provider-grants';
+import { getOnBaseApp } from '@/lib/onbase-app';
+import { obExchangeCode, onbaseClientFailure } from '@/lib/onbase/service-client';
 import { getAtlassianJsmApp, getAtlassianConfluenceApp } from '@/lib/atlassian-app';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getOrigin } from '@/lib/get-origin';
@@ -137,7 +140,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // provider's token endpoint the code must be exchanged at.
     const pendingSignIn = await db
       .selectFrom('pending_oidc_signin')
-      .select(['tenant_id', 'expires_at', 'subject', 'provider', 'scopes'])
+      .select(['tenant_id', 'expires_at', 'subject', 'provider', 'scopes', 'code_verifier'])
       .where('state', '=', state)
       .executeTakeFirst();
 
@@ -216,6 +219,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     if (pendingSignIn.provider === 'zoom') {
       return handleZoomCallback(request, tenant, pendingSignIn.subject, code, pendingSignIn.scopes);
+    }
+    if (pendingSignIn.provider === 'onbase') {
+      return handleOnBaseCallback(
+        request,
+        tenant,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes,
+        pendingSignIn.code_verifier
+      );
     }
 
     logger.debug('Jira callback', { component: 'auth/oauth', tenantId: tenant.id });
@@ -1341,6 +1354,154 @@ async function handleAtlassianConfluenceCallback(
     action: 'connector.connected',
     targetKind: 'connector',
     targetLabel: ATLASSIAN_CONFLUENCE,
+  });
+  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+}
+
+/**
+ * Complete an OnBase connect. The token exchange runs through the OnBase
+ * worker — the customer's Hyland IdP usually lives on a private network
+ * this process must not dial — presenting the PKCE code_verifier the
+ * authorize step stored on the state row. Identity comes from the
+ * id_token's `sub` claim, decoded locally: the token arrived over TLS from
+ * the IdP's own token endpoint via our trusted worker, which is exactly
+ * the case where the OIDC code flow needs no signature check — and it
+ * works even when the IdP exposes no userinfo endpoint.
+ */
+async function handleOnBaseCallback(
+  request: NextRequest,
+  tenant: { id: string; slug: string },
+  subject: string | null,
+  code: string,
+  requestedScopes: string | null,
+  codeVerifier: string | null
+): Promise<NextResponse> {
+  if (!subject) {
+    logger.error('OnBase pending flow has no subject; cannot assign grant owner', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Sign in again before connecting OnBase' }, { status: 400 });
+  }
+  if (!codeVerifier) {
+    // Every OnBase authorize stores one; a row without it is not ours.
+    logger.error('OnBase pending flow carries no code_verifier', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Start the OnBase connect again' }, { status: 400 });
+  }
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) {
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
+  const app = await getOnBaseApp(tenant.id, originResult.val);
+  if (!app) {
+    return NextResponse.json(
+      { error: 'OnBase integration not configured for this organization' },
+      { status: 503 }
+    );
+  }
+
+  const exchanged = await obExchangeCode({
+    tenantId: tenant.id,
+    code,
+    redirectUri: app.redirectUri,
+    codeVerifier,
+  });
+  if (!exchanged.ok) {
+    const failure = onbaseClientFailure(exchanged.err);
+    logger.error('OnBase token exchange failed: {message}', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      message: failure.message,
+    });
+    return NextResponse.json(
+      { error: 'OnBase token exchange failed', error_description: failure.message },
+      { status: 502 }
+    );
+  }
+  const tokens = exchanged.val;
+  const refreshToken = typeof tokens.refresh_token === 'string' ? tokens.refresh_token : '';
+  const expiresIn = typeof tokens.expires_in === 'number' ? tokens.expires_in : 3600;
+  const scopeEcho = typeof tokens.scope === 'string' ? tokens.scope : null;
+
+  const idClaims =
+    typeof tokens.id_token === 'string' ? decodeJwtPayload(tokens.id_token) : null;
+  const accountId = typeof idClaims?.sub === 'string' ? idClaims.sub : null;
+  if (!accountId) {
+    // Without a subject there is no durable key to store the grant under.
+    logger.error('OnBase id_token carried no sub claim; cannot identify grantor', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      hadIdToken: typeof tokens.id_token === 'string',
+    });
+    return NextResponse.json(
+      {
+        error: 'Could not identify OnBase user',
+        error_description:
+          "The IdP's token response carried no usable id_token. Ensure the client registered " +
+          'for Renkei on the Hyland IdP allows the openid scope, then reconnect.',
+      },
+      { status: 502 }
+    );
+  }
+  const displayName =
+    (typeof idClaims?.name === 'string' && idClaims.name) ||
+    (typeof idClaims?.preferred_username === 'string' && idClaims.preferred_username) ||
+    accountId;
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) {
+    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store OnBase grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  const stored = await setGrant(
+    ONBASE,
+    tenant.id,
+    {
+      accountId,
+      clientId: app.clientId,
+      displayName,
+      accessToken: tokens.access_token,
+      refreshToken,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      requestedScopes: (requestedScopes || `openid offline_access ${app.idpScopeName}`).split(' '),
+      grantedScopes:
+        scopesFromAccessToken(tokens.access_token) ?? scopeEcho?.split(/\s+/) ?? null,
+      metadata: { issuer: app.idpIssuer },
+      subject,
+    },
+    keyResult.val
+  );
+  if (!stored.ok) {
+    logger.error('Failed to store OnBase grant', { component: 'auth/oauth', tenantId: tenant.id });
+    return NextResponse.json({ error: 'Failed to store OnBase grant' }, { status: 500 });
+  }
+
+  // No refresh token means the connection dies with this access token —
+  // an IdP-side setting (offline_access), worth a log line now instead of
+  // a mystery disconnect later.
+  if (!refreshToken) {
+    logger.warn('OnBase grant stored without a refresh token (offline_access not granted?)', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      subject,
+    });
+  }
+
+  logger.info('OnBase grant stored', { component: 'auth/oauth', tenantId: tenant.id, subject });
+  recordAuditEvent({
+    tenantId: tenant.id,
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: ONBASE,
   });
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }

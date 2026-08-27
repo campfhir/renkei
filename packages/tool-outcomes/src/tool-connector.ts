@@ -40,6 +40,7 @@ const PREFIXES: [string, string][] = [
   ['onedrive_', 'onedrive'],
   ['webex_', 'webex'],
   ['zoom_', 'zoom'],
+  ['onbase_', 'onbase'],
   ['knowledge_', 'knowledge'],
   ['fileshare_', 'fileshares'],
   ['card_', 'cards'],

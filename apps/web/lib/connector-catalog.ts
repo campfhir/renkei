@@ -88,6 +88,13 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     toolPrefix: 'zoom_*',
   },
   {
+    capabilityKey: 'onbase',
+    configKey: 'onbase',
+    label: 'OnBase',
+    summary: "Documents, keywords and custom queries on your organization's Hyland OnBase.",
+    toolPrefix: 'onbase_*',
+  },
+  {
     capabilityKey: 'fileshares',
     // No connector_configs row: each share carries its own host and
     // credential in file_shares — the key exists so the identifier stays

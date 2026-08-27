@@ -50,6 +50,9 @@ const BRAND: Record<string, string> = {
   onedrive: '#0364B8',
   webex: '#00CF64',
   zoom: '#0B5CFF',
+  // Hyland's green; we ship no vendor mark (GLYPH_ONLY), so the glyph
+  // below carries the colour.
+  onbase: '#78BE20',
   knowledge: '#7C3AED',
 };
 
@@ -198,6 +201,17 @@ function glyphFor(logo: string, label: string) {
             opacity="0.95"
           />
           <path d="M14.2 14.2L18 18" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" />
+        </>
+      );
+    // OnBase: a document sheet with index lines — it is a document store,
+    // and the keyword index is the part Renkei talks to.
+    case 'onbase':
+      return (
+        <>
+          <rect width="24" height="24" rx="5" fill={color} />
+          <path d="M7 5h7l3 3v11H7z" fill="#fff" opacity="0.95" />
+          <path d="M14 5v3h3" fill="none" stroke={color} strokeWidth="1.2" />
+          <path d="M9 12h6M9 15h6" stroke={color} strokeWidth="1.4" strokeLinecap="round" />
         </>
       );
     default:

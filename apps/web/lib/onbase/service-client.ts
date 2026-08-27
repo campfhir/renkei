@@ -109,7 +109,7 @@ async function opFailure(response: Response): Promise<{ ok: false; err: OnBaseCl
 async function callOp(
   op: string,
   body: unknown,
-  init?: { headers?: Record<string, string>; rawBody?: Uint8Array; query?: string }
+  init?: { headers?: Record<string, string>; rawBody?: Uint8Array<ArrayBuffer>; query?: string }
 ): Promise<OnBaseClientResult<Response>> {
   const cfg = config();
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
@@ -271,7 +271,9 @@ export async function obPutBytes(input: {
   )}&filePart=${input.filePart}`;
   const called = await callOp('put-bytes', undefined, {
     query,
-    rawBody: input.bytes,
+    // A fresh ArrayBuffer-backed copy: fetch's BodyInit refuses the wider
+    // Uint8Array<ArrayBufferLike> a caller may hold (e.g. a Buffer).
+    rawBody: Uint8Array.from(input.bytes),
     headers: { 'x-onbase-token': input.accessToken },
   });
   if (!called.ok) return called;
