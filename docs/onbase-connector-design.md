@@ -250,7 +250,8 @@ so:
 
 Deliberate scope cuts, per this document: no deletes, no locks, no
 sensitive-note-text, and knowledge indexing deferred (retrieval-only v1 —
-no content watches).
+no content watches). The connector ships a vector recreation of the
+official OnBase mark (`connector-logos/onbase.svg`).
 
 One decision this document did not anticipate: multi-environment support
 (several OnBase servers per tenant) was considered and **rejected** as too
