@@ -44,6 +44,54 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: '2026-08-26',
+    heading: 'Runs that find nothing, and finding runs',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'An empty search is an answer, not the end of the run',
+        detail:
+          'An agent that searched and found nothing would sometimes declare the whole run over — skipping the very work an empty search should lead to, like creating the ticket it failed to find. A search that comes back empty now retries with a reworded query, and a freshly added search step is set up to carry on when every try finds nothing. Both are ordinary rows under a step\'s "If something goes wrong", so any of it can be turned off.',
+      },
+      {
+        kind: 'added',
+        title: 'A failing step can be told to keep going',
+        detail:
+          '"Keep going anyway" joins stop, retry and not-an-error in a step\'s failure handling: the failure stays on the record, the step\'s saved result says what happened, and the run moves on. A retrying step separately chooses where to land when every try has failed — stop, keep going, or end quietly.',
+      },
+      {
+        kind: 'changed',
+        title: 'A run that decided there was nothing to do says "Skipped"',
+        detail:
+          'The status used to read "Stopped — nothing to do". The run\'s timeline now also marks the exact step that made that call, so an early end is explained where it happened instead of looking like an unexplained stop.',
+      },
+      {
+        kind: 'added',
+        title: 'Runs can be searched and filtered',
+        detail:
+          'The runs page gains a search box — words from the triggering message, error text, or a pasted run id — and a tab for every status, so one particular run among hundreds is findable. The admin view gets the same.',
+      },
+    ],
+  },
+  {
+    date: '2026-08-26',
+    heading: 'Notifications you can act on',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'Service requests and WebEx notes open from their notification',
+        detail:
+          '"Raised a service request" now carries the ticket key and links to the issue, and WebEx messages and notes link to the space they landed in. Those cards previously had nothing to click.',
+      },
+      {
+        kind: 'added',
+        title: 'Notifications can be deleted',
+        detail:
+          'Every card has a ⋯ menu: open the thing it is about, show the run behind it, select, or delete. Selecting turns on checkboxes and a Delete bar for clearing several at once, and every delete asks once before it is final. Before this, a notification stayed until the retention sweep aged it out.',
+      },
+    ],
+  },
+  {
+    date: '2026-08-26',
     entries: [
       {
         kind: 'changed',
