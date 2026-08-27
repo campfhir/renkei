@@ -1,14 +1,14 @@
 /**
- * One agent's memory — owner only, the item-route rules (someone else's
- * agentId is a 404, never a 403). GET returns the rolling summary plus the
- * entry rows newest-first; DELETE clears everything, the owner's "start
- * this agent fresh" switch.
+ * One agent's memory — the owner, or a grantee through an unexpired
+ * access grant (access-grants.ts); anyone else's agentId is a 404, never
+ * a 403. GET returns the rolling summary plus the entry rows newest-first;
+ * DELETE clears everything, the "start this agent fresh" switch.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
-import { getAgent } from '@/lib/agents/store';
+import { resolveAgentAccess } from '@/lib/agents/access-grants';
 
 const MAX_LISTED_ENTRIES = 100;
 
@@ -24,9 +24,9 @@ export async function GET(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  // Ownership check via the same lookup every agent item route uses.
-  const agent = await getAgent(db, tenantId, session.subject, agentId);
-  if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  // Access check via the same resolver every agent item route uses.
+  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const rows = await db
     .selectFrom('agent_memories')
@@ -60,8 +60,8 @@ export async function DELETE(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const agent = await getAgent(db, tenantId, session.subject, agentId);
-  if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const deleted = await db
     .deleteFrom('agent_memories')

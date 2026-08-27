@@ -32,6 +32,12 @@ export const ICONS = {
   externalLink: 'M14 4h6v6M20 4l-9 9M20 14v6H4V4h6',
   /** An empty checkbox — "start selecting". */
   checkbox: 'M6 5h12a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z',
+  /** A ticked checkbox — "select everything". */
+  checkboxChecked:
+    'M6 5h12a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM8.5 12l2.5 2.5 4.5-5',
+  check: 'M5 12.5l4.5 4.5L19 7',
+  /** A ring around a dot — the unread badge, "put it back". */
+  unreadDot: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 12h.01',
   folder: 'M3 19V5h6l2 3h10v11z',
   folderPlus: 'M3 19V5h6l2 3h10v11zM12 10.5v5M9.5 13h5',
   upload: 'M12 16V4M8 8l4-4 4 4M5 16v4h14v-4',

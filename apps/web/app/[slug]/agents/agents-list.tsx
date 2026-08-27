@@ -12,7 +12,7 @@
  * history with it.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { StoredAgent } from '@/lib/agents/store';
@@ -146,14 +146,24 @@ function TriggersDialog({ agent, onClose }: { agent: StoredAgent; onClose: () =>
   );
 }
 
+/** A card in the "Shared with you" group: whose it is, and until when. */
+export interface SharedAgentCard {
+  agent: StoredAgent;
+  sharedBy: string;
+  expiresAt: string | null;
+}
+
 export function AgentsList({
   slug,
   tenantId,
   agents,
+  shared = [],
 }: {
   slug: string;
   tenantId: string;
   agents: StoredAgent[];
+  /** Someone else's agents this viewer holds access grants on. */
+  shared?: SharedAgentCard[];
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
@@ -233,7 +243,7 @@ export function AgentsList({
     else router.refresh();
   };
 
-  if (agents.length === 0) {
+  if (agents.length === 0 && shared.length === 0) {
     return (
       <p className="rounded-md border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
         No agents yet. Draft your first one — describe steps in plain words, pick a trigger, and
@@ -242,109 +252,141 @@ export function AgentsList({
     );
   }
 
+  const renderCard = (agent: StoredAgent, sharedInfo?: SharedAgentCard) => {
+    // Manual runs of an event agent start with its trigger.* details
+    // unbound — not a useful test, so the button isn't offered.
+    const eventOnly =
+      agent.triggers.length > 0 &&
+      agent.triggers.every((trigger) => trigger.draft.kind === 'event');
+    return (
+      <div
+        key={agent.id}
+        className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <span className="flex min-w-0 items-center gap-2">
+            <Link
+              href={`/${slug}/agents/${agent.id}`}
+              className="truncate text-sm font-semibold hover:underline"
+            >
+              {agent.name}
+            </Link>
+            {sharedInfo ? (
+              <span
+                title={
+                  sharedInfo.expiresAt
+                    ? `Access until ${new Date(sharedInfo.expiresAt).toLocaleString()}`
+                    : 'Open-ended access'
+                }
+                className="shrink-0 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+              >
+                Shared by {sharedInfo.sharedBy}
+              </span>
+            ) : null}
+          </span>
+          <Toggle on={agent.enabled} busy={busy === agent.id} onToggle={() => toggle(agent)} />
+        </div>
+
+        <p className="mt-1.5 text-sm text-gray-600 dark:text-gray-400">
+          {agent.descriptionStatus === 'stale' ? (
+            <span className="flex items-center gap-2 italic text-gray-400 dark:text-gray-500">
+              <span
+                aria-hidden="true"
+                className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400"
+              />
+              Writing a summary…
+            </span>
+          ) : (
+            (agent.description ?? (
+              <span className="italic text-gray-400 dark:text-gray-500">
+                We couldn&apos;t write a summary — check the organization&apos;s agent models, then
+                save again.
+              </span>
+            ))
+          )}
+        </p>
+
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <p className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {agent.triggers.slice(0, TRIGGER_CHIP_LIMIT).map((trigger) => {
+              const summary = triggerSummary(trigger.draft);
+              return (
+                <span
+                  key={trigger.id}
+                  title={summary}
+                  className="inline-block max-w-[16rem] truncate rounded-full border border-gray-300 px-2 py-0.5 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-400"
+                >
+                  {summary}
+                </span>
+              );
+            })}
+            {agent.triggers.length > TRIGGER_CHIP_LIMIT ? (
+              <button
+                type="button"
+                onClick={() => setTriggersFor(agent)}
+                title={agent.triggers
+                  .slice(TRIGGER_CHIP_LIMIT)
+                  .map((trigger) => triggerSummary(trigger.draft))
+                  .join('\n')}
+                className="rounded-full border border-gray-300 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
+              >
+                +{agent.triggers.length - TRIGGER_CHIP_LIMIT} more
+              </button>
+            ) : null}
+            {ranNow === agent.id ? (
+              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                Run started
+              </span>
+            ) : null}
+          </p>
+          <div className="flex shrink-0 items-center gap-0.5">
+            {!eventOnly ? (
+              <IconButton
+                label="Run now"
+                icon="play"
+                disabled={busy === agent.id}
+                onClick={() => runNow(agent)}
+              />
+            ) : null}
+            <IconButton label="Edit" icon="pencil" href={`/${slug}/agents/${agent.id}/edit`} />
+            <IconButton
+              label="Run history"
+              icon="clock"
+              href={`/${slug}/agents/${agent.id}/runs`}
+            />
+            {!sharedInfo ? (
+              <IconButton
+                label="Delete"
+                icon="trash"
+                danger
+                disabled={busy === agent.id}
+                onClick={() => remove(agent)}
+              />
+            ) : null}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-3">
       {error ? <p className="text-sm text-red-600 dark:text-red-400">{error}</p> : null}
-      {agents.map((agent) => {
-        // Manual runs of an event agent start with its trigger.* details
-        // unbound — not a useful test, so the button isn't offered.
-        const eventOnly =
-          agent.triggers.length > 0 &&
-          agent.triggers.every((trigger) => trigger.draft.kind === 'event');
-        return (
-          <div
-            key={agent.id}
-            className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <Link
-                href={`/${slug}/agents/${agent.id}`}
-                className="truncate text-sm font-semibold hover:underline"
-              >
-                {agent.name}
-              </Link>
-              <Toggle on={agent.enabled} busy={busy === agent.id} onToggle={() => toggle(agent)} />
-            </div>
-
-            <p className="mt-1.5 text-sm text-gray-600 dark:text-gray-400">
-              {agent.descriptionStatus === 'stale' ? (
-                <span className="flex items-center gap-2 italic text-gray-400 dark:text-gray-500">
-                  <span
-                    aria-hidden="true"
-                    className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 dark:border-gray-700 dark:border-t-blue-400"
-                  />
-                  Writing a summary…
-                </span>
-              ) : (
-                (agent.description ?? (
-                  <span className="italic text-gray-400 dark:text-gray-500">
-                    We couldn&apos;t write a summary — check the organization&apos;s agent models,
-                    then save again.
-                  </span>
-                ))
-              )}
-            </p>
-
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <p className="flex min-w-0 flex-wrap items-center gap-1.5">
-                {agent.triggers.slice(0, TRIGGER_CHIP_LIMIT).map((trigger) => {
-                  const summary = triggerSummary(trigger.draft);
-                  return (
-                    <span
-                      key={trigger.id}
-                      title={summary}
-                      className="inline-block max-w-[16rem] truncate rounded-full border border-gray-300 px-2 py-0.5 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-400"
-                    >
-                      {summary}
-                    </span>
-                  );
-                })}
-                {agent.triggers.length > TRIGGER_CHIP_LIMIT ? (
-                  <button
-                    type="button"
-                    onClick={() => setTriggersFor(agent)}
-                    title={agent.triggers
-                      .slice(TRIGGER_CHIP_LIMIT)
-                      .map((trigger) => triggerSummary(trigger.draft))
-                      .join('\n')}
-                    className="rounded-full border border-gray-300 px-2 py-0.5 text-xs text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
-                  >
-                    +{agent.triggers.length - TRIGGER_CHIP_LIMIT} more
-                  </button>
-                ) : null}
-                {ranNow === agent.id ? (
-                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300">
-                    Run started
-                  </span>
-                ) : null}
-              </p>
-              <div className="flex shrink-0 items-center gap-0.5">
-                {!eventOnly ? (
-                  <IconButton
-                    label="Run now"
-                    icon="play"
-                    disabled={busy === agent.id}
-                    onClick={() => runNow(agent)}
-                  />
-                ) : null}
-                <IconButton label="Edit" icon="pencil" href={`/${slug}/agents/${agent.id}/edit`} />
-                <IconButton
-                  label="Run history"
-                  icon="clock"
-                  href={`/${slug}/agents/${agent.id}/runs`}
-                />
-                <IconButton
-                  label="Delete"
-                  icon="trash"
-                  danger
-                  disabled={busy === agent.id}
-                  onClick={() => remove(agent)}
-                />
-              </div>
-            </div>
+      {agents.map((agent) => (
+        <React.Fragment key={agent.id}>{renderCard(agent)}</React.Fragment>
+      ))}
+      {shared.length > 0 ? (
+        <div className="pt-3">
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            Shared with you
+          </h2>
+          <div className="space-y-3">
+            {shared.map((entry) => (
+              <React.Fragment key={entry.agent.id}>{renderCard(entry.agent, entry)}</React.Fragment>
+            ))}
           </div>
-        );
-      })}
+        </div>
+      ) : null}
       {triggersFor ? (
         <TriggersDialog agent={triggersFor} onClose={() => setTriggersFor(null)} />
       ) : null}

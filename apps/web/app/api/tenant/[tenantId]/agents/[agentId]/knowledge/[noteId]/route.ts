@@ -1,14 +1,17 @@
 /**
- * One agent knowledge note: replace (PUT) or delete — owner only, and the
+ * One agent knowledge note: replace (PUT) or delete — the owner or a
+ * grantee through an unexpired access grant (access-grants.ts), and the
  * note must actually be THIS agent's (the agentId stamp is part of the
- * lookup, so one agent's panel can never touch another's notes).
+ * lookup, so one agent's panel can never touch another's notes). Notes are
+ * filed under the OWNER's email prefix whoever edits: the owner's runs are
+ * what read them.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
-import { getAgent } from '@/lib/agents/store';
+import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { deleteAgentNote, parseNotePayload, updateAgentNote } from '@/lib/agents/agent-notes';
 
 async function ownedContext(
@@ -25,14 +28,14 @@ async function ownedContext(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const agent = await getAgent(db, tenantId, session.subject, agentId);
-  if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const emailResult = await getIdentityEmail(tenantId, session.subject);
+  const emailResult = await getIdentityEmail(tenantId, access.ownerSubject);
   const ownerEmail = emailResult.ok ? emailResult.val : null;
   if (!ownerEmail) {
     return NextResponse.json(
-      { error: 'No email is on record for your identity — sign in again to refresh it' },
+      { error: "No email is on record for the agent owner's identity" },
       { status: 409 }
     );
   }

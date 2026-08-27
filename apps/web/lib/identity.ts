@@ -94,6 +94,41 @@ export async function getIdentityEmail(
   return ok(rowResult.val?.email ?? null);
 }
 
+export interface TenantPerson {
+  subject: string;
+  email: string;
+  displayName: string | null;
+}
+
+/**
+ * Everyone who has ever signed into this tenant, for pickers (e.g. the
+ * agent sharing modal). Recorded identity only — a colleague who has never
+ * signed in has no subject yet and cannot be picked, which is correct: a
+ * grant is addressed to a subject.
+ */
+export async function listIdentities(tenantId: string): Promise<TenantPerson[]> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return [];
+
+  const rows = await wrapAsync(
+    () =>
+      dbResult.val
+        .selectFrom('identities')
+        .select(['subject', 'email', 'display_name'])
+        .where('tenant_id', '=', tenantId)
+        .orderBy('display_name', 'asc')
+        .orderBy('email', 'asc')
+        .execute(),
+    'DB_ERROR' as const
+  );
+  if (!rows.ok) return [];
+  return rows.val.map((row) => ({
+    subject: row.subject,
+    email: row.email,
+    displayName: row.display_name,
+  }));
+}
+
 /**
  * The recorded identity for a subject, for display: who to show in the nav.
  * Null when the subject has never signed in with claims we could record.

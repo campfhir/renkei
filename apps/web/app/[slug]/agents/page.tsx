@@ -6,12 +6,14 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listAgents } from '@/lib/agents/store';
+import { listAgentsSharedWith } from '@/lib/agents/access-grants';
 import { AgentsList } from './agents-list';
 
 /**
  * Your agents — every signed-in user's own list (agents are per-user
  * creations acting on their own grants; the org-wide view is the admin's
- * oversight page).
+ * oversight page) — plus, grouped separately, the agents colleagues shared
+ * with them through access grants.
  */
 export default async function AgentsPage({
   params,
@@ -28,7 +30,12 @@ export default async function AgentsPage({
   }
 
   const dbResult = getDatabase();
-  const agents = dbResult.ok ? await listAgents(dbResult.val, tenant.id, session.subject) : [];
+  const [agents, shared] = dbResult.ok
+    ? await Promise.all([
+        listAgents(dbResult.val, tenant.id, session.subject),
+        listAgentsSharedWith(dbResult.val, tenant.id, session.subject),
+      ])
+    : [[], []];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -52,7 +59,16 @@ export default async function AgentsPage({
         Step-by-step helpers you draft yourself — they act with your own connections, on your
         triggers, and keep a full history of every run.
       </p>
-      <AgentsList slug={slug} tenantId={tenant.id} agents={agents} />
+      <AgentsList
+        slug={slug}
+        tenantId={tenant.id}
+        agents={agents}
+        shared={shared.map((listing) => ({
+          agent: listing.agent,
+          sharedBy: listing.ownerName || listing.ownerEmail || 'a colleague',
+          expiresAt: listing.expiresAt,
+        }))}
+      />
     </div>
   );
 }

@@ -51,6 +51,16 @@ export interface ActionableItems {
   updated_at: Generated<Timestamp>;
 }
 
+export interface AgentAccessGrants {
+  agent_id: string;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp | null;
+  grantee_subject: string;
+  id: Generated<string>;
+  owner_subject: string;
+  tenant_id: string;
+}
+
 export interface AgentDrafts {
   agent_id: string | null;
   attempts: Generated<number>;
@@ -751,6 +761,7 @@ export interface WebhookSubscriptions {
 
 export interface DB {
   actionable_items: ActionableItems;
+  agent_access_grants: AgentAccessGrants;
   agent_drafts: AgentDrafts;
   agent_jobs: AgentJobs;
   agent_jobs_dead_letters: AgentJobsDeadLetters;

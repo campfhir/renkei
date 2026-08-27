@@ -1,16 +1,18 @@
 /**
- * An agent's knowledge notes — owner only (someone else's agentId is a
- * 404, the item-route rule). GET lists them; POST creates one, embedded
- * synchronously so the agent's very next run carries it. Creation needs
- * the org's embedding provider AND the owner's recorded email (the note
- * ref's owner prefix) — each absence is named, not lumped into a 500.
+ * An agent's knowledge notes — the owner or a grantee through an unexpired
+ * access grant (someone else's agentId is a 404, the item-route rule). GET
+ * lists them; POST creates one, embedded synchronously so the agent's very
+ * next run carries it. Creation needs the org's embedding provider AND the
+ * OWNER's recorded email (the note ref's owner prefix — the owner's runs
+ * read the notes, whoever wrote them) — each absence is named, not lumped
+ * into a 500.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
-import { getAgent } from '@/lib/agents/store';
+import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import {
   createAgentNote,
   listAgentNotes,
@@ -31,8 +33,8 @@ export async function GET(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const agent = await getAgent(db, tenantId, session.subject, agentId);
-  if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   return NextResponse.json({ notes: await listAgentNotes(db, tenantId, agentId) });
 }
@@ -49,8 +51,8 @@ export async function POST(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const agent = await getAgent(db, tenantId, session.subject, agentId);
-  if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const payload = parseNotePayload(await request.json().catch(() => null));
   if (!payload) {
@@ -62,11 +64,11 @@ export async function POST(
     );
   }
 
-  const emailResult = await getIdentityEmail(tenantId, session.subject);
+  const emailResult = await getIdentityEmail(tenantId, access.ownerSubject);
   const ownerEmail = emailResult.ok ? emailResult.val : null;
   if (!ownerEmail) {
     return NextResponse.json(
-      { error: 'No email is on record for your identity — sign in again to refresh it' },
+      { error: "No email is on record for the agent owner's identity" },
       { status: 409 }
     );
   }

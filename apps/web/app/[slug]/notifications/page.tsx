@@ -53,6 +53,7 @@ export default async function NotificationsPage({
 
   const cards: NotificationCard[] = rows.map((row) => ({
     id: row.id,
+    kind: row.kind,
     connector: row.connector,
     entity: row.entity,
     headline: row.headline,

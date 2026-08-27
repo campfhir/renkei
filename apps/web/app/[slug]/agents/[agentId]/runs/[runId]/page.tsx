@@ -5,7 +5,7 @@ import { getDatabase } from '@renkei/db';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
-import { getAgent } from '@/lib/agents/store';
+import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { getRunForOwner } from '@/lib/agents/runs-view';
 import { RunTimeline, StatusPill } from '../../../run-timeline';
 import RunActivitySection from '../../../run-activity';
@@ -15,7 +15,11 @@ import CopyDebugButton from '@/components/copy-debug-button';
 import RerunButton from './rerun-button';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 
-/** One run, owner's view: every attempt with full content. */
+/**
+ * One run with every attempt's full content — the owner's view, which a
+ * grantee through an unexpired access grant shares (unredacted run detail
+ * is the whole point of a troubleshooting share).
+ */
 export default async function AgentRunDetailPage({
   params,
 }: {
@@ -32,15 +36,18 @@ export default async function AgentRunDetailPage({
 
   const dbResult = getDatabase();
   if (!dbResult.ok) notFound();
-  const agent = await getAgent(dbResult.val, tenant.id, session.subject, agentId);
-  if (!agent) notFound();
-  const run = await getRunForOwner(dbResult.val, tenant.id, session.subject, agentId, runId);
+  const access = await resolveAgentAccess(dbResult.val, tenant.id, session.subject, agentId);
+  if (!access) notFound();
+  const agent = access.agent;
+  const run = await getRunForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, runId);
   if (!run) notFound();
 
   // The run page mirrors the home-page approval card while the run waits,
-  // so the person reading the timeline can decide right here.
+  // so the person reading the timeline can decide right here. The card is
+  // the OWNER's decision to make — approving spends their grants — so a
+  // grantee reads the timeline without it.
   const approvalCard =
-    run.status === 'waiting'
+    access.viewerIsOwner && run.status === 'waiting'
       ? await dbResult.val
           .selectFrom('actionable_items')
           .select(['id', 'status', 'summary', 'suggested_action'])
