@@ -134,6 +134,18 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `FILESHARES_WORKER_PORT`, default 8090). Without them the file-share
   connector answers "service not configured" everywhere — closed, never
   open. Entrypoint: `pnpm --filter @renkei/worker-fileshares start`.
+- `worker-onbase` — the same shape for Hyland OnBase: an internal HTTP
+  service on its **own image** (`renkei-onbase`, the `onbase` target in
+  `docker/Dockerfile`, opt-in prompts in the build/push scripts). It is
+  the only process that dials a customer's on-prem OnBase API Server or
+  Hyland IdP — hosts the web app's SSRF guard refuses by design — doing
+  OIDC discovery, the PKCE token exchange, refresh, and all Document API
+  calls. The web app reaches it at `ONBASE_WORKER_URL` (compose wires
+  `http://renkei-worker-onbase:8091`) presenting the shared bearer key
+  `ONBASE_WORKER_API_KEY` — set both in `.env` (the worker also honors
+  `ONBASE_WORKER_PORT`, default 8091). Without them the OnBase connector
+  answers "worker not configured" everywhere — closed, never open.
+  Entrypoint: `pnpm --filter @renkei/worker-onbase start`.
 
 **Horizontal scale:** either process may run as N instances. Claims take
 row locks (`FOR UPDATE SKIP LOCKED`), and messages sharing an ordering key

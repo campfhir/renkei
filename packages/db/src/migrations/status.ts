@@ -93,6 +93,7 @@ export const EXPECTED_MIGRATIONS = [
   '060-user-preferences',
   '061-file-shares',
   '062-file-share-user-credentials',
+  '063-pending-oauth-code-verifier',
 ];
 
 export interface MigrationStatus {

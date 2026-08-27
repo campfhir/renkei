@@ -20,7 +20,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { CapabilityProjection } from '@renkei/capability-registry';
-import { WEBEX_USER, ATLASSIAN_CONFLUENCE, MICROSOFT, ZOOM } from '@renkei/provider-grants';
+import { WEBEX_USER, ATLASSIAN_CONFLUENCE, MICROSOFT, ZOOM, ONBASE } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { registerAllTools } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
@@ -42,6 +42,8 @@ import { oauthConfluenceAuth } from '@/lib/mcp-tools/confluence/confluence-auth'
 import { resolveToolExposure } from '@renkei/connector-fileshares';
 import { registerFileshareTools, FILESHARES_MCP_CONNECTOR } from '@/lib/mcp-tools/fileshares';
 import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
+import { registerOnbaseTools, ONBASE_MCP_CONNECTOR } from '@/lib/mcp-tools/onbase';
+import { oauthOnbaseAuth } from '@/lib/mcp-tools/onbase/onbase-auth';
 import { registerSummaryTools, type SummaryProvider } from '@/lib/mcp-tools/summary';
 import { collectCalendar, collectUnreadMail } from '@/lib/mcp-tools/summary/collect-outlook';
 import { collectSprint, collectWorkItems } from '@/lib/mcp-tools/summary/collect-jira';
@@ -70,6 +72,7 @@ export interface ConnectorAvailability {
   /** Whether any connected share exposes write tools / delete to the LLM. */
   fileshareWrite: boolean;
   fileshareDelete: boolean;
+  onbaseAvailable: boolean;
 }
 
 async function grantRow(
@@ -158,6 +161,12 @@ export async function resolveConnectorAvailability(
   const fileshareWrite = fileshareExposure.ok && fileshareExposure.val.write;
   const fileshareDelete = fileshareExposure.ok && fileshareExposure.val.del;
 
+  // OnBase carries one opaque IdP scope, so availability is simply "this
+  // caller connected their OnBase account"; the API server enforces the
+  // rest per request under their token.
+  const onbaseGrantRow = await grantRow(db, tenantId, ONBASE, subject);
+  const onbaseAvailable = onbaseGrantRow !== undefined;
+
   return {
     knowledgeAvailable,
     webexAvailable,
@@ -173,6 +182,7 @@ export async function resolveConnectorAvailability(
     filesharesAvailable,
     fileshareWrite,
     fileshareDelete,
+    onbaseAvailable,
   };
 }
 
@@ -198,6 +208,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.zoomAvailable ? [ZOOM_MCP_CONNECTOR] : []),
     ...(availability.confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
     ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
+    ...(availability.onbaseAvailable ? [ONBASE_MCP_CONNECTOR] : []),
   ];
 }
 
@@ -233,6 +244,7 @@ export async function registerRenkeiTools(
     zoomAvailable,
     confluenceAvailable,
     filesharesAvailable,
+    onbaseAvailable,
   } = availability;
 
   await registerAllTools(withCapabilityGate(server, projection), context);
@@ -406,6 +418,16 @@ export async function registerRenkeiTools(
       context,
       userFileshareAuth(context),
       { write: availability.fileshareWrite, del: availability.fileshareDelete }
+    );
+  }
+  if (onbaseAvailable) {
+    // No scope gate: the Hyland IdP mints one opaque Document Management
+    // scope, so there is nothing finer to gate on — document-level
+    // authorization is OnBase's own, per request under the user's token.
+    registerOnbaseTools(
+      withCapabilityGate(server, projection, ONBASE_MCP_CONNECTOR),
+      context,
+      oauthOnbaseAuth(context)
     );
   }
 }

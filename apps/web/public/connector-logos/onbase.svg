@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="OnBase">
+  <path d="M 127.86 79.63 A 218 218 0 0 1 384.14 79.63" stroke="#1B5E77" stroke-width="54" fill="none"/>
+  <path d="M 401.87 93.99 A 218 218 0 0 1 467.52 203.26" stroke="#A6CE9E" stroke-width="54" fill="none"/>
+  <path d="M 467.52 308.74 A 218 218 0 0 1 401.87 418.01" stroke="#31AEE3" stroke-width="54" fill="none"/>
+  <path d="M 384.14 432.37 A 218 218 0 0 1 263.61 473.87" stroke="#2E8FA3" stroke-width="54" fill="none"/>
+  <path d="M 240.79 473.47 A 218 218 0 0 1 121.79 427.79" stroke="#57A845" stroke-width="54" fill="none"/>
+  <path d="M 104.56 412.82 A 218 218 0 0 1 44.48 308.74" stroke="#9AD6EC" stroke-width="54" fill="none"/>
+  <path d="M 44.48 203.26 A 218 218 0 0 1 110.13 93.99" stroke="#57A845" stroke-width="54" fill="none"/>
+  <text x="256" y="256" text-anchor="middle" dominant-baseline="central" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="104" font-weight="700" fill="#1B5E77">OnBase</text>
+</svg>

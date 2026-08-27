@@ -8,6 +8,7 @@ import AtlassianConnector from './atlassian-connector';
 import WebexUserConnector from './webex-user-connector';
 import MicrosoftConnector from './microsoft-connector';
 import ZoomConnector from './zoom-connector';
+import OnBaseConnector from './onbase-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
 import { listSharesWithConnection } from '@renkei/connector-fileshares';
@@ -18,10 +19,12 @@ import {
   ATLASSIAN_CONFLUENCE,
   MICROSOFT,
   ZOOM,
+  ONBASE,
 } from '@renkei/provider-grants';
 import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
 import { MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
 import { ZOOM_CONNECTOR } from '@/lib/zoom-app';
+import { ONBASE_CONNECTOR } from '@/lib/onbase-app';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
 import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
 import { DEFAULT_ZOOM_SCOPES } from '@/lib/zoom-scopes';
@@ -122,7 +125,7 @@ export default async function ConnectorsPage({
 
   // The caller's own grants, server-rendered — connection state, and the
   // scopes they previously authorized (seeding the picker on reconnect).
-  const [atlassianGrant, webexGrant, jsmGrant, confluenceGrant, microsoftGrant, zoomGrant] =
+  const [atlassianGrant, webexGrant, jsmGrant, confluenceGrant, microsoftGrant, zoomGrant, onbaseGrant] =
     dbResult.ok
       ? await Promise.all([
           enabled.has('atlassian')
@@ -179,8 +182,17 @@ export default async function ConnectorsPage({
                 .where('subject', '=', session.subject)
                 .executeTakeFirst()
             : Promise.resolve(undefined),
+          enabled.has(ONBASE_CONNECTOR)
+            ? dbResult.val
+                .selectFrom('provider_grants')
+                .select(['display_name'])
+                .where('tenant_id', '=', tenant.id)
+                .where('provider', '=', ONBASE)
+                .where('subject', '=', session.subject)
+                .executeTakeFirst()
+            : Promise.resolve(undefined),
         ])
-      : [undefined, undefined, undefined, undefined, undefined, undefined];
+      : [undefined, undefined, undefined, undefined, undefined, undefined, undefined];
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -320,6 +332,16 @@ export default async function ConnectorsPage({
                 displayName={zoomGrant?.display_name ?? null}
                 ceiling={zoomCeiling}
                 priorScopes={zoomGrant?.requested_scopes ?? null}
+              />
+            </div>
+          )}
+
+          {enabled.has(ONBASE_CONNECTOR) && (
+            <div className="mb-6 break-inside-avoid">
+              <OnBaseConnector
+                tenantId={tenant.id}
+                connected={onbaseGrant !== undefined && onbaseGrant !== null}
+                displayName={onbaseGrant?.display_name ?? null}
               />
             </div>
           )}

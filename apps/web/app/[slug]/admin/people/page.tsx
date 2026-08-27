@@ -30,6 +30,7 @@ const PROVIDER_ICON_KEY: Record<string, string> = {
   microsoft: 'microsoft',
   webex: 'webex',
   zoom: 'zoom',
+  onbase: 'onbase',
 };
 
 interface PersonRow {

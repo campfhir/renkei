@@ -88,6 +88,13 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     toolPrefix: 'zoom_*',
   },
   {
+    capabilityKey: 'onbase',
+    configKey: 'onbase',
+    label: 'OnBase',
+    summary: "Documents, keywords and custom queries on your organization's Hyland OnBase.",
+    toolPrefix: 'onbase_*',
+  },
+  {
     capabilityKey: 'fileshares',
     // No connector_configs row: shares are many-per-tenant rows in
     // file_shares, and each person connects with their own credentials —

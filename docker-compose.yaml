@@ -132,6 +132,25 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # The OnBase egress worker: the only process that dials a customer's
+  # on-prem OnBase API Server or Hyland IdP. Its own image so it rolls out
+  # independently of the queue workers. The web app reaches it over HTTP on
+  # the compose network (ONBASE_WORKER_URL below) with the shared
+  # ONBASE_WORKER_API_KEY from .env — generate one with
+  # `openssl rand -base64 32`. No published ports on purpose: nothing
+  # outside the compose network may speak to it.
+  worker-onbase:
+    image: scotteremiaroden/renkei-onbase:latest
+    container_name: renkei-worker-onbase
+    command: ['pnpm', '--filter', '@renkei/worker-onbase', 'start']
+    env_file:
+      - .env
+    environment: *database-urls
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   renkei:
     image: scotteremiaroden/renkei:latest
     container_name: renkei-app
@@ -142,6 +161,9 @@ services:
       # Where the web app reaches the file-share worker; the bearer key
       # (FILESHARES_WORKER_API_KEY) comes from the shared .env.
       FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
+      # Where the web app reaches the OnBase egress worker; the bearer key
+      # (ONBASE_WORKER_API_KEY) comes from the shared .env.
+      ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
       # PUBLIC_BASE_URL in .env is the authoritative origin when set — it is
       # the address registered with every OAuth provider. Without it, the app
       # falls back to X-Forwarded-Proto/Host from the reverse proxy, which it

@@ -42,6 +42,7 @@ describe('connector catalog', () => {
       'onedrive',
       'zoom',
       'atlassian-confluence',
+      'onbase',
     ]) {
       expect(keys).toContain(registered);
     }

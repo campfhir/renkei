@@ -14,6 +14,7 @@ export const GRANT_PROVIDER_LABELS: Record<string, string> = {
   microsoft: 'Microsoft 365',
   webex: 'WebEx',
   zoom: 'Zoom',
+  onbase: 'OnBase',
 };
 
 export function grantProviderLabel(provider: string): string {

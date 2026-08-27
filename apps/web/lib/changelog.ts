@@ -43,6 +43,36 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: null,
+    heading: 'Hyland OnBase joins the connectors',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Search and read your OnBase documents',
+        detail:
+          'Find documents by document type and keyword values — plain names like "Vendor" work, the tools translate them — or run the custom queries your OnBase admins have already saved. Read a document as text, get a download link for the original file, and see its keywords, notes and history.',
+      },
+      {
+        kind: 'added',
+        title: 'File documents into OnBase',
+        detail:
+          'Upload a file and archive it under a document type with keyword values, update the keywords on an existing document (only the fields you name change; everything else is preserved), add notes, and move a document to another type.',
+      },
+      {
+        kind: 'added',
+        title: 'Connect with your own OnBase account',
+        detail:
+          "Each person signs in on the organization's own Hyland identity provider from the Connectors page, and every tool acts with exactly that account's OnBase permissions — what OnBase would not show you, Renkei cannot either.",
+      },
+      {
+        kind: 'added',
+        title: 'OnBase setup for administrators',
+        detail:
+          "Operators enter the OnBase API server and identity provider on the connectors admin page, with a connection test that checks the values in the form before saving. A dedicated Renkei service reaches the OnBase servers inside the organization's network.",
+      },
+    ],
+  },
+  {
     date: '2026-08-26',
     entries: [
       {

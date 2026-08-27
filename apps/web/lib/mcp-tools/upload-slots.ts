@@ -32,7 +32,8 @@ export type UploadSlotKind =
   | 'onedrive-document'
   | 'sharepoint-document'
   | 'outlook-draft-attachment'
-  | 'fileshare-file';
+  | 'fileshare-file'
+  | 'onbase-document';
 
 export function hashUploadToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');

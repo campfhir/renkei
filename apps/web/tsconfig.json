@@ -31,6 +31,7 @@
       "@renkei/connector-webex": ["../../packages/connector-webex/src/index.ts"],
       "@renkei/connector-fileshares": ["../../packages/connector-fileshares/src/index.ts"],
       "@renkei/connector-fileshares/pure": ["../../packages/connector-fileshares/src/pure.ts"],
+      "@renkei/connector-onbase": ["../../packages/connector-onbase/src/index.ts"],
       "@renkei/connector-microsoft": ["../../packages/connector-microsoft/src/index.ts"],
       "@renkei/connector-atlassian": ["../../packages/connector-atlassian/src/index.ts"],
       "@renkei/connector-zoom": ["../../packages/connector-zoom/src/index.ts"],

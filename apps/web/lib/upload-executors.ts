@@ -16,6 +16,8 @@ import { ATLASSIAN, ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renk
 import { graphUploadViaSession } from '@renkei/connector-microsoft';
 import { childPath as fileshareChildPath } from '@renkei/connector-fileshares';
 import { clientFailure, fsWriteFile } from '@/lib/file-shares/service-client';
+import { obApi, obPutBytes, onbaseClientFailure } from '@/lib/onbase/service-client';
+import { resolveOnBaseAccess } from '@/lib/mcp-tools/onbase/onbase-auth';
 import { cacheTokenMetadata, jiraFetch } from '@/lib/mcp-tools/common';
 import {
   graphPost,
@@ -333,6 +335,100 @@ async function fileshareFile(
   return { ok: true, detail: `Wrote "${slot.filename}" to ${folder} on the share.` };
 }
 
+/**
+ * Stage uploaded bytes into OnBase (POST /documents/uploads, then the file
+ * parts), and record the staging reference on the slot so
+ * onbase_archive_document can complete the three-step archive. Nothing is
+ * a document yet — OnBase stores staged files transiently until archived.
+ */
+async function onbaseDocument(
+  db: Kysely<DB>,
+  slot: UploadSlotRow,
+  bytes: Buffer
+): Promise<UploadOutcome> {
+  const target = { tenantId: slot.tenant_id, subject: slot.subject };
+  let access = await resolveOnBaseAccess(target);
+  if (typeof access === 'string') return { ok: false, detail: access };
+
+  const extension = slot.filename.includes('.')
+    ? slot.filename.slice(slot.filename.lastIndexOf('.') + 1)
+    : 'dat';
+  const stageBody = { fileExtension: extension, fileSize: bytes.byteLength };
+  let staged = await obApi({
+    tenantId: slot.tenant_id,
+    accessToken: access.accessToken,
+    method: 'POST',
+    path: '/documents/uploads',
+    body: stageBody,
+  });
+  // One forced refresh on a 401 — the tools' session-lifecycle defensiveness.
+  if (staged.ok && staged.val.status === 401) {
+    access = await resolveOnBaseAccess(target, { forceRefresh: true });
+    if (typeof access === 'string') return { ok: false, detail: access };
+    staged = await obApi({
+      tenantId: slot.tenant_id,
+      accessToken: access.accessToken,
+      method: 'POST',
+      path: '/documents/uploads',
+      body: stageBody,
+    });
+  }
+  if (!staged.ok) return { ok: false, detail: onbaseClientFailure(staged.err).message };
+  if (staged.val.status < 200 || staged.val.status >= 300) {
+    return { ok: false, detail: `OnBase refused to stage the upload (${staged.val.status}).` };
+  }
+  let stagingRef: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(staged.val.body);
+    if (isRecord(parsed)) stagingRef = parsed;
+  } catch {
+    // handled by the id check below
+  }
+  const onbaseUploadId = str(stagingRef.id);
+  if (!onbaseUploadId) {
+    return { ok: false, detail: 'OnBase staged the upload but returned no reference.' };
+  }
+
+  // Respect the server's part size; a single part when it names none.
+  const filePartSize =
+    typeof stagingRef.filePartSize === 'number' && stagingRef.filePartSize > 0
+      ? stagingRef.filePartSize
+      : bytes.byteLength;
+  const partCount = Math.max(1, Math.ceil(bytes.byteLength / filePartSize));
+  for (let part = 0; part < partCount; part += 1) {
+    const chunk = bytes.subarray(part * filePartSize, (part + 1) * filePartSize);
+    const put = await obPutBytes({
+      tenantId: slot.tenant_id,
+      uploadId: onbaseUploadId,
+      filePart: part + 1,
+      accessToken: access.accessToken,
+      bytes: new Uint8Array(chunk),
+    });
+    if (!put.ok) return { ok: false, detail: onbaseClientFailure(put.err).message };
+    if (put.val.status < 200 || put.val.status >= 300) {
+      return {
+        ok: false,
+        detail: `OnBase refused file part ${part + 1} of ${partCount} (${put.val.status}).`,
+      };
+    }
+  }
+
+  // The staging reference rides the slot so the archive step can find it.
+  const destination = destinationOf(slot);
+  await db
+    .updateTable('upload_slots')
+    .set({ destination: JSON.stringify({ ...destination, onbaseUploadId }) })
+    .where('id', '=', slot.id)
+    .execute();
+
+  return {
+    ok: true,
+    detail:
+      `Staged "${slot.filename}" (${bytes.byteLength} bytes) in OnBase. Complete it with ` +
+      `onbase_archive_document using uploadId "${slot.id}", a document type, and keywords.`,
+  };
+}
+
 export async function executeUpload(
   db: Kysely<DB>,
   slot: UploadSlotRow,
@@ -352,6 +448,8 @@ export async function executeUpload(
       return outlookDraftAttachment(slot, bytes);
     case 'fileshare-file':
       return fileshareFile(db, slot, bytes);
+    case 'onbase-document':
+      return onbaseDocument(db, slot, bytes);
     default:
       return { ok: false, detail: `Unknown upload kind "${slot.kind}".` };
   }

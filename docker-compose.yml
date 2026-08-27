@@ -35,6 +35,8 @@ services:
       NODE_ENV: production
       FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
       FILESHARES_WORKER_API_KEY: ${FILESHARES_WORKER_API_KEY:-renkei-dev-fileshares-key}
+      ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
+      ONBASE_WORKER_API_KEY: ${ONBASE_WORKER_API_KEY:-renkei-dev-onbase-key}
     ports:
       - "3000:3000"
     depends_on:
@@ -130,6 +132,33 @@ services:
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       FILESHARES_WORKER_API_KEY: ${FILESHARES_WORKER_API_KEY:-renkei-dev-fileshares-key}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # The OnBase egress service — its own image (target `onbase`), the only
+  # container that dials a customer's on-prem OnBase API Server or Hyland
+  # IdP. The app reaches it via ONBASE_WORKER_URL with the shared bearer
+  # key; the dev default below keeps the stack turnkey — export
+  # ONBASE_WORKER_API_KEY to override both sides at once.
+  worker-onbase:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: onbase
+    image: renkei-onbase:latest
+    container_name: renkei-worker-onbase
+    # TOKEN_ENCRYPTION_KEY must match the app's — it opens the stored
+    # connector secrets (the IdP client secret) — so both read the same
+    # env file.
+    env_file:
+      - apps/web/.env.development
+    environment:
+      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      ONBASE_WORKER_API_KEY: ${ONBASE_WORKER_API_KEY:-renkei-dev-onbase-key}
       NODE_ENV: production
     depends_on:
       postgres:

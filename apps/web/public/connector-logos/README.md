@@ -45,6 +45,7 @@ Ratios below are measured from each file's `viewBox`, not estimated.
 | `webex.svg`      | `Cisco Webex logo - Brandlogos.net.svg`          | 2.64  |
 | `zoom.svg`       | _record source_                                  | 1.00  |
 | `directory.svg`  | **ours** — original artwork, not a vendor mark   | 1.00  |
+| `onbase.svg`     | **ours** — vector recreation of the official OnBase app icon (Hyland), supplied in-session; not a Commons asset | 1.00  |
 
 **The `_record source_` rows need filling in.** This table is the provenance
 record for third-party trademarks, so an unattributed asset is the one thing
