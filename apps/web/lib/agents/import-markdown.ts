@@ -11,7 +11,12 @@
  * prose is the drafting pipeline's job (agent_draft), not a parser's.
  */
 
-const DEFINITION_FENCE = /^```json renkei-agent[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/gm;
+import { AGENT_DEFINITION_FENCE } from '@/lib/agents/definition';
+
+const DEFINITION_FENCE = new RegExp(
+  '^```' + AGENT_DEFINITION_FENCE + '[ \\t]*\\r?\\n([\\s\\S]*?)^```[ \\t]*$',
+  'gm'
+);
 
 export function extractAgentDefinition(
   markdown: string

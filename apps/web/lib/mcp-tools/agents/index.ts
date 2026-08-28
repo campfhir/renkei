@@ -71,6 +71,7 @@ import {
   type AgentNoteError,
 } from '@/lib/agents/agent-notes';
 import { consumeDraft, createDraft, getDraft } from '@/lib/agents/draft-store';
+import { fencedDefinition } from '@/lib/agents/definition';
 import { parseReviewNotes } from '@/lib/agents/notes';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
@@ -170,8 +171,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Read — One agent in full',
       description:
         "One of your agents in full: the steps outline, guardrails, blocked skills, the " +
-        'variables it saves (for chaining), triggers, agents chained after it, and the ' +
-        'knowledge and memory its runs carry.',
+        'variables it saves (for chaining), triggers, agents chained after it, the ' +
+        'knowledge and memory its runs carry — and the EXACT stored definition as a ' +
+        '```json renkei-agent fenced block. To change the agent, edit that JSON directly ' +
+        'and pass its fields to agent_update (no drafting round-trip needed).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -234,6 +237,19 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           : []),
         ...(knowledge ? ['', 'Knowledge notes (as injected into runs):', knowledge] : []),
         ...(memory ? ['', 'Memory (as injected into runs):', memory] : []),
+        '',
+        'Definition (machine-readable) — the exact stored definition. To change the agent,',
+        'edit this JSON and pass its fields to agent_update (keep the ids of steps you are',
+        'keeping; they anchor run history and retry settings):',
+        fencedDefinition({
+          name: agent.name,
+          description: agent.description,
+          steps: agent.steps,
+          triggers: agent.triggers,
+          guardrails: agent.guardrails,
+          blockedTools: agent.blockedTools,
+          llmModelId: agent.llmModelId,
+        }),
       ];
       return textResult(lines.join('\n'));
     }
@@ -596,12 +612,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Start drafting an agent from a description',
       description:
-        'Turn a plain-language description into a drafted agent definition — steps, and ' +
-        'optionally triggers and guardrails. Drafting takes a minute or two of model time, so ' +
-        'it runs in the BACKGROUND: the reply carries a draftId to poll with agent_draft_get, ' +
-        'which returns the outline, open questions, and the raw steps document to pass to ' +
-        'agent_create or agent_update. No agent is created or changed by drafting. Pass ' +
-        'agentId to revise that agent instead of starting fresh.',
+        'Turn a PLAIN-LANGUAGE description into a drafted agent definition — a background ' +
+        'model job (a minute or two; poll agent_draft_get for the result). Use this only ' +
+        'when starting from prose. To CHANGE an existing agent, do not draft: read its ' +
+        'exact definition from agent_get, edit the JSON yourself, and pass it to ' +
+        'agent_update — deterministic, validated, and immediate. No agent is created or ' +
+        'changed by drafting. Pass agentId to revise that agent instead of starting fresh.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         text: z
@@ -851,8 +867,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Create an agent (confirm-gated)',
       description:
-        'Create a new agent of yours from a full definition (steps from agent_draft, plus ' +
-        'guardrails and triggers). Without confirm:true this is a DRY RUN — it validates and ' +
+        'Create a new agent of yours from a full definition — authored directly, taken from ' +
+        "another agent's agent_get definition block or exported markdown, or drafted from " +
+        'prose via agent_draft. Without confirm:true this is a DRY RUN — it validates and ' +
         'shows what would be created, persisting nothing. The agent is always created ' +
         'DISABLED: turning it on happens in the builder, where the review panel is.',
       annotations: { readOnlyHint: false },
@@ -917,11 +934,17 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Update an agent (confirm-gated)',
       description:
-        "Replace one of your agents' definition (name, steps, triggers, guardrails, blocked " +
-        'skills). Without confirm:true this is a DRY RUN — it validates and shows what would ' +
-        'change, persisting nothing. This tool never TURNS ON an agent (the builder is the ' +
-        'consent surface for that): an off agent stays off, an already-enabled one stays on ' +
-        'unless keepEnabled:false disables it.',
+        "REPLACE one of your agents' definition (name, steps, triggers, guardrails, blocked " +
+        'skills) — the direct edit path, and the preferred one: start from the exact ' +
+        'definition in agent_get\'s ```json renkei-agent block, change ONLY what the edit ' +
+        'needs, and send the whole definition back. Keep the ids of steps, branch paths, ' +
+        'and triggers you are keeping VERBATIM (run history, retry settings, and firings ' +
+        'anchor to them); give brand-new steps fresh UUIDs. Validation is deterministic and ' +
+        'reports precise per-path issues; the save also re-stamps the current steps format. ' +
+        'Without confirm:true this is a DRY RUN — it validates and shows what would change, ' +
+        'persisting nothing. This tool never TURNS ON an agent (the builder is the consent ' +
+        'surface for that): an off agent stays off, an already-enabled one stays on unless ' +
+        'keepEnabled:false disables it. Only draft (agent_draft) when working from prose.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),

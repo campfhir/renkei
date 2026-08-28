@@ -263,6 +263,16 @@ test('agent_draft_get surfaces a failed draft as an error', async () => {
   expect(draftStoreMock.consumeDraft).not.toHaveBeenCalled();
 });
 
+test('agent_get carries the exact definition in a fenced block', async () => {
+  const handlers = registerAll({});
+  const result = await handlers.get('agent_get')!({ agentId: 'agent-1' });
+  expect(result.isError).toBeUndefined();
+  const text = result.content[0]?.text ?? '';
+  expect(text).toContain('```json renkei-agent');
+  expect(text).toContain('"guardrails": "Never invent numbers."');
+  expect(text).toContain('pass its fields to agent_update');
+});
+
 test('read, knowledge, and memory tools stay available to agent-run callers', async () => {
   storeMock.listAgents.mockResolvedValue([AGENT]);
   const handlers = registerAll({ agent: { agentId: 'agent-9' } });

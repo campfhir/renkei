@@ -42,6 +42,7 @@ import {
   outcomeGuideFor,
   systemPromptWith,
 } from '@renkei/agents/step-prompts';
+import { fencedDefinition } from '@/lib/agents/definition';
 import { triggerSummary } from '@/lib/agents/trigger-summary';
 
 export interface AgentExportInput {
@@ -259,20 +260,7 @@ export function agentMarkdown(agent: AgentExportInput): string {
     'into Import on the agents page (or pass the JSON to agent_create) to recreate the',
     'agent — importing re-saves it, which also upgrades an older steps format.',
     '',
-    '```json renkei-agent',
-    JSON.stringify(
-      {
-        name: agent.name,
-        ...(agent.description ? { description: agent.description } : {}),
-        steps: agent.steps,
-        triggers: agent.triggers,
-        ...(agent.guardrails ? { guardrails: agent.guardrails } : {}),
-        ...(agent.blockedTools.length > 0 ? { blockedTools: agent.blockedTools } : {}),
-      },
-      null,
-      2
-    ),
-    '```',
+    fencedDefinition(agent),
     ''
   );
   return lines.join('\n');
