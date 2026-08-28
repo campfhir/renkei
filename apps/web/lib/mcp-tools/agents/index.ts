@@ -42,7 +42,7 @@ import { agentJobsQueue } from '@renkei/queue';
 import {
   isAgentStepsDoc,
   isTriggerDraft,
-  requiredVersion,
+  CURRENT_STEPS_VERSION,
   savesByPathCoverage,
   triggerVariableDescriptors,
   type AgentStepsDoc,
@@ -733,11 +733,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         typeof draft.result === 'object' && draft.result !== null && !Array.isArray(draft.result)
           ? draft.result
           : {};
-      const guard: unknown = { version: 7, steps: record.steps };
+      const guard: unknown = { version: CURRENT_STEPS_VERSION, steps: record.steps };
       if (!isAgentStepsDoc(guard)) {
         return errText('The stored draft is unreadable — start again with agent_draft.');
       }
-      const doc: AgentStepsDoc = { version: requiredVersion(guard.steps), steps: guard.steps };
+      const doc: AgentStepsDoc = { version: CURRENT_STEPS_VERSION, steps: guard.steps };
 
       const name = typeof record.name === 'string' && record.name ? record.name : 'Untitled agent';
       const questions = Array.isArray(record.questions)

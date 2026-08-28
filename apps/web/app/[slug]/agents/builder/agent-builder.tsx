@@ -21,7 +21,7 @@ import {
   flattenActionSteps,
   isContainerNode,
   isTriggerDraft,
-  requiredVersion,
+  CURRENT_STEPS_VERSION,
   triggerVariableDescriptors,
   validateAgentDraft,
   walkSteps,
@@ -516,7 +516,7 @@ export function AgentBuilder({
   const stepsDoc: AgentStepsDoc = useMemo(
     // The server recomputes the version on save; matching its rule here
     // keeps the client draft identical to what will persist.
-    () => ({ version: requiredVersion(steps), steps }),
+    () => ({ version: CURRENT_STEPS_VERSION, steps }),
     [steps]
   );
   const ordinals = useMemo(

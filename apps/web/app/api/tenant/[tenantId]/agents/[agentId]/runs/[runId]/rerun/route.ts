@@ -23,7 +23,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
-import { isAgentStepsDoc } from '@renkei/agents';
+import { isCurrentStepsDoc } from '@renkei/agents';
 import { createAgentRun } from '@renkei/agents/runs';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
@@ -76,9 +76,9 @@ export async function POST(
     .where('owner_subject', '=', access.ownerSubject)
     .executeTakeFirst();
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  if (!isAgentStepsDoc(agent.steps)) {
+  if (!isCurrentStepsDoc(agent.steps)) {
     return NextResponse.json(
-      { error: 'The agent cannot run in its current state — fix the steps and save first.' },
+      { error: 'This agent is saved in an older format — open it in the builder and save to update it.' },
       { status: 409 }
     );
   }

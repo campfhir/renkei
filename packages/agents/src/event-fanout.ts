@@ -17,7 +17,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
-import { isAgentStepsDoc } from './steps';
+import { isCurrentStepsDoc } from './steps';
 import { createAgentRun } from './runs';
 import { matchesTriggerEvent } from './trigger-catalog';
 
@@ -118,7 +118,7 @@ export async function fanOutAgentEvents(
       filtered += 1;
       continue;
     }
-    if (!isAgentStepsDoc(trigger.steps)) continue;
+    if (!isCurrentStepsDoc(trigger.steps)) continue;
 
     // The firing lock: one run per (trigger, source event), across every
     // worker process. Whoever wins this INSERT creates the run; a lost

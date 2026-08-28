@@ -94,7 +94,7 @@ describe('normalizeAgentDraft', () => {
     ]);
   });
 
-  it("strips the default exhausted 'exit' so untouched drafts stay below version 7", () => {
+  it("strips the default exhausted 'exit' — the key must be absent", () => {
     const normalized = normalizeAgentDraft(
       draft({
         steps: {
@@ -117,10 +117,10 @@ describe('normalizeAgentDraft', () => {
     const first = normalized.steps.steps[0];
     const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
     expect(handling?.exhausted).toBeUndefined();
-    expect(normalized.steps.version).toBe(1);
+    expect(normalized.steps.version).toBe(8);
   });
 
-  it('keeps a deliberate exhausted choice and labels the doc version 7', () => {
+  it('keeps a deliberate exhausted choice', () => {
     const normalized = normalizeAgentDraft(
       draft({
         steps: {
@@ -143,7 +143,7 @@ describe('normalizeAgentDraft', () => {
     const first = normalized.steps.steps[0];
     const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
     expect(handling?.exhausted).toBe('continue');
-    expect(normalized.steps.version).toBe(7);
+    expect(normalized.steps.version).toBe(8);
   });
 });
 
@@ -521,14 +521,14 @@ describe('branch validation', () => {
 });
 
 describe('normalizeAgentDraft with branches', () => {
-  it('recomputes the version: 2 iff a branch exists', () => {
+  it('stamps every save with the current version, whatever came in', () => {
     const withBranch = normalizeAgentDraft(
       draft({ steps: { version: 1 as const, steps: [step(), branchNode()] } })
     );
-    expect(withBranch.steps.version).toBe(2);
+    expect(withBranch.steps.version).toBe(8);
 
     const linear = normalizeAgentDraft(draft({ steps: { version: 2, steps: [step()] } }));
-    expect(linear.steps.version).toBe(1);
+    expect(linear.steps.version).toBe(8);
   });
 
   it('keeps a linear doc byte-identical to the pre-branch shape', () => {
@@ -794,7 +794,7 @@ describe('group and n-way validation', () => {
     expect(loopOut && 'maxIterations' in loopOut ? loopOut.maxIterations : null).toBe(25);
     // Half-configured collect is dropped entirely — the KEY must be absent.
     expect('collectVar' in (loopOut ?? {})).toBe(false);
-    expect(normalized.steps.version).toBe(3);
+    expect(normalized.steps.version).toBe(8);
   });
 });
 
@@ -810,10 +810,10 @@ describe('terminal nodes (version 4)', () => {
     ...overrides,
   });
 
-  it('accepts a well-formed ending as the last node and versions the doc 4', () => {
+  it('accepts a well-formed ending as the last node', () => {
     const doc = { version: 4 as const, steps: [step(), terminal()] };
     expect(validateAgentDraft(draft({ steps: doc }), TOOLS)).toEqual([]);
-    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(4);
+    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(8);
   });
 
   it('requires a message when a notification channel is on', () => {
@@ -916,10 +916,10 @@ describe('approval nodes (validation + normalize)', () => {
     ...overrides,
   });
 
-  it('accepts a well-formed approval and versions the doc 5', () => {
+  it('accepts a well-formed approval', () => {
     const doc = { version: 5 as const, steps: [approval()] };
     expect(validateAgentDraft(draft({ steps: doc }), TOOLS)).toEqual([]);
-    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(5);
+    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(8);
   });
 
   it('requires a message and refuses tool chips in it', () => {

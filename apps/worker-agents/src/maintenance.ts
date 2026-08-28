@@ -5,9 +5,11 @@
  * once cost duplicate reads, never wrong writes.
  */
 
+import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
+import { CURRENT_STEPS_VERSION } from '@renkei/agents';
 import { logger } from './logger';
 
 const RETENTION_BATCH = 500;
@@ -138,6 +140,69 @@ export function createStuckRunJanitor(db: Kysely<DB>) {
         component: 'worker-agents/janitor',
         runId: run.id,
         tenantId: run.tenant_id,
+      });
+    }
+  };
+}
+
+/**
+ * Disable agents saved in an older steps format, and tell their owners.
+ *
+ * There is no per-version maintenance any more: run creation demands the
+ * current version (isCurrentStepsDoc), so an agent left on an older number
+ * would just silently never fire. This sweep turns that silence into the
+ * two things the owner needs — the agent visibly OFF, and a notification
+ * saying exactly what to do (open it in the builder and save, which
+ * re-stamps it with the current version). Idempotent: a disabled agent no
+ * longer matches the WHERE, so each stale agent is handled exactly once,
+ * however many replicas sweep.
+ */
+export function createStaleVersionSweep(db: Kysely<DB>) {
+  return async function sweep(): Promise<void> {
+    const stale = await sql<{
+      id: string;
+      tenant_id: string;
+      owner_subject: string;
+      name: string;
+    }>`
+      UPDATE agents
+         SET enabled = false, updated_at = NOW()
+       WHERE enabled = true
+         AND (steps->>'version')::int < ${CURRENT_STEPS_VERSION}
+      RETURNING id, tenant_id, owner_subject, name
+    `.execute(db);
+
+    for (const agent of stale.rows) {
+      try {
+        await db
+          .insertInto('agent_notifications')
+          .values({
+            id: randomUUID(),
+            tenant_id: agent.tenant_id,
+            subject: agent.owner_subject,
+            kind: 'agent_disabled',
+            headline:
+              `“${agent.name}” was turned off — it is saved in an older format. ` +
+              `Open it in the builder and save to update it, then turn it back on.`,
+            agent_id: agent.id,
+            agent_name: agent.name,
+          })
+          .execute();
+      } catch (error) {
+        // The disable already happened and is the part that matters; a
+        // missed notification costs reach, not correctness.
+        logger.warn('could not notify owner of stale-version agent {agentId}', {
+          component: 'worker-agents/stale-version',
+          tenantId: agent.tenant_id,
+          agentId: agent.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      logger.warn('disabled stale-version agent {agentId} ({name})', {
+        component: 'worker-agents/stale-version',
+        tenantId: agent.tenant_id,
+        agentId: agent.id,
+        name: agent.name,
       });
     }
   };

@@ -27,6 +27,7 @@ import {
   APPROVAL_DEFAULT_TIMEOUT_HOURS,
   BRANCH_DEFAULT_ATTEMPTS,
   DEFAULT_APPROVAL_WAIT_CAP_HOURS,
+  CURRENT_STEPS_VERSION,
   LOOP_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
   MAX_BRANCH_DEPTH_V3,
@@ -42,7 +43,6 @@ import {
   containsApproval,
   countNodes,
   flattenActionSteps,
-  requiredVersion,
   toolSegments,
   varSegments,
   walkSteps,
@@ -879,10 +879,10 @@ export function normalizeAgentDraft(
     // Deduped, order preserved; empty entries dropped.
     blockedTools: [...new Set(draft.blockedTools.map((tool) => tool.trim()).filter(Boolean))],
     steps: {
-      // The SERVER owns the version rule (requiredVersion): a document any
-      // older writer could produce keeps its exact old version, so linear
-      // and plain-branch agents stay runnable by older workers.
-      version: requiredVersion(steps),
+      // Every save stamps the one current version — there is no per-version
+      // maintenance any more: an older doc updates by being re-saved, and
+      // until then run creation refuses it (isCurrentStepsDoc).
+      version: CURRENT_STEPS_VERSION,
       steps,
     },
   };

@@ -22,7 +22,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
-import { isAgentStepsDoc } from '@renkei/agents';
+import { isCurrentStepsDoc } from '@renkei/agents';
 import { createAgentRun } from '@renkei/agents/runs';
 import type { FinalizedRun } from './engine';
 import { logger } from './logger';
@@ -95,7 +95,7 @@ export function createFinalizeHook(
       .execute();
 
     for (const trigger of chained) {
-      if (!isAgentStepsDoc(trigger.steps)) continue;
+      if (!isCurrentStepsDoc(trigger.steps)) continue;
       const varLines = Object.entries(run.vars)
         .map(([name, value]) => `${name}: ${value}`)
         .join('; ');

@@ -27,6 +27,7 @@ import { createApprovalSweep, APPROVAL_SWEEP_MS } from './approval-sweep';
 import {
   createNotificationRetentionSweep,
   createRetentionSweep,
+  createStaleVersionSweep,
   createStuckRunJanitor,
 } from './maintenance';
 import { createMemoryCompactionSweep, MEMORY_COMPACTION_SWEEP_MS } from './memory-compaction';
@@ -115,6 +116,16 @@ async function main(): Promise<void> {
       'worker-agents/draft-sweep',
       DRAFT_SWEEP_INTERVAL_MS,
       createDraftSweep(db)
+    ),
+    // Turns "saved in an older format" from silent never-firing into a
+    // disabled agent plus a notification naming the fix. Idempotent by
+    // its WHERE clause.
+    schedulePeriodicSweep(
+      logger,
+      'stale-version agents',
+      'worker-agents/stale-version',
+      JANITOR_SWEEP_MS,
+      createStaleVersionSweep(db)
     ),
     // Replica-safe by construction (equivalent summaries, idempotent
     // deletes) — see memory-compaction.ts.

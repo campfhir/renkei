@@ -215,10 +215,11 @@ export default function NotificationsList({
                 row.runId && row.agentId
                   ? `/${slug}/agents/${row.agentId}/runs/${row.runId}`
                   : null;
-              // "Someone edited your agent" points at the agent itself —
-              // in-app, so no new tab.
+              // "Someone edited your agent" and "your agent was turned
+              // off — update it" both point at the agent itself — in-app,
+              // so no new tab.
               const agentHref =
-                row.kind === 'agent_edited' && row.agentId
+                (row.kind === 'agent_edited' || row.kind === 'agent_disabled') && row.agentId
                   ? `/${slug}/agents/${row.agentId}`
                   : null;
               return (

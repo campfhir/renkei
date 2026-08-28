@@ -37,7 +37,7 @@ import {
   flattenActionSteps,
   isBranchStep,
   isValidTimezone,
-  requiredVersion,
+  CURRENT_STEPS_VERSION,
   normalizeMatchForEvent,
   triggerEventById,
   validateMatchForEvent,
@@ -1738,7 +1738,7 @@ async function reviewDraftConcerns(
   budgetMs: number
 ): Promise<ReviewNote[] | null> {
   if (budgetMs < 10_000) return null;
-  const stepsDoc: AgentStepsDoc = { version: requiredVersion(draft.steps), steps: draft.steps };
+  const stepsDoc: AgentStepsDoc = { version: CURRENT_STEPS_VERSION, steps: draft.steps };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const outerMs = Math.min(REVIEW_TIMEOUT_MS, budgetMs);
   const completion = await Promise.race([

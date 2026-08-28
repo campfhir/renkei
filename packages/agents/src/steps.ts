@@ -136,9 +136,13 @@ export interface FailureHandling {
    */
   action: 'retry' | 'exit' | 'stop-quiet' | 'continue';
   /**
-   * Corrective guidance shown to the model on retry attempts. Required for
-   * 'retry'. MAY contain tool chips — several, deliberately laxer than the
-   * step body — which become the extra tools offered while correcting.
+   * The author's prose for this condition. On 'retry' it is the corrective
+   * guidance shown to the model on retry attempts (required, and MAY
+   * contain tool chips — several, deliberately laxer than the step body —
+   * which become the extra tools offered while correcting). On every other
+   * action (version 8) it is advisory: rendered into the attempt-1 outcome
+   * guide and the outlines so the step model and the reviewer both see
+   * what the author meant by handling this condition the way they did.
    */
   guidance?: InstructionSegment[];
   /**
@@ -150,6 +154,16 @@ export interface FailureHandling {
    * default stay byte-identical with what older writers produce.
    */
   exhausted?: 'exit' | 'stop-quiet' | 'continue';
+  /**
+   * Version 8: plain-text description of a CUSTOM condition — one the
+   * step's tool does not enumerate, judged by the step model reasoning
+   * over the result ("the results don't match the description closely
+   * enough"). Present exactly when `outcome` is an author-invented code;
+   * validation rejects it on enumerated codes and requires it on custom
+   * ones. Never trimmed — an over-long description is a validation issue,
+   * not a silent clip.
+   */
+  when?: string;
 }
 
 export interface ActionStep {
@@ -360,8 +374,12 @@ export type AgentStepNode =
   ActionStep | BranchStep | LoopStep | GroupStep | TerminalStep | ApprovalStep;
 
 export interface AgentStepsDoc {
-  /** See requiredVersion: 7 continue-handling, 6 date chips, 5 approval, 4 terminal, 3 v3 constructs, 2 plain branches, else 1. */
-  version: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  /**
+   * CURRENT_STEPS_VERSION on everything this build writes. Older numbers
+   * still LOAD (so the builder can open a stale agent for updating) but
+   * never RUN — see isCurrentStepsDoc.
+   */
+  version: number;
   /** Array order is execution order; success is linear within a list. */
   steps: AgentStepNode[];
 }
@@ -381,12 +399,33 @@ export const MAX_STEP_ATTEMPTS = 10;
 export const MAX_STEPS = 20;
 export const MAX_INSTRUCTION_CHARS = 4_000;
 /**
- * The FROZEN v2 limit — a branch inside a branch, nothing deeper. Only the
- * v2 structural arm still reads this; new documents live under the v3
- * limits below.
+ * Sanity bounds on outcome-line prose, NOT trims: like the guardrails cap
+ * below, these exist so a paste accident cannot park a megabyte in every
+ * prompt — an over-cap value is a validation issue the author sees and
+ * fixes, and no code path may silently truncate either field.
  */
-export const MAX_BRANCH_DEPTH = 2;
-/** Version 3: conditionals may nest three deep. */
+export const MAX_GUIDANCE_CHARS = 20_000;
+export const MAX_OUTCOME_WHEN_CHARS = 1_000;
+/** Custom condition codes: short kebab-case slugs, e.g. "stale-data". */
+export const CUSTOM_OUTCOME_CODE_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+export const MAX_OUTCOME_CODE_CHARS = 64;
+
+/**
+ * A "when …" description → the kebab-case code it is stored under. The
+ * builder and the drafting parser both derive codes with this, so the same
+ * description lands on the same code wherever it is authored. Returns ''
+ * when nothing sluggable survives — callers fall back or refuse.
+ */
+export function customOutcomeSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/^[^a-z]+/, '')
+    .slice(0, MAX_OUTCOME_CODE_CHARS)
+    .replace(/-+$/, '');
+}
+/** Conditionals may nest three deep. */
 export const MAX_BRANCH_DEPTH_V3 = 3;
 /**
  * Version 3's combined containment ceiling: branch and loop levels count,
@@ -482,19 +521,18 @@ export function isInstructionSegment(value: unknown): value is InstructionSegmen
   return false;
 }
 
-/**
- * Structural check for a failure-handling entry. Shared across the version
- * arms like the segment guard above (see isDateSegment's comment): the v7
- * vocabulary ('continue', `exhausted`) is admitted here, and a document
- * carrying it is labeled version 7 by requiredVersion — an older worker
- * rejects the unknown version outright, which is the guarantee that
- * protects it from a handling it would silently ignore.
- */
+/** Structural check for a failure-handling entry. */
 function isFailureHandling(value: unknown): value is FailureHandling {
   if (typeof value !== 'object' || value === null) return false;
-  const entry: { outcome?: unknown; action?: unknown; guidance?: unknown; exhausted?: unknown } =
-    value;
+  const entry: {
+    outcome?: unknown;
+    action?: unknown;
+    guidance?: unknown;
+    exhausted?: unknown;
+    when?: unknown;
+  } = value;
   if (typeof entry.outcome !== 'string' || entry.outcome.length === 0) return false;
+  if (entry.when !== undefined && typeof entry.when !== 'string') return false;
   if (
     entry.action !== 'retry' &&
     entry.action !== 'exit' &&
@@ -603,58 +641,12 @@ export function approvalPathsOf(
   return APPROVAL_OUTCOME_KEYS.map((key) => ({ key, path: node[key] }));
 }
 
-/* ---------------- FROZEN v2 structural arm ------------------------- */
-/* Byte-for-byte the pre-v3 checks: two-path branches, depth ≤ 2, no    */
-/* loops or groups. v2 snapshots must parse forever exactly as they did. */
-
-function isBranchPathV2(value: unknown, depth: number): value is BranchPath {
-  if (typeof value !== 'object' || value === null) return false;
-  const path: { id?: unknown; name?: unknown; steps?: unknown } = value;
-  if (typeof path.id !== 'string' || path.id.length === 0) return false;
-  if (typeof path.name !== 'string') return false;
-  return Array.isArray(path.steps) && path.steps.every((step) => isNodeV2(step, depth));
-}
-
-function isBranchStepShapeV2(value: unknown, depth: number): value is BranchStep {
-  if (typeof value !== 'object' || value === null) return false;
-  const step: {
-    id?: unknown;
-    kind?: unknown;
-    name?: unknown;
-    condition?: unknown;
-    paths?: unknown;
-    failurePath?: unknown;
-    maxAttempts?: unknown;
-  } = value;
-  if (step.kind !== 'branch') return false;
-  // Defensive vs pathological jsonb: reject nesting the v2 engine won't run.
-  if (depth > MAX_BRANCH_DEPTH) return false;
-  if (step.failurePath !== undefined) return false;
-  if (typeof step.id !== 'string' || step.id.length === 0) return false;
-  if (typeof step.name !== 'string') return false;
-  if (!Array.isArray(step.condition) || !step.condition.every(isInstructionSegment)) return false;
-  if (typeof step.maxAttempts !== 'number') return false;
-  return (
-    Array.isArray(step.paths) &&
-    step.paths.length === 2 &&
-    step.paths.every((path) => isBranchPathV2(path, depth + 1))
-  );
-}
-
-function isNodeV2(value: unknown, depth: number): value is AgentStepNode {
-  if (typeof value === 'object' && value !== null) {
-    const candidate: { kind?: unknown } = value;
-    if (candidate.kind === 'branch') return isBranchStepShapeV2(value, depth);
-    if (candidate.kind === 'loop' || candidate.kind === 'group') return false;
-  }
-  return isActionStep(value);
-}
-
-/* ---------------- v3/v4 structural arm ------------------------------ */
-/* The container checks are shared between the two arms via the `isNode` */
-/* recursion parameter: v3 recurses with isNodeV3 (terminal nodes are    */
-/* NOT admitted — a doc labeled below the version its constructs demand  */
-/* is invalid), v4 with isNodeV4 (terminal leaves allowed anywhere).     */
+/* ---------------- structural node guard ----------------------------- */
+/* ONE guard for every stored document. Current shapes are supersets of  */
+/* every version this product ever wrote, so an old doc's NODES always   */
+/* pass — the version NUMBER decides whether it may RUN (see             */
+/* isCurrentStepsDoc): old versions load in the builder for updating,    */
+/* and the runtime disables the agent and tells the owner to re-save.    */
 
 /** Containment counters the v3+ shape checks thread through the tree. */
 interface GuardContext {
@@ -800,35 +792,6 @@ function isTerminalStepShape(value: unknown): value is TerminalStep {
   return typeof step.notifyEmail === 'boolean' && typeof step.notifyWebex === 'boolean';
 }
 
-function isNodeV3(value: unknown, context: GuardContext): value is AgentStepNode {
-  if (typeof value === 'object' && value !== null) {
-    const candidate: { kind?: unknown } = value;
-    if (candidate.kind === 'branch') return isBranchStepShapeV3(value, context, isNodeV3);
-    if (candidate.kind === 'loop') return isLoopStepShape(value, context, isNodeV3);
-    if (candidate.kind === 'group') return isGroupStepShape(value, context, isNodeV3);
-    // A v3-labeled document may not carry v4 constructs.
-    if (candidate.kind === 'terminal') return false;
-  }
-  return isActionStep(value);
-}
-
-/* ---------------- v4 structural arm -------------------------------- */
-
-function isNodeV4(value: unknown, context: GuardContext): value is AgentStepNode {
-  if (typeof value === 'object' && value !== null) {
-    const candidate: { kind?: unknown } = value;
-    if (candidate.kind === 'branch') return isBranchStepShapeV3(value, context, isNodeV4);
-    if (candidate.kind === 'loop') return isLoopStepShape(value, context, isNodeV4);
-    if (candidate.kind === 'group') return isGroupStepShape(value, context, isNodeV4);
-    if (candidate.kind === 'terminal') return isTerminalStepShape(value);
-    // A v4-labeled document may not carry v5 constructs.
-    if (candidate.kind === 'approval') return false;
-  }
-  return isActionStep(value);
-}
-
-/* ---------------- v5 structural arm -------------------------------- */
-
 function isApprovalStepShape(
   value: unknown,
   context: GuardContext,
@@ -873,54 +836,64 @@ function isApprovalStepShape(
   );
 }
 
-function isNodeV5(value: unknown, context: GuardContext): value is AgentStepNode {
+function isNode(value: unknown, context: GuardContext): value is AgentStepNode {
   if (typeof value === 'object' && value !== null) {
     const candidate: { kind?: unknown } = value;
-    if (candidate.kind === 'branch') return isBranchStepShapeV3(value, context, isNodeV5);
-    if (candidate.kind === 'loop') return isLoopStepShape(value, context, isNodeV5);
-    if (candidate.kind === 'group') return isGroupStepShape(value, context, isNodeV5);
+    if (candidate.kind === 'branch') return isBranchStepShapeV3(value, context, isNode);
+    if (candidate.kind === 'loop') return isLoopStepShape(value, context, isNode);
+    if (candidate.kind === 'group') return isGroupStepShape(value, context, isNode);
     if (candidate.kind === 'terminal') return isTerminalStepShape(value);
-    if (candidate.kind === 'approval') return isApprovalStepShape(value, context, isNodeV5);
+    if (candidate.kind === 'approval') return isApprovalStepShape(value, context, isNode);
   }
   return isActionStep(value);
 }
 
 /**
- * Whether a stored `steps` jsonb value is a document this build executes.
- * Structural only — business rules (attempt clamp, tool existence, variable
- * binding) are the validator's job on the way IN; this guards the way OUT,
- * where the value has already been through it.
- *
- * The version-1 arm is exactly the pre-branch check and the version-2 arm
- * exactly the pre-v3 check: old snapshots parse unchanged forever, and a
- * doc labeled below the version its constructs demand is NOT valid.
+ * The one version this build WRITES and RUNS. There is deliberately no
+ * per-version maintenance: the normalizer stamps every save with this,
+ * run creation demands it (isCurrentStepsDoc), and an agent found carrying
+ * an older number is disabled with a notification telling the owner to
+ * open it in the builder and save — which re-stamps it. History, for the
+ * curious: 8 outcome prose/custom conditions, 7 continue-handling, 6 date
+ * chips, 5 approvals, 4 terminals, 3 loops/groups/n-way branches, 2
+ * branches, 1 linear steps.
+ */
+export const CURRENT_STEPS_VERSION = 8;
+
+/**
+ * Whether a stored `steps` jsonb value is structurally a steps document.
+ * Structural only — business rules (attempt clamp, tool existence,
+ * variable binding) are the validator's job on the way IN; this guards the
+ * way OUT. The version number is accepted for ANY integer 1..current:
+ * today's node shapes are supersets of every version this product ever
+ * wrote, so old documents still LOAD (the builder needs them to, so an
+ * owner can update a stale agent) — whether a document may RUN is
+ * isCurrentStepsDoc's stricter question.
  */
 export function isAgentStepsDoc(value: unknown): value is AgentStepsDoc {
   if (typeof value !== 'object' || value === null) return false;
   const doc: { version?: unknown; steps?: unknown } = value;
-  if (doc.version === 1) {
-    return Array.isArray(doc.steps) && doc.steps.every(isActionStep);
+  if (
+    typeof doc.version !== 'number' ||
+    !Number.isInteger(doc.version) ||
+    doc.version < 1 ||
+    doc.version > CURRENT_STEPS_VERSION
+  ) {
+    return false;
   }
-  if (doc.version === 2) {
-    return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV2(step, 1));
-  }
-  if (doc.version === 3) {
-    const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
-    return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV3(step, root));
-  }
-  if (doc.version === 4) {
-    const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
-    return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV4(step, root));
-  }
-  if (doc.version === 5 || doc.version === 6 || doc.version === 7) {
-    // Versions 6 and 7 differ only in what a LEAF may contain (a date chip
-    // in an instruction; the continue/exhausted failure-handling
-    // vocabulary), which the shared guards already cover — the node shapes
-    // are v5's.
-    const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
-    return Array.isArray(doc.steps) && doc.steps.every((step) => isNodeV5(step, root));
-  }
-  return false;
+  const root: GuardContext = { branchDepth: 0, containerDepth: 0, inLoop: false };
+  return Array.isArray(doc.steps) && doc.steps.every((step) => isNode(step, root));
+}
+
+/**
+ * The gate at every RUN-CREATION site (manual invoke, rerun, schedules,
+ * event fan-out, chaining): only current-version documents start runs.
+ * Snapshot readers stay on the permissive isAgentStepsDoc so in-flight
+ * runs finish and history renders; the maintenance sweep disables agents
+ * that fail this and notifies their owners to update.
+ */
+export function isCurrentStepsDoc(value: unknown): value is AgentStepsDoc {
+  return isAgentStepsDoc(value) && value.version === CURRENT_STEPS_VERSION;
 }
 
 /** The tool chips in a segment list, in order of appearance. */
@@ -1123,107 +1096,12 @@ export function findNodeById(nodes: AgentStepNode[], id: string): FoundNode | nu
   return search(nodes, []);
 }
 
-/** Whether any node in the tree is a branch — the version-2 test. */
-export function containsBranch(nodes: AgentStepNode[]): boolean {
-  return walkSteps(nodes).some(({ node }) => isBranchStep(node));
-}
-
 /**
- * Whether the tree uses anything only a version-3 reader understands:
- * loops, groups, branches with more than two paths or a failure path, or
- * conditionals nested past the frozen v2 depth.
+ * Whether the tree contains an approval node. No longer a version test —
+ * it decides whether the approval.link builtin variable is offered.
  */
-export function containsV3Feature(nodes: AgentStepNode[]): boolean {
-  let branchTooDeep = false;
-  const visitBranchDepth = (list: AgentStepNode[], branchDepth: number) => {
-    for (const node of list) {
-      if (node.kind === 'branch') {
-        if (branchDepth + 1 > MAX_BRANCH_DEPTH) branchTooDeep = true;
-        for (const path of node.paths) visitBranchDepth(path.steps, branchDepth + 1);
-        if (node.failurePath) visitBranchDepth(node.failurePath.steps, branchDepth + 1);
-      } else if (node.kind === 'loop' || node.kind === 'group') {
-        visitBranchDepth(node.steps, branchDepth);
-      }
-    }
-  };
-  visitBranchDepth(nodes, 0);
-  return (
-    branchTooDeep ||
-    walkSteps(nodes).some(
-      ({ node }) =>
-        node.kind === 'loop' ||
-        node.kind === 'group' ||
-        (node.kind === 'branch' && (node.paths.length !== 2 || node.failurePath !== undefined))
-    )
-  );
-}
-
-/** Whether the tree contains a terminal node — the version-4 test. */
-export function containsTerminal(nodes: AgentStepNode[]): boolean {
-  return walkSteps(nodes).some(({ node }) => isTerminalStep(node));
-}
-
-/** Whether the tree contains an approval node — the version-5 test. */
 export function containsApproval(nodes: AgentStepNode[]): boolean {
   return walkSteps(nodes).some(({ node }) => isApprovalStep(node));
 }
 
-/** Every instruction-ish segment list a node carries. */
-function segmentListsOf(node: AgentStepNode): InstructionSegment[][] {
-  switch (node.kind) {
-    case 'branch':
-      return [node.condition];
-    case 'loop':
-      return node.mode === 'until' ? [node.condition] : [];
-    case 'group':
-      return [];
-    case 'terminal':
-      return [node.message];
-    case 'approval':
-      return [node.message];
-    case 'action':
-    case undefined:
-      return [node.instruction, ...node.failureHandling.map((entry) => entry.guidance ?? [])];
-    default: {
-      const unhandled: never = node;
-      throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
-    }
-  }
-}
 
-/** Whether any instruction carries a date chip — the version-6 test. */
-export function containsDateChip(nodes: AgentStepNode[]): boolean {
-  return walkSteps(nodes).some(({ node }) =>
-    segmentListsOf(node).some((segments) => segments.some((segment) => segment.t === 'date'))
-  );
-}
-
-/**
- * Whether any failure handling uses the v7 vocabulary — a 'continue'
- * action, or an `exhausted` choice (any value: the normalizer strips the
- * default 'exit', so one that survives is deliberate). The version-7 test.
- */
-export function containsContinueHandling(nodes: AgentStepNode[]): boolean {
-  return walkSteps(nodes).some(({ node }) => {
-    if (node.kind !== undefined && node.kind !== 'action') return false;
-    return node.failureHandling.some(
-      (handling) => handling.action === 'continue' || handling.exhausted !== undefined
-    );
-  });
-}
-
-/**
- * THE version rule — normalizeAgentDraft is its only writer. Anything an
- * older writer could have produced keeps its exact old version, which is
- * what keeps old snapshots byte-stable.
- */
-export function requiredVersion(nodes: AgentStepNode[]): 1 | 2 | 3 | 4 | 5 | 6 | 7 {
-  // Highest first: a leaf construct only an aware reader can honor (a
-  // continue handling, a date chip) outranks every structure below it.
-  if (containsContinueHandling(nodes)) return 7;
-  if (containsDateChip(nodes)) return 6;
-  if (containsApproval(nodes)) return 5;
-  if (containsTerminal(nodes)) return 4;
-  if (containsV3Feature(nodes)) return 3;
-  return containsBranch(nodes) ? 2 : 1;
-}
