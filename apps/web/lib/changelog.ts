@@ -44,8 +44,38 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
-    heading: 'Looking people up',
+    heading: 'Telling a step how hard to try',
     entries: [
+      {
+        kind: 'fixed',
+        title: 'Number fields let you type the number you meant',
+        detail:
+          'Typing a negative offset into a date chip was close to impossible: clearing the field snapped it back to 0, which swallowed the minus sign, so “-3” came out as 3. Number fields now let you empty them while you type and settle on a valid value when you leave — and the browser’s stepper arrows, which crowded the smaller fields, are gone.',
+      },
+      {
+        kind: 'changed',
+        title: 'Tries are typed, not picked from a list',
+        detail:
+          'A step’s “give up after N tries” was a dropdown listing one option per allowed value, so an organization that raised the ceiling to 100 got a hundred-item list to scroll. It is now a number field.',
+      },
+      {
+        kind: 'added',
+        title: 'Steps can say which try they are on',
+        detail:
+          'Two new chips, “This try” and “Total tries”, read as 1 and 3 in an instruction — so a step can tell the agent “this is try 2 of 3, narrow the search this time” instead of repeating itself identically on every retry. They work in corrective guidance too, and the skills an agent calls now know when they are being retried.',
+      },
+    ],
+  },
+  {
+    date: null,
+    heading: 'Fewer round trips looking things up',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'Look several field groups up in one go',
+        detail:
+          'Listing Jira fields took one filter per call, so an agent confirming a project’s schema — health, risk, story points — spent a call on each and could run out of budget before it had the whole picture. The lookup now takes a list of filters and reports the matches under each one. The full field list was always fetched and filtered locally anyway, so the extra filters cost nothing.',
+      },
       {
         kind: 'changed',
         title: 'Look several people up in one go',

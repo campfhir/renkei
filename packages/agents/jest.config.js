@@ -7,6 +7,7 @@ export default {
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
     '^@renkei/queue$': '<rootDir>/../../packages/queue/src/index.ts',
     '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
+    '^@renkei/tool-outcomes$': '<rootDir>/../../packages/tool-outcomes/src/index.ts',
   },
   transform: {
     '^.+\\.tsx?$': [

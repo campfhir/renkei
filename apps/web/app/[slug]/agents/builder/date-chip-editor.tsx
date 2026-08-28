@@ -15,6 +15,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { renderDateSegment, type DateSegment } from '@renkei/agents';
 import { useDismiss } from '@/lib/use-dismiss';
+import { useNumericInput } from '@/lib/use-numeric-input';
 
 const UNITS: DateSegment['unit'][] = ['minute', 'hour', 'day', 'week', 'month', 'year'];
 
@@ -53,6 +54,10 @@ export function DateChipEditor({
   }, []);
 
   const patch = (next: Partial<DateSegment>) => onChange({ ...segment, ...next });
+  // "-3" starts as "-", which is not a number yet — so the offset is typed as
+  // text and committed when it parses. Left empty, it falls back rather than
+  // writing NaN into the chip.
+  const amountField = useNumericInput(segment.amount, (amount) => patch({ amount }));
   const preview = renderDateSegment(segment, now);
 
   return (
@@ -78,8 +83,8 @@ export function DateChipEditor({
             id="date-chip-amount"
             type="number"
             className={inputClass}
-            value={segment.amount}
-            onChange={(event) => patch({ amount: Number(event.target.value) || 0 })}
+            {...amountField}
+            onChange={(event) => amountField.onChange(event.target.value)}
           />
         </div>
         <div>

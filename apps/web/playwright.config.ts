@@ -71,6 +71,12 @@ export default defineConfig({
       ...(process.env.TOKEN_ENCRYPTION_KEY
         ? { TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY }
         : {}),
+      // instrumentation.ts refuses to boot without this, so a shot run dies
+      // before the first page loads. Passed through when set, exactly like
+      // the other two — no key is invented here.
+      ...(process.env.LOG_ENCRYPTION_KEY
+        ? { LOG_ENCRYPTION_KEY: process.env.LOG_ENCRYPTION_KEY }
+        : {}),
     },
   },
 });

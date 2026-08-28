@@ -231,13 +231,19 @@ export async function registerProjectTools(
     'jira_list_fields',
     {
       title: 'Jira · Read — List all issue fields (standard and custom)',
-      description: 'List all fields available in a Jira project.',
+      description:
+        'List all fields available in a Jira project. Pass an array of filters to look up ' +
+        'several field groups in one call — the whole field list is fetched and filtered ' +
+        'here, so extra filters cost nothing beyond the first.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         projectKey: z.string().describe('Project key, e.g. SCRUM (optional)').optional(),
         query: z
-          .string()
-          .describe('Substring filter on field name or id, e.g. "change" (optional)')
+          .union([z.string(), z.array(z.string())])
+          .describe(
+            'Substring filter on field name or id, e.g. "change" (optional). An array reports ' +
+              'each filter separately, e.g. ["Project Health", "Risk", "Story Points"].'
+          )
           .optional(),
       }),
     },
@@ -260,44 +266,83 @@ export async function registerProjectTools(
 
         // 378 fields on a real site makes unfiltered paging blind — a
         // substring filter turns this into a usable lookup.
-        const query = typeof args.query === 'string' ? args.query.toLowerCase() : '';
-        const matching = query
-          ? fields.filter(
-              (f: any) =>
-                String(f.name ?? '')
-                  .toLowerCase()
-                  .includes(query) ||
-                String(f.id ?? '')
-                  .toLowerCase()
-                  .includes(query)
-            )
-          : fields;
+        const requested = Array.isArray(args.query) ? args.query : [args.query];
+        const queries: string[] = [];
+        const seen = new Set<string>();
+        for (const entry of requested) {
+          const text = typeof entry === 'string' ? entry.trim() : '';
+          if (!text) continue;
+          const key = text.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          queries.push(text);
+        }
 
-        const lines = [
-          query
-            ? `${matching.length} of ${fields.length} fields match "${args.query}":`
-            : `Found ${fields.length} fields:`,
-          ...matching
+        const matches = (query: string) => {
+          const needle = query.toLowerCase();
+          return fields.filter(
+            (f: any) =>
+              String(f.name ?? '')
+                .toLowerCase()
+                .includes(needle) ||
+              String(f.id ?? '')
+                .toLowerCase()
+                .includes(needle)
+          );
+        };
+
+        const render = (found: any[]) => [
+          ...found
             .slice(0, 50)
             .map((f: any) => `• ${f.name} (${f.id}) - ${f.schema?.type || 'unknown'}`),
-          matching.length > 50 ? `... and ${matching.length - 50} more` : '',
+          found.length > 50 ? `... and ${found.length - 50} more` : '',
         ];
-        const text = lines.filter(Boolean).join('\n');
 
-        if (matching.length === 0) {
-          return { content: [{ type: 'text' as const, text }] };
+        const hint =
+          'a table (Field name, id, Type) usually scans faster than this flat list — ' +
+          'there can be dozens of custom fields.';
+
+        // No filter, or one: the original shape, unchanged.
+        if (queries.length <= 1) {
+          const query = queries[0];
+          const matching = query ? matches(query) : fields;
+          const lines = [
+            query
+              ? `${matching.length} of ${fields.length} fields match "${query}":`
+              : `Found ${fields.length} fields:`,
+            ...render(matching),
+          ];
+          const text = lines.filter(Boolean).join('\n');
+
+          if (matching.length === 0) {
+            return { content: [{ type: 'text' as const, text }] };
+          }
+          return {
+            content: [{ type: 'text' as const, text: withPresentationHint(text, hint) }],
+          };
         }
+
+        // Several filters: one section each, so a caller reading back the
+        // answer can tell which field came from which question.
+        const sections = queries.map((query) => {
+          const found = matches(query);
+          if (found.length === 0) return `"${query}" — no match`;
+          return [
+            `"${query}" — ${found.length} ${found.length === 1 ? 'match' : 'matches'}:`,
+            ...render(found),
+          ]
+            .filter(Boolean)
+            .join('\n');
+        });
+
+        const text = [
+          `${fields.length} fields on this site, matched against ${queries.length} filters:`,
+          '',
+          sections.join('\n\n'),
+        ].join('\n');
+
         return {
-          content: [
-            {
-              type: 'text' as const,
-              text: withPresentationHint(
-                text,
-                'a table (Field name, id, Type) usually scans faster than this flat list — ' +
-                  'there can be dozens of custom fields.'
-              ),
-            },
-          ],
+          content: [{ type: 'text' as const, text: withPresentationHint(text, hint) }],
         };
       } catch (error) {
         return {

@@ -118,7 +118,7 @@ export {
   type BlackoutPolicy,
   type Weekday,
 } from './recurrence';
-export { BUILTIN_VARIABLES, type VariableDescriptor } from './variables';
+export { BUILTIN_VARIABLES, attemptVariables, type VariableDescriptor } from './variables';
 export {
   TRIGGER_EVENT_CATALOG,
   describeTriggerMatch,

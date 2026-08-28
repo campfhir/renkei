@@ -37,7 +37,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
-import { savesByPathCoverage, type AgentStepsDoc } from '@renkei/agents';
+import { BUILTIN_VARIABLES, savesByPathCoverage, type AgentStepsDoc } from '@renkei/agents';
 import { readAgentMemory } from '@renkei/agents/memory';
 import { sql } from 'kysely';
 import type { MCPToolContext } from '../common';
@@ -102,16 +102,29 @@ function outlineOf(steps: AgentStepsDoc): string {
   return outline.trim() ? outline : '(no steps yet)';
 }
 
-/** What an agent's steps bind, with whether each name always materializes. */
+/**
+ * What an agent's steps bind, with whether each name always materializes,
+ * plus the builtins every step can reference regardless.
+ *
+ * The builtins are listed because an author working over MCP has no
+ * autocomplete to discover them from — the builder's insert menu is the
+ * only other place they appear, and a chip nobody knows about is a chip
+ * nobody writes.
+ */
 function variableLines(steps: AgentStepsDoc): string[] {
   const coverage = savesByPathCoverage(steps.steps);
-  if (coverage.size === 0) return [];
   return [
-    'Variables this agent saves (chainable):',
-    ...[...coverage.entries()].map(
-      ([name, kind]) =>
-        `- ${name} (${kind === 'always' ? 'always set on success' : 'conditional — only some routes set it'})`
-    ),
+    'Variables always available (var chips):',
+    ...BUILTIN_VARIABLES.map((variable) => `- ${variable.name}: ${variable.description}`),
+    ...(coverage.size > 0
+      ? [
+          'Variables this agent saves (chainable):',
+          ...[...coverage.entries()].map(
+            ([name, kind]) =>
+              `- ${name} (${kind === 'always' ? 'always set on success' : 'conditional — only some routes set it'})`
+          ),
+        ]
+      : []),
   ];
 }
 
@@ -135,9 +148,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (agents.length === 0) return textResult('You have no agents yet.');
       const lines = [`${agents.length} agent(s):`];
       for (const agent of agents) {
-        const triggers = agent.triggers
-          .map((trigger) => triggerSummary(trigger.draft))
-          .join('; ');
+        const triggers = agent.triggers.map((trigger) => triggerSummary(trigger.draft)).join('; ');
         lines.push(
           '',
           `- ${agent.name} — ${agent.enabled ? 'ON' : 'off'}${agent.guardrails ? ' · has guardrails' : ''}`,
@@ -242,16 +253,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         ...(agent.blockedTools.length > 0
           ? ['', `Blocked skills (the engine refuses these): ${agent.blockedTools.join(', ')}`]
           : []),
-        ...(() => {
-          const vars = variableLines(agent.steps);
-          return vars.length > 0 ? ['', ...vars] : [];
-        })(),
+        '',
+        ...variableLines(agent.steps),
         '',
         'Triggers:',
         ...(agent.triggers.length > 0
           ? agent.triggers.map(
-              (trigger) =>
-                `- ${triggerSummary(trigger.draft)}${trigger.enabled ? '' : ' (off)'}`
+              (trigger) => `- ${triggerSummary(trigger.draft)}${trigger.enabled ? '' : ' (off)'}`
             )
           : ['- none (manual only)']),
         ...(chained.length > 0
@@ -372,7 +380,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   server.registerTool(
     'agent_memory_list',
     {
-      title: 'Agents · Read — An agent\'s memory',
+      title: "Agents · Read — An agent's memory",
       description:
         "One of your agents' memory in full: the rolling summary and the newest entries the " +
         'engine recorded across runs. agent_get shows the bounded slice runs receive; this is ' +
@@ -410,7 +418,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   server.registerTool(
     'agent_knowledge_list',
     {
-      title: 'Agents · Read — An agent\'s knowledge notes',
+      title: "Agents · Read — An agent's knowledge notes",
       description:
         "One of your agents' knowledge notes in full — the reference material its runs carry " +
         '(agent_get shows only the bounded render). Returns noteIds for update/remove.',
@@ -746,7 +754,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       description:
         "REPLACE one of your agents' definition (name, steps, triggers, guardrails, blocked " +
         'skills) — the direct edit path, and the preferred one: start from the exact ' +
-        'definition in agent_get\'s ```json renkei-agent block, change ONLY what the edit ' +
+        "definition in agent_get's ```json renkei-agent block, change ONLY what the edit " +
         'needs, and send the whole definition back. Keep the ids of steps, branch paths, ' +
         'and triggers you are keeping VERBATIM (run history, retry settings, and firings ' +
         'anchor to them); give brand-new steps fresh UUIDs. Validation is deterministic and ' +
@@ -821,7 +829,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               ]
             : []),
           ...(result.descriptionPending
-            ? ['The summary and review notes are being rewritten; agent_get will show them shortly.']
+            ? [
+                'The summary and review notes are being rewritten; agent_get will show them shortly.',
+              ]
             : []),
         ].join('\n')
       );

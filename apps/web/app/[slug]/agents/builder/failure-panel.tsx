@@ -32,6 +32,7 @@ import {
 } from '@renkei/agents';
 import type { ToolOutcomes } from '@/lib/mcp-tools/outcomes';
 import { ChipEditor } from './chip-editor';
+import { useNumericInput } from '@/lib/use-numeric-input';
 import { FieldIssues, forField, type NodeIssue } from './field-issues';
 import type { ToolOption, VariableOption } from './options';
 
@@ -112,20 +113,30 @@ export function FailurePanel({
     setAdding(false);
   };
 
+  // A number field, not a select: the option list would be exactly as long as
+  // the org's ceiling, and that ceiling is an admin setting accepting up to
+  // 100. Ten options scroll acceptably; a hundred is a scrollbar to hunt
+  // through for a number the author already knows. Clamping happens on blur
+  // (see useNumericInput) so it never fights the keystrokes.
+  const triesField = useNumericInput(maxAttempts, onMaxAttemptsChange, (candidate) =>
+    Math.min(Math.max(Math.round(candidate), 1), Math.max(1, attemptsCap))
+  );
   const tries = (
-    <select
-      value={maxAttempts}
-      aria-label="Total tries for this step"
-      title={`Tries are shared by every retrying condition of this step — ${attemptsCap} is your organization's ceiling.`}
-      onChange={(event) => onMaxAttemptsChange(Number(event.target.value))}
-      className="rounded-md border border-gray-300 bg-white px-1.5 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
-    >
-      {Array.from({ length: Math.max(1, attemptsCap) }, (_, i) => i + 1).map((n) => (
-        <option key={n} value={n}>
-          {n === 1 ? '×1 try' : `×${n} tries`}
-        </option>
-      ))}
-    </select>
+    <span className="inline-flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400">
+      <span aria-hidden="true">×</span>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={1}
+        max={Math.max(1, attemptsCap)}
+        aria-label="Total tries for this step"
+        title={`Tries are shared by every retrying condition of this step — ${attemptsCap} is your organization's ceiling.`}
+        {...triesField}
+        onChange={(event) => triesField.onChange(event.target.value)}
+        className="w-14 rounded-md border border-gray-300 bg-white px-1.5 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
+      />
+      {maxAttempts === 1 ? 'try' : 'tries'}
+    </span>
   );
 
   // No border of its own — the step editor's disclosure provides the frame.
@@ -142,9 +153,7 @@ export function FailurePanel({
           aria-label="What success leads to"
           onChange={(event) => {
             const choice = event.target.value;
-            onOnSuccessChange(
-              choice === 'stop' || choice === 'stop-quiet' ? choice : 'continue'
-            );
+            onOnSuccessChange(choice === 'stop' || choice === 'stop-quiet' ? choice : 'continue');
           }}
           className="rounded-md border border-gray-300 bg-white px-1.5 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
         >
@@ -159,7 +168,9 @@ export function FailurePanel({
       </p>
       {/* Handling-wide issues (e.g. "this step has no skill") — anything
           entry-scoped renders inside its own line below. */}
-      <FieldIssues messages={issues.filter((i) => i.field === 'failureHandling').map((i) => i.message)} />
+      <FieldIssues
+        messages={issues.filter((i) => i.field === 'failureHandling').map((i) => i.message)}
+      />
       <ul className="mt-2 space-y-2">
         {handling.map((entry, index) => {
           const enumerated = enumeratedByCode.get(entry.outcome);
@@ -219,8 +230,7 @@ export function FailurePanel({
                           : {};
                       replaceEntry(entry.outcome, {
                         outcome: entry.outcome,
-                        action:
-                          action === 'continue' || action === 'stop-quiet' ? action : 'exit',
+                        action: action === 'continue' || action === 'stop-quiet' ? action : 'exit',
                         ...prose,
                         ...keepWhen,
                       });
@@ -228,7 +238,11 @@ export function FailurePanel({
                     className="rounded-md border border-gray-300 bg-white px-1.5 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
                   >
                     <option value="exit">stop the agent</option>
-                    <option value="retry" disabled={!retriable} title={retriable ? undefined : "Retrying won't help here."}>
+                    <option
+                      value="retry"
+                      disabled={!retriable}
+                      title={retriable ? undefined : "Retrying won't help here."}
+                    >
                       try again
                     </option>
                     <option
@@ -283,8 +297,7 @@ export function FailurePanel({
                   onChange={(guidance) => {
                     // Retry keeps its guidance verbatim (the validator
                     // demands text); elsewhere an emptied note drops the key.
-                    const prose =
-                      isRetry || !emptyProse(guidance) ? { guidance } : {};
+                    const prose = isRetry || !emptyProse(guidance) ? { guidance } : {};
                     const { guidance: _drop, ...rest } = entry;
                     replaceEntry(entry.outcome, { ...rest, ...prose });
                   }}

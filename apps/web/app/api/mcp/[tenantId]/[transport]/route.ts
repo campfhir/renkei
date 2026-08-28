@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createMcpHandler } from 'mcp-handler';
 import { getDatabase } from '@renkei/db';
+import { attemptFromHeaders, withAttempt } from '@/lib/mcp-tools/attempt-context';
 import { getOrgSettings } from '@renkei/settings';
 import { getJiraGrant, type JiraGrant } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
@@ -579,8 +580,12 @@ const handler = async (
       logger.debug('Using cached handler', { component: 'mcp/transport', tenantId, accountId });
     }
 
-    // Handle the request with cached handler
-    return await cachedHandler(request);
+    // Handle the request with cached handler.
+    //
+    // The attempt rides in AsyncLocalStorage rather than on the context the
+    // handler closed over: handlers are cached and shared, and this value
+    // changes on every retry. See lib/mcp-tools/attempt-context.ts.
+    return await withAttempt(attemptFromHeaders(request.headers), () => cachedHandler(request));
   } catch (error) {
     logger.error('{error}', {
       component: 'mcp/transport',

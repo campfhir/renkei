@@ -160,6 +160,39 @@ test('builder — step editor open', async ({ page }, testInfo) => {
   await shot(page, testInfo, 'builder-step-editor', { fullPage: false });
 });
 
+test('builder — insert menu, details section', async ({ page }, testInfo) => {
+  await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/edit`);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await page.getByRole('button', { name: /File follow-up tickets/ }).click();
+  await expect(page.getByLabel('Step name')).toBeVisible();
+
+  // The persistent button opens the same menu as typing "/", and is the
+  // affordance most authors actually use.
+  await page
+    .getByRole('button', { name: /Insert a skill or detail/ })
+    .first()
+    .click();
+  // Filter to the details section so the var chips — including the attempt
+  // pair — are on screen without scrolling past every skill.
+  await page.keyboard.insertText('tr');
+  const menu = page.getByRole('listbox');
+  await expect(menu.getByRole('option', { name: /This try/ })).toBeVisible();
+  await expect(menu.getByRole('option', { name: /Total tries/ })).toBeVisible();
+  await shot(page, testInfo, 'builder-insert-menu-details', { fullPage: false });
+  // The menu scrolls inside a short dropdown, so the page shot can clip the
+  // second option — capture the list on its own as well.
+  await menu.screenshot({
+    path: path.join(
+      import.meta.dirname,
+      '..',
+      'test-results',
+      'screens',
+      testInfo.project.name,
+      'builder-insert-menu-list.png'
+    ),
+  });
+});
+
 test('builder — branch editor open', async ({ page }, testInfo) => {
   await page.goto(`/${E2E_SLUG}/agents/${AGENT_RICH_ID}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
