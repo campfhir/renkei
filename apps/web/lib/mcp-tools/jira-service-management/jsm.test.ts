@@ -34,6 +34,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { registerJsmTools } from './jsm';
 import type { JsmAuth } from './jsm-auth';
 import { JiraApiError, type MCPToolContext } from '../common';
+import { clearFieldSchemaCache } from '../jira/field-schema';
 
 type Handler = (args: Record<string, unknown>) => Promise<{
   content: { text: string }[];
@@ -95,6 +96,7 @@ async function toolsOf(): Promise<Map<string, Handler>> {
 beforeEach(() => {
   routes = [];
   requests = [];
+  clearFieldSchemaCache();
 });
 
 describe('jsm_create_request desk-id resolution', () => {
@@ -357,6 +359,46 @@ describe('jsm_create_request reporter, assignee, and priority', () => {
     const put = requests.find((r) => r.method === 'PUT');
     expect(put?.path).toContain('/rest/api/3/issue/CAS-305');
     expect(JSON.parse(put?.body ?? '{}')).toEqual({ fields: { priority: { name: 'High' } } });
+  });
+
+  it('sets story points and custom fields with a platform edit after the create', async () => {
+    routes = [
+      { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-310' } },
+      {
+        match: '/rest/api/3/field',
+        body: [
+          { id: 'customfield_10016', name: 'Story point estimate', schema: { type: 'number' } },
+          { id: 'customfield_12016', name: 'Decision', schema: { type: 'string' } },
+        ],
+      },
+      { match: '/rest/api/3/issue/CAS-310', body: {} },
+    ];
+    const result = await create({ storyPoints: 5, fields: { Decision: 'Approved' } });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('Story point estimate → 5');
+    const put = requests.find((r) => r.method === 'PUT');
+    expect(put?.path).toContain('/rest/api/3/issue/CAS-310');
+    const body = JSON.parse(put?.body ?? '{}') as { fields?: Record<string, unknown> };
+    expect(body.fields?.customfield_10016).toBe(5);
+    expect(body.fields?.customfield_12016).toBe('Approved');
+  });
+
+  it('an unreadable field schema costs the extras and says so, not the request', async () => {
+    routes = [
+      { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-311' } },
+      {
+        match: '/rest/api/3/field',
+        status: 403,
+        body: { message: 'This call needs read:issue:jira' },
+      },
+    ];
+    const result = await create({ storyPoints: 5 });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('CAS-311');
+    expect(result.content[0]?.text).toContain('Extra fields were not set');
+    expect(requests.some((r) => r.method === 'PUT')).toBe(false);
   });
 
   it('names the accepted priorities when the given one does not match the form', async () => {

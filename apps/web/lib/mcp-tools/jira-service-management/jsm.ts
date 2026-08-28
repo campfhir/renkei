@@ -35,6 +35,8 @@ import {
   resolveServiceDesk,
 } from './components';
 import { resolveUserId } from '../jira/resolve-user';
+import { collectExtraFields, extraFieldSchema } from '../jira/write';
+import { writeWithFieldFallback } from '../jira/field-write';
 
 /**
  * The cross-family platform scope for the post-create edit below (assignee,
@@ -540,6 +542,11 @@ export async function registerJsmTools(
           'set the request is still created and the reply says so.'
       )
       .optional(),
+    // Story points, the original estimate, and any custom field — the same
+    // arguments jira_create_issue takes, finished with one platform edit
+    // right after the create (the request form cannot carry them). Spread
+    // FIRST so the JSM-specific components definition below wins.
+    ...extraFieldSchema,
     components: z
       .array(z.string())
       .describe(
@@ -742,6 +749,66 @@ export async function registerJsmTools(
         }
       }
 
+      // Story points, the original estimate, and custom fields — resolved
+      // and shaped by the same machinery jira_create_issue uses (names to
+      // ids, values to each field's schema), then written with one platform
+      // edit. Refusals drop field by field with a note, never the request;
+      // a grant that cannot read the field schema costs a note too.
+      const extrasApplied: string[] = [];
+      const wantsExtras =
+        args.storyPoints !== undefined ||
+        typeof args.originalEstimate === 'string' ||
+        (typeof args.fields === 'object' &&
+          args.fields !== null &&
+          Object.keys(args.fields).length > 0);
+      if (wantsExtras && realKey) {
+        try {
+          const extra = await collectExtraFields(
+            context,
+            auth,
+            // Components deliberately absent: the request form already
+            // carried them above, and this map must not write them twice.
+            {
+              storyPoints: args.storyPoints,
+              originalEstimate: args.originalEstimate,
+              fields: args.fields,
+            },
+            { issueKey: realKey }
+          );
+          for (const entry of extra.unwritten) {
+            notes.push(`${entry.label} was not set — ${entry.reason}`);
+          }
+          if (Object.keys(extra.fields).length > 0) {
+            const outcome = await writeWithFieldFallback(
+              { required: {}, optional: extra.fields, labels: extra.labels, hints: extra.hints },
+              async (fields) => {
+                const put = await auth.fetch(
+                  [ISSUE_EDIT_WRITE],
+                  `/rest/api/3/issue/${encodeURIComponent(realKey)}`,
+                  { method: 'PUT', body: JSON.stringify({ fields }) }
+                );
+                if (!put.ok) throw new Error(await describeJsmAuthFailure(put));
+                return null;
+              }
+            );
+            for (const entry of outcome.dropped) {
+              notes.push(`${entry.label} was not set — ${entry.reason}`);
+            }
+            if (outcome.sent) {
+              const droppedLabels = new Set(outcome.dropped.map((entry) => entry.label));
+              for (const label of Object.values(extra.labels)) {
+                if (!droppedLabels.has(label)) extrasApplied.push(label);
+              }
+            }
+          }
+        } catch (error) {
+          notes.push(
+            `Extra fields were not set — ${error instanceof Error ? error.message : String(error)}. ` +
+              `Set them with jira_update_issue.`
+          );
+        }
+      }
+
       let prioritySet = priorityValue !== null;
       if (priorityWanted && priorityViaEdit && realKey) {
         const value = /^\d+$/.test(priorityWanted)
@@ -778,6 +845,9 @@ export async function registerJsmTools(
               (assigneeSet ? `\nAssignee: set` : '') +
               (prioritySet ? `\nPriority: set` : '') +
               (componentValues.length > 0 ? `\nComponents: ${componentValues.length} set` : '') +
+              (extrasApplied.length > 0
+                ? `\n${extrasApplied.map((label) => `• ${label}`).join('\n')}`
+                : '') +
               // Said out loud, never swallowed: a field that did not land is
               // the exact failure this whole posture exists to stop being
               // invisible.

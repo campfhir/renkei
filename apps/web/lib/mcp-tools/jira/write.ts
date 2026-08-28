@@ -69,8 +69,13 @@ function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
-/** The extra-field arguments jira_create_issue and jira_update_issue both accept. */
-const extraFieldSchema = {
+/**
+ * The extra-field arguments jira_create_issue and jira_update_issue both
+ * accept — and jsm_create_request, which finishes them with a platform edit
+ * right after the create (a service desk request IS a Jira issue; its form
+ * just cannot carry these).
+ */
+export const extraFieldSchema = {
   /*
     First-class, next to `labels`, rather than left to the `fields` escape
     hatch below. It WAS reachable there — `{"fields": {"Components": [...]}}`
@@ -112,7 +117,7 @@ const extraFieldSchema = {
     .optional(),
 };
 
-interface ExtraFields {
+export interface ExtraFields {
   /** Resolved and shaped, keyed by field id. Droppable. */
   fields: Record<string, unknown>;
   /** Field id -> `Story Points → 5`. */
@@ -131,7 +136,7 @@ interface ExtraFields {
  * refusal — the issue is worth creating either way, and the reply says plainly
  * what did not land.
  */
-async function collectExtraFields(
+export async function collectExtraFields(
   context: MCPToolContext,
   auth: JiraAuth,
   args: Record<string, unknown>,
