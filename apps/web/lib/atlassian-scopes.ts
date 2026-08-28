@@ -183,6 +183,14 @@ export const ATLASSIAN_JSM_SCOPE_OPTIONS: ScopeOption[] = [
       'write:request:jira-service-management',
       'delete:request.participant:jira-service-management',
       'read:user:jira',
+      // The third cross-family scope, same reasoning as the two reads: the
+      // servicedeskapi cannot set an assignee at all, nor a priority the
+      // request form does not carry, so jsm_create_request finishes both
+      // with one platform edit right after the create. A grant made before
+      // this was added simply lacks it — the request is still created, and
+      // the reply names this scope as the fix for the field that did not
+      // stick.
+      'write:issue:jira',
     ],
   },
   {

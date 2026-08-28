@@ -88,25 +88,24 @@ export async function resolveServiceDesk(
   return { ok: true, desk: { id: str(desk.id), projectKey: str(desk.projectKey) } };
 }
 
-/** What a request type's form says about components. */
+/** What a request type's form says about one of its fields. */
 export interface RequestTypeComponents {
-  /** False when the form has no components field — then nothing can set one. */
+  /** False when the form has no such field — then nothing can set one. */
   present: boolean;
   options: ComponentOption[];
 }
 
 /**
- * The components THIS request type accepts, from its own form metadata.
- *
- * `validValues` entries are `{value, label}` — the id and the name. An empty
- * options list with `present: true` is a real state and not an error: the
- * form has the field, the project has no components yet.
+ * The request type's whole form, one fetch — the authoritative list of the
+ * fields a create can carry. Callers that need several fields (components
+ * AND priority, say) extract each with `fieldOptionsOf` instead of paying
+ * one fetch per field.
  */
-export async function loadRequestTypeComponents(
+export async function loadRequestTypeForm(
   auth: JsmAuth,
   deskId: string,
   requestTypeId: string
-): Promise<{ ok: true; components: RequestTypeComponents } | { ok: false; message: string }> {
+): Promise<{ ok: true; fields: unknown[] } | { ok: false; message: string }> {
   const response = await auth.fetch(
     serviceDeskScopes('jsm_get_request_type_fields', true),
     `/rest/servicedeskapi/servicedesk/${encodeURIComponent(deskId)}` +
@@ -117,17 +116,25 @@ export async function loadRequestTypeComponents(
   const payload: unknown = await response.json().catch(() => null);
   // requestTypeFields is the real key; `.values` belongs to the paged
   // endpoints and reading only that is how this once reported "0 fields".
-  const list =
+  const fields =
     isRecord(payload) && Array.isArray(payload.requestTypeFields)
       ? payload.requestTypeFields
       : isRecord(payload) && Array.isArray(payload.values)
         ? payload.values
         : [];
+  return { ok: true, fields };
+}
 
-  const field = list.find(
-    (entry: unknown) => isRecord(entry) && str(entry.fieldId) === 'components'
-  );
-  if (!field || !isRecord(field)) return { ok: true, components: { present: false, options: [] } };
+/**
+ * One field's presence and options, off an already-loaded form.
+ *
+ * `validValues` entries are `{value, label}` — the id and the name. An empty
+ * options list with `present: true` is a real state and not an error: the
+ * form has the field, the project just offers no values for it yet.
+ */
+export function fieldOptionsOf(fields: readonly unknown[], fieldId: string): RequestTypeComponents {
+  const field = fields.find((entry: unknown) => isRecord(entry) && str(entry.fieldId) === fieldId);
+  if (!field || !isRecord(field)) return { present: false, options: [] };
 
   const valid = Array.isArray(field.validValues) ? field.validValues : [];
   const options = valid
@@ -136,7 +143,18 @@ export async function loadRequestTypeComponents(
     )
     .filter((entry): entry is ComponentOption => entry !== null);
 
-  return { ok: true, components: { present: true, options } };
+  return { present: true, options };
+}
+
+/** The components THIS request type accepts, from its own form metadata. */
+export async function loadRequestTypeComponents(
+  auth: JsmAuth,
+  deskId: string,
+  requestTypeId: string
+): Promise<{ ok: true; components: RequestTypeComponents } | { ok: false; message: string }> {
+  const form = await loadRequestTypeForm(auth, deskId, requestTypeId);
+  if (!form.ok) return form;
+  return { ok: true, components: fieldOptionsOf(form.fields, 'components') };
 }
 
 /** Every component on the desk's project, whether or not a form accepts it. */

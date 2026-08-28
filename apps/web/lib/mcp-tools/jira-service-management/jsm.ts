@@ -8,7 +8,13 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { actMeta } from '@renkei/tool-outcomes';
-import { getCachedDisplayName, issueUrl, requestUrl, withPresentationHint } from '../common';
+import {
+  JiraApiError,
+  getCachedDisplayName,
+  issueUrl,
+  requestUrl,
+  withPresentationHint,
+} from '../common';
 import { logger } from '@/lib/logger';
 import {
   APP_ONLY_META,
@@ -21,11 +27,23 @@ import {
 import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
 import {
   describeComponents,
+  fieldOptionsOf,
   loadProjectComponents,
   loadRequestTypeComponents,
+  loadRequestTypeForm,
   matchComponents,
   resolveServiceDesk,
 } from './components';
+import { resolveUserId } from '../jira/resolve-user';
+
+/**
+ * The cross-family platform scope for the post-create edit below (assignee,
+ * and priority when the request form cannot carry it). Same story as
+ * read:project.component:jira: the servicedeskapi genuinely has no way to
+ * express these, so the JSM app carries one Jira-API write scope, and a
+ * grant minted before it was added gets a denial that names the fix.
+ */
+const ISSUE_EDIT_WRITE = 'write:issue:jira';
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -497,6 +515,31 @@ export async function registerJsmTools(
     requestTypeId: z.string().describe('Request type ID'),
     summary: z.string().describe('Request summary/title'),
     description: z.string().describe('Request description (optional)').optional(),
+    reporter: z
+      .string()
+      .describe(
+        'Who the request is FOR — their email or accountId. Becomes the reporter (raised on ' +
+          'their behalf). Always set this when the request originates from someone else (a ' +
+          'message, a thread, a call); omitted, the request is reported by YOU. ' +
+          'jira_search_users or jsm_list_customers finds the address.'
+      )
+      .optional(),
+    assignee: z
+      .string()
+      .describe(
+        'Email or accountId of the person to assign the issue to. Set right after creation ' +
+          '(the request form cannot carry it); if it cannot be set the request is still ' +
+          'created and the reply says so. Omit to leave unassigned.'
+      )
+      .optional(),
+    priority: z
+      .string()
+      .describe(
+        'Priority name (e.g. "High") or id. Set through the request form when this request ' +
+          'type carries a priority field, otherwise right after creation; if it cannot be ' +
+          'set the request is still created and the reply says so.'
+      )
+      .optional(),
     components: z
       .array(z.string())
       .describe(
@@ -515,6 +558,9 @@ export async function registerJsmTools(
     });
     try {
       const { serviceDeskId, requestTypeId, summary, description, components } = args;
+      const reporter = str(args.reporter).trim();
+      const assignee = str(args.assignee).trim();
+      const priorityWanted = str(args.priority).trim();
 
       if (!serviceDeskId || !requestTypeId || !summary) {
         return {
@@ -541,38 +587,66 @@ export async function registerJsmTools(
       }
 
       /*
-        Components, resolved against the REQUEST TYPE's own form rather than
-        the project's component list.
+        Components and priority, resolved against the REQUEST TYPE's own
+        form rather than the project at large.
 
         The servicedeskapi rejects the whole payload for a field the form
-        does not declare, so sending components blindly would turn "the
-        component did not stick" into "the request was never created" —
-        strictly worse. And a name that is off by a case or a space is
-        rejected the same way. So both are checked here, and neither costs
-        the request: an unusable component becomes a NOTE on an otherwise
-        successful create, which is the same posture jira_create_issue takes
-        with a field it could not write.
+        does not declare, so sending either blindly would turn "the field
+        did not stick" into "the request was never created" — strictly
+        worse. And a name that is off by a case or a space is rejected the
+        same way. So both are checked here, and neither costs the request:
+        an unusable value becomes a NOTE on an otherwise successful create,
+        which is the same posture jira_create_issue takes with a field it
+        could not write. A priority the form cannot carry still has a path —
+        the post-create platform edit below.
       */
       const wanted = Array.isArray(components) ? components.map((c: unknown) => String(c)) : [];
       let componentValues: { id: string }[] = [];
-      const componentNotes: string[] = [];
-      if (wanted.length > 0) {
-        const found = await loadRequestTypeComponents(auth, deskId, String(requestTypeId));
-        if (!found.ok) {
-          componentNotes.push(`Components were not set — ${found.message}`);
-        } else if (!found.components.present) {
-          componentNotes.push(
-            `Components were not set: request type ${requestTypeId} has no components field ` +
-              `on its form. Set them on the issue afterwards with jira_update_issue.`
-          );
+      let priorityValue: { id: string } | null = null;
+      let priorityViaEdit = false;
+      const notes: string[] = [];
+      if (wanted.length > 0 || priorityWanted) {
+        const form = await loadRequestTypeForm(auth, deskId, String(requestTypeId));
+        if (!form.ok) {
+          if (wanted.length > 0) notes.push(`Components were not set — ${form.message}`);
+          // The form being unreadable does not decide whether priority can
+          // be set at all — the platform edit still can.
+          if (priorityWanted) priorityViaEdit = true;
         } else {
-          const matched = matchComponents(wanted, found.components.options);
-          componentValues = matched.resolved.map((option) => ({ id: option.id }));
-          if (matched.missing.length > 0) {
-            componentNotes.push(
-              `Not set: ${matched.missing.map((name) => `"${name}"`).join(', ')} — ` +
-                `this request type accepts ${describeComponents(found.components.options)}.`
-            );
+          if (wanted.length > 0) {
+            const found = fieldOptionsOf(form.fields, 'components');
+            if (!found.present) {
+              notes.push(
+                `Components were not set: request type ${requestTypeId} has no components field ` +
+                  `on its form. Set them on the issue afterwards with jira_update_issue.`
+              );
+            } else {
+              const matched = matchComponents(wanted, found.options);
+              componentValues = matched.resolved.map((option) => ({ id: option.id }));
+              if (matched.missing.length > 0) {
+                notes.push(
+                  `Not set: ${matched.missing.map((name) => `"${name}"`).join(', ')} — ` +
+                    `this request type accepts ${describeComponents(found.options)}.`
+                );
+              }
+            }
+          }
+          if (priorityWanted) {
+            const found = fieldOptionsOf(form.fields, 'priority');
+            if (!found.present) {
+              priorityViaEdit = true;
+            } else {
+              const matched = matchComponents([priorityWanted], found.options);
+              if (matched.resolved.length > 0) {
+                priorityValue = { id: matched.resolved[0].id };
+              } else {
+                notes.push(
+                  `Priority was not set: "${priorityWanted}" is not one this request type ` +
+                    `accepts — it accepts ` +
+                    `${found.options.map((option) => `${option.name} (${option.id})`).join(', ')}.`
+                );
+              }
+            }
           }
         }
       }
@@ -582,30 +656,116 @@ export async function registerJsmTools(
       // "Invalid request payload". The 401 scope gate used to fire before
       // payload validation, which is why this never surfaced until the
       // JSM app's scopes landed.
-      const body: any = {
-        serviceDeskId: deskId,
-        requestTypeId: String(requestTypeId),
-        requestFieldValues: {
-          summary,
-          ...(description ? { description } : {}),
-          ...(componentValues.length > 0 ? { components: componentValues } : {}),
-        },
+      const postCreate = async (withReporter: boolean): Promise<Response> => {
+        const body: any = {
+          serviceDeskId: deskId,
+          requestTypeId: String(requestTypeId),
+          // raiseOnBehalfOf is how the servicedeskapi sets the reporter: the
+          // request is raised FOR that customer (email or accountId).
+          ...(withReporter && reporter ? { raiseOnBehalfOf: reporter } : {}),
+          requestFieldValues: {
+            summary,
+            ...(description ? { description } : {}),
+            ...(componentValues.length > 0 ? { components: componentValues } : {}),
+            ...(priorityValue ? { priority: priorityValue } : {}),
+          },
+        };
+        return auth.fetch(
+          serviceDeskScopes('jsm_create_request', false),
+          '/rest/servicedeskapi/request',
+          {
+            method: 'POST',
+            body: JSON.stringify(body),
+          }
+        );
       };
 
-      const response = await auth.fetch(
-        serviceDeskScopes('jsm_create_request', false),
-        '/rest/servicedeskapi/request',
-        {
-          method: 'POST',
-          body: JSON.stringify(body),
+      // A reporter Jira does not recognize (not a customer of this desk, a
+      // typo, a hidden account) rejects the WHOLE payload. That must cost
+      // the reporter, not the request: retry once as the caller and say so.
+      let reporterSet = Boolean(reporter);
+      let response: Response;
+      try {
+        response = await postCreate(true);
+      } catch (error) {
+        if (
+          reporter &&
+          error instanceof JiraApiError &&
+          (error.status === 400 || error.status === 404)
+        ) {
+          reporterSet = false;
+          notes.push(
+            `Reporter was not set — Jira rejected raising the request on behalf of ` +
+              `"${reporter}" (${error.message}). It was created with you as the reporter; ` +
+              `check the address with jira_search_users or jsm_list_customers, then fix it ` +
+              `with jira_update_issue.`
+          );
+          response = await postCreate(false);
+        } else {
+          throw error;
         }
-      );
+      }
       if (!response.ok) return errText(await describeJsmAuthFailure(response));
 
       const result = (await response.json()) as any;
       // Echo what Jira actually created, not the input.
       const realKey = str(result.issueKey);
       const key = realKey || '(no key in response)';
+
+      // Assignee (always) and priority (when the form could not carry it)
+      // live on the platform API — the request form has no field for them.
+      // Each is best-effort AFTER the create: a value that cannot land
+      // costs itself and a note, never the request.
+      let assigneeSet = false;
+      if (assignee && realKey) {
+        const resolved = await resolveUserId(auth, assignee);
+        if (!resolved.ok) {
+          notes.push(`Assignee was not set — ${resolved.reason}. Set it with jira_update_issue.`);
+        } else {
+          try {
+            const put = await auth.fetch(
+              [ISSUE_EDIT_WRITE],
+              `/rest/api/3/issue/${encodeURIComponent(realKey)}/assignee`,
+              { method: 'PUT', body: JSON.stringify({ accountId: resolved.id }) }
+            );
+            if (!put.ok) {
+              notes.push(`Assignee was not set — ${await describeJsmAuthFailure(put)}`);
+            } else {
+              assigneeSet = true;
+            }
+          } catch (error) {
+            notes.push(
+              `Assignee was not set — ${error instanceof Error ? error.message : String(error)}. ` +
+                `Set it with jira_update_issue.`
+            );
+          }
+        }
+      }
+
+      let prioritySet = priorityValue !== null;
+      if (priorityWanted && priorityViaEdit && realKey) {
+        const value = /^\d+$/.test(priorityWanted)
+          ? { id: priorityWanted }
+          : { name: priorityWanted };
+        try {
+          const put = await auth.fetch(
+            [ISSUE_EDIT_WRITE],
+            `/rest/api/3/issue/${encodeURIComponent(realKey)}`,
+            { method: 'PUT', body: JSON.stringify({ fields: { priority: value } }) }
+          );
+          if (!put.ok) {
+            notes.push(`Priority was not set — ${await describeJsmAuthFailure(put)}`);
+          } else {
+            prioritySet = true;
+          }
+        } catch (error) {
+          notes.push(
+            `Priority was not set — ${error instanceof Error ? error.message : String(error)}. ` +
+              `Set it with jira_update_issue.`
+          );
+        }
+      }
+
       return {
         content: [
           {
@@ -614,11 +774,14 @@ export async function registerJsmTools(
             // reported it can only open the portal.
             text:
               `Created request ${key}` +
+              (reporter && reporterSet ? `\nReporter: raised on behalf of ${reporter}` : '') +
+              (assigneeSet ? `\nAssignee: set` : '') +
+              (prioritySet ? `\nPriority: set` : '') +
               (componentValues.length > 0 ? `\nComponents: ${componentValues.length} set` : '') +
-              // Said out loud, never swallowed: a component that did not
-              // land is the exact failure this whole change exists to stop
-              // being invisible.
-              (componentNotes.length > 0 ? `\n\n${componentNotes.join('\n')}` : '') +
+              // Said out loud, never swallowed: a field that did not land is
+              // the exact failure this whole posture exists to stop being
+              // invisible.
+              (notes.length > 0 ? `\n\n${notes.join('\n')}` : '') +
               `\n\n[Open in Jira](${issueUrl(context.siteUrl, key)}) · ` +
               `[Customer portal](${requestUrl(context.siteUrl, key)})`,
           },
@@ -652,7 +815,9 @@ export async function registerJsmTools(
       description:
         'Create a customer request in a service desk. Prefer this over jira_create_issue ' +
         'whenever the target project is a service desk (see jsm_list_service_desks) — a plain ' +
-        'issue in a service desk project skips its request types and SLAs.',
+        'issue in a service desk project skips its request types and SLAs. Reporter, assignee, ' +
+        'priority, and components are their own inputs here — pass them as fields, never as ' +
+        'lines inside the description text.',
       annotations: { readOnlyHint: false },
       inputSchema: createRequestSchema,
     },
@@ -736,8 +901,12 @@ export async function registerJsmTools(
             { label: 'Service desk', value: deskName || serviceDeskId },
             { label: 'Request type', value: typeName || requestTypeId },
             // Only when asked for. A card row reading "Components: —" on
-            // every request would be noise; the point of showing it is that
-            // somebody approving the card can see where it will be filed.
+            // every request would be noise; the point of showing these is
+            // that somebody approving the card can see who it is for, who
+            // gets it, and where it will be filed.
+            ...(str(args.reporter) ? [{ label: 'Reporter', value: str(args.reporter) }] : []),
+            ...(str(args.assignee) ? [{ label: 'Assignee', value: str(args.assignee) }] : []),
+            ...(str(args.priority) ? [{ label: 'Priority', value: str(args.priority) }] : []),
             ...(Array.isArray(args.components) && args.components.length > 0
               ? [{ label: 'Components', value: args.components.map(String).join(', ') }]
               : []),

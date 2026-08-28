@@ -70,10 +70,19 @@ describe('two-app split invariants', () => {
     // read:project.component:jira is the second, and for the same shape of
     // reason: the servicedeskapi has no components endpoint at all, so
     // jsm_list_components has to ask the platform for the desk's project.
-    // Both are DELIBERATE — this list is the record that somebody weighed
+    //
+    // write:issue:jira is the third: the servicedeskapi cannot set an
+    // assignee at all, nor a priority the request form does not carry, so
+    // jsm_create_request finishes both with one platform edit right after
+    // the create — without it, agents filed every request unassigned.
+    // All are DELIBERATE — this list is the record that somebody weighed
     // each one, which is why the invariant is an allowlist rather than a
     // count.
-    const shared = new Set(['read:user:jira', 'read:project.component:jira']);
+    const shared = new Set([
+      'read:user:jira',
+      'read:project.component:jira',
+      'write:issue:jira',
+    ]);
     const jira = new Set(ALL_ATLASSIAN_SCOPES);
     const overlap = ALL_ATLASSIAN_JSM_SCOPES.filter(
       (scope) => jira.has(scope) && !shared.has(scope)
