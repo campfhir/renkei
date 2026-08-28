@@ -840,12 +840,6 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Updated an agent',
     short: 'Updated an agent',
   },
-  agent_draft: {
-    category: 'created',
-    entity: 'draft',
-    label: 'Started drafting an agent',
-    short: 'Started drafting an agent',
-  },
   agent_knowledge_write: {
     category: 'created',
     entity: 'note',

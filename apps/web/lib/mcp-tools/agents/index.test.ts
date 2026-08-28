@@ -29,12 +29,6 @@ jest.mock('@renkei/agents/memory', () => ({
   renderAgentKnowledgeNotes: jest.fn(async () => ''),
   renderAgentMemory: jest.fn(() => ''),
 }));
-jest.mock('@/lib/agents/draft-store', () => ({
-  createDraft: jest.fn(),
-  getDraft: jest.fn(),
-  consumeDraft: jest.fn(),
-}));
-jest.mock('@renkei/queue', () => ({ agentJobsQueue: jest.fn() }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import { registerAgentTools } from './index';
@@ -54,12 +48,6 @@ const notesMock = jest.requireMock<{
   updateAgentNote: jest.Mock;
   deleteAgentNote: jest.Mock;
 }>('@/lib/agents/agent-notes');
-const draftStoreMock = jest.requireMock<{
-  createDraft: jest.Mock;
-  getDraft: jest.Mock;
-  consumeDraft: jest.Mock;
-}>('@/lib/agents/draft-store');
-const queueMock = jest.requireMock<{ agentJobsQueue: jest.Mock }>('@renkei/queue');
 
 type Handler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text?: string }>;
@@ -133,22 +121,16 @@ const STEPS_DOC = {
   ],
 };
 
-let enqueue: jest.Mock;
-
 beforeEach(() => {
   jest.clearAllMocks();
   stubDb();
   storeMock.getAgent.mockResolvedValue(AGENT);
-  draftStoreMock.createDraft.mockResolvedValue('draft-1');
-  enqueue = jest.fn(async () => ({ ok: true }));
-  queueMock.agentJobsQueue.mockReturnValue({ producer: { enqueue } });
 });
 
-test('the three definition-editing tools refuse agent-run callers', async () => {
+test('the definition-editing tools refuse agent-run callers', async () => {
   const handlers = registerAll({ agent: { agentId: 'agent-9' } });
-  for (const name of ['agent_draft', 'agent_create', 'agent_update']) {
+  for (const name of ['agent_create', 'agent_update']) {
     const result = await handlers.get(name)!({
-      text: 'do something useful',
       agentId: 'agent-1',
       name: 'X',
       steps: STEPS_DOC,
@@ -157,120 +139,31 @@ test('the three definition-editing tools refuse agent-run callers', async () => 
     expect(result.content[0]?.text).toContain('Agent runs cannot edit agent definitions');
   }
   expect(saveMock.saveAgent).not.toHaveBeenCalled();
-  expect(draftStoreMock.createDraft).not.toHaveBeenCalled();
 });
 
-test('agent_draft persists a draft row, enqueues the worker job, and returns the draftId', async () => {
-  const handlers = registerAll({});
-  const result = await handlers.get('agent_draft')!({
-    text: 'watch a space and file tickets',
-    agentId: 'agent-1',
-  });
-  expect(result.isError).toBeUndefined();
-  expect(result.content[0]?.text).toContain('draft-1');
-  expect(result.content[0]?.text).toContain('agent_draft_get');
-  expect(draftStoreMock.createDraft).toHaveBeenCalledWith(
-    expect.anything(),
-    expect.objectContaining({
-      tenantId: 'tenant-1',
-      ownerSubject: 'auth0|alice',
-      agentId: 'agent-1',
-      request: expect.objectContaining({
-        text: 'watch a space and file tickets',
-        guardrails: 'Never invent numbers.',
-      }),
-    })
-  );
-  expect(enqueue).toHaveBeenCalledWith(
-    expect.objectContaining({
-      type: 'draft',
-      payload: { draftId: 'draft-1' },
-      orderingKey: 'draft:tenant-1:auth0|alice',
-    })
-  );
-});
-
-test('agent_draft reports failure when the job cannot be enqueued', async () => {
-  enqueue.mockResolvedValue({ ok: false, err: { message: 'queue down' } });
-  const handlers = registerAll({});
-  const result = await handlers.get('agent_draft')!({ text: 'watch a space and file tickets' });
-  expect(result.isError).toBe(true);
-  expect(result.content[0]?.text).toContain('Could not start drafting');
-});
-
-test('agent_draft_get reports progress, then renders the finished draft and consumes it', async () => {
-  draftStoreMock.getDraft.mockResolvedValue({
-    id: 'draft-1',
-    agentId: null,
-    status: 'running',
-    request: {},
-    result: null,
-    error: null,
-    errorDetail: null,
-    createdAt: '2026-01-01T00:00:00Z',
-    finishedAt: null,
-  });
-  const handlers = registerAll({});
-  let result = await handlers.get('agent_draft_get')!({ draftId: 'draft-1' });
-  expect(result.isError).toBeUndefined();
-  expect(result.content[0]?.text).toContain('Still drafting');
-  expect(draftStoreMock.consumeDraft).not.toHaveBeenCalled();
-
-  draftStoreMock.getDraft.mockResolvedValue({
-    id: 'draft-1',
-    agentId: 'agent-1',
-    status: 'succeeded',
-    request: {},
-    result: {
-      name: 'Triage watcher',
-      steps: STEPS_DOC.steps,
-      questions: ['Which project?'],
-    },
-    error: null,
-    errorDetail: null,
-    createdAt: '2026-01-01T00:00:00Z',
-    finishedAt: '2026-01-01T00:01:00Z',
-  });
-  result = await handlers.get('agent_draft_get')!({ draftId: 'draft-1' });
-  expect(result.isError).toBeUndefined();
-  expect(result.content[0]?.text).toContain('Triage watcher');
-  expect(result.content[0]?.text).toContain('agent_update');
-  expect(result.content[0]?.text).toContain('Which project?');
-  expect(draftStoreMock.consumeDraft).toHaveBeenCalledWith(
-    expect.anything(),
-    'tenant-1',
-    'auth0|alice',
-    'draft-1'
-  );
-});
-
-test('agent_draft_get surfaces a failed draft as an error', async () => {
-  draftStoreMock.getDraft.mockResolvedValue({
-    id: 'draft-1',
-    agentId: null,
-    status: 'failed',
-    request: {},
-    result: null,
-    error: 'The model replied with nothing usable.',
-    errorDetail: null,
-    createdAt: '2026-01-01T00:00:00Z',
-    finishedAt: '2026-01-01T00:01:00Z',
-  });
-  const handlers = registerAll({});
-  const result = await handlers.get('agent_draft_get')!({ draftId: 'draft-1' });
-  expect(result.isError).toBe(true);
-  expect(result.content[0]?.text).toContain('nothing usable');
-  expect(draftStoreMock.consumeDraft).not.toHaveBeenCalled();
-});
-
-test('agent_get carries the exact definition in a fenced block', async () => {
+test('agent_get returns the exact definition as raw JSON — no prose, no fence', async () => {
   const handlers = registerAll({});
   const result = await handlers.get('agent_get')!({ agentId: 'agent-1' });
   expect(result.isError).toBeUndefined();
+  const parsed = JSON.parse(result.content[0]?.text ?? '');
+  expect(parsed).toMatchObject({
+    agentId: 'agent-1',
+    enabled: true,
+    name: 'Triage',
+    guardrails: 'Never invent numbers.',
+    blockedTools: ['outlook_send_mail'],
+  });
+  expect(parsed.steps).toEqual({ version: 1, steps: [] });
+});
+
+test('agent_get_description renders the readable view without the definition', async () => {
+  const handlers = registerAll({});
+  const result = await handlers.get('agent_get_description')!({ agentId: 'agent-1' });
+  expect(result.isError).toBeUndefined();
   const text = result.content[0]?.text ?? '';
-  expect(text).toContain('```json renkei-agent');
-  expect(text).toContain('"guardrails": "Never invent numbers."');
-  expect(text).toContain('pass its fields to agent_update');
+  expect(text).toContain('Triage — ON (agentId: agent-1)');
+  expect(text).toContain('Standing guardrails:');
+  expect(text).not.toContain('renkei-agent');
 });
 
 test('read, knowledge, and memory tools stay available to agent-run callers', async () => {

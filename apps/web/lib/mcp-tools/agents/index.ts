@@ -15,38 +15,29 @@
  *  - Everything is OWNER-SCOPED: every lookup goes through the same
  *    subject-scoped queries the web routes use, so someone else's agentId
  *    reads as not-found, never as forbidden.
- *  - The three DEFINITION-EDITING tools (agent_draft, agent_create,
- *    agent_update) REFUSE agent-run callers (`context.agent` set): a run
- *    must not rewrite its own steps or strip its guardrails — the cards
- *    ground rule, applied to behavior. Knowledge and memory tools stay
- *    available to runs: knowledge is reference data an agent legitimately
- *    curates (knowledge_create_note already exists); steps and guardrails
- *    are behavior definition, and that line is the point.
+ *  - The DEFINITION-EDITING tools (agent_create, agent_update) REFUSE
+ *    agent-run callers (`context.agent` set): a run must not rewrite its
+ *    own steps or strip its guardrails — the cards ground rule, applied
+ *    to behavior. Knowledge and memory tools stay available to runs:
+ *    knowledge is reference data an agent legitimately curates
+ *    (knowledge_create_note already exists); steps and guardrails are
+ *    behavior definition, and that line is the point.
  *  - Writes are CONFIRM-GATED: without `confirm: true`, agent_create and
  *    agent_update validate and report what WOULD be saved, persisting
  *    nothing. `enabled: true` is refused outright — the builder's review
  *    panel is the consent surface for arming an agent; disabling is
  *    always allowed.
- *  - Drafting is a BACKGROUND JOB: agent_draft writes the same durable
- *    `agent_drafts` row the builder uses and enqueues the worker job;
- *    agent_draft_get polls it. The model time used to run inline in the
- *    MCP request, which is a long-lived connection that times out at
- *    sixty seconds somewhere you cannot see.
+ *  - There is NO drafting tool here. Prose-to-steps drafting is the web
+ *    builder's own REST path (/agents/draft + the worker job); model
+ *    callers work at the definition level instead — agent_get hands them
+ *    the exact JSON, agent_update validates their edit deterministically.
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
-import { agentJobsQueue } from '@renkei/queue';
-import {
-  isAgentStepsDoc,
-  isTriggerDraft,
-  CURRENT_STEPS_VERSION,
-  savesByPathCoverage,
-  triggerVariableDescriptors,
-  type AgentStepsDoc,
-} from '@renkei/agents';
+import { savesByPathCoverage, type AgentStepsDoc } from '@renkei/agents';
 import {
   readAgentMemory,
   renderAgentKnowledgeNotes,
@@ -70,9 +61,7 @@ import {
   MAX_AGENT_NOTE_TITLE_CHARS,
   type AgentNoteError,
 } from '@/lib/agents/agent-notes';
-import { consumeDraft, createDraft, getDraft } from '@/lib/agents/draft-store';
-import { fencedDefinition } from '@/lib/agents/definition';
-import { parseReviewNotes } from '@/lib/agents/notes';
+import { agentDefinition } from '@/lib/agents/definition';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
 
@@ -90,8 +79,8 @@ function errText(text: string) {
 const NO_SUBJECT = 'This caller has no recorded identity, so it has no agents.';
 const NOT_FOUND = 'No agent of yours has that id.';
 const RUN_REFUSAL =
-  'Agent runs cannot edit agent definitions — drafting, creating, and updating agents is ' +
-  'reserved for people. The read, run-history, knowledge, and memory tools remain available.';
+  'Agent runs cannot edit agent definitions — creating and updating agents is reserved ' +
+  'for people. The read, run-history, knowledge, and memory tools remain available.';
 
 const noteErrorText: Record<AgentNoteError, string> = {
   DB_ERROR: 'Database error.',
@@ -168,13 +157,59 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   server.registerTool(
     'agent_get',
     {
-      title: 'Agents · Read — One agent in full',
+      title: 'Agents · Read — The exact definition, as JSON',
       description:
-        "One of your agents in full: the steps outline, guardrails, blocked skills, the " +
-        'variables it saves (for chaining), triggers, agents chained after it, the ' +
-        'knowledge and memory its runs carry — and the EXACT stored definition as a ' +
-        '```json renkei-agent fenced block. To change the agent, edit that JSON directly ' +
-        'and pass its fields to agent_update (no drafting round-trip needed).',
+        "One of your agents' EXACT stored definition, as raw JSON — the machine path. " +
+        'To change the agent: edit this JSON, change only what the edit needs, keep the ids ' +
+        'of steps/paths/triggers you are keeping (run history and retry settings anchor to ' +
+        'them), and pass the fields to agent_update. For the human-readable rendering ' +
+        '(outline, knowledge, memory, chaining), use agent_get_description.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        agentId: z.string().min(1).describe('From agent_list'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const agent = await ownAgent(dbResult.val, context, args.agentId);
+      if (!agent) return errText(NOT_FOUND);
+
+      // Raw JSON, nothing else: agentId/enabled are read-only context (the
+      // save path ignores them); every other key is exactly what
+      // agent_update takes.
+      return textResult(
+        JSON.stringify(
+          {
+            agentId: agent.id,
+            enabled: agent.enabled,
+            ...agentDefinition({
+              name: agent.name,
+              description: agent.description,
+              steps: agent.steps,
+              triggers: agent.triggers,
+              guardrails: agent.guardrails,
+              blockedTools: agent.blockedTools,
+              llmModelId: agent.llmModelId,
+            }),
+          },
+          null,
+          2
+        )
+      );
+    }
+  );
+
+  server.registerTool(
+    'agent_get_description',
+    {
+      title: 'Agents · Read — One agent, described',
+      description:
+        'The human-readable rendering of one of your agents: the steps outline, guardrails, ' +
+        'blocked skills, the variables it saves (for chaining), triggers, agents chained ' +
+        'after it, and the knowledge and memory its runs carry. For the exact definition to ' +
+        'edit, use agent_get.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -237,19 +272,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           : []),
         ...(knowledge ? ['', 'Knowledge notes (as injected into runs):', knowledge] : []),
         ...(memory ? ['', 'Memory (as injected into runs):', memory] : []),
-        '',
-        'Definition (machine-readable) — the exact stored definition. To change the agent,',
-        'edit this JSON and pass its fields to agent_update (keep the ids of steps you are',
-        'keeping; they anchor run history and retry settings):',
-        fencedDefinition({
-          name: agent.name,
-          description: agent.description,
-          steps: agent.steps,
-          triggers: agent.triggers,
-          guardrails: agent.guardrails,
-          blockedTools: agent.blockedTools,
-          llmModelId: agent.llmModelId,
-        }),
       ];
       return textResult(lines.join('\n'));
     }
@@ -607,212 +629,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     }
   );
 
-  server.registerTool(
-    'agent_draft',
-    {
-      title: 'Agents · Act — Start drafting an agent from a description',
-      description:
-        'Turn a PLAIN-LANGUAGE description into a drafted agent definition — a background ' +
-        'model job (a minute or two; poll agent_draft_get for the result). Use this only ' +
-        'when starting from prose. To CHANGE an existing agent, do not draft: read its ' +
-        'exact definition from agent_get, edit the JSON yourself, and pass it to ' +
-        'agent_update — deterministic, validated, and immediate. No agent is created or ' +
-        'changed by drafting. Pass agentId to revise that agent instead of starting fresh.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        text: z
-          .string()
-          .min(10)
-          .max(20_000)
-          .describe('What the agent should do, in plain language'),
-        agentId: z
-          .string()
-          .optional()
-          .describe('Revise THIS agent of yours: its current steps are the starting point'),
-      }),
-    },
-    async (args: Record<string, unknown>) => {
-      if (!context.subject) return errText(NO_SUBJECT);
-      if (context.agent) return errText(RUN_REFUSAL);
-      const text = typeof args.text === 'string' ? args.text.trim() : '';
-      if (text.length < 10) return errText('Describe the automation in a sentence or two first.');
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
-
-      let revising: StoredAgent | null = null;
-      if (typeof args.agentId === 'string' && args.agentId.trim()) {
-        revising = await ownAgent(db, context, args.agentId);
-        if (!revising) return errText(NOT_FOUND);
-      }
-
-      // The same durable job the builder uses: a draft row plus a queue
-      // entry, worked by the agents worker. Doing the model calls inline
-      // here is what this replaced — an MCP request is exactly the kind of
-      // long-lived connection that times out at sixty seconds somewhere you
-      // cannot see, and the caller's client gives up while the work is
-      // still (invisibly) succeeding.
-      const draftId = await createDraft(db, {
-        tenantId: context.tenantId,
-        ownerSubject: context.subject,
-        agentId: revising?.id ?? null,
-        request: {
-          text,
-          steps: revising ? JSON.parse(JSON.stringify(revising.steps)) : null,
-          // Chips in existing steps only survive a revision when the
-          // drafting model knows the trigger variables that back them —
-          // the same list the builder sends.
-          triggerVars: revising
-            ? JSON.parse(
-                JSON.stringify(
-                  triggerVariableDescriptors(revising.triggers.map((t) => t.draft)).map(
-                    ({ name, description }) => ({ name, description })
-                  )
-                )
-              )
-            : [],
-          // Suggestions fill an empty slot, they never rewrite configured
-          // triggers — the builder's rule, applied here.
-          suggestTriggers: !revising || revising.triggers.length === 0,
-          guardrails: revising?.guardrails ?? null,
-        },
-      });
-
-      const enqueued = await agentJobsQueue().producer.enqueue({
-        tenantId: context.tenantId,
-        source: 'agents',
-        type: 'draft',
-        payload: { draftId },
-        // Drafts for one person stay serial: two at once would race for the
-        // same builder and cost double the model time for one usable answer.
-        orderingKey: `draft:${context.tenantId}:${context.subject}`,
-      });
-      if (!enqueued.ok) {
-        logger.error('could not enqueue draft job {draftId}: {error}', {
-          component: 'mcp/tool',
-          tenantId: context.tenantId,
-          draftId,
-          error: enqueued.err.message ?? 'unknown',
-        });
-        return errText('Could not start drafting. Try again in a moment.');
-      }
-
-      return textResult(
-        [
-          `Drafting ${revising ? `a revision of "${revising.name}"` : 'a new agent'} in the background.`,
-          `draftId: ${draftId}`,
-          'It takes a minute or two of model time. Poll agent_draft_get with this draftId for the result; nothing is created or changed by drafting.',
-        ].join('\n')
-      );
-    }
-  );
-
-  server.registerTool(
-    'agent_draft_get',
-    {
-      title: 'Agents · Read — Check on a background draft',
-      description:
-        'The status of a draft started by agent_draft and, once it finishes, the result: the ' +
-        'steps outline, open questions, and the raw steps document to pass to agent_create ' +
-        'or agent_update. Drafting takes a minute or two — poll this until it reports done.',
-      annotations: { readOnlyHint: true },
-      inputSchema: z.object({
-        draftId: z.string().min(1).describe('From agent_draft'),
-      }),
-    },
-    async (args: Record<string, unknown>) => {
-      if (!context.subject) return errText(NO_SUBJECT);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
-      const draftId = typeof args.draftId === 'string' ? args.draftId.trim() : '';
-      const draft = await getDraft(db, context.tenantId, context.subject, draftId);
-      if (!draft) return errText('No draft of yours has that id.');
-
-      if (draft.status === 'queued' || draft.status === 'running') {
-        return textResult(
-          `Still drafting (${draft.status}) — a minute or two of model time. Check again shortly.`
-        );
-      }
-      if (draft.status === 'failed') {
-        return errText(
-          `Drafting failed: ${draft.error ?? 'unknown error'}` +
-            `${draft.errorDetail ? ` ${draft.errorDetail}` : ''} Start again with agent_draft.`
-        );
-      }
-
-      // The stored result is the drafting pipeline's own output (a
-      // DraftedAgent round-tripped through jsonb); the guard is for a row
-      // damaged in storage, not a second validation pass. Version 7 is the
-      // most permissive shape gate — the real version is recomputed below.
-      const record: { [key: string]: unknown } =
-        typeof draft.result === 'object' && draft.result !== null && !Array.isArray(draft.result)
-          ? draft.result
-          : {};
-      const guard: unknown = { version: CURRENT_STEPS_VERSION, steps: record.steps };
-      if (!isAgentStepsDoc(guard)) {
-        return errText('The stored draft is unreadable — start again with agent_draft.');
-      }
-      const doc: AgentStepsDoc = { version: CURRENT_STEPS_VERSION, steps: guard.steps };
-
-      const name = typeof record.name === 'string' && record.name ? record.name : 'Untitled agent';
-      const questions = Array.isArray(record.questions)
-        ? record.questions.filter(
-            (question): question is string => typeof question === 'string' && question.trim() !== ''
-          )
-        : [];
-      const concerns = parseReviewNotes(record.concerns);
-      const guardrails =
-        typeof record.guardrails === 'string' && record.guardrails.trim()
-          ? record.guardrails
-          : null;
-      const triggers = Array.isArray(record.triggers) ? record.triggers.filter(isTriggerDraft) : [];
-
-      // Picked up: the builder stops offering this draft on its next open.
-      await consumeDraft(db, context.tenantId, context.subject, draft.id);
-
-      const revising = draft.agentId !== null;
-      const lines = [
-        `Drafted "${name}"${revising ? ` (a revision of agentId ${draft.agentId})` : ''}. Nothing is saved yet.`,
-        '',
-        'Steps:',
-        outlineOf(doc),
-        ...(guardrails ? ['', 'Proposed guardrails:', guardrails] : []),
-        ...(triggers.length > 0
-          ? [
-              '',
-              'Proposed triggers — pass them in the "triggers" input alongside the steps:',
-              ...triggers.map((trigger) => `- ${triggerSummary(trigger)}`),
-              JSON.stringify(triggers),
-            ]
-          : []),
-        ...(questions.length > 0
-          ? [
-              '',
-              'Open questions — answer these and draft again, or edit the steps yourself:',
-              ...questions.map((question) => `- ${question}`),
-            ]
-          : []),
-        ...(concerns.length > 0
-          ? [
-              '',
-              'Reviewer concerns still open:',
-              ...concerns.map((concern) => `- ${concern.issue}${concern.fix ? ` Fix: ${concern.fix}` : ''}`),
-            ]
-          : []),
-        '',
-        `To save: pass this steps document to ${revising ? 'agent_update' : 'agent_create'} (it stays a draft until you confirm):`,
-        JSON.stringify(doc),
-      ];
-      return textResult(lines.join('\n'));
-    }
-  );
-
   const definitionSchema = {
     name: z.string().min(1).max(200).describe('The agent name'),
     steps: z
       .record(z.string(), z.unknown())
-      .describe('The full steps document (e.g. from agent_draft or agent_get)'),
+      .describe('The full steps document (e.g. the `steps` value from agent_get)'),
     triggers: z
       .array(z.unknown())
       .optional()
@@ -867,9 +688,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Create an agent (confirm-gated)',
       description:
-        'Create a new agent of yours from a full definition — authored directly, taken from ' +
-        "another agent's agent_get definition block or exported markdown, or drafted from " +
-        'prose via agent_draft. Without confirm:true this is a DRY RUN — it validates and ' +
+        'Create a new agent of yours from a full definition — authored directly, or taken ' +
+        "from another agent's agent_get JSON or exported markdown. Without " +
+        'confirm:true this is a DRY RUN — it validates and ' +
         'shows what would be created, persisting nothing. The agent is always created ' +
         'DISABLED: turning it on happens in the builder, where the review panel is.',
       annotations: { readOnlyHint: false },
@@ -944,7 +765,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         'Without confirm:true this is a DRY RUN — it validates and shows what would change, ' +
         'persisting nothing. This tool never TURNS ON an agent (the builder is the consent ' +
         'surface for that): an off agent stays off, an already-enabled one stays on unless ' +
-        'keepEnabled:false disables it. Only draft (agent_draft) when working from prose.',
+        'keepEnabled:false disables it. Prose-to-steps drafting lives in the web builder.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
