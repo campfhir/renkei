@@ -78,6 +78,12 @@ export const CHANGELOG: ChangelogRelease[] = [
       },
       {
         kind: 'added',
+        title: 'Projects and who can reach them',
+        detail:
+          'Create, rename and delete the projects repositories are filed under; list workspace members and see who holds what on a project or repository; grant and revoke per-repository access for members and groups. Project-level permission changes are the one thing Bitbucket refuses to integrations outright — the tools say so and point at the repository grant instead. All behind a separate administration capability, off by default.',
+      },
+      {
+        kind: 'added',
         title: 'Connect with your own Bitbucket account',
         detail:
           'A fourth panel on the Atlassian card. Operators register a Bitbucket OAuth consumer under Connector setup; each person connects their own account and can narrow what Renkei uses — repositories, pull requests and pipelines each split into read and act.',

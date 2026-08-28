@@ -458,6 +458,16 @@ export const ATLASSIAN_BITBUCKET_SCOPE_OPTIONS: ScopeOption[] = [
     scopes: ['pullrequest:write'],
   },
   {
+    id: 'bb-admin',
+    label: 'Administer projects & repository access',
+    hint: 'Create, rename and delete projects; grant and revoke per-repository access for workspace members and groups (project-level permission changes are refused for OAuth by Bitbucket itself)',
+    group: 'code',
+    // Admin powers: present in the catalog so an org can offer them, but
+    // never granted by silence.
+    defaultChecked: false,
+    scopes: ['project:admin', 'repository:admin'],
+  },
+  {
     id: 'bb-pipelines-read',
     label: 'Read pipelines',
     hint: 'Pipeline runs, their steps, and step logs',

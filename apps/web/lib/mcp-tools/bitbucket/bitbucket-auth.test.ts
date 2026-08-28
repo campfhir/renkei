@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * The wire boundary: what oauthBitbucketAuth actually SENDS. The tool
  * suite stubs auth.fetch, so nothing there would catch the one failure

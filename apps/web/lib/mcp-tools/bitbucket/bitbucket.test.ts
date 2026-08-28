@@ -459,6 +459,132 @@ describe('repositories and source', () => {
   });
 });
 
+describe('projects and access', () => {
+  it('admin tools register only on the admin scopes, never by default bundles', async () => {
+    const tools = await toolsOf(['account', 'repository', 'project', 'pullrequest']);
+    expect(tools.has('bitbucket_get_project')).toBe(true);
+    expect(tools.has('bitbucket_create_project')).toBe(false);
+    expect(tools.has('bitbucket_grant_repository_permission')).toBe(false);
+    // Permission LISTINGS are access configuration — admin's business too.
+    expect(tools.has('bitbucket_list_project_permissions')).toBe(false);
+
+    const adminTools = await toolsOf(['project:admin', 'repository:admin']);
+    expect(adminTools.has('bitbucket_create_project')).toBe(true);
+    expect(adminTools.has('bitbucket_delete_project')).toBe(true);
+    expect(adminTools.has('bitbucket_grant_repository_permission')).toBe(true);
+    expect(adminTools.has('bitbucket_revoke_repository_permission')).toBe(true);
+  });
+
+  it('creates a project private by default', async () => {
+    routes = [{ match: '/projects', method: 'POST', body: { name: 'Mars', key: 'MARS' } }];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_create_project')!({
+      workspace: 'acme',
+      name: 'Mars',
+      key: 'MARS',
+    });
+
+    expect(result.isError).not.toBe(true);
+    const post = requests.find((request) => request.method === 'POST');
+    expect(post?.json).toEqual({ name: 'Mars', key: 'MARS', is_private: true });
+    expect(result.content[0]?.text).toContain('Created project Mars (MARS)');
+  });
+
+  it('a rename keeps the fields it was not asked to change (the PUT is an upsert)', async () => {
+    routes = [
+      {
+        match: '/projects/MARS',
+        method: 'GET',
+        body: { name: 'Mars', key: 'MARS', description: 'red planet', is_private: true },
+      },
+      { match: '/projects/MARS', method: 'PUT', body: { name: 'Mars Rover', key: 'MARS' } },
+    ];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_update_project')!({
+      workspace: 'acme',
+      projectKey: 'MARS',
+      name: 'Mars Rover',
+    });
+
+    expect(result.isError).not.toBe(true);
+    const put = requests.find((request) => request.method === 'PUT');
+    expect(put?.json).toEqual({
+      name: 'Mars Rover',
+      key: 'MARS',
+      description: 'red planet',
+      is_private: true,
+    });
+  });
+
+  it('grants repository access to a user by id', async () => {
+    routes = [
+      {
+        match: '/permissions-config/users/',
+        method: 'PUT',
+        body: { permission: 'write' },
+      },
+    ];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_grant_repository_permission')!({
+      workspace: 'acme',
+      repoSlug: 'api',
+      userId: '{u-42}',
+      permission: 'write',
+    });
+
+    expect(result.isError).not.toBe(true);
+    const put = requests.find((request) => request.method === 'PUT');
+    expect(put?.path).toBe(
+      `/repositories/acme/api/permissions-config/users/${encodeURIComponent('{u-42}')}`
+    );
+    expect(put?.json).toEqual({ permission: 'write' });
+  });
+
+  it('refuses a grant that names both a user and a group, or neither', async () => {
+    const tools = await toolsOf();
+    const both = await tools.get('bitbucket_grant_repository_permission')!({
+      workspace: 'acme',
+      repoSlug: 'api',
+      userId: '{u-42}',
+      group: 'developers',
+      permission: 'read',
+    });
+    const neither = await tools.get('bitbucket_grant_repository_permission')!({
+      workspace: 'acme',
+      repoSlug: 'api',
+      permission: 'read',
+    });
+
+    expect(both.isError).toBe(true);
+    expect(neither.isError).toBe(true);
+    expect(requests).toHaveLength(0);
+  });
+
+  it('the project permission listing says where the write actually lives', async () => {
+    // Bitbucket refuses PROJECT-permission writes from OAuth integrations
+    // outright — the listing must say so, or an agent reads it as an
+    // invitation to try.
+    routes = [
+      {
+        match: '/permissions-config/users',
+        body: {
+          values: [{ permission: 'admin', user: { display_name: 'Scott', uuid: '{u-1}' } }],
+        },
+      },
+      { match: '/permissions-config/groups', body: { values: [] } },
+    ];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_list_project_permissions')!({
+      workspace: 'acme',
+      projectKey: 'MARS',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('Scott — admin');
+    expect(result.content[0]?.text).toContain('bitbucket_grant_repository_permission');
+  });
+});
+
 describe('pipelines', () => {
   it('triggers the default pipeline on a branch', async () => {
     routes = [{ match: '/pipelines', method: 'POST', body: { build_number: 12, uuid: '{p-1}' } }];

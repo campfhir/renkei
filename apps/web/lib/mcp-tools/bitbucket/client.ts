@@ -171,7 +171,10 @@ export async function bitbucketRequest(
     };
   }
   if (!response.ok) {
-    const responseBody = await response.clone().text().catch(() => '');
+    const responseBody = await response
+      .clone()
+      .text()
+      .catch(() => '');
     logger.warn('Bitbucket API non-OK response', {
       component: 'bitbucket/fetch',
       tenantId: scope.tenantId,
@@ -243,7 +246,7 @@ export async function bbJson(
   if (!response.ok) return { ok: false, error: await describeBitbucketFailure(response) };
   const text = await response.text().catch(() => '');
   if (!text) return { ok: true, body: {} };
-  let body: unknown = null;
+  let body: unknown;
   try {
     body = JSON.parse(text);
   } catch {
