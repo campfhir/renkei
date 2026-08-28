@@ -496,6 +496,9 @@ importers:
       '@renkei/settings':
         specifier: workspace:*
         version: link:../settings
+      '@renkei/tool-outcomes':
+        specifier: workspace:*
+        version: link:../tool-outcomes
       kysely:
         specifier: ^0.29.4
         version: 0.29.4

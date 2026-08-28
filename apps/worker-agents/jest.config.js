@@ -13,6 +13,7 @@ export default {
     '^@renkei/queue$': '<rootDir>/../../packages/queue/src/index.ts',
     '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
     '^@renkei/agents$': '<rootDir>/../../packages/agents/src/index.ts',
+    '^@renkei/agents/step-prompts$': '<rootDir>/../../packages/agents/src/step-prompts.ts',
     '^@renkei/agents/runs$': '<rootDir>/../../packages/agents/src/runs.ts',
     '^@renkei/agents/event-fanout$': '<rootDir>/../../packages/agents/src/event-fanout.ts',
     '^@renkei/agent-llm$': '<rootDir>/../../packages/agent-llm/src/index.ts',

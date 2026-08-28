@@ -1,13 +1,12 @@
 /**
  * The outcome guide is the ONLY thing steering a model into an
  * author-invented condition code, and the author's non-retry prose rides
- * it too — so its rendering is pinned here, DB-free (unlike the engine
- * suite, which needs DATABASE_URL).
+ * it too — so its rendering is pinned here, pinned beside the builders it rides with.
  */
 
 import { randomUUID } from 'node:crypto';
-import type { ActionStep } from '@renkei/agents';
-import { outcomeGuideFor } from './engine';
+import { outcomeGuideFor } from './step-prompts';
+import type { ActionStep } from './steps';
 
 function step(overrides: Partial<ActionStep> = {}): ActionStep {
   return {

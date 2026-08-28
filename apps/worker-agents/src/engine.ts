@@ -57,7 +57,7 @@ import {
   type ResolvedLlm,
 } from '@renkei/agent-llm';
 import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
-import { resolveOutcomes, toolKindOf } from '@renkei/tool-outcomes';
+import { toolKindOf } from '@renkei/tool-outcomes';
 import { notifierFor, type Notifier } from './notifications';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { AgentMcpClient } from './mcp-client';
@@ -85,6 +85,9 @@ import {
   LOOP_DECISION_DEF,
   LOOP_DECISION_TOOL,
   systemPromptWith,
+  outcomeGuideFor,
+  NORMAL_TOOL_CAP,
+  CORRECTIVE_TOOL_CAP,
 } from './prompt';
 import { logger } from './logger';
 
@@ -93,8 +96,6 @@ import { logger } from './logger';
  * free date lookup and a nudge before the final forced decision.
  */
 const CONDITION_TURNS = 4;
-const NORMAL_TOOL_CAP = 3;
-const CORRECTIVE_TOOL_CAP = 10;
 const MAX_LLM_TURNS = 10;
 const PREVIEW_CHARS = 2_000;
 const DETAIL_CHARS = 60_000;
@@ -426,71 +427,6 @@ function handlingFor(step: ActionStep, code: string): FailureHandling | undefine
     step.failureHandling.find((handling) => handling.outcome === code) ??
     step.failureHandling.find((handling) => handling.outcome === 'other')
   );
-}
-
-/**
- * The conditions this step's author planned for, as a prompt paragraph.
- *
- * Injected on EVERY attempt so a declared condition lands on a code the
- * handling can route instead of an unroutable 'other'. Three kinds of
- * entry, all listed:
- *
- *  - enumerated codes wear the outcome catalog's label (`resolveOutcomes`
- *    is pure data; the kind argument only shapes the unused success label);
- *  - CUSTOM codes wear the author's own "applies when" description — the
- *    only thing that steers classification into an invented code, so it is
- *    load-bearing prose;
- *  - non-retry entries carry the author's note (advisory prose), rendered
- *    with the step's variables. Retry guidance is deliberately NOT shown
- *    here — it appears as "Extra guidance" on attempts ≥ 2, where its tool
- *    chips are also offered.
- *
- * And the rule that makes reasoned outcomes work at all: a call that
- * SUCCEEDED technically can still match a planned condition ("results
- * found, but none close enough") — the model judges that over the result
- * and declares the condition's code, because the tool cannot.
- */
-export function outcomeGuideFor(
-  step: ActionStep,
-  vars: Record<string, string>
-): string | undefined {
-  if (step.tool === null || step.failureHandling.length === 0) return undefined;
-  const labelOf = new Map(
-    resolveOutcomes(step.tool, 'read').failures.map((failure) => [failure.code, failure.label])
-  );
-  const listed = step.failureHandling
-    .map((handling) => {
-      const label = labelOf.get(handling.outcome);
-      const described =
-        handling.when !== undefined
-          ? `"${handling.outcome}" (applies when: ${handling.when})`
-          : label
-            ? `"${handling.outcome}" (${label.toLowerCase()})`
-            : `"${handling.outcome}"`;
-      const note =
-        handling.action !== 'retry' && handling.guidance && handling.guidance.length > 0
-          ? ` — the author notes: ${renderInstruction(handling.guidance, vars).text}`
-          : '';
-      return `${described}${note}`;
-    })
-    .join('; ');
-  const handled = step.failureHandling.map((handling) => handling.outcome);
-  const parts = [
-    `Conditions this step plans for: ${listed}. When the outcome matches one, declare it with ` +
-      `that exact code; anything else falls under "other". These conditions are judged by YOU ` +
-      `over the result — a call that technically succeeded whose result matches one of them IS ` +
-      `that condition (declare failure with its code so the planned handling routes it), and ` +
-      `the author's notes above tell you what they meant by planning for it.`,
-  ];
-  if (handled.includes('no-results')) {
-    parts.push(
-      'A search or lookup that runs cleanly but matches nothing IS that "no-results" failure — ' +
-        'declare it as such (never success with an empty answer, never "skipped") so the ' +
-        'configured handling decides what happens next. If you have tries left you will be ' +
-        'asked to search again differently.'
-    );
-  }
-  return parts.join(' ');
 }
 
 /**
