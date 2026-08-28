@@ -88,6 +88,7 @@ import {
   outcomeGuideFor,
   NORMAL_TOOL_CAP,
   CORRECTIVE_TOOL_CAP,
+  type PromptMessage,
 } from './prompt';
 import { logger } from './logger';
 
@@ -294,6 +295,12 @@ interface AttemptOutcome {
   usage: { inputTokens: number; outputTokens: number };
   unbound: string[];
   resolvedInstruction: string;
+  /**
+   * The attempt's first user message, verbatim — what the model was
+   * actually sent. Stored on the attempt row so the run-debug markdown can
+   * reproduce the instruction 1:1, runtime data included.
+   */
+  promptText: string;
 }
 
 /** The run-scoped context blocks every attempt's prompt carries. */
@@ -351,6 +358,20 @@ class TransientFailure extends Error {}
 
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
+}
+
+/**
+ * The verbatim-prompt cap for attempt details. The debug view's 1:1
+ * contract is the point of storing this at all, so the bound is generous —
+ * it exists only so a pathological guardrails blob cannot balloon every
+ * attempt row, and the clip marker is the honest boundary when it bites.
+ */
+const PROMPT_DETAIL_CHARS = 40_000;
+
+/** The attempt's first user message — the prompt the model was sent. */
+function promptTextOf(messages: PromptMessage[]): string {
+  const first = messages[0]?.content[0];
+  return first && first.type === 'text' ? first.text : '';
 }
 
 function classifyErrorText(text: string): string {
@@ -1656,6 +1677,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       const detail = {
         resolvedInstruction: clip(outcome.resolvedInstruction, PREVIEW_CHARS),
+        ...(outcome.promptText
+          ? { promptText: clip(outcome.promptText, PROMPT_DETAIL_CHARS) }
+          : {}),
         llmSummary: clip(outcome.summary, PREVIEW_CHARS),
         declaredOutcome:
           outcome.stopRun === 'skip' ? 'skipped' : outcome.succeeded ? 'success' : 'failure',
@@ -2383,6 +2407,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
       });
       const resolvedInstruction = renderInstruction(branch.condition, vars).text;
+      const promptText = promptTextOf(built.messages);
       const messages: LlmMessage[] = [...built.messages];
       const usage = { inputTokens: 0, outputTokens: 0 };
       let failureSummary = 'The model never chose a path.';
@@ -2476,6 +2501,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (decidedPath) {
         const detail = {
           resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+          ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
           llmSummary: clip(decidedReason, PREVIEW_CHARS),
           // Which instants it compared against — the first thing anyone
           // asks when a time-based branch went the wrong way.
@@ -2507,6 +2533,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       lastFailureSummary = failureSummary;
       const detail = {
         resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+        ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
         llmSummary: clip(failureSummary, PREVIEW_CHARS),
         declaredOutcome: 'failure',
         usage,
@@ -2646,6 +2673,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
       });
       const resolvedInstruction = renderInstruction(loop.condition, vars).text;
+      const promptText = promptTextOf(built.messages);
       const messages: LlmMessage[] = [...built.messages];
       const usage = { inputTokens: 0, outputTokens: 0 };
       let failureSummary = 'The model never decided the loop.';
@@ -2728,6 +2756,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (decided) {
         const detail = {
           resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+          ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
           llmSummary: clip(decidedReason, PREVIEW_CHARS),
           ...(timeNotes.length > 0 ? { timeLookups: timeNotes } : {}),
           declaredOutcome: 'success',
@@ -2754,6 +2783,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       lastFailureSummary = failureSummary;
       const detail = {
         resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+        ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
         llmSummary: clip(failureSummary, PREVIEW_CHARS),
         declaredOutcome: 'failure',
         usage,
@@ -2853,6 +2883,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       usage,
       unbound: built.unbound,
       resolvedInstruction,
+      promptText: promptTextOf(built.messages),
       // Only a finish_step call can ask to remember; error paths carry null.
       remember: null,
     };
@@ -3127,7 +3158,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     primaryResults: McpToolResult[],
     base: Pick<
       AttemptOutcome,
-      'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'remember'
+      'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'promptText' | 'remember'
     >
   ): AttemptOutcome {
     if (finish.outcome === 'skipped') {

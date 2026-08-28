@@ -53,6 +53,8 @@ function fixtureRun(): RunDetail {
         startedAt: '2026-08-21T10:54:01.000Z',
         finishedAt: '2026-08-21T10:54:10.000Z',
         detail: {
+          promptText:
+            'Step: Create the ticket\n\nInstruction: Create it for ENG-808.\n\nTool budget: at most 3 tool call(s) this attempt.',
           llmSummary: 'The create call was rejected.',
           toolCalls: [
             {
@@ -98,6 +100,20 @@ describe('renderRunDebugMarkdown', () => {
     expect(text).toContain('Attempt 1');
     expect(text).toContain('Tool call: jsm_create_request (ERROR, 278ms)');
     expect(text).toContain('Jira API 400');
+  });
+
+  it('reproduces the sent prompt byte-for-byte, before the appended context', () => {
+    const text = renderRunDebugMarkdown('Read Webex Messages', fixtureRun());
+    // The 1:1 contract: the fenced block IS the engine's captured message,
+    // runtime values included; outcomes/summaries/tool calls follow it.
+    expect(text).toContain(
+      'Prompt (verbatim, as sent to the model):\n```text\n' +
+        'Step: Create the ticket\n\nInstruction: Create it for ENG-808.\n\n' +
+        'Tool budget: at most 3 tool call(s) this attempt.\n```'
+    );
+    expect(text.indexOf('Prompt (verbatim')).toBeLessThan(
+      text.indexOf('Summary: The create call was rejected.')
+    );
   });
 
   it('keeps redacted attempts redacted', () => {
