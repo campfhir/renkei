@@ -454,9 +454,14 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
   // ceiling is. They are deliberately kept out of `variableLines` below —
   // the prompt already states the attempt in its own words on a retry, and
   // repeating it as "known information" on every first attempt is noise.
+  // Attempt bindings go FIRST so a caller that supplies these names wins.
+  // export-markdown renders every var chip as a {{name}} placeholder — it is
+  // describing an agent to a person, not running one — and binding real
+  // numbers over the top would print "try 1 of 3" as if that were the
+  // instruction's literal text.
   const variablesWithAttempt = {
-    ...input.variables,
     ...attemptVariables(input.attempt, input.step.maxAttempts),
+    ...input.variables,
   };
   const rendered = renderInstruction(input.step.instruction, variablesWithAttempt);
 
