@@ -15,6 +15,68 @@ function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
 }
 
+/**
+ * How many people one `jira_search_users` call may look up.
+ *
+ * A cap rather than unbounded fan-out: past a couple of dozen the caller
+ * wants a group (`jira_list_group_members`) or a project role, not a list
+ * of names, and an unbounded batch is an easy way to spend a site's whole
+ * rate-limit budget in one tool call.
+ */
+const MAX_USER_QUERIES = 25;
+
+/**
+ * Jira's user search is rate limited per site. A batch naming a dozen
+ * people would otherwise open a dozen sockets at once and start collecting
+ * 429s, which costs more wall clock than the queueing ever saved.
+ */
+const USER_SEARCH_CONCURRENCY = 5;
+
+type UserSearchResult =
+  { ok: true; query: string; users: any[] } | { ok: false; query: string; reason: string };
+
+/**
+ * One directory search, with the term it was for kept alongside the answer.
+ *
+ * Nothing escapes as a rejection: a batch runs these concurrently, and one
+ * name that times out or answers unparseable JSON must cost that name only
+ * — not the matches already found for everyone else.
+ */
+async function searchUsersOnce(
+  auth: JiraAuth,
+  query: string,
+  limit: number
+): Promise<UserSearchResult> {
+  try {
+    const response = await auth.fetch(
+      granularJiraScopes('jira_search_users', true),
+      `/rest/api/3/user/search?query=${encodeURIComponent(query)}&maxResults=${limit}`
+    );
+    if (!response.ok) return { ok: false, query, reason: await describeJiraAuthFailure(response) };
+    const body: unknown = await response.json();
+    return { ok: true, query, users: Array.isArray(body) ? body : [] };
+  } catch (error) {
+    return { ok: false, query, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** Run `work` over `items` at most `limit` at a time, preserving order. */
+async function mapWithLimit<T, R>(
+  items: T[],
+  limit: number,
+  work: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (let index = next++; index < items.length; index = next++) {
+      results[index] = await work(items[index]);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 export async function registerProjectTools(
   server: McpServer,
   context: MCPToolContext,
@@ -253,11 +315,22 @@ export async function registerProjectTools(
     'jira_search_users',
     {
       title: 'Jira · Read — Search Jira users by name or email',
-      description: 'Search for Jira users by email or name.',
+      description:
+        'Search for Jira users by email or name. Pass an array to look several people up in ' +
+        'one call — resolving the attendees of a meeting or the reviewers on a change should ' +
+        'not cost one round trip per person.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        query: z.string().describe('Email or name to search for'),
-        maxResults: z.number().describe('Maximum results (1-50, default 10)').optional(),
+        query: z
+          .union([z.string(), z.array(z.string())])
+          .describe(
+            'Email or name to search for. An array looks up each entry separately and reports ' +
+              'the matches under that entry, e.g. ["amanda@nems.org", "Dana Lin"].'
+          ),
+        maxResults: z
+          .number()
+          .describe('Maximum results per person searched for (1-50, default 10)')
+          .optional(),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -270,37 +343,98 @@ export async function registerProjectTools(
       });
       try {
         const { query, maxResults = 10 } = args;
+        const limit = Math.min(Math.max(Number(maxResults) || 10, 1), 50);
 
-        if (!query) {
-          return { content: [{ type: 'text' as const, text: 'query is required' }], isError: true };
+        // The same person named twice — "amanda@nems.org" in a list that also
+        // carries "Amanda@nems.org" — is one search, not two.
+        const requested = Array.isArray(query) ? query : [query];
+        const queries: string[] = [];
+        const seen = new Set<string>();
+        for (const entry of requested) {
+          const text = typeof entry === 'string' ? entry.trim() : '';
+          if (!text) continue;
+          const key = text.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          queries.push(text);
         }
 
-        const response = await auth.fetch(
-          granularJiraScopes('jira_search_users', true),
-          `/rest/api/3/user/search?query=${encodeURIComponent(query as string)}&maxResults=${Math.min(maxResults as number, 50)}`
+        if (queries.length === 0) {
+          return errText('query is required');
+        }
+        if (queries.length > MAX_USER_QUERIES) {
+          return errText(
+            `too many names at once: ${queries.length} given, ${MAX_USER_QUERIES} is the limit — ` +
+              'split the list across calls.'
+          );
+        }
+
+        const results = await mapWithLimit(queries, USER_SEARCH_CONCURRENCY, (one) =>
+          searchUsersOnce(auth, one, limit)
         );
-        if (!response.ok) return errText(await describeJiraAuthFailure(response));
 
-        const users = (await response.json()) as any[];
-
-        const lines = [
-          `Found ${users.length} users:`,
-          ...users.map((u: any) => `• ${u.displayName} (${u.emailAddress}) - ${u.accountId}`),
-        ];
-
-        if (users.length === 0) {
-          return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+        // One name keeps the original shape: a bare list, and an outright
+        // error when the search itself failed. Callers that have always
+        // passed a string see nothing new.
+        if (results.length === 1) {
+          const only = results[0];
+          if (!only.ok) return errText(only.reason);
+          const lines = [
+            `Found ${only.users.length} users:`,
+            ...only.users.map(
+              (u: any) => `• ${u.displayName} (${u.emailAddress}) - ${u.accountId}`
+            ),
+          ];
+          if (only.users.length === 0) {
+            return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
+          }
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: withPresentationHint(
+                  lines.join('\n'),
+                  'a table (Name, Email, Account id) usually scans faster than this flat list.'
+                ),
+              },
+            ],
+          };
         }
+
+        // A batch reports per name. One name failing must not lose the
+        // matches found for the others — the caller can retry that one.
+        const blocks = results.map((result) => {
+          if (!result.ok) return `${result.query} — search failed: ${result.reason}`;
+          if (result.users.length === 0) return `${result.query} — no match`;
+          return [
+            `${result.query} — ${result.users.length} ${result.users.length === 1 ? 'match' : 'matches'}:`,
+            ...result.users.map(
+              (u: any) => `• ${u.displayName} (${u.emailAddress}) - ${u.accountId}`
+            ),
+          ].join('\n');
+        });
+
+        const found = results.reduce((total, r) => total + (r.ok ? r.users.length : 0), 0);
+        const body = [
+          `Searched for ${results.length} people, found ${found} users:`,
+          '',
+          blocks.join('\n\n'),
+        ].join('\n');
+
         return {
           content: [
             {
               type: 'text' as const,
               text: withPresentationHint(
-                lines.join('\n'),
-                'a table (Name, Email, Account id) usually scans faster than this flat list.'
+                body,
+                'a table (Searched for, Name, Email, Account id) usually scans faster than ' +
+                  'these grouped lists.'
               ),
             },
           ],
+          // Only a wholly failed batch is an error; a partial one carries
+          // results worth reading.
+          ...(results.every((r) => !r.ok) ? { isError: true as const } : {}),
         };
       } catch (error) {
         return {
