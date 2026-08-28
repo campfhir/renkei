@@ -53,12 +53,18 @@ export async function resolveBitbucketAccess(
   const dbResult = getDatabase();
   if (!dbResult.ok) return 'Database unavailable.';
 
+  // Newest grant wins, deterministically. Rows are keyed by account id, so
+  // one subject CAN own several — a retried connect, or a reconnect as a
+  // different Bitbucket account — and an unordered take-first would pick
+  // arbitrarily between a live grant and a stale one from an earlier
+  // attempt, working or failing per pod.
   const row = await dbResult.val
     .selectFrom('provider_grants')
     .select('provider_account_id')
     .where('tenant_id', '=', context.tenantId)
     .where('provider', '=', ATLASSIAN_BITBUCKET)
     .where('subject', '=', context.subject)
+    .orderBy('updated_at', 'desc')
     .executeTakeFirst();
   if (!row) {
     return 'Bitbucket is not connected. Connect it on the Connectors page, then try again.';
