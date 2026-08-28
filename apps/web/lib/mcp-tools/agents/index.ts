@@ -27,13 +27,26 @@
  *    nothing. `enabled: true` is refused outright — the builder's review
  *    panel is the consent surface for arming an agent; disabling is
  *    always allowed.
+ *  - Drafting is a BACKGROUND JOB: agent_draft writes the same durable
+ *    `agent_drafts` row the builder uses and enqueues the worker job;
+ *    agent_draft_get polls it. The model time used to run inline in the
+ *    MCP request, which is a long-lived connection that times out at
+ *    sixty seconds somewhere you cannot see.
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
-import { requiredVersion, savesByPathCoverage, type AgentStepsDoc } from '@renkei/agents';
+import { agentJobsQueue } from '@renkei/queue';
+import {
+  isAgentStepsDoc,
+  isTriggerDraft,
+  requiredVersion,
+  savesByPathCoverage,
+  triggerVariableDescriptors,
+  type AgentStepsDoc,
+} from '@renkei/agents';
 import {
   readAgentMemory,
   renderAgentKnowledgeNotes,
@@ -57,8 +70,8 @@ import {
   MAX_AGENT_NOTE_TITLE_CHARS,
   type AgentNoteError,
 } from '@/lib/agents/agent-notes';
-import { draftAgentFromProse } from '@/lib/agents/draft-from-prose';
-import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
+import { consumeDraft, createDraft, getDraft } from '@/lib/agents/draft-store';
+import { parseReviewNotes } from '@/lib/agents/notes';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
 
@@ -581,13 +594,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   server.registerTool(
     'agent_draft',
     {
-      title: 'Agents · Act — Draft an agent from a description',
+      title: 'Agents · Act — Start drafting an agent from a description',
       description:
         'Turn a plain-language description into a drafted agent definition — steps, and ' +
-        'optionally triggers and guardrails — reviewed by the same critic the builder runs. ' +
-        'NOTHING is persisted: the reply carries the outline, open questions and concerns, ' +
-        'and the raw steps document to pass to agent_create or agent_update. Pass agentId to ' +
-        'revise that agent instead of starting fresh.',
+        'optionally triggers and guardrails. Drafting takes a minute or two of model time, so ' +
+        'it runs in the BACKGROUND: the reply carries a draftId to poll with agent_draft_get, ' +
+        'which returns the outline, open questions, and the raw steps document to pass to ' +
+        'agent_create or agent_update. No agent is created or changed by drafting. Pass ' +
+        'agentId to revise that agent instead of starting fresh.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         text: z
@@ -616,39 +630,158 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         if (!revising) return errText(NOT_FOUND);
       }
 
-      const tools = await listAvailableTools(context.tenantId, context.subject);
-      const drafted = await draftAgentFromProse(db, context.tenantId, text, tools, {
-        currentSteps: revising?.steps.steps,
-        guardrails: revising?.guardrails ?? null,
-        suggestTriggers: revising === null,
-        refineWithReview: true,
+      // The same durable job the builder uses: a draft row plus a queue
+      // entry, worked by the agents worker. Doing the model calls inline
+      // here is what this replaced — an MCP request is exactly the kind of
+      // long-lived connection that times out at sixty seconds somewhere you
+      // cannot see, and the caller's client gives up while the work is
+      // still (invisibly) succeeding.
+      const draftId = await createDraft(db, {
+        tenantId: context.tenantId,
+        ownerSubject: context.subject,
+        agentId: revising?.id ?? null,
+        request: {
+          text,
+          steps: revising ? JSON.parse(JSON.stringify(revising.steps)) : null,
+          // Chips in existing steps only survive a revision when the
+          // drafting model knows the trigger variables that back them —
+          // the same list the builder sends.
+          triggerVars: revising
+            ? JSON.parse(
+                JSON.stringify(
+                  triggerVariableDescriptors(revising.triggers.map((t) => t.draft)).map(
+                    ({ name, description }) => ({ name, description })
+                  )
+                )
+              )
+            : [],
+          // Suggestions fill an empty slot, they never rewrite configured
+          // triggers — the builder's rule, applied here.
+          suggestTriggers: !revising || revising.triggers.length === 0,
+          guardrails: revising?.guardrails ?? null,
+        },
       });
-      if ('error' in drafted) {
-        return errText(`${drafted.error}${drafted.detail ? ` ${drafted.detail}` : ''}`);
+
+      const enqueued = await agentJobsQueue().producer.enqueue({
+        tenantId: context.tenantId,
+        source: 'agents',
+        type: 'draft',
+        payload: { draftId },
+        // Drafts for one person stay serial: two at once would race for the
+        // same builder and cost double the model time for one usable answer.
+        orderingKey: `draft:${context.tenantId}:${context.subject}`,
+      });
+      if (!enqueued.ok) {
+        logger.error('could not enqueue draft job {draftId}: {error}', {
+          component: 'mcp/tool',
+          tenantId: context.tenantId,
+          draftId,
+          error: enqueued.err.message ?? 'unknown',
+        });
+        return errText('Could not start drafting. Try again in a moment.');
       }
 
-      const doc: AgentStepsDoc = {
-        version: requiredVersion(drafted.steps),
-        steps: drafted.steps,
-      };
+      return textResult(
+        [
+          `Drafting ${revising ? `a revision of "${revising.name}"` : 'a new agent'} in the background.`,
+          `draftId: ${draftId}`,
+          'It takes a minute or two of model time. Poll agent_draft_get with this draftId for the result; nothing is created or changed by drafting.',
+        ].join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
+    'agent_draft_get',
+    {
+      title: 'Agents · Read — Check on a background draft',
+      description:
+        'The status of a draft started by agent_draft and, once it finishes, the result: the ' +
+        'steps outline, open questions, and the raw steps document to pass to agent_create ' +
+        'or agent_update. Drafting takes a minute or two — poll this until it reports done.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        draftId: z.string().min(1).describe('From agent_draft'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const db = dbResult.val;
+      const draftId = typeof args.draftId === 'string' ? args.draftId.trim() : '';
+      const draft = await getDraft(db, context.tenantId, context.subject, draftId);
+      if (!draft) return errText('No draft of yours has that id.');
+
+      if (draft.status === 'queued' || draft.status === 'running') {
+        return textResult(
+          `Still drafting (${draft.status}) — a minute or two of model time. Check again shortly.`
+        );
+      }
+      if (draft.status === 'failed') {
+        return errText(
+          `Drafting failed: ${draft.error ?? 'unknown error'}` +
+            `${draft.errorDetail ? ` ${draft.errorDetail}` : ''} Start again with agent_draft.`
+        );
+      }
+
+      // The stored result is the drafting pipeline's own output (a
+      // DraftedAgent round-tripped through jsonb); the guard is for a row
+      // damaged in storage, not a second validation pass. Version 7 is the
+      // most permissive shape gate — the real version is recomputed below.
+      const record: { [key: string]: unknown } =
+        typeof draft.result === 'object' && draft.result !== null && !Array.isArray(draft.result)
+          ? draft.result
+          : {};
+      const guard: unknown = { version: 7, steps: record.steps };
+      if (!isAgentStepsDoc(guard)) {
+        return errText('The stored draft is unreadable — start again with agent_draft.');
+      }
+      const doc: AgentStepsDoc = { version: requiredVersion(guard.steps), steps: guard.steps };
+
+      const name = typeof record.name === 'string' && record.name ? record.name : 'Untitled agent';
+      const questions = Array.isArray(record.questions)
+        ? record.questions.filter(
+            (question): question is string => typeof question === 'string' && question.trim() !== ''
+          )
+        : [];
+      const concerns = parseReviewNotes(record.concerns);
+      const guardrails =
+        typeof record.guardrails === 'string' && record.guardrails.trim()
+          ? record.guardrails
+          : null;
+      const triggers = Array.isArray(record.triggers) ? record.triggers.filter(isTriggerDraft) : [];
+
+      // Picked up: the builder stops offering this draft on its next open.
+      await consumeDraft(db, context.tenantId, context.subject, draft.id);
+
+      const revising = draft.agentId !== null;
       const lines = [
-        `Drafted "${drafted.name}"${revising ? ` (a revision of "${revising.name}")` : ''}. Nothing is saved yet.`,
+        `Drafted "${name}"${revising ? ` (a revision of agentId ${draft.agentId})` : ''}. Nothing is saved yet.`,
         '',
         'Steps:',
         outlineOf(doc),
-        ...(drafted.guardrails ? ['', 'Proposed guardrails:', drafted.guardrails] : []),
-        ...(drafted.questions && drafted.questions.length > 0
+        ...(guardrails ? ['', 'Proposed guardrails:', guardrails] : []),
+        ...(triggers.length > 0
+          ? [
+              '',
+              'Proposed triggers — pass them in the "triggers" input alongside the steps:',
+              ...triggers.map((trigger) => `- ${triggerSummary(trigger)}`),
+              JSON.stringify(triggers),
+            ]
+          : []),
+        ...(questions.length > 0
           ? [
               '',
               'Open questions — answer these and draft again, or edit the steps yourself:',
-              ...drafted.questions.map((question) => `- ${question}`),
+              ...questions.map((question) => `- ${question}`),
             ]
           : []),
-        ...(drafted.concerns && drafted.concerns.length > 0
+        ...(concerns.length > 0
           ? [
               '',
               'Reviewer concerns still open:',
-              ...drafted.concerns.map((concern) => `- ${concern.issue} Fix: ${concern.fix}`),
+              ...concerns.map((concern) => `- ${concern.issue}${concern.fix ? ` Fix: ${concern.fix}` : ''}`),
             ]
           : []),
         '',
