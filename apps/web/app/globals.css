@@ -629,3 +629,28 @@ main:has([data-wide-page]) {
 .chip-editor [data-chip].chip-selected {
   outline: 2px solid color-mix(in oklab, currentColor 55%, transparent);
 }
+
+/* Number inputs: no stepper arrows.
+ *
+ * The arrows are a browser-drawn control we do not style and cannot style
+ * consistently — WebKit paints them inside the padding box (so they crowd
+ * short fields and overlap the text at our sizes), Firefox draws its own,
+ * and neither matches the rest of the form furniture. Every number field in
+ * this app is typed, not nudged.
+ *
+ * Firefox needs `appearance: textfield` on the input itself; the
+ * ::-webkit-*-spin-button rules do nothing there and vice versa, so BOTH are
+ * required — removing either brings the arrows back in one engine. The
+ * unprefixed `appearance` covers current Firefox and Chromium; the
+ * `-moz-` prefixed line is kept for Firefox before 80.
+ */
+input[type='number'] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
