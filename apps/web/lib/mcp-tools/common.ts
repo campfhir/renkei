@@ -94,6 +94,14 @@ export interface MCPToolContext {
    */
   confluenceScopes?: string[];
   /**
+   * Same, for the caller's grant on the fourth Atlassian app ("Renkei
+   * Bitbucket") — computed as requested ∩ granted (or bare requested when
+   * granted is unknown), the Zoom arrangement: Bitbucket fixes scopes on
+   * the OAuth consumer, so the token always carries the consumer's full
+   * set and bare granted would erase the user's narrowing.
+   */
+  bitbucketScopes?: string[];
+  /**
    * Present when the caller is an agent run (an agent-runner token,
    * migration 040). `subject`/`userEmail` still name the run OWNER — every
    * gate applies as if the owner called — this only says an agent is doing

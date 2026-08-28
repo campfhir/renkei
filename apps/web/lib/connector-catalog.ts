@@ -53,6 +53,13 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     toolPrefix: 'confluence_*',
   },
   {
+    capabilityKey: 'atlassian-bitbucket',
+    configKey: 'atlassian-bitbucket',
+    label: 'Bitbucket',
+    summary: 'Repositories, branches, commits, pull requests and pipelines.',
+    toolPrefix: 'bitbucket_*',
+  },
+  {
     capabilityKey: 'microsoft',
     configKey: 'microsoft',
     label: 'Outlook',

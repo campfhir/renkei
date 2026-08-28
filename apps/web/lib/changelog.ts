@@ -44,6 +44,48 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'Bitbucket joins the Atlassian connectors',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Read your repositories and their history',
+        detail:
+          'Workspaces, projects, repositories, branches, tags, commits, diffs, file contents and full-text code search — everything needed to answer "what changed and where" without opening Bitbucket.',
+      },
+      {
+        kind: 'added',
+        title: 'Work pull requests end to end',
+        detail:
+          'List and read pull requests with their reviewers, build statuses and diffs; open, update, comment (inline on a line, or in a thread), approve, request changes, resolve threads, manage the task checklist, merge, and decline.',
+      },
+      {
+        kind: 'added',
+        title: 'Opening and merging ask you first',
+        detail:
+          'Creating a pull request, merging one, and starting a pipeline each come with a preview card: the details are laid out — branches, approvals, strategy — and nothing happens until you confirm on the card.',
+      },
+      {
+        kind: 'added',
+        title: 'Pipelines: watch, run, and stop',
+        detail:
+          'List runs, drill into a run’s steps, read a failing step’s log, start the default or a named custom pipeline on a branch or tag, and stop one mid-run.',
+      },
+      {
+        kind: 'added',
+        title: 'Branches and single-file commits',
+        detail:
+          'Create and delete branches, and commit a one-file change to a branch directly — enough for an agent to fix a typo or update a config without a clone.',
+      },
+      {
+        kind: 'added',
+        title: 'Connect with your own Bitbucket account',
+        detail:
+          'A fourth panel on the Atlassian card. Operators register a Bitbucket OAuth consumer under Connector setup; each person connects their own account and can narrow what Renkei uses — repositories, pull requests and pipelines each split into read and act.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'Bigger agents, threaded WebEx replies',
     entries: [
       {

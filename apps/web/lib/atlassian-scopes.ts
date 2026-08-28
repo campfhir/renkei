@@ -407,11 +407,89 @@ export const ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS: ScopeOption[] = [
 ];
 
 /**
+ * The fourth catalog ("Renkei Bitbucket"): Bitbucket Cloud, an Atlassian
+ * product on its own OAuth system — consumers live on bitbucket.org, not
+ * the 3LO platform, and scopes are FIXED ON THE CONSUMER: the authorize
+ * step cannot narrow them, so these checkboxes shape requested_scopes and
+ * the tools register on requested ∩ granted (the Zoom arrangement).
+ * Scope-per-endpoint derivation:
+ * docs/bitbucket-cloud-rest-api-open-api-spec.json.
+ */
+export const ATLASSIAN_BITBUCKET_SCOPE_GROUPS: ScopeGroup[] = [
+  { id: 'code', label: 'Repositories & code' },
+  { id: 'prs', label: 'Pull requests' },
+  { id: 'pipelines', label: 'Pipelines' },
+];
+
+export const ATLASSIAN_BITBUCKET_SCOPE_OPTIONS: ScopeOption[] = [
+  {
+    id: 'bb-code-read',
+    label: 'Read repositories & code',
+    hint: 'Workspaces, projects, repositories, branches, tags, commits, diffs, file contents, code search',
+    group: 'code',
+    defaultChecked: true,
+    // `project` rides along: the workspace project listing is the only
+    // thing that needs it, and offering it as its own checkbox would be a
+    // switch whose whole effect is hiding one list tool.
+    scopes: ['repository', 'project'],
+  },
+  {
+    id: 'bb-code-write',
+    label: 'Create branches & commit files',
+    hint: 'Create and delete branches, commit file changes (org read-only mode disables these regardless)',
+    group: 'code',
+    defaultChecked: true,
+    scopes: ['repository:write'],
+  },
+  {
+    id: 'bb-pr-read',
+    label: 'Read pull requests',
+    hint: 'Pull requests, their diffs, comments, tasks and build statuses',
+    group: 'prs',
+    defaultChecked: true,
+    scopes: ['pullrequest'],
+  },
+  {
+    id: 'bb-pr-write',
+    label: 'Create & act on pull requests',
+    hint: 'Create, update, comment, approve, request changes, merge, decline',
+    group: 'prs',
+    defaultChecked: true,
+    scopes: ['pullrequest:write'],
+  },
+  {
+    id: 'bb-pipelines-read',
+    label: 'Read pipelines',
+    hint: 'Pipeline runs, their steps, and step logs',
+    group: 'pipelines',
+    defaultChecked: true,
+    scopes: ['pipeline'],
+  },
+  {
+    id: 'bb-pipelines-write',
+    label: 'Run & stop pipelines',
+    hint: 'Trigger a pipeline on a branch or commit, stop a running one',
+    group: 'pipelines',
+    defaultChecked: true,
+    scopes: ['pipeline:write'],
+  },
+];
+
+/**
  * Always requested, never a choice: without offline_access Atlassian issues
  * no refresh token, and every grant would die within an hour of connecting.
  */
 export const ATLASSIAN_OFFLINE_SCOPE = 'offline_access';
 export const ATLASSIAN_REQUIRED_SCOPES = [ATLASSIAN_OFFLINE_SCOPE];
+
+/**
+ * Bitbucket's equivalent of the always-on scope, with a different reason:
+ * `account` is what GET /2.0/user needs, and that call is how a connect
+ * learns whose grant it just stored. No offline_access exists on Bitbucket —
+ * refresh tokens are always issued.
+ */
+export const BITBUCKET_ACCOUNT_SCOPE = 'account';
+export const BITBUCKET_REQUIRED_SCOPES = [BITBUCKET_ACCOUNT_SCOPE];
 
 /** Every scope each catalog knows, across its bundles. */
 export const ALL_ATLASSIAN_SCOPES = [
@@ -422,6 +500,12 @@ export const ALL_ATLASSIAN_JSM_SCOPES = [
 ];
 export const ALL_ATLASSIAN_CONFLUENCE_SCOPES = [
   ...new Set(ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS.flatMap((option) => option.scopes)),
+];
+export const ALL_ATLASSIAN_BITBUCKET_SCOPES = [
+  ...new Set([
+    ...ATLASSIAN_BITBUCKET_SCOPE_OPTIONS.flatMap((option) => option.scopes),
+    BITBUCKET_ACCOUNT_SCOPE,
+  ]),
 ];
 
 export const DEFAULT_ATLASSIAN_SCOPES = [
@@ -451,6 +535,15 @@ export const DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES = [
   ATLASSIAN_OFFLINE_SCOPE,
 ].join(' ');
 
+export const DEFAULT_ATLASSIAN_BITBUCKET_SCOPES = [
+  ...new Set(
+    ATLASSIAN_BITBUCKET_SCOPE_OPTIONS.filter((option) => option.defaultChecked).flatMap(
+      (option) => option.scopes
+    )
+  ),
+  BITBUCKET_ACCOUNT_SCOPE,
+].join(' ');
+
 /**
  * The org's usable ceiling from a stored scopes string. Settings saved before
  * the granular migration hold classic scopes the catalog no longer knows —
@@ -471,6 +564,10 @@ export function usableAtlassianConfluenceCeiling(stored: string | null | undefin
     ALL_ATLASSIAN_CONFLUENCE_SCOPES,
     DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES
   );
+}
+
+export function usableAtlassianBitbucketCeiling(stored: string | null | undefined): string[] {
+  return usableCeiling(stored, ALL_ATLASSIAN_BITBUCKET_SCOPES, DEFAULT_ATLASSIAN_BITBUCKET_SCOPES);
 }
 
 function usableCeiling(

@@ -13,6 +13,7 @@ import {
   ATLASSIAN,
   ATLASSIAN_JSM,
   ATLASSIAN_CONFLUENCE,
+  ATLASSIAN_BITBUCKET,
   WEBEX_USER,
   MICROSOFT,
   ZOOM,
@@ -20,7 +21,11 @@ import {
 } from '@renkei/provider-grants';
 import { getOnBaseApp } from '@/lib/onbase-app';
 import { obExchangeCode, onbaseClientFailure } from '@/lib/onbase/service-client';
-import { getAtlassianJsmApp, getAtlassianConfluenceApp } from '@/lib/atlassian-app';
+import {
+  getAtlassianJsmApp,
+  getAtlassianConfluenceApp,
+  getAtlassianBitbucketApp,
+} from '@/lib/atlassian-app';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
@@ -201,6 +206,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     if (pendingSignIn.provider === 'atlassian-confluence') {
       return handleAtlassianConfluenceCallback(
+        request,
+        tenant,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes
+      );
+    }
+    if (pendingSignIn.provider === 'atlassian-bitbucket') {
+      return handleAtlassianBitbucketCallback(
         request,
         tenant,
         pendingSignIn.subject,
@@ -1359,6 +1373,134 @@ async function handleAtlassianConfluenceCallback(
 }
 
 /**
+ * Complete a Bitbucket connect — the fourth Atlassian app, on Bitbucket's
+ * own OAuth system rather than the 3LO platform. The token endpoint wants
+ * HTTP Basic app auth and a form body (Zoom-style), and its response
+ * carries the granted scopes as a plain `scopes` string — the consumer's
+ * fixed set, which is what the tool gate intersects the user's requested
+ * narrowing with. Identity comes from GET /2.0/user (the always-requested
+ * `account` scope exists exactly for this call).
+ */
+async function handleAtlassianBitbucketCallback(
+  request: NextRequest,
+  tenant: { id: string; slug: string },
+  subject: string,
+  code: string,
+  requestedScopes: string | null
+): Promise<NextResponse> {
+  logger.debug('Bitbucket callback', { component: 'auth/oauth', tenantId: tenant.id });
+
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  const app = await getAtlassianBitbucketApp(tenant.id, originResult.val);
+  if (!app) {
+    return NextResponse.json({ error: 'Bitbucket connector not configured' }, { status: 503 });
+  }
+
+  const tokenResponse = await fetch('https://bitbucket.org/site/oauth2/access_token', {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${app.clientId}:${app.clientSecret}`).toString('base64')}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ grant_type: 'authorization_code', code }),
+  });
+  const rawTokenBody = await tokenResponse.text().catch(() => '');
+  let tokenData: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(rawTokenBody);
+    if (typeof parsed === 'object' && parsed !== null) {
+      tokenData = parsed as Record<string, unknown>;
+    }
+  } catch {
+    // stays empty — the access_token check below fails on it
+  }
+  const accessToken = typeof tokenData.access_token === 'string' ? tokenData.access_token : '';
+  if (!tokenResponse.ok || !accessToken) {
+    logger.error('Bitbucket token exchange failed', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      status: tokenResponse.status,
+      // No token material reaches a failed exchange's body — safe to log
+      // verbatim, and exactly what a wrong consumer secret needs to diagnose.
+      body: rawTokenBody.slice(0, 300),
+    });
+    return NextResponse.json({ error: 'Token exchange failed' }, { status: 502 });
+  }
+
+  // Identity: Bitbucket tokens are opaque (no JWT claims to decode), so the
+  // /2.0/user read is the only source. Its uuid is the durable account key;
+  // the username is display material and rides in metadata.
+  const userResponse = await fetch('https://api.bitbucket.org/2.0/user', {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+  });
+  const userInfo: unknown = await userResponse.json().catch(() => null);
+  const user =
+    typeof userInfo === 'object' && userInfo !== null ? (userInfo as Record<string, unknown>) : {};
+  const accountId = typeof user.uuid === 'string' ? user.uuid : '';
+  if (!userResponse.ok || !accountId) {
+    logger.error('Bitbucket identity read failed', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      status: userResponse.status,
+    });
+    return NextResponse.json({ error: 'Could not read the Bitbucket account' }, { status: 502 });
+  }
+  const username = typeof user.username === 'string' ? user.username : '';
+  const displayName =
+    (typeof user.display_name === 'string' && user.display_name) || username || accountId;
+
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (!keyResult.ok) {
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+
+  const expiresIn = typeof tokenData.expires_in === 'number' ? tokenData.expires_in : 7200;
+  const stored = await setGrant(
+    ATLASSIAN_BITBUCKET,
+    tenant.id,
+    {
+      accountId,
+      clientId: app.clientId,
+      displayName,
+      subject,
+      accessToken,
+      refreshToken: typeof tokenData.refresh_token === 'string' ? tokenData.refresh_token : '',
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+      requestedScopes: (requestedScopes || app.scopes).split(' '),
+      // The consumer's fixed set, from the token response — Bitbucket cannot
+      // narrow at consent, so this is always the full configured list.
+      grantedScopes:
+        ((typeof tokenData.scopes === 'string' && tokenData.scopes.trim()) || null)?.split(/\s+/) ??
+        null,
+      metadata: { username },
+    },
+    keyResult.val
+  );
+  if (!stored.ok) {
+    logger.error('Failed to store Bitbucket grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+    });
+    return NextResponse.json({ error: 'Failed to store grant' }, { status: 500 });
+  }
+
+  logger.info('Bitbucket grant stored', {
+    component: 'auth/oauth',
+    tenantId: tenant.id,
+    subject,
+  });
+  recordAuditEvent({
+    tenantId: tenant.id,
+    actorSubject: subject,
+    action: 'connector.connected',
+    targetKind: 'connector',
+    targetLabel: ATLASSIAN_BITBUCKET,
+  });
+  return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
+}
+
+/**
  * Complete an OnBase connect. The token exchange runs through the OnBase
  * worker — the customer's Hyland IdP usually lives on a private network
  * this process must not dial — presenting the PKCE code_verifier the
@@ -1427,8 +1569,7 @@ async function handleOnBaseCallback(
   const expiresIn = typeof tokens.expires_in === 'number' ? tokens.expires_in : 3600;
   const scopeEcho = typeof tokens.scope === 'string' ? tokens.scope : null;
 
-  const idClaims =
-    typeof tokens.id_token === 'string' ? decodeJwtPayload(tokens.id_token) : null;
+  const idClaims = typeof tokens.id_token === 'string' ? decodeJwtPayload(tokens.id_token) : null;
   const accountId = typeof idClaims?.sub === 'string' ? idClaims.sub : null;
   if (!accountId) {
     // Without a subject there is no durable key to store the grant under.
@@ -1472,8 +1613,7 @@ async function handleOnBaseCallback(
       refreshToken,
       expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
       requestedScopes: (requestedScopes || `openid offline_access ${app.idpScopeName}`).split(' '),
-      grantedScopes:
-        scopesFromAccessToken(tokens.access_token) ?? scopeEcho?.split(/\s+/) ?? null,
+      grantedScopes: scopesFromAccessToken(tokens.access_token) ?? scopeEcho?.split(/\s+/) ?? null,
       metadata: { issuer: app.idpIssuer },
       subject,
     },

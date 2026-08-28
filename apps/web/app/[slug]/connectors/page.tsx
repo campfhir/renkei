@@ -17,6 +17,7 @@ import {
   ATLASSIAN,
   ATLASSIAN_JSM,
   ATLASSIAN_CONFLUENCE,
+  ATLASSIAN_BITBUCKET,
   MICROSOFT,
   ZOOM,
   ONBASE,
@@ -32,6 +33,7 @@ import {
   usableAtlassianCeiling,
   usableAtlassianJsmCeiling,
   usableAtlassianConfluenceCeiling,
+  usableAtlassianBitbucketCeiling,
 } from '@/lib/atlassian-scopes';
 
 /** The org's stored scopes string for a connector, from non-secret settings. */
@@ -119,80 +121,100 @@ export default async function ConnectorsPage({
   const confluenceCeiling = usableAtlassianConfluenceCeiling(
     storedScopes(settingsOf('atlassian-confluence'))
   );
+  const bitbucketCeiling = usableAtlassianBitbucketCeiling(
+    storedScopes(settingsOf('atlassian-bitbucket'))
+  );
   const webexCeiling = ceilingFrom(settingsOf(WEBEX_USER_CONNECTOR), DEFAULT_WEBEX_USER_SCOPES);
   const microsoftCeiling = ceilingFrom(settingsOf(MICROSOFT_CONNECTOR), DEFAULT_MICROSOFT_SCOPES);
   const zoomCeiling = ceilingFrom(settingsOf(ZOOM_CONNECTOR), DEFAULT_ZOOM_SCOPES);
 
   // The caller's own grants, server-rendered — connection state, and the
   // scopes they previously authorized (seeding the picker on reconnect).
-  const [atlassianGrant, webexGrant, jsmGrant, confluenceGrant, microsoftGrant, zoomGrant, onbaseGrant] =
-    dbResult.ok
-      ? await Promise.all([
-          enabled.has('atlassian')
-            ? dbResult.val
-                .selectFrom('provider_grants')
-                .select(['display_name', 'requested_scopes'])
-                .where('tenant_id', '=', tenant.id)
-                .where('provider', '=', ATLASSIAN)
-                .where('subject', '=', session.subject)
-                .executeTakeFirst()
-            : Promise.resolve(undefined),
-          enabled.has(WEBEX_USER_CONNECTOR)
-            ? dbResult.val
-                .selectFrom('provider_grants')
-                .select(['display_name', 'requested_scopes', 'metadata'])
-                .where('tenant_id', '=', tenant.id)
-                .where('provider', '=', WEBEX_USER)
-                .where('subject', '=', session.subject)
-                .executeTakeFirst()
-            : Promise.resolve(undefined),
-          enabled.has('atlassian-jsm')
-            ? dbResult.val
-                .selectFrom('provider_grants')
-                .select(['display_name', 'requested_scopes'])
-                .where('tenant_id', '=', tenant.id)
-                .where('provider', '=', ATLASSIAN_JSM)
-                .where('subject', '=', session.subject)
-                .executeTakeFirst()
-            : Promise.resolve(undefined),
-          enabled.has('atlassian-confluence')
-            ? dbResult.val
-                .selectFrom('provider_grants')
-                .select(['display_name', 'requested_scopes'])
-                .where('tenant_id', '=', tenant.id)
-                .where('provider', '=', ATLASSIAN_CONFLUENCE)
-                .where('subject', '=', session.subject)
-                .executeTakeFirst()
-            : Promise.resolve(undefined),
-          enabled.has(MICROSOFT_CONNECTOR)
-            ? dbResult.val
-                .selectFrom('provider_grants')
-                .select(['display_name', 'requested_scopes'])
-                .where('tenant_id', '=', tenant.id)
-                .where('provider', '=', MICROSOFT)
-                .where('subject', '=', session.subject)
-                .executeTakeFirst()
-            : Promise.resolve(undefined),
-          enabled.has(ZOOM_CONNECTOR)
-            ? dbResult.val
-                .selectFrom('provider_grants')
-                .select(['display_name', 'requested_scopes', 'granted_scopes'])
-                .where('tenant_id', '=', tenant.id)
-                .where('provider', '=', ZOOM)
-                .where('subject', '=', session.subject)
-                .executeTakeFirst()
-            : Promise.resolve(undefined),
-          enabled.has(ONBASE_CONNECTOR)
-            ? dbResult.val
-                .selectFrom('provider_grants')
-                .select(['display_name'])
-                .where('tenant_id', '=', tenant.id)
-                .where('provider', '=', ONBASE)
-                .where('subject', '=', session.subject)
-                .executeTakeFirst()
-            : Promise.resolve(undefined),
-        ])
-      : [undefined, undefined, undefined, undefined, undefined, undefined, undefined];
+  const [
+    atlassianGrant,
+    webexGrant,
+    jsmGrant,
+    confluenceGrant,
+    bitbucketGrant,
+    microsoftGrant,
+    zoomGrant,
+    onbaseGrant,
+  ] = dbResult.ok
+    ? await Promise.all([
+        enabled.has('atlassian')
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'requested_scopes'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', ATLASSIAN)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+        enabled.has(WEBEX_USER_CONNECTOR)
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'requested_scopes', 'metadata'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', WEBEX_USER)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+        enabled.has('atlassian-jsm')
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'requested_scopes'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', ATLASSIAN_JSM)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+        enabled.has('atlassian-confluence')
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'requested_scopes'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', ATLASSIAN_CONFLUENCE)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+        enabled.has('atlassian-bitbucket')
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'requested_scopes'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', ATLASSIAN_BITBUCKET)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+        enabled.has(MICROSOFT_CONNECTOR)
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'requested_scopes'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', MICROSOFT)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+        enabled.has(ZOOM_CONNECTOR)
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name', 'requested_scopes', 'granted_scopes'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', ZOOM)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+        enabled.has(ONBASE_CONNECTOR)
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', ONBASE)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+      ])
+    : [undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined];
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -245,9 +267,9 @@ export default async function ConnectorsPage({
       */}
         <div className="-mb-6 lg:columns-2 lg:gap-6">
           {/*
-            One Atlassian card holding all three products. Each keeps its own
-            connect/disconnect controls — they are three separate OAuth apps
-            with three separate grants, unlike Microsoft's single consent.
+            One Atlassian card holding all four products. Each keeps its own
+            connect/disconnect controls — they are four separate OAuth apps
+            with four separate grants, unlike Microsoft's single consent.
           */}
           <div className="mb-6 break-inside-avoid">
             <AtlassianConnector
@@ -277,6 +299,16 @@ export default async function ConnectorsPage({
                       displayName: confluenceGrant?.display_name ?? null,
                       ceiling: confluenceCeiling,
                       priorScopes: confluenceGrant?.requested_scopes ?? null,
+                    }
+                  : undefined
+              }
+              bitbucket={
+                enabled.has('atlassian-bitbucket')
+                  ? {
+                      connected: bitbucketGrant !== undefined && bitbucketGrant !== null,
+                      displayName: bitbucketGrant?.display_name ?? null,
+                      ceiling: bitbucketCeiling,
+                      priorScopes: bitbucketGrant?.requested_scopes ?? null,
                     }
                   : undefined
               }

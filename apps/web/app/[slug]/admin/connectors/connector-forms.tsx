@@ -13,7 +13,10 @@ import {
   ATLASSIAN_JSM_SCOPE_GROUPS,
   ATLASSIAN_CONFLUENCE_SCOPE_OPTIONS,
   ATLASSIAN_CONFLUENCE_SCOPE_GROUPS,
+  ATLASSIAN_BITBUCKET_SCOPE_OPTIONS,
+  ATLASSIAN_BITBUCKET_SCOPE_GROUPS,
   ATLASSIAN_OFFLINE_SCOPE,
+  BITBUCKET_ACCOUNT_SCOPE,
 } from '@/lib/atlassian-scopes';
 import {
   MICROSOFT_SCOPE_GROUPS,
@@ -229,6 +232,40 @@ function AtlassianConfluenceForm({ slug, origin }: { slug: string; origin: strin
   );
 }
 
+function AtlassianBitbucketForm({ slug, origin }: { slug: string; origin: string | null }) {
+  return (
+    <AtlassianAppForm
+      slug={slug}
+      origin={origin}
+      connector="atlassian-bitbucket"
+      title="Atlassian (Bitbucket)"
+      groups={ATLASSIAN_BITBUCKET_SCOPE_GROUPS}
+      options={ATLASSIAN_BITBUCKET_SCOPE_OPTIONS}
+      // No offline_access on Bitbucket — refresh tokens are always issued;
+      // `account` rides instead, for the identity read at connect time.
+      alwaysScope={BITBUCKET_ACCOUNT_SCOPE}
+      intro={
+        <>
+          An OAuth consumer from your Bitbucket workspace&apos;s settings (Workspace settings →
+          OAuth consumers). Its callback URL must be <CallbackUrl origin={origin} />, and it needs
+          &quot;This is a private consumer&quot; checked.
+        </>
+      }
+      scopeHint={
+        <>
+          This is the ceiling: users can narrow it when they connect, never widen it. Every checked
+          scope must also be granted to the consumer on bitbucket.org — and unlike the other
+          Atlassian apps, Bitbucket&apos;s consent screen always shows the consumer&apos;s full set:
+          narrowing here decides what Renkei USES, not what the token carries.{' '}
+          <code className="font-mono text-xs">{BITBUCKET_ACCOUNT_SCOPE}</code> is always included
+          (it is how Renkei learns whose grant it stored). Users who already connected keep their
+          old choices until they reconnect.
+        </>
+      }
+    />
+  );
+}
+
 /**
  * One form serves all three Atlassian app registrations — Jira, "Renkei JSM"
  * (the split exists because Atlassian's all-of scope enforcement times its
@@ -242,6 +279,9 @@ function AtlassianAppForm({
   title,
   groups,
   options,
+  alwaysScope = ATLASSIAN_OFFLINE_SCOPE,
+  intro,
+  scopeHint,
 }: {
   slug: string;
   origin: string | null;
@@ -249,6 +289,12 @@ function AtlassianAppForm({
   title: string;
   groups: ScopeGroup[];
   options: ScopeOption[];
+  /** The scope appended to every save, never offered as a checkbox. */
+  alwaysScope?: string;
+  /** Replaces the developer.atlassian.com blurb for non-3LO apps. */
+  intro?: ReactNode;
+  /** Replaces the default ceiling hint under the scope picker. */
+  scopeHint?: ReactNode;
 }) {
   const url = `/api/admin/${slug}/connectors/${connector}`;
   const [state, reload] = useConnectorConfig<AtlassianConfig>(url);
@@ -294,7 +340,7 @@ function AtlassianAppForm({
     setBusy(true);
     setNotice(null);
     setError(null);
-    const scopes = [...scopesOfOptions(options, checkedIds), ATLASSIAN_OFFLINE_SCOPE].join(' ');
+    const scopes = [...scopesOfOptions(options, checkedIds), alwaysScope].join(' ');
     const failure = await putJson(url, {
       clientId: clientId.trim(),
       // Blank means keep the stored secret — omit it from the payload.
@@ -336,16 +382,20 @@ function AtlassianAppForm({
       }
     >
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
-        The OAuth 2.0 (3LO) app from{' '}
-        <a
-          href="https://developer.atlassian.com/console/myapps/"
-          className="text-blue-600 hover:underline dark:text-blue-400"
-          target="_blank"
-          rel="noreferrer"
-        >
-          developer.atlassian.com
-        </a>
-        . Its callback URL must be <CallbackUrl origin={origin} />.
+        {intro ?? (
+          <>
+            The OAuth 2.0 (3LO) app from{' '}
+            <a
+              href="https://developer.atlassian.com/console/myapps/"
+              className="text-blue-600 hover:underline dark:text-blue-400"
+              target="_blank"
+              rel="noreferrer"
+            >
+              developer.atlassian.com
+            </a>
+            . Its callback URL must be <CallbackUrl origin={origin} />.
+          </>
+        )}
       </p>
       <form onSubmit={(e) => void save(e)} className="space-y-3">
         <div>
@@ -387,12 +437,16 @@ function AtlassianAppForm({
               onToggle={toggleOption}
             />
             <p className={hintClass}>
-              This is the ceiling: users can narrow it when they connect, never widen it. Every
-              checked scope must also be granted to the app on developer.atlassian.com — Atlassian
-              refuses the authorize step otherwise.{' '}
-              <code className="font-mono text-xs">{ATLASSIAN_OFFLINE_SCOPE}</code> is always
-              included (without it grants die within an hour). Users who already connected keep
-              their old scopes until they reconnect.
+              {scopeHint ?? (
+                <>
+                  This is the ceiling: users can narrow it when they connect, never widen it. Every
+                  checked scope must also be granted to the app on developer.atlassian.com —
+                  Atlassian refuses the authorize step otherwise.{' '}
+                  <code className="font-mono text-xs">{ATLASSIAN_OFFLINE_SCOPE}</code> is always
+                  included (without it grants die within an hour). Users who already connected keep
+                  their old scopes until they reconnect.
+                </>
+              )}
             </p>
           </fieldset>
         </div>
@@ -1222,7 +1276,9 @@ function OnBaseForm({ slug, origin }: { slug: string; origin: string | null }) {
         );
         return;
       }
-      const side = (value: unknown): { ok: boolean; error?: string; status?: number; tokenEndpoint?: string } => {
+      const side = (
+        value: unknown
+      ): { ok: boolean; error?: string; status?: number; tokenEndpoint?: string } => {
         const raw: Record<string, unknown> =
           typeof value === 'object' && value !== null ? { ...value } : {};
         return {
@@ -1299,8 +1355,8 @@ function OnBaseForm({ slug, origin }: { slug: string; origin: string | null }) {
             className={`${inputClass} font-mono`}
           />
           <p className={hintClass}>
-            OIDC discovery is read from
-            &lt;issuer&gt;/.well-known/openid-configuration by the OnBase worker.
+            OIDC discovery is read from &lt;issuer&gt;/.well-known/openid-configuration by the
+            OnBase worker.
           </p>
         </div>
         <div>
@@ -1341,7 +1397,11 @@ function OnBaseForm({ slug, origin }: { slug: string; origin: string | null }) {
             type="password"
             value={clientSecret}
             onChange={(e) => setClientSecret(e.target.value)}
-            placeholder={config?.hasClientSecret ? 'Stored — leave blank to keep' : 'Public PKCE client: leave blank'}
+            placeholder={
+              config?.hasClientSecret
+                ? 'Stored — leave blank to keep'
+                : 'Public PKCE client: leave blank'
+            }
             className={`${inputClass} font-mono`}
           />
           {config?.hasClientSecret && (
@@ -1384,12 +1444,24 @@ function OnBaseForm({ slug, origin }: { slug: string; origin: string | null }) {
         )}
         {testResult !== null && typeof testResult === 'object' && (
           <ul className="space-y-1 text-sm">
-            <li className={testResult.idp.ok ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}>
+            <li
+              className={
+                testResult.idp.ok
+                  ? 'text-green-700 dark:text-green-300'
+                  : 'text-red-700 dark:text-red-300'
+              }
+            >
               {testResult.idp.ok
                 ? 'IdP reachable — discovery answered.'
                 : `IdP: ${testResult.idp.error ?? 'unreachable'}`}
             </li>
-            <li className={testResult.api.ok ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}>
+            <li
+              className={
+                testResult.api.ok
+                  ? 'text-green-700 dark:text-green-300'
+                  : 'text-red-700 dark:text-red-300'
+              }
+            >
               {testResult.api.ok
                 ? `API server reachable${testResult.api.status === 401 ? ' — it demands authentication, as expected' : ''}.`
                 : `API server: ${testResult.api.error ?? 'unreachable'}`}
@@ -1415,6 +1487,7 @@ export default function ConnectorForms({
       <AtlassianForm slug={slug} origin={origin} />
       <AtlassianJsmForm slug={slug} origin={origin} />
       <AtlassianConfluenceForm slug={slug} origin={origin} />
+      <AtlassianBitbucketForm slug={slug} origin={origin} />
       <WebexUserForm slug={slug} origin={origin} />
       <MicrosoftForm slug={slug} origin={origin} />
       <ZoomForm slug={slug} tenantId={tenantId} origin={origin} />

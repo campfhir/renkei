@@ -162,6 +162,38 @@ describe('listAvailableTools', () => {
     expect(tools.some((name) => name.startsWith('outlook_'))).toBe(false);
     expect(tools.some((name) => name.startsWith('zoom_'))).toBe(false);
     expect(tools.some((name) => name.startsWith('confluence_'))).toBe(false);
+    expect(tools.some((name) => name.startsWith('bitbucket_'))).toBe(false);
+  });
+
+  it('includes Bitbucket once its grant exists, narrowed to requested ∩ granted', async () => {
+    // The Zoom arrangement: the token always carries the consumer's full
+    // scope set, so the user's narrowing lives in requested_scopes and the
+    // intersection is what registers. Here the user kept repository reads
+    // and pull requests but dropped the write and pipeline bundles.
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      'atlassian-bitbucket': {
+        requested_scopes: ['account', 'repository', 'project', 'pullrequest'],
+        granted_scopes: [
+          'account',
+          'repository',
+          'repository:write',
+          'project',
+          'pullrequest',
+          'pullrequest:write',
+          'pipeline',
+          'pipeline:write',
+        ],
+      },
+    };
+    const tools = namesOf(await listAvailableTools('tenant-1', 'subject-1'));
+    expect(tools).toContain('bitbucket_list_repositories');
+    expect(tools).toContain('bitbucket_list_pull_requests');
+    expect(tools.some((name) => name.startsWith('bitbucket_'))).toBe(true);
+    // Dropped bundles register nothing, whatever the token carries.
+    expect(tools).not.toContain('bitbucket_create_branch');
+    expect(tools).not.toContain('bitbucket_create_pull_request');
+    expect(tools).not.toContain('bitbucket_list_pipelines');
   });
 
   it('includes Outlook once Microsoft is connected', async () => {
