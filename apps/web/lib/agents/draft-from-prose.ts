@@ -193,7 +193,15 @@ function promptOf(
     .filter((tool) => !tool.appOnly)
     .map(
       (tool) =>
-        `- ${tool.name} (${friendlyToolName(tool.name, tool.title)}): ${(tool.description ?? '').slice(0, 100)}` +
+        // The FULL description, deliberately: the drafting model never sees
+        // input schemas, so a tool's description is its only account of what
+        // the tool needs and offers. This used to clip at 100 characters,
+        // which cut most descriptions mid-sentence — steps were drafted
+        // against tools whose requirements (a reporter input, a bulk
+        // variant, a "prefer X over Y" rule) lived in the part the model
+        // never read. Whitespace flattens so each tool stays one line.
+        `- ${tool.name} (${friendlyToolName(tool.name, tool.title)}): ` +
+        `${(tool.description ?? '').replace(/\s+/g, ' ').trim()}` +
         ` | failure codes: ${tool.outcomes.failures.map((failure) => failure.code).join(', ')}`
     )
     .join('\n');
