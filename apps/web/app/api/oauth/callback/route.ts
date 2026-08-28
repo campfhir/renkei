@@ -1372,6 +1372,15 @@ async function handleAtlassianConfluenceCallback(
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
 
+/** The granted-scope list from a Bitbucket token response, either spelling. */
+function grantedScopesOf(tokenData: Record<string, unknown>): string[] | null {
+  const raw =
+    (typeof tokenData.scopes === 'string' && tokenData.scopes.trim()) ||
+    (typeof tokenData.scope === 'string' && tokenData.scope.trim()) ||
+    '';
+  return raw ? raw.split(/\s+/) : null;
+}
+
 /**
  * Complete a Bitbucket connect — the fourth Atlassian app, on Bitbucket's
  * own OAuth system rather than the 3LO platform. The token endpoint wants
@@ -1470,9 +1479,10 @@ async function handleAtlassianBitbucketCallback(
       requestedScopes: (requestedScopes || app.scopes).split(' '),
       // The consumer's fixed set, from the token response — Bitbucket cannot
       // narrow at consent, so this is always the full configured list.
-      grantedScopes:
-        ((typeof tokenData.scopes === 'string' && tokenData.scopes.trim()) || null)?.split(/\s+/) ??
-        null,
+      // Read under both spellings: Bitbucket documents `scopes`, RFC 6749
+      // says `scope`, and a NULL here (observed in the field) quietly turns
+      // the requested ∩ granted narrowing into bare-requested.
+      grantedScopes: grantedScopesOf(tokenData),
       metadata: { username },
     },
     keyResult.val
