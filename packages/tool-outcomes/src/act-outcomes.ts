@@ -746,6 +746,36 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Added a task to a Bitbucket pull request',
     short: 'Added a pull request task',
   },
+  bitbucket_create_project: {
+    category: 'created',
+    entity: 'project',
+    label: 'Created a Bitbucket project',
+    short: 'Created a project',
+  },
+  bitbucket_update_project: {
+    category: 'updated',
+    entity: 'project',
+    label: 'Updated a Bitbucket project',
+    short: 'Edited a project',
+  },
+  bitbucket_delete_project: {
+    category: 'deleted',
+    entity: 'project',
+    label: 'Deleted a Bitbucket project',
+    short: 'Deleted a project',
+  },
+  bitbucket_grant_repository_permission: {
+    category: 'updated',
+    entity: 'repository access',
+    label: 'Granted access to a Bitbucket repository',
+    short: 'Granted repository access',
+  },
+  bitbucket_revoke_repository_permission: {
+    category: 'updated',
+    entity: 'repository access',
+    label: 'Revoked access to a Bitbucket repository',
+    short: 'Revoked repository access',
+  },
   bitbucket_create_branch: {
     category: 'created',
     entity: 'branch',

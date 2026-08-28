@@ -18,6 +18,7 @@ import type { MCPToolContext } from '../common';
 import { bitbucketScopeFor } from './scopes';
 import type { BitbucketAuth } from './bitbucket-auth';
 import { registerRepositoryTools } from './repositories';
+import { registerProjectTools } from './projects';
 import { registerPullRequestTools } from './pullrequests';
 import { registerPipelineTools } from './pipelines';
 
@@ -33,6 +34,7 @@ export async function registerBitbucketTools(
   );
 
   await registerRepositoryTools(server, context, auth);
+  await registerProjectTools(server, context, auth);
   await registerPullRequestTools(server, context, auth);
   await registerPipelineTools(server, context, auth);
 }
