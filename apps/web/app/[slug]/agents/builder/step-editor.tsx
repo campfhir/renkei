@@ -10,10 +10,9 @@ import { toolSegments, type AgentStep, type InstructionSegment } from '@renkei/a
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { FailurePanel } from './failure-panel';
 import { ChipEditor } from './chip-editor';
+import { FieldIssues, exceptFields, fieldClass, forField, type NodeIssue } from './field-issues';
 import type { ToolOption, VariableOption } from './options';
 
-const inputClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
 const labelClass = 'block text-sm font-medium mb-1';
 
 /**
@@ -58,7 +57,7 @@ export interface StepEditorProps {
   toolDescriptors: Map<string, ToolDescriptor>;
   variables: VariableOption[];
   invalidVars?: ReadonlySet<string>;
-  issues: string[];
+  issues: NodeIssue[];
 }
 
 export function StepEditor({
@@ -92,7 +91,16 @@ export function StepEditor({
   };
 
   const descriptor = step.tool ? toolDescriptors.get(step.tool) : undefined;
-  const failureIssuePresent = issues.length > 0 && step.failureHandling.length > 0;
+  const nameIssues = forField(issues, 'name');
+  // The step's tool IS a chip in the instruction, so tool issues point at
+  // the same field the author must edit.
+  const instructionIssues = forField(issues, 'instruction', 'tool');
+  const saveAsIssues = forField(issues, 'saveAs');
+  const failureIssues = issues.filter(
+    (issue) => issue.field === 'failureHandling' || issue.field.startsWith('failureHandling.')
+  );
+  const otherIssues = exceptFields(issues, 'name', 'instruction', 'tool', 'saveAs', 'failureHandling');
+  const failureIssuePresent = failureIssues.length > 0 && step.failureHandling.length > 0;
   const failureHint = (() => {
     const retries = step.failureHandling.filter((entry) => entry.action === 'retry').length;
     const benign = step.failureHandling.filter((entry) => entry.action === 'stop-quiet').length;
@@ -122,12 +130,14 @@ export function StepEditor({
         </label>
         <input
           id={`step-name-${step.id}`}
-          className={inputClass}
+          className={fieldClass(nameIssues.length > 0)}
+          aria-invalid={nameIssues.length > 0 || undefined}
           value={step.name}
           maxLength={80}
           placeholder="e.g. Find the ticket"
           onChange={(event) => onChange({ ...step, name: event.target.value })}
         />
+        <FieldIssues messages={nameIssues} />
       </div>
 
       <div>
@@ -141,7 +151,9 @@ export function StepEditor({
           placeholder="Describe it in plain words — type / to add a skill or a detail"
           ariaLabel={`Instruction for step ${ordinal}`}
           invalidVars={invalidVars}
+          invalid={instructionIssues.length > 0}
         />
+        <FieldIssues messages={instructionIssues} />
       </div>
 
       <div>
@@ -153,7 +165,8 @@ export function StepEditor({
         </label>
         <input
           id={`step-saveas-${step.id}`}
-          className={inputClass}
+          className={fieldClass(saveAsIssues.length > 0)}
+          aria-invalid={saveAsIssues.length > 0 || undefined}
           value={step.saveAs ?? ''}
           placeholder={`e.g. ${step.name.trim() || `Step ${ordinal}`} result`}
           onChange={(event) => {
@@ -163,6 +176,7 @@ export function StepEditor({
             onChange(saveAs ? { ...step, saveAs } : { ...step, saveAs: undefined });
           }}
         />
+        <FieldIssues messages={saveAsIssues} />
       </div>
 
       {descriptor ? (
@@ -200,6 +214,7 @@ export function StepEditor({
             tools={tools}
             variables={variables}
             invalidVars={invalidVars}
+            issues={failureIssues}
           />
         </details>
       ) : step.tool === null ? (
@@ -209,14 +224,13 @@ export function StepEditor({
         </p>
       ) : null}
 
-      {issues.length > 0 ? (
-        <ul className="space-y-1">
-          {issues.map((issue) => (
-            <li key={issue} className="text-xs text-red-600 dark:text-red-400">
-              {issue}
-            </li>
-          ))}
-        </ul>
+      {/* Only what no field above claimed — everything else is shown at
+          its input. */}
+      <FieldIssues messages={otherIssues} />
+      {/* Failure issues live inside the disclosure; when the step has no
+          tool the disclosure doesn't render, so they must surface here. */}
+      {descriptor === undefined ? (
+        <FieldIssues messages={failureIssues.map((issue) => issue.message)} />
       ) : null}
     </div>
   );

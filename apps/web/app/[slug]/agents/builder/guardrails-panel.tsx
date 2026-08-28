@@ -26,8 +26,10 @@ export interface BlockableTool {
   connector: string | null;
 }
 
-const textareaClass =
-  'mt-2 w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs leading-relaxed dark:border-gray-700 dark:bg-gray-900';
+const textareaClass = (invalid: boolean) =>
+  `mt-2 w-full rounded-md border bg-white px-3 py-2 font-mono text-xs leading-relaxed dark:bg-gray-900 ${
+    invalid ? 'border-red-400 dark:border-red-700' : 'border-gray-300 dark:border-gray-700'
+  }`;
 
 export function GuardrailsPanel({
   guardrails,
@@ -87,7 +89,8 @@ export function GuardrailsPanel({
           'e.g.\n## Role\nYou draft the weekly status report…\n\n## Rules\n- Draft only — never send anything without approval.\n- Never fabricate numbers; write "(not set)" instead.'
         }
         aria-label="Guardrails and context"
-        className={textareaClass}
+        aria-invalid={issues.length > 0 || undefined}
+        className={textareaClass(issues.length > 0)}
       />
 
       <div className="mt-3">

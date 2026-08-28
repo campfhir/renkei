@@ -32,6 +32,7 @@ import {
 } from '@renkei/agents';
 import type { ToolOutcomes } from '@/lib/mcp-tools/outcomes';
 import { ChipEditor } from './chip-editor';
+import { FieldIssues, forField, type NodeIssue } from './field-issues';
 import type { ToolOption, VariableOption } from './options';
 
 const CORRECTIVE_TOOL_LIMIT = 10;
@@ -50,6 +51,12 @@ export interface FailurePanelProps {
   tools: ToolOption[];
   variables: VariableOption[];
   invalidVars?: ReadonlySet<string>;
+  /**
+   * Validation issues scoped to this step's handling, fields relative to
+   * the step ('failureHandling' or 'failureHandling.N') — each line shows
+   * and outlines its own.
+   */
+  issues?: NodeIssue[];
 }
 
 /** An emptied note must not survive as `guidance: []` — see the header. */
@@ -69,6 +76,7 @@ export function FailurePanel({
   tools,
   variables,
   invalidVars,
+  issues = [],
 }: FailurePanelProps) {
   const [adding, setAdding] = useState(false);
   const [customWhen, setCustomWhen] = useState('');
@@ -149,18 +157,26 @@ export function FailurePanel({
       <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-gray-500">
         If something goes wrong
       </p>
+      {/* Handling-wide issues (e.g. "this step has no skill") — anything
+          entry-scoped renders inside its own line below. */}
+      <FieldIssues messages={issues.filter((i) => i.field === 'failureHandling').map((i) => i.message)} />
       <ul className="mt-2 space-y-2">
-        {handling.map((entry) => {
+        {handling.map((entry, index) => {
           const enumerated = enumeratedByCode.get(entry.outcome);
           const isCustom = entry.when !== undefined;
           const label = enumerated?.label ?? entry.outcome;
           const retriable = isCustom || enumerated === undefined || enumerated.retriable;
           const isRetry = entry.action === 'retry';
+          const entryIssues = forField(issues, `failureHandling.${index}`);
           return (
             <li
               key={entry.outcome}
               data-outcome-line
-              className="rounded-md border border-gray-200 bg-white p-2 dark:border-gray-800 dark:bg-gray-950"
+              className={`rounded-md border bg-white p-2 dark:bg-gray-950 ${
+                entryIssues.length > 0
+                  ? 'border-red-400 dark:border-red-700'
+                  : 'border-gray-200 dark:border-gray-800'
+              }`}
             >
               <div className="flex flex-wrap items-center gap-2">
                 <span
@@ -301,6 +317,7 @@ export function FailurePanel({
                   />
                 </div>
               ) : null}
+              <FieldIssues messages={entryIssues} />
             </li>
           );
         })}

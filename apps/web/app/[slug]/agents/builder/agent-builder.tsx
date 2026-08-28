@@ -62,13 +62,11 @@ import { GroupEditor } from './group-editor';
 import { TerminalEditor } from './terminal-editor';
 import { ApprovalEditor } from './approval-editor';
 import { GuardrailsPanel } from './guardrails-panel';
+import { FieldIssues, fieldClass } from './field-issues';
 import { summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
 import { TriggerChooser, TriggerEditor } from './trigger-editor';
 import type { CalendarOption } from './schedule-picker';
 import { SaveConfirmPanel } from './review-panel';
-
-const inputClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
 
 export interface AgentBuilderProps {
   slug: string;
@@ -1209,17 +1207,14 @@ export function AgentBuilder({
                 </label>
                 <input
                   id="agent-name"
-                  className={inputClass}
+                  className={fieldClass(issuesAt('name').length > 0)}
+                  aria-invalid={issuesAt('name').length > 0 || undefined}
                   value={name}
                   maxLength={200}
                   placeholder="e.g. Ticket from urgent email"
                   onChange={(event) => setName(event.target.value)}
                 />
-                {issuesAt('name').map((message) => (
-                  <p key={message} className="mt-1 text-xs text-red-600 dark:text-red-400">
-                    {message}
-                  </p>
-                ))}
+                <FieldIssues messages={issuesAt('name')} />
               </div>
 
               {prosePanel}

@@ -505,23 +505,28 @@ export function moveTargets(nodes: AgentStepNode[], id: string): MoveTarget[] {
  * nested step owns its own problems and the enclosing branch owns only what
  * is genuinely its own (`…condition`, `…paths.0.name`). Issues at bare
  * `steps`, `name`, or `triggers*` belong to no node and are not returned.
+ *
+ * Each routed issue keeps the path REMAINDER as its `field` ('name',
+ * 'failureHandling.1', '' for the node itself) so the editors can style
+ * the offending input instead of leaving the reader to guess.
  */
 export function issuesByNode(
   nodes: AgentStepNode[],
   issues: ValidationIssue[]
-): Map<string, string[]> {
+): Map<string, { field: string; message: string }[]> {
   const prefixes = walkSteps(nodes)
     .map(({ node, path }) => ({ id: node.id, prefix: path }))
     // Longest first: the first prefix that matches IS the longest match.
     .sort((a, b) => b.prefix.length - a.prefix.length);
-  const out = new Map<string, string[]>();
+  const out = new Map<string, { field: string; message: string }[]>();
   for (const issue of issues) {
     const owner = prefixes.find(
       ({ prefix }) => issue.path === prefix || issue.path.startsWith(`${prefix}.`)
     );
     if (!owner) continue;
     const list = out.get(owner.id) ?? [];
-    list.push(issue.message);
+    const field = issue.path === owner.prefix ? '' : issue.path.slice(owner.prefix.length + 1);
+    list.push({ field, message: issue.message });
     out.set(owner.id, list);
   }
   return out;

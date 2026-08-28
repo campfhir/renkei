@@ -18,10 +18,9 @@ import {
   type UntilLoopStep,
 } from '@renkei/agents';
 import { ChipEditor } from './chip-editor';
+import { FieldIssues, exceptFields, fieldClass, forField, type NodeIssue } from './field-issues';
 import type { VariableOption } from './options';
 
-const inputClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
 const labelClass = 'block text-sm font-medium mb-1';
 
 const ITERATION_CHOICES = [1, 2, 3, 5, 10, 15, 20, 25];
@@ -37,7 +36,7 @@ export function LoopEditor({
   onChange: (loop: LoopStep) => void;
   variables: VariableOption[];
   invalidVars?: ReadonlySet<string>;
-  issues: string[];
+  issues: NodeIssue[];
 }) {
   // The collect source must be a result saved INSIDE the body — offer
   // exactly those, which doubles as the explanation of the rule.
@@ -86,6 +85,18 @@ export function LoopEditor({
     ? ITERATION_CHOICES
     : [...ITERATION_CHOICES, loop.maxIterations].sort((a, b) => a - b);
 
+  const nameIssues = forField(issues, 'name');
+  const conditionIssues = forField(issues, 'condition');
+  const otherIssues = exceptFields(
+    issues,
+    'name',
+    'condition',
+    'itemsVar',
+    'itemVar',
+    'collectFrom',
+    'collectVar'
+  );
+
   return (
     <div className="space-y-3">
       <div>
@@ -94,12 +105,14 @@ export function LoopEditor({
         </label>
         <input
           id={`loop-name-${loop.id}`}
-          className={inputClass}
+          className={fieldClass(nameIssues.length > 0)}
+          aria-invalid={nameIssues.length > 0 || undefined}
           value={loop.name}
           maxLength={80}
           placeholder="e.g. Handle each ticket"
           onChange={(event) => onChange({ ...loop, name: event.target.value })}
         />
+        <FieldIssues messages={nameIssues} />
       </div>
 
       <div>
@@ -146,7 +159,8 @@ export function LoopEditor({
             </label>
             <select
               id={`loop-items-${loop.id}`}
-              className={inputClass}
+              className={fieldClass(forField(issues, 'itemsVar').length > 0)}
+              aria-invalid={forField(issues, 'itemsVar').length > 0 || undefined}
               value={loop.itemsVar}
               onChange={(event) => onChange({ ...loop, itemsVar: event.target.value })}
             >
@@ -157,6 +171,7 @@ export function LoopEditor({
                 </option>
               ))}
             </select>
+            <FieldIssues messages={forField(issues, 'itemsVar')} />
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
               A result an earlier step saved as a list of items — one round runs per item.
             </p>
@@ -167,12 +182,14 @@ export function LoopEditor({
             </label>
             <input
               id={`loop-item-${loop.id}`}
-              className={inputClass}
+              className={fieldClass(forField(issues, 'itemVar').length > 0)}
+              aria-invalid={forField(issues, 'itemVar').length > 0 || undefined}
               value={loop.itemVar}
               maxLength={64}
               placeholder="e.g. ticket"
               onChange={(event) => onChange({ ...loop, itemVar: event.target.value })}
             />
+            <FieldIssues messages={forField(issues, 'itemVar')} />
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
               Steps inside the loop reference the current item under this name.
             </p>
@@ -192,7 +209,9 @@ export function LoopEditor({
             placeholder="A yes/no question checked after each round — type / to reference a saved detail"
             ariaLabel={`Stop condition for loop ${loop.name || 'unnamed'}`}
             invalidVars={invalidVars}
+            invalid={conditionIssues.length > 0}
           />
+          <FieldIssues messages={conditionIssues} />
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Checked AFTER each round — the steps inside always run at least once. If the round limit
             is reached and this still isn’t true, the run fails.
@@ -206,7 +225,7 @@ export function LoopEditor({
         </label>
         <select
           id={`loop-max-${loop.id}`}
-          className={inputClass}
+          className={fieldClass(false)}
           value={loop.maxIterations}
           onChange={(event) => onChange({ ...loop, maxIterations: Number(event.target.value) })}
         >
@@ -246,7 +265,8 @@ export function LoopEditor({
               </label>
               <select
                 id={`loop-collect-from-${loop.id}`}
-                className={inputClass}
+                className={fieldClass(forField(issues, 'collectFrom').length > 0)}
+                aria-invalid={forField(issues, 'collectFrom').length > 0 || undefined}
                 value={loop.collectFrom ?? ''}
                 onChange={(event) => onChange({ ...loop, collectFrom: event.target.value })}
               >
@@ -257,6 +277,7 @@ export function LoopEditor({
                   </option>
                 ))}
               </select>
+              <FieldIssues messages={forField(issues, 'collectFrom')} />
               {bodySaveNames.length === 0 ? (
                 <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
                   No step inside this loop saves a result yet — add one, name its result, then pick
@@ -270,12 +291,14 @@ export function LoopEditor({
               </label>
               <input
                 id={`loop-collect-var-${loop.id}`}
-                className={inputClass}
+                className={fieldClass(forField(issues, 'collectVar').length > 0)}
+                aria-invalid={forField(issues, 'collectVar').length > 0 || undefined}
                 value={loop.collectVar}
                 maxLength={64}
                 placeholder="e.g. summaries"
                 onChange={(event) => onChange({ ...loop, collectVar: event.target.value })}
               />
+              <FieldIssues messages={forField(issues, 'collectVar')} />
             </div>
           </div>
         ) : null}
@@ -287,15 +310,9 @@ export function LoopEditor({
         </p>
       ) : null}
 
-      {issues.length > 0 ? (
-        <ul className="space-y-1">
-          {issues.map((issue) => (
-            <li key={issue} className="text-xs text-red-600 dark:text-red-400">
-              {issue}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {/* Only what no field above claimed — everything else is shown at
+          its input. */}
+      <FieldIssues messages={otherIssues} />
     </div>
   );
 }

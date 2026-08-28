@@ -13,10 +13,9 @@ import RemoveButton from '@/components/remove-button';
 import { MAX_BRANCH_PATHS, type BranchPath, type BranchStep } from '@renkei/agents';
 import { randomUUID } from '@/lib/agents/uuid';
 import { ChipEditor } from './chip-editor';
+import { FieldIssues, exceptFields, fieldClass, forField, type NodeIssue } from './field-issues';
 import type { VariableOption } from './options';
 
-const inputClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
 const labelClass = 'block text-sm font-medium mb-1';
 
 export function BranchEditor({
@@ -30,7 +29,7 @@ export function BranchEditor({
   onChange: (branch: BranchStep) => void;
   variables: VariableOption[];
   invalidVars?: ReadonlySet<string>;
-  issues: string[];
+  issues: NodeIssue[];
 }) {
   const renamePath = (index: number, name: string) => {
     onChange({
@@ -87,6 +86,9 @@ export function BranchEditor({
   };
 
   const twoWay = branch.paths.length === 2;
+  const nameIssues = forField(issues, 'name');
+  const conditionIssues = forField(issues, 'condition');
+  const otherIssues = exceptFields(issues, 'name', 'condition', 'paths', 'failurePath');
 
   return (
     <div className="space-y-3">
@@ -96,12 +98,14 @@ export function BranchEditor({
         </label>
         <input
           id={`branch-name-${branch.id}`}
-          className={inputClass}
+          className={fieldClass(nameIssues.length > 0)}
+          aria-invalid={nameIssues.length > 0 || undefined}
           value={branch.name}
           maxLength={80}
           placeholder="e.g. Was a ticket found?"
           onChange={(event) => onChange({ ...branch, name: event.target.value })}
         />
+        <FieldIssues messages={nameIssues} />
       </div>
 
       <div>
@@ -121,7 +125,9 @@ export function BranchEditor({
           }
           ariaLabel={`Condition for branch ${branch.name || 'unnamed'}`}
           invalidVars={invalidVars}
+          invalid={conditionIssues.length > 0}
         />
+        <FieldIssues messages={conditionIssues} />
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           {twoWay
             ? 'The agent answers yes or no from what it already knows; after either path finishes, the flow continues below the branch.'
@@ -141,14 +147,16 @@ export function BranchEditor({
               : isLast
                 ? 'Otherwise'
                 : `Path ${index + 1}`;
+            const pathIssues = forField(issues, `paths.${index}`);
             return (
-              <li key={path.id} className="flex items-center gap-2">
+              <li key={path.id} className="flex flex-wrap items-center gap-2">
                 <span className="w-16 shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400">
                   {caption}
                 </span>
                 <input
                   aria-label={`Name of path ${index + 1}`}
-                  className={inputClass}
+                  aria-invalid={pathIssues.length > 0 || undefined}
+                  className={`min-w-0 flex-1 ${fieldClass(pathIssues.length > 0)}`}
                   value={path.name}
                   maxLength={80}
                   onChange={(event) => renamePath(index, event.target.value)}
@@ -177,6 +185,11 @@ export function BranchEditor({
                   disabled={branch.paths.length <= 2}
                   onClick={() => removePath(index)}
                 />
+                {pathIssues.length > 0 ? (
+                  <div className="w-full pl-[4.5rem]">
+                    <FieldIssues messages={pathIssues} />
+                  </div>
+                ) : null}
               </li>
             );
           })}
@@ -217,7 +230,8 @@ export function BranchEditor({
             </label>
             <input
               id={`branch-failure-${branch.id}`}
-              className={inputClass}
+              className={fieldClass(forField(issues, 'failurePath').length > 0)}
+              aria-invalid={forField(issues, 'failurePath').length > 0 || undefined}
               value={branch.failurePath.name}
               maxLength={80}
               onChange={(event) =>
@@ -229,19 +243,13 @@ export function BranchEditor({
                 })
               }
             />
+            <FieldIssues messages={forField(issues, 'failurePath')} />
           </div>
         ) : null}
       </div>
 
-      {issues.length > 0 ? (
-        <ul className="space-y-1">
-          {issues.map((issue) => (
-            <li key={issue} className="text-xs text-red-600 dark:text-red-400">
-              {issue}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {/* Only what no field above claimed (path-count rules and the like). */}
+      <FieldIssues messages={otherIssues} />
     </div>
   );
 }
