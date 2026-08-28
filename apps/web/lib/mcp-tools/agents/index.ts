@@ -38,11 +38,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
 import { savesByPathCoverage, type AgentStepsDoc } from '@renkei/agents';
-import {
-  readAgentMemory,
-  renderAgentKnowledgeNotes,
-  renderAgentMemory,
-} from '@renkei/agents/memory';
+import { readAgentMemory } from '@renkei/agents/memory';
 import { sql } from 'kysely';
 import type { MCPToolContext } from '../common';
 import { getAgent, listAgents, type StoredAgent } from '@/lib/agents/store';
@@ -207,9 +203,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Read — One agent, described',
       description:
         'The human-readable rendering of one of your agents: the steps outline, guardrails, ' +
-        'blocked skills, the variables it saves (for chaining), triggers, agents chained ' +
-        'after it, and the knowledge and memory its runs carry. For the exact definition to ' +
-        'edit, use agent_get.',
+        'blocked skills, the variables it saves (for chaining), triggers, and agents ' +
+        'chained after it. For the exact definition to edit, use agent_get; for what its ' +
+        'runs carry, agent_knowledge_list and agent_memory_list.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -235,11 +231,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .where(sql<string>`t.config->>'callerAgentId'`, '=', agent.id)
         .where('a.owner_subject', '=', context.subject)
         .execute();
-
-      const [knowledge, memory] = await Promise.all([
-        renderAgentKnowledgeNotes(db, context.tenantId, agent.id),
-        readAgentMemory(db, context.tenantId, agent.id).then(renderAgentMemory),
-      ]);
 
       const lines = [
         `${agent.name} — ${agent.enabled ? 'ON' : 'off'} (agentId: ${agent.id})`,
@@ -270,8 +261,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               ...chained.map((row) => `- ${row.name} (agentId: ${row.id})`),
             ]
           : []),
-        ...(knowledge ? ['', 'Knowledge notes (as injected into runs):', knowledge] : []),
-        ...(memory ? ['', 'Memory (as injected into runs):', memory] : []),
       ];
       return textResult(lines.join('\n'));
     }
