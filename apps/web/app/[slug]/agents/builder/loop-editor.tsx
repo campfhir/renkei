@@ -20,10 +20,9 @@ import {
 import { ChipEditor } from './chip-editor';
 import { FieldIssues, exceptFields, fieldClass, forField, type NodeIssue } from './field-issues';
 import type { VariableOption } from './options';
+import { useNumericInput } from '@/lib/use-numeric-input';
 
 const labelClass = 'block text-sm font-medium mb-1';
-
-const ITERATION_CHOICES = [1, 2, 3, 5, 10, 15, 20, 25];
 
 export function LoopEditor({
   loop,
@@ -81,9 +80,16 @@ export function LoopEditor({
     }
   };
 
-  const iterationChoices = ITERATION_CHOICES.includes(loop.maxIterations)
-    ? ITERATION_CHOICES
-    : [...ITERATION_CHOICES, loop.maxIterations].sort((a, b) => a - b);
+  // A number field rather than a list of choices: the old select offered
+  // [1, 2, 3, 5, 10, 15, 20, 25] and had to splice in the current value
+  // whenever it was none of them — which it can be, because an agent
+  // authored over MCP is only bound by the validator's 1..MAX cap. Anyone
+  // wanting 7 rounds could see 7 but never pick it.
+  const iterationsField = useNumericInput(
+    loop.maxIterations,
+    (maxIterations) => onChange({ ...loop, maxIterations }),
+    (candidate) => Math.min(Math.max(Math.round(candidate), 1), MAX_LOOP_ITERATIONS)
+  );
 
   const nameIssues = forField(issues, 'name');
   const conditionIssues = forField(issues, 'condition');
@@ -223,20 +229,21 @@ export function LoopEditor({
         <label className={labelClass} htmlFor={`loop-max-${loop.id}`}>
           At most how many rounds?
         </label>
-        <select
-          id={`loop-max-${loop.id}`}
-          className={fieldClass(false)}
-          value={loop.maxIterations}
-          onChange={(event) => onChange({ ...loop, maxIterations: Number(event.target.value) })}
-        >
-          {iterationChoices
-            .filter((choice) => choice <= MAX_LOOP_ITERATIONS)
-            .map((choice) => (
-              <option key={choice} value={choice}>
-                {choice} round{choice === 1 ? '' : 's'}
-              </option>
-            ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <input
+            id={`loop-max-${loop.id}`}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MAX_LOOP_ITERATIONS}
+            className={`${fieldClass(false)} w-24`}
+            {...iterationsField}
+            onChange={(event) => iterationsField.onChange(event.target.value)}
+          />
+          <span className="text-sm text-gray-600 dark:text-gray-400">
+            round{loop.maxIterations === 1 ? '' : 's'}
+          </span>
+        </div>
         {loop.mode === 'foreach' ? (
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Items past the limit are skipped, with a note in the run history.
