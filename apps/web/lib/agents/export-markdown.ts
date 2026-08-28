@@ -98,7 +98,8 @@ export function agentMarkdown(agent: AgentExportInput): string {
     'Runtime-only content is substituted honestly: variables appear as {{name}} placeholders',
     'where real values bind during a run; memory, knowledge notes, and retry context exist',
     'only mid-run and are omitted; tool schemas ride beside the messages and are listed by',
-    'name.',
+    'name. The final "Definition" section is the exact stored definition — the',
+    'round-trip half of this document.',
     '',
     '## Triggers',
     '',
@@ -247,5 +248,32 @@ export function agentMarkdown(agent: AgentExportInput): string {
     }
   }
 
+  // The round-trip half: everything above is projection (for people and
+  // models); this block is the SOURCE, verbatim, so the document can be
+  // imported back — Import on the agents page, or the JSON passed to
+  // agent_create. parseAgentPayload reads exactly these keys.
+  lines.push(
+    '## Definition (machine-readable)',
+    '',
+    'The fenced block below is the exact stored definition. Paste this whole document',
+    'into Import on the agents page (or pass the JSON to agent_create) to recreate the',
+    'agent — importing re-saves it, which also upgrades an older steps format.',
+    '',
+    '```json renkei-agent',
+    JSON.stringify(
+      {
+        name: agent.name,
+        ...(agent.description ? { description: agent.description } : {}),
+        steps: agent.steps,
+        triggers: agent.triggers,
+        ...(agent.guardrails ? { guardrails: agent.guardrails } : {}),
+        ...(agent.blockedTools.length > 0 ? { blockedTools: agent.blockedTools } : {}),
+      },
+      null,
+      2
+    ),
+    '```',
+    ''
+  );
   return lines.join('\n');
 }

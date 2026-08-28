@@ -85,9 +85,12 @@ describe('agentMarkdown', () => {
     expect(markdown).toContain(
       '"poor-match" (applies when: results exist but none match the description closely enough)'
     );
-    // …with the author's non-retry note, and WITHOUT attempt-1 retry text.
+    // …with the author's non-retry note, and WITHOUT attempt-1 retry text
+    // in the PROMPT sections (the definition block at the end carries it as
+    // data, which is the round trip's job, not the prompt's).
     expect(markdown).toContain('the author notes: Note the closest candidates and move on.');
-    expect(markdown).not.toContain('Broaden the search terms.');
+    const promptSections = markdown.slice(0, markdown.indexOf('## Definition'));
+    expect(promptSections).not.toContain('Broaden the search terms.');
     // Variables are placeholders, stated up front.
     expect(markdown).toContain('{{trigger.month}}');
     expect(markdown).toContain(`Tool budget: at most ${NORMAL_TOOL_CAP} tool call(s)`);
