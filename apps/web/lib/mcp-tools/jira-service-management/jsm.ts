@@ -37,6 +37,7 @@ import {
 import { resolveUserId } from '../jira/resolve-user';
 import { collectExtraFields, extraFieldSchema } from '../jira/write';
 import { writeWithFieldFallback } from '../jira/field-write';
+import { markdownToAdf } from '../jira/markdown';
 
 /**
  * The cross-family platform scope for the post-create edit below (assignee,
@@ -670,9 +671,15 @@ export async function registerJsmTools(
           // raiseOnBehalfOf is how the servicedeskapi sets the reporter: the
           // request is raised FOR that customer (email or accountId).
           ...(withReporter && reporter ? { raiseOnBehalfOf: reporter } : {}),
+          // A plain description STRING is read as wiki markup, where a
+          // leading #/## means a (nested) numbered list — so model-written
+          // markdown headings render as "1. / 1. Summary". isAdfRequest lets
+          // the description travel as real ADF instead, through the same
+          // converter every platform-API description already goes through.
+          ...(description ? { isAdfRequest: true } : {}),
           requestFieldValues: {
             summary,
-            ...(description ? { description } : {}),
+            ...(description ? { description: markdownToAdf(description) } : {}),
             ...(componentValues.length > 0 ? { components: componentValues } : {}),
             ...(priorityValue ? { priority: priorityValue } : {}),
           },
