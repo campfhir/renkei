@@ -65,7 +65,7 @@ import { GuardrailsPanel } from './guardrails-panel';
 import { summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
 import { TriggerChooser, TriggerEditor } from './trigger-editor';
 import type { CalendarOption } from './schedule-picker';
-import { ReviewPanel } from './review-panel';
+import { SaveConfirmPanel } from './review-panel';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -155,20 +155,21 @@ export function AgentBuilder({
   // modal covers the canvas — and with it the selected node's move/delete
   // controls — so those actions must ride inside the modal as its footer.
   const isDesktop = useMediaQuery('(min-width: 1024px)');
-  const [enabled, setEnabled] = useState(existing?.enabled ?? false);
+  // The builder never flips this: saves keep the agent on or off as it
+  // is, and the agents list's toggle is the enable/disable surface.
+  const enabled = existing?.enabled ?? false;
   const [llmModelId, setLlmModelId] = useState<string | null>(existing?.llmModelId ?? null);
   const [guardrails, setGuardrails] = useState(existing?.guardrails ?? '');
   const [blockedTools, setBlockedTools] = useState<string[]>(existing?.blockedTools ?? []);
   const [saving, setSaving] = useState(false);
-  const [enabling, setEnabling] = useState(false);
   const [serverIssues, setServerIssues] = useState<ValidationIssue[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [review, setReview] = useState<{
-    description: string | null;
-    reviewNotes: ReviewNote[];
-    apiKeys: MintedApiKey[];
-    pending: boolean;
-  } | null>(null);
+  // Edit flow: Update opens the confirm stage WITHOUT saving; the modal's
+  // Save button is what persists. The keys stage shows once-only API keys
+  // a successful save minted (the only reason a create ever opens this).
+  const [saveModal, setSaveModal] = useState<
+    { stage: 'confirm' } | { stage: 'keys'; apiKeys: MintedApiKey[] } | null
+  >(null);
   // The edit page's standing "worth checking" panel — the checker's notes
   // on the SAVED version, refreshable on demand.
   const [checkNotes, setCheckNotes] = useState<ReviewNote[]>(notesOf(existing));
@@ -198,40 +199,6 @@ export function AgentBuilder({
   // and reviewer concerns still open after the gap-closing rounds.
   const [draftQuestions, setDraftQuestions] = useState<string[]>([]);
   const [draftConcerns, setDraftConcerns] = useState<ReviewNote[]>([]);
-
-  // The summary is written server-side AFTER the save response; poll the
-  // agent until its status resolves so the panel can stop showing the
-  // writing indicator. Bounded: after ~45s the panel falls back to its
-  // "couldn't write yet" wording.
-  useEffect(() => {
-    if (!review?.pending || !agentId) return;
-    let polls = 0;
-    const timer = setInterval(async () => {
-      polls += 1;
-      const result = await getJson<{ agent: StoredAgent }>(
-        `/api/tenant/${tenantId}/agents/${agentId}`
-      );
-      const agent = result.data?.agent;
-      if (agent && agent.descriptionStatus !== 'stale') {
-        clearInterval(timer);
-        setCheckNotes(notesOf(agent));
-        setReview((current) =>
-          current
-            ? {
-                ...current,
-                pending: false,
-                description: agent.description,
-                reviewNotes: notesOf(agent),
-              }
-            : current
-        );
-      } else if (polls >= 22) {
-        clearInterval(timer);
-        setReview((current) => (current ? { ...current, pending: false } : current));
-      }
-    }, 2_000);
-    return () => clearInterval(timer);
-  }, [review?.pending, agentId, tenantId]);
 
   /**
    * Watch a running draft.
@@ -653,22 +620,19 @@ export function AgentBuilder({
       .filter((issue) => issue.path === prefix || issue.path.startsWith(`${prefix}.`))
       .map((issue) => issue.message);
 
-  const persist = async (
-    withEnabled: boolean,
-    options: { refreshDescription?: boolean } = {}
-  ): Promise<SaveResponse | null> => {
+  const persist = async (): Promise<SaveResponse | 'invalid' | 'error'> => {
     setSaveError(null);
     const payload = {
       name,
       steps: stepsDoc,
       triggers,
-      enabled: withEnabled,
+      enabled,
       llmModelId,
       guardrails: guardrails.trim() ? guardrails : null,
       blockedTools,
-      // Save says "rewrite the summary, I'm about to review it"; the review
-      // panel's confirm deliberately does not — see the PUT route.
-      ...(options.refreshDescription ? { refreshDescription: true } : {}),
+      // Every save is content the owner may have changed — rewrite the
+      // summary in the background (see the PUT route).
+      refreshDescription: true,
     };
     const url = agentId
       ? `/api/tenant/${tenantId}/agents/${agentId}`
@@ -676,24 +640,35 @@ export function AgentBuilder({
     const result = await sendJsonFull<SaveResponse>(url, agentId ? 'PUT' : 'POST', payload);
     if (result.status === 422 && result.data?.issues) {
       setServerIssues(result.data.issues);
-      return null;
+      return 'invalid';
     }
     if (result.error || !result.data) {
       setSaveError(result.error ?? 'The agent could not be saved.');
-      return null;
+      return 'error';
     }
     setServerIssues([]);
     return result.data;
   };
 
-  const handleSave = async () => {
+  /** Persist and finish: navigate to the overview, or show minted keys. */
+  const persistAndFinish = async () => {
     setSaving(true);
     try {
-      const saved = await persist(enabled, { refreshDescription: true });
-      if (!saved) return;
+      const saved = await persist();
+      if (saved === 'invalid') {
+        // Validation issues render inline at the offending nodes — close
+        // the modal so they are visible.
+        setSaveModal(null);
+        return;
+      }
+      if (saved === 'error') {
+        // saveError renders inside the open modal; on create there is no
+        // modal and it shows in the save bar as before.
+        return;
+      }
       const savedId = saved.agentId ?? saved.agent?.id ?? agentId;
       if (savedId) setAgentId(savedId);
-      // Trigger ids come back on the stored agent; adopt them so the next
+      // Trigger ids come back on the stored agent; adopt them so a later
       // save reconciles instead of re-creating (and re-keying) triggers.
       const storedTriggers = saved.agent?.triggers;
       if (storedTriggers) {
@@ -707,39 +682,30 @@ export function AgentBuilder({
           }))
         );
       }
-      // Brand new: one click and done. The agent's overview page is the
-      // review surface (description, notes, the list's on/off toggle) —
-      // the modal would only add a dismissal click. It still opens when
-      // the save minted an API key, which is shown once and only here.
+      // Saved: the agent's overview page is the landing and review
+      // surface. The one thing that must be seen BEFORE leaving is an API
+      // key this save minted — shown once, only in the modal's keys stage.
       const mintedKeys = saved.apiKeys ?? [];
-      if (agentId === null && mintedKeys.length === 0 && savedId) {
-        router.push(`/${slug}/agents/${savedId}`);
+      if (mintedKeys.length > 0) {
+        setSaveModal({ stage: 'keys', apiKeys: mintedKeys });
         return;
       }
-      setReview({
-        description: saved.agent?.description ?? null,
-        reviewNotes: notesOf(saved.agent),
-        apiKeys: mintedKeys,
-        pending: saved.descriptionPending === true,
-      });
+      router.push(savedId ? `/${slug}/agents/${savedId}` : `/${slug}/agents`);
     } finally {
       setSaving(false);
     }
   };
 
-  const handleEnable = async () => {
-    setEnabling(true);
-    try {
-      const saved = await persist(true);
-      if (saved) {
-        setEnabled(true);
-        // Turning on is the flow's last act — finish here rather than
-        // asking for a third "Done" click.
-        router.push(agentId ? `/${slug}/agents/${agentId}` : `/${slug}/agents`);
-      }
-    } finally {
-      setEnabling(false);
+  const handleSave = () => {
+    if (agentId !== null) {
+      // Editing: Update -> confirm modal. Nothing is persisted until the
+      // modal's Save click.
+      setSaveError(null);
+      setSaveModal({ stage: 'confirm' });
+      return;
     }
+    // Brand new: one click — save and land on the overview page.
+    void persistAndFinish();
   };
 
   const issueMap = useMemo(() => issuesByNode(steps, issues), [steps, issues]);
@@ -1431,17 +1397,15 @@ export function AgentBuilder({
         </div>
       </div>
 
-      {review ? (
-        <ReviewPanel
-          description={review.description}
-          reviewNotes={review.reviewNotes}
-          descriptionPending={review.pending}
-          apiKeys={review.apiKeys}
-          enabled={enabled}
-          enabling={enabling}
-          onEnable={handleEnable}
-          onKeepEditing={() => setReview(null)}
-          // Same landing as a one-click create: the agent's own page.
+      {saveModal ? (
+        <SaveConfirmPanel
+          stage={saveModal.stage}
+          apiKeys={saveModal.stage === 'keys' ? saveModal.apiKeys : []}
+          saving={saving}
+          saveError={saveError}
+          onSave={() => void persistAndFinish()}
+          onKeepEditing={() => setSaveModal(null)}
+          // Same landing as a save without minted keys: the agent's page.
           onDone={() => router.push(agentId ? `/${slug}/agents/${agentId}` : `/${slug}/agents`)}
         />
       ) : null}
