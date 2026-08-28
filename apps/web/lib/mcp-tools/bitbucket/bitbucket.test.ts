@@ -273,6 +273,39 @@ describe('pull requests', () => {
     });
   });
 
+  it('workspace listing falls back to the permissions listing per token type', async () => {
+    // Observed in the field: a token that authenticates on every
+    // workspace-scoped endpoint still got the anonymous-style 404 on bare
+    // /workspaces — Bitbucket masks endpoints that do not support a token's
+    // TYPE as not-found. The permissions listing answers the same question.
+    // The longer path first: the stub matches by substring in order, and
+    // '/workspaces' is a substring of '/user/permissions/workspaces'.
+    routes = [
+      {
+        match: '/user/permissions/workspaces',
+        body: {
+          values: [
+            {
+              permission: 'member',
+              workspace: { slug: 'north-east-medical-services', name: 'NEMS' },
+            },
+          ],
+        },
+      },
+      {
+        match: '/workspaces?pagelen',
+        status: 404,
+        body: { type: 'error', error: { message: 'Resource not found' } },
+      },
+    ];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_list_workspaces')!({});
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('NEMS — slug: north-east-medical-services');
+    expect(result.content[0]?.text).toContain('your permission: member');
+  });
+
   it('the anonymous 404 names both readings, not just "wrong URL"', async () => {
     // Bitbucket hides auth-gated endpoints from requests it treats as
     // anonymous: a missing or EMPTY Authorization header gets this exact

@@ -67,15 +67,31 @@ export async function registerRepositoryTools(
       inputSchema: z.object({}),
     },
     async () => {
-      const result = await bbJson(
-        auth,
-        bitbucketScopeFor('bitbucket_list_workspaces'),
-        '/workspaces?pagelen=50'
-      );
-      if (!result.ok) return errText(result.error);
-      const lines = values(result.body).map(
-        (workspace) => `${str(workspace.name) || str(workspace.slug)} — slug: ${str(workspace.slug)}`
-      );
+      const scopes = bitbucketScopeFor('bitbucket_list_workspaces');
+      const result = await bbJson(auth, scopes, '/workspaces?pagelen=50');
+      if (result.ok) {
+        const lines = values(result.body).map(
+          (workspace) =>
+            `${str(workspace.name) || str(workspace.slug)} — slug: ${str(workspace.slug)}`
+        );
+        if (lines.length === 0) return textResult('No workspaces.');
+        return textResult(lines.join('\n'));
+      }
+      // Observed in the field: a token that authenticates cleanly on every
+      // workspace-scoped endpoint can still get the anonymous-style 404 on
+      // bare /workspaces — Bitbucket masks endpoints that do not support a
+      // token's TYPE as not-found rather than 401. The permissions listing
+      // answers the same question and takes the newer tokens, so it is the
+      // fallback; only if both refuse does the original error surface.
+      const fallback = await bbJson(auth, scopes, '/user/permissions/workspaces?pagelen=50');
+      if (!fallback.ok) return errText(result.error);
+      const lines = values(fallback.body).map((row) => {
+        const workspace = rec(row.workspace);
+        return (
+          `${str(workspace.name) || str(workspace.slug)} — slug: ${str(workspace.slug)}` +
+          (str(row.permission) ? ` — your permission: ${str(row.permission)}` : '')
+        );
+      });
       if (lines.length === 0) return textResult('No workspaces.');
       return textResult(lines.join('\n'));
     }
