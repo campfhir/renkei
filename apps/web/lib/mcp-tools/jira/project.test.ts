@@ -214,3 +214,86 @@ describe('jira_search_users', () => {
     expect(result.content[0].text).toContain('query is required');
   });
 });
+
+const fieldDirectory = [
+  { name: 'Project Health', id: 'customfield_12180', schema: { type: 'option' } },
+  { name: 'Risk Impact', id: 'customfield_12179', schema: { type: 'option' } },
+  { name: 'Risk Likelihood', id: 'customfield_12177', schema: { type: 'option' } },
+  { name: 'Risk Last Reviewed', id: 'customfield_12178', schema: { type: 'date' } },
+  { name: 'Story Points', id: 'customfield_10024', schema: { type: 'number' } },
+  { name: 'Summary', id: 'summary', schema: { type: 'string' } },
+];
+
+/** Answer every request with the field directory, recording the URL asked for. */
+function respondWithFields(): void {
+  requestedUrls = [];
+  jiraFetchMock.mockReset();
+  jiraFetchMock.mockImplementation(async (url: unknown) => {
+    requestedUrls.push(String(url));
+    return { ok: true, status: 200, json: async () => fieldDirectory } as unknown as Response;
+  });
+}
+
+describe('jira_list_fields', () => {
+  it('still filters on a single string exactly as before', async () => {
+    respondWithFields();
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_list_fields')!({ projectKey: 'CIO', query: 'Risk' });
+    const text = result.content[0].text ?? '';
+
+    expect(text).toContain('3 of 6 fields match "Risk":');
+    expect(text).toContain('• Risk Impact (customfield_12179) - option');
+  });
+
+  it('answers several filters from one fetch, reporting each separately', async () => {
+    respondWithFields();
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_list_fields')!({
+      projectKey: 'CIO',
+      query: ['Project Health', 'Risk', 'Story Points'],
+    });
+    const text = result.content[0].text ?? '';
+
+    // The whole directory is fetched once and filtered here, so extra
+    // filters must not cost extra round trips — that is the entire point.
+    expect(requestedUrls).toHaveLength(1);
+    expect(text).toContain('6 fields on this site, matched against 3 filters:');
+    expect(text).toContain('"Project Health" — 1 match:');
+    expect(text).toContain('• Project Health (customfield_12180) - option');
+    expect(text).toContain('"Risk" — 3 matches:');
+    expect(text).toContain('"Story Points" — 1 match:');
+    expect(text).toContain('• Story Points (customfield_10024) - number');
+  });
+
+  it('names a filter that matched nothing instead of omitting it', async () => {
+    respondWithFields();
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_list_fields')!({
+      query: ['Risk', 'Target Number'],
+    });
+
+    expect(result.content[0].text).toContain('"Target Number" — no match');
+  });
+
+  it('lists everything when no filter is given', async () => {
+    respondWithFields();
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_list_fields')!({ projectKey: 'CIO' });
+
+    expect(result.content[0].text).toContain('Found 6 fields:');
+  });
+
+  it('treats a repeated filter as one', async () => {
+    respondWithFields();
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_list_fields')!({ query: ['Risk', 'risk'] });
+
+    // Down to one filter, so it renders as the single-filter case.
+    expect(result.content[0].text).toContain('3 of 6 fields match "Risk":');
+  });
+});
