@@ -91,6 +91,14 @@ export async function resolveBitbucketAccess(
     grant = { ...grant, accessToken: refreshed.val.accessToken };
   }
 
+  // Refused HERE, never sent: Bitbucket answers `Authorization: Bearer `
+  // (empty token) with the same anonymous 404 "no API hosted at this URL"
+  // it gives requests with no header at all — an error that reads like a
+  // wrong URL and says nothing about credentials.
+  if (!grant.accessToken) {
+    return 'The stored Bitbucket grant holds no access token. Reconnect it on the Connectors page.';
+  }
+
   return {
     accessToken: grant.accessToken,
     accountId: grant.accountId,
@@ -165,6 +173,10 @@ export async function bitbucketRequest(
       path: pathAndQuery,
       method: init?.method ?? 'GET',
       status: response.status,
+      // Whether a credential was attached, never its bytes: Bitbucket
+      // answers credential-less requests with an anonymous 404 that reads
+      // like a wrong URL, and this is the field that tells them apart.
+      authTokenChars: access.accessToken.length,
       requestBody: jsonBody === undefined ? undefined : secure(truncateForLog(jsonBody)),
       responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
     });
@@ -180,6 +192,20 @@ export async function describeBitbucketFailure(response: Response): Promise<stri
   const body: unknown = await response.json().catch(() => null);
   const record = rec(body);
   const message = str(rec(record.error).message);
+  // Bitbucket hides auth-gated endpoints from requests it treats as
+  // anonymous — a missing or empty Authorization header gets this exact
+  // "Resource not found / no API hosted at this URL" 404 on endpoints that
+  // very much exist (a bad token gets 401, a missing scope 403). Verified
+  // against the live API; without this line the error reads as a wrong URL
+  // and sends whoever debugs it in exactly the wrong direction.
+  if (response.status === 404 && message === 'Resource not found') {
+    return (
+      `Bitbucket API 404: ${message} — either the workspace/repository/id in the request ` +
+      `does not exist, or the request reached Bitbucket without usable credentials ` +
+      `(Bitbucket answers anonymous requests to real endpoints with this same 404). ` +
+      `If ids look right, reconnect Bitbucket on the Connectors page.`
+    );
+  }
   if (message) return `Bitbucket API ${response.status}: ${message}`;
   if (response.status === 403) {
     return (
