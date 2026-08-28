@@ -273,6 +273,32 @@ describe('pull requests', () => {
     });
   });
 
+  it('the anonymous 404 names both readings, not just "wrong URL"', async () => {
+    // Bitbucket hides auth-gated endpoints from requests it treats as
+    // anonymous: a missing or EMPTY Authorization header gets this exact
+    // "Resource not found" 404 on endpoints that exist (a bad token gets
+    // 401). Rendered as-is it reads like a wrong URL and sends the
+    // debugging in exactly the wrong direction — the regression this pins.
+    routes = [
+      {
+        match: '/workspaces',
+        status: 404,
+        body: {
+          type: 'error',
+          error: {
+            message: 'Resource not found',
+            detail: 'There is no API hosted at this URL.',
+          },
+        },
+      },
+    ];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_list_workspaces')!({});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('without usable credentials');
+  });
+
   it('an API rejection surfaces Bitbucket’s own message', async () => {
     routes = [
       {
