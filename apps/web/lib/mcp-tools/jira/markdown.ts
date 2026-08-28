@@ -273,13 +273,28 @@ function codeBlock(body: string, language: string): AdfNode {
  * Nesting is by relative indent rather than a fixed step, because models mix
  * two- and four-space indents freely. Any line indented further than the
  * level's first item belongs to that item's sublist.
+ *
+ * Two model habits are normalized rather than rendered literally:
+ *
+ * An item with no text of its own whose only content is a nested list — a
+ * model faking a labeled section ("1." over an indented "1. Request") —
+ * would render as an empty numbered row with its children demoted a level
+ * ("1." then "a. Request"). The empty wrapper is never what anyone meant,
+ * so its children are hoisted into this level; a list that is nothing but
+ * one wrapper hands over to the nested list entirely, keeping its kind.
+ *
+ * And an ordered list that starts past 1 — the tail of a list a blank line
+ * or paragraph split in two — keeps its starting number via the `order`
+ * attribute instead of silently renumbering from 1 (adfToMarkdown already
+ * reads that attribute back).
  */
 function parseList(lines: readonly string[]): AdfNode {
   const first = LIST_ITEM.exec(lines[0] ?? '');
   const baseIndent = (first?.[1] ?? '').length;
   const ordered = first?.[3] !== undefined;
+  const start = ordered ? Number.parseInt(first?.[3] ?? '1', 10) : 1;
 
-  const items: AdfNode[] = [];
+  const entries: { item?: AdfNode; hoisted?: AdfNode }[] = [];
   let i = 0;
 
   while (i < lines.length) {
@@ -289,7 +304,7 @@ function parseList(lines: readonly string[]): AdfNode {
       continue;
     }
 
-    const content: AdfNode[] = [{ type: 'paragraph', content: parseInline(match[4] ?? '', []) }];
+    const inline = parseInline(match[4] ?? '', []);
     i += 1;
 
     const nested: string[] = [];
@@ -299,14 +314,31 @@ function parseList(lines: readonly string[]): AdfNode {
       nested.push(lines[i] ?? '');
       i += 1;
     }
-    if (nested.length > 0) {
-      content.push(parseList(nested));
+    const sublist = nested.length > 0 ? parseList(nested) : null;
+
+    if (inline.length === 0 && sublist) {
+      entries.push({ hoisted: sublist });
+      continue;
     }
 
-    items.push({ type: 'listItem', content });
+    const content: AdfNode[] = [{ type: 'paragraph', content: inline }];
+    if (sublist) {
+      content.push(sublist);
+    }
+    entries.push({ item: { type: 'listItem', content } });
   }
 
-  return { type: ordered ? 'orderedList' : 'bulletList', content: items };
+  const [only] = entries;
+  if (entries.length === 1 && only?.hoisted) {
+    return only.hoisted;
+  }
+
+  const items = entries.flatMap((entry) => entry.item ?? entry.hoisted?.content ?? []);
+  return {
+    type: ordered ? 'orderedList' : 'bulletList',
+    ...(ordered && start > 1 ? { attrs: { order: start } } : {}),
+    content: items,
+  };
 }
 
 // ------------------------------------------------------------------- inline
