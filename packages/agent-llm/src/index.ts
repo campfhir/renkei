@@ -21,6 +21,12 @@ export type {
 export { AnthropicProvider, type AnthropicConfig } from './anthropic';
 export { OpenAiProvider, type OpenAiConfig } from './openai';
 export {
+  listAvailableModels,
+  type AvailableModel,
+  type ListModelsConfig,
+  type ListModelsError,
+} from './models';
+export {
   invalidateLlmCache,
   resolveAgentLlm,
   type ResolveLlmError,

@@ -47,10 +47,26 @@ export async function PUT(
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // A blank apiKey keeps the stored one; a key is required only when none
-  // is stored yet.
+  // is stored yet. `apiKeyFromId` borrows a sibling config's key instead —
+  // the copied-encrypted-blob move the create route makes, so a fleet of
+  // rows sharing one connection can be re-pointed without retyping it.
   let encryptedSecrets = existing.encrypted_secrets;
   if (parsed.apiKey) {
     encryptedSecrets = encrypt(JSON.stringify({ apiKey: parsed.apiKey }), keyResult.val);
+  } else if (parsed.apiKeyFromId && parsed.apiKeyFromId !== modelId) {
+    const source = await db
+      .selectFrom('llm_model_configs')
+      .select(['encrypted_secrets'])
+      .where('tenant_id', '=', tenant.id)
+      .where('id', '=', parsed.apiKeyFromId)
+      .executeTakeFirst();
+    if (!source?.encrypted_secrets) {
+      return NextResponse.json(
+        { error: 'The model to reuse the key from has no key stored.' },
+        { status: 400 }
+      );
+    }
+    encryptedSecrets = source.encrypted_secrets;
   } else if (!encryptedSecrets || !decrypt(encryptedSecrets, keyResult.val).ok) {
     return NextResponse.json({ error: 'apiKey is required (none stored yet)' }, { status: 400 });
   }
