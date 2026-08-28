@@ -127,6 +127,11 @@ export function createWebexUserMessageHandler(
         // space-type filter then fails closed on (see trigger-filters.ts).
         roomType: message.roomType ?? '',
         messageId: message.id,
+        // The thread root this message replies under, '' for a top-level
+        // message — the one identifier that lets an agent answer in the
+        // same thread (webex_send_message parentId) instead of posting a
+        // new top-level message next to it.
+        parentId: message.parentId ?? '',
       },
       occurredAt: message.created ?? undefined,
       orderingKey: `webex/${event.tenant_id}/${payload.accountId}/${message.roomId}`,

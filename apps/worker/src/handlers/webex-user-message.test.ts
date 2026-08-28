@@ -36,6 +36,7 @@ function handlerWith(options: {
   sentByRenkei?: boolean;
   text?: string | null;
   roomType?: string | null;
+  parentId?: string | null;
   published: unknown[];
 }) {
   return createWebexUserMessageHandler({
@@ -50,7 +51,7 @@ function handlerWith(options: {
           id,
           roomId: 'room-1',
           roomType: options.roomType === undefined ? 'group' : options.roomType,
-          parentId: null,
+          parentId: options.parentId === undefined ? null : options.parentId,
           personId: options.personId,
           personEmail: 'someone@example.com',
           text: options.text === undefined ? 'hello there' : options.text,
@@ -131,6 +132,24 @@ describe('webex all-spaces ingest', () => {
     await handler(event('msg-dm'));
 
     expect(published[0]).toMatchObject({ data: { roomType: 'direct' } });
+  });
+
+  it('carries the thread root, so an agent can answer in the same thread', async () => {
+    const published: unknown[] = [];
+    const handler = handlerWith({ personId: 'somebody-else', parentId: 'msg-root', published });
+
+    await handler(event('msg-threaded-reply'));
+
+    expect(published[0]).toMatchObject({ data: { parentId: 'msg-root' } });
+  });
+
+  it('publishes an empty thread root for a top-level message', async () => {
+    const published: unknown[] = [];
+    const handler = handlerWith({ personId: 'somebody-else', published });
+
+    await handler(event('msg-top-level'));
+
+    expect(published[0]).toMatchObject({ data: { parentId: '' } });
   });
 
   it('publishes an empty room type when the API omits it, never dropping the message', async () => {

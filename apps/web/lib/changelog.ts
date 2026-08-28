@@ -44,6 +44,24 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'Bigger agents, threaded WebEx replies',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Drafting keeps up with a raised step limit',
+        detail:
+          'The organization setting can allow agents up to a hundred steps, but describing a change in prose still drafted against the old ceiling of twenty — an agent that had grown past it could not be revised that way at all. Drafting now offers and accepts exactly what saving will.',
+      },
+      {
+        kind: 'added',
+        title: 'WebEx agents know which thread a message belongs to',
+        detail:
+          'A message trigger now carries the thread root alongside the message id, so an agent can answer inside the thread it was spoken in — instead of posting a new top-level message next to it.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'Service Management requests agents raise',
     entries: [
       {
