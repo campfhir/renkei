@@ -268,6 +268,53 @@ describe('jsm_create_request reporter, assignee, and priority', () => {
     expect(result.content[0]?.text).toContain('on behalf of scott@nems.org');
   });
 
+  it('confirms the reporter from the response, resolved to a name', async () => {
+    routes = [
+      {
+        match: '/rest/servicedeskapi/request',
+        body: {
+          issueKey: 'CAS-300',
+          reporter: {
+            accountId: 'acc-scott',
+            emailAddress: 'scott@nems.org',
+            displayName: 'Scott Eremia-Roden',
+          },
+        },
+      },
+    ];
+    // Sent as an accountId — the reply must still read as a person, not an id.
+    const result = await create({ reporter: 'acc-scott' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain(
+      'on behalf of Scott Eremia-Roden (scott@nems.org)'
+    );
+  });
+
+  it('a reporter Jira quietly dropped is said out loud, not echoed as success', async () => {
+    routes = [
+      {
+        match: '/rest/servicedeskapi/request',
+        body: {
+          issueKey: 'CAS-300',
+          // Jira accepted the payload but left the CALLER as reporter.
+          reporter: {
+            accountId: 'acc-caller',
+            emailAddress: 'owner@nems.org',
+            displayName: 'The Owner',
+          },
+        },
+      },
+    ];
+    const result = await create({ reporter: 'scott@nems.org' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('CAS-300');
+    expect(result.content[0]?.text).not.toContain('raised on behalf of');
+    expect(result.content[0]?.text).toContain('Reporter was not set');
+    expect(result.content[0]?.text).toContain('The Owner');
+  });
+
   it('a reporter Jira rejects costs the reporter, not the request', async () => {
     routes = [
       { match: '/rest/servicedeskapi/request', throwStatus: 400, once: true },

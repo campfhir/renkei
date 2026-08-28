@@ -719,6 +719,38 @@ export async function registerJsmTools(
       const realKey = str(result.issueKey);
       const key = realKey || '(no key in response)';
 
+      // The response carries the request's ACTUAL reporter — trust it over
+      // the input. A raiseOnBehalfOf value Jira quietly dropped (leaving the
+      // caller as reporter) would otherwise read as success forever; and when
+      // it did land, the resolved name reads as confirmation where the raw
+      // accountId the caller sent reads as a mistake.
+      let reporterShown = reporter;
+      if (reporter && reporterSet) {
+        const actual = result.reporter as
+          | { accountId?: string; emailAddress?: string; displayName?: string }
+          | undefined;
+        if (actual && (actual.accountId || actual.emailAddress)) {
+          const wanted = reporter.toLowerCase();
+          const matches =
+            str(actual.accountId).toLowerCase() === wanted ||
+            str(actual.emailAddress).toLowerCase() === wanted;
+          if (!matches) {
+            reporterSet = false;
+            const who =
+              str(actual.displayName) || str(actual.emailAddress) || str(actual.accountId);
+            notes.push(
+              `Reporter was not set — Jira left the request reported by ${who}, not ` +
+                `"${reporter}". Check the address with jira_search_users or ` +
+                `jsm_list_customers, then fix it with jira_update_issue.`
+            );
+          } else if (actual.displayName) {
+            reporterShown = actual.emailAddress
+              ? `${actual.displayName} (${actual.emailAddress})`
+              : actual.displayName;
+          }
+        }
+      }
+
       // Assignee (always) and priority (when the form could not carry it)
       // live on the platform API — the request form has no field for them.
       // Each is best-effort AFTER the create: a value that cannot land
@@ -841,7 +873,7 @@ export async function registerJsmTools(
             // reported it can only open the portal.
             text:
               `Created request ${key}` +
-              (reporter && reporterSet ? `\nReporter: raised on behalf of ${reporter}` : '') +
+              (reporter && reporterSet ? `\nReporter: raised on behalf of ${reporterShown}` : '') +
               (assigneeSet ? `\nAssignee: set` : '') +
               (prioritySet ? `\nPriority: set` : '') +
               (componentValues.length > 0 ? `\nComponents: ${componentValues.length} set` : '') +
