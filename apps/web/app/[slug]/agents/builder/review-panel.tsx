@@ -8,6 +8,12 @@
  * raised, and any API keys minted by this save, which THIS panel is the
  * only place to ever see. Enabling from here is the deliberate act; a
  * save always lands disabled-or-as-it-was.
+ *
+ * Every path out is ONE click: "Done" finishes (leaving the agent as it
+ * is), "Looks right — turn it on" enables AND finishes, "Keep editing"
+ * goes back. Brand-new saves skip this panel entirely (unless they minted
+ * an API key) — the agent's overview page is their review surface — so an
+ * edit is at most two clicks and a create is one.
  */
 
 import type { MintedApiKey } from '@/lib/agents/store';
@@ -109,18 +115,23 @@ export function ReviewPanel({
           {/* Confirming is REVIEWING: while the summary is still being
               written there is nothing to have looked at, so the confirm
               buttons wait for it. The builder's poll bounds the wait (~45s)
-              by flipping pending off, which unlocks these either way. */}
-          {enabled ? (
-            <button
-              type="button"
-              onClick={onDone}
-              disabled={descriptionPending}
-              title={descriptionPending ? 'Waiting for the summary…' : undefined}
-              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
-            >
-              Done
-            </button>
-          ) : (
+              by flipping pending off, which unlocks these either way.
+              "Done" always finishes as-is; the enable button (off agents
+              only) enables and finishes in the same click. */}
+          <button
+            type="button"
+            onClick={onDone}
+            disabled={descriptionPending}
+            title={descriptionPending ? 'Waiting for the summary…' : undefined}
+            className={
+              enabled
+                ? 'rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50'
+                : 'rounded-md border border-gray-300 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-gray-700'
+            }
+          >
+            Done
+          </button>
+          {!enabled ? (
             <button
               type="button"
               onClick={onEnable}
@@ -130,7 +141,7 @@ export function ReviewPanel({
             >
               {enabling ? 'Turning on…' : 'Looks right — turn it on'}
             </button>
-          )}
+          ) : null}
         </div>
       </div>
     </div>

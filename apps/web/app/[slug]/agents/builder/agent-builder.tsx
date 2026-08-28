@@ -707,10 +707,19 @@ export function AgentBuilder({
           }))
         );
       }
+      // Brand new: one click and done. The agent's overview page is the
+      // review surface (description, notes, the list's on/off toggle) —
+      // the modal would only add a dismissal click. It still opens when
+      // the save minted an API key, which is shown once and only here.
+      const mintedKeys = saved.apiKeys ?? [];
+      if (agentId === null && mintedKeys.length === 0 && savedId) {
+        router.push(`/${slug}/agents/${savedId}`);
+        return;
+      }
       setReview({
         description: saved.agent?.description ?? null,
         reviewNotes: notesOf(saved.agent),
-        apiKeys: saved.apiKeys ?? [],
+        apiKeys: mintedKeys,
         pending: saved.descriptionPending === true,
       });
     } finally {
@@ -724,6 +733,9 @@ export function AgentBuilder({
       const saved = await persist(true);
       if (saved) {
         setEnabled(true);
+        // Turning on is the flow's last act — finish here rather than
+        // asking for a third "Done" click.
+        router.push(agentId ? `/${slug}/agents/${agentId}` : `/${slug}/agents`);
       }
     } finally {
       setEnabling(false);
@@ -1348,7 +1360,7 @@ export function AgentBuilder({
                 disabled={saving || clientIssues.length > 0}
                 className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
               >
-                {saving ? 'Saving…' : 'Save'}
+                {saving ? 'Saving…' : agentId ? 'Update' : 'Save'}
               </button>
             </div>
           </div>
@@ -1413,7 +1425,7 @@ export function AgentBuilder({
               disabled={saving || clientIssues.length > 0}
               className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
             >
-              {saving ? 'Saving…' : 'Save'}
+              {saving ? 'Saving…' : agentId ? 'Update' : 'Save'}
             </button>
           </div>
         </div>
@@ -1429,7 +1441,8 @@ export function AgentBuilder({
           enabling={enabling}
           onEnable={handleEnable}
           onKeepEditing={() => setReview(null)}
-          onDone={() => router.push(`/${slug}/agents`)}
+          // Same landing as a one-click create: the agent's own page.
+          onDone={() => router.push(agentId ? `/${slug}/agents/${agentId}` : `/${slug}/agents`)}
         />
       ) : null}
     </div>
