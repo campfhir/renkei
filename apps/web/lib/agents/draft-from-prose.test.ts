@@ -10,6 +10,14 @@ jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
+// The org's step ceiling; null = settings unavailable (the fallback path).
+let orgMaxSteps: number | null = null;
+jest.mock('@renkei/settings', () => ({
+  getOrgSettings: jest.fn(async () =>
+    orgMaxSteps === null ? { ok: false } : { ok: true, val: { agentMaxSteps: orgMaxSteps } }
+  ),
+}));
+
 import type { LlmRequest } from '@renkei/agent-llm';
 
 let replies: string[] = [];
@@ -97,6 +105,37 @@ const GOOD_REPLY = JSON.stringify({
 beforeEach(() => {
   replies = [];
   requests.length = 0;
+  orgMaxSteps = null;
+});
+
+/**
+ * The step ceiling is the ORG'S setting, end to end: the prompt offers it
+ * and the reply envelope accepts it. A hardcoded 20 in either place meant
+ * an agent the raised limit let grow past 20 steps could never be revised
+ * through drafting again.
+ */
+describe('the org step ceiling reaches the drafting contract', () => {
+  it('prompts and parses with the org limit, not a hardcoded 20', async () => {
+    orgMaxSteps = 40;
+    const steps = Array.from({ length: 25 }, (_, index) => ({
+      name: `Step ${index + 1}`,
+      instruction: `Search round ${index + 1} with {{tool:jira_search_issues}}`,
+      tool: 'jira_search_issues',
+    }));
+    replies = [JSON.stringify({ name: 'Big agent', steps })];
+
+    const result = await draftAgentFromProse(db, 't1', 'do many things', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    expect(result.steps).toHaveLength(25);
+    expect(JSON.stringify(requests[0].messages)).toContain('array of 1 to 40 objects');
+  });
+
+  it('falls back to the platform default when settings are unavailable', async () => {
+    replies = [GOOD_REPLY];
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    expect(JSON.stringify(requests[0].messages)).toContain('array of 1 to 20 objects');
+  });
 });
 
 describe('draftAgentFromProse retry loop', () => {

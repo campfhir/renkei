@@ -32,6 +32,7 @@ import {
   MAX_SCHEDULE_RULES,
   LOOP_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
+  MAX_STEPS,
   TRIGGER_EVENT_CATALOG,
   approvalPathsOf,
   flattenActionSteps,
@@ -57,6 +58,7 @@ import {
   type Weekday,
 } from '@renkei/agents';
 import { resolveAgentLlm, type LlmMessage, type ResolvedLlm } from '@renkei/agent-llm';
+import { getOrgSettings } from '@renkei/settings';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { friendlyToolName } from '@/lib/tool-name';
 import { buildAgentReviewPrompt, parseAgentReviewReply } from '@/lib/agents/describe';
@@ -188,7 +190,8 @@ function promptOf(
   triggerVars: TriggerVarInfo[],
   triggerOffer: TriggerOffer | null,
   guardrails: string | null,
-  offerGuardrails: boolean
+  offerGuardrails: boolean,
+  maxSteps: number
 ): string {
   const toolLines = tools
     .filter((tool) => !tool.appOnly)
@@ -429,7 +432,7 @@ function promptOf(
           '    clearly states when the automation runs,',
         ]
       : []),
-    '  "steps": array of 1 to 20 objects, in execution order, each:',
+    `  "steps": array of 1 to ${maxSteps} objects, in execution order, each:`,
     '  {',
     '    "name": string — a short step label, at most 80 characters, never empty,',
     '    "instruction": string — the plain-words instruction with {{tool:...}} and',
@@ -644,18 +647,26 @@ export interface DraftedAgent {
  * does not void nine good ones: the envelope must hold, then each step is
  * checked individually and broken ones become per-step feedback.
  */
-const REPLY_ENVELOPE = z.object({
-  name: z.string().optional(),
-  steps: z.array(z.unknown()).min(1, 'must contain at least one step').max(20),
-  triggers: z.array(z.unknown()).max(3, 'takes at most 3 triggers').optional(),
-  // Open decisions only the user can make; "edgeCases" (the model's own
-  // edge-case notes) also arrives but is working material, not output —
-  // zod strips it with every other undeclared key.
-  questions: z.array(z.unknown()).max(8, 'takes at most 5 questions').optional(),
-  // Proposed standing rules — honored only when the caller offered (the
-  // agent has none yet); a volunteered one is ignored otherwise.
-  guardrails: z.string().optional(),
-});
+// The steps ceiling is the ORG'S `agentMaxSteps` setting, not a constant:
+// the reply envelope was the last place that still said 20, and it bounced
+// every revision of an agent the org's raised limit had allowed to grow
+// past that. The envelope must accept whatever the save will.
+const replyEnvelopeOf = (maxSteps: number) =>
+  z.object({
+    name: z.string().optional(),
+    steps: z
+      .array(z.unknown())
+      .min(1, 'must contain at least one step')
+      .max(maxSteps, `takes at most ${maxSteps} steps`),
+    triggers: z.array(z.unknown()).max(3, 'takes at most 3 triggers').optional(),
+    // Open decisions only the user can make; "edgeCases" (the model's own
+    // edge-case notes) also arrives but is working material, not output —
+    // zod strips it with every other undeclared key.
+    questions: z.array(z.unknown()).max(8, 'takes at most 5 questions').optional(),
+    // Proposed standing rules — honored only when the caller offered (the
+    // agent has none yet); a volunteered one is ignored otherwise.
+    guardrails: z.string().optional(),
+  });
 
 const STEP_SHAPE = z.object({
   name: z.string().optional(),
@@ -1024,7 +1035,8 @@ function parseDraftReply(
   outcomesByTool: Map<string, Set<string>>,
   seedVars: Set<string>,
   triggerOffer: TriggerOffer | null,
-  offerGuardrails = false
+  offerGuardrails: boolean,
+  maxSteps: number
 ): { ok: true; draft: DraftedAgent; softProblems: string[] } | { ok: false; problems: string[] } {
   const cleaned = raw.replace(/```(?:json)?/g, '');
   const start = cleaned.indexOf('{');
@@ -1045,7 +1057,7 @@ function parseDraftReply(
     };
   }
 
-  const envelope = REPLY_ENVELOPE.safeParse(json);
+  const envelope = replyEnvelopeOf(maxSteps).safeParse(json);
   if (!envelope.success) {
     return { ok: false, problems: zodProblems('The reply object: ', envelope.error) };
   }
@@ -1700,7 +1712,8 @@ function parseActionEntry(
           continue;
         }
         if (!enumerated) {
-          outcome = customOutcomeSlug(failure.outcome) || customOutcomeSlug(whenText) || 'condition';
+          outcome =
+            customOutcomeSlug(failure.outcome) || customOutcomeSlug(whenText) || 'condition';
           if (seenCodes.has(outcome)) continue;
         }
         if (enumerated && whenText) {
@@ -1867,6 +1880,8 @@ async function closeReviewGaps(context: {
   outcomesByTool: Map<string, Set<string>>;
   seedVars: Set<string>;
   triggerOffer: TriggerOffer | null;
+  /** The org's agentMaxSteps ceiling, already resolved by the caller. */
+  maxSteps: number;
   /** The agent's existing guardrails; null = none configured. */
   guardrails: string | null;
   /** Whether the reply may propose guardrails (only when none exist). */
@@ -1929,7 +1944,8 @@ async function closeReviewGaps(context: {
       context.outcomesByTool,
       context.seedVars,
       context.triggerOffer,
-      context.offerGuardrails
+      context.offerGuardrails,
+      context.maxSteps
     );
     // A refinement that regresses to unparseable loses; the pre-refine
     // draft (with its concerns attached) beats an error.
@@ -2002,6 +2018,13 @@ export async function draftAgentFromProse(
   }
   const llm = llmResult.val;
 
+  // The org's step ceiling, the same one the save enforces (save.ts) —
+  // drafting must offer and accept exactly what saving will, or a raised
+  // limit lets an agent grow past 20 steps and then no revision of it can
+  // ever parse.
+  const settings = await getOrgSettings(tenantId);
+  const maxSteps = Math.max(1, settings.ok ? settings.val.agentMaxSteps : MAX_STEPS);
+
   const validTools = new Set(tools.filter((tool) => !tool.appOnly).map((tool) => tool.name));
   const outcomesByTool = new Map(
     tools.map((tool) => [
@@ -2055,7 +2078,8 @@ export async function draftAgentFromProse(
             triggerVars,
             triggerOffer,
             guardrails,
-            offerGuardrails
+            offerGuardrails,
+            maxSteps
           ),
         },
       ],
@@ -2153,7 +2177,8 @@ export async function draftAgentFromProse(
       outcomesByTool,
       seedVars,
       triggerOffer,
-      offerGuardrails
+      offerGuardrails,
+      maxSteps
     );
 
     if (parsed.ok) {
@@ -2206,6 +2231,7 @@ export async function draftAgentFromProse(
       outcomesByTool,
       seedVars,
       triggerOffer,
+      maxSteps,
       guardrails,
       offerGuardrails,
       draft: usable,

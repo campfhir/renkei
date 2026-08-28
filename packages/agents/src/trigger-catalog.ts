@@ -198,6 +198,13 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
         'Message id',
         'The identifier of the triggering message; pass it to webex_get_message to fetch it.'
       ),
+      trigger(
+        'parentId',
+        'Thread root id',
+        'The id of the thread the triggering message replies under, or empty when it is a ' +
+          'top-level message. Pass it (or, for a top-level message, the message id itself) as ' +
+          'parentId to webex_send_message to answer in the same thread.'
+      ),
     ],
     filters: [
       {
