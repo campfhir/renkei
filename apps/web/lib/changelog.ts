@@ -44,6 +44,24 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'Service Management requests agents raise',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Request descriptions keep their formatting',
+        detail:
+          'A description written in markdown was read by Jira as wiki markup, so every heading came out as a nested numbered list ("1. 1. Summary"). Descriptions on new Service Management requests now arrive as rich text and render as written — headings, lists and links intact.',
+      },
+      {
+        kind: 'fixed',
+        title: 'The reply confirms who a request was raised for',
+        detail:
+          'Creating a request on someone\'s behalf echoed back whatever reporter it was asked to set, even as a bare account id. The reply now reads the reporter Jira actually recorded, names them, and says "Reporter was not set" — naming who Jira left instead — on the occasions the value did not stick.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'Hyland OnBase joins the connectors',
     entries: [
       {
