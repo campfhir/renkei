@@ -190,6 +190,71 @@ describe('draftAgentFromProse retry loop', () => {
     expect(requests).toHaveLength(1);
   });
 
+  it('keeps a custom condition when a "when" description defines it', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'x',
+        steps: [
+          {
+            name: 'Search',
+            instruction: 'Search with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+            failures: [
+              {
+                outcome: 'Poor Match!',
+                action: 'retry',
+                when: 'results exist but none match the description closely enough',
+                guidance: 'Reword the search using the description itself.',
+              },
+              {
+                outcome: 'not-found',
+                action: 'continue',
+                guidance: 'That is a valid answer — note it and move on.',
+              },
+            ],
+          },
+        ],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const step = actionOf(result.steps[0]);
+    // The invented code is re-slugged the way the builder would write it.
+    expect(step.failureHandling[0]).toMatchObject({
+      outcome: 'poor-match',
+      action: 'retry',
+      when: 'results exist but none match the description closely enough',
+    });
+    // Non-retry prose survives as the advisory note.
+    expect(step.failureHandling[1]).toMatchObject({ outcome: 'not-found', action: 'continue' });
+    expect(step.failureHandling[1].guidance).toEqual(
+      expect.arrayContaining([expect.objectContaining({ t: 'text' })])
+    );
+    // No soft problems → no corrective round trip spent.
+    expect(requests).toHaveLength(1);
+  });
+
+  it('omits the guidance key entirely when non-retry guidance is empty', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'x',
+        steps: [
+          {
+            name: 'Search',
+            instruction: 'Search with {{tool:jira_search_issues}}',
+            tool: 'jira_search_issues',
+            failures: [{ outcome: 'not-found', action: 'continue', guidance: '   ' }],
+          },
+        ],
+      }),
+    ];
+    const result = await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const step = actionOf(result.steps[0]);
+    expect(step.failureHandling[0]).toEqual({ outcome: 'not-found', action: 'continue' });
+  });
+
   it('feeds an invalid failure code back with the valid codes listed', async () => {
     replies = [
       JSON.stringify({

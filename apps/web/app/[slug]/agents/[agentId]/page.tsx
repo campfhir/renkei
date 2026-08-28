@@ -13,12 +13,14 @@ import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { getIdentityDisplay } from '@/lib/identity';
 import { listRunsForOwner } from '@/lib/agents/runs-view';
 import { parseReviewNotes } from '@/lib/agents/notes';
+import { agentMarkdown } from '@/lib/agents/export-markdown';
 import { Icon, ICONS } from '@/components/icons';
 import { triggerBadge, triggerSummary } from '@/lib/agents/trigger-summary';
 import CollapsibleSection from '@/components/collapsible-section';
 import MemoryPanel from './memory-panel';
 import KnowledgePanel from './knowledge-panel';
 import ShareAgentButton from './share-agent';
+import CopyMarkdownButton from './copy-markdown-button';
 import RecentRuns from './recent-runs';
 import StepsOutline from './steps-outline';
 
@@ -147,6 +149,17 @@ export default async function AgentOverviewPage({
           >
             {agent.enabled ? 'On' : 'Off'}
           </span>
+          <CopyMarkdownButton
+            markdown={agentMarkdown({
+              name: agent.name,
+              description: agent.description,
+              enabled: agent.enabled,
+              steps: agent.steps,
+              triggers: agent.triggers,
+              guardrails: agent.guardrails,
+              blockedTools: agent.blockedTools,
+            })}
+          />
           {access.viewerIsOwner ? (
             <ShareAgentButton
               slug={slug}
