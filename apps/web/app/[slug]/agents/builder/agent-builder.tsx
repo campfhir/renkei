@@ -653,47 +653,49 @@ export function AgentBuilder({
   /** Persist and finish: navigate to the overview, or show minted keys. */
   const persistAndFinish = async () => {
     setSaving(true);
-    try {
-      const saved = await persist();
-      if (saved === 'invalid') {
-        // Validation issues render inline at the offending nodes — close
-        // the modal so they are visible.
-        setSaveModal(null);
-        return;
-      }
-      if (saved === 'error') {
-        // saveError renders inside the open modal; on create there is no
-        // modal and it shows in the save bar as before.
-        return;
-      }
-      const savedId = saved.agentId ?? saved.agent?.id ?? agentId;
-      if (savedId) setAgentId(savedId);
-      // Trigger ids come back on the stored agent; adopt them so a later
-      // save reconciles instead of re-creating (and re-keying) triggers.
-      const storedTriggers = saved.agent?.triggers;
-      if (storedTriggers) {
-        setTriggers(
-          storedTriggers.map((trigger) => ({
-            id: trigger.id,
-            draft: trigger.draft,
-            enabled: trigger.enabled,
-            keyHint: trigger.keyHint,
-            lastError: trigger.lastError,
-          }))
-        );
-      }
-      // Saved: the agent's overview page is the landing and review
-      // surface. The one thing that must be seen BEFORE leaving is an API
-      // key this save minted — shown once, only in the modal's keys stage.
-      const mintedKeys = saved.apiKeys ?? [];
-      if (mintedKeys.length > 0) {
-        setSaveModal({ stage: 'keys', apiKeys: mintedKeys });
-        return;
-      }
-      router.push(savedId ? `/${slug}/agents/${savedId}` : `/${slug}/agents`);
-    } finally {
+    const saved = await persist();
+    if (saved === 'invalid') {
+      // Validation issues render inline at the offending nodes — close
+      // the modal so they are visible.
       setSaving(false);
+      setSaveModal(null);
+      return;
     }
+    if (saved === 'error') {
+      // saveError renders inside the open modal; on create there is no
+      // modal and it shows as the save bar's error banner.
+      setSaving(false);
+      return;
+    }
+    const savedId = saved.agentId ?? saved.agent?.id ?? agentId;
+    if (savedId) setAgentId(savedId);
+    // Trigger ids come back on the stored agent; adopt them so a later
+    // save reconciles instead of re-creating (and re-keying) triggers.
+    const storedTriggers = saved.agent?.triggers;
+    if (storedTriggers) {
+      setTriggers(
+        storedTriggers.map((trigger) => ({
+          id: trigger.id,
+          draft: trigger.draft,
+          enabled: trigger.enabled,
+          keyHint: trigger.keyHint,
+          lastError: trigger.lastError,
+        }))
+      );
+    }
+    // Saved: the agent's overview page is the landing and review
+    // surface. The one thing that must be seen BEFORE leaving is an API
+    // key this save minted — shown once, only in the modal's keys stage.
+    const mintedKeys = saved.apiKeys ?? [];
+    if (mintedKeys.length > 0) {
+      setSaving(false);
+      setSaveModal({ stage: 'keys', apiKeys: mintedKeys });
+      return;
+    }
+    // `saving` deliberately stays on: the button keeps reading "Saving…"
+    // until the overview page takes over, so the click can't repeat while
+    // the navigation is in flight.
+    router.push(savedId ? `/${slug}/agents/${savedId}` : `/${slug}/agents`);
   };
 
   const handleSave = () => {
@@ -1307,8 +1309,13 @@ export function AgentBuilder({
                   ? 'This agent is on.'
                   : 'Saved agents start turned off — you review, then turn them on.'}
             </p>
-            {saveError ? (
-              <p className="mb-2 text-xs text-red-600 dark:text-red-400">{saveError}</p>
+            {saveError && !saveModal ? (
+              <p
+                role="alert"
+                className="mb-2 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-300"
+              >
+                Not saved — {saveError}
+              </p>
             ) : null}
             <div className="flex items-center gap-2">
               <button
@@ -1361,6 +1368,14 @@ export function AgentBuilder({
 
       {/* Mobile-only: desktop's save bar lives in the sidebar above. */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 px-4 py-3 backdrop-blur dark:border-gray-800 dark:bg-gray-950/95 lg:hidden">
+        {saveError && !saveModal ? (
+          <p
+            role="alert"
+            className="mx-auto mb-2 w-full max-w-6xl rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-300 sm:px-3"
+          >
+            Not saved — {saveError}
+          </p>
+        ) : null}
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 sm:px-2">
           <p className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
             {issues.length > 0
@@ -1370,9 +1385,6 @@ export function AgentBuilder({
                 : 'Saved agents start turned off — you review, then turn them on.'}
           </p>
           <div className="flex shrink-0 items-center gap-2">
-            {saveError ? (
-              <span className="text-xs text-red-600 dark:text-red-400">{saveError}</span>
-            ) : null}
             <button
               type="button"
               // Editing an existing agent: back to its overview, not the flat

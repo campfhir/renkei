@@ -46,7 +46,12 @@ export function SaveConfirmPanel({
               after saving — you’ll see it on the agent’s page.
             </p>
             {saveError ? (
-              <p className="mt-3 text-sm text-red-600 dark:text-red-400">{saveError}</p>
+              <p
+                role="alert"
+                className="mt-3 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-300"
+              >
+                Not saved — {saveError}
+              </p>
             ) : null}
             <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
               <button
