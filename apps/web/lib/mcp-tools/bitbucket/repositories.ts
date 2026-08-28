@@ -67,22 +67,28 @@ export async function registerRepositoryTools(
       inputSchema: z.object({}),
     },
     async () => {
+      // /user/workspaces, not bare /workspaces: the latter is deprecated
+      // AND refuses the newer JWT-shaped tokens with an anonymous-style 404
+      // (observed in the field on a token every workspace-scoped endpoint
+      // accepted). Each row here is a workspace_access wrapper carrying an
+      // administrator flag alongside the workspace itself.
       const scopes = bitbucketScopeFor('bitbucket_list_workspaces');
-      const result = await bbJson(auth, scopes, '/workspaces?pagelen=50');
+      const result = await bbJson(auth, scopes, '/user/workspaces?pagelen=50');
       if (result.ok) {
-        const lines = values(result.body).map(
-          (workspace) =>
-            `${str(workspace.name) || str(workspace.slug)} — slug: ${str(workspace.slug)}`
-        );
+        const lines = values(result.body).map((row) => {
+          const workspace = rec(row.workspace);
+          return (
+            `${str(workspace.name) || str(workspace.slug)} — slug: ${str(workspace.slug)}` +
+            (row.administrator === true ? ' — administrator' : '')
+          );
+        });
         if (lines.length === 0) return textResult('No workspaces.');
         return textResult(lines.join('\n'));
       }
-      // Observed in the field: a token that authenticates cleanly on every
-      // workspace-scoped endpoint can still get the anonymous-style 404 on
-      // bare /workspaces — Bitbucket masks endpoints that do not support a
-      // token's TYPE as not-found rather than 401. The permissions listing
-      // answers the same question and takes the newer tokens, so it is the
-      // fallback; only if both refuse does the original error surface.
+      // Belt and braces for token types the primary will not take: the
+      // permissions listing answers the same question with the caller's
+      // permission per row; only if both refuse does the primary's error
+      // surface.
       const fallback = await bbJson(auth, scopes, '/user/permissions/workspaces?pagelen=50');
       if (!fallback.ok) return errText(result.error);
       const lines = values(fallback.body).map((row) => {
@@ -478,14 +484,14 @@ export async function registerRepositoryTools(
         const file = rec(match.file);
         const repo = str(rec(rec(file.commit).repository).full_name);
         const snippets = Array.isArray(match.content_matches)
-          ? match.content_matches
-              .slice(0, 2)
-              .flatMap((contentMatch) => {
-                const matchLines = rec(contentMatch).lines;
-                return Array.isArray(matchLines)
-                  ? matchLines.map((line) => `    ${str(rec(line).segmentsText) || segmentsText(rec(line))}`)
-                  : [];
-              })
+          ? match.content_matches.slice(0, 2).flatMap((contentMatch) => {
+              const matchLines = rec(contentMatch).lines;
+              return Array.isArray(matchLines)
+                ? matchLines.map(
+                    (line) => `    ${str(rec(line).segmentsText) || segmentsText(rec(line))}`
+                  )
+                : [];
+            })
           : [];
         return [`${repo} — ${str(file.path)}`, ...snippets].join('\n');
       });
@@ -506,10 +512,7 @@ export async function registerRepositoryTools(
         workspace: workspaceArg,
         repoSlug: repoArg,
         name: z.string().min(1).describe('New branch name'),
-        target: z
-          .string()
-          .min(1)
-          .describe('Commit hash or branch name the new branch starts from'),
+        target: z.string().min(1).describe('Commit hash or branch name the new branch starts from'),
       }),
     },
     async (args: Record<string, any>) => {

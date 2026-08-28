@@ -54,8 +54,7 @@ const stubAuth: BitbucketAuth = {
       form: init?.form ? init.form.toString() : null,
     });
     const route = routes.find(
-      (candidate) =>
-        path.includes(candidate.match) && (candidate.method ?? method) === method
+      (candidate) => path.includes(candidate.match) && (candidate.method ?? method) === method
     );
     if (!route) return new Response(JSON.stringify({}), { status: 404 });
     if (route.text !== undefined) return new Response(route.text, { status: route.status ?? 200 });
@@ -164,9 +163,7 @@ describe('pull requests', () => {
   });
 
   it('the create preview never creates — the card does', async () => {
-    routes = [
-      { match: '/repositories/acme/api', body: { mainbranch: { name: 'main' } } },
-    ];
+    routes = [{ match: '/repositories/acme/api', body: { mainbranch: { name: 'main' } } }];
     const tools = await toolsOf();
     const result = await tools.get('bitbucket_create_pull_request_preview')!({
       workspace: 'acme',
@@ -273,13 +270,35 @@ describe('pull requests', () => {
     });
   });
 
+  it('workspace listing reads /user/workspaces, never the deprecated bare listing', async () => {
+    routes = [
+      {
+        match: '/user/workspaces',
+        body: {
+          values: [
+            {
+              administrator: true,
+              workspace: { slug: 'north-east-medical-services', name: 'NEMS' },
+            },
+          ],
+        },
+      },
+    ];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_list_workspaces')!({});
+
+    expect(result.isError).not.toBe(true);
+    expect(requests[0]?.path).toBe('/user/workspaces?pagelen=50');
+    expect(result.content[0]?.text).toContain('NEMS — slug: north-east-medical-services');
+    expect(result.content[0]?.text).toContain('administrator');
+  });
+
   it('workspace listing falls back to the permissions listing per token type', async () => {
-    // Observed in the field: a token that authenticates on every
-    // workspace-scoped endpoint still got the anonymous-style 404 on bare
-    // /workspaces — Bitbucket masks endpoints that do not support a token's
-    // TYPE as not-found. The permissions listing answers the same question.
-    // The longer path first: the stub matches by substring in order, and
-    // '/workspaces' is a substring of '/user/permissions/workspaces'.
+    // Observed in the field: a token every workspace-scoped endpoint
+    // accepted still got the anonymous-style 404 on a workspace listing —
+    // Bitbucket masks endpoints that do not support a token's TYPE as
+    // not-found. The permissions listing answers the same question.
+    // Longer paths first: the stub matches by substring in order.
     routes = [
       {
         match: '/user/permissions/workspaces',
@@ -293,7 +312,7 @@ describe('pull requests', () => {
         },
       },
       {
-        match: '/workspaces?pagelen',
+        match: '/user/workspaces',
         status: 404,
         body: { type: 'error', error: { message: 'Resource not found' } },
       },
@@ -442,9 +461,7 @@ describe('repositories and source', () => {
 
 describe('pipelines', () => {
   it('triggers the default pipeline on a branch', async () => {
-    routes = [
-      { match: '/pipelines', method: 'POST', body: { build_number: 12, uuid: '{p-1}' } },
-    ];
+    routes = [{ match: '/pipelines', method: 'POST', body: { build_number: 12, uuid: '{p-1}' } }];
     const tools = await toolsOf();
     const result = await tools.get('bitbucket_trigger_pipeline')!({
       workspace: 'acme',
@@ -461,9 +478,7 @@ describe('pipelines', () => {
   });
 
   it('a custom pipeline travels as a selector', async () => {
-    routes = [
-      { match: '/pipelines', method: 'POST', body: { build_number: 13, uuid: '{p-2}' } },
-    ];
+    routes = [{ match: '/pipelines', method: 'POST', body: { build_number: 13, uuid: '{p-2}' } }];
     const tools = await toolsOf();
     await tools.get('bitbucket_trigger_pipeline')!({
       workspace: 'acme',
@@ -493,7 +508,10 @@ describe('pipelines', () => {
   });
 
   it('normalizes bare uuids into brace form for pipeline paths', async () => {
-    routes = [{ match: '/steps', body: { values: [] } }, { match: '/pipelines/', body: {} }];
+    routes = [
+      { match: '/steps', body: { values: [] } },
+      { match: '/pipelines/', body: {} },
+    ];
     const tools = await toolsOf();
     await tools.get('bitbucket_get_pipeline')!({
       workspace: 'acme',
