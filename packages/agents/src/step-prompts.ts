@@ -13,6 +13,7 @@
 
 import { resolveOutcomes } from '@renkei/tool-outcomes';
 import { renderInstruction } from './render';
+import { attemptVariables } from './variables';
 import type { ActionStep, AgentStep, BranchStep, UntilLoopStep } from './steps';
 
 /** Structural twin of @renkei/agent-llm's text-only PromptMessage. */
@@ -448,7 +449,16 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
   messages: PromptMessage[];
   unbound: string[];
 } {
-  const rendered = renderInstruction(input.step.instruction, input.variables);
+  // The attempt chips are bound HERE rather than by the caller: this is the
+  // first place that knows both which try this is and what the step's
+  // ceiling is. They are deliberately kept out of `variableLines` below —
+  // the prompt already states the attempt in its own words on a retry, and
+  // repeating it as "known information" on every first attempt is noise.
+  const variablesWithAttempt = {
+    ...input.variables,
+    ...attemptVariables(input.attempt, input.step.maxAttempts),
+  };
+  const rendered = renderInstruction(input.step.instruction, variablesWithAttempt);
 
   const variableLines = Object.entries(input.variables)
     .map(([name, value]) => `- ${name}: ${value}`)

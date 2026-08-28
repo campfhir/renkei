@@ -26,6 +26,11 @@ export interface McpClient {
   initialize(): Promise<void>;
   listTools(): Promise<McpToolInfo[]>;
   callTool(name: string, args: Record<string, unknown>, timeoutMs?: number): Promise<McpToolResult>;
+  /**
+   * Tell the server which try of a step the next calls belong to. Optional
+   * so the in-memory test doubles need not implement it.
+   */
+  setAttempt?(attempt: number, maxAttempts: number): void;
 }
 
 const CALL_TIMEOUT_MS = 60_000;
@@ -58,10 +63,23 @@ export class AgentMcpClient implements McpClient {
   private nextId = 1;
   private sessionId: string | null = null;
 
+  /**
+   * The step attempt every subsequent call belongs to, stamped on each
+   * request so a tool can tell it is being retried. Mutable and safe:
+   * one client serves one run, and a run's attempts are strictly
+   * sequential — concurrent runs each hold their own client.
+   */
+  private attempt: { attempt: number; maxAttempts: number } | null = null;
+
   constructor(
     private readonly endpoint: string,
     private readonly bearerToken: string
   ) {}
+
+  /** Called by the engine before each attempt of a step. */
+  setAttempt(attempt: number, maxAttempts: number): void {
+    this.attempt = { attempt, maxAttempts };
+  }
 
   private async post(body: unknown, timeoutMs: number): Promise<unknown> {
     const response = await fetch(this.endpoint, {
@@ -72,6 +90,12 @@ export class AgentMcpClient implements McpClient {
         authorization: `Bearer ${this.bearerToken}`,
         'mcp-protocol-version': PROTOCOL_VERSION,
         ...(this.sessionId ? { 'mcp-session-id': this.sessionId } : {}),
+        ...(this.attempt
+          ? {
+              'x-renkei-attempt': String(this.attempt.attempt),
+              'x-renkei-attempt-max': String(this.attempt.maxAttempts),
+            }
+          : {}),
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),

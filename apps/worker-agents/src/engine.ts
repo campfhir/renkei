@@ -27,6 +27,7 @@ import { describeActor as describeActorRaw } from '@renkei/db';
 import type { DB, Json } from '@renkei/db';
 import {
   MAX_COLLECTED_ITEMS,
+  attemptVariables,
   findNodeById,
   friendlyToolName,
   flattenActionSteps,
@@ -2818,11 +2819,18 @@ export function createAgentRunHandler(deps: EngineDeps) {
     iteration: number,
     savesItemsForLoop: boolean
   ): Promise<AttemptOutcome> {
-    const guidanceText = guidance ? renderInstruction(guidance, vars).text : undefined;
+    // Corrective guidance is the likeliest place for "try [attempt] of
+    // [attempt.max]" to be written, so it renders against the same bindings
+    // the instruction gets.
+    const attemptVars = { ...vars, ...attemptVariables(attempt, step.maxAttempts) };
+    // Tools see the same numbers the instruction does, so one that can widen
+    // its own search on a retry has the fact to act on.
+    mcp.setAttempt?.(attempt, step.maxAttempts);
+    const guidanceText = guidance ? renderInstruction(guidance, attemptVars).text : undefined;
     const previousFailure =
       attempt > 1 ? await lastFailureText(run.id, step.id, iteration) : undefined;
     const toolCap = attempt > 1 ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
-    const outcomeGuide = outcomeGuideFor(step, vars);
+    const outcomeGuide = outcomeGuideFor(step, attemptVars);
     const built = buildAttemptMessages({
       step,
       attempt,
