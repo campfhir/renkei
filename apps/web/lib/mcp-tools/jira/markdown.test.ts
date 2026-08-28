@@ -151,6 +151,45 @@ describe('markdownToAdf', () => {
     it('accepts both ) and . as ordered markers', () => {
       expect(blockTypes('1) one')).toEqual(['orderedList']);
     });
+
+    it('collapses an empty wrapper item into its nested list', () => {
+      // A model faking a section label. Rendered literally this is an empty
+      // numbered row with "Request" demoted a level — Jira shows "1." over
+      // "a. Request".
+      const [list] = markdownToAdf('1. \n   1. Request').content;
+      expect(list?.type).toBe('orderedList');
+      expect(list?.content).toHaveLength(1);
+      expect(list?.content?.[0]?.content?.[0]?.content?.[0]?.text).toBe('Request');
+    });
+
+    it('lets a lone wrapper item hand the list over to its nested kind', () => {
+      const [list] = markdownToAdf('1. \n   - a\n   - b').content;
+      expect(list?.type).toBe('bulletList');
+      expect(list?.content).toHaveLength(2);
+    });
+
+    it('hoists a wrapper item among real siblings into the same level', () => {
+      const [list] = markdownToAdf('1. first\n2. \n   1. hoisted\n3. third').content;
+      expect(list?.type).toBe('orderedList');
+      expect(list?.content).toHaveLength(3);
+      expect(list?.content?.[1]?.content?.[0]?.content?.[0]?.text).toBe('hoisted');
+    });
+
+    it('keeps an item with text AND a nested list nested, as written', () => {
+      const [list] = markdownToAdf('1. outer\n   1. inner').content;
+      expect(list?.content).toHaveLength(1);
+      expect(list?.content?.[0]?.content?.[1]?.type).toBe('orderedList');
+    });
+
+    it('keeps the starting number of an ordered list that starts past 1', () => {
+      const [list] = markdownToAdf('3. third\n4. fourth').content;
+      expect(list?.attrs).toEqual({ order: 3 });
+    });
+
+    it('adds no order attribute when the list starts at 1', () => {
+      const [list] = markdownToAdf('1. one\n2. two').content;
+      expect(list?.attrs).toBeUndefined();
+    });
   });
 
   describe('round trip', () => {
@@ -161,6 +200,7 @@ describe('markdownToAdf', () => {
       '- one\n- two',
       '- outer\n  - inner',
       '1. first\n2. second',
+      '2. resumed\n3. onward',
       '> quoted line',
       '```sql\nselect 1;\n```',
       'A [link](https://x.test) inline.',

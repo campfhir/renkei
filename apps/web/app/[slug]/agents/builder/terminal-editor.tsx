@@ -12,10 +12,9 @@
 
 import type { TerminalResult, TerminalStep } from '@renkei/agents';
 import { ChipEditor } from './chip-editor';
+import { FieldIssues, exceptFields, fieldClass, forField, type NodeIssue } from './field-issues';
 import type { VariableOption } from './options';
 
-const inputClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
 const labelClass = 'block text-sm font-medium mb-1';
 
 const RESULTS: { value: TerminalResult; label: string; hint: string }[] = [
@@ -47,9 +46,11 @@ export function TerminalEditor({
   onChange: (terminal: TerminalStep) => void;
   variables: VariableOption[];
   invalidVars?: ReadonlySet<string>;
-  issues: string[];
+  issues: NodeIssue[];
 }) {
   const notifies = terminal.notifyEmail || terminal.notifyWebex;
+  const nameIssues = forField(issues, 'name');
+  const messageIssues = forField(issues, 'message');
   return (
     <div className="space-y-3">
       <div>
@@ -58,12 +59,14 @@ export function TerminalEditor({
         </label>
         <input
           id={`terminal-name-${terminal.id}`}
-          className={inputClass}
+          className={fieldClass(nameIssues.length > 0)}
+          aria-invalid={nameIssues.length > 0 || undefined}
           value={terminal.name}
           maxLength={80}
           placeholder="e.g. Ticket could not be updated"
           onChange={(event) => onChange({ ...terminal, name: event.target.value })}
         />
+        <FieldIssues messages={nameIssues} />
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           When the flow reaches this marker the WHOLE run ends here — inside a branch path or a loop
           too. Useful as a deliberate exit on a path that means “we’re done” or “this went wrong”.
@@ -138,22 +141,16 @@ export function TerminalEditor({
           placeholder="What should the notification say — type / to include a saved detail"
           ariaLabel={`Message of ending ${terminal.name || 'unnamed'}`}
           invalidVars={invalidVars}
+          invalid={messageIssues.length > 0}
         />
+        <FieldIssues messages={messageIssues} />
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           Sent as written, with saved details filled in from this run — so the notification carries
           the context (which ticket, which email, what failed), not just “an agent failed”.
         </p>
       </div>
 
-      {issues.length > 0 ? (
-        <ul className="space-y-1">
-          {issues.map((issue) => (
-            <li key={issue} className="text-xs text-red-600 dark:text-red-400">
-              {issue}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      <FieldIssues messages={exceptFields(issues, 'name', 'message')} />
     </div>
   );
 }

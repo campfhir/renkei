@@ -15,7 +15,7 @@
  * with the DST handling schedules already rely on.
  */
 
-import type { DateSegment, InstructionSegment } from './steps';
+import type { DateSegment, FailureHandling, InstructionSegment } from './steps';
 import { describeDateSegment, resolveTime } from './resolve-time';
 
 export interface RenderResult {
@@ -115,4 +115,49 @@ export function instructionPreview(segments: InstructionSegment[]): string {
       }
     })
     .join('');
+}
+
+/**
+ * One outcome-handling entry as prose — the SHARED reading every surface
+ * renders (the steps outline the reviewer and agent_get see, the run-debug
+ * snapshot, the builder's summary hint), so none of them can drift into
+ * lying about what a handling does (the old outline rendered 'continue'
+ * and 'stop-quiet' both as "stop").
+ */
+export function describeFailureHandling(
+  handling: FailureHandling,
+  maxAttempts: number,
+  saveAs?: string
+): string {
+  const condition =
+    handling.when !== undefined
+      ? `on "${handling.outcome}" (when: ${handling.when})`
+      : `on "${handling.outcome}"`;
+  const note =
+    handling.action !== 'retry' && handling.guidance && handling.guidance.length > 0
+      ? ` — note: ${instructionPreview(handling.guidance)}`
+      : '';
+  switch (handling.action) {
+    case 'retry': {
+      const exhausted =
+        handling.exhausted === 'continue'
+          ? 'keep going anyway'
+          : handling.exhausted === 'stop-quiet'
+            ? 'end quietly as skipped'
+            : 'stop the agent';
+      return (
+        `${condition} retry (max ${maxAttempts} attempts) with: ` +
+        `${instructionPreview(handling.guidance ?? [])}; if every try fails: ${exhausted}`
+      );
+    }
+    case 'stop-quiet':
+      return `${condition} end quietly as skipped (declared not an error)${note}`;
+    case 'continue':
+      return (
+        `${condition} keep going anyway (failure recorded` +
+        `${saveAs ? `, saved as "${saveAs}"` : ''})${note}`
+      );
+    case 'exit':
+      return `${condition} stop the agent${note}`;
+  }
 }

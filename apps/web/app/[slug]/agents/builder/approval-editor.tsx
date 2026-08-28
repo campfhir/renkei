@@ -11,10 +11,9 @@
 import type { ApprovalStep, BranchPath } from '@renkei/agents';
 import { APPROVAL_OUTCOME_KEYS, type ApprovalOutcomeKey } from '@renkei/agents';
 import { ChipEditor } from './chip-editor';
+import { FieldIssues, exceptFields, fieldClass, forField, type NodeIssue } from './field-issues';
 import type { VariableOption } from './options';
 
-const inputClass =
-  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
 const labelClass = 'block text-sm font-medium mb-1';
 
 /** Preset waits; the select shows hours under the hood. */
@@ -43,7 +42,7 @@ export function ApprovalEditor({
   onChange: (approval: ApprovalStep) => void;
   variables: VariableOption[];
   invalidVars?: ReadonlySet<string>;
-  issues: string[];
+  issues: NodeIssue[];
 }) {
   const renamePath = (key: ApprovalOutcomeKey, name: string) => {
     const path: BranchPath = { ...approval[key], name };
@@ -51,6 +50,18 @@ export function ApprovalEditor({
   };
 
   const presetValues = new Set(WAIT_PRESETS.map((preset) => preset.hours));
+  const nameIssues = forField(issues, 'name');
+  const messageIssues = forField(issues, 'message');
+  const saveAsIssues = forField(issues, 'saveAs');
+  const timeoutIssues = forField(issues, 'timeoutHours');
+  const otherIssues = exceptFields(
+    issues,
+    'name',
+    'message',
+    'saveAs',
+    'timeoutHours',
+    ...APPROVAL_OUTCOME_KEYS
+  );
 
   return (
     <div className="space-y-3">
@@ -60,12 +71,14 @@ export function ApprovalEditor({
         </label>
         <input
           id={`approval-name-${approval.id}`}
-          className={inputClass}
+          className={fieldClass(nameIssues.length > 0)}
+          aria-invalid={nameIssues.length > 0 || undefined}
           value={approval.name}
           maxLength={80}
           placeholder="e.g. OK to send the report?"
           onChange={(event) => onChange({ ...approval, name: event.target.value })}
         />
+        <FieldIssues messages={nameIssues} />
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           The run PAUSES here and puts a card on your home page. It continues down one of the paths
           below when you act — or down the timed-out path when the wait runs out.
@@ -84,7 +97,9 @@ export function ApprovalEditor({
           placeholder="What you'll see on the card — type / to include a saved detail"
           ariaLabel={`Message of approval ${approval.name || 'unnamed'}`}
           invalidVars={invalidVars}
+          invalid={messageIssues.length > 0}
         />
+        <FieldIssues messages={messageIssues} />
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           Shown on the card with saved details filled in from the run — so you decide with the
           context in front of you.
@@ -149,12 +164,14 @@ export function ApprovalEditor({
           </label>
           <input
             id={`approval-saveas-${approval.id}`}
-            className={inputClass}
+            className={fieldClass(saveAsIssues.length > 0)}
+            aria-invalid={saveAsIssues.length > 0 || undefined}
             value={approval.saveAs ?? ''}
             maxLength={64}
             placeholder="e.g. the decision"
             onChange={(event) => onChange({ ...approval, saveAs: event.target.value || undefined })}
           />
+          <FieldIssues messages={saveAsIssues} />
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
             Later steps reference it as a chip, like any saved result.
           </p>
@@ -167,7 +184,8 @@ export function ApprovalEditor({
         </label>
         <select
           id={`approval-wait-${approval.id}`}
-          className={inputClass}
+          className={fieldClass(timeoutIssues.length > 0)}
+          aria-invalid={timeoutIssues.length > 0 || undefined}
           value={approval.timeoutHours}
           onChange={(event) => onChange({ ...approval, timeoutHours: Number(event.target.value) })}
         >
@@ -180,6 +198,7 @@ export function ApprovalEditor({
             </option>
           ))}
         </select>
+        <FieldIssues messages={timeoutIssues} />
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           When the wait runs out, the run takes the timed-out path instead of stalling forever. Your
           organization caps the wait; longer choices are clipped to that cap on save.
@@ -214,20 +233,29 @@ export function ApprovalEditor({
       <div>
         <span className={labelClass}>Outcome paths</span>
         <ul className="space-y-2">
-          {APPROVAL_OUTCOME_KEYS.map((key) => (
-            <li key={key} className="flex items-center gap-2">
-              <span className="w-24 shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400">
-                {OUTCOME_CAPTIONS[key][approval.mode]}
-              </span>
-              <input
-                aria-label={`Name of the ${OUTCOME_CAPTIONS[key][approval.mode]} path`}
-                className={inputClass}
-                value={approval[key].name}
-                maxLength={80}
-                onChange={(event) => renamePath(key, event.target.value)}
-              />
-            </li>
-          ))}
+          {APPROVAL_OUTCOME_KEYS.map((key) => {
+            const pathIssues = forField(issues, key);
+            return (
+              <li key={key} className="flex flex-wrap items-center gap-2">
+                <span className="w-24 shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+                  {OUTCOME_CAPTIONS[key][approval.mode]}
+                </span>
+                <input
+                  aria-label={`Name of the ${OUTCOME_CAPTIONS[key][approval.mode]} path`}
+                  aria-invalid={pathIssues.length > 0 || undefined}
+                  className={`min-w-0 flex-1 ${fieldClass(pathIssues.length > 0)}`}
+                  value={approval[key].name}
+                  maxLength={80}
+                  onChange={(event) => renamePath(key, event.target.value)}
+                />
+                {pathIssues.length > 0 ? (
+                  <div className="w-full pl-[6.5rem]">
+                    <FieldIssues messages={pathIssues} />
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           Each path's steps are edited on the canvas. An empty path just continues below the
@@ -235,15 +263,7 @@ export function ApprovalEditor({
         </p>
       </div>
 
-      {issues.length > 0 ? (
-        <ul className="space-y-1">
-          {issues.map((issue) => (
-            <li key={issue} className="text-xs text-red-600 dark:text-red-400">
-              {issue}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      <FieldIssues messages={otherIssues} />
     </div>
   );
 }

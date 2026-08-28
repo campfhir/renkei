@@ -10,6 +10,7 @@
  * other callers may omit it for fire-and-forget.
  */
 
+import { after } from 'next/server';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import {
@@ -66,7 +67,11 @@ export async function saveAgent(
     ownerSubject?: string;
   } = {}
 ): Promise<SaveAgentResult> {
-  const defer = options.defer ?? ((task) => void task());
+  // Default to Next's after(): the summary is written AFTER the response
+  // in every caller (routes, MCP tools, imports) — a save never blocks on
+  // a model, and the deferred work still runs to completion instead of
+  // riding an unawaited promise a recycled process can drop.
+  const defer = options.defer ?? ((task) => after(task));
   const owner = options.ownerSubject ?? subject;
 
   const settings = await getOrgSettings(tenantId);
@@ -132,23 +137,43 @@ export async function saveAgent(
   const agentId = options.agentId;
   const existing = await getAgent(db, tenantId, owner, agentId);
   if (!existing) return { outcome: 'not-found' };
+  // Compared NORMALIZED-to-normalized: the stored doc may predate a
+  // normalizer rule (an older steps version, a since-added strip), and a
+  // round-tripped save that changed nothing the author can see must not
+  // read as a content change — the list's on/off toggle sends the whole
+  // definition back, and it was re-describing untouched agents purely
+  // because normalization moved.
+  const existingNormalized = normalizeAgentDraft(
+    {
+      name: existing.name,
+      steps: existing.steps,
+      triggers: existing.triggers.map((trigger) => trigger.draft),
+      enabled: existing.enabled,
+      llmModelId: existing.llmModelId,
+      guardrails: existing.guardrails,
+      blockedTools: existing.blockedTools,
+    },
+    {
+      attemptsCap: settings.ok ? settings.val.agentMaxStepAttempts : undefined,
+      approvalWaitCapHours: settings.ok ? settings.val.agentApprovalMaxWaitDays * 24 : undefined,
+    }
+  );
   const describedChanged =
-    existing.name !== normalized.name ||
-    JSON.stringify(existing.steps) !== JSON.stringify(normalized.steps) ||
+    existingNormalized.name !== normalized.name ||
+    JSON.stringify(existingNormalized.steps.steps) !== JSON.stringify(normalized.steps.steps) ||
     // Guardrails shape the summary and the reviewer's concerns, so a
     // guardrails edit re-describes like a steps edit does.
-    existing.guardrails !== normalized.guardrails ||
-    JSON.stringify(existing.blockedTools) !== JSON.stringify(normalized.blockedTools) ||
-    JSON.stringify(existing.triggers.map((trigger) => trigger.draft)) !==
-      JSON.stringify(normalized.triggers);
+    existingNormalized.guardrails !== normalized.guardrails ||
+    JSON.stringify(existingNormalized.blockedTools) !== JSON.stringify(normalized.blockedTools) ||
+    JSON.stringify(existingNormalized.triggers) !== JSON.stringify(normalized.triggers);
   // An explicit save (refreshDescription — the builder's Save button)
   // rewrites the summary unconditionally: the review panel is about to
-  // show it, so it must reflect THIS save, not a cached earlier one. The
-  // panel's confirm and the list's on/off toggle omit the flag, so they
-  // only regenerate when the content actually changed (or a summary is
-  // still missing) — confirming must never re-stale what was just read.
-  const needsDescription =
-    parsed.refreshDescription || describedChanged || existing.descriptionStatus !== 'ok';
+  // show it, so it must reflect THIS save, not a cached earlier one.
+  // Everything else — the panel's confirm, the list's on/off toggle —
+  // regenerates ONLY on a real content change: a toggle must never spend
+  // a model call, and a previously failed summary retries on the next
+  // real edit or the builder's re-check button, not on every save.
+  const needsDescription = parsed.refreshDescription || describedChanged;
 
   const result = await updateAgent(db, tenantId, owner, agentId, savedInput, {
     markDescriptionStale: needsDescription,

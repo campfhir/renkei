@@ -29,8 +29,6 @@ jest.mock('@renkei/agents/memory', () => ({
   renderAgentKnowledgeNotes: jest.fn(async () => ''),
   renderAgentMemory: jest.fn(() => ''),
 }));
-jest.mock('@/lib/agents/draft-from-prose', () => ({ draftAgentFromProse: jest.fn() }));
-jest.mock('@/lib/mcp-tools/tool-catalog', () => ({ listAvailableTools: jest.fn(async () => []) }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import { registerAgentTools } from './index';
@@ -50,9 +48,6 @@ const notesMock = jest.requireMock<{
   updateAgentNote: jest.Mock;
   deleteAgentNote: jest.Mock;
 }>('@/lib/agents/agent-notes');
-const draftMock = jest.requireMock<{ draftAgentFromProse: jest.Mock }>(
-  '@/lib/agents/draft-from-prose'
-);
 
 type Handler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text?: string }>;
@@ -132,11 +127,10 @@ beforeEach(() => {
   storeMock.getAgent.mockResolvedValue(AGENT);
 });
 
-test('the three definition-editing tools refuse agent-run callers', async () => {
+test('the definition-editing tools refuse agent-run callers', async () => {
   const handlers = registerAll({ agent: { agentId: 'agent-9' } });
-  for (const name of ['agent_draft', 'agent_create', 'agent_update']) {
+  for (const name of ['agent_create', 'agent_update']) {
     const result = await handlers.get(name)!({
-      text: 'do something useful',
       agentId: 'agent-1',
       name: 'X',
       steps: STEPS_DOC,
@@ -145,7 +139,31 @@ test('the three definition-editing tools refuse agent-run callers', async () => 
     expect(result.content[0]?.text).toContain('Agent runs cannot edit agent definitions');
   }
   expect(saveMock.saveAgent).not.toHaveBeenCalled();
-  expect(draftMock.draftAgentFromProse).not.toHaveBeenCalled();
+});
+
+test('agent_get returns the exact definition as raw JSON — no prose, no fence', async () => {
+  const handlers = registerAll({});
+  const result = await handlers.get('agent_get')!({ agentId: 'agent-1' });
+  expect(result.isError).toBeUndefined();
+  const parsed = JSON.parse(result.content[0]?.text ?? '');
+  expect(parsed).toMatchObject({
+    agentId: 'agent-1',
+    enabled: true,
+    name: 'Triage',
+    guardrails: 'Never invent numbers.',
+    blockedTools: ['outlook_send_mail'],
+  });
+  expect(parsed.steps).toEqual({ version: 1, steps: [] });
+});
+
+test('agent_get_description renders the readable view without the definition', async () => {
+  const handlers = registerAll({});
+  const result = await handlers.get('agent_get_description')!({ agentId: 'agent-1' });
+  expect(result.isError).toBeUndefined();
+  const text = result.content[0]?.text ?? '';
+  expect(text).toContain('Triage — ON (agentId: agent-1)');
+  expect(text).toContain('Standing guardrails:');
+  expect(text).not.toContain('renkei-agent');
 });
 
 test('read, knowledge, and memory tools stay available to agent-run callers', async () => {

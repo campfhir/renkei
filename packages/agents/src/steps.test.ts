@@ -1,23 +1,21 @@
 /**
- * The structural contract of the steps document, with branching. What's
- * pinned here is back-compat above all: a v1 document parses exactly as it
- * did before branches existed, a v2 document is rejected by nothing but
- * genuine malformation, and the walkers agree with the flat semantics on
- * linear docs (ordinal ≡ index) — that identity is what keeps old run
- * records readable.
+ * The structural contract of the steps document. One guard for every
+ * stored version: an old document's NODES always parse (today's shapes
+ * are supersets of everything this product ever wrote), so run records
+ * stay readable and stale agents open in the builder — while
+ * isCurrentStepsDoc pins the stricter question of what may RUN.
  */
 
 import { randomUUID } from 'node:crypto';
 import {
-  MAX_BRANCH_DEPTH,
-  containsBranch,
+  CURRENT_STEPS_VERSION,
   countNodes,
   findNodeById,
   flattenActionSteps,
   isAgentStepsDoc,
   isBranchStep,
+  isCurrentStepsDoc,
   nodeUsesModel,
-  requiredVersion,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
@@ -58,8 +56,11 @@ describe('isAgentStepsDoc', () => {
     expect(isAgentStepsDoc({ version: 1, steps: [action()] })).toBe(true);
   });
 
-  it('rejects a branch smuggled into a v1 document', () => {
-    expect(isAgentStepsDoc({ version: 1, steps: [branch()] })).toBe(false);
+  it('never lets the version number constrain structure — old docs LOAD', () => {
+    // The builder must be able to open a stale agent so its owner can
+    // update it; the version number decides only whether it may RUN.
+    expect(isAgentStepsDoc({ version: 1, steps: [branch()] })).toBe(true);
+    expect(isAgentStepsDoc({ version: 3, steps: [loop(), group()] })).toBe(true);
   });
 
   it('accepts every failure-handling action, and only those', () => {
@@ -120,17 +121,9 @@ describe('isAgentStepsDoc', () => {
     expect(isAgentStepsDoc({ version: 2, steps: [action(), branch()] })).toBe(true);
   });
 
-  it('accepts a nested branch at the allowed depth and rejects deeper', () => {
-    const nested = branch({
-      paths: [
-        { id: randomUUID(), name: 'Yes', steps: [branch()] },
-        { id: randomUUID(), name: 'No', steps: [] },
-      ],
-    });
-    expect(MAX_BRANCH_DEPTH).toBe(2);
-    expect(isAgentStepsDoc({ version: 2, steps: [nested] })).toBe(true);
-
-    const tooDeep = branch({
+  it('accepts nesting to the current depth and rejects deeper', () => {
+    // branch > branch > branch is the deepest legal branch shape.
+    const threeDeep = branch({
       paths: [
         {
           id: randomUUID(),
@@ -147,7 +140,15 @@ describe('isAgentStepsDoc', () => {
         { id: randomUUID(), name: 'No', steps: [] },
       ],
     });
-    expect(isAgentStepsDoc({ version: 2, steps: [tooDeep] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 8, steps: [threeDeep] })).toBe(true);
+
+    const fourDeep = branch({
+      paths: [
+        { id: randomUUID(), name: 'Yes', steps: [threeDeep] },
+        { id: randomUUID(), name: 'No', steps: [] },
+      ],
+    });
+    expect(isAgentStepsDoc({ version: 8, steps: [fourDeep] })).toBe(false);
   });
 
   it('rejects a branch missing its second path', () => {
@@ -155,15 +156,22 @@ describe('isAgentStepsDoc', () => {
     expect(isAgentStepsDoc({ version: 2, steps: [half] })).toBe(false);
   });
 
-  it('rejects unknown versions', () => {
-    expect(isAgentStepsDoc({ version: 8, steps: [] })).toBe(false);
+  it('rejects versions outside 1..current', () => {
+    expect(isAgentStepsDoc({ version: CURRENT_STEPS_VERSION + 1, steps: [] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 0, steps: [] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 2.5, steps: [] })).toBe(false);
+    expect(isAgentStepsDoc({ version: CURRENT_STEPS_VERSION, steps: [] })).toBe(true);
   });
 
-  it('accepts an empty version-3 document shell', () => {
-    expect(isAgentStepsDoc({ version: 3, steps: [] })).toBe(true);
+  it('isCurrentStepsDoc demands exactly the current version', () => {
+    expect(CURRENT_STEPS_VERSION).toBe(8);
+    expect(isCurrentStepsDoc({ version: CURRENT_STEPS_VERSION, steps: [action()] })).toBe(true);
+    // Loads, but may not run — the disable-and-notify path's trigger.
+    expect(isCurrentStepsDoc({ version: 7, steps: [action()] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 7, steps: [action()] })).toBe(true);
   });
 
-  it('admits terminal nodes only at version 4', () => {
+  it('admits terminal nodes at any loaded version, rejecting malformation', () => {
     const terminal = {
       id: randomUUID(),
       kind: 'terminal',
@@ -174,13 +182,39 @@ describe('isAgentStepsDoc', () => {
       notifyWebex: false,
     };
     expect(isAgentStepsDoc({ version: 4, steps: [terminal] })).toBe(true);
-    expect(isAgentStepsDoc({ version: 3, steps: [terminal] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 3, steps: [terminal] })).toBe(true);
     expect(isAgentStepsDoc({ version: 4, steps: [{ ...terminal, result: 'explode' }] })).toBe(
       false
     );
     expect(isAgentStepsDoc({ version: 4, steps: [{ ...terminal, notifyEmail: 'yes' }] })).toBe(
       false
     );
+  });
+
+  it('admits the v8 handling vocabulary and rejects a malformed when', () => {
+    const doc = (when: unknown): unknown => ({
+      version: 8,
+      steps: [
+        {
+          id: randomUUID(),
+          name: 'Find it',
+          instruction: [{ t: 'text', v: 'Find it.' }],
+          tool: 'jira_search_issues',
+          maxAttempts: 1,
+          failureHandling: [
+            {
+              outcome: 'stale-data',
+              action: 'continue',
+              guidance: [{ t: 'text', v: 'Note it and move on.' }],
+              ...(when === undefined ? {} : { when }),
+            },
+          ],
+        },
+      ],
+    });
+    expect(isAgentStepsDoc(doc('the report is older than 30 days'))).toBe(true);
+    expect(isAgentStepsDoc(doc(undefined))).toBe(true);
+    expect(isAgentStepsDoc(doc(42))).toBe(false);
   });
 });
 
@@ -321,62 +355,7 @@ describe('version 3 structures', () => {
     expect(found?.ancestors.map((a) => a.kind)).toEqual(['group', 'loop']);
   });
 
-  it('requiredVersion: v1/v2 stay put, every v3 trigger bumps', () => {
-    const { requiredVersion } = jest.requireActual<typeof import('./steps')>('./steps');
-    expect(requiredVersion([action()])).toBe(1);
-    expect(requiredVersion([branch()])).toBe(2);
-    expect(requiredVersion([loop()])).toBe(3);
-    expect(requiredVersion([group()])).toBe(3);
-    expect(
-      requiredVersion([
-        branch({
-          paths: [
-            { id: randomUUID(), name: 'A', steps: [] },
-            { id: randomUUID(), name: 'B', steps: [] },
-            { id: randomUUID(), name: 'C', steps: [action()] },
-          ],
-        }),
-      ])
-    ).toBe(3);
-    expect(
-      requiredVersion([
-        branch({ failurePath: { id: randomUUID(), name: 'On failure', steps: [] } }),
-      ])
-    ).toBe(3);
-    // Three nested all-binary branches: no new constructs, but past the
-    // frozen v2 depth — must be v3 or the v2 reader would reject it.
-    const threeDeep = branch({
-      paths: [
-        {
-          id: randomUUID(),
-          name: 'Yes',
-          steps: [
-            branch({
-              paths: [
-                { id: randomUUID(), name: 'Deeper', steps: [branch()] },
-                { id: randomUUID(), name: 'No', steps: [] },
-              ],
-            }),
-          ],
-        },
-        { id: randomUUID(), name: 'No', steps: [] },
-      ],
-    });
-    expect(requiredVersion([threeDeep])).toBe(3);
-  });
-
-  it('the frozen v2 arm rejects every v3 construct', () => {
-    expect(isAgentStepsDoc({ version: 2, steps: [loop()] })).toBe(false);
-    expect(isAgentStepsDoc({ version: 2, steps: [group()] })).toBe(false);
-    expect(
-      isAgentStepsDoc({
-        version: 2,
-        steps: [branch({ failurePath: { id: randomUUID(), name: 'F', steps: [] } })],
-      })
-    ).toBe(false);
-  });
-
-  it('the v3 arm accepts the new constructs and enforces its own limits', () => {
+  it('the guard accepts the container constructs and enforces its limits', () => {
     expect(isAgentStepsDoc({ version: 3, steps: [loop(), group(), branch()] })).toBe(true);
     // No nested loops.
     expect(isAgentStepsDoc({ version: 3, steps: [loop({ steps: [loop()] })] })).toBe(false);
@@ -411,10 +390,9 @@ describe('tree helpers', () => {
     expect(countNodes([action(), branch()])).toBe(3); // action + branch + its one child
   });
 
-  it('containsBranch sees nested branches', () => {
-    expect(containsBranch([action()])).toBe(false);
-    expect(containsBranch([action(), branch()])).toBe(true);
+  it('isBranchStep discriminates', () => {
     expect(isBranchStep(branch())).toBe(true);
+    expect(isBranchStep(action())).toBe(false);
   });
 });
 
@@ -434,16 +412,15 @@ describe('approval nodes (version 5)', () => {
     ...overrides,
   });
 
-  it('admits approval nodes only at version 5', () => {
+  it('admits approval nodes at any loaded version, rejecting malformation', () => {
     const node = approval();
     expect(isAgentStepsDoc({ version: 5, steps: [node] })).toBe(true);
-    expect(isAgentStepsDoc({ version: 4, steps: [node] })).toBe(false);
-    expect(isAgentStepsDoc({ version: 3, steps: [node] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 4, steps: [node] })).toBe(true);
     expect(isAgentStepsDoc({ version: 5, steps: [{ ...node, mode: 'shout' }] })).toBe(false);
     expect(isAgentStepsDoc({ version: 5, steps: [{ ...node, onTimeout: undefined }] })).toBe(false);
   });
 
-  it('requiredVersion puts approval above terminal', () => {
+  it('admits terminals inside approval outcome paths', () => {
     const terminal: TerminalStep = {
       id: randomUUID(),
       kind: 'terminal',
@@ -453,50 +430,8 @@ describe('approval nodes (version 5)', () => {
       notifyEmail: false,
       notifyWebex: false,
     };
-    expect(requiredVersion([approval()])).toBe(5);
-    expect(
-      requiredVersion([
-        approval({ onDeclined: { id: randomUUID(), name: 'R', steps: [terminal] } }),
-      ])
-    ).toBe(5);
-    expect(requiredVersion([terminal])).toBe(4);
-  });
-
-  it('requiredVersion labels the continue/exhausted handling vocabulary 7', () => {
-    const withContinue = action({
-      tool: 'jira_search_issues',
-      failureHandling: [{ outcome: 'no-results', action: 'continue' }],
-    });
-    const withExhausted = action({
-      tool: 'jira_search_issues',
-      maxAttempts: 3,
-      failureHandling: [
-        {
-          outcome: 'no-results',
-          action: 'retry',
-          guidance: [{ t: 'text', v: 'Reword the search.' }],
-          exhausted: 'continue',
-        },
-      ],
-    });
-    expect(requiredVersion([withContinue])).toBe(7);
-    expect(requiredVersion([withExhausted])).toBe(7);
-    // The plain vocabulary keeps its old label — byte-stability for every
-    // document an older writer could produce.
-    expect(
-      requiredVersion([
-        action({
-          tool: 'jira_search_issues',
-          failureHandling: [
-            {
-              outcome: 'no-results',
-              action: 'retry',
-              guidance: [{ t: 'text', v: 'Reword the search.' }],
-            },
-          ],
-        }),
-      ])
-    ).toBe(1);
+    const node = approval({ onDeclined: { id: randomUUID(), name: 'R', steps: [terminal] } });
+    expect(isAgentStepsDoc({ version: CURRENT_STEPS_VERSION, steps: [node] })).toBe(true);
   });
 
   it('walks and finds nodes inside outcome paths with the path grammar', () => {

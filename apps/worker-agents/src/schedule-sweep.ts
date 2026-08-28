@@ -19,7 +19,7 @@ import type { QueueProducer } from '@renkei/queue';
 import {
   blackoutPredicate,
   computeNextRunForSchedule,
-  isAgentStepsDoc,
+  isCurrentStepsDoc,
   isBlackoutEntry,
   parseScheduleConfig,
   type BlackoutEntry,
@@ -131,8 +131,12 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
         .executeTakeFirst();
       if (Number(advanced.numUpdatedRows ?? 0) === 0) continue;
 
-      if (!isAgentStepsDoc(row.steps)) {
-        await recordTriggerError(db, row.trigger_id, 'The saved steps could not be read.');
+      if (!isCurrentStepsDoc(row.steps)) {
+        await recordTriggerError(
+          db,
+          row.trigger_id,
+          'This agent is saved in an older format — open it in the builder and save to update it.'
+        );
         continue;
       }
 

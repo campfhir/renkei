@@ -8,7 +8,13 @@
  * withheld content for is copied as hidden, not resurrected here.
  */
 
-import { findNodeById, instructionPreview, isAgentStepsDoc, walkSteps } from '@renkei/agents';
+import {
+  describeFailureHandling,
+  findNodeById,
+  instructionPreview,
+  isAgentStepsDoc,
+  walkSteps,
+} from '@renkei/agents';
 import { statusLabel, outcomeCodeLabel } from '@/lib/agents/run-labels';
 import { activityHeadline, runActivity } from '@/lib/agents/run-actions';
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
@@ -157,6 +163,12 @@ function snapshotLines(run: RunDetail): string[] {
         const instruction = instructionPreview(node.instruction);
         if (instruction) lines.push(`${indent}   instruction: ${instruction}`);
         if (node.saveAs) lines.push(`${indent}   saves result as: ${node.saveAs}`);
+        // The handling is part of what the run DID — a debug reader asking
+        // "why did the run keep going after this failed?" finds the answer
+        // here instead of in the builder.
+        for (const handling of node.failureHandling) {
+          lines.push(`${indent}   ${describeFailureHandling(handling, node.maxAttempts, node.saveAs)}`);
+        }
         break;
       }
       default: {
@@ -181,6 +193,14 @@ function attemptLines(attempt: AttemptView): string[] {
     typeof attempt.detail === 'object' && attempt.detail !== null && !Array.isArray(attempt.detail)
       ? attempt.detail
       : {};
+  // The prompt the model was actually sent, byte-for-byte — captured by
+  // the engine at send time (attempts recorded before that ship only the
+  // resolved-instruction preview below). Everything after it — outcomes,
+  // summaries, tool calls, errors — is appended context; this block is the
+  // 1:1 part.
+  if (str(detail.promptText)) {
+    lines.push('  Prompt (verbatim, as sent to the model):', '```text', str(detail.promptText), '```');
+  }
   if (str(detail.chosenPathName)) lines.push(`  Took path: ${str(detail.chosenPathName)}`);
   // A skip ends the WHOLE run from inside a "Succeeded" attempt — without
   // this line the debug paste shows a green attempt and then an

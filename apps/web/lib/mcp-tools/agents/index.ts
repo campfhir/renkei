@@ -15,30 +15,30 @@
  *  - Everything is OWNER-SCOPED: every lookup goes through the same
  *    subject-scoped queries the web routes use, so someone else's agentId
  *    reads as not-found, never as forbidden.
- *  - The three DEFINITION-EDITING tools (agent_draft, agent_create,
- *    agent_update) REFUSE agent-run callers (`context.agent` set): a run
- *    must not rewrite its own steps or strip its guardrails — the cards
- *    ground rule, applied to behavior. Knowledge and memory tools stay
- *    available to runs: knowledge is reference data an agent legitimately
- *    curates (knowledge_create_note already exists); steps and guardrails
- *    are behavior definition, and that line is the point.
+ *  - The DEFINITION-EDITING tools (agent_create, agent_update) REFUSE
+ *    agent-run callers (`context.agent` set): a run must not rewrite its
+ *    own steps or strip its guardrails — the cards ground rule, applied
+ *    to behavior. Knowledge and memory tools stay available to runs:
+ *    knowledge is reference data an agent legitimately curates
+ *    (knowledge_create_note already exists); steps and guardrails are
+ *    behavior definition, and that line is the point.
  *  - Writes are CONFIRM-GATED: without `confirm: true`, agent_create and
  *    agent_update validate and report what WOULD be saved, persisting
  *    nothing. `enabled: true` is refused outright — the builder's review
  *    panel is the consent surface for arming an agent; disabling is
  *    always allowed.
+ *  - There is NO drafting tool here. Prose-to-steps drafting is the web
+ *    builder's own REST path (/agents/draft + the worker job); model
+ *    callers work at the definition level instead — agent_get hands them
+ *    the exact JSON, agent_update validates their edit deterministically.
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
-import { requiredVersion, savesByPathCoverage, type AgentStepsDoc } from '@renkei/agents';
-import {
-  readAgentMemory,
-  renderAgentKnowledgeNotes,
-  renderAgentMemory,
-} from '@renkei/agents/memory';
+import { savesByPathCoverage, type AgentStepsDoc } from '@renkei/agents';
+import { readAgentMemory } from '@renkei/agents/memory';
 import { sql } from 'kysely';
 import type { MCPToolContext } from '../common';
 import { getAgent, listAgents, type StoredAgent } from '@/lib/agents/store';
@@ -57,8 +57,7 @@ import {
   MAX_AGENT_NOTE_TITLE_CHARS,
   type AgentNoteError,
 } from '@/lib/agents/agent-notes';
-import { draftAgentFromProse } from '@/lib/agents/draft-from-prose';
-import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
+import { agentDefinition } from '@/lib/agents/definition';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
 
@@ -76,8 +75,8 @@ function errText(text: string) {
 const NO_SUBJECT = 'This caller has no recorded identity, so it has no agents.';
 const NOT_FOUND = 'No agent of yours has that id.';
 const RUN_REFUSAL =
-  'Agent runs cannot edit agent definitions — drafting, creating, and updating agents is ' +
-  'reserved for people. The read, run-history, knowledge, and memory tools remain available.';
+  'Agent runs cannot edit agent definitions — creating and updating agents is reserved ' +
+  'for people. The read, run-history, knowledge, and memory tools remain available.';
 
 const noteErrorText: Record<AgentNoteError, string> = {
   DB_ERROR: 'Database error.',
@@ -154,11 +153,59 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   server.registerTool(
     'agent_get',
     {
-      title: 'Agents · Read — One agent in full',
+      title: 'Agents · Read — The exact definition, as JSON',
       description:
-        "One of your agents in full: the steps outline, guardrails, blocked skills, the " +
-        'variables it saves (for chaining), triggers, agents chained after it, and the ' +
-        'knowledge and memory its runs carry.',
+        "One of your agents' EXACT stored definition, as raw JSON — the machine path. " +
+        'To change the agent: edit this JSON, change only what the edit needs, keep the ids ' +
+        'of steps/paths/triggers you are keeping (run history and retry settings anchor to ' +
+        'them), and pass the fields to agent_update. For the human-readable rendering ' +
+        '(outline, knowledge, memory, chaining), use agent_get_description.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        agentId: z.string().min(1).describe('From agent_list'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const agent = await ownAgent(dbResult.val, context, args.agentId);
+      if (!agent) return errText(NOT_FOUND);
+
+      // Raw JSON, nothing else: agentId/enabled are read-only context (the
+      // save path ignores them); every other key is exactly what
+      // agent_update takes.
+      return textResult(
+        JSON.stringify(
+          {
+            agentId: agent.id,
+            enabled: agent.enabled,
+            ...agentDefinition({
+              name: agent.name,
+              description: agent.description,
+              steps: agent.steps,
+              triggers: agent.triggers,
+              guardrails: agent.guardrails,
+              blockedTools: agent.blockedTools,
+              llmModelId: agent.llmModelId,
+            }),
+          },
+          null,
+          2
+        )
+      );
+    }
+  );
+
+  server.registerTool(
+    'agent_get_description',
+    {
+      title: 'Agents · Read — One agent, described',
+      description:
+        'The human-readable rendering of one of your agents: the steps outline, guardrails, ' +
+        'blocked skills, the variables it saves (for chaining), triggers, and agents ' +
+        'chained after it. For the exact definition to edit, use agent_get; for what its ' +
+        'runs carry, agent_knowledge_list and agent_memory_list.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -184,11 +231,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .where(sql<string>`t.config->>'callerAgentId'`, '=', agent.id)
         .where('a.owner_subject', '=', context.subject)
         .execute();
-
-      const [knowledge, memory] = await Promise.all([
-        renderAgentKnowledgeNotes(db, context.tenantId, agent.id),
-        readAgentMemory(db, context.tenantId, agent.id).then(renderAgentMemory),
-      ]);
 
       const lines = [
         `${agent.name} — ${agent.enabled ? 'ON' : 'off'} (agentId: ${agent.id})`,
@@ -219,8 +261,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               ...chained.map((row) => `- ${row.name} (agentId: ${row.id})`),
             ]
           : []),
-        ...(knowledge ? ['', 'Knowledge notes (as injected into runs):', knowledge] : []),
-        ...(memory ? ['', 'Memory (as injected into runs):', memory] : []),
       ];
       return textResult(lines.join('\n'));
     }
@@ -578,92 +618,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     }
   );
 
-  server.registerTool(
-    'agent_draft',
-    {
-      title: 'Agents · Act — Draft an agent from a description',
-      description:
-        'Turn a plain-language description into a drafted agent definition — steps, and ' +
-        'optionally triggers and guardrails — reviewed by the same critic the builder runs. ' +
-        'NOTHING is persisted: the reply carries the outline, open questions and concerns, ' +
-        'and the raw steps document to pass to agent_create or agent_update. Pass agentId to ' +
-        'revise that agent instead of starting fresh.',
-      annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        text: z
-          .string()
-          .min(10)
-          .max(20_000)
-          .describe('What the agent should do, in plain language'),
-        agentId: z
-          .string()
-          .optional()
-          .describe('Revise THIS agent of yours: its current steps are the starting point'),
-      }),
-    },
-    async (args: Record<string, unknown>) => {
-      if (!context.subject) return errText(NO_SUBJECT);
-      if (context.agent) return errText(RUN_REFUSAL);
-      const text = typeof args.text === 'string' ? args.text.trim() : '';
-      if (text.length < 10) return errText('Describe the automation in a sentence or two first.');
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
-
-      let revising: StoredAgent | null = null;
-      if (typeof args.agentId === 'string' && args.agentId.trim()) {
-        revising = await ownAgent(db, context, args.agentId);
-        if (!revising) return errText(NOT_FOUND);
-      }
-
-      const tools = await listAvailableTools(context.tenantId, context.subject);
-      const drafted = await draftAgentFromProse(db, context.tenantId, text, tools, {
-        currentSteps: revising?.steps.steps,
-        guardrails: revising?.guardrails ?? null,
-        suggestTriggers: revising === null,
-        refineWithReview: true,
-      });
-      if ('error' in drafted) {
-        return errText(`${drafted.error}${drafted.detail ? ` ${drafted.detail}` : ''}`);
-      }
-
-      const doc: AgentStepsDoc = {
-        version: requiredVersion(drafted.steps),
-        steps: drafted.steps,
-      };
-      const lines = [
-        `Drafted "${drafted.name}"${revising ? ` (a revision of "${revising.name}")` : ''}. Nothing is saved yet.`,
-        '',
-        'Steps:',
-        outlineOf(doc),
-        ...(drafted.guardrails ? ['', 'Proposed guardrails:', drafted.guardrails] : []),
-        ...(drafted.questions && drafted.questions.length > 0
-          ? [
-              '',
-              'Open questions — answer these and draft again, or edit the steps yourself:',
-              ...drafted.questions.map((question) => `- ${question}`),
-            ]
-          : []),
-        ...(drafted.concerns && drafted.concerns.length > 0
-          ? [
-              '',
-              'Reviewer concerns still open:',
-              ...drafted.concerns.map((concern) => `- ${concern.issue} Fix: ${concern.fix}`),
-            ]
-          : []),
-        '',
-        `To save: pass this steps document to ${revising ? 'agent_update' : 'agent_create'} (it stays a draft until you confirm):`,
-        JSON.stringify(doc),
-      ];
-      return textResult(lines.join('\n'));
-    }
-  );
-
   const definitionSchema = {
     name: z.string().min(1).max(200).describe('The agent name'),
     steps: z
       .record(z.string(), z.unknown())
-      .describe('The full steps document (e.g. from agent_draft or agent_get)'),
+      .describe('The full steps document (e.g. the `steps` value from agent_get)'),
     triggers: z
       .array(z.unknown())
       .optional()
@@ -718,8 +677,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Create an agent (confirm-gated)',
       description:
-        'Create a new agent of yours from a full definition (steps from agent_draft, plus ' +
-        'guardrails and triggers). Without confirm:true this is a DRY RUN — it validates and ' +
+        'Create a new agent of yours from a full definition — authored directly, or taken ' +
+        "from another agent's agent_get JSON or exported markdown. Without " +
+        'confirm:true this is a DRY RUN — it validates and ' +
         'shows what would be created, persisting nothing. The agent is always created ' +
         'DISABLED: turning it on happens in the builder, where the review panel is.',
       annotations: { readOnlyHint: false },
@@ -784,11 +744,17 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Update an agent (confirm-gated)',
       description:
-        "Replace one of your agents' definition (name, steps, triggers, guardrails, blocked " +
-        'skills). Without confirm:true this is a DRY RUN — it validates and shows what would ' +
-        'change, persisting nothing. This tool never TURNS ON an agent (the builder is the ' +
-        'consent surface for that): an off agent stays off, an already-enabled one stays on ' +
-        'unless keepEnabled:false disables it.',
+        "REPLACE one of your agents' definition (name, steps, triggers, guardrails, blocked " +
+        'skills) — the direct edit path, and the preferred one: start from the exact ' +
+        'definition in agent_get\'s ```json renkei-agent block, change ONLY what the edit ' +
+        'needs, and send the whole definition back. Keep the ids of steps, branch paths, ' +
+        'and triggers you are keeping VERBATIM (run history, retry settings, and firings ' +
+        'anchor to them); give brand-new steps fresh UUIDs. Validation is deterministic and ' +
+        'reports precise per-path issues; the save also re-stamps the current steps format. ' +
+        'Without confirm:true this is a DRY RUN — it validates and shows what would change, ' +
+        'persisting nothing. This tool never TURNS ON an agent (the builder is the consent ' +
+        'surface for that): an off agent stays off, an already-enabled one stays on unless ' +
+        'keepEnabled:false disables it. Prose-to-steps drafting lives in the web builder.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),

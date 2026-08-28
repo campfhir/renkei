@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql, type Kysely } from 'kysely';
 import { getDatabase, type DB } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
-import { isAgentStepsDoc } from '@renkei/agents';
+import { isCurrentStepsDoc } from '@renkei/agents';
 import { createAgentRun } from '@renkei/agents/runs';
 import { sha256Hex } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
@@ -144,9 +144,9 @@ export async function POST(
     // "Run now" may (that is how a draft gets tested before enabling).
     return NextResponse.json({ error: 'This agent is turned off.' }, { status: 409 });
   }
-  if (!isAgentStepsDoc(agent.steps)) {
+  if (!isCurrentStepsDoc(agent.steps)) {
     return NextResponse.json(
-      { error: 'The agent cannot run in its current state.' },
+      { error: 'This agent is saved in an older format — open it in the builder and save to update it.' },
       { status: 409 }
     );
   }

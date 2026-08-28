@@ -8,17 +8,18 @@ import { getOrgSettings } from '@renkei/settings';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
-import { readShareToken } from '@/lib/agents/store';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { getIdentityDisplay } from '@/lib/identity';
 import { listRunsForOwner } from '@/lib/agents/runs-view';
 import { parseReviewNotes } from '@/lib/agents/notes';
+import { agentMarkdown } from '@/lib/agents/export-markdown';
 import { Icon, ICONS } from '@/components/icons';
 import { triggerBadge, triggerSummary } from '@/lib/agents/trigger-summary';
 import CollapsibleSection from '@/components/collapsible-section';
 import MemoryPanel from './memory-panel';
 import KnowledgePanel from './knowledge-panel';
 import ShareAgentButton from './share-agent';
+import CopyMarkdownButton from './copy-markdown-button';
 import RecentRuns from './recent-runs';
 import StepsOutline from './steps-outline';
 
@@ -110,10 +111,7 @@ export default async function AgentOverviewPage({
   if (!access) notFound();
   const agent = access.agent;
 
-  const [shareToken, recentRuns, invocations, settingsResult, ownerDisplay] = await Promise.all([
-    access.viewerIsOwner
-      ? readShareToken(dbResult.val, tenant.id, session.subject, agentId)
-      : Promise.resolve(null),
+  const [recentRuns, invocations, settingsResult, ownerDisplay] = await Promise.all([
     listRunsForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, { limit: 5 }),
     invocationCountsOf(dbResult.val, tenant.id, agentId),
     getOrgSettings(tenant.id),
@@ -147,13 +145,19 @@ export default async function AgentOverviewPage({
           >
             {agent.enabled ? 'On' : 'Off'}
           </span>
+          <CopyMarkdownButton
+            markdown={agentMarkdown({
+              name: agent.name,
+              description: agent.description,
+              enabled: agent.enabled,
+              steps: agent.steps,
+              triggers: agent.triggers,
+              guardrails: agent.guardrails,
+              blockedTools: agent.blockedTools,
+            })}
+          />
           {access.viewerIsOwner ? (
-            <ShareAgentButton
-              slug={slug}
-              tenantId={tenant.id}
-              agentId={agentId}
-              initialToken={shareToken === 'NOT_FOUND' ? null : shareToken}
-            />
+            <ShareAgentButton tenantId={tenant.id} agentId={agentId} />
           ) : (
             <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
               Shared by {ownerDisplay?.displayName || ownerDisplay?.email || 'a colleague'}

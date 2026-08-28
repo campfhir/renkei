@@ -15,6 +15,7 @@ export default {
     // would be excluded by transformIgnorePatterns.
     '^@renkei/agents$': '<rootDir>/../../packages/agents/src/index.ts',
     '^@renkei/agents/runs$': '<rootDir>/../../packages/agents/src/runs.ts',
+    '^@renkei/agents/step-prompts$': '<rootDir>/../../packages/agents/src/step-prompts.ts',
     '^@renkei/agent-llm$': '<rootDir>/../../packages/agent-llm/src/index.ts',
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',

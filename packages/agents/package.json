@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./runs": "./src/runs.ts",
     "./event-fanout": "./src/event-fanout.ts",
-    "./memory": "./src/memory.ts"
+    "./memory": "./src/memory.ts",
+    "./step-prompts": "./src/step-prompts.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -21,7 +22,8 @@
     "@renkei/db": "workspace:*",
     "@renkei/queue": "workspace:*",
     "@renkei/settings": "workspace:*",
-    "kysely": "^0.29.4"
+    "kysely": "^0.29.4",
+    "@renkei/tool-outcomes": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

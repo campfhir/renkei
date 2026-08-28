@@ -1,4 +1,5 @@
 import React from 'react';
+import ImportAgentButton from './import-agent-button';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
 import { getDatabase } from '@renkei/db';
@@ -48,12 +49,15 @@ export default async function AgentsPage({
       */}
       <div className="mb-1 flex items-center justify-between gap-3">
         <h1 className="min-w-0 truncate text-xl font-bold">Agents</h1>
-        <Link
-          href={`/${slug}/agents/new`}
-          className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          New agent
-        </Link>
+        <div className="flex shrink-0 items-center gap-2">
+          <ImportAgentButton slug={slug} tenantId={tenant.id} />
+          <Link
+            href={`/${slug}/agents/new`}
+            className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            New agent
+          </Link>
+        </div>
       </div>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Step-by-step helpers you draft yourself — they act with your own connections, on your

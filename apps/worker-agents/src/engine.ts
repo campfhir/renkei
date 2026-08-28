@@ -57,7 +57,7 @@ import {
   type ResolvedLlm,
 } from '@renkei/agent-llm';
 import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
-import { resolveOutcomes, toolKindOf } from '@renkei/tool-outcomes';
+import { toolKindOf } from '@renkei/tool-outcomes';
 import { notifierFor, type Notifier } from './notifications';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { AgentMcpClient } from './mcp-client';
@@ -85,6 +85,10 @@ import {
   LOOP_DECISION_DEF,
   LOOP_DECISION_TOOL,
   systemPromptWith,
+  outcomeGuideFor,
+  NORMAL_TOOL_CAP,
+  CORRECTIVE_TOOL_CAP,
+  type PromptMessage,
 } from './prompt';
 import { logger } from './logger';
 
@@ -93,8 +97,6 @@ import { logger } from './logger';
  * free date lookup and a nudge before the final forced decision.
  */
 const CONDITION_TURNS = 4;
-const NORMAL_TOOL_CAP = 3;
-const CORRECTIVE_TOOL_CAP = 10;
 const MAX_LLM_TURNS = 10;
 const PREVIEW_CHARS = 2_000;
 const DETAIL_CHARS = 60_000;
@@ -293,6 +295,12 @@ interface AttemptOutcome {
   usage: { inputTokens: number; outputTokens: number };
   unbound: string[];
   resolvedInstruction: string;
+  /**
+   * The attempt's first user message, verbatim — what the model was
+   * actually sent. Stored on the attempt row so the run-debug markdown can
+   * reproduce the instruction 1:1, runtime data included.
+   */
+  promptText: string;
 }
 
 /** The run-scoped context blocks every attempt's prompt carries. */
@@ -350,6 +358,20 @@ class TransientFailure extends Error {}
 
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
+}
+
+/**
+ * The verbatim-prompt cap for attempt details. The debug view's 1:1
+ * contract is the point of storing this at all, so the bound is generous —
+ * it exists only so a pathological guardrails blob cannot balloon every
+ * attempt row, and the clip marker is the honest boundary when it bites.
+ */
+const PROMPT_DETAIL_CHARS = 40_000;
+
+/** The attempt's first user message — the prompt the model was sent. */
+function promptTextOf(messages: PromptMessage[]): string {
+  const first = messages[0]?.content[0];
+  return first && first.type === 'text' ? first.text : '';
 }
 
 function classifyErrorText(text: string): string {
@@ -426,43 +448,6 @@ function handlingFor(step: ActionStep, code: string): FailureHandling | undefine
     step.failureHandling.find((handling) => handling.outcome === code) ??
     step.failureHandling.find((handling) => handling.outcome === 'other')
   );
-}
-
-/**
- * The failure codes this step's author planned for, as a prompt paragraph.
- *
- * Injected so a declared failure lands on a code the failure handling can
- * route instead of an unroutable 'other' — and, when the author handled
- * 'no-results', so an empty search result goes where they pointed it
- * (retry with a reworded query, move on, …) instead of masquerading as a
- * success or a skip. The wording comes from the same outcome catalog the
- * builder's failure panel shows (`resolveOutcomes` is pure data; the kind
- * argument only shapes the success label, which is unused here).
- */
-function outcomeGuideFor(step: ActionStep): string | undefined {
-  if (step.tool === null || step.failureHandling.length === 0) return undefined;
-  const labelOf = new Map(
-    resolveOutcomes(step.tool, 'read').failures.map((failure) => [failure.code, failure.label])
-  );
-  const handled = step.failureHandling.map((handling) => handling.outcome);
-  const listed = handled
-    .map((code) => {
-      const label = labelOf.get(code);
-      return label ? `"${code}" (${label.toLowerCase()})` : `"${code}"`;
-    })
-    .join(', ');
-  const parts = [
-    `On failure, set code to the best match among the conditions this step plans for: ${listed}; anything else falls under "other".`,
-  ];
-  if (handled.includes('no-results')) {
-    parts.push(
-      'A search or lookup that runs cleanly but matches nothing IS that "no-results" failure — ' +
-        'declare it as such (never success with an empty answer, never "skipped") so the ' +
-        'configured handling decides what happens next. If you have tries left you will be ' +
-        'asked to search again differently.'
-    );
-  }
-  return parts.join(' ');
 }
 
 /**
@@ -1692,6 +1677,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       const detail = {
         resolvedInstruction: clip(outcome.resolvedInstruction, PREVIEW_CHARS),
+        ...(outcome.promptText
+          ? { promptText: clip(outcome.promptText, PROMPT_DETAIL_CHARS) }
+          : {}),
         llmSummary: clip(outcome.summary, PREVIEW_CHARS),
         declaredOutcome:
           outcome.stopRun === 'skip' ? 'skipped' : outcome.succeeded ? 'success' : 'failure',
@@ -2419,6 +2407,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
       });
       const resolvedInstruction = renderInstruction(branch.condition, vars).text;
+      const promptText = promptTextOf(built.messages);
       const messages: LlmMessage[] = [...built.messages];
       const usage = { inputTokens: 0, outputTokens: 0 };
       let failureSummary = 'The model never chose a path.';
@@ -2512,6 +2501,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (decidedPath) {
         const detail = {
           resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+          ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
           llmSummary: clip(decidedReason, PREVIEW_CHARS),
           // Which instants it compared against — the first thing anyone
           // asks when a time-based branch went the wrong way.
@@ -2543,6 +2533,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       lastFailureSummary = failureSummary;
       const detail = {
         resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+        ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
         llmSummary: clip(failureSummary, PREVIEW_CHARS),
         declaredOutcome: 'failure',
         usage,
@@ -2682,6 +2673,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         ...(context.guardrailsText ? { guardrailsText: context.guardrailsText } : {}),
       });
       const resolvedInstruction = renderInstruction(loop.condition, vars).text;
+      const promptText = promptTextOf(built.messages);
       const messages: LlmMessage[] = [...built.messages];
       const usage = { inputTokens: 0, outputTokens: 0 };
       let failureSummary = 'The model never decided the loop.';
@@ -2764,6 +2756,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (decided) {
         const detail = {
           resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+          ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
           llmSummary: clip(decidedReason, PREVIEW_CHARS),
           ...(timeNotes.length > 0 ? { timeLookups: timeNotes } : {}),
           declaredOutcome: 'success',
@@ -2790,6 +2783,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       lastFailureSummary = failureSummary;
       const detail = {
         resolvedInstruction: clip(resolvedInstruction, PREVIEW_CHARS),
+        ...(promptText ? { promptText: clip(promptText, PROMPT_DETAIL_CHARS) } : {}),
         llmSummary: clip(failureSummary, PREVIEW_CHARS),
         declaredOutcome: 'failure',
         usage,
@@ -2828,7 +2822,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const previousFailure =
       attempt > 1 ? await lastFailureText(run.id, step.id, iteration) : undefined;
     const toolCap = attempt > 1 ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
-    const outcomeGuide = outcomeGuideFor(step);
+    const outcomeGuide = outcomeGuideFor(step, vars);
     const built = buildAttemptMessages({
       step,
       attempt,
@@ -2889,6 +2883,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       usage,
       unbound: built.unbound,
       resolvedInstruction,
+      promptText: promptTextOf(built.messages),
       // Only a finish_step call can ask to remember; error paths carry null.
       remember: null,
     };
@@ -3163,7 +3158,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     primaryResults: McpToolResult[],
     base: Pick<
       AttemptOutcome,
-      'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'remember'
+      'toolCalls' | 'usage' | 'unbound' | 'resolvedInstruction' | 'promptText' | 'remember'
     >
   ): AttemptOutcome {
     if (finish.outcome === 'skipped') {

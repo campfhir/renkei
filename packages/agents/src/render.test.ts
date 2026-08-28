@@ -5,7 +5,7 @@
  * acting on an empty string.
  */
 
-import { instructionPreview, renderInstruction } from './render';
+import { describeFailureHandling, instructionPreview, renderInstruction } from './render';
 import type { InstructionSegment } from './steps';
 
 const segments: InstructionSegment[] = [
@@ -102,5 +102,50 @@ describe('date chips resolve before the model reads anything', () => {
       now
     );
     expect(text).toContain('unresolved date');
+  });
+});
+
+describe('describeFailureHandling', () => {
+  const base = { outcome: 'not-found', action: 'exit' as const };
+
+  it('renders each action faithfully — never a bare "stop" unless it IS exit', () => {
+    expect(describeFailureHandling(base, 3)).toBe('on "not-found" stop the agent');
+    expect(describeFailureHandling({ ...base, action: 'stop-quiet' }, 3)).toBe(
+      'on "not-found" end quietly as skipped (declared not an error)'
+    );
+    expect(describeFailureHandling({ ...base, action: 'continue' }, 3, 'the ticket')).toBe(
+      'on "not-found" keep going anyway (failure recorded, saved as "the ticket")'
+    );
+  });
+
+  it('renders retry with its guidance and the after-every-try choice', () => {
+    const text = describeFailureHandling(
+      {
+        outcome: 'no-results',
+        action: 'retry',
+        guidance: [{ t: 'text', v: 'Broaden the terms.' }],
+        exhausted: 'continue',
+      },
+      5
+    );
+    expect(text).toBe(
+      'on "no-results" retry (max 5 attempts) with: Broaden the terms.; if every try fails: keep going anyway'
+    );
+  });
+
+  it('renders custom conditions with their when, and non-retry prose as a note', () => {
+    const text = describeFailureHandling(
+      {
+        outcome: 'poor-match',
+        action: 'continue',
+        when: 'results exist but none match closely',
+        guidance: [{ t: 'text', v: 'Note the best candidates.' }],
+      },
+      3
+    );
+    expect(text).toBe(
+      'on "poor-match" (when: results exist but none match closely) keep going anyway ' +
+        '(failure recorded) — note: Note the best candidates.'
+    );
   });
 });

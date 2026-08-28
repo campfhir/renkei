@@ -37,7 +37,8 @@ import {
   flattenActionSteps,
   isBranchStep,
   isValidTimezone,
-  requiredVersion,
+  CURRENT_STEPS_VERSION,
+  customOutcomeSlug,
   normalizeMatchForEvent,
   triggerEventById,
   validateMatchForEvent,
@@ -193,7 +194,15 @@ function promptOf(
     .filter((tool) => !tool.appOnly)
     .map(
       (tool) =>
-        `- ${tool.name} (${friendlyToolName(tool.name, tool.title)}): ${(tool.description ?? '').slice(0, 100)}` +
+        // The FULL description, deliberately: the drafting model never sees
+        // input schemas, so a tool's description is its only account of what
+        // the tool needs and offers. This used to clip at 100 characters,
+        // which cut most descriptions mid-sentence — steps were drafted
+        // against tools whose requirements (a reporter input, a bulk
+        // variant, a "prefer X over Y" rule) lived in the part the model
+        // never read. Whitespace flattens so each tool stays one line.
+        `- ${tool.name} (${friendlyToolName(tool.name, tool.title)}): ` +
+        `${(tool.description ?? '').replace(/\s+/g, ' ').trim()}` +
         ` | failure codes: ${tool.outcomes.failures.map((failure) => failure.code).join(', ')}`
     )
     .join('\n');
@@ -310,6 +319,13 @@ function promptOf(
       '"guidance": "reword the search — broaden terms or try another identifier", ' +
       '"onExhausted": "continue"} so an empty first search is retried differently and a ' +
       'genuinely empty result still lets the automation decide what to do next.',
+    '- When the description plans for a condition the tool does not list ("if the results ' +
+      'are not close enough, reword and retry", "if the statement is for the wrong account, ' +
+      'skip it"), add a CUSTOM condition: an invented short kebab-case "outcome" code plus a ' +
+      '"when" sentence saying when it applies — e.g. {"outcome": "poor-match", "when": "results ' +
+      'exist but none match the description closely enough", "action": "retry", "guidance": ' +
+      '"reword the search using the description\'s own terms"}. The runner has the step model ' +
+      'judge the "when" over the result, so it works even when the call technically succeeded.',
     ...(revising
       ? [
           '- Every returned step carries "from": the sN id of the existing step it is based on (kept or tweaked), or null for a brand-new step. Unchanged and tweaked steps MUST carry their id — it preserves the owner\'s retry settings.',
@@ -427,11 +443,20 @@ function promptOf(
     '    "onSuccess": "continue" (default), "stop" (the automation ends here successfully),',
     '      or "stop-quiet" (ends silently: no reply, no follow-up automations),',
     '    "failures": array or omitted — only meaningful on tool steps; each entry:',
-    '      { "outcome": one of the tool\'s failure codes,',
+    '      { "outcome": one of the tool\'s failure codes — OR your own short kebab-case',
+    '          code for a condition the tool does not enumerate, in which case "when" is',
+    '          required,',
     '        "action": "stop", "retry", "stop-quiet" (not an error — end the run',
     '          silently), or "continue" (note the failure and move on to the next step),',
-    '        "guidance": string (required when action is "retry"; plain words, may use',
-    '          {{tool:...}} and {{var:...}} tokens) or null,',
+    '        "guidance": string — required when action is "retry" (what to do differently);',
+    '          on any other action an OPTIONAL note the step model reads ("that is a valid',
+    '          answer — record it and move on"); plain words, may use {{tool:...}} and',
+    '          {{var:...}} tokens; or null,',
+    '        "when": string or omitted — ONLY with an invented outcome code: one plain',
+    '          sentence saying when the condition applies (e.g. "the results exist but',
+    '          none match the description closely enough"). The step model judges it by',
+    '          reasoning over the result, so a call that technically succeeded can still',
+    '          match,',
     '        "onExhausted": "stop" (default), "continue", or "stop-quiet" — only with',
     '          action "retry": what happens when every try fails }' + (revising ? ',' : ''),
     ...(revising
@@ -647,6 +672,7 @@ const STEP_SHAPE = z.object({
         action: z.enum(['stop', 'retry', 'stop-quiet', 'continue']),
         guidance: z.string().nullable().optional(),
         onExhausted: z.enum(['stop', 'continue', 'stop-quiet']).optional(),
+        when: z.string().optional(),
       })
     )
     .optional(),
@@ -1657,27 +1683,53 @@ function parseActionEntry(
       const seenCodes = new Set<string>();
       for (const failure of step.failures) {
         if (seenCodes.has(failure.outcome)) continue;
-        if (!validCodes.has(failure.outcome)) {
+        const whenText = typeof failure.when === 'string' ? failure.when.trim() : '';
+        const enumerated = validCodes.has(failure.outcome);
+        // A code the tool does not enumerate is legal WITH a "when"
+        // description: it becomes a custom, model-reasoned condition, its
+        // code re-derived by the same slugifier the builder uses. Without
+        // one it stays a drop — an invented code nothing describes is a
+        // chip the save would bounce.
+        let outcome = failure.outcome;
+        if (!enumerated && !whenText) {
           softProblems.push(
             `${label} handles "${failure.outcome}", which is not a failure code of ` +
-              `${tool.name} — its codes are: ${[...validCodes].join(', ')}.`
+              `${tool.name} — its codes are: ${[...validCodes].join(', ')}. To define it as ` +
+              'a custom condition, add a "when" description saying when it applies.'
           );
           continue;
         }
-        seenCodes.add(failure.outcome);
+        if (!enumerated) {
+          outcome = customOutcomeSlug(failure.outcome) || customOutcomeSlug(whenText) || 'condition';
+          if (seenCodes.has(outcome)) continue;
+        }
+        if (enumerated && whenText) {
+          softProblems.push(
+            `${label} puts a "when" description on "${failure.outcome}", which ${tool.name} ` +
+              'already defines — the description was dropped.'
+          );
+        }
+        seenCodes.add(outcome);
+        const custom = !enumerated ? { when: whenText } : {};
         const guidanceText = typeof failure.guidance === 'string' ? failure.guidance.trim() : '';
         if (failure.action === 'retry' && !guidanceText) {
           softProblems.push(
-            `${label} retries on "${failure.outcome}" without guidance — guidance is ` +
+            `${label} retries on "${outcome}" without guidance — guidance is ` +
               'required for retry, so it was changed to stop.'
           );
-          authoredHandling.push({ outcome: failure.outcome, action: 'exit' });
+          authoredHandling.push({ outcome, action: 'exit', ...custom });
           continue;
         }
+        // Non-retry prose is advisory — the note the step model reads on
+        // attempt 1 — parsed with the same laxer multi-tool mode as
+        // corrective guidance, and omitted entirely when empty.
+        const prose = guidanceText
+          ? { guidance: segmentsOf(guidanceText, validTools, knownVars, true) }
+          : {};
         authoredHandling.push(
           failure.action === 'retry'
             ? {
-                outcome: failure.outcome,
+                outcome,
                 action: 'retry',
                 guidance: segmentsOf(guidanceText, validTools, knownVars, true),
                 // 'stop' is the wire word for the default; only a
@@ -1685,12 +1737,13 @@ function parseActionEntry(
                 ...(failure.onExhausted && failure.onExhausted !== 'stop'
                   ? { exhausted: failure.onExhausted }
                   : {}),
+                ...custom,
               }
             : failure.action === 'stop-quiet'
-              ? { outcome: failure.outcome, action: 'stop-quiet' }
+              ? { outcome, action: 'stop-quiet', ...prose, ...custom }
               : failure.action === 'continue'
-                ? { outcome: failure.outcome, action: 'continue' }
-                : { outcome: failure.outcome, action: 'exit' }
+                ? { outcome, action: 'continue', ...prose, ...custom }
+                : { outcome, action: 'exit', ...prose, ...custom }
         );
       }
     }
@@ -1730,7 +1783,7 @@ async function reviewDraftConcerns(
   budgetMs: number
 ): Promise<ReviewNote[] | null> {
   if (budgetMs < 10_000) return null;
-  const stepsDoc: AgentStepsDoc = { version: requiredVersion(draft.steps), steps: draft.steps };
+  const stepsDoc: AgentStepsDoc = { version: CURRENT_STEPS_VERSION, steps: draft.steps };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const outerMs = Math.min(REVIEW_TIMEOUT_MS, budgetMs);
   const completion = await Promise.race([

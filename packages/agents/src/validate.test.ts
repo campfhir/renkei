@@ -94,7 +94,7 @@ describe('normalizeAgentDraft', () => {
     ]);
   });
 
-  it("strips the default exhausted 'exit' so untouched drafts stay below version 7", () => {
+  it("strips the default exhausted 'exit' — the key must be absent", () => {
     const normalized = normalizeAgentDraft(
       draft({
         steps: {
@@ -117,10 +117,10 @@ describe('normalizeAgentDraft', () => {
     const first = normalized.steps.steps[0];
     const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
     expect(handling?.exhausted).toBeUndefined();
-    expect(normalized.steps.version).toBe(1);
+    expect(normalized.steps.version).toBe(8);
   });
 
-  it('keeps a deliberate exhausted choice and labels the doc version 7', () => {
+  it('keeps a deliberate exhausted choice', () => {
     const normalized = normalizeAgentDraft(
       draft({
         steps: {
@@ -143,7 +143,7 @@ describe('normalizeAgentDraft', () => {
     const first = normalized.steps.steps[0];
     const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
     expect(handling?.exhausted).toBe('continue');
-    expect(normalized.steps.version).toBe(7);
+    expect(normalized.steps.version).toBe(8);
   });
 });
 
@@ -269,7 +269,8 @@ describe('validateAgentDraft', () => {
     });
     const issues = validateAgentDraft(draft({ steps: { version: 1, steps: [bad] } }), TOOLS);
     expect(messagesOf(issues)).toContain(
-      'This failure condition does not belong to the chosen skill.'
+      'This condition does not belong to the chosen skill — add a "when …" description ' +
+        'to define it as a custom condition.'
     );
   });
 
@@ -521,14 +522,14 @@ describe('branch validation', () => {
 });
 
 describe('normalizeAgentDraft with branches', () => {
-  it('recomputes the version: 2 iff a branch exists', () => {
+  it('stamps every save with the current version, whatever came in', () => {
     const withBranch = normalizeAgentDraft(
       draft({ steps: { version: 1 as const, steps: [step(), branchNode()] } })
     );
-    expect(withBranch.steps.version).toBe(2);
+    expect(withBranch.steps.version).toBe(8);
 
     const linear = normalizeAgentDraft(draft({ steps: { version: 2, steps: [step()] } }));
-    expect(linear.steps.version).toBe(1);
+    expect(linear.steps.version).toBe(8);
   });
 
   it('keeps a linear doc byte-identical to the pre-branch shape', () => {
@@ -794,7 +795,7 @@ describe('group and n-way validation', () => {
     expect(loopOut && 'maxIterations' in loopOut ? loopOut.maxIterations : null).toBe(25);
     // Half-configured collect is dropped entirely — the KEY must be absent.
     expect('collectVar' in (loopOut ?? {})).toBe(false);
-    expect(normalized.steps.version).toBe(3);
+    expect(normalized.steps.version).toBe(8);
   });
 });
 
@@ -810,10 +811,10 @@ describe('terminal nodes (version 4)', () => {
     ...overrides,
   });
 
-  it('accepts a well-formed ending as the last node and versions the doc 4', () => {
+  it('accepts a well-formed ending as the last node', () => {
     const doc = { version: 4 as const, steps: [step(), terminal()] };
     expect(validateAgentDraft(draft({ steps: doc }), TOOLS)).toEqual([]);
-    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(4);
+    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(8);
   });
 
   it('requires a message when a notification channel is on', () => {
@@ -916,10 +917,10 @@ describe('approval nodes (validation + normalize)', () => {
     ...overrides,
   });
 
-  it('accepts a well-formed approval and versions the doc 5', () => {
+  it('accepts a well-formed approval', () => {
     const doc = { version: 5 as const, steps: [approval()] };
     expect(validateAgentDraft(draft({ steps: doc }), TOOLS)).toEqual([]);
-    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(5);
+    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(8);
   });
 
   it('requires a message and refuses tool chips in it', () => {
@@ -978,5 +979,164 @@ describe('approval nodes (validation + normalize)', () => {
     const node = approval({ onDeclined: { id: uuid(), name: 'Rejected', steps: [badInner] } });
     const issues = validateAgentDraft(draft({ steps: { version: 5, steps: [node] } }), TOOLS);
     expect(issues.some((issue) => issue.path.includes('.onDeclined.steps.0'))).toBe(true);
+  });
+});
+
+describe('outcome lines: custom conditions and prose on every action', () => {
+  const custom = (overrides: Record<string, unknown> = {}) =>
+    step({
+      failureHandling: [
+        {
+          outcome: 'stale-data',
+          action: 'continue',
+          when: 'the report is older than 30 days',
+          ...overrides,
+        },
+      ],
+    });
+
+  it('accepts a custom condition with a when description', () => {
+    expect(
+      validateAgentDraft(draft({ steps: { version: 8, steps: [custom()] } }), TOOLS)
+    ).toEqual([]);
+  });
+
+  it('rejects an unknown code without a when description', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [step({ failureHandling: [{ outcome: 'stale-data', action: 'continue' }] })],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues).join(' ')).toContain('does not belong to the chosen skill');
+  });
+
+  it('rejects a when description on an enumerated code', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [
+            step({
+              failureHandling: [
+                { outcome: 'not-found', action: 'continue', when: 'it is missing' },
+              ],
+            }),
+          ],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues).join(' ')).toContain('already belongs to the chosen skill');
+  });
+
+  it('rejects a malformed custom slug and an over-long when', () => {
+    const badSlug = validateAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [custom({ outcome: 'Stale Data!' })],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(badSlug).join(' ')).toContain('short lowercase slugs');
+
+    const longWhen = validateAgentDraft(
+      draft({ steps: { version: 8, steps: [custom({ when: 'x'.repeat(1_001) })] } }),
+      TOOLS
+    );
+    expect(messagesOf(longWhen).join(' ')).toContain('1,000 characters');
+  });
+
+  it('validates prose chips on non-retry actions too', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [
+            step({
+              failureHandling: [
+                {
+                  outcome: 'not-found',
+                  action: 'continue',
+                  guidance: [varChip('nothing binds this')],
+                },
+              ],
+            }),
+          ],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues).join(' ')).toContain('not something this agent knows');
+  });
+
+  it('caps prose length on any action, as an issue, never a trim', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [
+            step({
+              failureHandling: [
+                { outcome: 'not-found', action: 'continue', guidance: [text('x'.repeat(20_001))] },
+              ],
+            }),
+          ],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues).join(' ')).toContain('20,000 characters');
+  });
+
+  it('normalizer drops empty prose on non-retry entries and empty when', () => {
+    const normalized = normalizeAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [
+            step({
+              failureHandling: [
+                { outcome: 'not-found', action: 'continue', guidance: [], when: '   ' },
+              ],
+            }),
+          ],
+        },
+      })
+    );
+    const first = normalized.steps.steps[0];
+    const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
+    expect(handling).toEqual({ outcome: 'not-found', action: 'continue' });
+  });
+
+  it('normalizer keeps deliberate prose and trims when', () => {
+    const normalized = normalizeAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [
+            step({
+              failureHandling: [
+                {
+                  outcome: 'stale-data',
+                  action: 'continue',
+                  guidance: [text('Note it and move on.')],
+                  when: '  the report is stale  ',
+                },
+              ],
+            }),
+          ],
+        },
+      })
+    );
+    const first = normalized.steps.steps[0];
+    const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
+    expect(handling?.when).toBe('the report is stale');
+    expect(handling?.guidance).toEqual([text('Note it and move on.')]);
   });
 });

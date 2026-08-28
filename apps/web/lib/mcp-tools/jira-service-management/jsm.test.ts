@@ -19,12 +19,22 @@ jest.mock('../common', () => ({
   issueUrl: (site: string, key: string) => `${site}/browse/${key}`,
   requestUrl: (site: string, key: string) => `${site}/servicedesk/customer/portal/${key}`,
   withPresentationHint: (text: string) => text,
+  JiraApiError: class JiraApiError extends Error {
+    constructor(
+      message: string,
+      public status: number
+    ) {
+      super(message);
+      this.name = 'JiraApiError';
+    }
+  },
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import { registerJsmTools } from './jsm';
 import type { JsmAuth } from './jsm-auth';
-import type { MCPToolContext } from '../common';
+import { JiraApiError, type MCPToolContext } from '../common';
+import { clearFieldSchemaCache } from '../jira/field-schema';
 
 type Handler = (args: Record<string, unknown>) => Promise<{
   content: { text: string }[];
@@ -35,6 +45,11 @@ interface Route {
   match: string;
   status?: number;
   body?: unknown;
+  /** Throw JiraApiError with this status instead of answering — how the
+   *  real jiraFetch reports a genuine API rejection. */
+  throwStatus?: number;
+  /** Consume this route on first match, for first-call-fails sequences. */
+  once?: boolean;
 }
 
 let routes: Route[] = [];
@@ -48,7 +63,12 @@ const stubAuth: JsmAuth = {
       method: init?.method ?? 'GET',
       body: typeof init?.body === 'string' ? init.body : null,
     });
-    const route = routes.find((candidate) => path.includes(candidate.match));
+    const index = routes.findIndex((candidate) => path.includes(candidate.match));
+    const route = index >= 0 ? routes[index] : undefined;
+    if (route?.once) routes.splice(index, 1);
+    if (route?.throwStatus !== undefined) {
+      throw new JiraApiError('Jira rejected the payload', route.throwStatus);
+    }
     if (!route) return new Response(JSON.stringify({}), { status: 404 });
     return new Response(JSON.stringify(route.body ?? {}), { status: route.status ?? 200 });
   },
@@ -76,6 +96,7 @@ async function toolsOf(): Promise<Map<string, Handler>> {
 beforeEach(() => {
   routes = [];
   requests = [];
+  clearFieldSchemaCache();
 });
 
 describe('jsm_create_request desk-id resolution', () => {
@@ -216,6 +237,187 @@ describe('jsm_create_request components', () => {
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.method).toBe('POST');
+  });
+});
+
+/**
+ * Reporter, assignee, and priority — the fields the ticket-creating agents
+ * kept describing in prose because the tool had no input for them. The rule
+ * is the components rule: a value that cannot land costs itself and a note,
+ * never the request.
+ */
+describe('jsm_create_request reporter, assignee, and priority', () => {
+  const create = async (extra: Record<string, unknown>) => {
+    const tools = await toolsOf();
+    return tools.get('jsm_create_request')!({
+      serviceDeskId: '7',
+      requestTypeId: '165',
+      summary: 'Wait-time display discrepancy',
+      ...extra,
+    });
+  };
+
+  it('raises the request on behalf of the reporter', async () => {
+    routes = [{ match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-300' } }];
+    const result = await create({ reporter: 'scott@nems.org' });
+
+    expect(result.isError).not.toBe(true);
+    const post = requests.find((r) => r.method === 'POST');
+    const body = JSON.parse(post?.body ?? '{}') as Record<string, unknown>;
+    expect(body.raiseOnBehalfOf).toBe('scott@nems.org');
+    expect(result.content[0]?.text).toContain('on behalf of scott@nems.org');
+  });
+
+  it('a reporter Jira rejects costs the reporter, not the request', async () => {
+    routes = [
+      { match: '/rest/servicedeskapi/request', throwStatus: 400, once: true },
+      { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-301' } },
+    ];
+    const result = await create({ reporter: 'nobody@nems.org' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('CAS-301');
+    expect(result.content[0]?.text).toContain('Reporter was not set');
+    const retry = requests.filter((r) => r.method === 'POST')[1];
+    const body = JSON.parse(retry?.body ?? '{}') as Record<string, unknown>;
+    expect(body.raiseOnBehalfOf).toBeUndefined();
+  });
+
+  it('sets the assignee with a platform edit after the create', async () => {
+    routes = [
+      { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-302' } },
+      {
+        match: '/rest/api/3/user/search',
+        body: [{ accountId: 'acc-9', emailAddress: 'hiro@nems.org', displayName: 'Hiro' }],
+      },
+      { match: '/rest/api/3/issue/CAS-302/assignee', body: {} },
+    ];
+    const result = await create({ assignee: 'hiro@nems.org' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('Assignee: set');
+    const put = requests.find((r) => r.path.endsWith('/assignee'));
+    expect(put?.method).toBe('PUT');
+    expect(JSON.parse(put?.body ?? '{}')).toEqual({ accountId: 'acc-9' });
+  });
+
+  it('a denied platform edit costs the assignee and says so, not the request', async () => {
+    routes = [
+      { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-303' } },
+      {
+        match: '/rest/api/3/user/search',
+        body: [{ accountId: 'acc-9', emailAddress: 'hiro@nems.org', displayName: 'Hiro' }],
+      },
+      {
+        match: '/assignee',
+        status: 403,
+        body: { message: 'This call needs write:issue:jira' },
+      },
+    ];
+    const result = await create({ assignee: 'hiro@nems.org' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('CAS-303');
+    expect(result.content[0]?.text).toContain('Assignee was not set — This call needs');
+  });
+
+  it('sets priority through the form when the request type carries it', async () => {
+    routes = [
+      {
+        match: '/requesttype/165/field',
+        body: {
+          requestTypeFields: [{ fieldId: 'priority', validValues: [{ value: '2', label: 'High' }] }],
+        },
+      },
+      { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-304' } },
+    ];
+    const result = await create({ priority: 'high' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('Priority: set');
+    const post = requests.find((r) => r.method === 'POST');
+    const body = JSON.parse(post?.body ?? '{}') as { requestFieldValues?: Record<string, unknown> };
+    expect(body.requestFieldValues?.priority).toEqual({ id: '2' });
+  });
+
+  it('falls back to a platform edit when the form has no priority field', async () => {
+    routes = [
+      { match: '/requesttype/165/field', body: { requestTypeFields: [{ fieldId: 'summary' }] } },
+      { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-305' } },
+      { match: '/rest/api/3/issue/CAS-305', body: {} },
+    ];
+    const result = await create({ priority: 'High' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('Priority: set');
+    const post = requests.find((r) => r.method === 'POST');
+    const postBody = JSON.parse(post?.body ?? '{}') as {
+      requestFieldValues?: Record<string, unknown>;
+    };
+    // Never sent through the form it is not on — that would cost the request.
+    expect(postBody.requestFieldValues?.priority).toBeUndefined();
+    const put = requests.find((r) => r.method === 'PUT');
+    expect(put?.path).toContain('/rest/api/3/issue/CAS-305');
+    expect(JSON.parse(put?.body ?? '{}')).toEqual({ fields: { priority: { name: 'High' } } });
+  });
+
+  it('sets story points and custom fields with a platform edit after the create', async () => {
+    routes = [
+      { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-310' } },
+      {
+        match: '/rest/api/3/field',
+        body: [
+          { id: 'customfield_10016', name: 'Story point estimate', schema: { type: 'number' } },
+          { id: 'customfield_12016', name: 'Decision', schema: { type: 'string' } },
+        ],
+      },
+      { match: '/rest/api/3/issue/CAS-310', body: {} },
+    ];
+    const result = await create({ storyPoints: 5, fields: { Decision: 'Approved' } });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('Story point estimate → 5');
+    const put = requests.find((r) => r.method === 'PUT');
+    expect(put?.path).toContain('/rest/api/3/issue/CAS-310');
+    const body = JSON.parse(put?.body ?? '{}') as { fields?: Record<string, unknown> };
+    expect(body.fields?.customfield_10016).toBe(5);
+    expect(body.fields?.customfield_12016).toBe('Approved');
+  });
+
+  it('an unreadable field schema costs the extras and says so, not the request', async () => {
+    routes = [
+      { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-311' } },
+      {
+        match: '/rest/api/3/field',
+        status: 403,
+        body: { message: 'This call needs read:issue:jira' },
+      },
+    ];
+    const result = await create({ storyPoints: 5 });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('CAS-311');
+    expect(result.content[0]?.text).toContain('Extra fields were not set');
+    expect(requests.some((r) => r.method === 'PUT')).toBe(false);
+  });
+
+  it('names the accepted priorities when the given one does not match the form', async () => {
+    routes = [
+      {
+        match: '/requesttype/165/field',
+        body: {
+          requestTypeFields: [
+            { fieldId: 'priority', validValues: [{ value: '2', label: 'High' }] },
+          ],
+        },
+      },
+      { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-306' } },
+    ];
+    const result = await create({ priority: 'Urgent' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('Priority was not set');
+    expect(result.content[0]?.text).toContain('High (2)');
   });
 });
 

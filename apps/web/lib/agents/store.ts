@@ -615,62 +615,6 @@ export async function updateAgent(
   return { apiKeys };
 }
 
-/**
- * Shared-view lookup: the ONE read that is not keyed by owner. Holding
- * the link (plus a session in the tenant — the routes enforce that) IS
- * the authorization to read this agent's configuration for copying.
- */
-export async function getAgentByShareToken(
-  db: Kysely<DB>,
-  tenantId: string,
-  token: string
-): Promise<StoredAgent | null> {
-  if (!token) return null;
-  const row = await db
-    .selectFrom('agents')
-    .select(AGENT_COLUMNS)
-    .where('tenant_id', '=', tenantId)
-    .where('share_token', '=', token)
-    .executeTakeFirst();
-  return row ? toStored(db, tenantId, row) : null;
-}
-
-/** The agent's current share token — owner only; 'NOT_FOUND' keeps the 404 rule. */
-export async function readShareToken(
-  db: Kysely<DB>,
-  tenantId: string,
-  ownerSubject: string,
-  agentId: string
-): Promise<string | null | 'NOT_FOUND'> {
-  const row = await db
-    .selectFrom('agents')
-    .select('share_token')
-    .where('tenant_id', '=', tenantId)
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', agentId)
-    .executeTakeFirst();
-  if (!row) return 'NOT_FOUND';
-  return row.share_token;
-}
-
-/** Set (mint/regenerate) or clear (null) the share token — owner only. */
-export async function setShareToken(
-  db: Kysely<DB>,
-  tenantId: string,
-  ownerSubject: string,
-  agentId: string,
-  token: string | null
-): Promise<boolean> {
-  const updated = await db
-    .updateTable('agents')
-    .set({ share_token: token, updated_at: sql`NOW()` })
-    .where('tenant_id', '=', tenantId)
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', agentId)
-    .executeTakeFirst();
-  return Number(updated.numUpdatedRows ?? 0) > 0;
-}
-
 export async function deleteAgent(
   db: Kysely<DB>,
   tenantId: string,

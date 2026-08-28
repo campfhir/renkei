@@ -27,14 +27,19 @@ import {
   APPROVAL_DEFAULT_TIMEOUT_HOURS,
   BRANCH_DEFAULT_ATTEMPTS,
   DEFAULT_APPROVAL_WAIT_CAP_HOURS,
+  CURRENT_STEPS_VERSION,
+  CUSTOM_OUTCOME_CODE_PATTERN,
   LOOP_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
   MAX_BRANCH_DEPTH_V3,
   MAX_BRANCH_PATHS,
   MAX_CONTAINER_DEPTH,
   MAX_GUARDRAILS_CHARS,
+  MAX_GUIDANCE_CHARS,
   MAX_INSTRUCTION_CHARS,
   MAX_LOOP_ITERATIONS,
+  MAX_OUTCOME_CODE_CHARS,
+  MAX_OUTCOME_WHEN_CHARS,
   MAX_STEP_ATTEMPTS,
   MAX_STEPS,
   VARIABLE_NAME_PATTERN,
@@ -42,7 +47,6 @@ import {
   containsApproval,
   countNodes,
   flattenActionSteps,
-  requiredVersion,
   toolSegments,
   varSegments,
   walkSteps,
@@ -204,11 +208,40 @@ function validateActionStep(
   const seenCodes = new Set<string>();
   step.failureHandling.forEach((handling, handlingIndex) => {
     const hAt = `${prefix}.failureHandling.${handlingIndex}`;
-    if (descriptor && !declaredCodes.has(handling.outcome)) {
+    const isCustom = handling.when !== undefined;
+    if (descriptor && !declaredCodes.has(handling.outcome) && !isCustom) {
       issues.push({
         path: hAt,
-        message: 'This failure condition does not belong to the chosen skill.',
+        message:
+          'This condition does not belong to the chosen skill — add a "when …" description ' +
+          'to define it as a custom condition.',
       });
+    }
+    if (isCustom) {
+      // A custom condition is the author's own, judged by the step model
+      // reasoning over the result — its code is an invented slug, and the
+      // `when` text is what steers the classification.
+      if (descriptor && declaredCodes.has(handling.outcome)) {
+        issues.push({
+          path: hAt,
+          message:
+            'This condition already belongs to the chosen skill — remove the custom description.',
+        });
+      } else if (
+        !CUSTOM_OUTCOME_CODE_PATTERN.test(handling.outcome) ||
+        handling.outcome.length > MAX_OUTCOME_CODE_CHARS
+      ) {
+        issues.push({
+          path: hAt,
+          message: `Custom condition codes are short lowercase slugs like "stale-data" (${MAX_OUTCOME_CODE_CHARS} characters max).`,
+        });
+      }
+      if ((handling.when ?? '').trim().length > MAX_OUTCOME_WHEN_CHARS) {
+        issues.push({
+          path: hAt,
+          message: `Keep the "when …" description under ${MAX_OUTCOME_WHEN_CHARS.toLocaleString('en-US')} characters.`,
+        });
+      }
     }
     if (seenCodes.has(handling.outcome)) {
       issues.push({ path: hAt, message: 'This failure condition is handled twice.' });
@@ -222,27 +255,33 @@ function validateActionStep(
         message: 'An after-every-try choice only applies when the action is to try again.',
       });
     }
-    if (handling.action === 'retry') {
-      const guidance = handling.guidance ?? [];
-      if (guidance.length === 0 || segmentChars(guidance) === 0) {
-        issues.push({ path: hAt, message: 'Say what the agent should do differently.' });
+    // Prose rides every action now — corrective on retry (required there),
+    // advisory anywhere else — so its chips are checked wherever it appears.
+    const guidance = handling.guidance ?? [];
+    if (handling.action === 'retry' && (guidance.length === 0 || segmentChars(guidance) === 0)) {
+      issues.push({ path: hAt, message: 'Say what the agent should do differently.' });
+    }
+    if (segmentChars(guidance) > MAX_GUIDANCE_CHARS) {
+      issues.push({
+        path: hAt,
+        message: `Keep this under ${MAX_GUIDANCE_CHARS.toLocaleString('en-US')} characters.`,
+      });
+    }
+    for (const guidanceTool of toolSegments(guidance)) {
+      const guidanceDescriptor = toolsByName.get(guidanceTool);
+      if (!guidanceDescriptor || guidanceDescriptor.appOnly) {
+        issues.push({
+          path: hAt,
+          message: 'A skill in this guidance is not available to you.',
+        });
       }
-      for (const guidanceTool of toolSegments(guidance)) {
-        const guidanceDescriptor = toolsByName.get(guidanceTool);
-        if (!guidanceDescriptor || guidanceDescriptor.appOnly) {
-          issues.push({
-            path: hAt,
-            message: 'A skill in this guidance is not available to you.',
-          });
-        }
-      }
-      for (const name of varSegments(guidance)) {
-        if (!knownVariables.has(name)) {
-          issues.push({
-            path: hAt,
-            message: `"${name}" is not something this agent knows — remove or replace the chip.`,
-          });
-        }
+    }
+    for (const name of varSegments(guidance)) {
+      if (!knownVariables.has(name)) {
+        issues.push({
+          path: hAt,
+          message: `"${name}" is not something this agent knows — remove or replace the chip.`,
+        });
       }
     }
   });
@@ -835,14 +874,26 @@ function normalizeNode(node: AgentStepNode, cap: number, waitCapHours: number): 
         // the pattern (and every later lookup) never meets stray whitespace.
         ...(step.saveAs !== undefined ? { saveAs: step.saveAs.trim() || undefined } : {}),
         maxAttempts: clampAttempts(step.maxAttempts, cap, 1),
-        // An exhausted choice of 'exit' is the default and rides only on
-        // retry entries — stripping the no-ops keeps a document that never
-        // left the defaults byte-identical (and below version 7).
+        // Per-entry hygiene, each key spread conditionally so a normalized
+        // entry never carries an undefined-valued key (JSON round-trip
+        // stability): an exhausted 'exit' is the default and rides only on
+        // retry entries; empty advisory prose on a non-retry entry is the
+        // untouched editor's output, not a note; an empty `when` is no
+        // custom condition at all.
         failureHandling: step.failureHandling.map((handling) => {
-          const { exhausted, ...rest } = handling;
-          return handling.action === 'retry' && exhausted !== undefined && exhausted !== 'exit'
-            ? { ...rest, exhausted }
-            : rest;
+          const { exhausted, guidance, when, ...rest } = handling;
+          const trimmedWhen = when?.trim();
+          const keepGuidance =
+            guidance !== undefined &&
+            (handling.action === 'retry' || segmentChars(guidance) > 0);
+          return {
+            ...rest,
+            ...(keepGuidance ? { guidance } : {}),
+            ...(handling.action === 'retry' && exhausted !== undefined && exhausted !== 'exit'
+              ? { exhausted }
+              : {}),
+            ...(trimmedWhen ? { when: trimmedWhen } : {}),
+          };
         }),
       };
     }
@@ -879,10 +930,10 @@ export function normalizeAgentDraft(
     // Deduped, order preserved; empty entries dropped.
     blockedTools: [...new Set(draft.blockedTools.map((tool) => tool.trim()).filter(Boolean))],
     steps: {
-      // The SERVER owns the version rule (requiredVersion): a document any
-      // older writer could produce keeps its exact old version, so linear
-      // and plain-branch agents stay runnable by older workers.
-      version: requiredVersion(steps),
+      // Every save stamps the one current version — there is no per-version
+      // maintenance any more: an older doc updates by being re-saved, and
+      // until then run creation refuses it (isCurrentStepsDoc).
+      version: CURRENT_STEPS_VERSION,
       steps,
     },
   };

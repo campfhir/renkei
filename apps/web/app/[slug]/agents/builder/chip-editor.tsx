@@ -47,6 +47,17 @@ export interface ChipEditorProps {
   ariaLabel: string;
   /** Variable names that no longer resolve (a trigger was removed). */
   invalidVars?: ReadonlySet<string>;
+  /**
+   * Drop the editor's own border and padding — for hosts (the outcome
+   * lines) that draw the frame themselves and adorn the editor with
+   * elements outside the editable root.
+   */
+  frameless?: boolean;
+  /**
+   * A validation issue points at this field — the frame goes red (framed
+   * mode only; a frameless host styles its own frame).
+   */
+  invalid?: boolean;
 }
 
 function segmentsEqual(a: InstructionSegment[], b: InstructionSegment[]): boolean {
@@ -73,6 +84,8 @@ export function ChipEditor({
   placeholder,
   ariaLabel,
   invalidVars,
+  frameless,
+  invalid,
 }: ChipEditorProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const lastEmitted = useRef<InstructionSegment[] | null>(null);
@@ -477,6 +490,7 @@ export function ChipEditor({
         role="textbox"
         aria-multiline="false"
         aria-label={ariaLabel}
+        aria-invalid={invalid ? true : undefined}
         aria-expanded={menuOpen}
         aria-controls={menuOpen ? listboxId : undefined}
         aria-activedescendant={
@@ -485,7 +499,15 @@ export function ChipEditor({
         contentEditable
         suppressContentEditableWarning
         data-placeholder={placeholder}
-        className="chip-editor w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-900"
+        className={
+          frameless
+            ? 'chip-editor w-full bg-transparent px-1 py-0.5 text-sm focus:outline-none'
+            : `chip-editor w-full rounded-md border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-900 ${
+                invalid
+                  ? 'border-red-400 dark:border-red-700'
+                  : 'border-gray-300 dark:border-gray-700'
+              }`
+        }
         onKeyDown={handleKeyDown}
         onInput={handleInput}
         onBeforeInput={handleBeforeInput}

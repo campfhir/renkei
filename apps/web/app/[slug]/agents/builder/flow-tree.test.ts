@@ -232,13 +232,15 @@ describe('issuesByNode', () => {
       { path: 'steps.3.steps.0.name', message: 'group body step' },
       { path: 'name', message: 'not a node issue' },
     ]);
-    expect(routed.get('a1')).toEqual(['top step name']);
-    expect(routed.get('a2')).toEqual(['nested action']);
-    expect(routed.get('B')).toEqual(['failure path name']);
-    expect(routed.get('L')).toEqual(['loop items']);
-    expect(routed.get('a3')).toEqual(['loop body step']);
-    expect(routed.get('a4')).toEqual(['group body step']);
-    expect([...routed.values()].flat()).not.toContain('not a node issue');
+    expect(routed.get('a1')).toEqual([{ field: 'name', message: 'top step name' }]);
+    expect(routed.get('a2')).toEqual([{ field: 'instruction', message: 'nested action' }]);
+    expect(routed.get('B')).toEqual([{ field: 'failurePath.name', message: 'failure path name' }]);
+    expect(routed.get('L')).toEqual([{ field: 'itemsVar', message: 'loop items' }]);
+    expect(routed.get('a3')).toEqual([{ field: 'name', message: 'loop body step' }]);
+    expect(routed.get('a4')).toEqual([{ field: 'name', message: 'group body step' }]);
+    expect([...routed.values()].flat().map((issue) => issue.message)).not.toContain(
+      'not a node issue'
+    );
   });
 });
 

@@ -203,7 +203,6 @@ export interface Agents {
   name: string;
   owner_subject: string;
   review_notes: Json | null;
-  share_token: string | null;
   steps: Json;
   steps_version: Generated<number>;
   tenant_id: string;
