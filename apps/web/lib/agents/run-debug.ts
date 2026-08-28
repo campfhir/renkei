@@ -8,7 +8,13 @@
  * withheld content for is copied as hidden, not resurrected here.
  */
 
-import { findNodeById, instructionPreview, isAgentStepsDoc, walkSteps } from '@renkei/agents';
+import {
+  describeFailureHandling,
+  findNodeById,
+  instructionPreview,
+  isAgentStepsDoc,
+  walkSteps,
+} from '@renkei/agents';
 import { statusLabel, outcomeCodeLabel } from '@/lib/agents/run-labels';
 import { activityHeadline, runActivity } from '@/lib/agents/run-actions';
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
@@ -157,6 +163,12 @@ function snapshotLines(run: RunDetail): string[] {
         const instruction = instructionPreview(node.instruction);
         if (instruction) lines.push(`${indent}   instruction: ${instruction}`);
         if (node.saveAs) lines.push(`${indent}   saves result as: ${node.saveAs}`);
+        // The handling is part of what the run DID — a debug reader asking
+        // "why did the run keep going after this failed?" finds the answer
+        // here instead of in the builder.
+        for (const handling of node.failureHandling) {
+          lines.push(`${indent}   ${describeFailureHandling(handling, node.maxAttempts, node.saveAs)}`);
+        }
         break;
       }
       default: {

@@ -269,7 +269,8 @@ describe('validateAgentDraft', () => {
     });
     const issues = validateAgentDraft(draft({ steps: { version: 1, steps: [bad] } }), TOOLS);
     expect(messagesOf(issues)).toContain(
-      'This failure condition does not belong to the chosen skill.'
+      'This condition does not belong to the chosen skill — add a "when …" description ' +
+        'to define it as a custom condition.'
     );
   });
 
@@ -978,5 +979,164 @@ describe('approval nodes (validation + normalize)', () => {
     const node = approval({ onDeclined: { id: uuid(), name: 'Rejected', steps: [badInner] } });
     const issues = validateAgentDraft(draft({ steps: { version: 5, steps: [node] } }), TOOLS);
     expect(issues.some((issue) => issue.path.includes('.onDeclined.steps.0'))).toBe(true);
+  });
+});
+
+describe('outcome lines: custom conditions and prose on every action', () => {
+  const custom = (overrides: Record<string, unknown> = {}) =>
+    step({
+      failureHandling: [
+        {
+          outcome: 'stale-data',
+          action: 'continue',
+          when: 'the report is older than 30 days',
+          ...overrides,
+        },
+      ],
+    });
+
+  it('accepts a custom condition with a when description', () => {
+    expect(
+      validateAgentDraft(draft({ steps: { version: 8, steps: [custom()] } }), TOOLS)
+    ).toEqual([]);
+  });
+
+  it('rejects an unknown code without a when description', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [step({ failureHandling: [{ outcome: 'stale-data', action: 'continue' }] })],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues).join(' ')).toContain('does not belong to the chosen skill');
+  });
+
+  it('rejects a when description on an enumerated code', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [
+            step({
+              failureHandling: [
+                { outcome: 'not-found', action: 'continue', when: 'it is missing' },
+              ],
+            }),
+          ],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues).join(' ')).toContain('already belongs to the chosen skill');
+  });
+
+  it('rejects a malformed custom slug and an over-long when', () => {
+    const badSlug = validateAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [custom({ outcome: 'Stale Data!' })],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(badSlug).join(' ')).toContain('short lowercase slugs');
+
+    const longWhen = validateAgentDraft(
+      draft({ steps: { version: 8, steps: [custom({ when: 'x'.repeat(1_001) })] } }),
+      TOOLS
+    );
+    expect(messagesOf(longWhen).join(' ')).toContain('1,000 characters');
+  });
+
+  it('validates prose chips on non-retry actions too', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [
+            step({
+              failureHandling: [
+                {
+                  outcome: 'not-found',
+                  action: 'continue',
+                  guidance: [varChip('nothing binds this')],
+                },
+              ],
+            }),
+          ],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues).join(' ')).toContain('not something this agent knows');
+  });
+
+  it('caps prose length on any action, as an issue, never a trim', () => {
+    const issues = validateAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [
+            step({
+              failureHandling: [
+                { outcome: 'not-found', action: 'continue', guidance: [text('x'.repeat(20_001))] },
+              ],
+            }),
+          ],
+        },
+      }),
+      TOOLS
+    );
+    expect(messagesOf(issues).join(' ')).toContain('20,000 characters');
+  });
+
+  it('normalizer drops empty prose on non-retry entries and empty when', () => {
+    const normalized = normalizeAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [
+            step({
+              failureHandling: [
+                { outcome: 'not-found', action: 'continue', guidance: [], when: '   ' },
+              ],
+            }),
+          ],
+        },
+      })
+    );
+    const first = normalized.steps.steps[0];
+    const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
+    expect(handling).toEqual({ outcome: 'not-found', action: 'continue' });
+  });
+
+  it('normalizer keeps deliberate prose and trims when', () => {
+    const normalized = normalizeAgentDraft(
+      draft({
+        steps: {
+          version: 8,
+          steps: [
+            step({
+              failureHandling: [
+                {
+                  outcome: 'stale-data',
+                  action: 'continue',
+                  guidance: [text('Note it and move on.')],
+                  when: '  the report is stale  ',
+                },
+              ],
+            }),
+          ],
+        },
+      })
+    );
+    const first = normalized.steps.steps[0];
+    const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
+    expect(handling?.when).toBe('the report is stale');
+    expect(handling?.guidance).toEqual([text('Note it and move on.')]);
   });
 });

@@ -429,30 +429,58 @@ function handlingFor(step: ActionStep, code: string): FailureHandling | undefine
 }
 
 /**
- * The failure codes this step's author planned for, as a prompt paragraph.
+ * The conditions this step's author planned for, as a prompt paragraph.
  *
- * Injected so a declared failure lands on a code the failure handling can
- * route instead of an unroutable 'other' — and, when the author handled
- * 'no-results', so an empty search result goes where they pointed it
- * (retry with a reworded query, move on, …) instead of masquerading as a
- * success or a skip. The wording comes from the same outcome catalog the
- * builder's failure panel shows (`resolveOutcomes` is pure data; the kind
- * argument only shapes the success label, which is unused here).
+ * Injected on EVERY attempt so a declared condition lands on a code the
+ * handling can route instead of an unroutable 'other'. Three kinds of
+ * entry, all listed:
+ *
+ *  - enumerated codes wear the outcome catalog's label (`resolveOutcomes`
+ *    is pure data; the kind argument only shapes the unused success label);
+ *  - CUSTOM codes wear the author's own "applies when" description — the
+ *    only thing that steers classification into an invented code, so it is
+ *    load-bearing prose;
+ *  - non-retry entries carry the author's note (advisory prose), rendered
+ *    with the step's variables. Retry guidance is deliberately NOT shown
+ *    here — it appears as "Extra guidance" on attempts ≥ 2, where its tool
+ *    chips are also offered.
+ *
+ * And the rule that makes reasoned outcomes work at all: a call that
+ * SUCCEEDED technically can still match a planned condition ("results
+ * found, but none close enough") — the model judges that over the result
+ * and declares the condition's code, because the tool cannot.
  */
-function outcomeGuideFor(step: ActionStep): string | undefined {
+export function outcomeGuideFor(
+  step: ActionStep,
+  vars: Record<string, string>
+): string | undefined {
   if (step.tool === null || step.failureHandling.length === 0) return undefined;
   const labelOf = new Map(
     resolveOutcomes(step.tool, 'read').failures.map((failure) => [failure.code, failure.label])
   );
-  const handled = step.failureHandling.map((handling) => handling.outcome);
-  const listed = handled
-    .map((code) => {
-      const label = labelOf.get(code);
-      return label ? `"${code}" (${label.toLowerCase()})` : `"${code}"`;
+  const listed = step.failureHandling
+    .map((handling) => {
+      const label = labelOf.get(handling.outcome);
+      const described =
+        handling.when !== undefined
+          ? `"${handling.outcome}" (applies when: ${handling.when})`
+          : label
+            ? `"${handling.outcome}" (${label.toLowerCase()})`
+            : `"${handling.outcome}"`;
+      const note =
+        handling.action !== 'retry' && handling.guidance && handling.guidance.length > 0
+          ? ` — the author notes: ${renderInstruction(handling.guidance, vars).text}`
+          : '';
+      return `${described}${note}`;
     })
-    .join(', ');
+    .join('; ');
+  const handled = step.failureHandling.map((handling) => handling.outcome);
   const parts = [
-    `On failure, set code to the best match among the conditions this step plans for: ${listed}; anything else falls under "other".`,
+    `Conditions this step plans for: ${listed}. When the outcome matches one, declare it with ` +
+      `that exact code; anything else falls under "other". These conditions are judged by YOU ` +
+      `over the result — a call that technically succeeded whose result matches one of them IS ` +
+      `that condition (declare failure with its code so the planned handling routes it), and ` +
+      `the author's notes above tell you what they meant by planning for it.`,
   ];
   if (handled.includes('no-results')) {
     parts.push(
@@ -2828,7 +2856,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const previousFailure =
       attempt > 1 ? await lastFailureText(run.id, step.id, iteration) : undefined;
     const toolCap = attempt > 1 ? CORRECTIVE_TOOL_CAP : NORMAL_TOOL_CAP;
-    const outcomeGuide = outcomeGuideFor(step);
+    const outcomeGuide = outcomeGuideFor(step, vars);
     const built = buildAttemptMessages({
       step,
       attempt,

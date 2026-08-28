@@ -12,6 +12,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import {
+  describeFailureHandling,
   describeSchedule,
   instructionPreview,
   walkSteps,
@@ -46,12 +47,11 @@ function describeTrigger(draft: TriggerDraft): string {
 }
 
 function actionStepLines(step: ActionStep, label: string, indent: string): string {
+  // The shared reading, so the reviewer's outline can never lie about a
+  // handling (the old inline ternary rendered 'continue' and 'stop-quiet'
+  // both as "stop").
   const failure = step.failureHandling
-    .map((handling) =>
-      handling.action === 'retry'
-        ? `on "${handling.outcome}" retry (max ${step.maxAttempts} attempts) with: ${instructionPreview(handling.guidance ?? [])}`
-        : `on "${handling.outcome}" stop`
-    )
+    .map((handling) => describeFailureHandling(handling, step.maxAttempts, step.saveAs))
     .join('; ');
   return [
     `${indent}${label} ${step.name}`,

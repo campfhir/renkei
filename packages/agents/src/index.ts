@@ -92,6 +92,7 @@ export {
   type ValidationIssue,
 } from './validate';
 export {
+  describeFailureHandling,
   instructionPreview,
   renderDateSegment,
   renderInstruction,
