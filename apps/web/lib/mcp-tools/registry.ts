@@ -20,7 +20,14 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { CapabilityProjection } from '@renkei/capability-registry';
-import { WEBEX_USER, ATLASSIAN_CONFLUENCE, MICROSOFT, ZOOM, ONBASE } from '@renkei/provider-grants';
+import {
+  WEBEX_USER,
+  ATLASSIAN_CONFLUENCE,
+  ATLASSIAN_BITBUCKET,
+  MICROSOFT,
+  ZOOM,
+  ONBASE,
+} from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { registerAllTools } from '@/lib/mcp-tools';
 import { withCapabilityGate, JIRA_CONNECTOR } from '@/lib/mcp-tools/capability-gate';
@@ -39,6 +46,8 @@ import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
 import { oauthZoomAuth } from '@/lib/mcp-tools/zoom/zoom-auth';
 import { registerConfluenceTools, CONFLUENCE_MCP_CONNECTOR } from '@/lib/mcp-tools/confluence';
 import { oauthConfluenceAuth } from '@/lib/mcp-tools/confluence/confluence-auth';
+import { registerBitbucketTools, BITBUCKET_MCP_CONNECTOR } from '@/lib/mcp-tools/bitbucket';
+import { oauthBitbucketAuth } from '@/lib/mcp-tools/bitbucket/bitbucket-auth';
 import { resolveToolExposure } from '@renkei/connector-fileshares';
 import { registerFileshareTools, FILESHARES_MCP_CONNECTOR } from '@/lib/mcp-tools/fileshares';
 import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
@@ -68,6 +77,8 @@ export interface ConnectorAvailability {
   zoomScopes: string[];
   confluenceAvailable: boolean;
   confluenceScopes: string[];
+  bitbucketAvailable: boolean;
+  bitbucketScopes: string[];
   filesharesAvailable: boolean;
   /** Whether any connected share exposes write tools / delete to the LLM. */
   fileshareWrite: boolean;
@@ -150,6 +161,19 @@ export async function resolveConnectorAvailability(
     ? (confluenceGrantRow.granted_scopes ?? confluenceGrantRow.requested_scopes)
     : [];
 
+  // Bitbucket inverts the Atlassian rule the same way Zoom does: the token
+  // ALWAYS carries the OAuth consumer's full scope set (Bitbucket cannot
+  // narrow at consent), so bare granted would erase the user's narrowing.
+  // Requested ∩ granted when both are known; requested alone otherwise.
+  const bitbucketGrantRow = await grantRow(db, tenantId, ATLASSIAN_BITBUCKET, subject);
+  const bitbucketAvailable = bitbucketGrantRow !== undefined;
+  const bitbucketGranted = bitbucketGrantRow?.granted_scopes;
+  const bitbucketScopes = bitbucketGrantRow
+    ? bitbucketGranted
+      ? bitbucketGrantRow.requested_scopes.filter((scope) => bitbucketGranted.includes(scope))
+      : bitbucketGrantRow.requested_scopes
+    : [];
+
   // File shares are the one connector with no provider_grants row: the
   // caller's own stored connections stand in for the OAuth grant, and the
   // exposure they chose per share decides which tool FAMILIES register —
@@ -179,6 +203,8 @@ export async function resolveConnectorAvailability(
     zoomScopes,
     confluenceAvailable,
     confluenceScopes,
+    bitbucketAvailable,
+    bitbucketScopes,
     filesharesAvailable,
     fileshareWrite,
     fileshareDelete,
@@ -207,6 +233,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.onedriveAvailable ? [ONEDRIVE_MCP_CONNECTOR] : []),
     ...(availability.zoomAvailable ? [ZOOM_MCP_CONNECTOR] : []),
     ...(availability.confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
+    ...(availability.bitbucketAvailable ? [BITBUCKET_MCP_CONNECTOR] : []),
     ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
     ...(availability.onbaseAvailable ? [ONBASE_MCP_CONNECTOR] : []),
   ];
@@ -243,6 +270,7 @@ export async function registerRenkeiTools(
     onedriveAvailable,
     zoomAvailable,
     confluenceAvailable,
+    bitbucketAvailable,
     filesharesAvailable,
     onbaseAvailable,
   } = availability;
@@ -405,6 +433,15 @@ export async function registerRenkeiTools(
       withCapabilityGate(server, projection, CONFLUENCE_MCP_CONNECTOR),
       context,
       oauthConfluenceAuth(context)
+    );
+  }
+  if (bitbucketAvailable) {
+    // Production's one path: the caller's own Bitbucket grant. Same
+    // reasoning as WebEx/Zoom/Confluence above.
+    await registerBitbucketTools(
+      withCapabilityGate(server, projection, BITBUCKET_MCP_CONNECTOR),
+      context,
+      oauthBitbucketAuth(context)
     );
   }
   if (filesharesAvailable) {

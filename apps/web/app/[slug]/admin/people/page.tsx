@@ -27,6 +27,7 @@ const PROVIDER_ICON_KEY: Record<string, string> = {
   atlassian: 'jira',
   'atlassian-jsm': 'jira',
   'atlassian-confluence': 'atlassian-confluence',
+  'atlassian-bitbucket': 'atlassian-bitbucket',
   microsoft: 'microsoft',
   webex: 'webex',
   zoom: 'zoom',

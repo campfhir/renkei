@@ -685,6 +685,104 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     short: 'Deleted an attachment',
   },
 
+  // ---- Bitbucket ---------------------------------------------------------
+  bitbucket_create_pull_request: {
+    category: 'created',
+    entity: 'pull request',
+    label: 'Opened a Bitbucket pull request',
+    short: 'Opened a pull request',
+  },
+  bitbucket_create_pull_request_confirm: {
+    category: 'created',
+    entity: 'pull request',
+    label: 'Opened a Bitbucket pull request',
+    short: 'Opened a pull request',
+  },
+  bitbucket_update_pull_request: {
+    category: 'updated',
+    entity: 'pull request',
+    label: 'Updated a Bitbucket pull request',
+    short: 'Edited a pull request',
+  },
+  bitbucket_approve_pull_request: {
+    category: 'updated',
+    entity: 'pull request',
+    label: 'Approved a Bitbucket pull request',
+    short: 'Approved a pull request',
+  },
+  bitbucket_request_pr_changes: {
+    category: 'updated',
+    entity: 'pull request',
+    label: 'Requested changes on a Bitbucket pull request',
+    short: 'Requested changes',
+  },
+  bitbucket_merge_pull_request: {
+    category: 'updated',
+    entity: 'pull request',
+    label: 'Merged a Bitbucket pull request',
+    short: 'Merged a pull request',
+  },
+  bitbucket_merge_pull_request_confirm: {
+    category: 'updated',
+    entity: 'pull request',
+    label: 'Merged a Bitbucket pull request',
+    short: 'Merged a pull request',
+  },
+  bitbucket_decline_pull_request: {
+    category: 'updated',
+    entity: 'pull request',
+    label: 'Declined a Bitbucket pull request',
+    short: 'Declined a pull request',
+  },
+  bitbucket_add_pr_comment: {
+    category: 'created',
+    entity: 'comment',
+    label: 'Commented on a Bitbucket pull request',
+    short: 'Commented on a pull request',
+  },
+  bitbucket_add_pr_task: {
+    category: 'created',
+    entity: 'task',
+    label: 'Added a task to a Bitbucket pull request',
+    short: 'Added a pull request task',
+  },
+  bitbucket_create_branch: {
+    category: 'created',
+    entity: 'branch',
+    label: 'Created a Bitbucket branch',
+    short: 'Created a branch',
+  },
+  bitbucket_delete_branch: {
+    category: 'deleted',
+    entity: 'branch',
+    label: 'Deleted a Bitbucket branch',
+    short: 'Deleted a branch',
+  },
+  bitbucket_commit_file: {
+    category: 'created',
+    entity: 'commit',
+    label: 'Committed a file change to Bitbucket',
+    short: 'Committed a file',
+  },
+  bitbucket_trigger_pipeline: {
+    category: 'other',
+    entity: 'pipeline run',
+    label: 'Started a Bitbucket pipeline',
+    short: 'Started a pipeline',
+  },
+  bitbucket_trigger_pipeline_confirm: {
+    category: 'other',
+    entity: 'pipeline run',
+    label: 'Started a Bitbucket pipeline',
+    short: 'Started a pipeline',
+  },
+  bitbucket_stop_pipeline: {
+    category: 'other',
+    entity: 'pipeline run',
+    label: 'Stopped a Bitbucket pipeline',
+    short: 'Stopped a pipeline',
+  },
+
   // ---- WebEx ------------------------------------------------------------
   webex_send_message: {
     category: 'sent',

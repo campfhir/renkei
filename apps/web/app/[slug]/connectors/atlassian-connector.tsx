@@ -3,20 +3,22 @@ import { ConnectorShell, ConnectorHeading } from './connector-shell';
 import JiraConnector from './jira-connector';
 import JsmConnector from './jsm-connector';
 import ConfluenceConnector from './confluence-connector';
+import BitbucketConnector from './bitbucket-connector';
 
 /**
- * The Atlassian suite: Jira, Service Management and Confluence, grouped under
- * one heading.
+ * The Atlassian suite: Jira, Service Management, Confluence and Bitbucket,
+ * grouped under one heading.
  *
  * Grouping only — and the difference from the Microsoft card matters enough
  * to state, because the two look alike and behave oppositely.
  *
  * Microsoft is ONE consent covering four products, so its card owns a single
  * connect/disconnect/re-authorize control and the products inside it own
- * nothing but their capabilities. Atlassian is THREE separate OAuth apps with
- * three separate grants — the split is forced, not chosen: Atlassian enforces
+ * nothing but their capabilities. Atlassian is FOUR separate OAuth apps with
+ * four separate grants — the split is forced, not chosen: Atlassian enforces
  * scopes all-of and its consent URL has a length cliff, so the union of Jira,
- * JSM and Confluence scopes cannot fit on one app. Each product here is
+ * JSM and Confluence scopes cannot fit on one app; Bitbucket is not even the
+ * same OAuth system (consumers live on bitbucket.org). Each product here is
  * therefore genuinely its own connection, and keeps its own connect,
  * disconnect and approve controls, on the product they act on.
  *
@@ -33,6 +35,7 @@ export default function AtlassianConnector({
   jira,
   jsm,
   confluence,
+  bitbucket,
 }: {
   tenantId: string;
   /** Absent when the org has not enabled that product. */
@@ -49,6 +52,12 @@ export default function AtlassianConnector({
     ceiling: string[];
     priorScopes: string[] | null;
   };
+  bitbucket?: {
+    connected: boolean;
+    displayName: string | null;
+    ceiling: string[];
+    priorScopes: string[] | null;
+  };
 }) {
   return (
     <ConnectorShell>
@@ -58,9 +67,9 @@ export default function AtlassianConnector({
       </ConnectorHeading>
 
       <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-        Three separate connections, because Atlassian cannot fit these scopes on a single consent.
-        Connect each product you want — they are independent, and connecting one does not affect the
-        others.
+        Separate connections per product — Atlassian cannot fit the Jira, Service Management and
+        Confluence scopes on a single consent, and Bitbucket has an OAuth system of its own. Connect
+        each product you want; they are independent, and connecting one does not affect the others.
       </p>
 
       <div className="mt-3 space-y-3">
@@ -102,6 +111,17 @@ export default function AtlassianConnector({
             displayName={confluence.displayName}
             ceiling={confluence.ceiling}
             priorScopes={confluence.priorScopes}
+          />
+        )}
+
+        {bitbucket && (
+          <BitbucketConnector
+            nested
+            tenantId={tenantId}
+            connected={bitbucket.connected}
+            displayName={bitbucket.displayName}
+            ceiling={bitbucket.ceiling}
+            priorScopes={bitbucket.priorScopes}
           />
         )}
       </div>

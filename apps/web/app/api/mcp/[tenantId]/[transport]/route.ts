@@ -339,6 +339,8 @@ const handler = async (
       zoomScopes,
       confluenceAvailable,
       confluenceScopes,
+      bitbucketAvailable,
+      bitbucketScopes,
       filesharesAvailable,
       fileshareWrite,
       fileshareDelete,
@@ -371,7 +373,8 @@ const handler = async (
       `${[...jiraScopes].sort().join(',')}|${[...webexScopes].sort().join(',')}|` +
       `${[...jsmScopes].sort().join(',')}:${jsmGrant ? 'jsm' : 'nojsm'}|` +
       `${[...graphScopes].sort().join(',')}|${[...zoomScopes].sort().join(',')}|` +
-      `${[...confluenceScopes].sort().join(',')}`;
+      `${[...confluenceScopes].sort().join(',')}|` +
+      `${[...bitbucketScopes].sort().join(',')}:${bitbucketAvailable ? 'bb' : 'nobb'}`;
     // Everything the redaction gate's behaviour depends on, in one string.
     const redactionFingerprint = settings.redactionEnabled
       ? `r:${[...settings.redactionDetectors].sort().join(',')}:` +
@@ -458,6 +461,7 @@ const handler = async (
               graphScopes: microsoftAvailable ? graphScopes : undefined,
               zoomScopes: zoomAvailable ? zoomScopes : undefined,
               confluenceScopes: confluenceAvailable ? confluenceScopes : undefined,
+              bitbucketScopes: bitbucketAvailable ? bitbucketScopes : undefined,
               jsmGrant: jsmGrant ?? undefined,
               agent: agentId ? { agentId } : undefined,
               db,

@@ -20,6 +20,8 @@ export const LOGO_FILE: Record<string, string> = {
   // OAuth app carries — but its mark is the product logo, named for the
   // product.
   'atlassian-confluence': 'confluence',
+  // Bitbucket: same suite-prefix key, same product-named mark.
+  'atlassian-bitbucket': 'bitbucket',
 };
 
 /**

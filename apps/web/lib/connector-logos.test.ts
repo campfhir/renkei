@@ -77,10 +77,10 @@ describe('connector logo files', () => {
   });
 
   it('leaves no orphaned assets undocumented', () => {
-    // Not a failure — vendors ship -gray/-white variants we stage for later,
-    // and bitbucket is staged for a connector that does not exist yet. This
-    // just keeps the set visible, so an asset nobody references is a decision
-    // rather than an accident.
+    // Not a failure — vendors ship -gray/-white variants we stage for later.
+    // This just keeps the set visible, so an asset nobody references is a
+    // decision rather than an accident. (bitbucket.svg sat here staged until
+    // the Bitbucket connector landed and started referencing it.)
     const referenced = new Set([
       ...CONNECTOR_CATALOG.map((entry) => resolveLogoFile(entry.capabilityKey)),
       ...MICROSOFT_PRODUCTS.map((product) => resolveLogoFile(product.capabilityKey, product.logo)),
@@ -94,7 +94,6 @@ describe('connector logo files', () => {
     expect(orphans.sort()).toEqual([
       'atlassian-gray',
       'atlassian-white',
-      'bitbucket',
       'bitbucket-gray',
       'bitbucket-white',
     ]);

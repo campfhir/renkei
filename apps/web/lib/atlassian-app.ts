@@ -24,6 +24,15 @@ export const ATLASSIAN_JSM_CONNECTOR = 'atlassian-jsm';
  * it doesn't share a consent-URL budget with either.
  */
 export const ATLASSIAN_CONFLUENCE_CONNECTOR = 'atlassian-confluence';
+/**
+ * The fourth Atlassian app ("Renkei Bitbucket") — Bitbucket Cloud on its
+ * own OAuth system entirely: the consumer is registered on bitbucket.org,
+ * not developer.atlassian.com, tokens come from bitbucket.org's token
+ * endpoint, and the API lives at api.bitbucket.org. Grouped with the
+ * others because it is the same vendor and the same connect-per-product
+ * shape, not because it shares any plumbing with 3LO.
+ */
+export const ATLASSIAN_BITBUCKET_CONNECTOR = 'atlassian-bitbucket';
 
 // The scope catalog lives in atlassian-scopes.ts (pure data, client-importable
 // — the admin form renders it as checkboxes); re-exported here for the server
@@ -32,14 +41,17 @@ import {
   DEFAULT_ATLASSIAN_SCOPES,
   DEFAULT_ATLASSIAN_JSM_SCOPES,
   DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES,
+  DEFAULT_ATLASSIAN_BITBUCKET_SCOPES,
   usableAtlassianCeiling,
   usableAtlassianJsmCeiling,
   usableAtlassianConfluenceCeiling,
+  usableAtlassianBitbucketCeiling,
 } from '@/lib/atlassian-scopes';
 export {
   DEFAULT_ATLASSIAN_SCOPES,
   DEFAULT_ATLASSIAN_JSM_SCOPES,
   DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES,
+  DEFAULT_ATLASSIAN_BITBUCKET_SCOPES,
 };
 
 export interface AtlassianApp {
@@ -81,6 +93,14 @@ export async function getAtlassianConfluenceApp(
     ATLASSIAN_CONFLUENCE_CONNECTOR,
     usableAtlassianConfluenceCeiling
   );
+}
+
+/** The tenant's fourth Atlassian app (Bitbucket Cloud), same contract. */
+export async function getAtlassianBitbucketApp(
+  tenantId: string,
+  origin: string
+): Promise<AtlassianApp | null> {
+  return readApp(tenantId, origin, ATLASSIAN_BITBUCKET_CONNECTOR, usableAtlassianBitbucketCeiling);
 }
 
 async function readApp(
