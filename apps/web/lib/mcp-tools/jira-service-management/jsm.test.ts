@@ -136,6 +136,30 @@ describe('jsm_create_request desk-id resolution', () => {
     expect(requests[0]?.method).toBe('POST');
   });
 
+  it('sends the description as ADF, never as a raw markdown string', async () => {
+    routes = [{ match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-103' } }];
+    const tools = await toolsOf();
+
+    const result = await tools.get('jsm_create_request')!({
+      serviceDeskId: '7',
+      requestTypeId: '165',
+      summary: 'Wait-time display discrepancy',
+      description: '## Summary\n\nDisplay lags by ten minutes.',
+    });
+
+    expect(result.isError).not.toBe(true);
+    const post = requests.find((r) => r.method === 'POST');
+    const body = JSON.parse(post?.body ?? '{}') as {
+      isAdfRequest?: boolean;
+      requestFieldValues?: { description?: { type?: string; content?: { type: string }[] } };
+    };
+    // A raw string is read as wiki markup, where "##" is a NESTED NUMBERED
+    // LIST — headings written in markdown came out as "1. / 1. Summary".
+    expect(body.isAdfRequest).toBe(true);
+    expect(body.requestFieldValues?.description?.type).toBe('doc');
+    expect(body.requestFieldValues?.description?.content?.[0]?.type).toBe('heading');
+  });
+
   it('says the desk could not be resolved instead of forwarding the key', async () => {
     routes = [{ match: '/rest/servicedeskapi/request', body: { issueKey: 'never' } }];
     const tools = await toolsOf();
