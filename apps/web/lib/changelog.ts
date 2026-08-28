@@ -44,6 +44,18 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'Looking people up',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'Look several people up in one go',
+        detail:
+          'Searching for Jira users took one name per call, so resolving a meeting’s attendees or a change’s reviewers cost a round trip each. The search now accepts a list of names and emails and reports the matches under each one — naming the people it could not find rather than quietly dropping them, and still answering with what it did find when a lookup fails partway.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'Bitbucket joins the Atlassian connectors',
     entries: [
       {
