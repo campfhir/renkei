@@ -11,6 +11,22 @@ import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
 import { createUploadSlot } from '../upload-slots';
+// The same spelling jira_list_fields gives a Jira option field: the two are
+// one question asked of two systems, and a caller reading both should not
+// have to notice which it is looking at.
+import { renderOptions } from '../jira/field-schema';
+
+/** How many of a field's accepted values one line spells out. */
+const VALUES_SHOWN = 25;
+
+/** An ISO timestamp out of JSM's date object, which wraps every format. */
+function jsmDate(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value !== 'object' || value === null) return '';
+  const date: { iso8601?: unknown; friendly?: unknown } = value;
+  if (typeof date.iso8601 === 'string') return date.iso8601;
+  return typeof date.friendly === 'string' ? date.friendly : '';
+}
 
 const DEFAULT_MAX_ATTACHMENT_BYTES = 20_971_520; // 20MB — matches jira_add_attachment
 
@@ -68,11 +84,36 @@ export async function registerRequestDetailsTools(
           id: f.fieldId,
           name: f.name,
           required: f.required,
+          // The hint below promised a Type column this never carried, and
+          // the id alone is half an answer anyway: a caller still has to
+          // guess whether the field wants a string, a date or one of a
+          // closed set, and jsm_create_request answers a wrong guess with a
+          // 400 that names nothing.
+          type: typeof f.jiraSchema?.type === 'string' ? f.jiraSchema.type : '',
+          // JSM sends the accepted values IN THIS RESPONSE — a form
+          // description that drops them leaves the caller inventing one.
+          // `value` is what a write sends; `label` is what a person reads.
+          values: (Array.isArray(f.validValues) ? f.validValues : []).map((v: any) => ({
+            value: typeof v.label === 'string' ? v.label : String(v.value ?? ''),
+            id: typeof v.value === 'string' ? v.value : undefined,
+          })),
+          description: typeof f.description === 'string' ? f.description.trim() : '',
         }));
 
         const lines = [
           `Request type has ${fieldList.length} fields:`,
-          ...fieldList.map((f: any) => `• ${f.name} (${f.id})${f.required ? ' [REQUIRED]' : ''}`),
+          ...fieldList.flatMap((f: any) => [
+            `• ${f.name} (${f.id})${f.type ? ` - ${f.type}` : ''}${f.required ? ' [REQUIRED]' : ''}`,
+            ...(f.values.length > 0
+              ? [
+                  `    accepts: ${renderOptions(f.values, VALUES_SHOWN)}` +
+                    (f.values.length > VALUES_SHOWN
+                      ? `, +${f.values.length - VALUES_SHOWN} more`
+                      : ''),
+                ]
+              : []),
+            ...(f.description ? [`    ${f.description}`] : []),
+          ]),
         ];
         const text = lines.join('\n');
 
@@ -141,12 +182,29 @@ export async function registerRequestDetailsTools(
         const approvals = (data.values || []).map((a: any) => ({
           id: a.id,
           name: a.name,
-          status: a.status,
+          // The JSM payload calls it finalDecision; `status` alone rendered
+          // "[undefined]" on every row.
+          status: a.finalDecision || a.status || 'unknown',
+          // Who is actually being waited on, and what each of them said —
+          // "Manager approval [pending]" does not say whose desk it is on.
+          approvers: (Array.isArray(a.approvers) ? a.approvers : []).map((entry: any) => {
+            const who = entry?.approver?.displayName || entry?.approver?.accountId || 'someone';
+            const decision = entry?.approverDecision;
+            return decision ? `${who} (${decision})` : who;
+          }),
+          // The hint promised a Decided column; the dates were in hand.
+          decided: jsmDate(a.completedDate),
+          created: jsmDate(a.createdDate),
         }));
 
         const lines = [
           `${issueKey} has ${approvals.length} approvals:`,
-          ...approvals.map((a: any) => `• ${a.name} [${a.status}]`),
+          ...approvals.map(
+            (a: any) =>
+              `• ${a.name} [${a.status}]` +
+              (a.decided ? ` — decided ${a.decided}` : a.created ? ` — raised ${a.created}` : '') +
+              (a.approvers.length > 0 ? ` — approvers: ${a.approvers.join(', ')}` : '')
+          ),
         ];
         const text = lines.join('\n');
 

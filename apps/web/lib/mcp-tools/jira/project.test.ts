@@ -15,6 +15,7 @@ jest.mock('../common', () => ({
 }));
 
 import { registerProjectTools } from './project';
+import { clearFieldSchemaCache } from './field-schema';
 import type { JiraAuth } from './jira-auth';
 
 type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean };
@@ -215,6 +216,38 @@ describe('jira_search_users', () => {
   });
 });
 
+describe('jira_list_components', () => {
+  it('names the lead and what the component is for', async () => {
+    // Both arrive in this response; the hint's own Lead column was empty.
+    requestedUrls = [];
+    jiraFetchMock.mockReset();
+    jiraFetchMock.mockImplementation(async (url: unknown) => {
+      requestedUrls.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            id: '10010',
+            name: 'Billing',
+            description: 'Invoicing and payments',
+            lead: { displayName: 'Amanda Wong' },
+          },
+          { id: '10011', name: 'Search' },
+        ],
+      } as unknown as Response;
+    });
+    const tools = await registerTools();
+
+    const text =
+      (await tools.get('jira_list_components')!({ projectKey: 'CAS' })).content[0].text ?? '';
+
+    expect(text).toContain('• Billing (ID: 10010) — lead: Amanda Wong — Invoicing and payments');
+    // A component with neither stays exactly as it was.
+    expect(text).toContain('• Search (ID: 10011)');
+  });
+});
+
 const fieldDirectory = [
   { name: 'Project Health', id: 'customfield_12180', schema: { type: 'option' } },
   { name: 'Risk Impact', id: 'customfield_12179', schema: { type: 'option' } },
@@ -224,15 +257,44 @@ const fieldDirectory = [
   { name: 'Summary', id: 'summary', schema: { type: 'string' } },
 ];
 
-/** Answer every request with the field directory, recording the URL asked for. */
-function respondWithFields(): void {
+/** The option values createmeta reports for project CIO, by field id. */
+const createmetaFields: Record<string, unknown> = {
+  customfield_12180: {
+    allowedValues: [
+      { id: '15001', value: 'On track' },
+      { id: '15002', value: 'At risk' },
+    ],
+  },
+  customfield_12179: {
+    allowedValues: [
+      { id: '15010', value: 'High' },
+      { id: '15011', value: 'Low' },
+    ],
+  },
+};
+
+/**
+ * Answer the field directory, and createmeta with `options` (none by
+ * default — a site this caller cannot read createmeta on, or a field that
+ * is on no create screen).
+ */
+function respondWithFields(options: Record<string, unknown> | null = null): void {
   requestedUrls = [];
   jiraFetchMock.mockReset();
+  // The option lookup caches per site and per project, and it would
+  // otherwise carry values from the test before this one.
+  clearFieldSchemaCache();
   jiraFetchMock.mockImplementation(async (url: unknown) => {
     requestedUrls.push(String(url));
-    return { ok: true, status: 200, json: async () => fieldDirectory } as unknown as Response;
+    const body = String(url).includes('createmeta')
+      ? { projects: [{ issuetypes: [{ name: 'Task', id: '10001', fields: options ?? {} }] }] }
+      : fieldDirectory;
+    return { ok: true, status: 200, json: async () => body } as unknown as Response;
   });
 }
+
+/** The requests that fetched the field directory, not the option lookup. */
+const directoryFetches = () => requestedUrls.filter((url) => !url.includes('createmeta'));
 
 describe('jira_list_fields', () => {
   it('still filters on a single string exactly as before', async () => {
@@ -258,7 +320,9 @@ describe('jira_list_fields', () => {
 
     // The whole directory is fetched once and filtered here, so extra
     // filters must not cost extra round trips — that is the entire point.
-    expect(requestedUrls).toHaveLength(1);
+    // The option lookup is likewise one call for the whole answer.
+    expect(directoryFetches()).toHaveLength(1);
+    expect(requestedUrls.filter((url) => url.includes('createmeta'))).toHaveLength(1);
     expect(text).toContain('6 fields on this site, matched against 3 filters:');
     expect(text).toContain('"Project Health" — 1 match:');
     expect(text).toContain('• Project Health (customfield_12180) - option');
@@ -285,6 +349,62 @@ describe('jira_list_fields', () => {
     const result = await tools.get('jira_list_fields')!({ projectKey: 'CIO' });
 
     expect(result.content[0].text).toContain('Found 6 fields:');
+  });
+
+  it('spells out what an option field accepts, so a write need not guess', async () => {
+    // The whole point: an id alone leaves a caller inventing a value, and
+    // Jira answers a wrong one with a 400 that names nothing.
+    respondWithFields(createmetaFields);
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_list_fields')!({
+      projectKey: 'CIO',
+      query: ['Project Health', 'Story Points'],
+    });
+    const text = result.content[0].text ?? '';
+
+    expect(text).toContain('• Project Health (customfield_12180) - option');
+    expect(text).toContain('options: "On track" (id 15001), "At risk" (id 15002)');
+    // A number field has no closed set, so it gets no options line.
+    expect(text).toContain('• Story Points (customfield_10024) - number');
+    expect(text).not.toContain('options: pass projectKey');
+  });
+
+  it('asks for a projectKey rather than staying silent about options', async () => {
+    respondWithFields(createmetaFields);
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_list_fields')!({ query: 'Project Health' });
+    const text = result.content[0].text ?? '';
+
+    expect(text).toContain('options: pass projectKey to list them');
+    // Nothing to look them up against, so nothing is looked up.
+    expect(requestedUrls.some((url) => url.includes('createmeta'))).toBe(false);
+  });
+
+  it('says an option field reported no values instead of implying it takes any', async () => {
+    respondWithFields();
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_list_fields')!({
+      projectKey: 'CIO',
+      query: 'Project Health',
+    });
+
+    expect(result.content[0].text).toContain('options: none reported for CIO');
+  });
+
+  it('does not spend a round trip when nothing matched has options', async () => {
+    respondWithFields(createmetaFields);
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_list_fields')!({
+      projectKey: 'CIO',
+      query: 'Story Points',
+    });
+
+    expect(result.content[0].text).toContain('• Story Points (customfield_10024) - number');
+    expect(requestedUrls.some((url) => url.includes('createmeta'))).toBe(false);
   });
 
   it('treats a repeated filter as one', async () => {

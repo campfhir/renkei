@@ -169,11 +169,19 @@ export async function registerJsmTools(
         const types = (data.values || []).map((type: any) => ({
           id: type.id,
           name: type.name,
+          // What the desk itself says this request type is for. Choosing
+          // between "Report a problem" and "Request something" off the names
+          // alone is a guess the response was already answering.
+          description: typeof type.description === 'string' ? type.description.trim() : '',
+          helpText: typeof type.helpText === 'string' ? type.helpText.trim() : '',
         }));
 
         const lines = [
           `Service desk has ${types.length} request types:`,
-          ...types.map((t: any) => `• ${t.name} (ID: ${t.id})`),
+          ...types.flatMap((t: any) => [
+            `• ${t.name} (ID: ${t.id})${t.description ? ` — ${t.description}` : ''}`,
+            ...(t.helpText ? [`    ${t.helpText}`] : []),
+          ]),
         ];
         const text = lines.join('\n');
 
@@ -734,8 +742,7 @@ export async function registerJsmTools(
       let reporterShown = reporter;
       if (reporter && reporterSet) {
         const actual = result.reporter as
-          | { accountId?: string; emailAddress?: string; displayName?: string }
-          | undefined;
+          { accountId?: string; emailAddress?: string; displayName?: string } | undefined;
         if (actual && (actual.accountId || actual.emailAddress)) {
           const wanted = reporter.toLowerCase();
           const matches =

@@ -21,6 +21,7 @@
 
 import { jiraFetch, type MCPToolContext } from '../common';
 import { MAX_ITEMS_PER_SECTION, type SummaryPeriod, type SummarySection } from './types';
+import { sprintProgress, sprintWindow } from '../jira/sprint-window';
 
 /** Jira's own id for the Agile sprint field; the customfield number varies per site. */
 const SPRINT_FIELD_SCHEMA = 'com.pyxis.greenhopper.jira:gh-sprint';
@@ -119,18 +120,6 @@ async function searchJql(
   );
 }
 
-/** How much of the sprint has elapsed, which is the number people actually want. */
-function sprintProgress(sprint: SprintInfo, now: Date): string {
-  if (!sprint.startDate || !sprint.endDate) return '';
-  const start = new Date(sprint.startDate).getTime();
-  const end = new Date(sprint.endDate).getTime();
-  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return '';
-  const remainingMs = end - now.getTime();
-  const days = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
-  if (days < 0) return `ended ${Math.abs(days)}d ago`;
-  return `${days}d left`;
-}
-
 export async function collectSprint(
   context: MCPToolContext,
   _period: SummaryPeriod,
@@ -169,10 +158,7 @@ export async function collectSprint(
   const lines: string[] = [];
 
   if (sprint) {
-    const window =
-      sprint.startDate && sprint.endDate
-        ? `${sprint.startDate.slice(0, 10)} → ${sprint.endDate.slice(0, 10)}`
-        : 'dates not set';
+    const window = sprintWindow(sprint);
     const progress = sprintProgress(sprint, now);
     lines.push(`${sprint.name} (${window}${progress ? `, ${progress}` : ''})`);
   }

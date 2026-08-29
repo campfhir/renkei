@@ -10,6 +10,14 @@ import type { MCPToolContext } from '../common';
 import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+import {
+  enrichFieldsWithAllowedValues,
+  isOptionBearing,
+  parseField,
+  renderOptions,
+  type FieldOption,
+  type JiraField,
+} from './field-schema';
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
@@ -75,6 +83,46 @@ async function mapWithLimit<T, R>(
   });
   await Promise.all(runners);
   return results;
+}
+
+/** How many of a field's options one line of the field list spells out. */
+const OPTIONS_SHOWN = 25;
+
+/**
+ * What each option field in `shown` actually accepts, keyed by field id.
+ *
+ * A field id is only half an answer. "Project Health is customfield_12180"
+ * still leaves a caller guessing whether it wants "Green", "On track" or an
+ * option id, and Jira answers a wrong guess with a 400 that names nothing —
+ * so the model that looked the field up gets to discover the vocabulary by
+ * failing at it. The values are configured per project, which is what
+ * `projectKey` is for: this tool has accepted one since it was written and,
+ * until now, never read it.
+ *
+ * Skipped entirely when nothing shown is option-bearing, so looking up what
+ * Story Points is called here still costs exactly one round trip.
+ */
+async function optionValuesFor(
+  context: MCPToolContext,
+  auth: JiraAuth,
+  shown: JiraField[],
+  projectKey: string
+): Promise<Map<string, FieldOption[]>> {
+  const values = new Map<string, FieldOption[]>();
+  const wanted = new Map(shown.filter(isOptionBearing).map((field) => [field.id, field]));
+  if (wanted.size === 0 || !projectKey) return values;
+
+  // Fails open by contract: a site whose createmeta this caller cannot read
+  // still gets the field list, just without the options.
+  const enriched = await enrichFieldsWithAllowedValues(context, auth, [...wanted.values()], {
+    projectKey,
+  });
+  for (const field of enriched) {
+    if (field.allowedValues && field.allowedValues.length > 0) {
+      values.set(field.id, field.allowedValues);
+    }
+  }
+  return values;
 }
 
 export async function registerProjectTools(
@@ -198,7 +246,18 @@ export async function registerProjectTools(
 
         const lines = [
           `Project ${projectKey} has ${components.length} components:`,
-          ...components.map((c: any) => `• ${c.name} (ID: ${c.id})`),
+          // The lead is the hint's own second column, and the description is
+          // what tells two similarly named components apart — both arrive in
+          // this response and were being read past.
+          ...components.map((c: any) => {
+            const lead = c.lead?.displayName || c.lead?.name || '';
+            const description = typeof c.description === 'string' ? c.description.trim() : '';
+            return (
+              `• ${c.name} (ID: ${c.id})` +
+              (lead ? ` — lead: ${lead}` : '') +
+              (description ? ` — ${description}` : '')
+            );
+          }),
         ];
 
         if (components.length === 0) {
@@ -232,12 +291,20 @@ export async function registerProjectTools(
     {
       title: 'Jira · Read — List all issue fields (standard and custom)',
       description:
-        'List all fields available in a Jira project. Pass an array of filters to look up ' +
-        'several field groups in one call — the whole field list is fetched and filtered ' +
-        'here, so extra filters cost nothing beyond the first.',
+        'List all fields available in a Jira project, with the id a write has to be keyed ' +
+        'by. Pass an array of filters to look up several field groups in one call — the ' +
+        'whole field list is fetched and filtered here, so extra filters cost nothing ' +
+        'beyond the first. Give a projectKey and a select/option field also reports the ' +
+        'values it accepts, so a write can use one instead of guessing at it.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        projectKey: z.string().describe('Project key, e.g. SCRUM (optional)').optional(),
+        projectKey: z
+          .string()
+          .describe(
+            'Project key, e.g. SCRUM (optional). Needed to report what a select/option ' +
+              'field accepts — options are configured per project.'
+          )
+          .optional(),
         query: z
           .union([z.string(), z.array(z.string())])
           .describe(
@@ -291,16 +358,52 @@ export async function registerProjectTools(
           );
         };
 
+        // Everything the answer will print, decided before a line of it is
+        // rendered so the option lookup happens once for the whole call
+        // rather than once per filter.
+        const projectKey = typeof args.projectKey === 'string' ? args.projectKey.trim() : '';
+        const shownRaw = queries.length === 0 ? fields : queries.flatMap(matches);
+        const parsed = new Map<string, JiraField>();
+        for (const raw of shownRaw) {
+          const field = parseField(raw);
+          if (field) parsed.set(field.id, field);
+        }
+        const options = await optionValuesFor(context, auth, [...parsed.values()], projectKey);
+
+        /**
+         * What a field accepts, for the fields where that is a closed set.
+         *
+         * An option field with no values to show still says so: silence
+         * reads as "this field takes anything", which is the belief that
+         * sends a made-up value and gets a 400 back.
+         */
+        const optionsLine = (id: string): string | null => {
+          const field = parsed.get(id);
+          if (!field || !isOptionBearing(field)) return null;
+          const values = options.get(id);
+          if (values && values.length > 0) {
+            const more =
+              values.length > OPTIONS_SHOWN ? `, +${values.length - OPTIONS_SHOWN} more` : '';
+            return `options: ${renderOptions(values, OPTIONS_SHOWN)}${more}`;
+          }
+          return projectKey
+            ? `options: none reported for ${projectKey} — the field may not be on that ` +
+                "project's screens, or its values may be set per issue type"
+            : 'options: pass projectKey to list them — they are configured per project';
+        };
+
         const render = (found: any[]) => [
-          ...found
-            .slice(0, 50)
-            .map((f: any) => `• ${f.name} (${f.id}) - ${f.schema?.type || 'unknown'}`),
+          ...found.slice(0, 50).flatMap((f: any) => {
+            const line = `• ${f.name} (${f.id}) - ${f.schema?.type || 'unknown'}`;
+            const line2 = optionsLine(String(f.id ?? ''));
+            return line2 ? [line, `    ${line2}`] : [line];
+          }),
           found.length > 50 ? `... and ${found.length - 50} more` : '',
         ];
 
         const hint =
-          'a table (Field name, id, Type) usually scans faster than this flat list — ' +
-          'there can be dozens of custom fields.';
+          `a table (Field name, id, Type${[...parsed.values()].some(isOptionBearing) ? ', Options' : ''}) ` +
+          'usually scans faster than this flat list — there can be dozens of custom fields.';
 
         // No filter, or one: the original shape, unchanged.
         if (queries.length <= 1) {
