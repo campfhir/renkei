@@ -20,6 +20,7 @@ import MemoryPanel from './memory-panel';
 import KnowledgePanel from './knowledge-panel';
 import ShareAgentButton from './share-agent';
 import CopyMarkdownButton from './copy-markdown-button';
+import RunNowButton from './run-now-button';
 import RecentRuns from './recent-runs';
 import StepsOutline from './steps-outline';
 
@@ -115,9 +116,16 @@ export default async function AgentOverviewPage({
     listRunsForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, { limit: 5 }),
     invocationCountsOf(dbResult.val, tenant.id, agentId),
     getOrgSettings(tenant.id),
-    access.viewerIsOwner ? Promise.resolve(null) : getIdentityDisplay(tenant.id, access.ownerSubject),
+    access.viewerIsOwner
+      ? Promise.resolve(null)
+      : getIdentityDisplay(tenant.id, access.ownerSubject),
   ]);
   const reviewNotes = parseReviewNotes(agent.reviewNotes);
+  // Same rule the agents list applies: a manual run of an event-only agent
+  // starts with every trigger.* variable unbound, which is a confusing
+  // failure rather than a test — so the button is not offered there.
+  const eventOnly =
+    agent.triggers.length > 0 && agent.triggers.every((trigger) => trigger.draft.kind === 'event');
   const dailyCap = settingsResult.ok ? settingsResult.val.agentMaxRunsPerDay : null;
   const invocationRows: { label: string; count: number }[] = [
     { label: 'Today', count: invocations.today },
@@ -130,12 +138,15 @@ export default async function AgentOverviewPage({
 
   return (
     <div className="mx-auto max-w-5xl">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+      {/* On phones the actions flow UNDER the name rather than fighting it
+          for the same line — the name is the long part, and a squeezed row
+          of half-width buttons was the result of sharing it. */}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-center gap-2 sm:flex-1">
           <BackLink href={`/${slug}/agents`} label="All agents" />
           <h1 className="min-w-0 truncate text-xl font-bold">{agent.name}</h1>
         </div>
-        <div className="flex shrink-0 items-center gap-2 text-sm">
+        <div className="flex flex-wrap items-center gap-2 text-sm sm:shrink-0">
           <span
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${
               agent.enabled
@@ -186,9 +197,16 @@ export default async function AgentOverviewPage({
           {/* When does it run — the schedule/event answer the card view has
               but this page was missing. */}
           <div className="mb-3 rounded-md border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-950">
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-              Runs
-            </p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Runs
+              </p>
+              {/* Beside the schedule, because "every weekday at 8am" is
+                  exactly what makes someone want to fire it once by hand. */}
+              {eventOnly ? null : (
+                <RunNowButton slug={slug} tenantId={tenant.id} agentId={agentId} />
+              )}
+            </div>
             {agent.triggers.length > 0 ? (
               <ul className="mt-1 space-y-2">
                 {agent.triggers.map((trigger) => (
