@@ -44,6 +44,18 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'Connected tools show up when you connect them',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Newly connected tools no longer wait behind a stale list',
+        detail:
+          'Renkei told every client it would announce changes to its tool list, and then never announced any — so a client could reasonably hold the list it fetched on the day it connected, and a connector added afterwards stayed invisible to it. Renkei no longer makes that promise, and the version it reports now changes whenever your tools do.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'Telling a step how hard to try',
     entries: [
       {

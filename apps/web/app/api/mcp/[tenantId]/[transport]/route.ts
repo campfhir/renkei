@@ -34,13 +34,12 @@ import { ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renkei/provider
 import { parseEncryptionKey } from '@renkei/crypto';
 import { getIdentityEmail } from '@/lib/identity';
 import { createProjection } from '@renkei/capability-registry';
+import { toolSurfaceVersion } from '@/lib/mcp-tools/surface-version';
+import { getHandler, setHandler } from '@/lib/mcp-tools/handler-cache';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { McpServer } from '@modelcontextprotocol/server';
-
-// Cache MCP handlers per (tenantId, accountId)
-const handlerCache = new Map<string, (request: Request) => Promise<Response>>();
 
 /**
  * Derived once per process from the deployment secret, so a given identifier
@@ -50,44 +49,6 @@ const handlerCache = new Map<string, (request: Request) => Promise<Response>>();
  */
 const redactionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
 const redactionKey = deriveRedactionKey(redactionKeyResult.ok ? redactionKeyResult.val : null);
-
-function getCacheKey(
-  tenantId: string,
-  accountId: string,
-  readOnly: boolean,
-  knowledgeAvailable: boolean,
-  webexAvailable: boolean,
-  microsoftAvailable: boolean,
-  sharepointAvailable: boolean,
-  onedriveAvailable: boolean,
-  zoomAvailable: boolean,
-  confluenceAvailable: boolean,
-  fileshareTools: string,
-  onbaseAvailable: boolean,
-  userEmail: string | null,
-  disabledConnectors: readonly string[],
-  redaction: string
-): string {
-  // Everything the registered tool set or a handler closure depends on must
-  // be part of the key, or a change takes effect only on process restart:
-  // the org's read-only mode, whether the knowledge layer is provisioned,
-  // which per-user connector grants this caller holds, and the caller's
-  // recorded email (captured by search_knowledge's closure).
-  return (
-    `${tenantId}:${accountId}:${readOnly ? 'ro' : 'rw'}:${knowledgeAvailable ? 'k' : 'nk'}:` +
-    `${webexAvailable ? 'w' : 'nw'}:${microsoftAvailable ? 'm' : 'nm'}:${zoomAvailable ? 'z' : 'nz'}:` +
-    `${sharepointAvailable ? 's' : 'ns'}:${onedriveAvailable ? 'o' : 'no'}:` +
-    `${confluenceAvailable ? 'c' : 'nc'}:${fileshareTools}:` +
-    `${onbaseAvailable ? 'ob' : 'nob'}:${userEmail ?? ''}:` +
-    // Sorted, so the same set in a different order is the same key rather
-    // than a needless cache miss.
-    `${[...disabledConnectors].sort().join(',')}:` +
-    // The redaction settings are baked into the registered handlers, so a
-    // change to them has to miss the cache or it would not take effect until
-    // the process restarted.
-    `${redaction}`
-  );
-}
 
 /**
  * The caller's grant on the second Atlassian app ("Renkei JSM"), decrypted —
@@ -262,9 +223,20 @@ const handler = async (
           );
         },
         {
+          // We do NOT send notifications/tools/list_changed: nothing in this
+          // codebase publishes one, and GET on this endpoint is 405, so there
+          // is no stream for one to travel on. The SDK advertises the bit as
+          // `true` by default the moment a tool is registered
+          // (registerCapabilities uses `?? true`), which tells a client the
+          // server will announce changes — an invitation to cache the tool
+          // list indefinitely and wait for a notification that never comes.
+          // Saying `false` is simply the truth, and leaves a client to
+          // re-list on its own terms.
+          capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
           serverInfo: {
             name: 'Renkei MCP',
-            version: '1.0.0',
+            // A fixed surface — one connect pointer — so a fixed version.
+            version: '1.0.0+unconnected',
           },
           instructions: 'Jira authentication required',
           verboseLogs: false,
@@ -328,24 +300,21 @@ const handler = async (
     const emailResult = await getIdentityEmail(tenantId, subject);
     const userEmail = emailResult.ok ? emailResult.val : null;
 
+    // Only what this scope still reads by name. The per-connector availability
+    // flags used to be destructured here to build the cache key; the key is now
+    // derived from row versions, and `availability` itself is what
+    // registerRenkeiTools gates on.
     const {
-      knowledgeAvailable,
       webexAvailable,
       webexScopes,
       microsoftAvailable,
       graphScopes,
-      sharepointAvailable,
-      onedriveAvailable,
       zoomAvailable,
       zoomScopes,
       confluenceAvailable,
       confluenceScopes,
       bitbucketAvailable,
       bitbucketScopes,
-      filesharesAvailable,
-      fileshareWrite,
-      fileshareDelete,
-      onbaseAvailable,
     } = availability;
     // No Jira grant → an empty scope list, which the scope gate reads as
     // "register no Jira/JSM tools" (never undefined — that means a legacy
@@ -365,51 +334,17 @@ const handler = async (
         ATLASSIAN_JSM
       );
     }
-    const jsmScopes = jsmGrant?.scopes ?? [];
 
-    // Check cache. The tool set now varies with every grant's scopes, so they
-    // are part of the key — a reconnect with different scopes must not be
-    // served a handler built for the old ones.
-    const scopeFingerprint =
-      `${[...jiraScopes].sort().join(',')}|${[...webexScopes].sort().join(',')}|` +
-      `${[...jsmScopes].sort().join(',')}:${jsmGrant ? 'jsm' : 'nojsm'}|` +
-      `${[...graphScopes].sort().join(',')}|${[...zoomScopes].sort().join(',')}|` +
-      `${[...confluenceScopes].sort().join(',')}|` +
-      `${[...bitbucketScopes].sort().join(',')}:${bitbucketAvailable ? 'bb' : 'nobb'}`;
-    // Everything the redaction gate's behaviour depends on, in one string.
-    const redactionFingerprint = settings.redactionEnabled
-      ? `r:${[...settings.redactionDetectors].sort().join(',')}:` +
-        `${settings.redactionMrnFormats.join('\u0001')}`
-      : 'nr';
-
-    const cacheKey =
-      getCacheKey(
-        tenantId,
-        accountId,
-        settings.readOnly,
-        knowledgeAvailable,
-        webexAvailable,
-        microsoftAvailable,
-        sharepointAvailable,
-        onedriveAvailable,
-        zoomAvailable,
-        confluenceAvailable,
-        // The registered fileshare tool set varies with the caller's
-        // per-share exposure opt-ins, so they are part of the key — an
-        // opt-in on the connectors page must not be served a handler built
-        // without the write tools.
-        `${filesharesAvailable ? 'f' : 'nf'}${fileshareWrite ? 'w' : ''}${fileshareDelete ? 'd' : ''}`,
-        onbaseAvailable,
-        userEmail,
-        settings.disabledConnectors,
-        redactionFingerprint
-      ) +
-      `:${scopeFingerprint}` +
-      // The agent identity is captured by tool closures (provenance
-      // stamping), so a cached user handler must never serve an agent call
-      // of the same subject, nor one agent's handler another's.
-      `:agent:${agentId ?? 'none'}`;
-    let cachedHandler = handlerCache.get(cacheKey);
+    // Identity plus one version derived from the rows the tool surface is
+    // built from — see lib/mcp-tools/surface-version.ts for why this is not a
+    // fingerprint of the inputs and not an explicit invalidation.
+    //
+    // The agent id stays in the key on its own: it is not stored anywhere the
+    // version reads, and tool closures capture it for provenance stamping, so
+    // one agent's handler must never serve another's calls (or a user's).
+    const surfaceVersion = await toolSurfaceVersion(db, tenantId, subject);
+    const cacheKey = `${tenantId}:${subject}:${agentId ?? 'none'}:${surfaceVersion}`;
+    let cachedHandler = getHandler(cacheKey);
 
     if (!cachedHandler) {
       logger.debug('Creating new handler (cache miss)', {
@@ -541,9 +476,26 @@ const handler = async (
           }
         },
         {
+          // We do NOT send notifications/tools/list_changed: nothing in this
+          // codebase publishes one, and GET on this endpoint is 405, so there
+          // is no stream for one to travel on. The SDK advertises the bit as
+          // `true` by default the moment a tool is registered
+          // (registerCapabilities uses `?? true`), which tells a client the
+          // server will announce changes — an invitation to cache the tool
+          // list indefinitely and wait for a notification that never comes.
+          // Saying `false` is simply the truth, and leaves a client to
+          // re-list on its own terms.
+          capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
           serverInfo: {
             name: 'Renkei MCP',
-            version: '1.0.0',
+            // The surface version rides in the build metadata, so a client
+            // that keys anything off server identity sees this server change
+            // when its tool set does. Costs nothing — it is the same value
+            // the handler cache is keyed on, already computed above — and
+            // even when a client ignores it, it says which surface a given
+            // session is holding, which is most of what made the stale-tool
+            // reports hard to diagnose.
+            version: `1.0.0+${surfaceVersion}`,
           },
           instructions:
             'Renkei: org tools over MCP. Tools are named <connector>_<verb>_<noun> and titled ' +
@@ -575,7 +527,7 @@ const handler = async (
       );
 
       // Store in cache
-      handlerCache.set(cacheKey, cachedHandler);
+      setHandler(cacheKey, cachedHandler);
     } else {
       logger.debug('Using cached handler', { component: 'mcp/transport', tenantId, accountId });
     }
