@@ -43,6 +43,8 @@ interface DbState {
   inserted: Array<Record<string, unknown>>;
   updates: Array<{ sets: Record<string, unknown>; wheres: Array<unknown[]> }>;
   updatedRows: number;
+  /** What a card_list select resolves to. */
+  rows?: Array<Record<string, unknown>>;
 }
 
 function stubDb(state: DbState): void {
@@ -57,6 +59,17 @@ function stubDb(state: DbState): void {
           },
         }),
       }),
+      selectFrom: () => {
+        const chain = {
+          leftJoin: () => chain,
+          select: () => chain,
+          where: () => chain,
+          orderBy: () => chain,
+          limit: () => chain,
+          execute: async () => state.rows ?? [],
+        };
+        return chain;
+      },
       updateTable: () => ({
         set: (sets: Record<string, unknown>) => {
           const wheres: Array<unknown[]> = [];
@@ -165,4 +178,78 @@ test('every card tool fails closed without a subject', async () => {
   }
   expect(state.inserted).toHaveLength(0);
   expect(state.updates).toHaveLength(0);
+});
+
+describe('card_list tells an approval apart from a note', () => {
+  const base = {
+    status: 'suggested',
+    created_at: new Date('2026-08-28T09:00:00.000Z'),
+    archived_at: null,
+  };
+  const info = {
+    ...base,
+    id: 'card-info',
+    kind: 'info',
+    source: 'mcp',
+    title: 'Overnight summary',
+    summary: 'Three things happened.',
+    runId: null,
+    agentId: null,
+    agentName: null,
+  };
+  const approval = {
+    ...base,
+    id: 'card-approval',
+    kind: 'approval',
+    source: 'agents',
+    title: 'Refund triage — needs your approval',
+    summary: 'Refund $240 to Dana Lin?',
+    runId: 'run-1',
+    agentId: 'agent-1',
+    agentName: 'Refund triage',
+  };
+
+  it('names the run an approval is holding up, and how to answer it', async () => {
+    // Without this a caller reads a paused agent as a note to acknowledge —
+    // or leaves it sitting, which comes to the same thing.
+    const state: DbState = { inserted: [], updates: [], updatedRows: 1, rows: [approval] };
+    stubDb(state);
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('card_list')!({})).content[0]?.text ?? '';
+
+    expect(text).toContain('— approval · suggested · from agents');
+    expect(text).toContain('Paused run run-1 of agent "Refund triage" (agent-1)');
+    expect(text).toContain('decide it with agent_approval_decide');
+  });
+
+  it('leaves an info card alone — no run, no decision pointer', async () => {
+    const state: DbState = { inserted: [], updates: [], updatedRows: 1, rows: [info] };
+    stubDb(state);
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('card_list')!({})).content[0]?.text ?? '';
+
+    expect(text).toContain('— info · suggested · from mcp');
+    expect(text).not.toContain('Paused run');
+    expect(text).not.toContain('agent_approval_decide');
+  });
+
+  it('stops offering a decision once the approval is decided', async () => {
+    const state: DbState = {
+      inserted: [],
+      updates: [],
+      updatedRows: 1,
+      rows: [{ ...approval, status: 'approved', archived_at: new Date() }],
+    };
+    stubDb(state);
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('card_list')!({})).content[0]?.text ?? '';
+
+    // The run context still helps ("which run was that?"); the pointer
+    // would only invite a second decision on a card that has one.
+    expect(text).toContain('Paused run run-1');
+    expect(text).not.toContain('decide it with agent_approval_decide');
+  });
 });
