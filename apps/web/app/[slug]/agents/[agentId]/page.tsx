@@ -127,6 +127,47 @@ export default async function AgentOverviewPage({
   const eventOnly =
     agent.triggers.length > 0 && agent.triggers.every((trigger) => trigger.draft.kind === 'event');
   const dailyCap = settingsResult.ok ? settingsResult.val.agentMaxRunsPerDay : null;
+  /**
+   * The agent's controls, rendered in ONE of two places depending on the
+   * width — never both: `hidden`/`lg:hidden` takes the other out of the
+   * accessibility tree along with the pixels, so a screen reader is never
+   * offered two Share buttons.
+   *
+   * Below lg they belong to the rail, whose cards are already the page's
+   * column of things you DO to this agent; in the header they had a line
+   * of their own and still crowded the name. At lg the header row is wide
+   * enough for both, and the controls read better beside the title than
+   * two hundred pixels below it.
+   */
+  const actions = (
+    <>
+      <CopyMarkdownButton
+        markdown={agentMarkdown({
+          name: agent.name,
+          description: agent.description,
+          enabled: agent.enabled,
+          steps: agent.steps,
+          triggers: agent.triggers,
+          guardrails: agent.guardrails,
+          blockedTools: agent.blockedTools,
+        })}
+      />
+      {access.viewerIsOwner ? (
+        <ShareAgentButton tenantId={tenant.id} agentId={agentId} />
+      ) : (
+        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+          Shared by {ownerDisplay?.displayName || ownerDisplay?.email || 'a colleague'}
+        </span>
+      )}
+      <Link
+        href={`/${slug}/agents/${agentId}/edit`}
+        className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700"
+      >
+        <Icon path={ICONS.pencil} />
+        Edit
+      </Link>
+    </>
+  );
   const invocationRows: { label: string; count: number }[] = [
     { label: 'Today', count: invocations.today },
     { label: 'This week', count: invocations.week },
@@ -138,15 +179,10 @@ export default async function AgentOverviewPage({
 
   return (
     <div className="mx-auto max-w-5xl">
-      {/* Two bands: WHAT this is (chevron, name, on/off) and what you can
-          DO to it. The name pins left and the state pins right — reading
-          the title told you nothing about whether the thing is running,
-          because On/Off used to lead the button strip and got squeezed off
-          the line with it. On phones the buttons flow under the name
-          rather than fighting it for the same line — and that holds until
-          lg, the page's own wide breakpoint, because four controls beside
-          a name is what squeezed the name down to an initial at tablet
-          widths. */}
+      {/* The title band says WHAT this is: chevron, name pinned left, state
+          pinned right. On/Off used to lead the button strip and was the
+          first thing squeezed off the line with it — the one fact you open
+          this page to check. */}
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-start lg:justify-between">
         <div className="flex min-w-0 items-center gap-2 lg:flex-1">
           <BackLink href={`/${slug}/agents`} label="All agents" />
@@ -161,38 +197,10 @@ export default async function AgentOverviewPage({
             {agent.enabled ? 'On' : 'Off'}
           </span>
         </div>
-        {/* From sm the band gets a line of its own with room to spare, so
-            the controls sit against the right edge under the state badge
-            rather than adrift in the middle of the row. At lg the band
-            shrinks to its contents inside a justify-between row, where
-            justify-end has nothing left to move. Phones keep them left,
-            where a wrapped second line reads as a continuation. */}
-        <div className="flex flex-wrap items-center gap-2 text-sm sm:justify-end lg:shrink-0">
-          <CopyMarkdownButton
-            markdown={agentMarkdown({
-              name: agent.name,
-              description: agent.description,
-              enabled: agent.enabled,
-              steps: agent.steps,
-              triggers: agent.triggers,
-              guardrails: agent.guardrails,
-              blockedTools: agent.blockedTools,
-            })}
-          />
-          {access.viewerIsOwner ? (
-            <ShareAgentButton tenantId={tenant.id} agentId={agentId} />
-          ) : (
-            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-              Shared by {ownerDisplay?.displayName || ownerDisplay?.email || 'a colleague'}
-            </span>
-          )}
-          <Link
-            href={`/${slug}/agents/${agentId}/edit`}
-            className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700"
-          >
-            <Icon path={ICONS.pencil} />
-            Edit
-          </Link>
+        {/* Beside the name only where the row can hold both — see the rail
+            copy below for where these go otherwise. */}
+        <div className="hidden flex-wrap items-center gap-2 text-sm lg:flex lg:shrink-0">
+          {actions}
         </div>
       </div>
 
@@ -206,6 +214,13 @@ export default async function AgentOverviewPage({
         {/* The rail is FIRST in the DOM so it stacks above the steps on
             phones; on lg the explicit grid placement puts it right. */}
         <aside className="mb-6 lg:col-start-2 lg:row-start-1 lg:mb-0">
+          {/* The controls, wherever the header cannot hold them (see the
+              `actions` note): at the head of the rail, ending on the same
+              right edge as the cards under them. */}
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2 text-sm lg:hidden">
+            {actions}
+          </div>
+
           {/* When does it run — the schedule/event answer the card view has
               but this page was missing. */}
           <div className="mb-3 rounded-md border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-950">
