@@ -13,6 +13,7 @@ import { logger } from '@/lib/logger';
 import { issueLinkTargets, issueLinksMarkdown } from './issue-urls';
 import { checkJql, describeJqlProblem, JQL_PARAMETER_DESCRIPTION } from './jql';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+import { sprintProgress, sprintWindow } from './sprint-window';
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
@@ -843,14 +844,27 @@ export async function registerReadTools(
         }
         const sprints = isArray(data.values) ? data.values : [];
 
+        const now = new Date();
         const sprintLines = sprints
           .map((s: unknown) => {
             if (!isRecord(s)) {
               return null;
             }
+            const dates = {
+              startDate: typeof s.startDate === 'string' ? s.startDate : undefined,
+              endDate: typeof s.endDate === 'string' ? s.endDate : undefined,
+            };
+            // "How long is left" only means something for the sprint that is
+            // running; on fourteen closed ones it is fourteen lines of noise.
+            const progress = s.state === 'active' ? sprintProgress(dates, now) : '';
             // The id feeds jira_move_issue_to_sprint / jira_complete_sprint — the
-            // last member of the ids-missing-from-list-output family.
-            return `• ${s.name} (${s.state}) — sprintId: ${s.id}`;
+            // last member of the ids-missing-from-list-output family. The dates
+            // ride along because Jira sent them and the question after "which
+            // sprint is active" is always "and when does it end".
+            return (
+              `• ${s.name} (${s.state}) — sprintId: ${s.id} — ` +
+              `${sprintWindow(dates)}${progress ? `, ${progress}` : ''}`
+            );
           })
           .filter((line): line is string => line !== null);
         const lines = [`Board ${boardId} has ${sprints.length} sprints:`, ...sprintLines];

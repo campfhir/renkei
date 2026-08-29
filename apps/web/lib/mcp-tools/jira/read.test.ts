@@ -272,3 +272,70 @@ describe('jira_search_issues truncation', () => {
     expect(result.content[0].text).not.toContain('jira_count_issues');
   });
 });
+
+describe('jira_list_sprints', () => {
+  /** Frozen so "how many days left" is a fact, not today's weather. */
+  const now = new Date('2026-08-21T00:00:00.000Z');
+
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(now);
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  const board = {
+    values: [
+      {
+        id: 385,
+        name: 'Bridges (2025-01-06)',
+        state: 'closed',
+        startDate: '2025-01-06T10:00:00.000Z',
+        endDate: '2025-01-13T10:00:00.000Z',
+      },
+      {
+        id: 2469,
+        name: 'Chicken Little',
+        state: 'active',
+        startDate: '2026-08-18T10:00:00.000Z',
+        endDate: '2026-09-01T10:00:00.000Z',
+      },
+      { id: 1147, name: 'Bridges (2025-04-21) 2', state: 'future' },
+    ],
+  };
+
+  it('carries the dates Jira sent, instead of promising a table it cannot fill', async () => {
+    // The transcript this comes from: "end date is not available from this
+    // call" — about a response that contained the end date.
+    respondWith(board);
+    const tools = await registerTools();
+
+    const result = await tools.get('jira_list_sprints')!({ boardId: '588' });
+    const text = result.content[0].text ?? '';
+
+    expect(text).toContain('• Chicken Little (active) — sprintId: 2469 — 2026-08-18 → 2026-09-01');
+    expect(text).toContain(
+      '• Bridges (2025-01-06) (closed) — sprintId: 385 — 2025-01-06 → 2025-01-13'
+    );
+  });
+
+  it('says how long the running sprint has left, and only that one', async () => {
+    respondWith(board);
+    const tools = await registerTools();
+
+    const text = (await tools.get('jira_list_sprints')!({ boardId: '588' })).content[0].text ?? '';
+
+    expect(text).toContain('2026-08-18 → 2026-09-01, 12d left');
+    // Fourteen closed sprints saying "ended 400d ago" is fourteen lines of noise.
+    expect(text).not.toContain('ago');
+  });
+
+  it('says a sprint has no dates rather than leaving the columns blank', async () => {
+    respondWith(board);
+    const tools = await registerTools();
+
+    const text = (await tools.get('jira_list_sprints')!({ boardId: '588' })).content[0].text ?? '';
+
+    expect(text).toContain('• Bridges (2025-04-21) 2 (future) — sprintId: 1147 — dates not set');
+  });
+});
