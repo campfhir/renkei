@@ -11,28 +11,13 @@ import { getCachedDisplayName, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
 import { createUploadSlot } from '../upload-slots';
+// The same spelling jira_list_fields gives a Jira option field: the two are
+// one question asked of two systems, and a caller reading both should not
+// have to notice which it is looking at.
+import { renderOptions } from '../jira/field-schema';
 
 /** How many of a field's accepted values one line spells out. */
 const VALUES_SHOWN = 25;
-
-/**
- * The values a field accepts, quoted, each with the id a write has to send.
- *
- * Deliberately the same spelling `jira_list_fields` uses for a Jira option
- * field — the two are the same question asked of two systems, and a caller
- * reading both should not have to notice which one it is looking at.
- */
-function renderValues(values: { value: string; id?: string | undefined }[]): string {
-  const shown = values
-    .slice(0, VALUES_SHOWN)
-    .map((entry) =>
-      entry.id && entry.id !== entry.value
-        ? `"${entry.value}" (id ${entry.id})`
-        : `"${entry.value}"`
-    )
-    .join(', ');
-  return values.length > VALUES_SHOWN ? `${shown}, +${values.length - VALUES_SHOWN} more` : shown;
-}
 
 /** An ISO timestamp out of JSM's date object, which wraps every format. */
 function jsmDate(value: unknown): string {
@@ -119,7 +104,14 @@ export async function registerRequestDetailsTools(
           `Request type has ${fieldList.length} fields:`,
           ...fieldList.flatMap((f: any) => [
             `• ${f.name} (${f.id})${f.type ? ` - ${f.type}` : ''}${f.required ? ' [REQUIRED]' : ''}`,
-            ...(f.values.length > 0 ? [`    accepts: ${renderValues(f.values)}`] : []),
+            ...(f.values.length > 0
+              ? [
+                  `    accepts: ${renderOptions(f.values, VALUES_SHOWN)}` +
+                    (f.values.length > VALUES_SHOWN
+                      ? `, +${f.values.length - VALUES_SHOWN} more`
+                      : ''),
+                ]
+              : []),
             ...(f.description ? [`    ${f.description}`] : []),
           ]),
         ];
