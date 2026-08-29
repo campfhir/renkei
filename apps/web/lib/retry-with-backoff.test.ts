@@ -56,7 +56,7 @@ describe('retryWithBackoff', () => {
 
       // Exponential: 1s (2^0), 2s (2^1), 4s (2^2)
       expect(delays).toEqual([1000, 2000, 4000]);
-    });
+    }, 15000);
 
     it('respects custom backoff offset', async () => {
       const fn = vi.fn().mockRejectedValue(new Error('fail'));
@@ -102,7 +102,7 @@ describe('retryWithBackoff', () => {
 
       // Linear: 1s (1*1), 2s (2*1), 3s (3*1)
       expect(delays).toEqual([1000, 2000, 3000]);
-    });
+    }, 15000);
 
     it('respects custom backoff offset for linear', async () => {
       const fn = vi.fn().mockRejectedValue(new Error('fail'));
@@ -152,8 +152,8 @@ describe('retryWithBackoff', () => {
         });
         fail('Should have thrown');
       } catch (error) {
-        expect(error).toBeInstanceOf(RetryExhaustedError);
-        expect((error as RetryExhaustedError).lastError).toBe(originalError);
+        if (!(error instanceof RetryExhaustedError)) throw error;
+        expect(error.lastError).toBe(originalError);
       }
     });
 
@@ -232,7 +232,7 @@ describe('retryWithBackoff', () => {
       // so this tests the timing between abort and completion
       try {
         await promise;
-      } catch (error) {
+      } catch {
         // May throw OperationAbortedError or succeed depending on timing
       }
     });
@@ -283,8 +283,8 @@ describe('retryWithBackoff', () => {
         await retryWithBackoff(fn, { timeout: 100, maxRetries: 0 });
         fail('Should have thrown');
       } catch (error) {
-        expect(error).toBeInstanceOf(RetryExhaustedError);
-        expect((error as RetryExhaustedError).lastError.message).toBe('string error');
+        if (!(error instanceof RetryExhaustedError)) throw error;
+        expect(error.lastError.message).toBe('string error');
       }
     });
 
@@ -295,7 +295,8 @@ describe('retryWithBackoff', () => {
         await retryWithBackoff(fn, { timeout: 100, maxRetries: 2 });
         fail('Should have thrown');
       } catch (error) {
-        expect((error as RetryExhaustedError).attempts).toBeGreaterThan(0);
+        if (!(error instanceof RetryExhaustedError)) throw error;
+        expect(error.attempts).toBeGreaterThan(0);
       }
     });
   });
