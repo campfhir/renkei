@@ -53,6 +53,7 @@ export default async function EditAgentPage({
         calendars={data.calendars}
         models={data.models}
         attemptsCap={data.attemptsCap}
+        maxSteps={data.maxSteps}
         existing={agent}
       />
     </div>

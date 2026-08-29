@@ -80,6 +80,7 @@ export interface AgentBuilderProps {
   models: { id: string; label: string; isDefault: boolean }[];
   /** The org's per-step attempt ceiling (org settings; default 10). */
   attemptsCap: number;
+  maxSteps: number;
   /** Present in edit mode. */
   existing?: StoredAgent;
 }
@@ -131,6 +132,7 @@ export function AgentBuilder({
   calendars,
   models,
   attemptsCap,
+  maxSteps,
   existing,
 }: AgentBuilderProps) {
   const router = useRouter();
@@ -610,7 +612,14 @@ export function AgentBuilder({
     return used;
   }, [steps, knownVarNames]);
 
-  const clientIssues = useMemo(() => validateAgentDraft(draft, tools), [draft, tools]);
+  // maxSteps must come from the org, not the MAX_STEPS default: without it
+  // this refuses to save an agent the server would accept, and the person
+  // sees "Keep the agent to 20 steps or fewer" from an org whose ceiling is
+  // higher.
+  const clientIssues = useMemo(
+    () => validateAgentDraft(draft, tools, { maxSteps }),
+    [draft, tools, maxSteps]
+  );
   const issues = serverIssues.length > 0 ? serverIssues : clientIssues;
   // Exact prefix match: `steps.1` must NOT claim `steps.10.instruction`.
   const issuesAt = (prefix: string) =>

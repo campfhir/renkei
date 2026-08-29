@@ -47,6 +47,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     heading: 'Editing an agent from outside the builder',
     entries: [
       {
+        kind: 'fixed',
+        title: 'The builder respects your organization’s step limit',
+        detail:
+          'An organization can raise how many steps an agent may hold, but the builder still refused to save past twenty — it was checking against the built-in default instead of your setting, so the Update button stayed disabled on an agent the server would have accepted.',
+      },
+      {
         kind: 'added',
         title: 'Change one step without resending the whole agent',
         detail:

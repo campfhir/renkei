@@ -44,6 +44,7 @@ export default async function NewAgentPage({
         calendars={data.calendars}
         models={data.models}
         attemptsCap={data.attemptsCap}
+        maxSteps={data.maxSteps}
       />
     </div>
   );
