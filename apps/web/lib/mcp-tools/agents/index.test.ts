@@ -24,6 +24,7 @@ jest.mock('@/lib/agents/agent-notes', () => ({
   updateAgentNote: jest.fn(),
   deleteAgentNote: jest.fn(),
 }));
+jest.mock('@/lib/mcp-tools/tool-catalog', () => ({ listAvailableTools: jest.fn() }));
 jest.mock('@renkei/agents/memory', () => ({
   readAgentMemory: jest.fn(async () => ({ summary: null, entries: [] })),
   renderAgentKnowledgeNotes: jest.fn(async () => ''),
@@ -41,6 +42,9 @@ const storeMock = jest.requireMock<{ getAgent: jest.Mock; listAgents: jest.Mock 
 const saveMock = jest.requireMock<{ saveAgent: jest.Mock }>('@/lib/agents/save');
 const runsMock = jest.requireMock<{ listRunsForOwner: jest.Mock; getRunForOwner: jest.Mock }>(
   '@/lib/agents/runs-view'
+);
+const catalogMock = jest.requireMock<{ listAvailableTools: jest.Mock }>(
+  '@/lib/mcp-tools/tool-catalog'
 );
 const notesMock = jest.requireMock<{
   listAgentNotes: jest.Mock;
@@ -336,7 +340,13 @@ test('agent_knowledge_write with every entry failing is an error result', async 
 
 test('agent_knowledge_update carries omitted fields over from the stored note', async () => {
   notesMock.listAgentNotes.mockResolvedValue([
-    { noteId: 'n-1', title: 'Old title', content: 'Old content', authoredBy: 'user', sourceAt: null },
+    {
+      noteId: 'n-1',
+      title: 'Old title',
+      content: 'Old content',
+      authoredBy: 'user',
+      sourceAt: null,
+    },
   ]);
   notesMock.updateAgentNote.mockResolvedValue('OK');
   const handlers = registerAll({});
@@ -348,7 +358,11 @@ test('agent_knowledge_update carries omitted fields over from the stored note', 
   expect(result.isError).toBeUndefined();
   expect(notesMock.updateAgentNote).toHaveBeenCalledWith(
     expect.anything(),
-    expect.objectContaining({ title: 'Old title', content: 'New content', ownerEmail: 'alice@example.com' })
+    expect.objectContaining({
+      title: 'Old title',
+      content: 'New content',
+      ownerEmail: 'alice@example.com',
+    })
   );
 });
 
@@ -381,4 +395,103 @@ test('every agents tool fails closed without a subject', async () => {
     expect(result.isError).toBe(true);
     expect(`${name}: ${result.content[0]?.text ?? ''}`).toContain('no recorded identity');
   }
+});
+
+/** A catalog entry, with the two things a step author actually needs. */
+const catalogTool = (
+  name: string,
+  connector: string,
+  kind: 'read' | 'act',
+  description: string,
+  extra: { appOnly?: boolean } = {}
+) => ({
+  name,
+  connector,
+  kind,
+  title: `${connector} · ${kind === 'act' ? 'Act' : 'Read'} — ${name}`,
+  description,
+  appOnly: extra.appOnly === true,
+  outcomes: {
+    success: { label: 'It worked' },
+    failures: [
+      { code: 'not-found', label: 'Missing', description: 'x', retriable: true },
+      { code: 'other', label: 'Anything else', description: 'x', retriable: true },
+    ],
+  },
+});
+
+const CATALOG = [
+  catalogTool('outlook_send_mail', 'outlook', 'act', 'Send an email as yourself.'),
+  catalogTool('outlook_list_messages', 'outlook', 'read', 'List messages in a folder.'),
+  catalogTool('jira_create_issue', 'jira', 'act', 'Create a Jira issue.'),
+  catalogTool('jira_create_issue_preview', 'jira', 'act', 'A card only.', { appOnly: true }),
+];
+
+describe('agent_list_tools', () => {
+  beforeEach(() => {
+    catalogMock.listAvailableTools.mockResolvedValue(CATALOG);
+  });
+
+  it('names the whole vocabulary by connector when nothing is filtered', async () => {
+    const handlers = registerAll({});
+    const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
+
+    // Names, not descriptions: what a step has to get exactly right, without
+    // the wall of prose for a catalog this size.
+    expect(text).toContain('3 skills your agents can use, across 2 connectors:');
+    expect(text).toContain('outlook (2):');
+    expect(text).toContain('outlook_send_mail, outlook_list_messages');
+    expect(text).toContain('jira (1):');
+    expect(text).not.toContain('Send an email as yourself.');
+  });
+
+  it('leaves out the tools only a preview card can call', async () => {
+    const handlers = registerAll({});
+    const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
+
+    // The model never sees them, so an author must not be told to write a
+    // step for one.
+    expect(text).not.toContain('jira_create_issue_preview');
+  });
+
+  it('gives the full description and the failure codes once filtered', async () => {
+    const handlers = registerAll({});
+    const text =
+      (await handlers.get('agent_list_tools')!({ connector: 'outlook', kind: 'act' })).content[0]
+        ?.text ?? '';
+
+    // The failure codes are the vocabulary failureHandling is keyed by — a
+    // step cannot handle a condition it was never told about.
+    expect(text).toContain('- outlook_send_mail');
+    expect(text).toContain('[act] — Send an email as yourself.');
+    expect(text).toContain('failure codes: not-found, other');
+    expect(text).not.toContain('outlook_list_messages');
+  });
+
+  it('reports each query separately, naming the one that matched nothing', async () => {
+    const handlers = registerAll({});
+    const text =
+      (await handlers.get('agent_list_tools')!({ query: ['send', 'delete a repository'] }))
+        .content[0]?.text ?? '';
+
+    expect(text).toContain('"send" — 1 match(es):');
+    expect(text).toContain('outlook_send_mail');
+    expect(text).toContain('"delete a repository" — no match');
+  });
+
+  it('names the connectors you do have when one is asked for that you do not', async () => {
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_list_tools')!({ connector: 'zoom' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('your connectors are jira, outlook');
+  });
+
+  it('says why the catalog is empty rather than answering with nothing', async () => {
+    catalogMock.listAvailableTools.mockResolvedValue([]);
+    const handlers = registerAll({});
+    const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
+
+    expect(text).toContain('no connectors enabled');
+  });
 });
