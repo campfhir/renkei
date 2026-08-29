@@ -161,7 +161,13 @@ export default async function AgentOverviewPage({
             {agent.enabled ? 'On' : 'Off'}
           </span>
         </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm lg:shrink-0">
+        {/* From sm the band gets a line of its own with room to spare, so
+            the controls sit against the right edge under the state badge
+            rather than adrift in the middle of the row. At lg the band
+            shrinks to its contents inside a justify-between row, where
+            justify-end has nothing left to move. Phones keep them left,
+            where a wrapped second line reads as a continuation. */}
+        <div className="flex flex-wrap items-center gap-2 text-sm sm:justify-end lg:shrink-0">
           <CopyMarkdownButton
             markdown={agentMarkdown({
               name: agent.name,
