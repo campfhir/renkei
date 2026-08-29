@@ -13,6 +13,7 @@ import {
   describeSchedule,
   isBlackoutEntry,
   isRecurrence,
+  recurrenceIssue,
   isValidTimezone,
   parseScheduleConfig,
   type ScheduleConfig,
@@ -447,5 +448,64 @@ describe('describeRecurrence / describeSchedule', () => {
       'Every day at 09:00, and the last day of each month at 17:00 — starting 2026-09-01, ' +
         'shifting blackout dates to the next clear day'
     );
+  });
+});
+
+describe('recurrenceIssue explains the rejection', () => {
+  it('names the vocabulary when `every` is not one of the forms', () => {
+    // The empirical discovery this replaces: 'sunday' rejected with nothing
+    // to say that a named day is `{ every: 'week', weekday: 0 }`.
+    const issue = recurrenceIssue({ every: 'sunday', at: '09:00' });
+    expect(issue).toContain('"every"');
+    expect(issue).toContain('"week"');
+    expect(issue).toContain('"sunday"');
+  });
+
+  it('names the offending key for each form', () => {
+    expect(recurrenceIssue({ every: 'day', at: '24:00' })).toContain('"at"');
+    expect(recurrenceIssue({ every: 'week', at: '08:00', weekday: 7 })).toContain('"weekday"');
+    expect(recurrenceIssue({ every: 'month', at: '08:00', day: 32 })).toContain('"day"');
+    expect(recurrenceIssue({ every: 'month', at: '08:00', on: 'sunday' })).toContain('"last-day"');
+    expect(recurrenceIssue({ every: 'month', at: '08:00', nth: 5, weekday: 1 })).toContain('"nth"');
+  });
+
+  it('says which discriminants a monthly rule may carry when it names none or two', () => {
+    for (const rule of [
+      { every: 'month', at: '08:00' },
+      { every: 'month', at: '08:00', day: 1, on: 'last-day' },
+    ]) {
+      const issue = recurrenceIssue(rule);
+      expect(issue).toContain('exactly one');
+      expect(issue).toContain('"nth"');
+    }
+  });
+
+  it('is silent on every rule isRecurrence accepts, and speaks on every one it rejects', () => {
+    const accepted: unknown[] = [
+      { every: 'hour' },
+      { every: 'day', at: '09:30' },
+      { every: 'weekday', at: '08:00' },
+      { every: 'week', weekday: 0, at: '08:00' },
+      { every: 'month', day: 31, at: '08:00' },
+      { every: 'month', on: 'last-weekday', at: '17:00' },
+      { every: 'month', nth: -1, weekday: 5, at: '12:00' },
+    ];
+    const rejected: unknown[] = [
+      null,
+      'nope',
+      [],
+      { every: 'never' },
+      { every: 'day' },
+      { every: 'week', at: '08:00' },
+      { every: 'month', at: '08:00', nth: 2 },
+    ];
+    for (const rule of accepted) {
+      expect(recurrenceIssue(rule)).toBeNull();
+      expect(isRecurrence(rule)).toBe(true);
+    }
+    for (const rule of rejected) {
+      expect(recurrenceIssue(rule)).toEqual(expect.any(String));
+      expect(isRecurrence(rule)).toBe(false);
+    }
   });
 });

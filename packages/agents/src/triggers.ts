@@ -11,14 +11,15 @@
 
 import {
   isBlackoutEntry,
-  isRecurrence,
   isValidDateString,
   isValidTimezone,
+  recurrenceIssue,
+  shownValue,
   MAX_SCHEDULE_BLACKOUTS,
   MAX_SCHEDULE_RULES,
   type ScheduleConfig,
 } from './recurrence';
-import { triggerEventById, validateMatchForEvent } from './trigger-catalog';
+import { TRIGGER_EVENT_CATALOG, triggerEventById, validateMatchForEvent } from './trigger-catalog';
 import { isTriggerMatch, type TriggerMatch } from './trigger-filters';
 import { VARIABLE_NAME_PATTERN } from './steps';
 import type { VariableDescriptor } from './variables';
@@ -54,12 +55,19 @@ export interface TriggerIssue {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * The event vocabulary, quoted for error messages. Derived from the catalog
+ * rather than written out, so adding an event cannot leave the guidance
+ * naming a stale set.
+ */
+const TRIGGER_EVENT_IDS = TRIGGER_EVENT_CATALOG.map((event) => `"${event.id}"`).join(', ');
+
 function validateOne(draft: TriggerDraft, index: number): TriggerIssue[] {
   const issues: TriggerIssue[] = [];
   switch (draft.kind) {
     case 'event': {
       if (!triggerEventById(draft.eventId)) {
-        issues.push({ index, message: 'Choose an event from the list.' });
+        issues.push({ index, message: `Choose an event from the list: ${TRIGGER_EVENT_IDS}.` });
       }
       // Field-level filter rules are catalog data, so the messages come from
       // there rather than from a check per field kept in step with it here.
@@ -78,8 +86,9 @@ function validateOne(draft: TriggerDraft, index: number): TriggerIssue[] {
         });
       } else {
         draft.recurrences.forEach((rule, at) => {
-          if (!isRecurrence(rule)) {
-            issues.push({ index, message: `Schedule rule ${at + 1} is incomplete.` });
+          const issue = recurrenceIssue(rule);
+          if (issue) {
+            issues.push({ index, message: `Schedule rule ${at + 1}: ${issue}.` });
           }
         });
       }
@@ -145,8 +154,20 @@ function isApiTriggerInput(value: unknown): value is ApiTriggerInput {
   return typeof input.name === 'string' && typeof input.label === 'string';
 }
 
-export function isTriggerDraft(value: unknown): value is TriggerDraft {
-  if (typeof value !== 'object' || value === null) return false;
+/**
+ * Why `value` is not a TriggerDraft, naming the offending key and what it
+ * accepts, or null when it is one. `isTriggerDraft` is the boolean face of
+ * this, so the guard and its reason are one decision.
+ *
+ * This is the payload boundary, and the message is all a caller writing a
+ * draft by hand gets: `validateOne`'s per-field messages only run on drafts
+ * that already have the right SHAPE, so a schedule with a bad `every` never
+ * reaches them. Hence the accepted values inline.
+ */
+export function triggerDraftIssue(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return 'a trigger draft must be an object with a "kind"';
+  }
   const draft: {
     kind?: unknown;
     eventId?: unknown;
@@ -158,29 +179,50 @@ export function isTriggerDraft(value: unknown): value is TriggerDraft {
   } = value;
   switch (draft.kind) {
     case 'event':
+      if (typeof draft.eventId !== 'string') {
+        return `"eventId" must be a catalog event id, one of ${TRIGGER_EVENT_IDS} (got ${shownValue(draft.eventId)})`;
+      }
       // `match` is checked structurally here, not field by field: this runs
       // on a wire payload, and letting an arbitrary object through as a
       // filter is how junk reaches the fan-out's hot path. validateOne
       // carries the field-level messages.
-      return (
-        typeof draft.eventId === 'string' &&
-        (draft.match === undefined || isTriggerMatch(draft.match))
-      );
-    case 'schedule':
-      // Shape only (payload boundary); validateOne carries the field-level
-      // messages. Optional members are checked there too.
-      return (
-        Array.isArray(draft.recurrences) &&
-        draft.recurrences.every(isRecurrence) &&
-        typeof draft.timezone === 'string'
-      );
+      if (draft.match !== undefined && !isTriggerMatch(draft.match)) {
+        return '"match" must map the event\'s filter field ids to a string or a list of strings';
+      }
+      return null;
+    case 'schedule': {
+      // Shape only (payload boundary); validateOne carries the rest —
+      // rule count, timezone recognition, start date, blackouts.
+      if (!Array.isArray(draft.recurrences)) {
+        return `"recurrences" must be a list of rules (got ${shownValue(draft.recurrences)})`;
+      }
+      for (const [at, rule] of draft.recurrences.entries()) {
+        const issue = recurrenceIssue(rule);
+        if (issue) return `recurrence ${at + 1}: ${issue}`;
+      }
+      if (typeof draft.timezone !== 'string') {
+        return `"timezone" must be an IANA zone name, e.g. "America/Chicago" (got ${shownValue(draft.timezone)})`;
+      }
+      return null;
+    }
     case 'agent':
-      return typeof draft.callerAgentId === 'string';
-    case 'api':
-      return Array.isArray(draft.inputs) && draft.inputs.every(isApiTriggerInput);
+      return typeof draft.callerAgentId === 'string'
+        ? null
+        : `"callerAgentId" must be the id of the agent whose run starts this one (got ${shownValue(draft.callerAgentId)})`;
+    case 'api': {
+      if (!Array.isArray(draft.inputs)) {
+        return `"inputs" must be a list of {name, label} inputs (got ${shownValue(draft.inputs)})`;
+      }
+      const at = draft.inputs.findIndex((input) => !isApiTriggerInput(input));
+      return at === -1 ? null : `input ${at + 1} needs a string "name" and a string "label"`;
+    }
     default:
-      return false;
+      return `"kind" must be "event", "schedule", "agent" or "api" (got ${shownValue(draft.kind)})`;
   }
+}
+
+export function isTriggerDraft(value: unknown): value is TriggerDraft {
+  return triggerDraftIssue(value) === null;
 }
 
 export function validateTriggerDrafts(drafts: TriggerDraft[]): TriggerIssue[] {

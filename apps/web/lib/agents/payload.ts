@@ -5,7 +5,12 @@
  * validator, which runs on the parsed result.
  */
 
-import { isAgentStepsDoc, isTriggerDraft, type AgentDraft } from '@renkei/agents';
+import {
+  isAgentStepsDoc,
+  isTriggerDraft,
+  triggerDraftIssue,
+  type AgentDraft,
+} from '@renkei/agents';
 import type { SaveAgentInput, TriggerPayload } from '@/lib/agents/store';
 
 export function parseAgentPayload(
@@ -28,10 +33,27 @@ export function parseAgentPayload(
   if (!Array.isArray(payload.triggers)) return { error: 'triggers must be a list' };
 
   const triggers: TriggerPayload[] = [];
-  for (const entry of payload.triggers) {
-    if (typeof entry !== 'object' || entry === null) return { error: 'Malformed trigger' };
+  // A rejection here names the offending key and its accepted values: this
+  // is the boundary, so the draft never reaches the validator's per-path
+  // messages, and "malformed" alone leaves a caller writing a draft by hand
+  // (over MCP, say) guessing at a grammar it cannot read anywhere.
+  for (const [index, entry] of payload.triggers.entries()) {
+    const at = `Trigger ${index + 1}`;
+    if (typeof entry !== 'object' || entry === null) {
+      return { error: `${at} must be a {draft, enabled} entry` };
+    }
     const item: { id?: unknown; draft?: unknown; enabled?: unknown } = entry;
-    if (!isTriggerDraft(item.draft)) return { error: 'Malformed trigger' };
+    if (item.draft === undefined) {
+      // The likeliest wire mistake is a bare draft where the entry goes:
+      // say which of the two shapes is missing rather than describing the
+      // draft grammar for an entry that has no draft to describe.
+      return { error: `${at} needs a "draft" — an entry is {draft, enabled}` };
+    }
+    // The guard narrows; the issue function says why it refused. Both run
+    // the same switch, so the reason can never disagree with the verdict.
+    if (!isTriggerDraft(item.draft)) {
+      return { error: [at, triggerDraftIssue(item.draft)].filter(Boolean).join(': ') };
+    }
     triggers.push({
       id: typeof item.id === 'string' ? item.id : undefined,
       draft: item.draft,

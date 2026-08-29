@@ -74,8 +74,28 @@ const SHIFT_CAP_DAYS = 30;
 /** The natural-occurrence walk bound (worst gap among rule kinds ≈ 35 days). */
 const WALK_DAYS = 62;
 
-export function isRecurrence(value: unknown): value is Recurrence {
-  if (typeof value !== 'object' || value === null) return false;
+/** An offending value, rendered compactly for an error message. */
+export function shownValue(value: unknown): string {
+  if (value === undefined) return 'nothing';
+  const json = JSON.stringify(value);
+  if (json === undefined) return String(value);
+  return json.length > 40 ? `${json.slice(0, 39)}…` : json;
+}
+
+/**
+ * Why `value` is not a Recurrence, in words the author of the rule can act
+ * on, or null when it is one. `isRecurrence` is this function's boolean
+ * face, so a verdict and its reason can never drift apart.
+ *
+ * The messages name the offending key and its accepted values, because the
+ * union above is the whole vocabulary: a caller writing a rule by hand
+ * (over MCP, say) has no other way to learn that Sunday is `{every:
+ * 'week', weekday: 0}` and not `{every: 'sunday'}`.
+ */
+export function recurrenceIssue(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return `a rule must be an object (got ${shownValue(value)})`;
+  }
   const rec: {
     every?: unknown;
     at?: unknown;
@@ -84,49 +104,61 @@ export function isRecurrence(value: unknown): value is Recurrence {
     on?: unknown;
     nth?: unknown;
   } = value;
-  const validAt = typeof rec.at === 'string' && TIME_PATTERN.test(rec.at);
-  const validWeekday =
+  const atIssue =
+    typeof rec.at === 'string' && TIME_PATTERN.test(rec.at)
+      ? null
+      : `"at" must be a 24-hour "HH:MM" wall-clock time (got ${shownValue(rec.at)})`;
+  const weekdayIssue =
     typeof rec.weekday === 'number' &&
     Number.isInteger(rec.weekday) &&
     rec.weekday >= 0 &&
-    rec.weekday <= 6;
+    rec.weekday <= 6
+      ? null
+      : `"weekday" must be an integer 0-6, Sunday=0 (got ${shownValue(rec.weekday)})`;
   switch (rec.every) {
     case 'hour':
-      return true;
+      return null;
     case 'day':
     case 'weekday':
-      return validAt;
+      return atIssue;
     case 'week':
-      return validAt && validWeekday;
+      return atIssue ?? weekdayIssue;
     case 'month': {
       // Exactly ONE monthly discriminant — jsonb is untyped, and a row
       // carrying two would make the day filter ambiguous.
       const forms = [rec.day !== undefined, rec.on !== undefined, rec.nth !== undefined];
-      if (forms.filter(Boolean).length !== 1) return false;
-      if (rec.day !== undefined) {
+      if (forms.filter(Boolean).length !== 1) {
         return (
-          validAt &&
-          typeof rec.day === 'number' &&
+          'a monthly rule needs exactly one of "day" (1-31), "on" ("last-day", ' +
+          '"first-weekday" or "last-weekday"), or "nth" (1-4, or -1 for last) with "weekday"'
+        );
+      }
+      if (atIssue) return atIssue;
+      if (rec.day !== undefined) {
+        return typeof rec.day === 'number' &&
           Number.isInteger(rec.day) &&
           rec.day >= 1 &&
           rec.day <= 31
-        );
+          ? null
+          : `"day" must be an integer 1-31 (got ${shownValue(rec.day)})`;
       }
       if (rec.on !== undefined) {
-        return (
-          validAt &&
-          (rec.on === 'last-day' || rec.on === 'first-weekday' || rec.on === 'last-weekday')
-        );
+        return rec.on === 'last-day' || rec.on === 'first-weekday' || rec.on === 'last-weekday'
+          ? null
+          : `"on" must be "last-day", "first-weekday" or "last-weekday" (got ${shownValue(rec.on)})`;
       }
-      return (
-        validAt &&
-        validWeekday &&
-        (rec.nth === 1 || rec.nth === 2 || rec.nth === 3 || rec.nth === 4 || rec.nth === -1)
-      );
+      if (rec.nth !== 1 && rec.nth !== 2 && rec.nth !== 3 && rec.nth !== 4 && rec.nth !== -1) {
+        return `"nth" must be 1, 2, 3, 4, or -1 for last (got ${shownValue(rec.nth)})`;
+      }
+      return weekdayIssue;
     }
     default:
-      return false;
+      return `"every" must be "hour", "day", "weekday", "week" or "month" (got ${shownValue(rec.every)})`;
   }
+}
+
+export function isRecurrence(value: unknown): value is Recurrence {
+  return recurrenceIssue(value) === null;
 }
 
 export function isValidTimezone(timezone: string): boolean {

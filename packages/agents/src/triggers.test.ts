@@ -9,6 +9,7 @@
 
 import {
   isTriggerDraft,
+  triggerDraftIssue,
   triggerVariableDescriptors,
   triggerVariableNames,
   validateTriggerDrafts,
@@ -98,5 +99,97 @@ describe('validateTriggerDrafts reports filter problems against the catalog', ()
     expect(
       validateTriggerDrafts([{ kind: 'event', eventId, match: { somethingNewer: 'x' } }])
     ).toEqual([]);
+  });
+});
+
+describe('triggerDraftIssue explains the rejection', () => {
+  it('names the kinds when `kind` is missing or unknown', () => {
+    for (const draft of [{}, { kind: 'cron' }, { recurrences: [] }]) {
+      const issue = triggerDraftIssue(draft);
+      expect(issue).toContain('"kind"');
+      expect(issue).toContain('"schedule"');
+    }
+  });
+
+  it('carries the rule number and the recurrence reason for a bad schedule', () => {
+    // The four-attempt discovery this replaces: a rejected rule said only
+    // "Malformed trigger", so the grammar had to be guessed key by key.
+    expect(
+      triggerDraftIssue({
+        kind: 'schedule',
+        timezone: 'America/Chicago',
+        recurrences: [{ every: 'day', at: '09:00' }, { every: 'sunday' }],
+      })
+    ).toBe(
+      'recurrence 2: "every" must be "hour", "day", "weekday", "week" or "month" (got "sunday")'
+    );
+  });
+
+  it('accepts the weekly form a named day needs', () => {
+    expect(
+      triggerDraftIssue({
+        kind: 'schedule',
+        timezone: 'America/Chicago',
+        recurrences: [{ every: 'week', weekday: 0, at: '09:00' }],
+      })
+    ).toBeNull();
+  });
+
+  it('names the catalog ids for an event trigger without one', () => {
+    const issue = triggerDraftIssue({ kind: 'event' });
+    expect(issue).toContain('"eventId"');
+    expect(issue).toContain('"microsoft/mail.received"');
+  });
+
+  it('names the offending key for the remaining kinds', () => {
+    expect(triggerDraftIssue({ kind: 'event', eventId: 'x', match: ['nope'] })).toContain(
+      '"match"'
+    );
+    expect(triggerDraftIssue({ kind: 'agent' })).toContain('"callerAgentId"');
+    expect(triggerDraftIssue({ kind: 'api' })).toContain('"inputs"');
+    expect(
+      triggerDraftIssue({ kind: 'api', inputs: [{ name: 'ok', label: 'Ok' }, { name: 1 }] })
+    ).toContain('input 2');
+    expect(triggerDraftIssue({ kind: 'schedule', recurrences: [] })).toContain('"timezone"');
+  });
+
+  it('stays the reason behind isTriggerDraft rather than a second opinion', () => {
+    for (const draft of [
+      { kind: 'event', eventId: 'microsoft/mail.received' },
+      { kind: 'agent', callerAgentId: '00000000-0000-0000-0000-000000000000' },
+      { kind: 'api', inputs: [] },
+      { kind: 'schedule', recurrences: [], timezone: 'UTC' },
+      null,
+      'nope',
+      { kind: 'event' },
+    ]) {
+      expect(triggerDraftIssue(draft) === null).toBe(isTriggerDraft(draft));
+    }
+  });
+});
+
+describe('validateTriggerDrafts carries the recurrence reason too', () => {
+  it('says why a schedule rule is unusable, not just that it is', () => {
+    const issues = validateTriggerDrafts([
+      {
+        kind: 'schedule',
+        timezone: 'America/Chicago',
+        // In range for the type, out of range for the calendar — the case
+        // only the validator can catch, and the one it used to call
+        // "incomplete".
+        recurrences: [
+          { every: 'week', weekday: 0, at: '09:00' },
+          { every: 'month', day: 40, at: '09:00' },
+        ],
+      },
+    ]);
+    expect(issues).toEqual([
+      { index: 0, message: 'Schedule rule 2: "day" must be an integer 1-31 (got 40).' },
+    ]);
+  });
+
+  it('points an unknown event id at the vocabulary', () => {
+    const issues = validateTriggerDrafts([{ kind: 'event', eventId: 'webex/message.sent' }]);
+    expect(issues[0]?.message).toContain('"webex/message.received"');
   });
 });
