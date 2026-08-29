@@ -26,9 +26,16 @@ import { resolveAgentLlm } from '@renkei/agent-llm';
 import { logger } from '@/lib/logger';
 import { saveDescription } from '@/lib/agents/store';
 import { parseReviewNotes, type ReviewNote } from '@/lib/agents/notes';
+import {
+  retryWithBackoff,
+  RetryExhaustedError,
+  OperationAbortedError,
+} from '@/lib/retry-with-backoff';
 
-const GENERATION_TIMEOUT_MS = 20_000;
+const GENERATION_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
 const MAX_OUTPUT_TOKENS = 1_024;
+const MAX_RETRIES = 2; // 3 total attempts (initial + 2 retries)
+const RETRY_BACKOFF_OFFSET_MS = 2000; // Start with 2 second delay
 
 function describeTrigger(draft: TriggerDraft): string {
   switch (draft.kind) {
@@ -309,50 +316,79 @@ export async function generateAgentDescription(
   if (!llmResult.ok) return failed(llmResult.err.type);
   const llm = llmResult.val;
 
-  const completion = await Promise.race([
-    llm.provider.complete({
-      system:
-        'You summarize user-drafted automations for the person who wrote them. You reply with strict JSON.',
-      messages: [
-        {
-          role: 'user',
-          content: [
+  try {
+    const completion = await retryWithBackoff(
+      () =>
+        llm.provider.complete({
+          system:
+            'You summarize user-drafted automations for the person who wrote them. You reply with strict JSON.',
+          messages: [
             {
-              type: 'text',
-              text: buildAgentReviewPrompt(
-                agent.name,
-                agent.steps,
-                agent.triggers,
-                agent.guardrails
-              ),
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: buildAgentReviewPrompt(
+                    agent.name,
+                    agent.steps,
+                    agent.triggers,
+                    agent.guardrails
+                  ),
+                },
+              ],
             },
           ],
+          tools: [],
+          maxTokens: Math.max(MAX_OUTPUT_TOKENS, llm.maxOutputTokens),
+        }),
+      {
+        timeout: GENERATION_TIMEOUT_MS,
+        maxRetries: MAX_RETRIES,
+        backoffStrategy: 'exponential',
+        backoffOffset: RETRY_BACKOFF_OFFSET_MS,
+        onRetry: (attempt, error, nextDelayMs) => {
+          logger.info(
+            'agent description generation retry {attempt}: {error} (waiting {delay}ms before retry)',
+            {
+              component: 'agents/describe',
+              tenantId,
+              agentId: agent.id,
+              attempt,
+              error: error.message,
+              delay: nextDelayMs,
+            }
+          );
         },
-      ],
-      tools: [],
-      maxTokens: Math.max(MAX_OUTPUT_TOKENS, llm.maxOutputTokens),
-    }),
-    new Promise<'timeout'>((resolve) =>
-      setTimeout(() => resolve('timeout'), GENERATION_TIMEOUT_MS)
-    ),
-  ]);
-  if (completion === 'timeout') return failed('timeout');
-  if (!completion.ok) {
-    return failed(
-      `${completion.err.type}${completion.err.message ? `: ${completion.err.message.slice(0, 300)}` : ''}`
+      }
     );
+
+    if (!completion.ok) {
+      return failed(
+        `${completion.err.type}${completion.err.message ? `: ${completion.err.message.slice(0, 300)}` : ''}`
+      );
+    }
+
+    const text = completion.val.content
+      .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+      .join('\n');
+    const parsed = parseAgentReviewReply(text);
+    if (!parsed) return failed('unparseable reply');
+
+    await saveDescription(db, tenantId, agent.id, {
+      status: 'ok',
+      description: parsed.summary,
+      reviewNotes: parsed.concerns,
+    });
+    return { description: parsed.summary, reviewNotes: parsed.concerns };
+  } catch (error) {
+    if (error instanceof OperationAbortedError) {
+      return failed('operation aborted');
+    }
+    if (error instanceof RetryExhaustedError) {
+      return failed(
+        `exhausted after ${error.attempts} attempt${error.attempts === 1 ? '' : 's'}: ${error.lastError.message}`
+      );
+    }
+    return failed(error instanceof Error ? error.message : String(error));
   }
-
-  const text = completion.val.content
-    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
-    .join('\n');
-  const parsed = parseAgentReviewReply(text);
-  if (!parsed) return failed('unparseable reply');
-
-  await saveDescription(db, tenantId, agent.id, {
-    status: 'ok',
-    description: parsed.summary,
-    reviewNotes: parsed.concerns,
-  });
-  return { description: parsed.summary, reviewNotes: parsed.concerns };
 }

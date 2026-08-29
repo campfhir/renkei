@@ -5,6 +5,10 @@
  * without editing anything — and it analyzes the stored version on
  * purpose: describing unsaved edits would pin a summary to steps that may
  * never be saved.
+ *
+ * Uses background job execution with 5-minute timeout to allow the LLM
+ * generation to complete without HTTP timeout (3 minutes for generation +
+ * buffer for DB operations and cleanup).
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -14,6 +18,14 @@ import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { generateAgentDescription } from '@/lib/agents/describe';
+
+/**
+ * NextJS serverless function timeout.
+ * Set to 5 minutes (300 seconds) to allow 3-minute LLM generation +
+ * overhead for request setup, cleanup, and database operations.
+ * This is only applicable to serverless/edge deployments.
+ */
+export const maxDuration = 300;
 
 export async function POST(
   request: NextRequest,
