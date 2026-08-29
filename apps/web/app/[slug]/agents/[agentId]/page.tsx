@@ -138,17 +138,21 @@ export default async function AgentOverviewPage({
 
   return (
     <div className="mx-auto max-w-5xl">
-      {/* On phones the actions flow UNDER the name rather than fighting it
-          for the same line — the name is the long part, and a squeezed row
-          of half-width buttons was the result of sharing it. */}
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-center gap-2 sm:flex-1">
+      {/* Two bands: WHAT this is (chevron, name, on/off) and what you can
+          DO to it. The name pins left and the state pins right — reading
+          the title told you nothing about whether the thing is running,
+          because On/Off used to lead the button strip and got squeezed off
+          the line with it. On phones the buttons flow under the name
+          rather than fighting it for the same line — and that holds until
+          lg, the page's own wide breakpoint, because four controls beside
+          a name is what squeezed the name down to an initial at tablet
+          widths. */}
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-center gap-2 lg:flex-1">
           <BackLink href={`/${slug}/agents`} label="All agents" />
           <h1 className="min-w-0 truncate text-xl font-bold">{agent.name}</h1>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 text-sm sm:shrink-0">
           <span
-            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+            className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
               agent.enabled
                 ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
                 : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
@@ -156,6 +160,8 @@ export default async function AgentOverviewPage({
           >
             {agent.enabled ? 'On' : 'Off'}
           </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-sm lg:shrink-0">
           <CopyMarkdownButton
             markdown={agentMarkdown({
               name: agent.name,
