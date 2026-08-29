@@ -41,7 +41,7 @@ import {
 } from './config';
 import { logger } from './logger';
 import type { Result } from '@campfhir/safe-functions/types';
-import { forgetSession, rememberSession, sessionCookie } from './sessions';
+import { forgetSession, hasOnBaseSession, rememberSession, sessionCookie } from './sessions';
 
 /**
  * The `set-cookie` headers of a response, as a list.
@@ -441,11 +441,15 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
         return sendError(response, 'bad_request', 'subject and accessToken are required');
       }
 
+      // The full jar goes out (the balancer cookie included, or the
+      // disconnect lands on a node that has no such session), but the
+      // question asked first is specifically whether we hold an OnBase
+      // session: without one the API would build one just to be told to
+      // close it, taking a licence on the way in.
+      const holds = hasOnBaseSession(tenantId, subject);
       const cookie = sessionCookie(tenantId, subject);
       forgetSession(tenantId, subject);
-      // No cookie means no session of ours to end: the API would build one
-      // just to be told to close it, taking a license on the way in.
-      if (!cookie) return sendJson(response, 200, { disconnected: false });
+      if (!holds || !cookie) return sendJson(response, 200, { disconnected: false });
 
       const upstream = await timedFetch(
         config.apiBaseUrl + '/session/disconnect',

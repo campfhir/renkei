@@ -1,8 +1,9 @@
 import {
   ONBASE_SESSION_COOKIE,
   clearSessions,
-  extractSessionCookie,
   forgetSession,
+  hasOnBaseSession,
+  parseSetCookies,
   rememberSession,
   sessionCookie,
   sessionCount,
@@ -13,26 +14,35 @@ const SET = (value: string) =>
 
 beforeEach(() => clearSessions());
 
-describe('extractSessionCookie', () => {
-  it('takes the name=value pair and drops the attributes', () => {
-    expect(extractSessionCookie([SET('abc123')])).toBe(`${ONBASE_SESSION_COOKIE}=abc123`);
+describe('parseSetCookies', () => {
+  it('takes the name=value pairs and drops the attributes', () => {
+    expect(parseSetCookies([SET('abc123')])).toEqual(new Map([[ONBASE_SESSION_COOKIE, 'abc123']]));
   });
 
-  it('finds it among other cookies the server sets', () => {
-    expect(extractSessionCookie(['other=1; path=/', SET('abc123'), 'another=2'])).toBe(
-      `${ONBASE_SESSION_COOKIE}=abc123`
+  it('keeps EVERY cookie, not just the OnBase one', () => {
+    // The load balancer's cookie is what pins a request to the node holding
+    // the session; dropping it was the bug this replaced.
+    expect(parseSetCookies([SET('abc123'), 'FB_LB=node-7; path=/'])).toEqual(
+      new Map([
+        [ONBASE_SESSION_COOKIE, 'abc123'],
+        ['FB_LB', 'node-7'],
+      ])
     );
   });
 
   it('survives an Expires date, whose comma looks like a cookie separator', () => {
     expect(
-      extractSessionCookie([`x=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT, ${SET('abc123')}`])
-    ).toBe(`${ONBASE_SESSION_COOKIE}=abc123`);
+      parseSetCookies([`x=1; Expires=Wed, 21 Oct 2026 07:28:00 GMT, ${SET('abc123')}`])
+    ).toEqual(
+      new Map([
+        ['x', '1'],
+        [ONBASE_SESSION_COOKIE, 'abc123'],
+      ])
+    );
   });
 
-  it('finds nothing when the session cookie is absent', () => {
-    expect(extractSessionCookie(['other=1; path=/'])).toBeUndefined();
-    expect(extractSessionCookie([])).toBeUndefined();
+  it('finds nothing in an empty set', () => {
+    expect(parseSetCookies([]).size).toBe(0);
   });
 });
 
@@ -40,6 +50,35 @@ describe('session reuse', () => {
   it('gives back what it stored, so the next call reuses the session', () => {
     rememberSession('t1', 's1', [SET('abc')]);
     expect(sessionCookie('t1', 's1')).toBe(`${ONBASE_SESSION_COOKIE}=abc`);
+  });
+
+  it('sends both cookies once a balancer is in play', () => {
+    rememberSession('t1', 's1', [SET('abc'), 'FB_LB=node-7; path=/']);
+    const header = sessionCookie('t1', 's1') ?? '';
+    expect(header).toContain(`${ONBASE_SESSION_COOKIE}=abc`);
+    expect(header).toContain('FB_LB=node-7');
+  });
+
+  it('renews the balancer cookie per response while the session holds still', () => {
+    // Opposite lifecycles: FB_LB is reissued on EVERY response, the OnBase
+    // session cookie keeps one value. A response carrying only the balancer
+    // cookie must not lose the session.
+    rememberSession('t1', 's1', [SET('abc'), 'FB_LB=node-7; path=/']);
+    rememberSession('t1', 's1', ['FB_LB=node-9; path=/']);
+
+    const header = sessionCookie('t1', 's1') ?? '';
+    expect(header).toContain(`${ONBASE_SESSION_COOKIE}=abc`);
+    expect(header).toContain('FB_LB=node-9');
+    expect(header).not.toContain('node-7');
+  });
+
+  it('knows whether an OnBase session is actually held', () => {
+    rememberSession('t1', 's1', ['FB_LB=node-7; path=/']);
+    // A balancer cookie alone is routing, not a session — disconnecting on it
+    // would make the API open a session just to close it.
+    expect(hasOnBaseSession('t1', 's1')).toBe(false);
+    rememberSession('t1', 's1', [SET('abc')]);
+    expect(hasOnBaseSession('t1', 's1')).toBe(true);
   });
 
   it('never hands one person another person’s session', () => {

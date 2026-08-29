@@ -323,3 +323,31 @@ any other session credential.
 Nothing calls `disconnect` yet. The natural hook is agent-run completion,
 which is a real, identifiable moment; a user's interactive session has no
 such boundary and should keep relying on the idle timeout.
+
+### Load balancing: there are two cookies, not one
+
+Hyland's load-balancing guidance (surfaced after the first pass of this work)
+adds a second cookie with the opposite lifecycle:
+
+| Cookie                         | Lifecycle                                                 |
+| ------------------------------ | --------------------------------------------------------- |
+| `Cookie.Session.OnBase.Hyland` | one value for the life of the session                     |
+| balancer cookie (e.g. `FB_LB`) | **reissued on every response**; must be sent back updated |
+
+Each API Server node keeps its own in-memory session state, so the balancer
+cookie is what pins a request to the node holding the session. The first
+implementation here forwarded only Hyland's session cookie, on the reasoning
+that echoing everything back was a wider trust than needed. That was wrong in
+a load-balanced deployment: requests scatter, the receiving node has no such
+session so it opens one and takes its own licence, and multi-step work fails
+outright — an upload's byte phase 404s against a node that never saw the
+upload id.
+
+So the store keeps **every** cookie the API Server sets and merges rather than
+replaces, which is what lets two cookies with opposite lifecycles share one
+jar. `disconnect` asks specifically whether an OnBase session cookie is held,
+because a balancer cookie alone is routing, not a session.
+
+Hyland Cloud handles balancer configuration centrally, so sticky sessions are
+not something a customer can enable themselves — correct cookie handling on
+our side is the whole of our contribution.
