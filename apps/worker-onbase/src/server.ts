@@ -33,9 +33,30 @@ import {
   parseDiscoveryDocument,
   type OnBaseIdpEndpoints,
 } from '@renkei/connector-onbase';
-import { parseHttpUrl, resolveOnBaseConfig, type ConfigError, type OnBaseTenantConfig } from './config';
+import {
+  parseHttpUrl,
+  resolveOnBaseConfig,
+  type ConfigError,
+  type OnBaseTenantConfig,
+} from './config';
 import { logger } from './logger';
 import type { Result } from '@campfhir/safe-functions/types';
+import { forgetSession, rememberSession, sessionCookie } from './sessions';
+
+/**
+ * The `set-cookie` headers of a response, as a list.
+ *
+ * `Headers.getSetCookie()` is the correct reader — `get('set-cookie')` folds
+ * multiple cookies into one comma-joined string, and cookie values may
+ * legally contain commas (Expires dates do). The fallback keeps this working
+ * on runtimes that predate it.
+ */
+function setCookies(response: Response): string[] {
+  const headers: { getSetCookie?: () => string[] } = response.headers;
+  if (typeof headers.getSetCookie === 'function') return headers.getSetCookie();
+  const single = response.headers.get('set-cookie');
+  return single ? [single] : [];
+}
 
 export interface OnBaseServerDeps {
   /** The parsed TOKEN_ENCRYPTION_KEY; opens the tenant's connector secrets. */
@@ -294,7 +315,11 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
         const redirectUri = str(grant.redirectUri);
         const codeVerifier = str(grant.codeVerifier);
         if (!code || !redirectUri || !codeVerifier) {
-          return sendError(response, 'bad_request', 'code, redirectUri and codeVerifier are required');
+          return sendError(
+            response,
+            'bad_request',
+            'code, redirectUri and codeVerifier are required'
+          );
         }
         form = new URLSearchParams({
           grant_type: 'authorization_code',
@@ -312,7 +337,11 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
           ...clientAuth(config),
         });
       } else {
-        return sendError(response, 'bad_request', 'grant.type must be authorization_code or refresh_token');
+        return sendError(
+          response,
+          'bad_request',
+          'grant.type must be authorization_code or refresh_token'
+        );
       }
 
       const endpoints = await discoverIssuer(config.idpIssuer);
@@ -322,13 +351,20 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
         endpoints.tokenEndpoint,
         {
           method: 'POST',
-          headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+            accept: 'application/json',
+          },
           body: form,
         },
         IDP_TIMEOUT_MS
       );
       if ('failed' in tokenResponse) {
-        return sendError(response, 'unreachable', `The IdP token endpoint ${tokenResponse.failed}.`);
+        return sendError(
+          response,
+          'unreachable',
+          `The IdP token endpoint ${tokenResponse.failed}.`
+        );
       }
       const payload: unknown = await tokenResponse.json().catch(() => null);
       if (!tokenResponse.ok) {
@@ -337,7 +373,11 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
         // Anything else stays token_failed (the Zoom-adapter discipline).
         const errorTag = isRecord(payload) ? str(payload.error) : '';
         if (errorTag === 'invalid_grant') {
-          return sendError(response, 'invalid_grant', 'The IdP reports the grant is no longer valid.');
+          return sendError(
+            response,
+            'invalid_grant',
+            'The IdP reports the grant is no longer valid.'
+          );
         }
         logger.warn('token exchange failed with {status}', {
           component: 'worker-onbase/token',
@@ -381,6 +421,45 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       sendJson(response, 200, { revoked: !('failed' in revokeResponse) && revokeResponse.ok });
     },
 
+    /**
+     * Hand back this person's OnBase session, and its license, now rather
+     * than in five minutes' time.
+     *
+     * POST /session/disconnect is what actually frees the license; forgetting
+     * the cookie locally only stops us reusing it. Best-effort by contract —
+     * a failed disconnect costs an idle timeout, never a wrong answer — so
+     * this always reports success rather than surfacing an upstream problem
+     * to a caller that has already finished its work.
+     */
+    async disconnect(body, response) {
+      const config = await configFor(body, response);
+      if (!config) return;
+      const tenantId = str(body.tenantId);
+      const subject = str(body.subject);
+      const accessToken = str(body.accessToken);
+      if (!subject || !accessToken) {
+        return sendError(response, 'bad_request', 'subject and accessToken are required');
+      }
+
+      const cookie = sessionCookie(tenantId, subject);
+      forgetSession(tenantId, subject);
+      // No cookie means no session of ours to end: the API would build one
+      // just to be told to close it, taking a license on the way in.
+      if (!cookie) return sendJson(response, 200, { disconnected: false });
+
+      const upstream = await timedFetch(
+        config.apiBaseUrl + '/session/disconnect',
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${accessToken}`, cookie },
+        },
+        API_TIMEOUT_MS
+      );
+      sendJson(response, 200, {
+        disconnected: !('failed' in upstream) && upstream.ok,
+      });
+    },
+
     async api(body, response) {
       const config = await configFor(body, response);
       if (!config) return;
@@ -391,17 +470,26 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
         return sendError(response, 'bad_request', 'method is not one of GET/POST/PUT/PATCH/DELETE');
       }
-      if (!validApiPath(path)) return sendError(response, 'bad_request', 'path is not a usable API path');
+      if (!validApiPath(path))
+        return sendError(response, 'bad_request', 'path is not a usable API path');
 
       const url = new URL(config.apiBaseUrl + path);
       if (isRecord(body.query)) {
         for (const [key, value] of Object.entries(body.query)) {
           if (typeof value === 'string') url.searchParams.append(key, value);
           else if (Array.isArray(value)) {
-            for (const item of value) if (typeof item === 'string') url.searchParams.append(key, item);
+            for (const item of value)
+              if (typeof item === 'string') url.searchParams.append(key, item);
           }
         }
       }
+
+      // The session cookie is what stops every call building a NEW OnBase
+      // session and taking another license — see sessions.ts. Absent
+      // `subject` the cookie cannot be attributed safely, so the call goes
+      // out without one rather than risk reusing someone else's session.
+      const subject = str(body.subject);
+      const cookie = subject ? sessionCookie(str(body.tenantId), subject) : undefined;
 
       const upstream = await timedFetch(
         url.toString(),
@@ -410,6 +498,7 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
           headers: {
             authorization: `Bearer ${accessToken}`,
             accept: str(body.accept) || 'application/json',
+            ...(cookie ? { cookie } : {}),
             ...(body.body !== undefined ? { 'content-type': 'application/json' } : {}),
           },
           ...(body.body !== undefined ? { body: JSON.stringify(body.body) } : {}),
@@ -418,6 +507,13 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       );
       if ('failed' in upstream) {
         return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`);
+      }
+      if (subject) {
+        // 401 is ambiguous between a dead token and a dead session; dropping
+        // the cookie makes the web side's retry build a fresh session rather
+        // than present a stale one again.
+        if (upstream.status === 401) forgetSession(str(body.tenantId), subject);
+        else rememberSession(str(body.tenantId), subject, setCookies(upstream));
       }
       // An envelope, not passthrough: the web side needs the upstream status
       // (401 drives its refresh-and-retry) without confusing it with this
@@ -436,13 +532,20 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       const accessToken = str(body.accessToken);
       const path = str(body.path);
       if (!accessToken) return sendError(response, 'bad_request', 'accessToken is required');
-      if (!validApiPath(path)) return sendError(response, 'bad_request', 'path is not a usable API path');
+      if (!validApiPath(path))
+        return sendError(response, 'bad_request', 'path is not a usable API path');
+
+      const contentSubject = str(body.subject);
+      const contentCookie = contentSubject
+        ? sessionCookie(str(body.tenantId), contentSubject)
+        : undefined;
 
       const upstream = await timedFetch(
         config.apiBaseUrl + path,
         {
           headers: {
             authorization: `Bearer ${accessToken}`,
+            ...(contentCookie ? { cookie: contentCookie } : {}),
             ...(str(body.accept) ? { accept: str(body.accept) } : {}),
           },
         },
@@ -450,6 +553,10 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       );
       if ('failed' in upstream) {
         return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`);
+      }
+      if (contentSubject) {
+        if (upstream.status === 401) forgetSession(str(body.tenantId), contentSubject);
+        else rememberSession(str(body.tenantId), contentSubject, setCookies(upstream));
       }
       if (!upstream.ok) {
         const detail = await upstream.text().catch(() => '');
@@ -534,10 +641,19 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     // The token rides a header, never the query string — query strings end
     // up in access logs.
     const accessToken = str(request.headers['x-onbase-token']);
+    // Same reasoning as the token: the subject rides a header, and it is
+    // optional so an older caller keeps working (it just gets its own
+    // session, as it does today).
+    const uploadSubject = str(request.headers['x-onbase-subject']);
     if (!tenantId || !uploadId || !accessToken) {
-      return sendError(response, 'bad_request', 'tenantId, uploadId and x-onbase-token are required');
+      return sendError(
+        response,
+        'bad_request',
+        'tenantId, uploadId and x-onbase-token are required'
+      );
     }
-    if (!/^\d+$/.test(filePart)) return sendError(response, 'bad_request', 'filePart must be a number');
+    if (!/^\d+$/.test(filePart))
+      return sendError(response, 'bad_request', 'filePart must be a number');
     const config = await resolveConfig(tenantId);
     if (!config.ok) return sendError(response, config.err.type);
 
@@ -546,14 +662,19 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     if (bytes === null) {
       return sendError(response, 'too_large', `The file part exceeds the ${limit}-byte limit.`);
     }
-    if (bytes.byteLength === 0) return sendError(response, 'bad_request', 'The file part is empty.');
+    if (bytes.byteLength === 0)
+      return sendError(response, 'bad_request', 'The file part is empty.');
 
+    // An upload part authenticates like any other request, so it builds a
+    // session and takes a license unless it carries the cookie too.
+    const uploadCookie = uploadSubject ? sessionCookie(tenantId, uploadSubject) : undefined;
     const upstream = await timedFetch(
       `${config.val.apiBaseUrl}/documents/uploads/${encodeURIComponent(uploadId)}?filePart=${filePart}`,
       {
         method: 'PUT',
         headers: {
           authorization: `Bearer ${accessToken}`,
+          ...(uploadCookie ? { cookie: uploadCookie } : {}),
           'content-type': 'application/octet-stream',
         },
         body: new Uint8Array(bytes),
@@ -562,6 +683,10 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     );
     if ('failed' in upstream) {
       return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`);
+    }
+    if (uploadSubject) {
+      if (upstream.status === 401) forgetSession(tenantId, uploadSubject);
+      else rememberSession(tenantId, uploadSubject, setCookies(upstream));
     }
     const text = await upstream.text().catch(() => '');
     sendJson(response, 200, {

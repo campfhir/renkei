@@ -225,6 +225,12 @@ export async function obRevoke(input: {
 
 export async function obApi(input: {
   tenantId: string;
+  /**
+   * Who the call is for. The worker keys the OnBase session cookie on this,
+   * so a missing subject means a new session (and a new license) per call —
+   * never a session shared with the wrong person.
+   */
+  subject?: string;
   accessToken: string;
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   path: string;
@@ -250,6 +256,8 @@ export async function obApi(input: {
 
 export async function obContent(input: {
   tenantId: string;
+  /** See obApi: keys the worker's session cookie. */
+  subject?: string;
   accessToken: string;
   path: string;
   accept?: string;
@@ -269,6 +277,8 @@ export async function obContent(input: {
 
 export async function obPutBytes(input: {
   tenantId: string;
+  /** See obApi: keys the worker's session cookie. */
+  subject?: string;
   uploadId: string;
   filePart: number;
   accessToken: string;
@@ -282,7 +292,11 @@ export async function obPutBytes(input: {
     // A fresh ArrayBuffer-backed copy: fetch's BodyInit refuses the wider
     // Uint8Array<ArrayBufferLike> a caller may hold (e.g. a Buffer).
     rawBody: Uint8Array.from(input.bytes),
-    headers: { 'x-onbase-token': input.accessToken },
+    headers: {
+      'x-onbase-token': input.accessToken,
+      // Header, not query string: query strings end up in access logs.
+      ...(input.subject ? { 'x-onbase-subject': input.subject } : {}),
+    },
   });
   if (!called.ok) return called;
   let parsed: unknown;
@@ -329,8 +343,7 @@ export function onbaseClientFailure(error: OnBaseClientError): { status: number;
     case 'unconfigured':
       return {
         status: 503,
-        message:
-          'The OnBase worker is not configured (ONBASE_WORKER_URL / ONBASE_WORKER_API_KEY).',
+        message: 'The OnBase worker is not configured (ONBASE_WORKER_URL / ONBASE_WORKER_API_KEY).',
       };
     case 'unreachable':
       return { status: 502, message: `The OnBase worker could not be reached: ${error.message}` };

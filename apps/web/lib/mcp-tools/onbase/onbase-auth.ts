@@ -196,6 +196,7 @@ export function oauthOnbaseAuth(context: MCPToolContext): OnBaseAuth {
         (accessToken) =>
           obApi({
             tenantId: context.tenantId,
+            ...(context.subject ? { subject: context.subject } : {}),
             accessToken,
             method: request.method,
             path: request.path,
@@ -211,6 +212,7 @@ export function oauthOnbaseAuth(context: MCPToolContext): OnBaseAuth {
         (accessToken) =>
           obContent({
             tenantId: context.tenantId,
+            ...(context.subject ? { subject: context.subject } : {}),
             accessToken,
             path,
             ...(accept ? { accept } : {}),

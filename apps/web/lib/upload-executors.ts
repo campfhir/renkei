@@ -399,6 +399,9 @@ async function onbaseDocument(
     const chunk = bytes.subarray(part * filePartSize, (part + 1) * filePartSize);
     const put = await obPutBytes({
       tenantId: slot.tenant_id,
+      // Every part reuses the uploader's OnBase session rather than opening
+      // one (and taking a license) per chunk of a multi-part upload.
+      subject: slot.subject,
       uploadId: onbaseUploadId,
       filePart: part + 1,
       accessToken: access.accessToken,

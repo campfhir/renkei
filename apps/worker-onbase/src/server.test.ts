@@ -88,17 +88,30 @@ function fakeIdp(): Server {
   });
 }
 
+const cookiesSeen: (string | null)[] = [];
+
 function fakeOnBase(): Server {
   return createServer((request, response) => {
     const url = new URL(request.url ?? '/', 'http://onbase.internal');
     const authenticated = request.headers.authorization === 'Bearer good-token';
+    // What the worker sent us, so a test can assert the session was reused
+    // rather than a second one created (and a second license taken).
+    cookiesSeen.push(request.headers.cookie ?? null);
+    if (url.pathname === '/onbase/core/session/disconnect') {
+      response.writeHead(request.headers.cookie ? 200 : 400);
+      response.end();
+      return;
+    }
     if (url.pathname === '/onbase/core/document-types') {
       if (!authenticated) {
         response.writeHead(401, { 'content-type': 'application/json' });
         response.end(JSON.stringify({}));
         return;
       }
-      response.writeHead(200, { 'content-type': 'application/json' });
+      response.writeHead(200, {
+        'content-type': 'application/json',
+        'set-cookie': 'Cookie.Session.OnBase.Hyland=sess-1; path=/; HttpOnly',
+      });
       response.end(JSON.stringify({ items: [{ id: '7', name: 'Invoices' }] }));
       return;
     }
@@ -241,7 +254,9 @@ describe('worker-onbase server', () => {
       grant: { type: 'refresh_token', refreshToken: 'rt-dead' },
     });
     expect(revoked.status).toBe(400);
-    expect(((await revoked.json()) as { error: { type: string } }).error.type).toBe('invalid_grant');
+    expect(((await revoked.json()) as { error: { type: string } }).error.type).toBe(
+      'invalid_grant'
+    );
 
     idpTokenMode = 'server_error';
     const flaky = await post('token', {
@@ -380,5 +395,73 @@ describe('worker-onbase server', () => {
     expect(response.status).toBe(200);
     const result = (await response.json()) as { api: { ok: boolean; error?: string } };
     expect(result.api.ok).toBe(false);
+  });
+
+  it('reuses the OnBase session cookie instead of taking a licence per call', async () => {
+    // An access token alone creates nothing; the FIRST authenticated request
+    // builds a session and consumes a licence. Sending its cookie back is the
+    // whole reason a ten-document sweep costs one licence and not ten.
+    cookiesSeen.length = 0;
+    const call = () =>
+      post('api', {
+        tenantId: TENANT,
+        subject: 'subject-1',
+        accessToken: 'good-token',
+        method: 'GET',
+        path: '/document-types',
+      });
+
+    await call();
+    await call();
+
+    expect(cookiesSeen[0]).toBeNull();
+    expect(cookiesSeen[1]).toBe('Cookie.Session.OnBase.Hyland=sess-1');
+  });
+
+  it('keeps one caller off another caller’s session', async () => {
+    cookiesSeen.length = 0;
+    await post('api', {
+      tenantId: TENANT,
+      subject: 'subject-a',
+      accessToken: 'good-token',
+      method: 'GET',
+      path: '/document-types',
+    });
+    await post('api', {
+      tenantId: TENANT,
+      subject: 'subject-b',
+      accessToken: 'good-token',
+      method: 'GET',
+      path: '/document-types',
+    });
+
+    // b must open its own session — reusing a's would act in OnBase as a.
+    expect(cookiesSeen[1]).toBeNull();
+  });
+
+  it('ends a session on disconnect so the licence comes back early', async () => {
+    await post('api', {
+      tenantId: TENANT,
+      subject: 'subject-d',
+      accessToken: 'good-token',
+      method: 'GET',
+      path: '/document-types',
+    });
+
+    const first = await post('disconnect', {
+      tenantId: TENANT,
+      subject: 'subject-d',
+      accessToken: 'good-token',
+    });
+    expect(await first.json()).toEqual({ disconnected: true });
+
+    // Nothing left to disconnect: the API is not called just to be told to
+    // close a session it would have had to open first.
+    const second = await post('disconnect', {
+      tenantId: TENANT,
+      subject: 'subject-d',
+      accessToken: 'good-token',
+    });
+    expect(await second.json()).toEqual({ disconnected: false });
   });
 });

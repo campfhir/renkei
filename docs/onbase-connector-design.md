@@ -259,3 +259,67 @@ complicated — the connector is single-instance per tenant, exactly the
 `connector_configs`/`provider_grants` shape described above. The only
 schema change was additive: `pending_oidc_signin.code_verifier`
 (migration 063) so the PKCE verifier survives the authorize redirect.
+
+## OnBase sessions and licences (added after the guide surfaced)
+
+The original design was written without Hyland's "Authentication & the
+Document Management API" guide, and its "no HTTP leaves this process" rule is
+what made the gap invisible: the worker was the only thing talking to OnBase,
+and it sent a Bearer header and nothing else.
+
+What the guide says, and what it costs:
+
+- An access token alone creates **no** OnBase session and consumes **no**
+  licence.
+- The Document Management API builds a session the first time it authenticates
+  a request. That **consumes a licence** and returns
+  `Cookie.Session.OnBase.Hyland`.
+- The cookie is required on later requests to reuse that session. **Every
+  request without it builds another session and may take another licence.**
+- Each request extends the session's idle window by five minutes.
+  `POST /session/heartbeat` keeps it alive; `POST /session/disconnect` ends it
+  and returns the licence.
+
+So before this change, one `onbase_search_documents` call took a licence, an
+agent reading ten documents took ten, and none came back for five minutes.
+That is the likeliest explanation for a 401 on a token the IdP had just
+issued: with the pool exhausted, the API server cannot build a session for a
+perfectly valid token.
+
+### What was built
+
+`apps/worker-onbase/src/sessions.ts` keys one cookie per `tenantId + subject`
+and sends it on every api/content/upload request. Keyed on the SUBJECT, not
+the access token: the token rotates on refresh and would orphan a live
+session with its licence, and — more importantly — a cookie shared between
+people would act in OnBase as the wrong user. That is an authorization
+failure, not a licensing one, and it is the property the tests pin hardest.
+
+A 401 drops the cookie, so the existing refresh-and-retry builds a fresh
+session instead of presenting a stale one twice.
+
+### Where we deliberately depart from the guide
+
+**No heartbeat.** The guide is right for an application a person is sitting
+in front of. Renkei's OnBase traffic is bursty — an agent runs, makes a
+handful of calls, then nothing for an hour — and heartbeating would hold a
+licence through all of it. Letting an idle session lapse IS the release
+mechanism and it is free. Entries expire at four minutes, just inside the
+server's five, because sending a cookie the server already dropped silently
+builds a new session anyway.
+
+`disconnect` exists as a worker op for the case where we know work has
+finished and want the licence back before the idle timeout.
+
+### Still open
+
+The store is in-process. `docker-compose.yaml` runs a single
+`renkei-worker-onbase` container, so that holds today — but a second replica
+would silently double licence consumption, because a request landing on the
+replica without the cookie opens its own session. If that service is ever
+scaled, the cookie needs to move to shared storage, encrypted at rest like
+any other session credential.
+
+Nothing calls `disconnect` yet. The natural hook is agent-run completion,
+which is a real, identifiable moment; a user's interactive session has no
+such boundary and should keep relying on the idle timeout.
