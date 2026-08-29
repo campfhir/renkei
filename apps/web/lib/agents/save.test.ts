@@ -29,6 +29,7 @@ const storeMock = jest.requireMock<{ getAgent: jest.Mock; updateAgent: jest.Mock
 const describeMock = jest.requireMock<{ generateAgentDescription: jest.Mock }>(
   '@/lib/agents/describe'
 );
+const settingsMock = jest.requireMock<{ getOrgSettings: jest.Mock }>('@renkei/settings');
 
 // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
 const db = {} as Kysely<DB>;
@@ -118,5 +119,88 @@ describe('saveAgent description regeneration', () => {
       agentId: 'agent-1',
     });
     expect(describeMock.generateAgentDescription).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('the org step ceiling', () => {
+  /** A draft of `count` trivial steps. */
+  function draftOf(count: number): AgentDraft {
+    return {
+      name: 'Long one',
+      steps: {
+        version: 1,
+        steps: Array.from({ length: count }, () => ({
+          id: randomUUID(),
+          name: 'Think',
+          instruction: [{ t: 'text', v: 'Think it through.' }],
+          tool: null,
+          maxAttempts: 1,
+          failureHandling: [],
+        })),
+      },
+      triggers: [],
+      enabled: false,
+      llmModelId: null,
+      guardrails: null,
+      blockedTools: [],
+    };
+  }
+
+  afterEach(() => {
+    settingsMock.getOrgSettings.mockImplementation(async () => ({ ok: false }));
+  });
+
+  it('refuses past the built-in default when the org has no setting', async () => {
+    settingsMock.getOrgSettings.mockImplementation(async () => ({ ok: false }));
+    const result = await saveAgent(
+      db,
+      't1',
+      'owner',
+      { input: {}, draft: draftOf(25), refreshDescription: false },
+      { dryRun: true }
+    );
+
+    expect(result.outcome).toBe('invalid');
+    expect(result.outcome === 'invalid' && result.issues.map((i) => i.message)).toContain(
+      'Keep the agent to 20 steps or fewer.'
+    );
+  });
+
+  it('allows what a RAISED org ceiling allows', async () => {
+    // The bug this pins was the builder validating against the constant while
+    // the save path read the setting; every MCP write (create, update,
+    // patch_steps) goes through here, so this is the guarantee they inherit.
+    settingsMock.getOrgSettings.mockImplementation(async () => ({
+      ok: true,
+      val: { agentMaxSteps: 30, agentMaxStepAttempts: 10, agentApprovalMaxWaitDays: 7 },
+    }));
+    const result = await saveAgent(
+      db,
+      't1',
+      'owner',
+      { input: {}, draft: draftOf(25), refreshDescription: false },
+      { dryRun: true }
+    );
+
+    expect(result.outcome).toBe('valid-dry-run');
+  });
+
+  it('still refuses past a raised ceiling', async () => {
+    settingsMock.getOrgSettings.mockImplementation(async () => ({
+      ok: true,
+      val: { agentMaxSteps: 30, agentMaxStepAttempts: 10, agentApprovalMaxWaitDays: 7 },
+    }));
+    const result = await saveAgent(
+      db,
+      't1',
+      'owner',
+      { input: {}, draft: draftOf(31), refreshDescription: false },
+      { dryRun: true }
+    );
+
+    expect(result.outcome).toBe('invalid');
+    expect(result.outcome === 'invalid' && result.issues.map((i) => i.message)).toContain(
+      'Keep the agent to 30 steps or fewer.'
+    );
   });
 });
