@@ -92,7 +92,15 @@ export function clearFieldSchemaCache(): void {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-function parseField(raw: unknown): JiraField | null {
+/**
+ * One `/rest/api/3/field` entry, or null when it is not one.
+ *
+ * Exported because `jira_list_fields` reads the same endpoint for its own
+ * rendering and needs the parsed shape (`type`, `itemType`) to decide which
+ * of its matches have options worth fetching — deriving that a second time
+ * is how two readings of one payload drift.
+ */
+export function parseField(raw: unknown): JiraField | null {
   if (!isRecord(raw)) return null;
   if (typeof raw.id !== 'string' || typeof raw.name !== 'string') return null;
 
@@ -247,7 +255,7 @@ export function isRequestTypeField(field: JiraField): boolean {
  * write succeeded; the loss is a line in a comment nobody reads. That is
  * the whole of "components are not being set on created tickets".
  */
-function isOptionBearing(field: JiraField): boolean {
+export function isOptionBearing(field: JiraField): boolean {
   return (
     field.type === 'option' ||
     field.type === 'option-with-child' ||
@@ -270,17 +278,25 @@ const OPTIONS_PREVIEW_LIMIT = 20;
 export function optionsHint(field: JiraField): string {
   const options = field.allowedValues ?? [];
   if (options.length === 0) return '';
-  const shown = options
-    .slice(0, OPTIONS_PREVIEW_LIMIT)
-    .map((opt) =>
-      opt.id && opt.id !== opt.value ? `"${opt.value}" (id ${opt.id})` : `"${opt.value}"`
-    )
-    .join(', ');
   const more =
     options.length > OPTIONS_PREVIEW_LIMIT
       ? `, +${options.length - OPTIONS_PREVIEW_LIMIT} more (jsm_list_request_types / jsm_get_request_type_fields show the full set)`
       : '';
-  return `Valid options: ${shown}${more}.`;
+  return `Valid options: ${renderOptions(options, OPTIONS_PREVIEW_LIMIT)}${more}.`;
+}
+
+/**
+ * The options themselves, quoted, each with its id where the id is what a
+ * write has to send. Shared so every surface that lists options — a write's
+ * mismatch message, `jira_list_fields` — spells them the same way.
+ */
+export function renderOptions(options: readonly FieldOption[], limit: number): string {
+  return options
+    .slice(0, limit)
+    .map((opt) =>
+      opt.id && opt.id !== opt.value ? `"${opt.value}" (id ${opt.id})` : `"${opt.value}"`
+    )
+    .join(', ');
 }
 
 export type Coercion = { ok: true; value: unknown } | { ok: false; message: string };
