@@ -188,7 +188,12 @@ export async function registerUserTools(
         const data = (await response.json()) as any;
         const groups = data.groups || [];
 
-        const lines = [`Found ${groups.length} groups:`, ...groups.map((g: any) => `• ${g.name}`)];
+        const lines = [
+          `Found ${groups.length} groups:`,
+          // The groupId the picker returns: Jira's newer group APIs take it
+          // instead of the name, and a name is not unique across directories.
+          ...groups.map((g: any) => `• ${g.name}${g.groupId ? ` — groupId: ${g.groupId}` : ''}`),
+        ];
 
         if (groups.length === 0) {
           return { content: [{ type: 'text' as const, text: lines.join('\n') }] };

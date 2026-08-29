@@ -198,7 +198,18 @@ export async function registerProjectTools(
 
         const lines = [
           `Project ${projectKey} has ${components.length} components:`,
-          ...components.map((c: any) => `• ${c.name} (ID: ${c.id})`),
+          // The lead is the hint's own second column, and the description is
+          // what tells two similarly named components apart — both arrive in
+          // this response and were being read past.
+          ...components.map((c: any) => {
+            const lead = c.lead?.displayName || c.lead?.name || '';
+            const description = typeof c.description === 'string' ? c.description.trim() : '';
+            return (
+              `• ${c.name} (ID: ${c.id})` +
+              (lead ? ` — lead: ${lead}` : '') +
+              (description ? ` — ${description}` : '')
+            );
+          }),
         ];
 
         if (components.length === 0) {
