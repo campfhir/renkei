@@ -986,6 +986,12 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Removed an agent’s knowledge note',
     short: 'Removed a knowledge note',
   },
+  agent_memory_forget: {
+    category: 'deleted',
+    entity: 'memory',
+    label: 'Forgot part of an agent’s memory',
+    short: 'Forgot agent memory',
+  },
   fileshare_request_file_upload: {
     category: 'created',
     entity: 'file',

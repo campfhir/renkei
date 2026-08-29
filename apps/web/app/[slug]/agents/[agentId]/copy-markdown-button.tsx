@@ -3,9 +3,14 @@
 /**
  * "Copy as Markdown" — puts the agent's whole definition (built server-side
  * by lib/agents/export-markdown.ts, any steps version) on the clipboard.
+ *
+ * Sized like Share and Edit beside it (px-3 py-1.5 text-sm): the header row
+ * reads as one strip of controls, and a button half the height of its
+ * neighbours looked like a different KIND of thing.
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { Icon, ICONS } from '@/components/icons';
 
 export default function CopyMarkdownButton({ markdown }: { markdown: string }) {
   const [copied, setCopied] = useState(false);
@@ -38,9 +43,10 @@ export default function CopyMarkdownButton({ markdown }: { markdown: string }) {
           URL.revokeObjectURL(url);
         }
       }}
-      className="rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+      className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
     >
-      {copied ? 'Copied ✓' : 'Copy as Markdown'}
+      <Icon path={copied ? ICONS.check : ICONS.copy} />
+      {copied ? 'Copied' : 'Copy as Markdown'}
     </button>
   );
 }

@@ -20,6 +20,7 @@ import MemoryPanel from './memory-panel';
 import KnowledgePanel from './knowledge-panel';
 import ShareAgentButton from './share-agent';
 import CopyMarkdownButton from './copy-markdown-button';
+import RunNowButton from './run-now-button';
 import RecentRuns from './recent-runs';
 import StepsOutline from './steps-outline';
 
@@ -115,10 +116,58 @@ export default async function AgentOverviewPage({
     listRunsForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, { limit: 5 }),
     invocationCountsOf(dbResult.val, tenant.id, agentId),
     getOrgSettings(tenant.id),
-    access.viewerIsOwner ? Promise.resolve(null) : getIdentityDisplay(tenant.id, access.ownerSubject),
+    access.viewerIsOwner
+      ? Promise.resolve(null)
+      : getIdentityDisplay(tenant.id, access.ownerSubject),
   ]);
   const reviewNotes = parseReviewNotes(agent.reviewNotes);
+  // Same rule the agents list applies: a manual run of an event-only agent
+  // starts with every trigger.* variable unbound, which is a confusing
+  // failure rather than a test — so the button is not offered there.
+  const eventOnly =
+    agent.triggers.length > 0 && agent.triggers.every((trigger) => trigger.draft.kind === 'event');
   const dailyCap = settingsResult.ok ? settingsResult.val.agentMaxRunsPerDay : null;
+  /**
+   * The agent's controls, rendered in ONE of two places depending on the
+   * width — never both: `hidden`/`lg:hidden` takes the other out of the
+   * accessibility tree along with the pixels, so a screen reader is never
+   * offered two Share buttons.
+   *
+   * Below lg they belong to the rail, whose cards are already the page's
+   * column of things you DO to this agent; in the header they had a line
+   * of their own and still crowded the name. At lg the header row is wide
+   * enough for both, and the controls read better beside the title than
+   * two hundred pixels below it.
+   */
+  const actions = (
+    <>
+      <CopyMarkdownButton
+        markdown={agentMarkdown({
+          name: agent.name,
+          description: agent.description,
+          enabled: agent.enabled,
+          steps: agent.steps,
+          triggers: agent.triggers,
+          guardrails: agent.guardrails,
+          blockedTools: agent.blockedTools,
+        })}
+      />
+      {access.viewerIsOwner ? (
+        <ShareAgentButton tenantId={tenant.id} agentId={agentId} />
+      ) : (
+        <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+          Shared by {ownerDisplay?.displayName || ownerDisplay?.email || 'a colleague'}
+        </span>
+      )}
+      <Link
+        href={`/${slug}/agents/${agentId}/edit`}
+        className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700"
+      >
+        <Icon path={ICONS.pencil} />
+        Edit
+      </Link>
+    </>
+  );
   const invocationRows: { label: string; count: number }[] = [
     { label: 'Today', count: invocations.today },
     { label: 'This week', count: invocations.week },
@@ -130,14 +179,16 @@ export default async function AgentOverviewPage({
 
   return (
     <div className="mx-auto max-w-5xl">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+      {/* The title band says WHAT this is: chevron, name pinned left, state
+          pinned right. On/Off used to lead the button strip and was the
+          first thing squeezed off the line with it — the one fact you open
+          this page to check. */}
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-start lg:justify-between">
+        <div className="flex min-w-0 items-center gap-2 lg:flex-1">
           <BackLink href={`/${slug}/agents`} label="All agents" />
           <h1 className="min-w-0 truncate text-xl font-bold">{agent.name}</h1>
-        </div>
-        <div className="flex shrink-0 items-center gap-2 text-sm">
           <span
-            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+            className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
               agent.enabled
                 ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
                 : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
@@ -145,31 +196,11 @@ export default async function AgentOverviewPage({
           >
             {agent.enabled ? 'On' : 'Off'}
           </span>
-          <CopyMarkdownButton
-            markdown={agentMarkdown({
-              name: agent.name,
-              description: agent.description,
-              enabled: agent.enabled,
-              steps: agent.steps,
-              triggers: agent.triggers,
-              guardrails: agent.guardrails,
-              blockedTools: agent.blockedTools,
-            })}
-          />
-          {access.viewerIsOwner ? (
-            <ShareAgentButton tenantId={tenant.id} agentId={agentId} />
-          ) : (
-            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-              Shared by {ownerDisplay?.displayName || ownerDisplay?.email || 'a colleague'}
-            </span>
-          )}
-          <Link
-            href={`/${slug}/agents/${agentId}/edit`}
-            className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700"
-          >
-            <Icon path={ICONS.pencil} />
-            Edit
-          </Link>
+        </div>
+        {/* Beside the name only where the row can hold both — see the rail
+            copy below for where these go otherwise. */}
+        <div className="hidden flex-wrap items-center gap-2 text-sm lg:flex lg:shrink-0">
+          {actions}
         </div>
       </div>
 
@@ -183,12 +214,26 @@ export default async function AgentOverviewPage({
         {/* The rail is FIRST in the DOM so it stacks above the steps on
             phones; on lg the explicit grid placement puts it right. */}
         <aside className="mb-6 lg:col-start-2 lg:row-start-1 lg:mb-0">
+          {/* The controls, wherever the header cannot hold them (see the
+              `actions` note): at the head of the rail, ending on the same
+              right edge as the cards under them. */}
+          <div className="mb-3 flex flex-wrap items-center justify-end gap-2 text-sm lg:hidden">
+            {actions}
+          </div>
+
           {/* When does it run — the schedule/event answer the card view has
               but this page was missing. */}
           <div className="mb-3 rounded-md border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-950">
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-              Runs
-            </p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Runs
+              </p>
+              {/* Beside the schedule, because "every weekday at 8am" is
+                  exactly what makes someone want to fire it once by hand. */}
+              {eventOnly ? null : (
+                <RunNowButton slug={slug} tenantId={tenant.id} agentId={agentId} />
+              )}
+            </div>
             {agent.triggers.length > 0 ? (
               <ul className="mt-1 space-y-2">
                 {agent.triggers.map((trigger) => (

@@ -37,6 +37,12 @@ jest.mock('@renkei/agents/memory', () => ({
   readAgentMemory: jest.fn(async () => ({ summary: null, entries: [] })),
   renderAgentKnowledgeNotes: jest.fn(async () => ''),
   renderAgentMemory: jest.fn(() => ''),
+  countAgentMemory: jest.fn(async () => ({ entries: 0, hasSummary: false })),
+  forgetAgentMemory: jest.fn(async () => ({
+    entriesDeleted: 0,
+    summaryCleared: false,
+    missingIds: [],
+  })),
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -59,6 +65,11 @@ const approvalsMock = jest.requireMock<{
   listPendingApprovals: jest.Mock;
   decideApproval: jest.Mock;
 }>('@/lib/agents/approvals');
+const memoryMock = jest.requireMock<{
+  readAgentMemory: jest.Mock;
+  countAgentMemory: jest.Mock;
+  forgetAgentMemory: jest.Mock;
+}>('@renkei/agents/memory');
 const notesMock = jest.requireMock<{
   listAgentNotes: jest.Mock;
   createAgentNote: jest.Mock;
@@ -322,10 +333,15 @@ test("someone else's agentId reads as not-found on every agent-scoped tool", asy
     'agent_get',
     'agent_runs_list',
     'agent_memory_list',
+    'agent_memory_forget',
     'agent_knowledge_list',
     'agent_knowledge_remove',
   ]) {
-    const result = await handlers.get(name)!({ agentId: 'not-mine', noteIds: ['n1'] });
+    const result = await handlers.get(name)!({
+      agentId: 'not-mine',
+      noteIds: ['n1'],
+      entryIds: ['m1'],
+    });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain('No agent of yours');
   }
@@ -769,5 +785,161 @@ describe('a waiting run says what it is waiting on', () => {
     await handlers.get('agent_runs_list')!({ agentId: 'agent-1' });
 
     expect(approvalsMock.listPendingApprovals).not.toHaveBeenCalled();
+  });
+});
+
+describe('agent_memory_forget', () => {
+  beforeEach(() => {
+    stubDb({ row: { id: 'agent-1' } });
+    storeMock.getAgent.mockResolvedValue(AGENT);
+  });
+
+  it('lists entryIds so selective forgetting is reachable at all', async () => {
+    memoryMock.readAgentMemory.mockResolvedValue({
+      summary: 'Handles P1s.',
+      entries: [{ id: 'mem-1', content: 'Acme uses UTC.', createdAt: new Date(0) }],
+    });
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_memory_list')!({ agentId: 'agent-1' });
+    expect(result.content[0]?.text).toContain('(entryId: mem-1)');
+  });
+
+  it('refuses a call that names nothing to forget', async () => {
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_memory_forget')!({ agentId: 'agent-1' });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('Nothing to forget');
+    expect(memoryMock.forgetAgentMemory).not.toHaveBeenCalled();
+  });
+
+  it('forgets named entries immediately and names the ids that matched nothing', async () => {
+    memoryMock.forgetAgentMemory.mockResolvedValue({
+      entriesDeleted: 1,
+      summaryCleared: false,
+      missingIds: ['mem-9'],
+    });
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_memory_forget')!({
+      agentId: 'agent-1',
+      entryIds: ['mem-1', 'mem-9'],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-1',
+      'agent-1',
+      {
+        kind: 'entries',
+        entryIds: ['mem-1', 'mem-9'],
+      }
+    );
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('1/2');
+    expect(text).toContain('mem-9: no entry of this agent has that id.');
+  });
+
+  it('every named id missing is an error result', async () => {
+    memoryMock.forgetAgentMemory.mockResolvedValue({
+      entriesDeleted: 0,
+      summaryCleared: false,
+      missingIds: ['mem-9'],
+    });
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_memory_forget')!({
+      agentId: 'agent-1',
+      entryIds: ['mem-9'],
+    });
+    expect(result.isError).toBe(true);
+  });
+
+  it('all without confirm is a dry run that deletes nothing', async () => {
+    memoryMock.countAgentMemory.mockResolvedValue({ entries: 12, hasSummary: true });
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_memory_forget')!({ agentId: 'agent-1', all: true });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain('12 entries and the rolling summary');
+    expect(result.content[0]?.text).toContain('confirm: true');
+    expect(memoryMock.forgetAgentMemory).not.toHaveBeenCalled();
+  });
+
+  it('all with confirm clears everything', async () => {
+    memoryMock.countAgentMemory.mockResolvedValue({ entries: 12, hasSummary: true });
+    memoryMock.forgetAgentMemory.mockResolvedValue({
+      entriesDeleted: 12,
+      summaryCleared: true,
+      missingIds: [],
+    });
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_memory_forget')!({
+      agentId: 'agent-1',
+      all: true,
+      confirm: true,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-1',
+      'agent-1',
+      { kind: 'all' }
+    );
+    expect(result.content[0]?.text).toContain('12 entries and the rolling summary forgotten');
+  });
+
+  it('refuses all mixed with a narrower selector', async () => {
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_memory_forget')!({
+      agentId: 'agent-1',
+      all: true,
+      entryIds: ['mem-1'],
+      confirm: true,
+    });
+    expect(result.isError).toBe(true);
+    expect(memoryMock.forgetAgentMemory).not.toHaveBeenCalled();
+  });
+
+  it('lets a run forget named entries but never wipe the whole record', async () => {
+    memoryMock.forgetAgentMemory.mockResolvedValue({
+      entriesDeleted: 1,
+      summaryCleared: false,
+      missingIds: [],
+    });
+    const handlers = registerAll({ agent: { agentId: 'agent-1' } });
+
+    const wipe = await handlers.get('agent_memory_forget')!({
+      agentId: 'agent-1',
+      all: true,
+      confirm: true,
+    });
+    expect(wipe.isError).toBe(true);
+    expect(wipe.content[0]?.text).toContain('whole memory');
+    expect(memoryMock.forgetAgentMemory).not.toHaveBeenCalled();
+
+    const selective = await handlers.get('agent_memory_forget')!({
+      agentId: 'agent-1',
+      entryIds: ['mem-1'],
+    });
+    expect(selective.isError).toBeUndefined();
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the rolling summary on its own', async () => {
+    memoryMock.forgetAgentMemory.mockResolvedValue({
+      entriesDeleted: 0,
+      summaryCleared: true,
+      missingIds: [],
+    });
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_memory_forget')!({
+      agentId: 'agent-1',
+      summary: true,
+    });
+    expect(result.isError).toBeUndefined();
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-1',
+      'agent-1',
+      { kind: 'summary' }
+    );
+    expect(result.content[0]?.text).toContain('Rolling summary cleared.');
   });
 });

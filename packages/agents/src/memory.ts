@@ -46,6 +46,9 @@ export interface AgentMemory {
   entries: AgentMemoryEntry[];
 }
 
+/** Entry ids are uuids; see forgetAgentMemory for why the shape matters. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
@@ -266,4 +269,138 @@ export function renderAgentMemory(memory: AgentMemory): string {
     lines.push(...kept.reverse());
   }
   return lines.join('\n');
+}
+
+/**
+ * What an agent currently holds, without reading any of it back — the
+ * numbers a "forget everything?" dry run needs. readAgentMemory would
+ * answer the entry question too, but only up to its own limit, and a
+ * confirmation that says "40 entries" when there are 300 is worse than no
+ * confirmation at all.
+ */
+export async function countAgentMemory(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string
+): Promise<{ entries: number; hasSummary: boolean }> {
+  const rows = await db
+    .selectFrom('agent_memories')
+    .select(['kind', ({ fn }) => fn.countAll<string>().as('count')])
+    .where('tenant_id', '=', tenantId)
+    .where('agent_id', '=', agentId)
+    .groupBy('kind')
+    .execute();
+  let entries = 0;
+  let hasSummary = false;
+  for (const row of rows) {
+    if (row.kind === 'summary') hasSummary = Number(row.count) > 0;
+    else entries += Number(row.count);
+  }
+  return { entries, hasSummary };
+}
+
+/** What forgetAgentMemory was asked to drop. */
+export type AgentMemoryTarget =
+  /** Everything: entries and the rolling summary. */
+  | { kind: 'all' }
+  /** The rolling summary only — entries stay. */
+  | { kind: 'summary' }
+  /** Named entries only, by the ids readAgentMemory returns. */
+  | { kind: 'entries'; entryIds: string[] };
+
+export interface AgentMemoryForgetResult {
+  entriesDeleted: number;
+  summaryCleared: boolean;
+  /** Ids that matched no entry of this agent — reported, never fatal. */
+  missingIds: string[];
+}
+
+/**
+ * Delete memory rows, tenant- and agent-scoped.
+ *
+ * The scoping is the whole safety story: every predicate carries both
+ * tenant_id and agent_id, so an id belonging to another agent (or another
+ * tenant) simply matches nothing and comes back in `missingIds`. Callers
+ * report that rather than failing — same posture as the note tools, where
+ * one bad id does not void the rest.
+ *
+ * Deleting is deliberately DUMB: no tombstone, no summary rewrite. The
+ * summary is compaction's output, so dropping entries it already folded in
+ * leaves those facts in the summary; a caller that wants a genuinely clean
+ * slate passes { kind: 'all' }.
+ */
+export async function forgetAgentMemory(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string,
+  target: AgentMemoryTarget
+): Promise<AgentMemoryForgetResult> {
+  if (target.kind === 'all') {
+    const before = await countAgentMemory(db, tenantId, agentId);
+    await db
+      .deleteFrom('agent_memories')
+      .where('tenant_id', '=', tenantId)
+      .where('agent_id', '=', agentId)
+      .execute();
+    return {
+      entriesDeleted: before.entries,
+      summaryCleared: before.hasSummary,
+      missingIds: [],
+    };
+  }
+
+  if (target.kind === 'summary') {
+    const deleted = await db
+      .deleteFrom('agent_memories')
+      .where('tenant_id', '=', tenantId)
+      .where('agent_id', '=', agentId)
+      .where('kind', '=', 'summary')
+      .executeTakeFirst();
+    return {
+      entriesDeleted: 0,
+      summaryCleared: Number(deleted.numDeletedRows ?? 0) > 0,
+      missingIds: [],
+    };
+  }
+
+  const ids = [...new Set(target.entryIds.map((id) => id.trim()).filter(Boolean))];
+  if (ids.length === 0) return { entriesDeleted: 0, summaryCleared: false, missingIds: [] };
+
+  // A malformed id never reaches the query: `id` is a uuid column, so
+  // Postgres answers a 22P02 for the cast and ONE typo'd id would take the
+  // whole batch down. Shape-checking here makes it what it actually is —
+  // an id that matches nothing.
+  const wellFormed = ids.filter((id) => UUID_RE.test(id));
+  const malformed = ids.filter((id) => !UUID_RE.test(id));
+  if (wellFormed.length === 0) {
+    return { entriesDeleted: 0, summaryCleared: false, missingIds: malformed };
+  }
+
+  // Which of them are actually this agent's, read before the delete so the
+  // caller can name the ones that were not.
+  const found = await db
+    .selectFrom('agent_memories')
+    .select(['id'])
+    .where('tenant_id', '=', tenantId)
+    .where('agent_id', '=', agentId)
+    .where('kind', '=', 'entry')
+    .where('id', 'in', wellFormed)
+    .execute();
+  const foundIds = found.map((row) => row.id);
+  if (foundIds.length > 0) {
+    await db
+      .deleteFrom('agent_memories')
+      .where('tenant_id', '=', tenantId)
+      .where('agent_id', '=', agentId)
+      .where('kind', '=', 'entry')
+      .where('id', 'in', foundIds)
+      .execute();
+  }
+  const foundSet = new Set(foundIds);
+  return {
+    entriesDeleted: foundIds.length,
+    summaryCleared: false,
+    // Original order, so a caller's report reads back in the order it asked.
+    missingIds: ids.filter((id) => !foundSet.has(id)),
+  };
 }
