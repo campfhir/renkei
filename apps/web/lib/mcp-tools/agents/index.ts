@@ -43,6 +43,7 @@ import { sql } from 'kysely';
 import type { MCPToolContext } from '../common';
 import { getAgent, listAgents, type StoredAgent } from '@/lib/agents/store';
 import { saveAgent } from '@/lib/agents/save';
+import { applyStepPatch, toPatchOperations } from '@/lib/agents/patch-steps';
 import { parseAgentPayload } from '@/lib/agents/payload';
 import { renderStepsOutline } from '@/lib/agents/describe';
 import { triggerSummary } from '@/lib/agents/trigger-summary';
@@ -167,9 +168,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Read — The exact definition, as JSON',
       description:
         "One of your agents' EXACT stored definition, as raw JSON — the machine path. " +
-        'To change the agent: edit this JSON, change only what the edit needs, keep the ids ' +
-        'of steps/paths/triggers you are keeping (run history and retry settings anchor to ' +
-        'them), and pass the fields to agent_update. For the human-readable rendering ' +
+        'To change a STEP, take its id from here and use agent_patch_steps: it inserts, ' +
+        'replaces, removes or moves one step at a time and leaves the rest untouched. ' +
+        'To rewrite the agent, or to change its name, triggers, guardrails or blocked ' +
+        'skills, edit this JSON — change only what the edit needs, keep the ids of ' +
+        'steps/paths/triggers you are keeping (run history and retry settings anchor to ' +
+        'them) — and pass the fields to agent_update. For the human-readable rendering ' +
         '(outline, knowledge, memory, chaining), use agent_get_description.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -748,21 +752,151 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   );
 
   server.registerTool(
+    'agent_patch_steps',
+    {
+      title: 'Agents · Act — Change some steps of an agent (confirm-gated)',
+      description:
+        "Change PART of one of your agents' steps without resending the whole definition — " +
+        'insert a step between two others, replace one, remove one, or move one. Prefer this ' +
+        'over agent_update for anything short of a rewrite: agent_update requires echoing ' +
+        'every untouched step back verbatim, and one transcription slip silently rewrites a ' +
+        'step nobody meant to touch. Positions are given as after/before another step id ' +
+        '(from agent_get), or intoPath / intoContainer / atTop for a list. Operations apply ' +
+        'in order and each sees the last, so you can insert a loop and move a step into it in ' +
+        'one call; if any operation cannot be applied, NONE are. Without confirm:true this is ' +
+        'a DRY RUN. Ids are never changed here — run history, retry settings and trigger ' +
+        'firings anchor to them.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        agentId: z.string().min(1).describe('From agent_list'),
+        operations: z
+          .array(
+            z.object({
+              op: z.enum(['insert', 'replace', 'remove', 'move']),
+              id: z
+                .string()
+                .optional()
+                .describe('The step to replace, remove or move (not used by insert)'),
+              node: z
+                .unknown()
+                .optional()
+                .describe(
+                  'The step node for insert/replace — the same shape agent_get returns. A new ' +
+                    'step needs a fresh uuid; a replacement keeps the id it replaces.'
+                ),
+              at: z
+                .object({
+                  after: z
+                    .string()
+                    .optional()
+                    .describe("Immediately after this step, in that step's own list"),
+                  before: z
+                    .string()
+                    .optional()
+                    .describe("Immediately before this step, in that step's own list"),
+                  intoPath: z
+                    .string()
+                    .optional()
+                    .describe('Into this branch path (appended unless index is given)'),
+                  intoContainer: z
+                    .string()
+                    .optional()
+                    .describe('Into this loop or group (appended unless index is given)'),
+                  atTop: z.boolean().optional().describe('Onto the top-level list'),
+                  index: z.number().int().min(0).optional(),
+                })
+                .optional()
+                .describe('Where the step goes, for insert and move. Exactly one anchor.'),
+            })
+          )
+          .min(1)
+          .describe('Applied in order; all or nothing'),
+        confirm: z.boolean().optional().describe('Without true: validate and report only'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      if (context.agent) return errText(RUN_REFUSAL);
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const agent = await ownAgent(dbResult.val, context, args.agentId);
+      if (!agent) return errText(NOT_FOUND);
+
+      const operations = toPatchOperations(args.operations);
+      if ('error' in operations) return errText(operations.error);
+
+      const patched = applyStepPatch(agent.steps, operations.val);
+      if (!patched.ok) return errText(patched.error);
+
+      // The patched document goes through the SAME save path as a full
+      // update, so validation, clamping and the format re-stamp are
+      // identical — a patch cannot reach a state agent_update could not.
+      const dryRun = args.confirm !== true;
+      // Everything except the steps is the agent as stored: a patch changes
+      // steps and nothing else, and it goes through the SAME parse and save
+      // path as a full update so validation and clamping are identical.
+      const parsed = parseDefinition(
+        {
+          name: agent.name,
+          steps: patched.steps,
+          triggers: agent.triggers,
+          llmModelId: agent.llmModelId,
+          guardrails: agent.guardrails,
+          blockedTools: agent.blockedTools,
+        },
+        agent.enabled
+      );
+      if ('error' in parsed) return errText(parsed.error);
+
+      const result = await saveAgent(dbResult.val, context.tenantId, context.subject, parsed, {
+        agentId: agent.id,
+        dryRun,
+      });
+      if (result.outcome === 'not-found') return errText(NOT_FOUND);
+      if (result.outcome === 'invalid') return errText(issueLines(result.issues));
+      if (result.outcome === 'valid-dry-run') {
+        return textResult(
+          [
+            `Valid. ${operations.val.length} operation(s) would leave "${result.normalized.name}" as:`,
+            outlineOf(result.normalized.steps),
+            '',
+            'Nothing was saved. Call again with confirm:true to apply it.',
+          ].join('\n')
+        );
+      }
+
+      logger.info('agent_patch_steps applied', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        agentId: agent.id,
+      });
+      return textResult(
+        [`Updated "${result.normalized.name}":`, outlineOf(result.normalized.steps)].join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
     'agent_update',
     {
       title: 'Agents · Act — Update an agent (confirm-gated)',
       description:
         "REPLACE one of your agents' definition (name, steps, triggers, guardrails, blocked " +
-        'skills) — the direct edit path, and the preferred one: start from the exact ' +
-        "definition in agent_get's ```json renkei-agent block, change ONLY what the edit " +
-        'needs, and send the whole definition back. Keep the ids of steps, branch paths, ' +
-        'and triggers you are keeping VERBATIM (run history, retry settings, and firings ' +
-        'anchor to them); give brand-new steps fresh UUIDs. Validation is deterministic and ' +
-        'reports precise per-path issues; the save also re-stamps the current steps format. ' +
-        'Without confirm:true this is a DRY RUN — it validates and shows what would change, ' +
-        'persisting nothing. This tool never TURNS ON an agent (the builder is the consent ' +
-        'surface for that): an off agent stays off, an already-enabled one stays on unless ' +
-        'keepEnabled:false disables it. Prose-to-steps drafting lives in the web builder.',
+        'skills) — the whole-document path, for a rewrite or for changing something that is ' +
+        'NOT a step (the name, a trigger, the guardrails, blocked skills). ' +
+        'TO CHANGE STEPS, USE agent_patch_steps INSTEAD: it inserts, replaces, removes or ' +
+        'moves individual steps by id, and this tool requires echoing every untouched step ' +
+        'back verbatim, where one slip silently rewrites a step nobody meant to touch. ' +
+        "If you do use this: start from the exact definition in agent_get's " +
+        '```json renkei-agent block, change ONLY what the edit needs, and send the whole ' +
+        'definition back. Keep the ids of steps, branch paths, and triggers you are keeping ' +
+        'VERBATIM (run history, retry settings, and firings anchor to them); give brand-new ' +
+        'steps fresh UUIDs. Validation is deterministic and reports precise per-path issues; ' +
+        'the save also re-stamps the current steps format. Without confirm:true this is a ' +
+        'DRY RUN — it validates and shows what would change, persisting nothing. This tool ' +
+        'never TURNS ON an agent (the builder is the consent surface for that): an off agent ' +
+        'stays off, an already-enabled one stays on unless keepEnabled:false disables it. ' +
+        'Prose-to-steps drafting lives in the web builder.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),

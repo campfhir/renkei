@@ -124,6 +124,13 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
           metadata: {
             kind: 'note',
             title,
+            // PROVENANCE ONLY. This deliberately does NOT set `scope`, which
+            // is what makes a note part of an agent's injected knowledge
+            // (see AGENT_NOTE_SCOPE). It used to, by sharing one field for
+            // both meanings — so a step whose tool was this one silently and
+            // permanently grew its own agent's prompt, which nobody chose.
+            // Agent knowledge is written on purpose, through the knowledge
+            // panel or agent_knowledge_write.
             authoredBy: context.agent ? 'agent' : 'user',
             ...(context.agent ? { agentId: context.agent.agentId } : {}),
           },

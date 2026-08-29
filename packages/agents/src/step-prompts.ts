@@ -334,7 +334,10 @@ export function buildLoopConditionMessages(input: LoopPromptInput): {
       ? [`What you remember (notes from this agent’s earlier runs):\n${input.memoryText}`]
       : []),
     ...(input.knowledgeText
-      ? [`Your knowledge notes (reference material this agent keeps):\n${input.knowledgeText}`]
+      ? [
+          'Your knowledge notes — an INDEX of what this agent keeps, newest first. Short notes are shown whole; longer ones show only their title and id, and agent_knowledge_list returns the full text when one looks relevant. Do not assume a note says what its title suggests:\n' +
+            input.knowledgeText,
+        ]
       : []),
     ...(input.attempt > 1
       ? [
@@ -397,7 +400,10 @@ export function buildBranchMessages(input: BranchPromptInput): {
       ? [`What you remember (notes from this agent’s earlier runs):\n${input.memoryText}`]
       : []),
     ...(input.knowledgeText
-      ? [`Your knowledge notes (reference material this agent keeps):\n${input.knowledgeText}`]
+      ? [
+          'Your knowledge notes — an INDEX of what this agent keeps, newest first. Short notes are shown whole; longer ones show only their title and id, and agent_knowledge_list returns the full text when one looks relevant. Do not assume a note says what its title suggests:\n' +
+            input.knowledgeText,
+        ]
       : []),
     ...(input.attempt > 1
       ? [
@@ -496,7 +502,10 @@ export function buildAttemptMessages(input: AttemptPromptInput): {
         ]
       : []),
     ...(input.knowledgeText
-      ? [`Your knowledge notes (reference material this agent keeps):\n${input.knowledgeText}`]
+      ? [
+          'Your knowledge notes — an INDEX of what this agent keeps, newest first. Short notes are shown whole; longer ones show only their title and id, and agent_knowledge_list returns the full text when one looks relevant. Do not assume a note says what its title suggests:\n' +
+            input.knowledgeText,
+        ]
       : []),
     ...(input.attempt > 1
       ? [

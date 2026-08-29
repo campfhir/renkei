@@ -15,6 +15,7 @@ import { getIdentityEmail } from '@/lib/identity';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import {
   createAgentNote,
+  deleteAgentNotes,
   listAgentNotes,
   parseNotePayload,
   MAX_AGENT_NOTE_CHARS,
@@ -96,4 +97,55 @@ export async function POST(
     return NextResponse.json({ error: 'The note could not be saved' }, { status: 500 });
   }
   return NextResponse.json({ noteId: created.noteId }, { status: 201 });
+}
+
+/**
+ * Delete several notes at once, or all of them.
+ *
+ * `{ all: true }` purges; `{ noteIds: [...] }` deletes a selection. The
+ * owner's email is required for the same reason creation needs it — a note's
+ * ref is owner-prefixed — and a grantee deleting is deliberate: the access
+ * grant already lets them add and edit.
+ */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ tenantId: string; agentId: string }> }
+): Promise<NextResponse> {
+  const { tenantId, agentId } = await params;
+  const session = await getSessionFromRequest(request, tenantId);
+  if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+  const db = dbResult.val;
+
+  const access = await resolveAgentAccess(db, tenantId, session.subject, agentId);
+  if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+
+  const ownerEmail = await getIdentityEmail(tenantId, access.ownerSubject);
+  if (!ownerEmail.ok || !ownerEmail.val) {
+    return NextResponse.json({ error: 'The agent owner has no recorded email' }, { status: 409 });
+  }
+
+  const body: unknown = await request.json().catch(() => null);
+  const record = isRecord(body) ? body : {};
+  const all = record.all === true;
+  const noteIds = Array.isArray(record.noteIds)
+    ? record.noteIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : [];
+  if (!all && noteIds.length === 0) {
+    return NextResponse.json({ error: 'Give noteIds, or all: true' }, { status: 400 });
+  }
+
+  const result = await deleteAgentNotes(db, {
+    tenantId,
+    agentId,
+    ownerEmail: ownerEmail.val,
+    ...(all ? { all } : { noteIds }),
+  });
+  return NextResponse.json(result);
 }

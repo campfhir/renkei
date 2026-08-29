@@ -2,11 +2,16 @@
 
 /**
  * The agent's knowledge notes — reference material every run loads into
- * context ("Your knowledge notes"). The owner curates them here; agents
- * can also write their own via knowledge_create_note, and those appear in
- * the same list marked as agent-written.
+ * context ("Your knowledge notes"). The owner curates them here; an agent
+ * can add one deliberately with agent_knowledge_write, and those appear in
+ * the same list marked as agent-written. (knowledge_create_note does NOT
+ * land here: it writes an ORG note, and an agent using it was silently
+ * growing its own prompt — see AGENT_NOTE_SCOPE.)
  *
- * The rule-forms shape: a list plus one draft form for create and edit.
+ * The rule-forms shape: a list plus one draft form for create and edit,
+ * with a selection for deleting several at once — an agent that has been
+ * writing its own notes for a while accumulates more than anyone wants to
+ * remove one at a time.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -40,6 +45,8 @@ export default function KnowledgePanel({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [purgeArmed, setPurgeArmed] = useState(false);
 
   const base = `/api/tenant/${tenantId}/agents/${agentId}/knowledge`;
 
@@ -73,6 +80,33 @@ export default function KnowledgePanel({
     await load();
   };
 
+  const toggle = (noteId: string) => {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(noteId)) next.delete(noteId);
+      else next.add(noteId);
+      return next;
+    });
+  };
+
+  /** Delete the selection, or everything when `all`. */
+  const removeMany = async (all: boolean) => {
+    setBusy(true);
+    setError(null);
+    const body = all ? { all: true } : { noteIds: [...selected] };
+    const { error: bulkError } = await sendJsonFull<{ deleted: number }>(base, 'DELETE', body);
+    setBusy(false);
+    setPurgeArmed(false);
+    if (bulkError) {
+      setError(bulkError);
+      return;
+    }
+    // A draft editing something just deleted would save it back.
+    if (draft?.noteId && (all || selected.has(draft.noteId))) setDraft(null);
+    setSelected(new Set());
+    await load();
+  };
+
   const remove = async (noteId: string) => {
     setBusy(true);
     setError(null);
@@ -97,6 +131,67 @@ export default function KnowledgePanel({
         <p className="text-sm text-gray-500 dark:text-gray-400">No notes yet.</p>
       ) : null}
 
+      {notes.length > 0 ? (
+        <div className="mb-2 flex flex-wrap items-center gap-3 text-xs">
+          <label className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
+            <input
+              type="checkbox"
+              checked={selected.size === notes.length && notes.length > 0}
+              // Indeterminate is the honest state for a partial selection and
+              // cannot be expressed as `checked`.
+              ref={(input) => {
+                if (input) input.indeterminate = selected.size > 0 && selected.size < notes.length;
+              }}
+              onChange={() =>
+                setSelected(
+                  selected.size === notes.length ? new Set() : new Set(notes.map((n) => n.noteId))
+                )
+              }
+            />
+            {selected.size > 0 ? `${selected.size} selected` : 'Select all'}
+          </label>
+          {selected.size > 0 ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void removeMany(false)}
+              className="text-red-600 hover:underline disabled:opacity-50 dark:text-red-400"
+            >
+              Delete {selected.size}
+            </button>
+          ) : null}
+          <span className="ml-auto">
+            {purgeArmed ? (
+              <span className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void removeMany(true)}
+                  className="rounded-md bg-red-600 px-2 py-1 font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  Really delete all {notes.length}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPurgeArmed(false)}
+                  className="text-gray-500 hover:underline"
+                >
+                  Keep them
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setPurgeArmed(true)}
+                className="text-red-600 hover:underline dark:text-red-400"
+              >
+                Clear knowledge
+              </button>
+            )}
+          </span>
+        </div>
+      ) : null}
+
       <ul className="space-y-2">
         {notes.map((note) => (
           <li
@@ -104,8 +199,15 @@ export default function KnowledgePanel({
             className="rounded-md border border-gray-200 p-3 dark:border-gray-800"
           >
             <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-sm font-medium">
+              <input
+                type="checkbox"
+                className="mt-1 shrink-0"
+                checked={selected.has(note.noteId)}
+                onChange={() => toggle(note.noteId)}
+                aria-label={`Select ${note.title}`}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="break-words text-sm font-medium">
                   {note.title}
                   {note.authoredBy === 'agent' ? (
                     <span className="ml-2 rounded-full bg-violet-100 px-2 py-0.5 text-xs font-normal text-violet-700 dark:bg-violet-950 dark:text-violet-300">
@@ -113,7 +215,7 @@ export default function KnowledgePanel({
                     </span>
                   ) : null}
                 </p>
-                <p className="mt-1 whitespace-pre-wrap text-xs text-gray-600 dark:text-gray-400">
+                <p className="mt-1 break-words whitespace-pre-wrap text-xs text-gray-600 dark:text-gray-400">
                   {note.content.length > 300 ? `${note.content.slice(0, 299)}…` : note.content}
                 </p>
               </div>

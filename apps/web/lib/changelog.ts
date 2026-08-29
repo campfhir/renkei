@@ -44,6 +44,48 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'Agent knowledge you chose',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Notes an agent files are no longer added to its own knowledge',
+        detail:
+          'A step that saved an organization note also, invisibly, added it to that agent’s permanent knowledge — so an agent doing its job slowly grew its own instructions with material nobody chose to put there. Saving a note is now just saving a note; agent knowledge is what you add on the agent’s Knowledge panel, or what it writes deliberately. Everything already there is left alone, and can be cleared below.',
+      },
+      {
+        kind: 'changed',
+        title: 'Runs get an index of the agent’s knowledge, not the ten newest notes',
+        detail:
+          'A run used to receive the ten most recently written notes, trimmed — so once an agent held more than ten, it silently saw whichever were newest rather than whichever were relevant, and had no way to know the rest existed. It now sees every note’s title up front (short notes in full) and reads the ones that look useful.',
+      },
+      {
+        kind: 'added',
+        title: 'Select and delete knowledge in bulk',
+        detail:
+          'Tick several notes and remove them together, or clear an agent’s knowledge entirely — the same two-click confirmation as clearing its memory. Long identifiers in a note now wrap inside their card instead of spilling out of it.',
+      },
+    ],
+  },
+  {
+    date: null,
+    heading: 'Editing an agent from outside the builder',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'The builder respects your organization’s step limit',
+        detail:
+          'An organization can raise how many steps an agent may hold, but the builder still refused to save past twenty — it was checking against the built-in default instead of your setting, so the Update button stayed disabled on an agent the server would have accepted.',
+      },
+      {
+        kind: 'added',
+        title: 'Change one step without resending the whole agent',
+        detail:
+          'Editing an agent over MCP meant sending its entire definition back, every untouched step copied out word for word — so slipping one new step between two others risked quietly rewriting something else. There is now a patch tool that inserts, replaces, removes or moves individual steps, positioned as “after this one” or “before that one”, and applies all of the changes or none of them.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'OnBase stops spending licences it does not need',
     entries: [
       {

@@ -7,7 +7,7 @@
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { isBlackoutEntry, MAX_STEP_ATTEMPTS, type BlackoutEntry } from '@renkei/agents';
+import { isBlackoutEntry, MAX_STEP_ATTEMPTS, MAX_STEPS, type BlackoutEntry } from '@renkei/agents';
 import { getOrgSettings } from '@renkei/settings';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { listAgents } from '@/lib/agents/store';
@@ -18,6 +18,13 @@ export interface BuilderData {
   models: { id: string; label: string; isDefault: boolean }[];
   /** The org's per-step attempt ceiling — the builder offers no more. */
   attemptsCap: number;
+  /**
+   * The org's `agentMaxSteps` ceiling. The builder validates against it for
+   * the same reason it takes attemptsCap: without it the client falls back to
+   * the MAX_STEPS default and refuses to save an agent the SERVER would have
+   * accepted, which reads as a bug in the product rather than a limit.
+   */
+  maxSteps: number;
   /**
    * The org's holiday calendars, DATES INCLUDED: the schedule editor's
    * live next-run preview computes client-side with the same function the
@@ -62,6 +69,7 @@ export async function loadBuilderData(
     })),
     // The org cap may exceed the 10 default — it is the real ceiling.
     attemptsCap: Math.max(1, settings.ok ? settings.val.agentMaxStepAttempts : MAX_STEP_ATTEMPTS),
+    maxSteps: Math.max(1, settings.ok ? settings.val.agentMaxSteps : MAX_STEPS),
     calendars: calendarRows.map((row) => ({
       id: row.id,
       name: row.name,

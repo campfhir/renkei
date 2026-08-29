@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { contentEncryptionKey, revealContent } from '@renkei/crypto';
+import { AGENT_NOTE_SCOPE } from '@renkei/agents/memory';
 import {
   resolveEmbeddingProvider,
   ingestObjectChunks,
@@ -70,6 +71,7 @@ async function agentNoteChunks(db: Kysely<DB>, tenantId: string, agentId: string
     .where('tenant_id', '=', tenantId)
     .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
     .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
+    .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
     .orderBy('ref_id')
     .execute();
 }
@@ -137,6 +139,10 @@ export async function createAgentNote(
         title: input.title,
         authoredBy: 'user',
         agentId: input.agentId,
+        // Membership, not provenance — see AGENT_NOTE_SCOPE. Written here
+        // because this module IS the deliberate path (the knowledge panel
+        // and agent_knowledge_write); knowledge_create_note is not.
+        scope: AGENT_NOTE_SCOPE,
       },
       sourceAt: new Date().toISOString(),
     },
@@ -161,6 +167,7 @@ async function noteExists(
     .where('tenant_id', '=', tenantId)
     .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
     .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
+    .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
     .where((eb) =>
       eb.or([eb('ref_id', '=', refId), eb('ref_id', 'like', `${escapeLike(refId)}#%`)])
     )
@@ -196,7 +203,13 @@ export async function updateAgentNote(
       content: input.content,
       // The panel's notes are user-authored by definition; an agent-written
       // note edited here becomes the owner's word.
-      metadata: { kind: 'note', title: input.title, authoredBy: 'user', agentId: input.agentId },
+      metadata: {
+        kind: 'note',
+        title: input.title,
+        authoredBy: 'user',
+        agentId: input.agentId,
+        scope: AGENT_NOTE_SCOPE,
+      },
       sourceAt: new Date().toISOString(),
     },
     NOTE_CHUNKING
@@ -234,6 +247,7 @@ export async function copyAgentNotes(
     .where('tenant_id', '=', input.tenantId)
     .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
     .where(sql<boolean>`metadata ->> 'agentId' = ${input.sourceAgentId}`)
+    .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
     .execute();
   const baseRefs = [...new Set(rows.map((row) => baseRefOf(row.ref_id)))];
 
@@ -263,4 +277,46 @@ export async function deleteAgentNote(
   if (!(await noteExists(db, input.tenantId, input.agentId, refId))) return 'NOT_FOUND';
   const deleted = await deleteObjectChunks(input.tenantId, NOTE_KNOWLEDGE_PROVIDER, refId);
   return deleted.ok ? 'OK' : 'DB_ERROR';
+}
+
+/**
+ * Delete several notes, or every note this agent has.
+ *
+ * Reports per-note outcomes rather than failing the batch: with a
+ * multi-select the useful answer is "these went, that one did not", and a
+ * caller who deleted a note in another tab should not have the rest refused
+ * on their behalf. NOT_FOUND is therefore counted, not raised.
+ *
+ * `all` re-reads the list rather than trusting ids from the client, so a
+ * purge cannot be aimed at anything outside this agent.
+ */
+export async function deleteAgentNotes(
+  db: Kysely<DB>,
+  input: {
+    tenantId: string;
+    agentId: string;
+    ownerEmail: string;
+    noteIds?: string[];
+    all?: boolean;
+  }
+): Promise<{ deleted: number; missing: number; failed: number }> {
+  const ids = input.all
+    ? (await listAgentNotes(db, input.tenantId, input.agentId)).map((note) => note.noteId)
+    : (input.noteIds ?? []);
+
+  let deleted = 0;
+  let missing = 0;
+  let failed = 0;
+  for (const noteId of ids) {
+    const outcome = await deleteAgentNote(db, {
+      tenantId: input.tenantId,
+      agentId: input.agentId,
+      ownerEmail: input.ownerEmail,
+      noteId,
+    });
+    if (outcome === 'OK') deleted += 1;
+    else if (outcome === 'NOT_FOUND') missing += 1;
+    else failed += 1;
+  }
+  return { deleted, missing, failed };
 }
