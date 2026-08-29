@@ -1,6 +1,14 @@
 /**
  * General-purpose async operation with configurable retry logic and backoff strategies.
  * Supports timeouts, multiple backoff algorithms, and custom abort signals.
+ *
+ * RUNS ANYWHERE — browser, edge runtime, or Node. This module deliberately has
+ * no imports and touches only web standards (setTimeout/clearTimeout,
+ * AbortSignal/EventTarget, Promise, Date.now). Keep it that way: a `node:`
+ * import, a Node-only timer field, or NodeJS.Timeout in a signature would all
+ * break the browser and edge builds. `ReturnType<typeof setTimeout>` is the
+ * portable spelling for a timer handle — it resolves to `number` under the DOM
+ * lib and to `Timeout` under Node's.
  */
 
 export interface RetryOptions {

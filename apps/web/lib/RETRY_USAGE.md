@@ -2,6 +2,12 @@
 
 A production-ready retry mechanism for async operations with configurable backoff strategies.
 
+**Runs anywhere.** The module has no imports and uses only web standards
+(`setTimeout`/`clearTimeout`, `AbortSignal`, `Promise`, `Date.now`), so it works
+unchanged in the browser, on the edge runtime, and in Node. Please keep it that
+way when editing — a `node:` import or a `NodeJS.Timeout` in a signature breaks
+the browser and edge builds.
+
 ## Quick Start
 
 ```typescript
