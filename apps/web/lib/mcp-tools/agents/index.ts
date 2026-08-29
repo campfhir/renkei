@@ -38,8 +38,16 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
 import {
+  APPROVAL_DEFAULT_TIMEOUT_HOURS,
   BUILTIN_VARIABLES,
+  CURRENT_STEPS_VERSION,
+  DEFAULT_APPROVAL_WAIT_CAP_HOURS,
+  MAX_BRANCH_DEPTH_V3,
+  MAX_BRANCH_PATHS,
+  MAX_LOOP_ITERATIONS,
   MAX_SCHEDULE_RULES,
+  MAX_STEPS,
+  MAX_STEP_ATTEMPTS,
   TRIGGER_EVENT_CATALOG,
   friendlyToolName,
   savesByPathCoverage,
@@ -136,6 +144,29 @@ function variableLines(steps: AgentStepsDoc): string[] {
       : []),
   ];
 }
+
+/**
+ * What an agent can do that no skill accounts for.
+ *
+ * The engine provides these as step KINDS, so they are invisible to a
+ * catalog built from registered tools — and a model that reads the catalog
+ * as "everything this agent could do" concludes an agent cannot pause for a
+ * person, because nothing named `*_ask_approval` came back. It then writes a
+ * step that says "check with the owner first" and acts anyway.
+ */
+const NATIVE_CAPABILITIES = [
+  'These are step KINDS, not skills, so no name above covers them:',
+  '- PAUSE FOR A PERSON — a {kind:"approval"} step parks the run as "waiting" and puts an ' +
+    "interactive card on the owner's home-page feed to approve, decline, or type an answer, " +
+    'then resumes down whichever of its three outcome paths applies. This is how an agent ' +
+    'gets a human decision; there is no skill for it. Use it for "ask me before sending", ' +
+    '"let me approve this", "check with me first".',
+  '- END THE RUN AND SAY SO — a {kind:"terminal"} step ends the whole run as a success, a ' +
+    'deliberate failure, or a graceful skip, and emails or WebEx-messages the owner the ' +
+    'message it carries.',
+  '- DECIDE, REPEAT, GROUP — {kind:"branch"}, {kind:"loop"} and {kind:"group"} nodes.',
+  'The full shape of each is on the "steps" argument of agent_create and agent_update.',
+].join('\n');
 
 /**
  * How many tools one call spells out in full before it stops and says how
@@ -359,8 +390,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       );
       if (all.length === 0) {
         return textResult(
-          'No skills are available to you — this organization has no connectors enabled, or ' +
-            'none that you have authorized. Connect one in the web app, then ask again.'
+          [
+            'No skills are available to you — this organization has no connectors enabled, ' +
+              'or none that you have authorized. Connect one in the web app, then ask again.',
+            '',
+            NATIVE_CAPABILITIES,
+          ].join('\n')
         );
       }
 
@@ -430,6 +465,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             '',
             'Pass connector, kind or query to read what each one does and the failure codes ' +
               'its steps can handle.',
+            '',
+            NATIVE_CAPABILITIES,
           ].join('\n')
         );
       }
@@ -827,6 +864,69 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   );
 
   /**
+   * The step-node grammar, written out for the same reason the trigger one
+   * is: `steps` crosses the wire as an opaque object, and the builder — a
+   * UI with a node palette — is the only other place the vocabulary
+   * appears. A caller here cannot read a palette.
+   *
+   * The APPROVAL node is the load-bearing entry. It is a Renkei capability
+   * with NO TOOL BEHIND IT: agent_list_tools cannot mention it, because
+   * pausing a run and raising a card on someone's home page is something
+   * the engine does, not something a connector exposes. So a model asked to
+   * "have it check with me first" had no way to know the construct existed,
+   * and wrote a step that says "ask the owner" and then acts anyway.
+   *
+   * Caps come from the constants they enforce, so this cannot name a limit
+   * the validator does not.
+   */
+  const STEP_NODE_GRAMMAR = [
+    'Every node has a uuid "id" and a "name". A node is one of:',
+    'An ACTION step (NO "kind" key) — the default: {id, name, instruction:[segment,...],',
+    'tool:<a skill name from agent_list_tools, or null for a pure reasoning step>,',
+    `maxAttempts:1-${MAX_STEP_ATTEMPTS}, saveAs?:<short name later steps reference as a var>,`,
+    'failureHandling:[{outcome:<a failure code of THAT skill, from agent_list_tools, or',
+    '"other">, action:"retry"|"exit"|"stop-quiet"|"continue", guidance?:[segment,...]}],',
+    'onSuccess?:"continue"|"stop"|"stop-quiet"}. At most one tool per step.',
+    '{kind:"approval"} — PAUSE THE RUN AND ASK A PERSON. This is how an agent gets a human',
+    'decision, and there is no tool for it: reaching the node parks the whole run as',
+    '"waiting" and puts an interactive CARD on the owner\'s home-page feed for them to',
+    'approve or decline (or type an answer). REACH FOR THIS whenever the automation should',
+    'not act without a person saying so — "ask me before sending", "let me approve the',
+    'refund", "check with me first". {id, name, message:[segment,...] (the card body AND the',
+    'notification), mode:"approve" (approve/decline buttons) or "input" (a typed answer,',
+    'which REQUIRES saveAs to bind it), saveAs?, timeoutHours (how long it may wait; default',
+    `${APPROVAL_DEFAULT_TIMEOUT_HOURS}, clamped by the org's cap, never more than`,
+    `${DEFAULT_APPROVAL_WAIT_CAP_HOURS}), notifyEmail, notifyWebex (send the card link to the`,
+    'owner), and three outcome paths onApproved, onDeclined and onTimeout, each',
+    '{id, name, steps:[node,...]} — an EMPTY path just continues after the node, and a',
+    'timeout never fails the run by itself.}',
+    '{kind:"branch"} — a fork the model decides: {id, name, condition:[segment,...] (prose and',
+    'var segments only, NEVER tool segments — do the tool work in a step before the branch and',
+    `save it), paths:[2-${MAX_BRANCH_PATHS} × {id, name, steps:[...]}] where the LAST path is`,
+    'the fallback, failurePath?:{id, name, steps} (taken when the EVALUATION itself runs out',
+    `of attempts), maxAttempts}. Branches nest at most ${MAX_BRANCH_DEPTH_V3} deep, and an`,
+    'approval counts toward the same budget.',
+    '{kind:"loop"} — repeat a body: mode:"foreach" with itemsVar (a saved list) and itemVar',
+    '(the per-round binding), or mode:"until" with condition:[segment,...] checked AFTER each',
+    `round. Both take maxIterations:1-${MAX_LOOP_ITERATIONS} and steps:[...], and may set`,
+    'collectFrom (a saveAs inside the body) plus collectVar (a new list of what it saved).',
+    'Loops never nest in loops. Prefer ONE bulk skill call over a loop wherever one exists.',
+    '{kind:"group"} — pure structure for readability: {id, name, steps:[...]}, executed as if',
+    'inlined.',
+    '{kind:"terminal"} — end the whole run here: {id, name, result:"success"|"failure"|"stop",',
+    'message:[segment,...], notifyEmail, notifyWebex}.',
+    'A segment is {t:"text", v:"..."}, {t:"var", name:"<a variable this agent has>"} or',
+    '{t:"tool", name:"<a skill name>"}.',
+  ].join(' ');
+
+  const STEPS_DESCRIPTION = [
+    `The full steps document: {version:${CURRENT_STEPS_VERSION}, steps:[node,...]} — e.g. the`,
+    '`steps` value from agent_get. Array order is execution order.',
+    `At most ${MAX_STEPS} steps by default (the org may allow more).`,
+    STEP_NODE_GRAMMAR,
+  ].join(' ');
+
+  /**
    * The trigger grammar, written out because a caller here has nowhere else
    * to read it: drafts are `unknown` to zod (the shapes are a discriminated
    * union zod's JSON Schema projection would flatten into noise), and the
@@ -857,14 +957,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
   const definitionSchema = {
     name: z.string().min(1).max(200).describe('The agent name'),
-    steps: z
-      .record(z.string(), z.unknown())
-      .describe(
-        'The full steps document (e.g. the `steps` value from agent_get). A step\'s "tool" ' +
-          'must be a skill name from agent_list_tools, and its "failureHandling" outcomes ' +
-          "must be that skill's failure codes — call agent_list_tools first rather than " +
-          'guessing at either.'
-      ),
+    steps: z.record(z.string(), z.unknown()).describe(STEPS_DESCRIPTION),
     triggers: z.array(z.unknown()).optional().describe(TRIGGERS_DESCRIPTION),
     llmModelId: z.string().optional().describe('Model config id; default the org default'),
     guardrails: z
@@ -1011,9 +1104,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
                 .unknown()
                 .optional()
                 .describe(
-                  'The step node for insert/replace — the same shape agent_get returns. A new ' +
-                    'step needs a fresh uuid; a replacement keeps the id it replaces. Its ' +
-                    '"tool", when it has one, is a skill name from agent_list_tools.'
+                  'The step node for insert/replace — the same shape agent_get returns. ' +
+                    'A new step needs a fresh uuid; a replacement keeps the id it ' +
+                    'replaces. ' +
+                    STEP_NODE_GRAMMAR
                 ),
               at: z
                 .object({
