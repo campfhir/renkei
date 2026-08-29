@@ -99,6 +99,38 @@ beforeEach(() => {
   clearFieldSchemaCache();
 });
 
+describe('jsm_list_request_types', () => {
+  it('says what each request type is for, not just its name and id', async () => {
+    // Choosing between "Report a problem" and "Request something" off the
+    // names alone is a guess this response was already answering.
+    routes = [
+      {
+        match: '/requesttype',
+        body: {
+          values: [
+            {
+              id: '165',
+              name: 'Report a problem',
+              description: 'Something is broken',
+              helpText: 'Include the ward and the device number.',
+            },
+            { id: '166', name: 'Request something' },
+          ],
+        },
+      },
+    ];
+    const tools = await toolsOf();
+
+    const text =
+      (await tools.get('jsm_list_request_types')!({ serviceDeskId: '7' })).content[0]?.text ?? '';
+
+    expect(text).toContain('• Report a problem (ID: 165) — Something is broken');
+    expect(text).toContain('    Include the ward and the device number.');
+    // A type with neither reads exactly as it did.
+    expect(text).toContain('• Request something (ID: 166)');
+  });
+});
+
 describe('jsm_create_request desk-id resolution', () => {
   it('resolves a project key to the numeric id before posting', async () => {
     routes = [
@@ -310,9 +342,7 @@ describe('jsm_create_request reporter, assignee, and priority', () => {
     const result = await create({ reporter: 'acc-scott' });
 
     expect(result.isError).not.toBe(true);
-    expect(result.content[0]?.text).toContain(
-      'on behalf of Scott Eremia-Roden (scott@nems.org)'
-    );
+    expect(result.content[0]?.text).toContain('on behalf of Scott Eremia-Roden (scott@nems.org)');
   });
 
   it('a reporter Jira quietly dropped is said out loud, not echoed as success', async () => {
@@ -397,7 +427,9 @@ describe('jsm_create_request reporter, assignee, and priority', () => {
       {
         match: '/requesttype/165/field',
         body: {
-          requestTypeFields: [{ fieldId: 'priority', validValues: [{ value: '2', label: 'High' }] }],
+          requestTypeFields: [
+            { fieldId: 'priority', validValues: [{ value: '2', label: 'High' }] },
+          ],
         },
       },
       { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-304' } },

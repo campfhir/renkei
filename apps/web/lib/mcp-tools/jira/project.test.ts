@@ -216,6 +216,38 @@ describe('jira_search_users', () => {
   });
 });
 
+describe('jira_list_components', () => {
+  it('names the lead and what the component is for', async () => {
+    // Both arrive in this response; the hint's own Lead column was empty.
+    requestedUrls = [];
+    jiraFetchMock.mockReset();
+    jiraFetchMock.mockImplementation(async (url: unknown) => {
+      requestedUrls.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => [
+          {
+            id: '10010',
+            name: 'Billing',
+            description: 'Invoicing and payments',
+            lead: { displayName: 'Amanda Wong' },
+          },
+          { id: '10011', name: 'Search' },
+        ],
+      } as unknown as Response;
+    });
+    const tools = await registerTools();
+
+    const text =
+      (await tools.get('jira_list_components')!({ projectKey: 'CAS' })).content[0].text ?? '';
+
+    expect(text).toContain('• Billing (ID: 10010) — lead: Amanda Wong — Invoicing and payments');
+    // A component with neither stays exactly as it was.
+    expect(text).toContain('• Search (ID: 10011)');
+  });
+});
+
 const fieldDirectory = [
   { name: 'Project Health', id: 'customfield_12180', schema: { type: 'option' } },
   { name: 'Risk Impact', id: 'customfield_12179', schema: { type: 'option' } },
