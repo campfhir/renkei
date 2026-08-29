@@ -15,22 +15,30 @@
  *  - Everything is OWNER-SCOPED: every lookup goes through the same
  *    subject-scoped queries the web routes use, so someone else's agentId
  *    reads as not-found, never as forbidden.
- *  - The DEFINITION-EDITING tools (agent_create, agent_update) REFUSE
+ *  - The DEFINITION-EDITING tools (agent_create, agent_update, and the
+ *    agent_patch_* pair) REFUSE
  *    agent-run callers (`context.agent` set): a run must not rewrite its
  *    own steps or strip its guardrails — the cards ground rule, applied
  *    to behavior. Knowledge and memory tools stay available to runs:
  *    knowledge is reference data an agent legitimately curates
  *    (knowledge_create_note already exists); steps and guardrails are
  *    behavior definition, and that line is the point.
- *  - Writes are CONFIRM-GATED: without `confirm: true`, agent_create and
- *    agent_update validate and report what WOULD be saved, persisting
- *    nothing. `enabled: true` is refused outright — the builder's review
+ *  - Writes are CONFIRM-GATED: without `confirm: true`, every
+ *    definition-editing tool validates and reports what WOULD be saved,
+ *    persisting nothing. `enabled: true` is refused outright — the builder's review
  *    panel is the consent surface for arming an agent; disabling is
  *    always allowed.
  *  - There is NO drafting tool here. Prose-to-steps drafting is the web
  *    builder's own REST path (/agents/draft + the worker job); model
  *    callers work at the definition level instead — agent_get hands them
  *    the exact JSON, agent_update validates their edit deterministically.
+ *  - EDITS ARE PARTIAL BY DEFAULT: agent_update replaces the whole
+ *    definition, which makes every untouched step and trigger a
+ *    transcription risk, and an omitted trigger an outright delete.
+ *    agent_patch_steps (steps, by id) and agent_patch (name, one trigger by
+ *    id, guardrails, blocked skills, model) change what they name and
+ *    nothing else, through the same parse-and-save path — so a patch can
+ *    never reach a state a full update could not.
  */
 
 import { z } from 'zod';
@@ -47,9 +55,10 @@ import {
 import { readAgentMemory } from '@renkei/agents/memory';
 import { sql } from 'kysely';
 import type { MCPToolContext } from '../common';
-import { getAgent, listAgents, type StoredAgent } from '@/lib/agents/store';
+import { getAgent, listAgents, type StoredAgent, type TriggerPayload } from '@/lib/agents/store';
 import { saveAgent } from '@/lib/agents/save';
 import { applyStepPatch, toPatchOperations } from '@/lib/agents/patch-steps';
+import { applyTriggerPatch, toTriggerOperations } from '@/lib/agents/patch-triggers';
 import { parseAgentPayload } from '@/lib/agents/payload';
 import { renderStepsOutline } from '@/lib/agents/describe';
 import { triggerSummary } from '@/lib/agents/trigger-summary';
@@ -176,11 +185,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         "One of your agents' EXACT stored definition, as raw JSON — the machine path. " +
         'To change a STEP, take its id from here and use agent_patch_steps: it inserts, ' +
         'replaces, removes or moves one step at a time and leaves the rest untouched. ' +
-        'To rewrite the agent, or to change its name, triggers, guardrails or blocked ' +
-        'skills, edit this JSON — change only what the edit needs, keep the ids of ' +
-        'steps/paths/triggers you are keeping (run history and retry settings anchor to ' +
-        'them) — and pass the fields to agent_update. For the human-readable rendering ' +
-        '(outline, knowledge, memory, chaining), use agent_get_description.',
+        'To change the NAME, a TRIGGER, the guardrails, the blocked skills or the model, ' +
+        'take the trigger ids from here and use agent_patch: it changes only the fields ' +
+        'you send. Reach for agent_update — which replaces the whole definition, ids and ' +
+        'all — only for a rewrite. For the human-readable rendering (outline, knowledge, ' +
+        'memory, chaining), use agent_get_description.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -643,10 +652,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
    * builder — the only other place the vocabulary appears — is a UI. The
    * event ids come from the catalog so this cannot name a stale set.
    */
-  const TRIGGERS_DESCRIPTION = [
-    'Trigger drafts — {id?, draft, enabled?} entries, or bare drafts; default none',
-    '(manual only). Keep the `id` of a trigger you are keeping VERBATIM (its firings and',
-    'API key anchor to it); omit it for a new one.',
+  const TRIGGER_DRAFT_GRAMMAR = [
     'A draft is one of:',
     '{kind:"schedule", recurrences:[rule,...], timezone:<IANA zone, e.g. "America/Chicago">,',
     'startAt?:"YYYY-MM-DD", calendarId?:<holiday calendar id>,',
@@ -663,6 +669,15 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     'narrow deterministically before a run exists.',
     '{kind:"agent", callerAgentId:<the agent id whose run starts this one>}.',
     '{kind:"api", inputs:[{name, label}, ...]} — each becomes a trigger.<name> variable.',
+  ].join(' ');
+
+  const TRIGGERS_DESCRIPTION = [
+    'Trigger drafts — {id?, draft, enabled?} entries, or bare drafts; default none',
+    '(manual only). This list REPLACES the stored one: keep the `id` of a trigger you are',
+    'keeping VERBATIM (its firings and API key anchor to it), omit `id` for a new one, and',
+    'know that a trigger left out is DELETED — agent_patch changes one trigger by id',
+    'instead.',
+    TRIGGER_DRAFT_GRAMMAR,
   ].join(' ');
 
   const definitionSchema = {
@@ -707,6 +722,20 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       guardrails: typeof args.guardrails === 'string' ? args.guardrails : null,
       blockedTools: Array.isArray(args.blockedTools) ? args.blockedTools : [],
     });
+  }
+
+  /** The trigger list as a caller can act on it next: id, what it does, on/off. */
+  function triggerLines(triggers: TriggerPayload[]): string[] {
+    if (triggers.length === 0) {
+      return ['Triggers: none — this agent runs only when started by hand.'];
+    }
+    return [
+      'Triggers:',
+      ...triggers.map(
+        (trigger) =>
+          `- ${trigger.id ?? '(new)'}: ${triggerSummary(trigger.draft)}${trigger.enabled ? '' : ' — off'}`
+      ),
+    ];
   }
 
   function issueLines(issues: { path: string; message: string }[]): string {
@@ -909,16 +938,202 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   );
 
   server.registerTool(
+    'agent_patch',
+    {
+      title: 'Agents · Act — Change one part of an agent (confirm-gated)',
+      description:
+        'Change PART of one of your agents WITHOUT resending its steps — its name, its ' +
+        'triggers (one at a time, by id), its guardrails, its blocked skills, or its model. ' +
+        'ONLY the fields you send change; everything you leave out is kept exactly as ' +
+        'stored. Prefer this over agent_update for anything short of a rewrite: agent_update ' +
+        'REPLACES the whole definition, so it makes you echo every step and every trigger ' +
+        'back verbatim, and a trigger missing from that echo is DELETED along with its ' +
+        'firing history, its next run time and an API key that can never be shown again. ' +
+        'To change STEPS use agent_patch_steps. Trigger ids come from agent_get; a trigger ' +
+        'you do not name here is left untouched, ids and all. Without confirm:true this is ' +
+        'a DRY RUN — it validates and shows what would change, persisting nothing. This ' +
+        'tool never TURNS ON an agent (the builder is the consent surface for that): an off ' +
+        'agent stays off, an already-enabled one stays on unless keepEnabled:false.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        agentId: z.string().min(1).describe('From agent_list'),
+        name: z.string().min(1).max(200).optional().describe('Rename the agent'),
+        triggers: z
+          .array(
+            z.object({
+              op: z.enum(['add', 'update', 'remove']),
+              id: z
+                .string()
+                .optional()
+                .describe('The trigger to update or remove, from agent_get (not used by add)'),
+              draft: z
+                .unknown()
+                .optional()
+                .describe(
+                  'The trigger draft, for add and for an update that changes what fires. An ' +
+                    "update keeps the trigger's kind — a draft of a different kind is a " +
+                    'different trigger, so remove it and add the new one instead. ' +
+                    TRIGGER_DRAFT_GRAMMAR
+                ),
+              enabled: z
+                .boolean()
+                .optional()
+                .describe(
+                  "This TRIGGER's own on/off state (not the agent's) — on for a new trigger, " +
+                    'unchanged on an update that omits it'
+                ),
+            })
+          )
+          .min(1)
+          .optional()
+          .describe(
+            'Trigger changes, applied in order and all-or-nothing: {op:"add", draft, ' +
+              'enabled?}, {op:"update", id, draft?, enabled?} or {op:"remove", id}. Triggers ' +
+              'you do not name are untouched.'
+          ),
+        llmModelId: z
+          .string()
+          .nullable()
+          .optional()
+          .describe('Model config id; null to fall back to the org default'),
+        guardrails: z
+          .string()
+          .max(1_000_000)
+          .nullable()
+          .optional()
+          .describe(
+            'Standing instructions injected into every model call of every run; null or "" ' +
+              'to drop them'
+          ),
+        blockedTools: z
+          .array(z.string())
+          .optional()
+          .describe('Replaces the blocked-skill list outright; [] unblocks everything'),
+        keepEnabled: z
+          .boolean()
+          .optional()
+          .describe('Keep an ALREADY-ENABLED agent enabled through this change (default true)'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('Without true: validate and report only, persist nothing'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      if (context.agent) return errText(RUN_REFUSAL);
+      if (args.enabled === true) {
+        return errText(
+          'Enabling an agent is done in the builder after review. This tool can change or ' +
+            'disable, and keeps an already-enabled agent on unless keepEnabled:false.'
+        );
+      }
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const agent = await ownAgent(dbResult.val, context, args.agentId);
+      if (!agent) return errText(NOT_FOUND);
+
+      // Present means change it, absent means keep it: the whole point of
+      // this tool is that what a caller does not mention is not touched.
+      // `null` is a value here, not an omission — it clears the field.
+      const given = (key: string) => key in args && args[key] !== undefined;
+      const fields = ['name', 'triggers', 'guardrails', 'blockedTools', 'llmModelId'];
+      if (!fields.some(given) && args.keepEnabled === undefined) {
+        return errText(`Nothing to change — send at least one of ${fields.join(', ')}.`);
+      }
+
+      let triggers: TriggerPayload[] = agent.triggers.map((trigger) => ({
+        id: trigger.id,
+        draft: trigger.draft,
+        enabled: trigger.enabled,
+      }));
+      if (given('triggers')) {
+        const operations = toTriggerOperations(args.triggers);
+        if ('error' in operations) return errText(operations.error);
+        const patched = applyTriggerPatch(agent.triggers, operations.val);
+        if (!patched.ok) return errText(patched.error);
+        triggers = patched.triggers;
+      }
+
+      // enabled is never RAISED here, exactly as in agent_update.
+      const enabled = agent.enabled && args.keepEnabled !== false;
+      // Everything the caller left out is the agent as stored, and the whole
+      // thing goes through the SAME parse and save path as a full update, so
+      // validation and clamping are identical — a patch cannot reach a state
+      // agent_update could not.
+      const parsed = parseDefinition(
+        {
+          name: given('name') ? args.name : agent.name,
+          steps: agent.steps,
+          triggers,
+          llmModelId: given('llmModelId') ? args.llmModelId : agent.llmModelId,
+          guardrails: given('guardrails') ? args.guardrails : agent.guardrails,
+          blockedTools: given('blockedTools') ? args.blockedTools : agent.blockedTools,
+        },
+        enabled
+      );
+      if ('error' in parsed) return errText(parsed.error);
+
+      const changed = [
+        ...(given('name') ? [`name → "${parsed.input.name}"`] : []),
+        ...(given('triggers') ? ['triggers'] : []),
+        ...(given('guardrails') ? ['guardrails'] : []),
+        ...(given('blockedTools') ? ['blocked skills'] : []),
+        ...(given('llmModelId') ? ['model'] : []),
+        ...(agent.enabled && !enabled ? ['turned off'] : []),
+      ].join(', ');
+
+      const dryRun = args.confirm !== true;
+      const result = await saveAgent(dbResult.val, context.tenantId, context.subject, parsed, {
+        agentId: agent.id,
+        dryRun,
+      });
+      if (result.outcome === 'not-found') return errText(NOT_FOUND);
+      if (result.outcome === 'invalid') return errText(issueLines(result.issues));
+      if (result.outcome === 'valid-dry-run') {
+        return textResult(
+          [
+            `Valid. This would change "${agent.name}": ${changed}.`,
+            ...triggerLines(triggers),
+            '',
+            `Its steps are untouched. It stays ${enabled ? 'ENABLED' : 'disabled'}. Nothing was saved. Call again with confirm:true to apply.`,
+          ].join('\n')
+        );
+      }
+
+      logger.info('agent_patch changed an agent definition', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        agentId: result.agentId,
+      });
+      return textResult(
+        [
+          `Updated "${result.normalized.name}" (${enabled ? 'still enabled' : 'disabled'}): ${changed}.`,
+          ...triggerLines(triggers),
+          ...(result.apiKeys.length > 0
+            ? [
+                '',
+                'API trigger keys (shown exactly once):',
+                ...result.apiKeys.map((key) => `- trigger ${key.triggerId}: ${key.key}`),
+              ]
+            : []),
+        ].join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
     'agent_update',
     {
       title: 'Agents · Act — Update an agent (confirm-gated)',
       description:
         "REPLACE one of your agents' definition (name, steps, triggers, guardrails, blocked " +
-        'skills) — the whole-document path, for a rewrite or for changing something that is ' +
-        'NOT a step (the name, a trigger, the guardrails, blocked skills). ' +
-        'TO CHANGE STEPS, USE agent_patch_steps INSTEAD: it inserts, replaces, removes or ' +
-        'moves individual steps by id, and this tool requires echoing every untouched step ' +
-        'back verbatim, where one slip silently rewrites a step nobody meant to touch. ' +
+        'skills) — the whole-document path, for a REWRITE. ' +
+        'FOR ANYTHING SHORT OF ONE, PATCH INSTEAD: agent_patch_steps changes steps by id, ' +
+        'agent_patch changes the name, a trigger, the guardrails, the blocked skills or the ' +
+        'model. This tool requires echoing everything untouched back verbatim, where one ' +
+        'slip silently rewrites a step nobody meant to touch and an omitted trigger is ' +
+        'deleted with its firing history and its API key. ' +
         "If you do use this: start from the exact definition in agent_get's " +
         '```json renkei-agent block, change ONLY what the edit needs, and send the whole ' +
         'definition back. Keep the ids of steps, branch paths, and triggers you are keeping ' +
