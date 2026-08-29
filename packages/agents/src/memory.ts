@@ -144,8 +144,38 @@ export async function writeAgentMemorySummary(
 }
 
 /** What a run's prompt may carry of the agent's knowledge notes. */
+/**
+ * The membership marker on a knowledge chunk that belongs to an agent.
+ *
+ * Provenance and membership used to be the same field. `knowledge_create_note`
+ * stamps `agentId` whenever an agent calls it — reasonable as provenance,
+ * "this org note was written by that agent" — and the injection query read
+ * the same field as "inject this into that agent's every run". So a step
+ * whose tool was knowledge_create_note silently and permanently grew its own
+ * agent's prompt, which nobody chose.
+ *
+ * `scope` says membership and nothing else. Only the deliberate paths set it:
+ * the knowledge panel and agent_knowledge_write, both via agent-notes.ts.
+ */
+export const AGENT_NOTE_SCOPE = 'agent';
+
 export const AGENT_NOTES_INJECT_MAX_CHARS = 3_000;
-export const AGENT_NOTES_INJECT_MAX_NOTES = 10;
+/** At or under this, a note's whole body rides the index — see below. */
+const SHORT_NOTE_CHARS = 160;
+/**
+ * How many notes the injected INDEX may name.
+ *
+ * Bodies used to be injected — ten notes clipped to 400 characters each. That
+ * fails quietly as knowledge grows: the ten are chosen by recency, so an
+ * agent with sixty notes silently gets whichever were written last rather
+ * than whichever matter, and the run has no way to know the rest exist.
+ *
+ * Titles and ids are a fraction of the size, so five times as many fit the
+ * same budget, and the run can see EVERYTHING it holds and fetch what it
+ * needs with agent_knowledge_list. An index that names all sixty beats ten
+ * arbitrary bodies.
+ */
+export const AGENT_NOTES_INJECT_MAX_NOTES = 50;
 
 /**
  * The agent's OWN knowledge notes (provider 'note' rows this agent wrote
@@ -172,6 +202,7 @@ export async function renderAgentKnowledgeNotes(
     .where('tenant_id', '=', tenantId)
     .where('provider', '=', 'note')
     .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
+    .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
     .orderBy('source_at', 'desc')
     .orderBy('ref_id')
     .limit(AGENT_NOTES_INJECT_MAX_NOTES * 4)
@@ -193,8 +224,12 @@ export async function renderAgentKnowledgeNotes(
     const title = typeof metadata.title === 'string' ? metadata.title : '(untitled)';
     const slash = baseRef.indexOf('/');
     const noteId = slash > 0 ? baseRef.slice(slash + 1) : baseRef;
-    // Chunk content is ciphertext at rest.
-    const line = `- ${title} [noteId ${noteId}]: ${clip(revealContent(row.content, contentKey), 400)}`;
+    // An index line: what the note is and how to fetch it, not what it says.
+    // A short note still carries a preview, because for those the preview IS
+    // the note and a second call to read forty characters is pure latency.
+    const body = revealContent(row.content, contentKey);
+    const preview = body.length <= SHORT_NOTE_CHARS ? `: ${body}` : '';
+    const line = `- ${title} [noteId ${noteId}]${preview}`;
     if (spent + line.length + 1 > AGENT_NOTES_INJECT_MAX_CHARS) break;
     lines.push(line);
     spent += line.length + 1;

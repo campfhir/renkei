@@ -96,6 +96,7 @@ export const EXPECTED_MIGRATIONS = [
   '063-pending-oauth-code-verifier',
   '064-agent-access-grants',
   '065-drop-agent-share-token',
+  '066-agent-note-scope',
 ];
 
 export interface MigrationStatus {
