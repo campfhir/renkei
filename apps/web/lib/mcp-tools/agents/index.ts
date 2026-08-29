@@ -168,9 +168,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Read — The exact definition, as JSON',
       description:
         "One of your agents' EXACT stored definition, as raw JSON — the machine path. " +
-        'To change the agent: edit this JSON, change only what the edit needs, keep the ids ' +
-        'of steps/paths/triggers you are keeping (run history and retry settings anchor to ' +
-        'them), and pass the fields to agent_update. For the human-readable rendering ' +
+        'To change a STEP, take its id from here and use agent_patch_steps: it inserts, ' +
+        'replaces, removes or moves one step at a time and leaves the rest untouched. ' +
+        'To rewrite the agent, or to change its name, triggers, guardrails or blocked ' +
+        'skills, edit this JSON — change only what the edit needs, keep the ids of ' +
+        'steps/paths/triggers you are keeping (run history and retry settings anchor to ' +
+        'them) — and pass the fields to agent_update. For the human-readable rendering ' +
         '(outline, knowledge, memory, chaining), use agent_get_description.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -879,16 +882,21 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Act — Update an agent (confirm-gated)',
       description:
         "REPLACE one of your agents' definition (name, steps, triggers, guardrails, blocked " +
-        'skills) — the direct edit path, and the preferred one: start from the exact ' +
-        "definition in agent_get's ```json renkei-agent block, change ONLY what the edit " +
-        'needs, and send the whole definition back. Keep the ids of steps, branch paths, ' +
-        'and triggers you are keeping VERBATIM (run history, retry settings, and firings ' +
-        'anchor to them); give brand-new steps fresh UUIDs. Validation is deterministic and ' +
-        'reports precise per-path issues; the save also re-stamps the current steps format. ' +
-        'Without confirm:true this is a DRY RUN — it validates and shows what would change, ' +
-        'persisting nothing. This tool never TURNS ON an agent (the builder is the consent ' +
-        'surface for that): an off agent stays off, an already-enabled one stays on unless ' +
-        'keepEnabled:false disables it. Prose-to-steps drafting lives in the web builder.',
+        'skills) — the whole-document path, for a rewrite or for changing something that is ' +
+        'NOT a step (the name, a trigger, the guardrails, blocked skills). ' +
+        'TO CHANGE STEPS, USE agent_patch_steps INSTEAD: it inserts, replaces, removes or ' +
+        'moves individual steps by id, and this tool requires echoing every untouched step ' +
+        'back verbatim, where one slip silently rewrites a step nobody meant to touch. ' +
+        "If you do use this: start from the exact definition in agent_get's " +
+        '```json renkei-agent block, change ONLY what the edit needs, and send the whole ' +
+        'definition back. Keep the ids of steps, branch paths, and triggers you are keeping ' +
+        'VERBATIM (run history, retry settings, and firings anchor to them); give brand-new ' +
+        'steps fresh UUIDs. Validation is deterministic and reports precise per-path issues; ' +
+        'the save also re-stamps the current steps format. Without confirm:true this is a ' +
+        'DRY RUN — it validates and shows what would change, persisting nothing. This tool ' +
+        'never TURNS ON an agent (the builder is the consent surface for that): an off agent ' +
+        'stays off, an already-enabled one stays on unless keepEnabled:false disables it. ' +
+        'Prose-to-steps drafting lives in the web builder.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
