@@ -108,6 +108,7 @@ export {
   describeSchedule,
   isRecurrence,
   isBlackoutEntry,
+  recurrenceIssue,
   isValidDateString,
   isValidTimezone,
   MAX_SCHEDULE_RULES,
@@ -151,6 +152,7 @@ export {
 } from './trigger-filters';
 export {
   isTriggerDraft,
+  triggerDraftIssue,
   triggerVariableDescriptors,
   triggerVariableNames,
   validateTriggerDrafts,

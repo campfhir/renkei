@@ -37,7 +37,13 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
-import { BUILTIN_VARIABLES, savesByPathCoverage, type AgentStepsDoc } from '@renkei/agents';
+import {
+  BUILTIN_VARIABLES,
+  MAX_SCHEDULE_RULES,
+  TRIGGER_EVENT_CATALOG,
+  savesByPathCoverage,
+  type AgentStepsDoc,
+} from '@renkei/agents';
 import { readAgentMemory } from '@renkei/agents/memory';
 import { sql } from 'kysely';
 import type { MCPToolContext } from '../common';
@@ -630,15 +636,41 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     }
   );
 
+  /**
+   * The trigger grammar, written out because a caller here has nowhere else
+   * to read it: drafts are `unknown` to zod (the shapes are a discriminated
+   * union zod's JSON Schema projection would flatten into noise), and the
+   * builder — the only other place the vocabulary appears — is a UI. The
+   * event ids come from the catalog so this cannot name a stale set.
+   */
+  const TRIGGERS_DESCRIPTION = [
+    'Trigger drafts — {id?, draft, enabled?} entries, or bare drafts; default none',
+    '(manual only). Keep the `id` of a trigger you are keeping VERBATIM (its firings and',
+    'API key anchor to it); omit it for a new one.',
+    'A draft is one of:',
+    '{kind:"schedule", recurrences:[rule,...], timezone:<IANA zone, e.g. "America/Chicago">,',
+    'startAt?:"YYYY-MM-DD", calendarId?:<holiday calendar id>,',
+    'blackouts?:[{date:"YYYY-MM-DD"}|{start,end}|{annual:"MM-DD"}, each with an optional label],',
+    'blackoutPolicy?:"skip"|"before"|"after"} — where each rule is exactly one of',
+    '{every:"hour"}, {every:"day", at:"HH:MM"}, {every:"weekday", at:"HH:MM"} (Mon-Fri),',
+    '{every:"week", weekday:0-6, at:"HH:MM"} (Sunday=0 — this is how a single named day is',
+    'expressed; there is no {every:"sunday"}), or {every:"month", at:"HH:MM"} plus EXACTLY ONE',
+    'of day:1-31 (clamped to short months), on:"last-day"|"first-weekday"|"last-weekday", or',
+    "nth:1|2|3|4|-1 with weekday:0-6. Times are 24-hour wall clock read in the schedule's",
+    `timezone, and rules combine by union (earliest wins, at most ${MAX_SCHEDULE_RULES}).`,
+    `{kind:"event", eventId:<one of ${TRIGGER_EVENT_CATALOG.map((event) => `"${event.id}"`).join(', ')}>,`,
+    "match?:{<the event's filter field id>: string | string[]}} — filters are optional and",
+    'narrow deterministically before a run exists.',
+    '{kind:"agent", callerAgentId:<the agent id whose run starts this one>}.',
+    '{kind:"api", inputs:[{name, label}, ...]} — each becomes a trigger.<name> variable.',
+  ].join(' ');
+
   const definitionSchema = {
     name: z.string().min(1).max(200).describe('The agent name'),
     steps: z
       .record(z.string(), z.unknown())
       .describe('The full steps document (e.g. the `steps` value from agent_get)'),
-    triggers: z
-      .array(z.unknown())
-      .optional()
-      .describe('Trigger drafts ({draft, enabled} entries or bare drafts); default none'),
+    triggers: z.array(z.unknown()).optional().describe(TRIGGERS_DESCRIPTION),
     llmModelId: z.string().optional().describe('Model config id; default the org default'),
     guardrails: z
       .string()
