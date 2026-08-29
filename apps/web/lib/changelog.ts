@@ -44,6 +44,18 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'Editing an agent from outside the builder',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Change one step without resending the whole agent',
+        detail:
+          'Editing an agent over MCP meant sending its entire definition back, every untouched step copied out word for word — so slipping one new step between two others risked quietly rewriting something else. There is now a patch tool that inserts, replaces, removes or moves individual steps, positioned as “after this one” or “before that one”, and applies all of the changes or none of them.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'OnBase stops spending licences it does not need',
     entries: [
       {
