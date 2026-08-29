@@ -123,9 +123,9 @@ describe('saveAgent description regeneration', () => {
 });
 
 describe('the org step ceiling', () => {
-  /** A draft of `count` trivial steps. */
-  function draftOf(count: number): AgentDraft {
-    return {
+  /** The parsed payload for an agent of `count` trivial steps. */
+  function parsedOf(count: number) {
+    return parsedWith({
       name: 'Long one',
       steps: {
         version: 1,
@@ -138,12 +138,7 @@ describe('the org step ceiling', () => {
           failureHandling: [],
         })),
       },
-      triggers: [],
-      enabled: false,
-      llmModelId: null,
-      guardrails: null,
-      blockedTools: [],
-    };
+    });
   }
 
   afterEach(() => {
@@ -152,13 +147,7 @@ describe('the org step ceiling', () => {
 
   it('refuses past the built-in default when the org has no setting', async () => {
     settingsMock.getOrgSettings.mockImplementation(async () => ({ ok: false }));
-    const result = await saveAgent(
-      db,
-      't1',
-      'owner',
-      { input: {}, draft: draftOf(25), refreshDescription: false },
-      { dryRun: true }
-    );
+    const result = await saveAgent(db, 't1', 'owner', parsedOf(25), { dryRun: true });
 
     expect(result.outcome).toBe('invalid');
     expect(result.outcome === 'invalid' && result.issues.map((i) => i.message)).toContain(
@@ -174,13 +163,7 @@ describe('the org step ceiling', () => {
       ok: true,
       val: { agentMaxSteps: 30, agentMaxStepAttempts: 10, agentApprovalMaxWaitDays: 7 },
     }));
-    const result = await saveAgent(
-      db,
-      't1',
-      'owner',
-      { input: {}, draft: draftOf(25), refreshDescription: false },
-      { dryRun: true }
-    );
+    const result = await saveAgent(db, 't1', 'owner', parsedOf(25), { dryRun: true });
 
     expect(result.outcome).toBe('valid-dry-run');
   });
@@ -190,13 +173,7 @@ describe('the org step ceiling', () => {
       ok: true,
       val: { agentMaxSteps: 30, agentMaxStepAttempts: 10, agentApprovalMaxWaitDays: 7 },
     }));
-    const result = await saveAgent(
-      db,
-      't1',
-      'owner',
-      { input: {}, draft: draftOf(31), refreshDescription: false },
-      { dryRun: true }
-    );
+    const result = await saveAgent(db, 't1', 'owner', parsedOf(31), { dryRun: true });
 
     expect(result.outcome).toBe('invalid');
     expect(result.outcome === 'invalid' && result.issues.map((i) => i.message)).toContain(
