@@ -347,7 +347,7 @@ export async function generateAgentDescription(
         backoffStrategy: 'exponential',
         backoffOffset: RETRY_BACKOFF_OFFSET_MS,
         onRetry: (attempt, error, nextDelayMs) => {
-          logger.info(
+          logger.debug(
             'agent description generation retry {attempt}: {error} (waiting {delay}ms before retry)',
             {
               component: 'agents/describe',

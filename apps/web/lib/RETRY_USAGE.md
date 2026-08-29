@@ -187,7 +187,9 @@ Total: ~15 seconds for 5 attempts
 
 ## Monitoring & Logging
 
-### With Detailed Logging
+Retry attempts are logged at DEBUG level by default (not visible in normal logs).
+
+### With Custom Logging
 ```typescript
 const result = await retryWithBackoff(
   () => operation(),
@@ -195,7 +197,8 @@ const result = await retryWithBackoff(
     timeout: 60_000,
     maxRetries: 3,
     onRetry: (attempt, error, delay) => {
-      logger.warn(
+      // Log at appropriate level for your use case
+      logger.debug(
         'Operation retry {attempt}: {error} (waiting {delay}ms)',
         {
           attempt,
@@ -203,6 +206,8 @@ const result = await retryWithBackoff(
           delay,
         }
       );
+      // Or use warn/error if retries indicate a serious issue:
+      // logger.warn(...)
     },
   }
 );
