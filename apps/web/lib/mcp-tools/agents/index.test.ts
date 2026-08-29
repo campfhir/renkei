@@ -24,6 +24,14 @@ jest.mock('@/lib/agents/agent-notes', () => ({
   updateAgentNote: jest.fn(),
   deleteAgentNote: jest.fn(),
 }));
+jest.mock('@/lib/agents/approvals', () => ({
+  MAX_APPROVAL_ANSWER_CHARS: 10_000,
+  listPendingApprovals: jest.fn(async () => []),
+  decideApproval: jest.fn(),
+}));
+jest.mock('@renkei/queue', () => ({
+  agentJobsQueue: () => ({ producer: { enqueue: jest.fn() } }),
+}));
 jest.mock('@renkei/agents/memory', () => ({
   readAgentMemory: jest.fn(async () => ({ summary: null, entries: [] })),
   renderAgentKnowledgeNotes: jest.fn(async () => ''),
@@ -42,6 +50,10 @@ const saveMock = jest.requireMock<{ saveAgent: jest.Mock }>('@/lib/agents/save')
 const runsMock = jest.requireMock<{ listRunsForOwner: jest.Mock; getRunForOwner: jest.Mock }>(
   '@/lib/agents/runs-view'
 );
+const approvalsMock = jest.requireMock<{
+  listPendingApprovals: jest.Mock;
+  decideApproval: jest.Mock;
+}>('@/lib/agents/approvals');
 const notesMock = jest.requireMock<{
   listAgentNotes: jest.Mock;
   createAgentNote: jest.Mock;
@@ -336,7 +348,13 @@ test('agent_knowledge_write with every entry failing is an error result', async 
 
 test('agent_knowledge_update carries omitted fields over from the stored note', async () => {
   notesMock.listAgentNotes.mockResolvedValue([
-    { noteId: 'n-1', title: 'Old title', content: 'Old content', authoredBy: 'user', sourceAt: null },
+    {
+      noteId: 'n-1',
+      title: 'Old title',
+      content: 'Old content',
+      authoredBy: 'user',
+      sourceAt: null,
+    },
   ]);
   notesMock.updateAgentNote.mockResolvedValue('OK');
   const handlers = registerAll({});
@@ -348,7 +366,11 @@ test('agent_knowledge_update carries omitted fields over from the stored note', 
   expect(result.isError).toBeUndefined();
   expect(notesMock.updateAgentNote).toHaveBeenCalledWith(
     expect.anything(),
-    expect.objectContaining({ title: 'Old title', content: 'New content', ownerEmail: 'alice@example.com' })
+    expect.objectContaining({
+      title: 'Old title',
+      content: 'New content',
+      ownerEmail: 'alice@example.com',
+    })
   );
 });
 
@@ -381,4 +403,191 @@ test('every agents tool fails closed without a subject', async () => {
     expect(result.isError).toBe(true);
     expect(`${name}: ${result.content[0]?.text ?? ''}`).toContain('no recorded identity');
   }
+});
+
+const PENDING = {
+  cardId: 'card-1',
+  runId: 'run-1',
+  agentId: 'agent-1',
+  agentName: 'Refund triage',
+  title: 'Refund triage — needs your approval',
+  message: 'Refund $240 to Dana Lin?',
+  mode: 'approve' as const,
+  raisedAt: '2026-08-28T09:00:00.000Z',
+  waitingUntil: '2026-08-31T09:00:00.000Z',
+};
+
+describe('agent_approvals_list', () => {
+  it('carries what a decision needs: the cardId, the ask, and the time left', async () => {
+    approvalsMock.listPendingApprovals.mockResolvedValue([PENDING]);
+    jest.useFakeTimers().setSystemTime(new Date('2026-08-30T09:00:00.000Z'));
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('agent_approvals_list')!({})).content[0]?.text ?? '';
+    jest.useRealTimers();
+
+    expect(text).toContain('1 approval(s) waiting on you');
+    expect(text).toContain('cardId: card-1');
+    expect(text).toContain('Refund $240 to Dana Lin?');
+    expect(text).toContain('Wants approve or decline');
+    expect(text).toContain('24h left before it times out');
+    expect(text).toContain('agent_approval_decide');
+  });
+
+  it('says an input-mode card wants an answer, not just a verdict', async () => {
+    approvalsMock.listPendingApprovals.mockResolvedValue([{ ...PENDING, mode: 'input' }]);
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('agent_approvals_list')!({})).content[0]?.text ?? '';
+
+    expect(text).toContain('Wants a typed ANSWER');
+  });
+
+  it('says nothing is waiting rather than answering with an empty list', async () => {
+    approvalsMock.listPendingApprovals.mockResolvedValue([]);
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('agent_approvals_list')!({})).content[0]?.text ?? '';
+
+    expect(text).toContain('Nothing is waiting on you');
+  });
+});
+
+describe('agent_approval_decide', () => {
+  beforeEach(() => {
+    approvalsMock.decideApproval.mockReset();
+  });
+
+  it('REFUSES an agent run — the pause exists so a person decides', async () => {
+    // An agent that could answer its own approval makes every approval step
+    // decorative. This is the single most important rule in this file.
+    const handlers = registerAll({ agent: { agentId: 'agent-1' } });
+
+    const result = await handlers.get('agent_approval_decide')!({
+      cardId: 'card-1',
+      decision: 'approve',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('Agent runs cannot decide approvals');
+    expect(approvalsMock.decideApproval).not.toHaveBeenCalled();
+  });
+
+  it('reports where the run went, and that it was queued', async () => {
+    approvalsMock.decideApproval.mockResolvedValue({
+      outcome: 'decided',
+      decision: 'approve',
+      runId: 'run-1',
+      resumed: true,
+    });
+    const handlers = registerAll({});
+
+    const text =
+      (await handlers.get('agent_approval_decide')!({ cardId: 'card-1', decision: 'approve' }))
+        .content[0]?.text ?? '';
+
+    expect(text).toContain('Approved. Run run-1 takes its approved path.');
+    expect(text).toContain('queued to resume');
+  });
+
+  it('never calls a saved decision a failure when only the wake was lost', async () => {
+    // The claim is durable and the sweep picks the run up; reporting an
+    // error here would have the caller decide twice.
+    approvalsMock.decideApproval.mockResolvedValue({
+      outcome: 'decided',
+      decision: 'decline',
+      runId: 'run-1',
+      resumed: false,
+    });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_approval_decide')!({
+      cardId: 'card-1',
+      decision: 'decline',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain('resume automatically within a few minutes');
+  });
+
+  it('says who got there first rather than overwriting a standing decision', async () => {
+    approvalsMock.decideApproval.mockResolvedValue({
+      outcome: 'already-decided',
+      status: 'expired',
+    });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_approval_decide')!({
+      cardId: 'card-1',
+      decision: 'approve',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('already expired');
+  });
+
+  it('points an ordinary card at the tool that handles it', async () => {
+    approvalsMock.decideApproval.mockResolvedValue({ outcome: 'not-approval' });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_approval_decide')!({
+      cardId: 'card-9',
+      decision: 'approve',
+    });
+
+    expect(result.content[0]?.text).toContain('card_dismiss');
+  });
+});
+
+describe('a waiting run says what it is waiting on', () => {
+  it('annotates the waiting run in agent_runs_list', async () => {
+    // "waiting" alone reads as stuck. The answer is a decision the caller
+    // reading this line can make.
+    stubDb({ row: { id: 'agent-1' } });
+    storeMock.getAgent.mockResolvedValue(AGENT);
+    runsMock.listRunsForOwner.mockResolvedValue([
+      {
+        id: 'run-1',
+        status: 'waiting',
+        triggerKind: 'schedule',
+        createdAt: '2026-08-28T09:00:00.000Z',
+        durationMs: null,
+        error: null,
+        errorKind: null,
+        failedStepName: null,
+      },
+    ]);
+    approvalsMock.listPendingApprovals.mockResolvedValue([PENDING]);
+    const handlers = registerAll({});
+
+    const text =
+      (await handlers.get('agent_runs_list')!({ agentId: 'agent-1' })).content[0]?.text ?? '';
+
+    expect(text).toContain('- waiting · via schedule');
+    expect(text).toContain('Waiting on you:');
+    expect(text).toContain('cardId: card-1');
+  });
+
+  it('spends no query on approvals when nothing is waiting', async () => {
+    stubDb({ row: { id: 'agent-1' } });
+    storeMock.getAgent.mockResolvedValue(AGENT);
+    runsMock.listRunsForOwner.mockResolvedValue([
+      {
+        id: 'run-2',
+        status: 'succeeded',
+        triggerKind: 'manual',
+        createdAt: '2026-08-28T09:00:00.000Z',
+        durationMs: 1200,
+        error: null,
+        errorKind: null,
+        failedStepName: null,
+      },
+    ]);
+    approvalsMock.listPendingApprovals.mockClear();
+    const handlers = registerAll({});
+
+    await handlers.get('agent_runs_list')!({ agentId: 'agent-1' });
+
+    expect(approvalsMock.listPendingApprovals).not.toHaveBeenCalled();
+  });
 });

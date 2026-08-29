@@ -65,6 +65,13 @@ import {
   type AgentNoteError,
 } from '@/lib/agents/agent-notes';
 import { agentDefinition } from '@/lib/agents/definition';
+import {
+  decideApproval,
+  listPendingApprovals,
+  MAX_APPROVAL_ANSWER_CHARS,
+  type PendingApproval,
+} from '@/lib/agents/approvals';
+import { agentJobsQueue } from '@renkei/queue';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
 
@@ -132,6 +139,29 @@ function variableLines(steps: AgentStepsDoc): string[] {
           ),
         ]
       : []),
+  ];
+}
+
+/**
+ * One waiting approval, with everything a decision needs in the lines that
+ * announce it: what is being asked, which run it holds up, whether a
+ * verdict is enough or an answer is wanted, and how long is left.
+ */
+function approvalLines(approval: PendingApproval, now: number): string[] {
+  const deadline = approval.waitingUntil ? new Date(approval.waitingUntil).getTime() : null;
+  const hoursLeft = deadline === null ? null : Math.round((deadline - now) / 3_600_000);
+  const remaining =
+    hoursLeft === null
+      ? ''
+      : hoursLeft <= 0
+        ? ' — the wait has run out; the run takes its timed-out path next'
+        : ` — ${hoursLeft}h left before it times out`;
+  return [
+    `- ${approval.title}`,
+    `  cardId: ${approval.cardId} · agent "${approval.agentName}" (${approval.agentId}) · run ${approval.runId}`,
+    `  ${approval.mode === 'input' ? 'Wants a typed ANSWER alongside the decision' : 'Wants approve or decline'}` +
+      ` · raised ${approval.raisedAt}${remaining}`,
+    ...(approval.message ? [`  ${approval.message.replace(/\n/g, '\n  ')}`] : []),
   ];
 }
 
@@ -285,6 +315,164 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   );
 
   server.registerTool(
+    'agent_approvals_list',
+    {
+      title: 'Agents · Read — Approvals waiting on you',
+      description:
+        'The approval cards your agents are PAUSED on, waiting for you to decide — oldest ' +
+        'first, because the oldest is the one about to time out. An agent that reaches an ' +
+        'approval step parks its whole run as "waiting" and raises one of these; until ' +
+        'somebody answers, that run does nothing and the work behind it does not happen. ' +
+        'Each entry carries the cardId agent_approval_decide takes, what is being asked, ' +
+        'which run it holds up, whether a verdict is enough or a typed answer is wanted, and ' +
+        'how long is left before the wait runs out and the run takes its timed-out path.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        agentId: z
+          .string()
+          .optional()
+          .describe('Only approvals raised by this agent (from agent_list)'),
+        limit: z.number().int().min(1).max(50).optional().describe('Max approvals (default 20)'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+
+      const approvals = await listPendingApprovals(
+        dbResult.val,
+        context.tenantId,
+        context.subject,
+        {
+          agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
+          limit: typeof args.limit === 'number' ? args.limit : undefined,
+        }
+      );
+      if (approvals.length === 0) {
+        return textResult(
+          'Nothing is waiting on you — none of your agents is paused for a decision.'
+        );
+      }
+
+      const now = Date.now();
+      return textResult(
+        [
+          `${approvals.length} approval(s) waiting on you, longest-waiting first:`,
+          ...approvals.flatMap((approval) => ['', ...approvalLines(approval, now)]),
+          '',
+          'Answer one with agent_approval_decide, giving its cardId.',
+        ].join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
+    'agent_approval_decide',
+    {
+      title: 'Agents · Act — Approve or decline a paused run',
+      description:
+        'Answer one of the approval cards from agent_approvals_list: approve it, or decline ' +
+        'it. The run resumes down whichever outcome path applies — approved, declined, or ' +
+        '(if nobody answers in time) timed out. A declined approval does NOT fail the run by ' +
+        'itself; it takes the path its author wrote for that answer. When the card wants a ' +
+        'typed answer ("input" mode), pass `answer` — it binds to the variable the step ' +
+        'named, and everything after can use it. ' +
+        "This is a REAL DECISION on the owner's behalf, taken immediately and not " +
+        'reversible from here — an approval step exists because a person was meant to weigh ' +
+        'in, so confirm with them before deciding for them. AGENT RUNS CANNOT CALL THIS: an ' +
+        'agent approving its own pause is the whole point of the pause, undone.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        cardId: z.string().min(1).describe('From agent_approvals_list'),
+        decision: z
+          .enum(['approve', 'decline'])
+          .describe('"approve" takes the approved path; "decline" takes the declined path'),
+        answer: z
+          .string()
+          .max(MAX_APPROVAL_ANSWER_CHARS)
+          .optional()
+          .describe(
+            'The typed answer, for a card in "input" mode — it binds to the step\'s saveAs ' +
+              'name for everything after it'
+          ),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      // The cards ground rule, at its sharpest: the pause exists so a PERSON
+      // decides. A run that could answer its own approval — or another
+      // agent's — would make every approval step decorative.
+      if (context.agent) {
+        return errText(
+          'Agent runs cannot decide approvals — that is the one thing an approval step ' +
+            'exists to prevent. A person answers this, in the Renkei feed or through their ' +
+            'own MCP client.'
+        );
+      }
+      const decision =
+        args.decision === 'approve' || args.decision === 'decline' ? args.decision : null;
+      if (!decision) return errText('decision must be "approve" or "decline".');
+
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+
+      const result = await decideApproval(
+        dbResult.val,
+        agentJobsQueue().producer,
+        context.tenantId,
+        context.subject,
+        {
+          cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
+          decision,
+          answer: typeof args.answer === 'string' ? args.answer : undefined,
+        }
+      );
+
+      switch (result.outcome) {
+        case 'answer-too-long':
+          return errText(`The answer must stay under ${result.max} characters.`);
+        case 'not-found':
+          return errText(
+            'No approval of yours has that cardId. Approvals are owner-scoped — ' +
+              'agent_approvals_list shows the ones you can decide.'
+          );
+        case 'not-approval':
+          return errText(
+            'That card is not an approval. Informational cards are dismissed with ' +
+              'card_dismiss; only a paused run raises a decision.'
+          );
+        case 'already-decided':
+          // Someone (or the timeout sweep) got there first. Saying so beats
+          // overwriting a decision that already stands.
+          return errText(
+            `That approval is already ${result.status} — it was decided elsewhere, or the ` +
+              'wait ran out and the run took its timed-out path.'
+          );
+        case 'decided': {
+          logger.info('agent_approval_decide answered a paused run', {
+            component: 'mcp/tool',
+            tenantId: context.tenantId,
+            runId: result.runId,
+            decision: result.decision,
+          });
+          return textResult(
+            [
+              `${result.decision === 'approve' ? 'Approved' : 'Declined'}. Run ${result.runId} ` +
+                `takes its ${result.decision === 'approve' ? 'approved' : 'declined'} path.`,
+              // The claim is durable either way; only the wake is in doubt,
+              // and the sweep covers it. Never report this as a failure.
+              result.resumed
+                ? 'It has been queued to resume — agent_run_get will show where it went.'
+                : 'The decision is saved; the run will resume automatically within a few minutes.',
+            ].join('\n')
+          );
+        }
+      }
+    }
+  );
+
+  server.registerTool(
     'agent_runs_list',
     {
       title: 'Agents · Read — Recent runs of an agent',
@@ -329,13 +517,28 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       );
       if (runs.length === 0) return textResult('No runs match.');
 
+      // "waiting" on its own says a run is stuck without saying on WHAT, and
+      // the answer is a decision this caller can make right here.
+      const waiting = runs.some((run) => run.status === 'waiting')
+        ? await listPendingApprovals(dbResult.val, context.tenantId, context.subject, {
+            agentId: agent.id,
+            limit: 50,
+          })
+        : [];
+      const byRun = new Map(waiting.map((approval) => [approval.runId, approval]));
+      const now = Date.now();
+
       const lines = [`${runs.length} run(s) of "${agent.name}", newest first:`];
       for (const run of runs) {
         const duration = run.durationMs !== null ? ` · ${Math.round(run.durationMs / 1000)}s` : '';
+        const approval = byRun.get(run.id);
         lines.push(
           '',
           `- ${run.status} · via ${run.triggerKind} · ${run.createdAt}${duration}`,
           `  runId: ${run.id}`,
+          ...(approval
+            ? ['  Waiting on you:', ...approvalLines(approval, now).map((line) => `  ${line}`)]
+            : []),
           ...(run.error
             ? [
                 `  ${run.errorKind ?? 'error'}${run.failedStepName ? ` at "${run.failedStepName}"` : ''}: ${run.error}`,
@@ -383,7 +586,33 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const run = await getRunForOwner(db, context.tenantId, context.subject, agent.id, runId);
       if (!run) return errText('No run of yours has that id.');
 
-      return textResult(renderRunDebugMarkdown(agent.name, run));
+      // A parked run's timeline ends mid-air without this: the last thing it
+      // did was raise a card, and the card is what happens next.
+      const approval =
+        run.status === 'waiting'
+          ? (
+              await listPendingApprovals(db, context.tenantId, context.subject, {
+                agentId: agent.id,
+                limit: 50,
+              })
+            ).find((pending) => pending.runId === runId)
+          : undefined;
+
+      return textResult(
+        [
+          renderRunDebugMarkdown(agent.name, run),
+          ...(approval
+            ? [
+                '',
+                '## Waiting on you',
+                '',
+                ...approvalLines(approval, Date.now()),
+                '',
+                'Answer it with agent_approval_decide, giving its cardId.',
+              ]
+            : []),
+        ].join('\n')
+      );
     }
   );
 
