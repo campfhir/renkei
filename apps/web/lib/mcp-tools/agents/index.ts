@@ -22,12 +22,18 @@
  *    to behavior. Knowledge and memory tools stay available to runs:
  *    knowledge is reference data an agent legitimately curates
  *    (knowledge_create_note already exists); steps and guardrails are
- *    behavior definition, and that line is the point.
+ *    behavior definition, and that line is the point. The one memory
+ *    exception: agent_memory_forget's blanket `all` wipe refuses runs too,
+ *    because that record is what the NEXT run and the owner both read —
+ *    forgetting named entries stays open to runs.
  *  - Writes are CONFIRM-GATED: without `confirm: true`, every
  *    definition-editing tool validates and reports what WOULD be saved,
  *    persisting nothing. `enabled: true` is refused outright — the builder's review
  *    panel is the consent surface for arming an agent; disabling is
- *    always allowed.
+ *    always allowed. agent_memory_forget shares the gate for its
+ *    `all` wipe (a dry run reports what would go), while forgetting named
+ *    entries is immediate — the caller listed them from agent_memory_list
+ *    first.
  *  - There is NO drafting tool here. Prose-to-steps drafting is the web
  *    builder's own REST path (/agents/draft + the worker job); model
  *    callers work at the definition level instead — agent_get hands them
@@ -61,7 +67,7 @@ import {
   savesByPathCoverage,
   type AgentStepsDoc,
 } from '@renkei/agents';
-import { readAgentMemory } from '@renkei/agents/memory';
+import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/agents/memory';
 import { sql } from 'kysely';
 import type { MCPToolContext } from '../common';
 import { getAgent, listAgents, type StoredAgent, type TriggerPayload } from '@/lib/agents/store';
@@ -103,6 +109,11 @@ function textResult(text: string) {
 
 function errText(text: string) {
   return { content: [{ type: 'text' as const, text }], isError: true as const };
+}
+
+/** "1 entry" / "3 entries" — memory counts appear in three sentences. */
+function entryCount(count: number): string {
+  return `${count} ${count === 1 ? 'entry' : 'entries'}`;
 }
 
 const NO_SUBJECT = 'This caller has no recorded identity, so it has no agents.';
@@ -860,7 +871,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       description:
         "One of your agents' memory in full: the rolling summary and the newest entries the " +
         'engine recorded across runs. agent_get shows the bounded slice runs receive; this is ' +
-        'the raw list.',
+        'the raw list. Returns entryIds for agent_memory_forget.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -884,10 +895,158 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (memory.entries.length > 0) {
         lines.push('', `Entries (${memory.entries.length}, newest first):`);
         for (const entry of memory.entries) {
-          lines.push(`- [${entry.createdAt.toISOString()}] ${entry.content}`);
+          // The entryId rides along because forgetting is SELECTIVE here:
+          // without an id per line the only reachable verb is "clear it all".
+          lines.push(
+            `- [${entry.createdAt.toISOString()}] (entryId: ${entry.id}) ${entry.content}`
+          );
         }
       }
       return textResult(lines.join('\n'));
+    }
+  );
+
+  server.registerTool(
+    'agent_memory_forget',
+    {
+      title: "Agents · Act — Forget an agent's memory",
+      description:
+        'Delete what one of your agents remembers: named entries (entryIds from ' +
+        'agent_memory_list), the rolling summary, or everything. Selective forgetting is the ' +
+        'point — an agent that learned one wrong fact should lose that fact, not its whole ' +
+        'history. `all: true` needs `confirm: true`; without it you get a count of what would ' +
+        'go and nothing is deleted. Memory does not come back.',
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      inputSchema: z.object({
+        agentId: z.string().min(1).describe('From agent_list'),
+        entryIds: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(100)
+          .optional()
+          .describe('From agent_memory_list — the entries to forget'),
+        summary: z
+          .boolean()
+          .optional()
+          .describe('Also drop the rolling summary (entries are untouched)'),
+        all: z
+          .boolean()
+          .optional()
+          .describe('Forget everything — entries and summary. Requires confirm: true'),
+        confirm: z.boolean().optional().describe('Required for all: true'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      const all = args.all === true;
+      // A run curating its own notes is fine — wiping the record of what it
+      // has already done is not: the next run reads that memory, and the
+      // owner reads it to see what the agent has been doing. Selective
+      // forgetting stays open to runs; the blanket wipe is the owner's.
+      if (all && context.agent) {
+        return errText(
+          "Agent runs cannot clear an agent's whole memory — that record is what the next " +
+            'run and the owner both read. Forget specific entryIds instead, or clear it from ' +
+            "the agent's page."
+        );
+      }
+      const entryIds = Array.isArray(args.entryIds)
+        ? [
+            ...new Set(
+              args.entryIds.filter((id): id is string => typeof id === 'string' && !!id.trim())
+            ),
+          ]
+        : [];
+      const clearSummary = args.summary === true;
+      if (!all && entryIds.length === 0 && !clearSummary) {
+        return errText(
+          'Nothing to forget — pass entryIds (from agent_memory_list), summary: true, or ' +
+            'all: true.'
+        );
+      }
+      if (all && (entryIds.length > 0 || clearSummary)) {
+        return errText(
+          'all: true already clears everything — call it on its own, or name entryIds instead.'
+        );
+      }
+
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const db = dbResult.val;
+      const agent = await ownAgent(db, context, args.agentId);
+      if (!agent) return errText(NOT_FOUND);
+
+      if (all) {
+        const held = await countAgentMemory(db, context.tenantId, agent.id);
+        if (held.entries === 0 && !held.hasSummary) {
+          return textResult(`"${agent.name}" remembers nothing already — nothing to forget.`);
+        }
+        const holding = `${entryCount(held.entries)}${
+          held.hasSummary ? ' and the rolling summary' : ''
+        }`;
+        if (args.confirm !== true) {
+          return textResult(
+            [
+              `Would clear ALL of "${agent.name}"'s memory: ${holding}.`,
+              'Nothing deleted — call again with confirm: true.',
+            ].join('\n')
+          );
+        }
+        const result = await forgetAgentMemory(db, context.tenantId, agent.id, { kind: 'all' });
+        // Memory does not come back, so the wipe leaves a trace somewhere.
+        logger.info('agent_memory_forget cleared an agent memory', {
+          component: 'mcp/tool',
+          tenantId: context.tenantId,
+          agentId: agent.id,
+          entriesDeleted: result.entriesDeleted,
+          summaryCleared: result.summaryCleared,
+        });
+        return textResult(
+          `Cleared "${agent.name}"'s memory: ${entryCount(result.entriesDeleted)}` +
+            `${result.summaryCleared ? ' and the rolling summary' : ''} forgotten.`
+        );
+      }
+
+      const lines: string[] = [];
+      let entriesDeleted = 0;
+      if (entryIds.length > 0) {
+        const result = await forgetAgentMemory(db, context.tenantId, agent.id, {
+          kind: 'entries',
+          entryIds,
+        });
+        entriesDeleted = result.entriesDeleted;
+        lines.push(
+          `${entriesDeleted}/${entryIds.length} named entr` +
+            `${entryIds.length === 1 ? 'y' : 'ies'} forgotten.`
+        );
+        for (const id of result.missingIds) {
+          lines.push(`- ${id}: no entry of this agent has that id.`);
+        }
+      }
+      if (clearSummary) {
+        const result = await forgetAgentMemory(db, context.tenantId, agent.id, {
+          kind: 'summary',
+        });
+        lines.push(
+          result.summaryCleared
+            ? 'Rolling summary cleared.'
+            : 'No rolling summary to clear — the agent had none.'
+        );
+      }
+      // Entries the summary already folded in survive inside it; say so
+      // rather than let "forgotten" read as more than it is.
+      if (entriesDeleted > 0 && !clearSummary) {
+        lines.push(
+          'Note: anything compaction had already folded into the rolling summary stays there — ' +
+            'pass summary: true to drop that too.'
+        );
+      }
+      const body = [`Memory of "${agent.name}":`, ...lines].join('\n');
+      // Every named id missing and nothing else asked for is a failed call,
+      // not a quiet no-op.
+      return entryIds.length > 0 && entriesDeleted === 0 && !clearSummary
+        ? errText(body)
+        : textResult(body);
     }
   );
 

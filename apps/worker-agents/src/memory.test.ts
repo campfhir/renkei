@@ -11,6 +11,8 @@ import type { Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import {
   appendAgentMemory,
+  countAgentMemory,
+  forgetAgentMemory,
   readAgentMemory,
   renderAgentMemory,
   writeAgentMemorySummary,
@@ -109,6 +111,80 @@ maybe('agent memory', () => {
     const rendered = renderAgentMemory(await readAgentMemory(db, tenantId, agentId));
     expect(rendered.length).toBeLessThanOrEqual(MEMORY_INJECT_MAX_CHARS);
     expect(rendered.length).toBeGreaterThan(0);
+  });
+
+  it('forgets named entries and reports ids that matched nothing', async () => {
+    await appendAgentMemory(db, { tenantId, agentId, content: 'keep me' });
+    await appendAgentMemory(db, { tenantId, agentId, content: 'forget me' });
+    const before = await readAgentMemory(db, tenantId, agentId);
+    const doomed = before.entries.find((entry) => entry.content === 'forget me');
+    const absent = randomUUID();
+
+    // A malformed id rides along: it must come back missing, not blow the
+    // batch up on the uuid cast.
+    const result = await forgetAgentMemory(db, tenantId, agentId, {
+      kind: 'entries',
+      entryIds: [doomed!.id, absent, 'not-a-uuid'],
+    });
+
+    expect(result.entriesDeleted).toBe(1);
+    expect(result.missingIds).toEqual([absent, 'not-a-uuid']);
+    const after = await readAgentMemory(db, tenantId, agentId);
+    expect(after.entries.map((entry) => entry.content)).toEqual(['keep me']);
+  });
+
+  it("will not delete another agent's entry, even with its real id", async () => {
+    const otherId = randomUUID();
+    await db
+      .insertInto('agents')
+      .values({
+        id: otherId,
+        tenant_id: tenantId,
+        owner_subject: 'owner-1',
+        name: `mem-agent-${otherId.slice(0, 8)}`,
+        steps: JSON.stringify({ version: 1, steps: [] }),
+        enabled: true,
+      })
+      .execute();
+    await appendAgentMemory(db, { tenantId, agentId: otherId, content: 'theirs' });
+    const theirs = (await readAgentMemory(db, tenantId, otherId)).entries[0];
+
+    const result = await forgetAgentMemory(db, tenantId, agentId, {
+      kind: 'entries',
+      entryIds: [theirs.id],
+    });
+
+    expect(result.entriesDeleted).toBe(0);
+    expect(result.missingIds).toEqual([theirs.id]);
+    expect((await readAgentMemory(db, tenantId, otherId)).entries).toHaveLength(1);
+  });
+
+  it('clears the summary alone, leaving entries in place', async () => {
+    await appendAgentMemory(db, { tenantId, agentId, content: 'still here' });
+    await writeAgentMemorySummary(db, tenantId, agentId, 'the standing summary');
+
+    const result = await forgetAgentMemory(db, tenantId, agentId, { kind: 'summary' });
+
+    expect(result.summaryCleared).toBe(true);
+    const memory = await readAgentMemory(db, tenantId, agentId);
+    expect(memory.summary).toBeNull();
+    expect(memory.entries).toHaveLength(1);
+  });
+
+  it('counts what is held, then all clears every row', async () => {
+    await appendAgentMemory(db, { tenantId, agentId, content: 'one' });
+    await appendAgentMemory(db, { tenantId, agentId, content: 'two' });
+    await writeAgentMemorySummary(db, tenantId, agentId, 'summary');
+
+    expect(await countAgentMemory(db, tenantId, agentId)).toEqual({
+      entries: 2,
+      hasSummary: true,
+    });
+
+    const result = await forgetAgentMemory(db, tenantId, agentId, { kind: 'all' });
+
+    expect(result).toEqual({ entriesDeleted: 2, summaryCleared: true, missingIds: [] });
+    expect(await readAgentMemory(db, tenantId, agentId)).toEqual({ summary: null, entries: [] });
   });
 
   it('compaction folds old entries into the summary via the agent model', async () => {
