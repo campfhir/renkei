@@ -270,7 +270,11 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
       title: 'Cards · Read — List your feed cards',
       description:
         "The Renkei card feed as YOU see it: your own cards plus the tenant's shared ones, " +
-        'newest first, with cardIds.',
+        'newest first, with cardIds. Two kinds land here and they are answered differently: ' +
+        'an "info" card is a note that stays until you acknowledge it with card_dismiss, ' +
+        'while an "approval" card is an agent run PAUSED on your decision — it names the run ' +
+        'it is holding up, and agent_approval_decide is what answers it (agent_approvals_list ' +
+        'shows those on their own, with the time left before each times out).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         status: z
@@ -291,15 +295,32 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
       if (!dbResult.ok) return errText('Database unavailable.');
 
       let query = dbResult.val
-        .selectFrom('actionable_items')
-        .select(['id', 'kind', 'source', 'status', 'title', 'summary', 'created_at', 'archived_at'])
-        .where('tenant_id', '=', context.tenantId)
+        .selectFrom('actionable_items as c')
+        // An approval card belongs to a run of an agent; the join is left
+        // because an info card belongs to neither.
+        .leftJoin('agents as a', 'a.id', 'c.created_by_agent_id')
+        .select([
+          'c.id as id',
+          'c.kind as kind',
+          'c.source as source',
+          'c.status as status',
+          'c.title as title',
+          'c.summary as summary',
+          'c.created_at as created_at',
+          'c.archived_at as archived_at',
+          'c.run_id as runId',
+          'a.id as agentId',
+          'a.name as agentName',
+        ])
+        .where('c.tenant_id', '=', context.tenantId)
         // The same visibility rule as the web feed: mine, or tenant-wide.
-        .where((eb) => eb.or([eb('owner_subject', 'is', null), eb('owner_subject', '=', subject)]))
-        .orderBy('created_at', 'desc')
+        .where((eb) =>
+          eb.or([eb('c.owner_subject', 'is', null), eb('c.owner_subject', '=', subject)])
+        )
+        .orderBy('c.created_at', 'desc')
         .limit(limit);
-      if (typeof args.status === 'string') query = query.where('status', '=', args.status);
-      if (args.includeArchived !== true) query = query.where('archived_at', 'is', null);
+      if (typeof args.status === 'string') query = query.where('c.status', '=', args.status);
+      if (args.includeArchived !== true) query = query.where('c.archived_at', 'is', null);
       const rows = await query.execute();
 
       if (rows.length === 0) return textResult('No cards match.');
@@ -307,11 +328,24 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
       for (const row of rows) {
         const summary = row.summary ?? '';
         const excerpt = summary.length <= 200 ? summary : `${summary.slice(0, 199)}…`;
+        // An approval card is a run waiting on a person, and a caller that
+        // cannot tell it from a note treats a paused agent as something to
+        // acknowledge — or leaves it sitting, which is the same outcome. Its
+        // run is the context that makes it decidable, and `source` says who
+        // put the card here, which was fetched and then dropped.
+        const isApproval = row.kind === 'approval' && row.runId;
         lines.push(
           '',
-          `- ${row.title} — ${row.kind} · ${row.status}` +
+          `- ${row.title} — ${row.kind} · ${row.status} · from ${row.source}` +
             `${row.archived_at ? ' · archived' : ''} — ${new Date(row.created_at).toISOString()}`,
           `  cardId: ${row.id}`,
+          ...(isApproval
+            ? [
+                `  Paused run ${row.runId}` +
+                  `${row.agentName ? ` of agent "${row.agentName}" (${row.agentId})` : ''}` +
+                  `${row.status === 'suggested' ? ' — decide it with agent_approval_decide' : ''}`,
+              ]
+            : []),
           `  ${excerpt}`
         );
       }
