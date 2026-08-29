@@ -24,6 +24,7 @@ jest.mock('@/lib/agents/agent-notes', () => ({
   updateAgentNote: jest.fn(),
   deleteAgentNote: jest.fn(),
 }));
+jest.mock('@/lib/mcp-tools/tool-catalog', () => ({ listAvailableTools: jest.fn() }));
 jest.mock('@renkei/agents/memory', () => ({
   readAgentMemory: jest.fn(async () => ({ summary: null, entries: [] })),
   renderAgentKnowledgeNotes: jest.fn(async () => ''),
@@ -33,6 +34,7 @@ jest.mock('@renkei/agents/memory', () => ({
 import type { McpServer } from '@modelcontextprotocol/server';
 import { registerAgentTools } from './index';
 import type { MCPToolContext } from '../common';
+import { APPROVAL_DEFAULT_TIMEOUT_HOURS } from '@renkei/agents';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const storeMock = jest.requireMock<{ getAgent: jest.Mock; listAgents: jest.Mock }>(
@@ -41,6 +43,9 @@ const storeMock = jest.requireMock<{ getAgent: jest.Mock; listAgents: jest.Mock 
 const saveMock = jest.requireMock<{ saveAgent: jest.Mock }>('@/lib/agents/save');
 const runsMock = jest.requireMock<{ listRunsForOwner: jest.Mock; getRunForOwner: jest.Mock }>(
   '@/lib/agents/runs-view'
+);
+const catalogMock = jest.requireMock<{ listAvailableTools: jest.Mock }>(
+  '@/lib/mcp-tools/tool-catalog'
 );
 const notesMock = jest.requireMock<{
   listAgentNotes: jest.Mock;
@@ -54,11 +59,20 @@ type Handler = (args: Record<string, unknown>) => Promise<{
   isError?: boolean;
 }>;
 
+/** The registered schema/description of each tool, by name. */
+const configs = new Map<string, { description?: string; inputSchema?: unknown }>();
+
 function registerAll(context: Partial<MCPToolContext>): Map<string, Handler> {
   const handlers = new Map<string, Handler>();
+  configs.clear();
   const server = {
-    registerTool: (name: string, _config: unknown, handler: Handler) => {
+    registerTool: (
+      name: string,
+      config: { description?: string; inputSchema?: unknown },
+      handler: Handler
+    ) => {
       handlers.set(name, handler);
+      configs.set(name, config);
     },
   };
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
@@ -336,7 +350,13 @@ test('agent_knowledge_write with every entry failing is an error result', async 
 
 test('agent_knowledge_update carries omitted fields over from the stored note', async () => {
   notesMock.listAgentNotes.mockResolvedValue([
-    { noteId: 'n-1', title: 'Old title', content: 'Old content', authoredBy: 'user', sourceAt: null },
+    {
+      noteId: 'n-1',
+      title: 'Old title',
+      content: 'Old content',
+      authoredBy: 'user',
+      sourceAt: null,
+    },
   ]);
   notesMock.updateAgentNote.mockResolvedValue('OK');
   const handlers = registerAll({});
@@ -348,7 +368,11 @@ test('agent_knowledge_update carries omitted fields over from the stored note', 
   expect(result.isError).toBeUndefined();
   expect(notesMock.updateAgentNote).toHaveBeenCalledWith(
     expect.anything(),
-    expect.objectContaining({ title: 'Old title', content: 'New content', ownerEmail: 'alice@example.com' })
+    expect.objectContaining({
+      title: 'Old title',
+      content: 'New content',
+      ownerEmail: 'alice@example.com',
+    })
   );
 });
 
@@ -381,4 +405,170 @@ test('every agents tool fails closed without a subject', async () => {
     expect(result.isError).toBe(true);
     expect(`${name}: ${result.content[0]?.text ?? ''}`).toContain('no recorded identity');
   }
+});
+
+/** A catalog entry, with the two things a step author actually needs. */
+const catalogTool = (
+  name: string,
+  connector: string,
+  kind: 'read' | 'act',
+  description: string,
+  extra: { appOnly?: boolean } = {}
+) => ({
+  name,
+  connector,
+  kind,
+  title: `${connector} · ${kind === 'act' ? 'Act' : 'Read'} — ${name}`,
+  description,
+  appOnly: extra.appOnly === true,
+  outcomes: {
+    success: { label: 'It worked' },
+    failures: [
+      { code: 'not-found', label: 'Missing', description: 'x', retriable: true },
+      { code: 'other', label: 'Anything else', description: 'x', retriable: true },
+    ],
+  },
+});
+
+const CATALOG = [
+  catalogTool('outlook_send_mail', 'outlook', 'act', 'Send an email as yourself.'),
+  catalogTool('outlook_list_messages', 'outlook', 'read', 'List messages in a folder.'),
+  catalogTool('jira_create_issue', 'jira', 'act', 'Create a Jira issue.'),
+  catalogTool('jira_create_issue_preview', 'jira', 'act', 'A card only.', { appOnly: true }),
+];
+
+describe('agent_list_tools', () => {
+  beforeEach(() => {
+    catalogMock.listAvailableTools.mockResolvedValue(CATALOG);
+  });
+
+  it('names the whole vocabulary by connector when nothing is filtered', async () => {
+    const handlers = registerAll({});
+    const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
+
+    // Names, not descriptions: what a step has to get exactly right, without
+    // the wall of prose for a catalog this size.
+    expect(text).toContain('3 skills your agents can use, across 2 connectors:');
+    expect(text).toContain('outlook (2):');
+    expect(text).toContain('outlook_send_mail, outlook_list_messages');
+    expect(text).toContain('jira (1):');
+    expect(text).not.toContain('Send an email as yourself.');
+  });
+
+  it('leaves out the tools only a preview card can call', async () => {
+    const handlers = registerAll({});
+    const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
+
+    // The model never sees them, so an author must not be told to write a
+    // step for one.
+    expect(text).not.toContain('jira_create_issue_preview');
+  });
+
+  it('gives the full description and the failure codes once filtered', async () => {
+    const handlers = registerAll({});
+    const text =
+      (await handlers.get('agent_list_tools')!({ connector: 'outlook', kind: 'act' })).content[0]
+        ?.text ?? '';
+
+    // The failure codes are the vocabulary failureHandling is keyed by — a
+    // step cannot handle a condition it was never told about.
+    expect(text).toContain('- outlook_send_mail');
+    expect(text).toContain('[act] — Send an email as yourself.');
+    expect(text).toContain('failure codes: not-found, other');
+    expect(text).not.toContain('outlook_list_messages');
+  });
+
+  it('reports each query separately, naming the one that matched nothing', async () => {
+    const handlers = registerAll({});
+    const text =
+      (await handlers.get('agent_list_tools')!({ query: ['send', 'delete a repository'] }))
+        .content[0]?.text ?? '';
+
+    expect(text).toContain('"send" — 1 match(es):');
+    expect(text).toContain('outlook_send_mail');
+    expect(text).toContain('"delete a repository" — no match');
+  });
+
+  it('names the connectors you do have when one is asked for that you do not', async () => {
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_list_tools')!({ connector: 'zoom' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('your connectors are jira, outlook');
+  });
+
+  it('says why the catalog is empty rather than answering with nothing', async () => {
+    catalogMock.listAvailableTools.mockResolvedValue([]);
+    const handlers = registerAll({});
+    const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
+
+    expect(text).toContain('no connectors enabled');
+  });
+});
+
+/**
+ * The approval card is a capability with no skill behind it, so a catalog
+ * built from registered tools cannot mention it. Every place a caller
+ * learns what an agent can do has to say so itself, or a model asked to
+ * "check with me first" writes a step that says so and acts anyway.
+ */
+describe('the approval-card capability is discoverable', () => {
+  /** The zod field description, wherever in the shape it sits. */
+  type Zodish = { description?: string; _def?: { description?: string } } | undefined;
+  const described = (tool: string, walk: (shape: Record<string, Zodish>) => Zodish): string => {
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    const schema = configs.get(tool)?.inputSchema as { shape?: Record<string, Zodish> } | undefined;
+    const field = walk(schema?.shape ?? {});
+    return String(field?.description ?? field?._def?.description ?? '');
+  };
+
+  it('is spelled out on the steps argument of agent_create and agent_update', async () => {
+    registerAll({});
+
+    for (const tool of ['agent_create', 'agent_update']) {
+      const steps = described(tool, (shape) => shape?.steps);
+      expect(steps).toContain('{kind:"approval"}');
+      expect(steps).toContain('card');
+      // The three outcome paths are the part a caller cannot guess.
+      expect(steps).toContain('onApproved');
+      expect(steps).toContain('onDeclined');
+      expect(steps).toContain('onTimeout');
+      // Caps come from the constants, so they cannot name a limit the
+      // validator does not enforce.
+      expect(steps).toContain(`${APPROVAL_DEFAULT_TIMEOUT_HOURS}`);
+    }
+  });
+
+  it('is spelled out on the node agent_patch_steps takes', async () => {
+    registerAll({});
+
+    const node = described('agent_patch_steps', (shape) => {
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      const operations = shape.operations as
+        { element?: { shape?: Record<string, Zodish> } } | undefined;
+      return operations?.element?.shape?.node;
+    });
+    expect(node).toContain('{kind:"approval"}');
+  });
+
+  it('is named by agent_list_tools, which no skill list could cover', async () => {
+    catalogMock.listAvailableTools.mockResolvedValue(CATALOG);
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
+
+    expect(text).toContain('PAUSE FOR A PERSON');
+    expect(text).toContain('home-page feed');
+    expect(text).toContain('there is no skill for it');
+  });
+
+  it('names them even when the caller has no connectors at all', async () => {
+    catalogMock.listAvailableTools.mockResolvedValue([]);
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
+
+    expect(text).toContain('no connectors enabled');
+    expect(text).toContain('PAUSE FOR A PERSON');
+  });
 });
