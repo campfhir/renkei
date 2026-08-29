@@ -44,6 +44,18 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'OnBase stops spending licences it does not need',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'One OnBase session per person, not one per request',
+        detail:
+          'Every OnBase tool call opened a brand-new OnBase session and consumed a licence, so an agent reading ten documents held ten at once and released none for five minutes — on a busy day, enough to exhaust the pool and make perfectly good requests fail. Renkei now reuses your session across calls, and hands it back when it is finished.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'Connected tools show up when you connect them',
     entries: [
       {
