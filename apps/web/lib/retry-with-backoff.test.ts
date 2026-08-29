@@ -1,20 +1,38 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+/**
+ * The retry helper's contract, exercised against real timers: the delays it
+ * actually waits are the point, so the backoff suites take seconds rather
+ * than fake-timer ticks — a mocked clock would prove the arithmetic and
+ * nothing about the waiting.
+ */
+
+import { getEventListeners } from 'node:events';
 import { retryWithBackoff, RetryExhaustedError, OperationAbortedError } from './retry-with-backoff';
+
+/** Settle a rejection into a value so the assertion can inspect it. */
+async function rejection(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(
+    () => {
+      throw new Error('expected the operation to reject, but it resolved');
+    },
+    (error: unknown) => error
+  );
+}
 
 describe('retryWithBackoff', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    jest.clearAllMocks();
   });
+
   describe('successful execution', () => {
     it('succeeds on first attempt', async () => {
-      const fn = vi.fn().mockResolvedValue('success');
+      const fn = jest.fn().mockResolvedValue('success');
       const result = await retryWithBackoff(fn);
       expect(result).toBe('success');
       expect(fn).toHaveBeenCalledTimes(1);
     });
 
     it('succeeds after one retry', async () => {
-      const fn = vi.fn();
+      const fn = jest.fn();
       fn.mockRejectedValueOnce(new Error('fail'));
       fn.mockResolvedValueOnce('success');
 
@@ -24,7 +42,7 @@ describe('retryWithBackoff', () => {
     });
 
     it('succeeds after multiple retries', async () => {
-      const fn = vi.fn();
+      const fn = jest.fn();
       fn.mockRejectedValueOnce(new Error('fail 1'));
       fn.mockRejectedValueOnce(new Error('fail 2'));
       fn.mockResolvedValueOnce('success');
@@ -36,12 +54,13 @@ describe('retryWithBackoff', () => {
   });
 
   describe('exponential backoff', () => {
+    // Really waits 1s + 2s + 4s; the default 5s timeout would cut it short.
     it('uses exponential delays: 1s, 2s, 4s', async () => {
-      const fn = vi.fn().mockRejectedValue(new Error('fail'));
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
       const delays: number[] = [];
 
-      try {
-        await retryWithBackoff(fn, {
+      await rejection(
+        retryWithBackoff(fn, {
           timeout: 10000,
           maxRetries: 3,
           backoffStrategy: 'exponential',
@@ -49,21 +68,19 @@ describe('retryWithBackoff', () => {
           onRetry: (attempt, error, delay) => {
             delays.push(delay);
           },
-        });
-      } catch {
-        // Expected to fail
-      }
+        })
+      );
 
       // Exponential: 1s (2^0), 2s (2^1), 4s (2^2)
       expect(delays).toEqual([1000, 2000, 4000]);
     }, 15000);
 
     it('respects custom backoff offset', async () => {
-      const fn = vi.fn().mockRejectedValue(new Error('fail'));
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
       const delays: number[] = [];
 
-      try {
-        await retryWithBackoff(fn, {
+      await rejection(
+        retryWithBackoff(fn, {
           timeout: 10000,
           maxRetries: 2,
           backoffStrategy: 'exponential',
@@ -71,10 +88,8 @@ describe('retryWithBackoff', () => {
           onRetry: (attempt, error, delay) => {
             delays.push(delay);
           },
-        });
-      } catch {
-        // Expected to fail
-      }
+        })
+      );
 
       // Exponential with 500ms offset: 500ms (2^0), 1000ms (2^1)
       expect(delays).toEqual([500, 1000]);
@@ -82,12 +97,13 @@ describe('retryWithBackoff', () => {
   });
 
   describe('linear backoff', () => {
+    // Really waits 1s + 2s + 3s; see the exponential note above.
     it('uses linear delays: 1s, 2s, 3s', async () => {
-      const fn = vi.fn().mockRejectedValue(new Error('fail'));
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
       const delays: number[] = [];
 
-      try {
-        await retryWithBackoff(fn, {
+      await rejection(
+        retryWithBackoff(fn, {
           timeout: 10000,
           maxRetries: 3,
           backoffStrategy: 'linear',
@@ -95,21 +111,19 @@ describe('retryWithBackoff', () => {
           onRetry: (attempt, error, delay) => {
             delays.push(delay);
           },
-        });
-      } catch {
-        // Expected to fail
-      }
+        })
+      );
 
       // Linear: 1s (1*1), 2s (2*1), 3s (3*1)
       expect(delays).toEqual([1000, 2000, 3000]);
     }, 15000);
 
     it('respects custom backoff offset for linear', async () => {
-      const fn = vi.fn().mockRejectedValue(new Error('fail'));
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
       const delays: number[] = [];
 
-      try {
-        await retryWithBackoff(fn, {
+      await rejection(
+        retryWithBackoff(fn, {
           timeout: 10000,
           maxRetries: 2,
           backoffStrategy: 'linear',
@@ -117,10 +131,8 @@ describe('retryWithBackoff', () => {
           onRetry: (attempt, error, delay) => {
             delays.push(delay);
           },
-        });
-      } catch {
-        // Expected to fail
-      }
+        })
+      );
 
       // Linear with 500ms offset: 500ms (1*500), 1000ms (2*500)
       expect(delays).toEqual([500, 1000]);
@@ -129,7 +141,7 @@ describe('retryWithBackoff', () => {
 
   describe('timeout behavior', () => {
     it('throws RetryExhaustedError when timeout is exceeded', async () => {
-      const fn = vi.fn().mockRejectedValue(new Error('fail'));
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
 
       await expect(
         retryWithBackoff(fn, {
@@ -142,23 +154,23 @@ describe('retryWithBackoff', () => {
 
     it('includes last error in RetryExhaustedError', async () => {
       const originalError = new Error('original fail');
-      const fn = vi.fn().mockRejectedValue(originalError);
+      const fn = jest.fn().mockRejectedValue(originalError);
 
-      try {
-        await retryWithBackoff(fn, {
+      const caught = await rejection(
+        retryWithBackoff(fn, {
           timeout: 100,
           maxRetries: 5,
           backoffOffset: 500,
-        });
-        fail('Should have thrown');
-      } catch (error) {
-        if (!(error instanceof RetryExhaustedError)) throw error;
-        expect(error.lastError).toBe(originalError);
-      }
+        })
+      );
+
+      expect(caught).toBeInstanceOf(RetryExhaustedError);
+      if (!(caught instanceof RetryExhaustedError)) return;
+      expect(caught.lastError).toBe(originalError);
     });
 
     it('respects custom timeout', async () => {
-      const fn = vi.fn().mockRejectedValue(new Error('fail'));
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
       const startTime = Date.now();
 
       await expect(
@@ -181,7 +193,7 @@ describe('retryWithBackoff', () => {
       const controller = new AbortController();
       controller.abort();
 
-      const fn = vi.fn();
+      const fn = jest.fn();
 
       await expect(retryWithBackoff(fn, { signal: controller.signal })).rejects.toThrow(
         OperationAbortedError
@@ -192,7 +204,7 @@ describe('retryWithBackoff', () => {
 
     it('aborts during backoff delay', async () => {
       const controller = new AbortController();
-      const fn = vi.fn().mockRejectedValue(new Error('fail'));
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
 
       // Start the operation and abort after a short delay
       const promise = retryWithBackoff(fn, {
@@ -210,12 +222,15 @@ describe('retryWithBackoff', () => {
       expect(fn).toHaveBeenCalledTimes(1);
     });
 
-    it('aborts during operation execution', async () => {
+    it('aborts while an attempt is still running, without waiting it out', async () => {
       const controller = new AbortController();
-      const fn = vi.fn(
+      // Resolves far later than the abort: if the abort were only noticed
+      // between attempts, this would take the full second.
+      let settle: ReturnType<typeof setTimeout> | undefined;
+      const fn = jest.fn(
         () =>
           new Promise((resolve) => {
-            setTimeout(() => resolve('success'), 1000);
+            settle = setTimeout(() => resolve('success'), 1000);
           })
       );
 
@@ -225,27 +240,55 @@ describe('retryWithBackoff', () => {
         signal: controller.signal,
       });
 
-      // Abort quickly while operation is running
+      const startTime = Date.now();
       setTimeout(() => controller.abort(), 50);
 
-      // Note: AbortSignal doesn't directly cancel pending promises,
-      // so this tests the timing between abort and completion
+      await expect(promise).rejects.toThrow(OperationAbortedError);
+
+      // Rejected on the abort, not on the operation's own completion.
+      expect(Date.now() - startTime).toBeLessThan(500);
+      if (settle) clearTimeout(settle);
+    });
+
+    it('leaves no pending timer behind on success', async () => {
+      // A Promise.race against an uncleared timeout timer keeps the event
+      // loop alive for the full attempt cap (60s) after the call already
+      // returned — on every successful call, not just failures.
+      jest.useFakeTimers();
       try {
-        await promise;
-      } catch {
-        // May throw OperationAbortedError or succeed depending on timing
+        const fn = jest.fn().mockResolvedValue('success');
+        await retryWithBackoff(fn, { timeout: 180_000 });
+
+        expect(jest.getTimerCount()).toBe(0);
+      } finally {
+        jest.useRealTimers();
       }
+    });
+
+    it('removes its abort listener once an attempt settles', async () => {
+      // A listener left on a caller-owned signal accumulates across calls
+      // and trips Node's max-listeners warning.
+      const controller = new AbortController();
+      const fn = jest.fn().mockResolvedValue('success');
+
+      for (let i = 0; i < 20; i++) {
+        await retryWithBackoff(fn, { timeout: 5000, signal: controller.signal });
+      }
+
+      // AbortSignal is an EventTarget, which exposes no listener count of
+      // its own — node:events can see through it.
+      expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
     });
   });
 
   describe('onRetry callback', () => {
     it('calls onRetry with attempt number, error, and delay', async () => {
-      const fn = vi.fn();
+      const fn = jest.fn();
       fn.mockRejectedValueOnce(new Error('fail 1'));
       fn.mockRejectedValueOnce(new Error('fail 2'));
       fn.mockResolvedValueOnce('success');
 
-      const onRetry = vi.fn();
+      const onRetry = jest.fn();
 
       await retryWithBackoff(fn, {
         timeout: 5000,
@@ -277,33 +320,29 @@ describe('retryWithBackoff', () => {
 
   describe('error handling', () => {
     it('throws original error if fn throws non-Error', async () => {
-      const fn = vi.fn().mockRejectedValue('string error');
+      const fn = jest.fn().mockRejectedValue('string error');
 
-      try {
-        await retryWithBackoff(fn, { timeout: 100, maxRetries: 0 });
-        fail('Should have thrown');
-      } catch (error) {
-        if (!(error instanceof RetryExhaustedError)) throw error;
-        expect(error.lastError.message).toBe('string error');
-      }
+      const caught = await rejection(retryWithBackoff(fn, { timeout: 100, maxRetries: 0 }));
+
+      expect(caught).toBeInstanceOf(RetryExhaustedError);
+      if (!(caught instanceof RetryExhaustedError)) return;
+      expect(caught.lastError.message).toBe('string error');
     });
 
     it('includes attempt count in error', async () => {
-      const fn = vi.fn().mockRejectedValue(new Error('fail'));
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
 
-      try {
-        await retryWithBackoff(fn, { timeout: 100, maxRetries: 2 });
-        fail('Should have thrown');
-      } catch (error) {
-        if (!(error instanceof RetryExhaustedError)) throw error;
-        expect(error.attempts).toBeGreaterThan(0);
-      }
+      const caught = await rejection(retryWithBackoff(fn, { timeout: 100, maxRetries: 2 }));
+
+      expect(caught).toBeInstanceOf(RetryExhaustedError);
+      if (!(caught instanceof RetryExhaustedError)) return;
+      expect(caught.attempts).toBeGreaterThan(0);
     });
   });
 
   describe('defaults', () => {
     it('uses default options when none provided', async () => {
-      const fn = vi.fn().mockResolvedValue('success');
+      const fn = jest.fn().mockResolvedValue('success');
       const result = await retryWithBackoff(fn);
 
       expect(result).toBe('success');
@@ -311,14 +350,10 @@ describe('retryWithBackoff', () => {
     });
 
     it('defaults to 3 total attempts (maxRetries=2)', async () => {
-      const fn = vi.fn().mockRejectedValue(new Error('fail'));
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
       const attempts: number[] = [];
 
-      try {
-        await retryWithBackoff(fn, { timeout: 5000, onRetry: () => attempts.push(1) });
-      } catch {
-        // Expected
-      }
+      await rejection(retryWithBackoff(fn, { timeout: 5000, onRetry: () => attempts.push(1) }));
 
       // 1 initial + 2 retries
       expect(attempts.length).toBe(2);
@@ -326,18 +361,16 @@ describe('retryWithBackoff', () => {
     });
 
     it('defaults to exponential backoff with 1s offset', async () => {
-      const fn = vi.fn().mockRejectedValue(new Error('fail'));
+      const fn = jest.fn().mockRejectedValue(new Error('fail'));
       const delays: number[] = [];
 
-      try {
-        await retryWithBackoff(fn, {
+      await rejection(
+        retryWithBackoff(fn, {
           timeout: 10000,
           maxRetries: 2,
           onRetry: (attempt, error, delay) => delays.push(delay),
-        });
-      } catch {
-        // Expected
-      }
+        })
+      );
 
       // Exponential with 1s offset: 1s, 2s
       expect(delays).toEqual([1000, 2000]);

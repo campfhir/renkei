@@ -14,60 +14,52 @@ const result = await retryWithBackoff(() => myAsyncOperation());
 ## Common Patterns
 
 ### LLM/API Calls (3 minutes timeout, exponential backoff)
+
 ```typescript
-const result = await retryWithBackoff(
-  () => llm.complete({ /* ... */ }),
-  {
-    timeout: 180_000,           // 3 minutes total
-    maxRetries: 2,              // 3 total attempts
-    backoffStrategy: 'exponential',
-    backoffOffset: 2_000,       // 2s, 4s, 8s delays
-    onRetry: (attempt, error, delay) => {
-      logger.info(`LLM attempt ${attempt} failed, retrying in ${delay}ms`);
-    }
-  }
-);
+const result = await retryWithBackoff(() => llm.complete({/* ... */}), {
+  timeout: 180_000, // 3 minutes total
+  maxRetries: 2, // 3 total attempts
+  backoffStrategy: 'exponential',
+  backoffOffset: 2_000, // 2s, 4s, 8s delays
+  onRetry: (attempt, error, delay) => {
+    logger.info(`LLM attempt ${attempt} failed, retrying in ${delay}ms`);
+  },
+});
 ```
 
 ### Network Requests (30 seconds, linear backoff)
+
 ```typescript
-const result = await retryWithBackoff(
-  () => fetch(url),
-  {
-    timeout: 30_000,            // 30 seconds total
-    maxRetries: 3,              // 4 total attempts
-    backoffStrategy: 'linear',
-    backoffOffset: 500,         // 500ms, 1s, 1.5s, 2s delays
-  }
-);
+const result = await retryWithBackoff(() => fetch(url), {
+  timeout: 30_000, // 30 seconds total
+  maxRetries: 3, // 4 total attempts
+  backoffStrategy: 'linear',
+  backoffOffset: 500, // 500ms, 1s, 1.5s, 2s delays
+});
 ```
 
 ### Database Operations (10 seconds, exponential backoff)
+
 ```typescript
-const result = await retryWithBackoff(
-  () => db.query(sql),
-  {
-    timeout: 10_000,            // 10 seconds total
-    maxRetries: 2,              // 3 total attempts
-    backoffStrategy: 'exponential',
-    backoffOffset: 100,         // 100ms, 200ms, 400ms delays
-  }
-);
+const result = await retryWithBackoff(() => db.query(sql), {
+  timeout: 10_000, // 10 seconds total
+  maxRetries: 2, // 3 total attempts
+  backoffStrategy: 'exponential',
+  backoffOffset: 100, // 100ms, 200ms, 400ms delays
+});
 ```
 
 ### With Cancellation Support
+
 ```typescript
 const controller = new AbortController();
 
 // Start operation in background
-const promise = retryWithBackoff(
-  () => expensiveOperation(),
-  {
-    timeout: 60_000,
-    maxRetries: 5,
-    signal: controller.signal,
-  }
-);
+const promise = retryWithBackoff(() => expensiveOperation(), {
+  timeout: 60_000,
+  maxRetries: 5,
+  signal: controller.signal,
+});
 
 // Cancel if needed
 setTimeout(() => controller.abort(), 5000);
@@ -132,6 +124,7 @@ interface RetryOptions {
 ## Error Handling
 
 ### Success Case
+
 ```typescript
 try {
   const result = await retryWithBackoff(fn);
@@ -142,6 +135,7 @@ try {
 ```
 
 ### Retry Exhausted
+
 ```typescript
 import { RetryExhaustedError } from '@/lib/retry-with-backoff';
 
@@ -157,6 +151,7 @@ try {
 ```
 
 ### Operation Cancelled
+
 ```typescript
 import { OperationAbortedError } from '@/lib/retry-with-backoff';
 
@@ -169,9 +164,54 @@ try {
 }
 ```
 
+## What `signal` Does — and What It Doesn't
+
+An abort rejects the `retryWithBackoff` call promptly in all three phases:
+
+| Phase                       | Effect of `controller.abort()`                         |
+| --------------------------- | ------------------------------------------------------ |
+| Before the first attempt    | Rejects immediately; `fn` is never called              |
+| During a backoff delay      | Cancels the wait and rejects immediately               |
+| While an attempt is running | Rejects immediately — it does not wait the attempt out |
+
+An abort is never retried: it's the caller's decision, so it propagates as
+`OperationAbortedError` rather than being wrapped in `RetryExhaustedError`.
+
+**Important**: `fn` is called with no arguments, so aborting stops _waiting on_
+the operation — it does not cancel the operation itself. To actually cancel the
+underlying work, pass the same signal into it. For `fetch`, that means giving it
+to both:
+
+```typescript
+const controller = new AbortController();
+
+const response = await retryWithBackoff(
+  () => fetch(url, { signal: controller.signal }), // cancels the HTTP request
+  { timeout: 30_000, maxRetries: 2, signal: controller.signal } // cancels the retry loop
+);
+```
+
+Pass it only to `retryWithBackoff` and the socket stays open until the server
+answers, even though your `await` already rejected.
+
+Note that only `fetch` itself is retried above — `response.json()` runs after.
+To retry the parse too, put both inside `fn`:
+
+```typescript
+await retryWithBackoff(
+  async () => {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  },
+  { maxRetries: 2, signal: controller.signal }
+);
+```
+
 ## Backoff Strategy Examples
 
 ### Exponential (Default)
+
 ```
 offset: 1000ms
 Delays: 1000ms → 2000ms → 4000ms → 8000ms → 16000ms
@@ -179,6 +219,7 @@ Total: ~31 seconds for 5 attempts
 ```
 
 ### Linear
+
 ```
 offset: 1000ms
 Delays: 1000ms → 2000ms → 3000ms → 4000ms → 5000ms
@@ -190,27 +231,22 @@ Total: ~15 seconds for 5 attempts
 Retry attempts are logged at DEBUG level by default (not visible in normal logs).
 
 ### With Custom Logging
+
 ```typescript
-const result = await retryWithBackoff(
-  () => operation(),
-  {
-    timeout: 60_000,
-    maxRetries: 3,
-    onRetry: (attempt, error, delay) => {
-      // Log at appropriate level for your use case
-      logger.debug(
-        'Operation retry {attempt}: {error} (waiting {delay}ms)',
-        {
-          attempt,
-          error: error.message,
-          delay,
-        }
-      );
-      // Or use warn/error if retries indicate a serious issue:
-      // logger.warn(...)
-    },
-  }
-);
+const result = await retryWithBackoff(() => operation(), {
+  timeout: 60_000,
+  maxRetries: 3,
+  onRetry: (attempt, error, delay) => {
+    // Log at appropriate level for your use case
+    logger.debug('Operation retry {attempt}: {error} (waiting {delay}ms)', {
+      attempt,
+      error: error.message,
+      delay,
+    });
+    // Or use warn/error if retries indicate a serious issue:
+    // logger.warn(...)
+  },
+});
 ```
 
 ## Timeouts Explained
@@ -218,15 +254,18 @@ const result = await retryWithBackoff(
 The timeout works in two ways:
 
 ### 1. **Overall Timeout**
+
 - Measures from first attempt start to final result
 - If exceeded, throws `RetryExhaustedError`
 
 ### 2. **Per-Attempt Timeout**
+
 - Each individual attempt is capped at 60 seconds
 - Prevents hanging on a single attempt
 - Remaining time from overall timeout is used
 
 Example:
+
 ```
 timeout: 180000ms (3 minutes total)
 Attempt 1: runs for up to 60s (if it takes 90s, fails)
@@ -248,20 +287,19 @@ If still failing and time > 180s, throws RetryExhaustedError
 ## Integration with Existing Code
 
 ### Before (No Retry)
+
 ```typescript
 const completion = await llm.provider.complete(config);
 ```
 
 ### After (With Retry)
+
 ```typescript
-const completion = await retryWithBackoff(
-  () => llm.provider.complete(config),
-  {
-    timeout: 180_000,
-    maxRetries: 2,
-    backoffOffset: 2_000,
-  }
-);
+const completion = await retryWithBackoff(() => llm.provider.complete(config), {
+  timeout: 180_000,
+  maxRetries: 2,
+  backoffOffset: 2_000,
+});
 ```
 
 ## Performance Considerations
@@ -278,12 +316,10 @@ import { vi } from 'vitest';
 import { retryWithBackoff, RetryExhaustedError } from '@/lib/retry-with-backoff';
 
 it('retries on failure', async () => {
-  const fn = vi.fn()
-    .mockRejectedValueOnce(new Error('fail'))
-    .mockResolvedValueOnce('success');
+  const fn = vi.fn().mockRejectedValueOnce(new Error('fail')).mockResolvedValueOnce('success');
 
   const result = await retryWithBackoff(fn, { timeout: 5000, maxRetries: 1 });
-  
+
   expect(result).toBe('success');
   expect(fn).toHaveBeenCalledTimes(2);
 });

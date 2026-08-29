@@ -142,23 +142,40 @@ export async function retryWithBackoff<T>(
       throw new OperationAbortedError();
     }
 
-    try {
-      // Set up timeout for this specific attempt
-      const remainingTime = timeout - elapsed;
-      const attemptTimeout = Math.min(60_000, remainingTime); // Cap individual attempts at 60s
+    // Set up timeout for this specific attempt
+    const remainingTime = timeout - elapsed;
+    const attemptTimeout = Math.min(60_000, remainingTime); // Cap individual attempts at 60s
 
-      const result = await Promise.race([
-        fn(),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`Attempt ${attemptNumber + 1} exceeded ${attemptTimeout}ms`)),
-            attemptTimeout
-          )
-        ),
-      ]);
+    // Both the timer and the abort listener MUST be torn down once the
+    // attempt settles. A surviving timer keeps the Node event loop alive for
+    // its full duration (60s on a default-timeout call, on every success),
+    // and a surviving listener accumulates on a signal the caller reuses.
+    let attemptTimer: ReturnType<typeof setTimeout> | undefined;
+    let attemptAbortHandler: (() => void) | undefined;
+
+    try {
+      const result = await new Promise<T>((resolve, reject) => {
+        attemptTimer = setTimeout(
+          () => reject(new Error(`Attempt ${attemptNumber + 1} exceeded ${attemptTimeout}ms`)),
+          attemptTimeout
+        );
+
+        // Racing the signal is what makes abort responsive DURING an
+        // attempt. Without it an abort sits unnoticed until the attempt
+        // finishes on its own — up to the full 60s cap.
+        if (signal) {
+          attemptAbortHandler = () => reject(new OperationAbortedError());
+          signal.addEventListener('abort', attemptAbortHandler, { once: true });
+        }
+
+        fn().then(resolve, reject);
+      });
 
       return result;
     } catch (error) {
+      // An abort is the caller's decision, not a failure to retry against.
+      if (error instanceof OperationAbortedError) throw error;
+
       lastError = error instanceof Error ? error : new Error(String(error));
 
       // If this was the last attempt, throw
@@ -194,16 +211,26 @@ export async function retryWithBackoff<T>(
 
       // Wait before retrying, but be interruptible by abort signal
       await new Promise<void>((resolve, reject) => {
-        const timeoutHandle = setTimeout(resolve, delay);
+        let abortHandler: (() => void) | undefined;
+
+        const timeoutHandle = setTimeout(() => {
+          // The wait finished without an abort — drop the listener, or it
+          // outlives every retry on a caller-owned signal.
+          if (abortHandler) signal?.removeEventListener('abort', abortHandler);
+          resolve();
+        }, delay);
 
         if (signal) {
-          const abortHandler = () => {
+          abortHandler = () => {
             clearTimeout(timeoutHandle);
             reject(new OperationAbortedError());
           };
           signal.addEventListener('abort', abortHandler, { once: true });
         }
       });
+    } finally {
+      if (attemptTimer !== undefined) clearTimeout(attemptTimer);
+      if (attemptAbortHandler) signal?.removeEventListener('abort', attemptAbortHandler);
     }
   }
 
