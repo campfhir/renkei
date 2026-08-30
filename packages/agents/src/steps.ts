@@ -347,16 +347,33 @@ export type ApprovalMode = 'approve' | 'input';
 export type ApprovalFieldType = 'text' | 'longtext' | 'number' | 'choice' | 'multi' | 'date';
 
 export interface ApprovalField {
-  /** uuid — stable across edits, and the key answers come back under. */
-  id: string;
   /**
    * The variable this field binds, in the SAME namespace as saveAs and
    * loop items: two fields cannot share a name, and neither can a field
    * and a saved result.
+   *
+   * It is also the KEY an answer comes back under. A form is a key/value
+   * reply and this is the key — there is deliberately no id beside it. An
+   * id would survive renaming a field while a card waits behind it, which
+   * sounds worth having until you notice that renaming a binding already
+   * breaks every chip referencing it (the validator refuses the save until
+   * they are updated too). Paying for that everywhere — uuids in
+   * hand-written JSON, a name→id map at every boundary, `{"f-3": [...]}`
+   * in the audit trail — buys consistency in one rare window and costs
+   * legibility in all of them.
    */
   name: string;
   /** What the person is asked for, rendered above the control. */
   label: string;
+  /**
+   * What the DESTINATION calls this, when the answer is headed somewhere
+   * that has its own identifier: `customfield_10016` for Story Points,
+   * a column name, a form id. Optional, opaque, and never interpreted
+   * here — it rides along so the step that writes the answer has the key
+   * and the value together ("Story Points [customfield_10016]: 8")
+   * instead of resolving a display name at run time and hoping.
+   */
+  key?: string;
   type: ApprovalFieldType;
   /** Nothing sends until it has a value. */
   required: boolean;
@@ -375,6 +392,7 @@ export const MAX_APPROVAL_FIELD_OPTIONS = 25;
 export const MAX_APPROVAL_FIELD_LABEL_CHARS = 200;
 export const MAX_APPROVAL_FIELD_OPTION_CHARS = 200;
 export const MAX_APPROVAL_FIELD_HELP_CHARS = 500;
+export const MAX_APPROVAL_FIELD_KEY_CHARS = 200;
 
 export interface ApprovalStep {
   /** uuid, same doc-wide id space as every node. */
@@ -894,9 +912,9 @@ const APPROVAL_FIELD_TYPES = new Set<string>([
 function isApprovalField(value: unknown): value is ApprovalField {
   if (typeof value !== 'object' || value === null) return false;
   const field: {
-    id?: unknown;
     name?: unknown;
     label?: unknown;
+    key?: unknown;
     type?: unknown;
     required?: unknown;
     options?: unknown;
@@ -904,9 +922,9 @@ function isApprovalField(value: unknown): value is ApprovalField {
     max?: unknown;
     help?: unknown;
   } = value;
-  if (typeof field.id !== 'string' || field.id.length === 0) return false;
   if (typeof field.name !== 'string') return false;
   if (typeof field.label !== 'string') return false;
+  if (field.key !== undefined && typeof field.key !== 'string') return false;
   if (typeof field.type !== 'string' || !APPROVAL_FIELD_TYPES.has(field.type)) return false;
   if (typeof field.required !== 'boolean') return false;
   if (

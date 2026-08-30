@@ -29,6 +29,7 @@ import {
   MAX_COLLECTED_ITEMS,
   approvalAnswerText,
   approvalFieldsOf,
+  describeApprovalAnswer,
   attemptVariables,
   findNodeById,
   friendlyToolName,
@@ -520,11 +521,10 @@ interface SeqFrame {
 function describeAnswers(node: ApprovalStep, answers: Record<string, ApprovalAnswerValue>): string {
   const lines: string[] = [];
   for (const field of approvalFieldsOf(node)) {
-    const value = answers[field.id];
+    const value = answers[field.name];
     if (value === undefined) continue;
-    const text = Array.isArray(value) ? value.join(', ') : value;
-    if (!text) continue;
-    lines.push(`${field.label.trim() || field.name}: ${text}`);
+    if (Array.isArray(value) ? value.length === 0 : !value) continue;
+    lines.push(describeApprovalAnswer(field, value));
   }
   return lines.join('\n');
 }
@@ -534,7 +534,7 @@ interface ApprovalRoute {
   outcome: ApprovalOutcomeKey;
   /** The single free-text answer, for a form-less input node. */
   answer: string | null;
-  /** A form's answers, by FIELD ID — see approval-answers.ts on why id. */
+  /** A form's answers, keyed by the field NAME each one binds. */
   answers: Record<string, ApprovalAnswerValue> | null;
   link: string | null;
   /** The card's own status: 'approved' | 'declined' | 'expired'. */
@@ -1164,7 +1164,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
             const answerHome = (() => {
               const fields = approvalFieldsOf(node);
               if (fields.length === 0) return `"${node.saveAs ?? 'the saved answer'}"`;
-              const named = fields.map((field) => `"${field.name}"`);
+              // A destination key belongs beside the variable holding its
+              // value: the step writing this answer needs both, and
+              // resolving "Story Points" to customfield_10016 at run time
+              // is exactly the guesswork the field spared it.
+              const named = fields.map(
+                (field) => `"${field.name}"${field.key ? ` (${field.key})` : ''}`
+              );
               return named.length === 1
                 ? named[0]
                 : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`;
@@ -1187,14 +1193,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
             if (node.mode === 'input' && node.saveAs && outcome.answer !== null) {
               vars[node.saveAs] = outcome.answer;
             }
-            // A form binds one variable per FIELD, by the field's current
-            // name — the answers were stored under field ids exactly so a
-            // rename between asking and answering lands on the right chip.
-            // A multi-select also binds a LIST, so a loop can iterate the
+            // A form binds one variable per FIELD, under the name the
+            // answer already came back keyed by — the reply IS the
+            // key/value pairs, so there is nothing to look up. A
+            // multi-select also binds a LIST, so a loop can iterate the
             // picks the way it iterates any collected list.
             if (outcome.answers) {
               for (const field of approvalFieldsOf(node)) {
-                const value = outcome.answers[field.id];
+                const value = outcome.answers[field.name];
                 if (value === undefined) continue;
                 vars[field.name] = approvalAnswerText(value);
                 if (Array.isArray(value)) lists[field.name] = value;
@@ -2332,11 +2338,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // "needs your answer" over a link is a worse ask than "needs an
         // issue key and a date".
         ...(formFields.length > 0
-          ? [
-              `Asks for: ${formFields
-                .map((field) => field.label.trim() || field.name)
-                .join(', ')}`,
-            ]
+          ? [`Asks for: ${formFields.map((field) => field.label.trim() || field.name).join(', ')}`]
           : []),
         ...(link ? [`Respond here: ${link}`] : []),
       ].join('\n\n'),

@@ -928,14 +928,12 @@ describe('approval nodes (validation + normalize)', () => {
       mode: 'input',
       fields: [
         {
-          id: uuid(),
           name: 'the issue key',
           label: 'Which issue tracks this?',
           type: 'text',
           required: true,
         },
         {
-          id: uuid(),
           name: 'the comments',
           label: 'Which comments to post?',
           type: 'multi',
@@ -960,9 +958,7 @@ describe('approval nodes (validation + normalize)', () => {
     const both = approval({
       mode: 'input',
       saveAs: 'the decision',
-      fields: [
-        { id: uuid(), name: 'the key', label: 'Which issue?', type: 'text', required: true },
-      ],
+      fields: [{ name: 'the key', label: 'Which issue?', type: 'text', required: true }],
     });
     expect(
       messagesOf(validateAgentDraft(draft({ steps: { version: 5, steps: [both] } }), TOOLS)).some(
@@ -978,7 +974,6 @@ describe('approval nodes (validation + normalize)', () => {
         // A choice with one option, two fields sharing a name, and a
         // number whose bounds exclude every value.
         {
-          id: uuid(),
           name: 'the pick',
           label: 'Pick',
           type: 'choice',
@@ -986,7 +981,6 @@ describe('approval nodes (validation + normalize)', () => {
           options: ['only'],
         },
         {
-          id: uuid(),
           name: 'the pick',
           label: 'Points',
           type: 'number',
@@ -1006,9 +1000,7 @@ describe('approval nodes (validation + normalize)', () => {
 
   it('refuses fields on an approve/decline card', () => {
     const wrong = approval({
-      fields: [
-        { id: uuid(), name: 'the key', label: 'Which issue?', type: 'text', required: true },
-      ],
+      fields: [{ name: 'the key', label: 'Which issue?', type: 'text', required: true }],
     });
     expect(
       messagesOf(validateAgentDraft(draft({ steps: { version: 5, steps: [wrong] } }), TOOLS)).some(
@@ -1022,7 +1014,6 @@ describe('approval nodes (validation + normalize)', () => {
       mode: 'input',
       fields: [
         {
-          id: uuid(),
           name: '  the pick  ',
           label: '  Pick one  ',
           type: 'choice',
@@ -1030,6 +1021,7 @@ describe('approval nodes (validation + normalize)', () => {
           // The builder appends a blank line as you type; a stored blank is
           // a choice nobody can pick that fails validation forever.
           options: ['first', '', '  second  ', '   '],
+          key: '  customfield_10016  ',
         },
       ],
     });
@@ -1040,6 +1032,8 @@ describe('approval nodes (validation + normalize)', () => {
       name: 'the pick',
       label: 'Pick one',
       options: ['first', 'second'],
+      // The destination's own id for this field rides along, trimmed.
+      key: 'customfield_10016',
     });
   });
 

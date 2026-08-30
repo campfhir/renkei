@@ -7,9 +7,13 @@
  * differ within a month, and the one that matters — the server's — is the
  * one nobody would be looking at when they did.
  *
- * Answers are keyed by FIELD ID, never by name. A form can be edited while
- * a run waits behind it; ids survive a rename, so an answer given against
- * the old label still binds to the field the author is looking at now.
+ * A form is a key/value reply and the key is the field's NAME — the same
+ * name the answer binds to as a variable, so `{"the issue key": "CIO-12"}`
+ * reads the same in the browser's POST, in the stored result, in an MCP
+ * call and in the audit trail. A field may also carry the DESTINATION's
+ * own key (`customfield_10016`); that travels with the description of the
+ * answer, not as the key of it, because what a later step needs is the
+ * pair, and what everything else needs is legibility.
  *
  * The checks stop where authoring stops: a number is a number, a choice is
  * one of the choices, a date is a real calendar date. Whether "CIO-12" is
@@ -27,7 +31,8 @@ export const MAX_APPROVAL_ANSWER_CHARS = 10_000;
 export type ApprovalAnswerValue = string | string[];
 
 export interface ApprovalAnswerIssue {
-  fieldId: string;
+  /** The field's name — what the answer was keyed by. */
+  name: string;
   /** The field's label, so a caller can say which control is wrong. */
   label: string;
   message: string;
@@ -36,7 +41,7 @@ export interface ApprovalAnswerIssue {
 export interface ApprovalAnswersResult {
   ok: boolean;
   issues: ApprovalAnswerIssue[];
-  /** fieldId → cleaned value. Only fields that answered appear. */
+  /** name → cleaned value. Only fields that answered appear. */
   values: Record<string, ApprovalAnswerValue>;
 }
 
@@ -62,9 +67,9 @@ export function checkApprovalAnswers(fields: ApprovalField[], raw: unknown): App
   for (const field of fields) {
     const label = field.label.trim() || field.name.trim() || 'This field';
     const fail = (message: string): void => {
-      issues.push({ fieldId: field.id, label, message });
+      issues.push({ name: field.name, label, message });
     };
-    const given = submitted[field.id];
+    const given = submitted[field.name];
 
     switch (field.type) {
       case 'text':
@@ -78,7 +83,7 @@ export function checkApprovalAnswers(fields: ApprovalField[], raw: unknown): App
           fail(`Must stay under ${MAX_APPROVAL_ANSWER_CHARS} characters.`);
           break;
         }
-        values[field.id] = text;
+        values[field.name] = text;
         break;
       }
       case 'number': {
@@ -102,7 +107,7 @@ export function checkApprovalAnswers(fields: ApprovalField[], raw: unknown): App
           fail(`Must be ${field.max} or less.`);
           break;
         }
-        values[field.id] = String(parsed);
+        values[field.name] = String(parsed);
         break;
       }
       case 'date': {
@@ -115,7 +120,7 @@ export function checkApprovalAnswers(fields: ApprovalField[], raw: unknown): App
           fail('Must be a real date, as YYYY-MM-DD.');
           break;
         }
-        values[field.id] = text;
+        values[field.name] = text;
         break;
       }
       case 'choice': {
@@ -129,7 +134,7 @@ export function checkApprovalAnswers(fields: ApprovalField[], raw: unknown): App
           fail('Pick one of the choices offered.');
           break;
         }
-        values[field.id] = text;
+        values[field.name] = text;
         break;
       }
       case 'multi': {
@@ -149,7 +154,7 @@ export function checkApprovalAnswers(fields: ApprovalField[], raw: unknown): App
           fail('Pick from the choices offered.');
           break;
         }
-        values[field.id] = picks;
+        values[field.name] = picks;
         break;
       }
       default: {
@@ -160,6 +165,19 @@ export function checkApprovalAnswers(fields: ApprovalField[], raw: unknown): App
   }
 
   return { ok: issues.length === 0, issues, values };
+}
+
+/**
+ * One answered field as a line a model can act on: what it was called
+ * where the person read it, what the destination calls it, and the value.
+ * The destination key is why this is not just "name: value" — a step
+ * writing to Jira needs `customfield_10016` beside the 8, not a display
+ * name it would have to resolve.
+ */
+export function describeApprovalAnswer(field: ApprovalField, value: ApprovalAnswerValue): string {
+  const shown = Array.isArray(value) ? value.join(', ') : value;
+  const named = field.label.trim() || field.name;
+  return `${named}${field.key ? ` [${field.key}]` : ''}: ${shown}`;
 }
 
 /**

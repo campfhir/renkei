@@ -220,6 +220,7 @@ function describeApprovalField(field: ApprovalField): string {
           : 'text';
   return (
     `"${field.name}" — ${field.label.trim() || field.name} (${shape})` +
+    `${field.key ? ` · writes to ${field.key}` : ''}` +
     `${field.required ? ' · required' : ''}${field.help ? ` · ${field.help}` : ''}`
   );
 }
@@ -236,11 +237,21 @@ function describeApprovalField(field: ApprovalField): string {
 const NATIVE_CAPABILITIES = [
   'These are step KINDS, not skills, so no name above covers them:',
   '- PAUSE FOR A PERSON — a {kind:"approval"} step parks the run as "waiting" and puts an ' +
-    "interactive card on the owner's home-page feed to approve, decline, or type an answer, " +
-    'then resumes down whichever of its three outcome paths applies. This is how an agent ' +
-    'gets a human decision; there is no skill for it. Use it for "ask me before sending", ' +
-    '"let me approve this", "check with me first". agent_approvals_list shows the ones ' +
-    'waiting on you right now, and agent_approval_decide answers one.',
+    "interactive card on the owner's home-page feed, then resumes down whichever of its " +
+    'three outcome paths applies. This is how an agent gets a human decision; there is no ' +
+    'skill for it. Use it for "ask me before sending", "let me approve this", "check with ' +
+    'me first". agent_approvals_list shows the ones waiting on you right now, and ' +
+    'agent_approval_decide answers one.',
+  '  The card asks in one of two ways. mode:"approve" is a VERDICT on something already ' +
+    'decided — approve or decline. mode:"input" ASKS FOR INFORMATION the agent could not ' +
+    'work out for itself, and it does not have to be prose: give it `fields` and the card ' +
+    'renders a FORM — a number, a date, one of a list of choices, several of them, short or ' +
+    'long text — each binding its own variable for later steps, and each checked before the ' +
+    'run continues. Reach for fields whenever the answer has a shape ("which issue?", "how ' +
+    'many points?", "which of these to post?"): a plain box makes the next step parse a ' +
+    'string that may be anything, while a form cannot come back as anything else. A field ' +
+    'may also carry the destination\'s own id (`key`, e.g. "customfield_10016"), which ' +
+    'travels with the answer so the step that writes it has both halves.',
   '- END THE RUN AND SAY SO — a {kind:"terminal"} step ends the whole run as a success, a ' +
     'deliberate failure, or a graceful skip, and emails or WebEx-messages the owner the ' +
     'message it carries.',
@@ -677,10 +688,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           .record(z.string(), z.union([z.string(), z.array(z.string())]))
           .optional()
           .describe(
-            'For a card that asks with a FORM: one entry per field, keyed by the field name ' +
-              'agent_approvals_list prints. A multi-select takes an array. Checked against ' +
-              'the form before anything is recorded — a number that is not a number, or a ' +
-              'choice that is not on offer, comes back as an error, not as a bad answer'
+            'For a card that asks with a FORM: {"<field name>": value} — the names ' +
+              'agent_approvals_list prints, one entry each. A multi-select takes an array. ' +
+              'Checked against the form before anything is recorded — a number that is not a ' +
+              'number, or a choice that is not on offer, comes back as an error, not as a ' +
+              'bad answer'
           ),
       }),
     },
@@ -1341,10 +1353,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     'notification), mode:"approve" (approve/decline buttons) or "input" (asks for an answer),',
     'saveAs? (REQUIRED in "input" mode unless fields is given — it binds the typed answer),',
     'fields? (input mode WITH STRUCTURE: a form of up to',
-    `${MAX_APPROVAL_FIELDS} controls, each {id:<uuid>, name:<the variable it binds>,`,
-    'label:<what the person is asked>, type:"text"|"longtext"|"number"|"date"|"choice"|"multi",',
-    'required:true|false, options?:[...] (choice/multi, at least two), min?/max? (number),',
-    'help?}. USE FIELDS when the answer has a shape the agent would otherwise have to parse —',
+    `${MAX_APPROVAL_FIELDS} controls, each {name:<the variable it binds, and the key its`,
+    'answer comes back under>, label:<what the person is asked>,',
+    'type:"text"|"longtext"|"number"|"date"|"choice"|"multi", required:true|false,',
+    'options?:[...] (choice/multi, at least two), min?/max? (number), help?,',
+    'key?:<what the DESTINATION calls this field, e.g. "customfield_10016" — opaque here,',
+    'carried so the step that writes the answer has the id and the value together>}.',
+    'USE FIELDS when the answer has a shape the agent would otherwise have to parse —',
     'a number, a date, one of a known set — because the card refuses anything that does not',
     'fit, so no step has to. Each field binds its own variable and a "multi" also binds a',
     'LIST a foreach loop can iterate. A step may have saveAs OR fields, never both),',
@@ -1373,11 +1388,68 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     '{t:"tool", name:"<a skill name>"}.',
   ].join(' ');
 
+  /**
+   * ONE worked node, and it is the approval-with-a-form.
+   *
+   * The grammar above is complete and dense, and the node it describes
+   * least readably is the one with the most parts. What came back without
+   * this was the shape a reader guesses from prose: fields as a bare list
+   * of names, or options on a number, or a form that also sets saveAs. An
+   * example costs a few hundred characters in a description that is read
+   * once per session and copied from every time.
+   */
+  const FORM_EXAMPLE = [
+    'Example of an input node that asks with a form:',
+    JSON.stringify({
+      id: '<uuid>',
+      kind: 'approval',
+      name: 'Where do these go?',
+      message: [{ t: 'text', v: 'I found 7 decisions with no home. Which issue tracks them?' }],
+      mode: 'input',
+      fields: [
+        {
+          name: 'the issue key',
+          label: 'Which issue tracks this?',
+          type: 'text',
+          required: true,
+          help: 'e.g. CIO-12',
+        },
+        {
+          name: 'the points',
+          label: 'Story Points',
+          type: 'number',
+          required: false,
+          min: 1,
+          max: 13,
+          key: 'customfield_10016',
+        },
+        {
+          name: 'the comments',
+          label: 'Which of these should I post?',
+          type: 'multi',
+          required: false,
+          options: ['decision 1', 'risk 2', 'action 3'],
+        },
+      ],
+      timeoutHours: 72,
+      notifyEmail: true,
+      notifyWebex: false,
+      onApproved: { id: '<uuid>', name: 'Answered', steps: [] },
+      onDeclined: { id: '<uuid>', name: 'Skipped', steps: [] },
+      onTimeout: { id: '<uuid>', name: 'No answer', steps: [] },
+    }),
+    'The steps inside onApproved then use the chips "the issue key", "the points" and',
+    '"the comments" — that is the whole point of asking: the write the answer unlocks happens',
+    'in the same run, and the answered path is told "Story Points [customfield_10016]: 8" so',
+    'the step posting it needs no second lookup.',
+  ].join(' ');
+
   const STEPS_DESCRIPTION = [
     `The full steps document: {version:${CURRENT_STEPS_VERSION}, steps:[node,...]} — e.g. the`,
     '`steps` value from agent_get. Array order is execution order.',
     `At most ${MAX_STEPS} steps by default (the org may allow more).`,
     STEP_NODE_GRAMMAR,
+    FORM_EXAMPLE,
   ].join(' ');
 
   /**
@@ -1581,7 +1653,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
                   'The step node for insert/replace — the same shape agent_get returns. ' +
                     'A new step needs a fresh uuid; a replacement keeps the id it ' +
                     'replaces. ' +
-                    STEP_NODE_GRAMMAR
+                    STEP_NODE_GRAMMAR +
+                    ' ' +
+                    FORM_EXAMPLE
                 ),
               at: z
                 .object({

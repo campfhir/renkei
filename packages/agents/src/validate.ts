@@ -44,6 +44,7 @@ import {
   MAX_STEPS,
   MAX_APPROVAL_FIELDS,
   MAX_APPROVAL_FIELD_HELP_CHARS,
+  MAX_APPROVAL_FIELD_KEY_CHARS,
   MAX_APPROVAL_FIELD_LABEL_CHARS,
   MAX_APPROVAL_FIELD_OPTIONS,
   MAX_APPROVAL_FIELD_OPTION_CHARS,
@@ -642,6 +643,12 @@ function approvalFieldIssues(fields: ApprovalField[], prefix: string): Validatio
         message: `"${named}": the hint must stay under ${MAX_APPROVAL_FIELD_HELP_CHARS} characters.`,
       });
     }
+    if (field.key !== undefined && field.key.length > MAX_APPROVAL_FIELD_KEY_CHARS) {
+      issues.push({
+        path: `${at}.key`,
+        message: `"${named}": the destination's field id must stay under ${MAX_APPROVAL_FIELD_KEY_CHARS} characters.`,
+      });
+    }
 
     if (field.type === 'choice' || field.type === 'multi') {
       const cleaned = (field.options ?? []).map((option) => option.trim()).filter(Boolean);
@@ -931,10 +938,11 @@ function normalizeApprovalField(field: ApprovalField): ApprovalField {
       ? (field.options ?? []).map((option) => option.trim()).filter(Boolean)
       : undefined;
   const help = field.help?.trim();
+  const key = field.key?.trim();
   return {
-    id: field.id,
     name: field.name.trim(),
     label: field.label.trim(),
+    ...(key ? { key } : {}),
     type: field.type,
     required: field.required,
     ...(options ? { options } : {}),

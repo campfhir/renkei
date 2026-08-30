@@ -159,31 +159,6 @@ export type DecideApprovalResult =
   | { outcome: 'decided'; decision: ApprovalDecision; runId: string; resumed: boolean };
 
 /**
- * Answers as the checker wants them: keyed by field id.
- *
- * The card posts ids, because it rendered from the spec. A person driving
- * this from a chat client has field NAMES in front of them and nothing
- * else — agent_approvals_list prints the form, not its uuids — so a name
- * is accepted as the key too, matched case-insensitively. Ids win where
- * both are present; unknown keys pass through and are ignored downstream.
- */
-function keyAnswersById(fields: ApprovalField[], raw: unknown): Record<string, unknown> {
-  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
-  const byName = new Map(fields.map((field) => [field.name.trim().toLowerCase(), field.id]));
-  const ids = new Set(fields.map((field) => field.id));
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (ids.has(key)) {
-      out[key] = value;
-      continue;
-    }
-    const id = byName.get(key.trim().toLowerCase());
-    if (id !== undefined && out[id] === undefined) out[id] = value;
-  }
-  return out;
-}
-
-/**
  * Decide one approval card and wake its run.
  *
  * The producer is a parameter rather than an import so this stays testable
@@ -199,7 +174,7 @@ export async function decideApproval(
     cardId: string;
     decision: ApprovalDecision;
     answer?: string | undefined;
-    /** A form card's answers, keyed by field id (or name — see below). */
+    /** A form card's answers: one entry per field, keyed by field name. */
     answers?: unknown;
   }
 ): Promise<DecideApprovalResult> {
@@ -234,7 +209,7 @@ export async function decideApproval(
   const fields = fieldsOf(item.suggested_action);
   let answers: Record<string, ApprovalAnswerValue> | null = null;
   if (fields.length > 0 && input.decision === 'approve') {
-    const checked = checkApprovalAnswers(fields, keyAnswersById(fields, input.answers));
+    const checked = checkApprovalAnswers(fields, input.answers);
     if (!checked.ok) return { outcome: 'invalid-answers', issues: checked.issues };
     answers = checked.values;
   }

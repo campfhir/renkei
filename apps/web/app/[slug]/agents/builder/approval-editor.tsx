@@ -76,13 +76,7 @@ export function ApprovalEditor({
     onChange({ ...approval, fields: fields.map((field, at) => (at === index ? next : field)) });
   };
   const addField = () => {
-    const next: ApprovalField = {
-      id: crypto.randomUUID(),
-      name: '',
-      label: '',
-      type: 'text',
-      required: true,
-    };
+    const next: ApprovalField = { name: '', label: '', type: 'text', required: true };
     // The first field takes over from the plain box, so saveAs goes with
     // it: a step cannot both save one answer and collect several.
     const { saveAs: _saveAs, ...rest } = approval;
@@ -234,7 +228,9 @@ export function ApprovalEditor({
           <div className="space-y-2">
             {fields.map((field, index) => (
               <FieldRow
-                key={field.id}
+                // Position, not name: a field being renamed has a blank or
+                // duplicate name for as long as the author is typing it.
+                key={index}
                 field={field}
                 index={index}
                 issues={forField(issues, `fields.${index}`)}
@@ -257,8 +253,10 @@ export function ApprovalEditor({
             </p>
           )}
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Each answer is saved under its own name and available to later steps as a chip. Remove
-            them all to go back to one plain answer.
+            Each answer is saved under its own name and available to later steps as a chip. Where
+            the answer is headed somewhere with its own field id — a Jira custom field, say — put
+            that id on the field and the step writing it gets the pair. Remove them all to go back
+            to one plain answer.
           </p>
         </div>
       ) : null}
@@ -391,7 +389,7 @@ function FieldRow({
   onRemove: () => void;
 }) {
   const choices = field.type === 'choice' || field.type === 'multi';
-  const idFor = (part: string) => `approval-field-${field.id}-${part}`;
+  const idFor = (part: string) => `approval-field-${index}-${part}`;
 
   const retype = (type: ApprovalFieldType) => {
     // Dropping the settings that no longer apply keeps a stored field from
@@ -527,6 +525,20 @@ function FieldRow({
             placeholder="Optional hint shown under the box"
             onChange={(event) => onChange({ ...field, help: event.target.value || undefined })}
           />
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-xs text-gray-500 dark:text-gray-400" htmlFor={idFor('key')}>
+              Field id where it&apos;s going
+            </label>
+            <input
+              id={idFor('key')}
+              className={`min-w-0 flex-1 ${fieldClass(false)}`}
+              value={field.key ?? ''}
+              maxLength={200}
+              placeholder="Optional — e.g. customfield_10016"
+              onChange={(event) => onChange({ ...field, key: event.target.value || undefined })}
+            />
+          </div>
 
           <FieldIssues messages={issues} />
         </div>

@@ -2538,20 +2538,16 @@ maybe('agent run engine', () => {
     });
 
     it('a form card binds one variable per field, and a list for a multi-select', async () => {
-      const keyField = randomUUID();
-      const picksField = randomUUID();
       const { doc } = approvalDoc({
         mode: 'input',
         fields: [
           {
-            id: keyField,
             name: 'the issue key',
             label: 'Which issue?',
             type: 'text',
             required: true,
           },
           {
-            id: picksField,
             name: 'the comments',
             label: 'Which comments?',
             type: 'multi',
@@ -2585,7 +2581,7 @@ maybe('agent run engine', () => {
         .set({
           status: 'approved',
           result: JSON.stringify({
-            answers: { [keyField]: 'CIO-12', [picksField]: ['decision 1', 'risk 2'] },
+            answers: { 'the issue key': 'CIO-12', 'the comments': ['decision 1', 'risk 2'] },
           }),
           decided_at: sql`NOW()`,
         })

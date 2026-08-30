@@ -650,14 +650,12 @@ describe('agent_approvals_list', () => {
         mode: 'input',
         fields: [
           {
-            id: 'f-1',
             name: 'the issue key',
             label: 'Which issue tracks this?',
             type: 'text',
             required: true,
           },
           {
-            id: 'f-2',
             name: 'the comments',
             label: 'Which comments to post?',
             type: 'multi',
@@ -665,13 +663,13 @@ describe('agent_approvals_list', () => {
             options: ['decision 1', 'risk 2'],
           },
           {
-            id: 'f-3',
             name: 'the points',
-            label: 'Points',
+            label: 'Story Points',
             type: 'number',
             required: false,
             min: 1,
             max: 13,
+            key: 'customfield_10016',
           },
         ],
       },
@@ -686,6 +684,8 @@ describe('agent_approvals_list', () => {
     expect(text).toContain('"the issue key" — Which issue tracks this? (text) · required');
     expect(text).toContain('any of: decision 1 | risk 2');
     expect(text).toContain('number, min 1, max 13');
+    // Where the answer is headed, so the step writing it needs no lookup.
+    expect(text).toContain('writes to customfield_10016');
   });
 
   it('says nothing is waiting rather than answering with an empty list', async () => {

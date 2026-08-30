@@ -2,11 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  checkApprovalAnswers,
-  type ApprovalAnswerValue,
-  type ApprovalField,
-} from '@renkei/agents';
+import { checkApprovalAnswers, type ApprovalAnswerValue, type ApprovalField } from '@renkei/agents';
 
 /**
  * The decision controls of an APPROVAL card — the human half of a paused
@@ -54,10 +50,10 @@ export default function ApprovalActions({
   const isForm = mode === 'input' && fields.length > 0;
 
   const setField = (field: ApprovalField, value: ApprovalAnswerValue): void => {
-    setAnswers((current) => ({ ...current, [field.id]: value }));
+    setAnswers((current) => ({ ...current, [field.name]: value }));
     setFieldErrors((current) => {
-      if (!current[field.id]) return current;
-      const { [field.id]: _cleared, ...rest } = current;
+      if (!current[field.name]) return current;
+      const { [field.name]: _cleared, ...rest } = current;
       return rest;
     });
   };
@@ -67,7 +63,7 @@ export default function ApprovalActions({
       const checked = checkApprovalAnswers(fields, answers);
       if (!checked.ok) {
         setFieldErrors(
-          Object.fromEntries(checked.issues.map((issue) => [issue.fieldId, issue.message]))
+          Object.fromEntries(checked.issues.map((issue) => [issue.name, issue.message]))
         );
         return;
       }
@@ -104,10 +100,10 @@ export default function ApprovalActions({
           setFieldErrors(
             Object.fromEntries(
               issues.flatMap((issue) => {
-                const entry: { fieldId?: unknown; message?: unknown } =
+                const entry: { name?: unknown; message?: unknown } =
                   typeof issue === 'object' && issue !== null ? { ...issue } : {};
-                return typeof entry.fieldId === 'string' && typeof entry.message === 'string'
-                  ? [[entry.fieldId, entry.message]]
+                return typeof entry.name === 'string' && typeof entry.message === 'string'
+                  ? [[entry.name, entry.message]]
                   : [];
               })
             )
@@ -130,12 +126,13 @@ export default function ApprovalActions({
         <>
           {isForm ? (
             <div className="space-y-3">
-              {fields.map((field) => (
+              {fields.map((field, index) => (
                 <FormField
-                  key={field.id}
+                  key={field.name || index}
                   field={field}
-                  value={answers[field.id]}
-                  error={fieldErrors[field.id]}
+                  index={index}
+                  value={answers[field.name]}
+                  error={fieldErrors[field.name]}
                   onChange={(value) => setField(field, value)}
                 />
               ))}
@@ -207,16 +204,20 @@ const CONTROL_CLASS =
  */
 function FormField({
   field,
+  index,
   value,
   error,
   onChange,
 }: {
   field: ApprovalField;
+  /** Position on this card — the control's DOM id, which a name with
+   *  spaces in it could not be. */
+  index: number;
   value: ApprovalAnswerValue | undefined;
   error: string | undefined;
   onChange: (value: ApprovalAnswerValue) => void;
 }): React.ReactNode {
-  const controlId = `approval-field-${field.id}`;
+  const controlId = `approval-field-${index}`;
   const describedBy = error ? `${controlId}-error` : field.help ? `${controlId}-help` : undefined;
   const border = error
     ? 'border-red-400 dark:border-red-700'
@@ -291,7 +292,9 @@ function FormField({
                       onChange(option);
                       return;
                     }
-                    onChange(checked ? picks.filter((pick) => pick !== option) : [...picks, option]);
+                    onChange(
+                      checked ? picks.filter((pick) => pick !== option) : [...picks, option]
+                    );
                   }}
                 />
                 <span>{option}</span>

@@ -178,14 +178,12 @@ describe('decideApproval', () => {
 describe('decideApproval on a form card', () => {
   const FORM = [
     {
-      id: 'f-1',
       name: 'the issue key',
       label: 'Which issue?',
       type: 'text' as const,
       required: true,
     },
     {
-      id: 'f-2',
       name: 'the points',
       label: 'Points',
       type: 'number' as const,
@@ -194,7 +192,6 @@ describe('decideApproval on a form card', () => {
       max: 13,
     },
     {
-      id: 'f-3',
       name: 'the comments',
       label: 'Which comments?',
       type: 'multi' as const,
@@ -237,7 +234,7 @@ describe('decideApproval on a form card', () => {
     expect(sets).toHaveLength(0);
   });
 
-  it('accepts answers keyed by field NAME and stores them keyed by id', async () => {
+  it('stores the answers under the same names they arrived with', async () => {
     const sets: Record<string, unknown>[] = [];
     const result = await decideApproval(
       stubDb({ row: formCard(), updated: 1, sets }),
@@ -253,11 +250,12 @@ describe('decideApproval on a form card', () => {
 
     expect(result.outcome).toBe('decided');
     const stored: { answers?: Record<string, unknown> } = JSON.parse(String(sets[0]?.result));
-    // Ids, not names: the step may be renamed while the card waits.
+    // The reply IS the key/value pairs: what is stored reads the same as
+    // what was sent, and as what the run will bind.
     expect(stored.answers).toEqual({
-      'f-1': 'CIO-12',
-      'f-2': '8',
-      'f-3': ['risk 2'],
+      'the issue key': 'CIO-12',
+      'the points': '8',
+      'the comments': ['risk 2'],
     });
   });
 
