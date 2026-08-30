@@ -11,6 +11,14 @@
  * success the new run is linked directly — the reason for pressing it is
  * to watch what happens — and the page refreshes so Recent runs catches
  * up.
+ *
+ * A second run while one is already `queued`/`running` is safe — the
+ * queue's ordering key already runs one agent's jobs strictly serial, so
+ * this one just waits its turn — but pressing the button twice by accident
+ * is easy to do without meaning it, so the server asks first (409
+ * `ALREADY_RUNNING`) rather than silently piling one on. The confirm modal
+ * is the one place that ambiguity gets resolved; everywhere else the
+ * server is trusted to answer plainly.
  */
 
 import { useState } from 'react';
@@ -18,6 +26,13 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { sendJsonFull } from '@/lib/fetch-json';
 import { Icon, ICONS } from '@/components/icons';
+import Modal from '@/components/modal';
+
+interface InvokeResponse {
+  runId?: string;
+  code?: string;
+  liveRun?: { id: string; status: string };
+}
 
 export default function RunNowButton({
   slug,
@@ -32,17 +47,23 @@ export default function RunNowButton({
   const [busy, setBusy] = useState(false);
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingLiveRun, setPendingLiveRun] = useState<{ status: string } | null>(null);
 
-  const start = async () => {
+  const start = async (confirmQueue = false) => {
     setBusy(true);
     setError(null);
     setStartedRunId(null);
-    const result = await sendJsonFull<{ runId?: string }>(
+    const result = await sendJsonFull<InvokeResponse>(
       `/api/tenant/${tenantId}/agents/${agentId}/invoke`,
-      'POST'
+      'POST',
+      confirmQueue ? { confirmQueue: true } : undefined
     );
     setBusy(false);
     if (result.error) {
+      if (result.data?.code === 'ALREADY_RUNNING' && result.data.liveRun) {
+        setPendingLiveRun({ status: result.data.liveRun.status });
+        return;
+      }
       setError(result.error);
       return;
     }
@@ -72,6 +93,35 @@ export default function RunNowButton({
       ) : null}
       {error ? (
         <span className="text-right text-xs text-red-600 dark:text-red-400">{error}</span>
+      ) : null}
+
+      {pendingLiveRun ? (
+        <Modal title="A run is already in progress" onClose={() => setPendingLiveRun(null)}>
+          <p className="text-sm">
+            This agent already has a run that&rsquo;s {pendingLiveRun.status} — they won&rsquo;t run
+            at the same time. Starting another queues it right behind the current one.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setPendingLiveRun(null)}
+              className="rounded-md border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-800 dark:hover:bg-gray-900"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setPendingLiveRun(null);
+                void start(true);
+              }}
+              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              Queue it anyway
+            </button>
+          </div>
+        </Modal>
       ) : null}
     </div>
   );

@@ -49,6 +49,40 @@ export interface CreateAgentRunInput {
 export type CreateAgentRunError =
   'AGENT_CYCLE' | 'CHAIN_TOO_DEEP' | 'DAILY_RUN_CAP' | 'DB_ERROR' | 'QUEUE_ERROR';
 
+export interface LiveRun {
+  id: string;
+  status: string;
+}
+
+/**
+ * The run of this agent still holding the `agent:{agentId}` ordering key,
+ * if any — the run a NEW one would queue behind rather than run alongside.
+ * `queued` counts the same as `running`: both already claim the key (see
+ * this file's module doc), so both are "in progress" for a caller deciding
+ * whether to warn a person before adding another.
+ *
+ * Not itself a guard — nothing here refuses to create a run. A machine
+ * trigger (schedule, event, chain, API key) queues behind a live run
+ * silently, same as always; this exists for the ONE caller with someone
+ * present to ask first, the manual "Run now" button, to check before it
+ * calls `createAgentRun`.
+ */
+export async function liveRunFor(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string
+): Promise<LiveRun | null> {
+  const row = await db
+    .selectFrom('agent_runs')
+    .select(['id', 'status'])
+    .where('tenant_id', '=', tenantId)
+    .where('agent_id', '=', agentId)
+    .where('status', 'in', ['queued', 'running'])
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst();
+  return row ? { id: row.id, status: row.status } : null;
+}
+
 export async function createAgentRun(
   db: Kysely<DB>,
   producer: QueueProducer,

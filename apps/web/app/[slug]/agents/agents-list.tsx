@@ -18,6 +18,7 @@ import { useRouter } from 'next/navigation';
 import type { StoredAgent } from '@/lib/agents/store';
 import { sendJsonFull } from '@/lib/fetch-json';
 import { Icon, ICONS } from '@/components/icons';
+import Modal from '@/components/modal';
 import { triggerBadge, triggerSummary } from '@/lib/agents/trigger-summary';
 
 function IconButton({
@@ -170,6 +171,9 @@ export function AgentsList({
   const [error, setError] = useState<string | null>(null);
   const [ranNow, setRanNow] = useState<string | null>(null);
   const [triggersFor, setTriggersFor] = useState<StoredAgent | null>(null);
+  const [confirmRunFor, setConfirmRunFor] = useState<{ agent: StoredAgent; status: string } | null>(
+    null
+  );
 
   // Summaries are written after the save response; while any card is still
   // waiting on one, refresh the server-rendered list a few times so the
@@ -215,13 +219,31 @@ export function AgentsList({
     else router.refresh();
   };
 
-  const runNow = async (agent: StoredAgent) => {
+  // A second run while one is already queued/running is safe — the queue's
+  // ordering key already runs one agent's jobs strictly serial — but
+  // pressing this twice by accident is easy to do without meaning it, so
+  // the server asks first (409 ALREADY_RUNNING) rather than piling one on
+  // silently. Confirming resends with confirmQueue: true.
+  const runNow = async (agent: StoredAgent, confirmQueue = false) => {
     setBusy(agent.id);
     setError(null);
-    const result = await sendJsonFull(`/api/tenant/${tenantId}/agents/${agent.id}/invoke`, 'POST');
+    const result = await sendJsonFull<{
+      runId?: string;
+      code?: string;
+      liveRun?: { id: string; status: string };
+    }>(
+      `/api/tenant/${tenantId}/agents/${agent.id}/invoke`,
+      'POST',
+      confirmQueue ? { confirmQueue: true } : undefined
+    );
     setBusy(null);
-    if (result.error) setError(result.error);
-    else {
+    if (result.error) {
+      if (result.data?.code === 'ALREADY_RUNNING' && result.data.liveRun) {
+        setConfirmRunFor({ agent, status: result.data.liveRun.status });
+        return;
+      }
+      setError(result.error);
+    } else {
       setRanNow(agent.id);
       setTimeout(() => setRanNow(null), 4000);
     }
@@ -389,6 +411,36 @@ export function AgentsList({
       ) : null}
       {triggersFor ? (
         <TriggersDialog agent={triggersFor} onClose={() => setTriggersFor(null)} />
+      ) : null}
+      {confirmRunFor ? (
+        <Modal title="A run is already in progress" onClose={() => setConfirmRunFor(null)}>
+          <p className="text-sm">
+            &ldquo;{confirmRunFor.agent.name}&rdquo; already has a run that&rsquo;s{' '}
+            {confirmRunFor.status} — they won&rsquo;t run at the same time. Starting another queues
+            it right behind the current one.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmRunFor(null)}
+              className="rounded-md border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-800 dark:hover:bg-gray-900"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={busy === confirmRunFor.agent.id}
+              onClick={() => {
+                const agent = confirmRunFor.agent;
+                setConfirmRunFor(null);
+                void runNow(agent, true);
+              }}
+              className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              Queue it anyway
+            </button>
+          </div>
+        </Modal>
       ) : null}
     </div>
   );

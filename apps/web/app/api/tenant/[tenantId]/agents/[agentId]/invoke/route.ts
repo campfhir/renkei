@@ -15,6 +15,14 @@
  * — identifiers and small content, capped well below anything jsonb would
  * regret. The web app stays a producer only (Decision #17): the row and
  * queue message are written here, execution happens in worker-agents.
+ *
+ * A second manual run while one is already `queued`/`running` is fine —
+ * `createAgentRun`'s ordering key already runs one agent's jobs strictly
+ * serial — but only the session path gets asked about it first, since only
+ * it has someone to ask: a 409 `ALREADY_RUNNING` names the run it would
+ * queue behind, and the button re-sends with `confirmQueue: true` once the
+ * person says to go ahead. A machine trigger has no such round trip and
+ * queues behind a live run without ceremony, same as it always has.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -22,7 +30,7 @@ import { sql, type Kysely } from 'kysely';
 import { getDatabase, type DB } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { isCurrentStepsDoc } from '@renkei/agents';
-import { createAgentRun } from '@renkei/agents/runs';
+import { createAgentRun, liveRunFor } from '@renkei/agents/runs';
 import { sha256Hex } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { digestsMatch, getBearerToken } from '@/lib/mcp-token';
@@ -146,7 +154,10 @@ export async function POST(
   }
   if (!isCurrentStepsDoc(agent.steps)) {
     return NextResponse.json(
-      { error: 'This agent is saved in an older format — open it in the builder and save to update it.' },
+      {
+        error:
+          'This agent is saved in an older format — open it in the builder and save to update it.',
+      },
       { status: 409 }
     );
   }
@@ -159,15 +170,35 @@ export async function POST(
     return NextResponse.json({ error: 'state must stay under 64KB' }, { status: 413 });
   }
   let state: Record<string, unknown> | undefined;
+  let confirmQueue = false;
   if (raw.trim().length > 0) {
     try {
-      const body: { state?: unknown } = JSON.parse(raw);
+      const body: { state?: unknown; confirmQueue?: unknown } = JSON.parse(raw);
       if (typeof body.state === 'object' && body.state !== null && !Array.isArray(body.state)) {
         // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
         state = body.state as Record<string, unknown>;
       }
+      confirmQueue = body.confirmQueue === true;
     } catch {
       return NextResponse.json({ error: 'Body must be JSON' }, { status: 400 });
+    }
+  }
+
+  // A machine trigger queues behind a live run silently — the ordering key
+  // already serializes it, and there is nobody there to ask. The button a
+  // person presses gets a chance to notice first, unless this is the
+  // confirmed retry of exactly that prompt.
+  if (session && !confirmQueue) {
+    const liveRun = await liveRunFor(db, tenantId, agentId);
+    if (liveRun) {
+      return NextResponse.json(
+        {
+          error: 'A run of this agent is already in progress.',
+          code: 'ALREADY_RUNNING',
+          liveRun,
+        },
+        { status: 409 }
+      );
     }
   }
 
