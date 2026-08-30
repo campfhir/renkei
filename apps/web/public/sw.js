@@ -38,6 +38,6 @@ self.addEventListener('notificationclick', (event) => {
       if (refUrl) {
         await self.clients.openWindow(refUrl);
       }
-    })(),
+    })()
   );
 });

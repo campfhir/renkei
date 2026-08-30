@@ -44,15 +44,18 @@ export interface NotificationPrefs {
   /** Whether anything pops up in the corner; the page always fills. */
   toastsEnabled: boolean;
   toastCorner: ToastCorner;
-  /**
-   * Native browser notifications — the OS banner for a tab in the
-   * background. Off by default, and necessarily so: the browser will not
-   * show one without its own per-site permission prompt, which can only be
-   * asked from a click. The preferences page owns that handshake; this
-   * flag records the person's side of it.
-   */
-  desktopEnabled: boolean;
 }
+
+/*
+  Native browser notifications (the OS banner for a background tab) are
+  deliberately NOT in here. `Notification.permission` is per-origin and
+  per-BROWSER — granting it on a laptop says nothing about a phone, and a
+  synced "on" from the database would claim a state that browser has never
+  actually agreed to. That preference lives in this browser's own
+  localStorage instead (apps/web/lib/desktop-notifications-storage.ts),
+  scoped by tenant, next to the permission it can only ever describe
+  locally.
+*/
 
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   runStarted: false,
@@ -63,7 +66,6 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   tools: {},
   toastsEnabled: true,
   toastCorner: 'bottom-right',
-  desktopEnabled: false,
 };
 
 /**
@@ -142,6 +144,5 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
     tools: boolMap(raw.tools),
     toastsEnabled: boolOr(raw.toastsEnabled, DEFAULT_NOTIFICATION_PREFS.toastsEnabled),
     toastCorner: corner,
-    desktopEnabled: boolOr(raw.desktopEnabled, DEFAULT_NOTIFICATION_PREFS.desktopEnabled),
   };
 }

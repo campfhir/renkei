@@ -6,6 +6,10 @@ import { useEffect, useState } from 'react';
 // `dns` — into the browser bundle. That split is what prefs.ts is for.
 import { wantsAct, type NotificationPrefs, type ToastCorner } from '@renkei/user-prefs/prefs';
 import ConnectorIcon from '@/components/connector-icon';
+import {
+  getDesktopNotificationsEnabled,
+  setDesktopNotificationsEnabled,
+} from '@/lib/desktop-notifications-storage';
 
 /**
  * What to be told about, and where.
@@ -103,35 +107,38 @@ export default function PreferencesForm({
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
 
   /*
-    The browser's side of the desktop-notification deal. Read in an effect,
-    not during render: this component is server-rendered first, where
-    `Notification` does not exist, and guessing would only trade a crash for
-    a hydration mismatch. Until the effect runs the card renders in its
-    supported shape — the flash is one frame, and only on browsers where the
-    pessimistic shape would have been wrong anyway.
+    The browser's side of the desktop-notification deal, and the person's —
+    both read in an effect, not during render: this component is
+    server-rendered first, where neither `Notification` nor `localStorage`
+    exists, and guessing would only trade a crash for a hydration mismatch.
+    Until the effect runs the card renders in its supported shape — the
+    flash is one frame, and only on browsers where the pessimistic shape
+    would have been wrong anyway.
+
+    The opt-in itself lives in THIS browser's localStorage rather than the
+    synced `prefs` object: `Notification.permission` is per-browser, so a
+    database row could never be more than a claim about a device it isn't
+    running on. Reading it here means this switch shows what this browser
+    actually has, not what some other one decided.
 
     'unsupported' covers the browsers with no Notification global at all —
     iOS Safari outside an installed web app being the one people will
     actually meet.
   */
+  const [desktopEnabled, setDesktopEnabled] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported' | null>(null);
   useEffect(() => {
+    setDesktopEnabled(getDesktopNotificationsEnabled(tenantId));
     setPermission('Notification' in window ? Notification.permission : 'unsupported');
-  }, []);
+  }, [tenantId]);
 
-  /*
-    Flipping the switch ON is the one moment permission can be asked for:
-    browsers only honour `requestPermission()` from a user gesture, and this
-    click is it. If the person then declines the browser's prompt, the
-    switch stays off — saving "on" with permission denied would store a
-    preference that can never fire and look exactly like a bug.
-  */
-  async function toggleDesktop(on: boolean) {
-    if (!on) {
-      update({ ...prefs, desktopEnabled: false });
-      return;
-    }
-    if (permission === 'unsupported' || permission === null) return;
+  /**
+   * Asks the browser for permission if it hasn't already answered, and
+   * reports whether the two — the person's opt-in and the browser's own
+   * answer — are now both "yes". `requestPermission()` only honours a
+   * user gesture, so this must only ever be called from a click.
+   */
+  async function requestPermission(): Promise<boolean> {
     let current: NotificationPermission = Notification.permission;
     if (current === 'default') {
       try {
@@ -141,7 +148,31 @@ export default function PreferencesForm({
       }
       setPermission(current);
     }
-    update({ ...prefs, desktopEnabled: current === 'granted' });
+    return current === 'granted';
+  }
+
+  /*
+    Flipping the switch ON is the moment permission is normally asked for.
+    If the person then declines the browser's prompt, the switch stays off
+    — storing "on" with permission denied would be a preference that can
+    never fire and would look exactly like a bug.
+  */
+  async function toggleDesktop(on: boolean) {
+    const enabled =
+      on && permission !== 'unsupported' && permission !== null && (await requestPermission());
+    setDesktopEnabled(enabled);
+    setDesktopNotificationsEnabled(tenantId, enabled);
+  }
+
+  /**
+   * The retrigger next to the switch: for when the switch already reads on
+   * but the browser's own answer has drifted back to "ask" — reset from
+   * site settings, most likely — so nothing has actually been firing.
+   * Distinct from `toggleDesktop` because unchecking and rechecking the box
+   * is not obviously how you'd fix that, and the box never changes here.
+   */
+  async function retryPermission() {
+    await requestPermission();
   }
 
   function update(next: NotificationPrefs) {
@@ -450,40 +481,59 @@ export default function PreferencesForm({
           <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
             The other half of pop-ups: your system&rsquo;s own notifications, shown when Renkei is
             open in a background tab. Nothing fires while you are looking at Renkei — that is what
-            the pop-ups are for.
+            the pop-ups are for. Remembered by this browser only, not your account — sign in
+            somewhere else and it starts off there too.
           </p>
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap items-start gap-x-3 gap-y-2">
             <label className="flex items-start gap-2 text-sm">
               <input
                 type="checkbox"
                 className="mt-0.5 shrink-0"
-                checked={prefs.desktopEnabled}
+                checked={desktopEnabled}
                 disabled={permission === 'unsupported'}
                 onChange={(event) => void toggleDesktop(event.target.checked)}
               />
               <span className="min-w-0">
                 Show system notifications
                 <span className="block text-xs text-gray-500 dark:text-gray-400">
-                  Your browser asks its own permission the first time — both switches have to be
-                  on.
+                  Your browser asks its own permission the first time — both switches have to be on.
                 </span>
               </span>
             </label>
             {/*
-              The states worth a sentence, not every state: 'granted' and
-              'default' need nothing beyond the hint above, and null (one
-              server-rendered frame) must claim nothing it cannot know yet.
+              The switch already reads on, but the browser's own answer has
+              drifted back to "ask" — a site-settings reset is the usual
+              cause. Unchecking and rechecking the box would not fix this
+              (it would just turn the preference off), so this is a
+              separate control that re-asks without touching it.
+            */}
+            {desktopEnabled && permission === 'default' ? (
+              <button
+                type="button"
+                onClick={() => void retryPermission()}
+                className="shrink-0 rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700"
+              >
+                Allow notifications
+              </button>
+            ) : null}
+            {/*
+              The states worth a sentence, not every state: 'granted' needs
+              nothing beyond the hint above, and null (one server-rendered
+              frame) must claim nothing it cannot know yet.
             */}
             {permission === 'unsupported' ? (
-              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                This browser can&rsquo;t show them. On iPhone and iPad they only work once Renkei
-                is added to the Home Screen.
+              <p className="w-full text-xs text-gray-500 dark:text-gray-400">
+                This browser can&rsquo;t show them. On iPhone and iPad they only work once Renkei is
+                added to the Home Screen.
               </p>
             ) : null}
             {permission === 'denied' ? (
-              <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
-                Notifications are blocked for this site in your browser&rsquo;s settings. Allow
-                them there, then flip this switch again.
+              <p className="w-full text-xs text-amber-700 dark:text-amber-400">
+                Blocked for this site in your browser&rsquo;s settings, which is why nothing shows
+                up even with this switch on: once a browser has recorded &ldquo;block&rdquo;, it
+                won&rsquo;t ask again on its own, so Renkei can&rsquo;t re-prompt for you. Open this
+                page&rsquo;s site settings (usually behind the padlock or the icon left of the
+                address bar), allow notifications, then reload.
               </p>
             ) : null}
           </div>

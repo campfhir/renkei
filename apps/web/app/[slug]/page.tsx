@@ -1,13 +1,11 @@
 import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
-import { getNotificationPrefs } from '@renkei/user-prefs';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import ActionableCards from './cards';
 import AutoRefresh from '@/components/auto-refresh';
-import NotificationPermissionNudge from '@/components/notification-permission-nudge';
 
 /**
  * Where a signed-in user lands: the actionable-item feed, which is the point
@@ -32,14 +30,9 @@ export default async function HomePage({
   }
 
   const showArchived = (await searchParams).archived === '1';
-  const notifications = await getNotificationPrefs(tenant.id, session.subject, { fresh: true });
 
   return (
     <div className="mx-auto max-w-3xl">
-      <NotificationPermissionNudge
-        tenantId={tenant.id}
-        desktopEnabled={notifications.desktopEnabled}
-      />
       <div className="mb-1 flex items-baseline justify-between gap-4">
         <h1 className="text-xl font-bold">Actionable items</h1>
         <Link

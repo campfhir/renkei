@@ -6,7 +6,6 @@ import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
-import NotificationPermissionNudge from '@/components/notification-permission-nudge';
 import PreferencesForm from './preferences-form';
 
 /**
@@ -65,10 +64,6 @@ export default async function PreferencesPage({
       past comfortable reading length to no benefit.
     */
     <div className="mx-auto max-w-5xl">
-      <NotificationPermissionNudge
-        tenantId={tenant.id}
-        desktopEnabled={notifications.desktopEnabled}
-      />
       <h1 className="mb-1 text-xl font-bold">Preferences</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Yours alone — nobody else sees these, and they change nothing about what your agents are

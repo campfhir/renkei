@@ -2,21 +2,25 @@
 
 import { useEffect, useRef } from 'react';
 import { useNotifications } from '@/components/notification-center';
+import { getDesktopNotificationsEnabled } from '@/lib/desktop-notifications-storage';
 
 /**
  * Native browser notifications — the OS banner, not the corner toast.
  *
- * Mounted only when the preference is on, and firing only while this tab is
- * NOT in front: the toast stack owns the foreground, and an OS banner about
- * a page somebody is already looking at says the same thing twice. It reads
- * the same arrivals the toasts do, so it costs no extra request — the one
- * poller gains a third reader.
+ * Mounted for every signed-in visitor (see app/[slug]/layout.tsx), and
+ * firing only while this tab is NOT in front: the toast stack owns the
+ * foreground, and an OS banner about a page somebody is already looking at
+ * says the same thing twice. It reads the same arrivals the toasts do, so
+ * it costs no extra request — the one poller gains a third reader.
  *
- * The preference is the person's half of the deal; `Notification.permission`
- * is the browser's, per origin, and it is re-checked at FIRE time rather
- * than trusted from mount. Permission can be revoked in site settings long
- * after the switch was saved, and the reverse — pref on, permission newly
- * granted in another tab — should start working without a save.
+ * Two things gate a banner, and BOTH are read at fire time rather than
+ * trusted from mount: the person's own opt-in, kept in this browser's
+ * localStorage (desktop-notifications-storage.ts) rather than synced from
+ * the database — `Notification.permission` is per-browser, so a synced "on"
+ * could never be more than a claim about a device it isn't running on — and
+ * `Notification.permission` itself, the browser's per-origin answer, which
+ * can be revoked in site settings long after the switch was flipped, or
+ * newly granted in another tab without a save happening at all.
  *
  * Banners are tagged the way the toast pile coalesces: repeats of one tool
  * in one run REPLACE each other, so a loop transitioning forty issues is
@@ -30,7 +34,7 @@ import { useNotifications } from '@/components/notification-center';
  * back to it only when the constructor throws — every browser where the
  * constructor already works keeps using it unchanged.
  */
-export default function DesktopNotifications() {
+export default function DesktopNotifications({ tenantId }: { tenantId: string }) {
   const { arrivals } = useNotifications();
   // Ids already announced. Arrivals linger in context until their toast is
   // dismissed (or forever, with toasts off), and an effect re-run must not
@@ -41,7 +45,8 @@ export default function DesktopNotifications() {
     if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
     // Registration is cheap and idempotent — the browser no-ops a repeat
     // register() of the same URL/scope — so there is no reason to gate it
-    // on the preference beyond this component only mounting when it's on.
+    // on the preference: it costs nothing for someone who never opts in,
+    // and it means the path is already warm for someone who opts in later.
     navigator.serviceWorker.register('/sw.js').catch(() => {
       // Nothing to recover: browsers that need this path simply keep
       // relying on the constructor, same as before this existed.
@@ -50,6 +55,7 @@ export default function DesktopNotifications() {
 
   useEffect(() => {
     if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (!getDesktopNotificationsEnabled(tenantId)) return;
     if (Notification.permission !== 'granted') return;
 
     // Front and focused means the corner has it covered. Arrivals that show
@@ -85,7 +91,7 @@ export default function DesktopNotifications() {
         void showViaServiceWorker(entry.headline, options);
       }
     }
-  }, [arrivals]);
+  }, [arrivals, tenantId]);
 
   return null;
 }

@@ -7,7 +7,7 @@ import { getIdentityDisplay } from '@/lib/identity';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import { NotificationCenter } from '@/components/notification-center';
-import ToastStack from '@/components/toast-stack';
+import NotificationCorner from '@/components/notification-corner';
 import DesktopNotifications from '@/components/desktop-notifications';
 import AppNav from './nav';
 
@@ -66,11 +66,18 @@ export default async function TenantLayout({
       {/* Wide enough for the log and grant tables; narrow pages center a
           max-w-3xl block of their own inside it. */}
       <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">{children}</main>
-      {prefs?.toastsEnabled ? <ToastStack corner={prefs.toastCorner} /> : null}
+      {session ? (
+        <NotificationCorner
+          tenantId={tenant.id}
+          corner={prefs?.toastCorner ?? 'bottom-right'}
+          toastsEnabled={prefs?.toastsEnabled ?? false}
+        />
+      ) : null}
       {/* Renders nothing — it only turns arrivals into OS banners while the
-          tab is in the background, and only for somebody who both flipped
-          the preference AND granted the browser's own permission. */}
-      {prefs?.desktopEnabled ? <DesktopNotifications /> : null}
+          tab is in the background, and only for somebody whose browser has
+          granted permission. The opt-in it checks lives in this browser's
+          localStorage, not here — see desktop-notifications.tsx. */}
+      {session ? <DesktopNotifications tenantId={tenant.id} /> : null}
     </div>
   );
 
