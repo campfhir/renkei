@@ -65,6 +65,7 @@ function draft(overrides: Partial<AgentDraft> = {}): AgentDraft {
     llmModelId: null,
     guardrails: null,
     blockedTools: [],
+    canAskQuestions: false,
     ...overrides,
   };
 }
@@ -117,7 +118,7 @@ describe('normalizeAgentDraft', () => {
     const first = normalized.steps.steps[0];
     const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
     expect(handling?.exhausted).toBeUndefined();
-    expect(normalized.steps.version).toBe(8);
+    expect(normalized.steps.version).toBe(9);
   });
 
   it('keeps a deliberate exhausted choice', () => {
@@ -143,7 +144,7 @@ describe('normalizeAgentDraft', () => {
     const first = normalized.steps.steps[0];
     const handling = first && 'failureHandling' in first ? first.failureHandling[0] : undefined;
     expect(handling?.exhausted).toBe('continue');
-    expect(normalized.steps.version).toBe(8);
+    expect(normalized.steps.version).toBe(9);
   });
 });
 
@@ -526,10 +527,10 @@ describe('normalizeAgentDraft with branches', () => {
     const withBranch = normalizeAgentDraft(
       draft({ steps: { version: 1 as const, steps: [step(), branchNode()] } })
     );
-    expect(withBranch.steps.version).toBe(8);
+    expect(withBranch.steps.version).toBe(9);
 
     const linear = normalizeAgentDraft(draft({ steps: { version: 2, steps: [step()] } }));
-    expect(linear.steps.version).toBe(8);
+    expect(linear.steps.version).toBe(9);
   });
 
   it('keeps a linear doc byte-identical to the pre-branch shape', () => {
@@ -795,7 +796,7 @@ describe('group and n-way validation', () => {
     expect(loopOut && 'maxIterations' in loopOut ? loopOut.maxIterations : null).toBe(25);
     // Half-configured collect is dropped entirely — the KEY must be absent.
     expect('collectVar' in (loopOut ?? {})).toBe(false);
-    expect(normalized.steps.version).toBe(8);
+    expect(normalized.steps.version).toBe(9);
   });
 });
 
@@ -814,7 +815,7 @@ describe('terminal nodes (version 4)', () => {
   it('accepts a well-formed ending as the last node', () => {
     const doc = { version: 4 as const, steps: [step(), terminal()] };
     expect(validateAgentDraft(draft({ steps: doc }), TOOLS)).toEqual([]);
-    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(8);
+    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(9);
   });
 
   it('requires a message when a notification channel is on', () => {
@@ -898,221 +899,141 @@ describe('guardrails and blocked skills', () => {
   });
 });
 
-describe('approval nodes (validation + normalize)', () => {
-  const path = (name: string) => ({ id: uuid(), name, steps: [] });
-  const approval = (
-    overrides: Partial<import('./steps').ApprovalStep> = {}
-  ): import('./steps').ApprovalStep => ({
-    id: uuid(),
-    kind: 'approval',
-    name: 'Ship it?',
-    message: [text('OK to send the weekly report?')],
-    mode: 'approve',
-    timeoutHours: 72,
-    notifyEmail: true,
-    notifyWebex: false,
-    onApproved: path('Approved'),
-    onDeclined: path('Rejected'),
-    onTimeout: path('No answer in time'),
-    ...overrides,
-  });
+describe('needsApproval gate (validation + normalize)', () => {
+  const gated = (overrides: Partial<AgentStep> = {}): AgentStep =>
+    step({
+      name: 'Post the comment',
+      tool: 'jira_get_issue',
+      needsApproval: true,
+      approvalTimeoutHours: 96,
+      onNotApproved: { id: uuid(), name: 'Skip it', steps: [] },
+      ...overrides,
+    });
 
-  it('accepts a well-formed approval', () => {
-    const doc = { version: 5 as const, steps: [approval()] };
+  it('accepts a well-formed gate', () => {
+    const doc = { version: 9 as const, steps: [gated()] };
     expect(validateAgentDraft(draft({ steps: doc }), TOOLS)).toEqual([]);
-    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(8);
+    expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(9);
   });
 
-  it('accepts a form instead of one answer, and binds every field name', () => {
-    const form = approval({
-      mode: 'input',
-      fields: [
-        {
-          name: 'the issue key',
-          label: 'Which issue tracks this?',
-          type: 'text',
-          required: true,
-        },
-        {
-          name: 'the comments',
-          label: 'Which comments to post?',
-          type: 'multi',
-          required: false,
-          options: ['decision 1', 'risk 2'],
-        },
-      ],
-    });
-    const consumer = step({
-      tool: null,
-      instruction: [text('Post '), varChip('the comments'), text(' to '), varChip('the issue key')],
-    });
-
-    expect(
-      validateAgentDraft(draft({ steps: { version: 5, steps: [form, consumer] } }), TOOLS)
-    ).toEqual([]);
+  it('accepts a gate with no recovery path at all — empty/absent just continues', () => {
+    const bare = gated({ onNotApproved: undefined });
+    expect(validateAgentDraft(draft({ steps: { version: 9, steps: [bare] } }), TOOLS)).toEqual([]);
   });
 
-  it('lets a form ALSO name the whole reply, and binds both readings', () => {
-    // Two useful readings of "the answer": each field on its own, and
-    // everything they said as one value a step can relay.
-    const both = approval({
-      mode: 'input',
-      saveAs: 'what you told me',
-      fields: [{ name: 'the key', label: 'Which issue?', type: 'text', required: true }],
-    });
-    const consumer = step({
-      tool: null,
-      instruction: [
-        text('Comment '),
-        varChip('what you told me'),
-        text(' on '),
-        varChip('the key'),
-      ],
-    });
-    expect(
-      validateAgentDraft(draft({ steps: { version: 5, steps: [both, consumer] } }), TOOLS)
-    ).toEqual([]);
-  });
-
-  it('still refuses a form whose whole-reply name is unusable', () => {
-    const bad = approval({
-      mode: 'input',
-      saveAs: '9 lives',
-      fields: [{ name: 'the key', label: 'Which issue?', type: 'text', required: true }],
-    });
-    expect(
-      messagesOf(validateAgentDraft(draft({ steps: { version: 5, steps: [bad] } }), TOOLS)).some(
-        (message) => message.includes('start with a letter')
-      )
-    ).toBe(true);
-  });
-
-  it('holds each field to its own kind of nonsense', () => {
-    const bad = approval({
-      mode: 'input',
-      fields: [
-        // A choice with one option, two fields sharing a name, and a
-        // number whose bounds exclude every value.
-        {
-          name: 'the pick',
-          label: 'Pick',
-          type: 'choice',
-          required: true,
-          options: ['only'],
-        },
-        {
-          name: 'the pick',
-          label: 'Points',
-          type: 'number',
-          required: false,
-          min: 10,
-          max: 2,
-        },
-      ],
-    });
+  it('refuses needsApproval on a step with no tool — there is nothing to approve', () => {
+    const reasoningOnly = gated({ tool: null, failureHandling: [] });
     const messages = messagesOf(
-      validateAgentDraft(draft({ steps: { version: 5, steps: [bad] } }), TOOLS)
+      validateAgentDraft(draft({ steps: { version: 9, steps: [reasoningOnly] } }), TOOLS)
     );
-    expect(messages.some((message) => message.includes('at least two choices'))).toBe(true);
-    expect(messages.some((message) => message.includes('above the highest'))).toBe(true);
-    expect(messages.some((message) => message.includes('Two fields bind "the pick"'))).toBe(true);
+    expect(messages.some((message) => message.includes('nothing to approve'))).toBe(true);
   });
 
-  it('refuses fields on an approve/decline card', () => {
-    const wrong = approval({
-      fields: [{ name: 'the key', label: 'Which issue?', type: 'text', required: true }],
-    });
-    expect(
-      messagesOf(validateAgentDraft(draft({ steps: { version: 5, steps: [wrong] } }), TOOLS)).some(
-        (message) => message.includes('has no form')
-      )
-    ).toBe(true);
-  });
-
-  it('normalizes a form: trims, and drops the blank option rows', () => {
-    const messy = approval({
-      mode: 'input',
-      fields: [
-        {
-          name: '  the pick  ',
-          label: '  Pick one  ',
-          type: 'choice',
-          required: true,
-          // The builder appends a blank line as you type; a stored blank is
-          // a choice nobody can pick that fails validation forever.
-          options: ['first', '', '  second  ', '   '],
-          key: '  customfield_10016  ',
-        },
-      ],
-    });
-    const normalized = normalizeAgentDraft(draft({ steps: { version: 5, steps: [messy] } }));
-    const node = normalized.steps.steps[0];
-    if (node.kind !== 'approval') throw new Error('expected the approval back');
-    expect(node.fields?.[0]).toMatchObject({
-      name: 'the pick',
-      label: 'Pick one',
-      options: ['first', 'second'],
-      // The destination's own id for this field rides along, trimmed.
-      key: 'customfield_10016',
-    });
-  });
-
-  it('requires a message and refuses tool chips in it', () => {
-    const issues = validateAgentDraft(
-      draft({ steps: { version: 5, steps: [approval({ message: [] })] } }),
-      TOOLS
-    );
-    expect(issues.some((issue) => issue.path.endsWith('.message'))).toBe(true);
-
-    const chipped = approval({ message: [toolChip('jira_get_issue')] });
+  it('refuses approvalTimeoutHours or onNotApproved without needsApproval', () => {
+    const strayTimeout = step({ approvalTimeoutHours: 48 });
     expect(
       messagesOf(
-        validateAgentDraft(draft({ steps: { version: 5, steps: [chipped] } }), TOOLS)
-      ).some((message) => message.includes('skill'))
+        validateAgentDraft(draft({ steps: { version: 9, steps: [strayTimeout] } }), TOOLS)
+      ).some((message) => message.includes('only applies when this step needs approval'))
+    ).toBe(true);
+
+    const strayPath = step({ onNotApproved: { id: uuid(), name: 'X', steps: [] } });
+    expect(
+      messagesOf(
+        validateAgentDraft(draft({ steps: { version: 9, steps: [strayPath] } }), TOOLS)
+      ).some((message) => message.includes('only applies when this step needs approval'))
     ).toBe(true);
   });
 
-  it('requires a named answer in input mode, and binds it for later steps', () => {
-    const unnamed = approval({ mode: 'input' });
-    const issues = validateAgentDraft(draft({ steps: { version: 5, steps: [unnamed] } }), TOOLS);
-    expect(issues.some((issue) => issue.path.endsWith('.saveAs'))).toBe(true);
+  it('requires the wait ceiling to be at least one hour', () => {
+    const zero = gated({ approvalTimeoutHours: 0 });
+    expect(
+      messagesOf(validateAgentDraft(draft({ steps: { version: 9, steps: [zero] } }), TOOLS)).some(
+        (message) => message.includes('at least one hour')
+      )
+    ).toBe(true);
+  });
 
-    const named = approval({ mode: 'input', saveAs: 'the decision' });
+  it('requires the recovery path to be named', () => {
+    const unnamed = gated({ onNotApproved: { id: uuid(), name: '  ', steps: [] } });
+    expect(
+      validateAgentDraft(draft({ steps: { version: 9, steps: [unnamed] } }), TOOLS).some((issue) =>
+        issue.path.endsWith('.onNotApproved.name')
+      )
+    ).toBe(true);
+  });
+
+  it('validates steps inside the recovery path', () => {
+    const badInner = step({ tool: 'nonsense_tool', instruction: [text('do')] });
+    const node = gated({ onNotApproved: { id: uuid(), name: 'Skip it', steps: [badInner] } });
+    const issues = validateAgentDraft(draft({ steps: { version: 9, steps: [node] } }), TOOLS);
+    expect(issues.some((issue) => issue.path.includes('.onNotApproved.steps.0'))).toBe(true);
+  });
+
+  it('binds approval.outcome/approval.comment/approval.link for a step to read', () => {
     const consumer = step({
+      name: 'Record what happened',
       tool: null,
       instruction: [
-        text('Act on '),
-        varChip('the decision'),
-        text(' via '),
+        text('Note '),
+        varChip('approval.outcome'),
+        text(': '),
+        varChip('approval.comment'),
+        text(' — see '),
         varChip('approval.link'),
       ],
     });
-    expect(
-      validateAgentDraft(draft({ steps: { version: 5, steps: [named, consumer] } }), TOOLS)
-    ).toEqual([]);
+    const node = gated({
+      onNotApproved: { id: uuid(), name: 'Skip it', steps: [consumer] },
+    });
+    expect(validateAgentDraft(draft({ steps: { version: 9, steps: [node] } }), TOOLS)).toEqual([]);
+  });
+
+  it('normalizes: drops needsApproval/approvalTimeoutHours/onNotApproved entirely when off', () => {
+    const plain = step({ needsApproval: false });
+    const normalized = normalizeAgentDraft(draft({ steps: { version: 9, steps: [plain] } }));
+    const node = normalized.steps.steps[0];
+    expect(node && 'needsApproval' in node).toBe(false);
+    expect(node && 'approvalTimeoutHours' in node).toBe(false);
+    expect(node && 'onNotApproved' in node).toBe(false);
+  });
+
+  it('normalizes: trims the recovery path name and recurses into its steps', () => {
+    const messy = gated({
+      onNotApproved: {
+        id: uuid(),
+        name: '  Skip it  ',
+        steps: [step({ maxAttempts: 99 })],
+      },
+    });
+    const normalized = normalizeAgentDraft(draft({ steps: { version: 9, steps: [messy] } }));
+    const node = normalized.steps.steps[0];
+    if (!node || !('onNotApproved' in node) || !node.onNotApproved) {
+      throw new Error('expected the recovery path back');
+    }
+    expect(node.onNotApproved.name).toBe('Skip it');
+    const inner = node.onNotApproved.steps[0];
+    expect(inner && 'maxAttempts' in inner ? inner.maxAttempts : null).toBe(10);
   });
 
   it('clamps the wait ceiling to the org cap', () => {
-    const eager = approval({ timeoutHours: 24 * 90 });
-    const normalized = normalizeAgentDraft(draft({ steps: { version: 5, steps: [eager] } }), {
+    const eager = gated({ approvalTimeoutHours: 24 * 90 });
+    const normalized = normalizeAgentDraft(draft({ steps: { version: 9, steps: [eager] } }), {
       approvalWaitCapHours: 7 * 24,
     });
     const first = normalized.steps.steps[0];
-    expect(first && 'timeoutHours' in first ? first.timeoutHours : null).toBe(7 * 24);
+    expect(first && 'approvalTimeoutHours' in first ? first.approvalTimeoutHours : null).toBe(
+      7 * 24
+    );
 
     // Default cap = 14 days when no org settings are in hand.
-    const defaulted = normalizeAgentDraft(draft({ steps: { version: 5, steps: [eager] } }));
+    const defaulted = normalizeAgentDraft(draft({ steps: { version: 9, steps: [eager] } }));
     const firstDefault = defaulted.steps.steps[0];
-    expect(firstDefault && 'timeoutHours' in firstDefault ? firstDefault.timeoutHours : null).toBe(
-      14 * 24
-    );
-  });
-
-  it('validates steps inside outcome paths', () => {
-    const badInner = step({ tool: 'nonsense_tool', instruction: [text('do')] });
-    const node = approval({ onDeclined: { id: uuid(), name: 'Rejected', steps: [badInner] } });
-    const issues = validateAgentDraft(draft({ steps: { version: 5, steps: [node] } }), TOOLS);
-    expect(issues.some((issue) => issue.path.includes('.onDeclined.steps.0'))).toBe(true);
+    expect(
+      firstDefault && 'approvalTimeoutHours' in firstDefault
+        ? firstDefault.approvalTimeoutHours
+        : null
+    ).toBe(14 * 24);
   });
 });
 

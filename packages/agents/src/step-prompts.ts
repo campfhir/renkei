@@ -164,6 +164,54 @@ export const FINISH_STEP_DEF: PromptToolDef = {
   },
 };
 
+export const ASK_PERSON_TOOL = 'ask_person';
+
+/**
+ * Free, offered only when the agent's `canAskQuestions` is on: pause this
+ * step and raise a card the owner answers, instead of guessing or failing.
+ * Ends the current attempt (like finish_step) — the answer, or a timeout,
+ * arrives on a FRESH attempt whose prompt states what was asked and what
+ * came back, so no in-flight reasoning has to survive the wait. One form
+ * per call is deliberate: several pending questions belong in one card
+ * (paragraphs and groups exist for exactly that), not a loop of asks.
+ */
+export const ASK_PERSON_DEF: PromptToolDef = {
+  name: ASK_PERSON_TOOL,
+  description:
+    'Pause this step and ask the owner something, instead of guessing or failing for lack of ' +
+    'it. Ends this attempt; the answer (or a timeout) starts a fresh one that sees both what ' +
+    'was asked and what came back. Put every question you have right now into ONE call — ' +
+    'group and paragraph entries in form let several questions share one readable card.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      message: {
+        type: 'string',
+        description: 'Plain prose: what you need and why, shown above any form fields.',
+      },
+      form: {
+        type: 'array',
+        description:
+          'Optional structure beyond the open question in message — at most 40 entries total ' +
+          "(a group's members count toward that). Each entry is one of: " +
+          '{kind:"field", name, label, type: "text"|"longtext"|"number"|"choice"|"multi"|"date", ' +
+          'required, options?, min?, max?, help?, key?} — an answerable control, "key" being the ' +
+          "destination's own field id (e.g. a Jira custom field) when the answer is headed " +
+          'somewhere specific; {kind:"paragraph", text} — context with nothing to answer; or ' +
+          '{kind:"group", label, nodes} — one level of fields/paragraphs clustered under a ' +
+          'heading (groups do not nest). A two-option "choice" reads as yes/no buttons.',
+        items: { type: 'object' },
+      },
+      timeoutHours: {
+        type: 'number',
+        description:
+          'How long to wait for an answer before treating it as unanswered. Default 96 (4 days).',
+      },
+    },
+    required: ['message'],
+  },
+};
+
 export const SYSTEM_PROMPT = [
   'You are executing one step of an automated workflow that a person drafted.',
   'Do only what this step says. You do not know the other steps, and you must not invent work beyond this one.',

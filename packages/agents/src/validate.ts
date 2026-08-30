@@ -42,27 +42,17 @@ import {
   MAX_OUTCOME_WHEN_CHARS,
   MAX_STEP_ATTEMPTS,
   MAX_STEPS,
-  MAX_APPROVAL_FIELDS,
-  MAX_APPROVAL_FIELD_HELP_CHARS,
-  MAX_APPROVAL_FIELD_KEY_CHARS,
-  MAX_APPROVAL_FIELD_LABEL_CHARS,
-  MAX_APPROVAL_FIELD_OPTIONS,
-  MAX_APPROVAL_FIELD_OPTION_CHARS,
   VARIABLE_NAME_PATTERN,
-  approvalBindingNames,
-  approvalFieldsOf,
-  approvalPathsOf,
-  containsApproval,
+  containsApprovalGate,
   countNodes,
   flattenActionSteps,
+  isActionStepNode,
   toolSegments,
   varSegments,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
   type AgentStepsDoc,
-  type ApprovalField,
-  type ApprovalStep,
   type BranchPath,
   type BranchStep,
   type GroupStep,
@@ -102,6 +92,12 @@ export interface AgentDraft {
    * (engine-initiated, owner-configured).
    */
   blockedTools: string[];
+  /**
+   * Unlocks the free `ask_person` tool in every step's turn — the model
+   * may pause and raise a dynamic question card at any point, not only at
+   * a pre-planned node. Agent-wide, live-read like guardrails/blockedTools.
+   */
+  canAskQuestions: boolean;
 }
 
 export interface ValidationIssue {
@@ -164,6 +160,7 @@ function dateChipIssues(segments: InstructionSegment[], path: string): Validatio
 function validateActionStep(
   step: ActionStep,
   prefix: string,
+  context: NestingContext,
   toolsByName: Map<string, ToolDescriptorLike>,
   knownVariables: Set<string>
 ): ValidationIssue[] {
@@ -312,6 +309,66 @@ function validateActionStep(
     }
   }
   issues.push(...dateChipIssues(step.instruction, at('instruction')));
+
+  const needsApproval = step.needsApproval === true;
+  if (needsApproval && step.tool === null) {
+    issues.push({
+      path: at('tool'),
+      message: 'A step with no skill has nothing to approve — pick a skill, or turn approval off.',
+    });
+  }
+  if (!needsApproval && step.approvalTimeoutHours !== undefined) {
+    issues.push({
+      path: at('approvalTimeoutHours'),
+      message: 'A wait ceiling only applies when this step needs approval.',
+    });
+  }
+  if (
+    needsApproval &&
+    step.approvalTimeoutHours !== undefined &&
+    (!Number.isFinite(step.approvalTimeoutHours) || step.approvalTimeoutHours < 1)
+  ) {
+    issues.push({
+      path: at('approvalTimeoutHours'),
+      message: 'The wait ceiling must be at least one hour.',
+    });
+  }
+  if (!needsApproval && step.onNotApproved !== undefined) {
+    issues.push({
+      path: at('onNotApproved'),
+      message: 'A recovery path only applies when this step needs approval.',
+    });
+  }
+  if (needsApproval && step.onNotApproved) {
+    // Recovery consumes a container-depth level, the same budget a loop or
+    // group level costs — not a branch level, since nothing is DECIDED
+    // here, just recovered from.
+    const inner: NestingContext = {
+      branchDepth: context.branchDepth,
+      containerDepth: context.containerDepth + 1,
+      inLoop: context.inLoop,
+    };
+    if (inner.containerDepth > MAX_CONTAINER_DEPTH) {
+      issues.push({
+        path: prefix,
+        message: 'Steps are nested too deeply here — move this up a level.',
+      });
+    }
+    if (step.onNotApproved.name.trim().length === 0) {
+      issues.push({ path: at('onNotApproved.name'), message: 'Name this path.' });
+    }
+    step.onNotApproved.steps.forEach((child, childIndex) => {
+      issues.push(
+        ...validateNode(
+          child,
+          `${at('onNotApproved.steps')}.${childIndex}`,
+          inner,
+          toolsByName,
+          knownVariables
+        )
+      );
+    });
+  }
 
   return issues;
 }
@@ -602,246 +659,6 @@ function validateTerminalStep(
   return issues;
 }
 
-/**
- * A form's own rules. Every message names the field by its label where it
- * has one, because an author looking at eight controls needs to know WHICH
- * is wrong, and a path like `.fields.3.options` is not that.
- */
-function approvalFieldIssues(fields: ApprovalField[], prefix: string): ValidationIssue[] {
-  const issues: ValidationIssue[] = [];
-  if (fields.length > MAX_APPROVAL_FIELDS) {
-    issues.push({
-      path: `${prefix}.fields`,
-      message: `A question may ask for at most ${MAX_APPROVAL_FIELDS} things — split the rest into another step.`,
-    });
-  }
-  const names = new Map<string, number>();
-  fields.forEach((field, index) => {
-    const at = `${prefix}.fields.${index}`;
-    const named = field.label.trim() || field.name.trim() || `field ${index + 1}`;
-    if (!field.label.trim()) {
-      issues.push({ path: `${at}.label`, message: 'Say what this field asks for.' });
-    } else if (field.label.length > MAX_APPROVAL_FIELD_LABEL_CHARS) {
-      issues.push({
-        path: `${at}.label`,
-        message: `"${named}": the prompt must stay under ${MAX_APPROVAL_FIELD_LABEL_CHARS} characters.`,
-      });
-    }
-    if (!field.name || !VARIABLE_NAME_PATTERN.test(field.name)) {
-      issues.push({
-        path: `${at}.name`,
-        message: field.name
-          ? `"${named}": names start with a letter and use letters, numbers, spaces, ".", "-" or "_" (64 characters max).`
-          : `"${named}": name it so later steps can use the answer.`,
-      });
-    } else {
-      names.set(field.name, (names.get(field.name) ?? 0) + 1);
-    }
-    if (field.help !== undefined && field.help.length > MAX_APPROVAL_FIELD_HELP_CHARS) {
-      issues.push({
-        path: `${at}.help`,
-        message: `"${named}": the hint must stay under ${MAX_APPROVAL_FIELD_HELP_CHARS} characters.`,
-      });
-    }
-    if (field.key !== undefined && field.key.length > MAX_APPROVAL_FIELD_KEY_CHARS) {
-      issues.push({
-        path: `${at}.key`,
-        message: `"${named}": the destination's field id must stay under ${MAX_APPROVAL_FIELD_KEY_CHARS} characters.`,
-      });
-    }
-
-    if (field.type === 'choice' || field.type === 'multi') {
-      const cleaned = (field.options ?? []).map((option) => option.trim()).filter(Boolean);
-      if (cleaned.length < 2) {
-        issues.push({
-          path: `${at}.options`,
-          message: `"${named}": give at least two choices — one choice is not a question.`,
-        });
-      }
-      if (cleaned.length > MAX_APPROVAL_FIELD_OPTIONS) {
-        issues.push({
-          path: `${at}.options`,
-          message: `"${named}": at most ${MAX_APPROVAL_FIELD_OPTIONS} choices.`,
-        });
-      }
-      if (new Set(cleaned).size !== cleaned.length) {
-        issues.push({
-          path: `${at}.options`,
-          message: `"${named}": two choices are identical — the answer could not say which was picked.`,
-        });
-      }
-      if (cleaned.some((option) => option.length > MAX_APPROVAL_FIELD_OPTION_CHARS)) {
-        issues.push({
-          path: `${at}.options`,
-          message: `"${named}": each choice must stay under ${MAX_APPROVAL_FIELD_OPTION_CHARS} characters.`,
-        });
-      }
-    } else if (field.options !== undefined && field.options.length > 0) {
-      issues.push({
-        path: `${at}.options`,
-        message: `"${named}": only a choice field offers choices.`,
-      });
-    }
-
-    if (field.type === 'number') {
-      const { min, max } = field;
-      if (min !== undefined && !Number.isFinite(min)) {
-        issues.push({
-          path: `${at}.min`,
-          message: `"${named}": the lowest value must be a number.`,
-        });
-      }
-      if (max !== undefined && !Number.isFinite(max)) {
-        issues.push({
-          path: `${at}.max`,
-          message: `"${named}": the highest value must be a number.`,
-        });
-      }
-      if (min !== undefined && max !== undefined && min > max) {
-        issues.push({
-          path: `${at}.min`,
-          message: `"${named}": the lowest value is above the highest — no answer could satisfy both.`,
-        });
-      }
-    } else if (field.min !== undefined || field.max !== undefined) {
-      issues.push({
-        path: `${at}.min`,
-        message: `"${named}": only a number field has a lowest and highest value.`,
-      });
-    }
-  });
-  for (const [name, count] of names) {
-    if (count > 1) {
-      issues.push({
-        path: `${prefix}.fields`,
-        message: `Two fields bind "${name}" — a later chip could not say which answer it meant.`,
-      });
-    }
-  }
-  return issues;
-}
-
-function validateApprovalStep(
-  approval: ApprovalStep,
-  prefix: string,
-  context: NestingContext,
-  toolsByName: Map<string, ToolDescriptorLike>,
-  knownVariables: Set<string>
-): ValidationIssue[] {
-  const issues: ValidationIssue[] = [];
-  // Branch-like containment: a pause routes between outcome paths, so it
-  // spends the same nesting budgets a branch does.
-  const inner: NestingContext = {
-    branchDepth: context.branchDepth + 1,
-    containerDepth: context.containerDepth + 1,
-    inLoop: context.inLoop,
-  };
-  if (inner.branchDepth > MAX_BRANCH_DEPTH_V3) {
-    issues.push({
-      path: prefix,
-      message: `Conditions can nest ${MAX_BRANCH_DEPTH_V3} levels deep — move this approval up.`,
-    });
-  }
-  if (inner.containerDepth > MAX_CONTAINER_DEPTH) {
-    issues.push({
-      path: prefix,
-      message: 'Steps are nested too deeply here — move this up a level.',
-    });
-  }
-  if (approval.name.trim().length === 0) {
-    issues.push({ path: `${prefix}.name`, message: 'Give this approval a short name.' });
-  }
-
-  // The message is the card body — without it the owner is asked to
-  // approve nothing in particular.
-  if (approval.message.length === 0 || segmentChars(approval.message) === 0) {
-    issues.push({
-      path: `${prefix}.message`,
-      message: 'Say what you are being asked to approve or answer.',
-    });
-  }
-  if (segmentChars(approval.message) > MAX_INSTRUCTION_CHARS) {
-    issues.push({
-      path: `${prefix}.message`,
-      message: `Keep the message under ${MAX_INSTRUCTION_CHARS.toLocaleString()} characters.`,
-    });
-  }
-  if (toolSegments(approval.message).length > 0) {
-    issues.push({
-      path: `${prefix}.message`,
-      message: 'An approval message can’t use a skill — it is shown to you as written.',
-    });
-  }
-  for (const name of varSegments(approval.message)) {
-    if (!knownVariables.has(name)) {
-      issues.push({
-        path: `${prefix}.message`,
-        message: `"${name}" is not something this agent knows — remove or replace the chip.`,
-      });
-    }
-  }
-
-  if (approval.mode === 'input') {
-    const fields = approvalFieldsOf(approval);
-    /*
-      saveAs means "the answer", and a form has two useful readings of that:
-      each field on its own (the field names), and the WHOLE reply as one
-      value — every label, destination id and answer, ready to hand to a
-      step that writes them somewhere. So with fields, saveAs is optional
-      and names the whole form; without them it is the single typed answer
-      and required, because nothing else would bind.
-    */
-    if (approval.saveAs !== undefined && !VARIABLE_NAME_PATTERN.test(approval.saveAs)) {
-      issues.push({
-        path: `${prefix}.saveAs`,
-        message:
-          'Answer names start with a letter and use letters, numbers, spaces, ".", "-" or "_" (64 characters max).',
-      });
-    } else if (fields.length === 0 && !approval.saveAs) {
-      issues.push({
-        path: `${prefix}.saveAs`,
-        message:
-          'Name the answer so later steps can use it — or add fields to ask for it in pieces.',
-      });
-    }
-    issues.push(...approvalFieldIssues(fields, prefix));
-    // Read from the node, not through approvalFieldsOf: that helper answers
-    // "what does this card ask with", which for an approve card is nothing
-    // — the very case this branch exists to catch.
-  } else if ((approval.fields ?? []).length > 0) {
-    issues.push({
-      path: `${prefix}.fields`,
-      message: 'Only a question can collect fields — an approve/decline card has no form.',
-    });
-  }
-
-  if (!Number.isFinite(approval.timeoutHours) || approval.timeoutHours < 1) {
-    issues.push({
-      path: `${prefix}.timeoutHours`,
-      message: 'The wait ceiling must be at least one hour.',
-    });
-  }
-
-  for (const { key, path } of approvalPathsOf(approval)) {
-    if (path.name.trim().length === 0) {
-      issues.push({ path: `${prefix}.${key}.name`, message: 'Name this path.' });
-    }
-    path.steps.forEach((node, nodeIndex) => {
-      issues.push(
-        ...validateNode(
-          node,
-          `${prefix}.${key}.steps.${nodeIndex}`,
-          inner,
-          toolsByName,
-          knownVariables
-        )
-      );
-    });
-  }
-
-  return issues;
-}
-
 function validateNode(
   node: AgentStepNode,
   prefix: string,
@@ -860,11 +677,9 @@ function validateNode(
       return validateGroupStep(node, prefix, context, toolsByName, knownVariables);
     case 'terminal':
       return validateTerminalStep(node, prefix, knownVariables);
-    case 'approval':
-      return validateApprovalStep(node, prefix, context, toolsByName, knownVariables);
     case 'action':
     case undefined:
-      return validateActionStep(node, prefix, toolsByName, knownVariables);
+      return validateActionStep(node, prefix, context, toolsByName, knownVariables);
     default: {
       const unhandled: never = node;
       throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
@@ -905,13 +720,13 @@ function terminalPlacementIssues(nodes: AgentStepNode[], prefix: string): Valida
       case 'group':
         issues.push(...terminalPlacementIssues(node.steps, `${at}.steps`));
         break;
-      case 'approval':
-        for (const { key, path } of approvalPathsOf(node)) {
-          issues.push(...terminalPlacementIssues(path.steps, `${at}.${key}.steps`));
-        }
-        break;
       case 'action':
       case undefined:
+        if (node.onNotApproved) {
+          issues.push(
+            ...terminalPlacementIssues(node.onNotApproved.steps, `${at}.onNotApproved.steps`)
+          );
+        }
         break;
       default: {
         const unhandled: never = node;
@@ -931,31 +746,6 @@ function clampIterations(value: number): number {
     MAX_LOOP_ITERATIONS,
     Math.max(1, Math.round(Number.isFinite(value) ? value : LOOP_DEFAULT_ITERATIONS))
   );
-}
-
-/** One field, trimmed: same shape in, nothing invented, blanks dropped. */
-function normalizeApprovalField(field: ApprovalField): ApprovalField {
-  const options =
-    field.type === 'choice' || field.type === 'multi'
-      ? (field.options ?? []).map((option) => option.trim()).filter(Boolean)
-      : undefined;
-  const help = field.help?.trim();
-  const key = field.key?.trim();
-  return {
-    name: field.name.trim(),
-    label: field.label.trim(),
-    ...(key ? { key } : {}),
-    type: field.type,
-    required: field.required,
-    ...(options ? { options } : {}),
-    ...(field.type === 'number' && field.min !== undefined && Number.isFinite(field.min)
-      ? { min: field.min }
-      : {}),
-    ...(field.type === 'number' && field.max !== undefined && Number.isFinite(field.max)
-      ? { max: field.max }
-      : {}),
-    ...(help ? { help } : {}),
-  };
 }
 
 function normalizeNode(node: AgentStepNode, cap: number, waitCapHours: number): AgentStepNode {
@@ -1010,44 +800,18 @@ function normalizeNode(node: AgentStepNode, cap: number, waitCapHours: number): 
       };
     case 'terminal':
       return { ...node, name: node.name.trim() };
-    case 'approval': {
-      const normalizePath = (path: BranchPath): BranchPath => ({
-        ...path,
-        name: path.name.trim(),
-        steps: path.steps.map((child) => normalizeNode(child, cap, waitCapHours)),
-      });
-      const fields = approvalFieldsOf(node);
-      return {
-        ...node,
-        name: node.name.trim(),
-        ...(node.saveAs !== undefined ? { saveAs: node.saveAs.trim() || undefined } : {}),
-        // A form is stored trimmed and with its empty option rows dropped:
-        // the builder appends a blank row as you type, and a stored blank
-        // is a choice nobody can pick that still fails validation forever.
-        ...(fields.length > 0 ? { fields: fields.map(normalizeApprovalField) } : {}),
-        // The org's wait cap binds here AND live at pause time — the
-        // stricter of the two always wins.
-        timeoutHours: Math.min(
-          Math.max(1, waitCapHours),
-          Math.max(
-            1,
-            Math.round(
-              Number.isFinite(node.timeoutHours)
-                ? node.timeoutHours
-                : APPROVAL_DEFAULT_TIMEOUT_HOURS
-            )
-          )
-        ),
-        onApproved: normalizePath(node.onApproved),
-        onDeclined: normalizePath(node.onDeclined),
-        onTimeout: normalizePath(node.onTimeout),
-      };
-    }
     case 'action':
     case undefined: {
       // Strip the optional discriminant so linear documents stay
       // byte-identical with what pre-branch builds wrote.
-      const { kind: _kind, ...step } = node;
+      const {
+        kind: _kind,
+        needsApproval: rawNeedsApproval,
+        approvalTimeoutHours: _rawTimeout,
+        onNotApproved: rawOnNotApproved,
+        ...step
+      } = node;
+      const needsApproval = rawNeedsApproval === true;
       return {
         ...step,
         name: step.name.trim(),
@@ -1075,6 +839,39 @@ function normalizeNode(node: AgentStepNode, cap: number, waitCapHours: number): 
             ...(trimmedWhen ? { when: trimmedWhen } : {}),
           };
         }),
+        // needsApproval/approvalTimeoutHours/onNotApproved are dropped
+        // entirely (not just left false/undefined) when the gate is off —
+        // same "not meaningful, don't persist it" policy failureHandling's
+        // exhausted/when get above.
+        ...(needsApproval
+          ? {
+              needsApproval: true,
+              // The org's wait cap binds here AND live at pause time — the
+              // stricter of the two always wins.
+              approvalTimeoutHours: Math.min(
+                Math.max(1, waitCapHours),
+                Math.max(
+                  1,
+                  Math.round(
+                    typeof _rawTimeout === 'number' && Number.isFinite(_rawTimeout)
+                      ? _rawTimeout
+                      : APPROVAL_DEFAULT_TIMEOUT_HOURS
+                  )
+                )
+              ),
+              ...(rawOnNotApproved
+                ? {
+                    onNotApproved: {
+                      ...rawOnNotApproved,
+                      name: rawOnNotApproved.name.trim(),
+                      steps: rawOnNotApproved.steps.map((child) =>
+                        normalizeNode(child, cap, waitCapHours)
+                      ),
+                    },
+                  }
+                : {}),
+            }
+          : {}),
       };
     }
     default: {
@@ -1109,6 +906,7 @@ export function normalizeAgentDraft(
     guardrails,
     // Deduped, order preserved; empty entries dropped.
     blockedTools: [...new Set(draft.blockedTools.map((tool) => tool.trim()).filter(Boolean))],
+    canAskQuestions: draft.canAskQuestions === true,
     steps: {
       // Every save stamps the one current version — there is no per-version
       // maintenance any more: an older doc updates by being re-saved, and
@@ -1127,15 +925,15 @@ export function normalizeAgentDraft(
 export function savesByPathCoverage(nodes: AgentStepNode[]): Map<string, 'always' | 'conditional'> {
   const out = new Map<string, 'always' | 'conditional'>();
   for (const { node, depth } of walkSteps(nodes)) {
-    if ((node.kind === undefined || node.kind === 'action') && node.saveAs) {
+    if (isActionStepNode(node) && node.saveAs) {
       out.set(node.saveAs, depth === 1 ? 'always' : 'conditional');
     }
-    // An approval answer binds only on the answered outcome — conditional
-    // wherever the node sits. A form binds one name per field plus, when
-    // named, the whole reply, all on that same outcome.
-    if (node.kind === 'approval') {
-      for (const name of approvalBindingNames(node)) out.set(name, 'conditional');
-    }
+  }
+  // approval.outcome/approval.comment are fixed names, not author-chosen
+  // ones — bound once, doc-wide, wherever a gate exists, never per-node.
+  if (containsApprovalGate(nodes)) {
+    out.set('approval.outcome', 'conditional');
+    out.set('approval.comment', 'conditional');
   }
   return out;
 }
@@ -1192,14 +990,13 @@ export function validateAgentDraft(
           ...node.paths.map((path) => path.id),
           ...(node.failurePath ? [node.failurePath.id] : []),
         ];
-      case 'approval':
-        return [node.id, ...approvalPathsOf(node).map(({ path }) => path.id)];
       case 'loop':
       case 'group':
       case 'terminal':
+        return [node.id];
       case 'action':
       case undefined:
-        return [node.id];
+        return node.onNotApproved ? [node.id, node.onNotApproved.id] : [node.id];
       default: {
         const unhandled: never = node;
         throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
@@ -1222,12 +1019,7 @@ export function validateAgentDraft(
       ...(node.collectVar ? [node.collectVar] : []),
     ];
   });
-  // Approval answers bind names too (input mode) — one per form field, or
-  // the single saveAs.
-  const approvalBindings = walked.flatMap(({ node }) =>
-    node.kind === 'approval' ? approvalBindingNames(node) : []
-  );
-  const boundNames = [...saveAsNames, ...loopBindings, ...approvalBindings];
+  const boundNames = [...saveAsNames, ...loopBindings];
   if (new Set(boundNames).size !== boundNames.length) {
     issues.push({
       path: 'steps',
@@ -1246,8 +1038,12 @@ export function validateAgentDraft(
     ...BUILTIN_VARIABLES.map((variable) => variable.name),
     ...triggerVariableNames(draft.triggers),
     ...boundNames,
-    // The pause binds the card/run link for its outcome paths and beyond.
-    ...(containsApproval(nodes) ? ['approval.link'] : []),
+    // A gate binds the decision and the run link for its recovery path and
+    // beyond — fixed names, not author-chosen, so doc-wide once any gate
+    // exists rather than per-node.
+    ...(containsApprovalGate(nodes)
+      ? ['approval.link', 'approval.outcome', 'approval.comment']
+      : []),
   ]);
 
   nodes.forEach((node, index) => {

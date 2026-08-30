@@ -61,6 +61,7 @@ const existing = {
   enabled: true,
   guardrails: null,
   blockedTools: [],
+  canAskQuestions: false,
   triggers: [],
 };
 
@@ -74,6 +75,7 @@ function parsedWith(overrides: Partial<AgentDraft> = {}, refreshDescription = fa
     llmModelId: null,
     guardrails: null,
     blockedTools: [],
+    canAskQuestions: false,
     ...overrides,
   };
   return {

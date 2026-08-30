@@ -13,12 +13,10 @@ import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { LlmRequest, LlmResponse, ResolvedLlm } from '@renkei/agent-llm';
 import {
+  CURRENT_STEPS_VERSION,
   isAgentStepsDoc,
   type AgentStepNode,
   type AgentStepsDoc,
-  type ApprovalStep,
-  type InstructionSegment,
-  type TerminalStep,
 } from '@renkei/agents';
 import { createAgentRunHandler } from './engine';
 import { createApprovalSweep } from './approval-sweep';
@@ -2130,62 +2128,48 @@ maybe('agent run engine', () => {
     expect(run.error).toContain('blocked');
   });
 
-  describe('approval nodes', () => {
-    const terminalNode = (
-      result: 'success' | 'failure' | 'stop',
-      message: InstructionSegment[] = []
-    ): TerminalStep => ({
-      id: randomUUID(),
-      kind: 'terminal',
-      name: `end-${result}`,
-      result,
-      message,
-      notifyEmail: false,
-      notifyWebex: false,
-    });
-
-    function approvalDoc(
+  describe('needsApproval gate', () => {
+    function gatedDoc(
       options: {
-        mode?: 'approve' | 'input';
+        approvalTimeoutHours?: number;
         saveAs?: string;
-        fields?: ApprovalStep['fields'];
-        timeoutHours?: number;
-        notifyEmail?: boolean;
-        notifyWebex?: boolean;
-        onApproved?: AgentStepNode[];
-        onDeclined?: AgentStepNode[];
-        onTimeout?: AgentStepNode[];
+        onSuccess?: 'continue' | 'stop' | 'stop-quiet';
+        onNotApproved?: AgentStepNode[];
+        after?: AgentStepNode[];
       } = {}
-    ): { doc: AgentStepsDoc; approvalId: string } {
-      const approval: ApprovalStep = {
+    ): { doc: AgentStepsDoc; gateId: string } {
+      const gate: AgentStepNode = {
         id: randomUUID(),
-        kind: 'approval',
-        name: 'OK to send?',
-        message: [
-          { t: 'text', v: 'Send the report for ' },
+        name: 'Post the update',
+        instruction: [
+          { t: 'text', v: 'Post a comment on the ticket mentioned in ' },
           { t: 'var', name: 'trigger.subject' },
-          { t: 'text', v: '?' },
+          { t: 'text', v: '.' },
         ],
-        mode: options.mode ?? 'approve',
+        tool: 'jira_add_comment',
+        maxAttempts: 3,
+        failureHandling: [],
+        needsApproval: true,
+        approvalTimeoutHours: options.approvalTimeoutHours ?? 72,
         ...(options.saveAs ? { saveAs: options.saveAs } : {}),
-        ...(options.fields ? { fields: options.fields } : {}),
-        timeoutHours: options.timeoutHours ?? 72,
-        notifyEmail: options.notifyEmail ?? false,
-        notifyWebex: options.notifyWebex ?? false,
-        onApproved: { id: randomUUID(), name: 'Approved', steps: options.onApproved ?? [] },
-        onDeclined: { id: randomUUID(), name: 'Declined', steps: options.onDeclined ?? [] },
-        onTimeout: { id: randomUUID(), name: 'No answer', steps: options.onTimeout ?? [] },
+        ...(options.onSuccess ? { onSuccess: options.onSuccess } : {}),
+        ...(options.onNotApproved
+          ? {
+              onNotApproved: {
+                id: randomUUID(),
+                name: 'Not approved',
+                steps: options.onNotApproved,
+              },
+            }
+          : {}),
       };
-      const doc: AgentStepsDoc = { version: 5, steps: [approval] };
-      if (!isAgentStepsDoc(doc)) throw new Error('test doc is not a valid v5 steps doc');
-      return { doc, approvalId: approval.id };
+      const doc: AgentStepsDoc = {
+        version: CURRENT_STEPS_VERSION,
+        steps: [gate, ...(options.after ?? [])],
+      };
+      if (!isAgentStepsDoc(doc)) throw new Error('test doc is not a valid steps doc');
+      return { doc, gateId: gate.id };
     }
-
-    /** Approval nodes are deterministic — any model call is a bug. */
-    const noModel = () =>
-      stubLlm(() => {
-        throw new Error('approval nodes must not call the model');
-      });
 
     const cardOf = async (runId: string) =>
       db
@@ -2194,29 +2178,42 @@ maybe('agent run engine', () => {
         .where('run_id', '=', runId)
         .executeTakeFirstOrThrow();
 
-    it('parks the run waiting behind a card and delivers the notifications', async () => {
-      const { doc, approvalId } = approvalDoc({
-        notifyEmail: true,
-        notifyWebex: true,
-        timeoutHours: 4,
-      });
-      const { runId } = await seedRun(doc);
+    /** An MCP client that records every call it receives, name and args. */
+    function recordingMcp(tools: string[]): {
+      mcp: McpClient;
+      calls: { name: string; args: Record<string, unknown> }[];
+    } {
       const calls: { name: string; args: Record<string, unknown> }[] = [];
       const mcp: McpClient = {
         initialize: async () => undefined,
         listTools: async () =>
-          ['outlook_send_mail', 'webex_note_to_self'].map((name) => ({
-            name,
-            description: name,
-            inputSchema: { type: 'object' },
-          })),
+          tools.map((name) => ({ name, description: name, inputSchema: { type: 'object' } })),
         callTool: async (name, args) => {
           calls.push({ name, args });
           return okToolResult;
         },
       };
+      return { mcp, calls };
+    }
+
+    /** Proposes the gated call on the first model turn; any later call is a bug. */
+    const proposesThenNoMore = (args: Record<string, unknown> = { issueKey: 'PROJ-42' }) =>
+      stubLlm((_request, call) => {
+        if (call === 0) return useTool('jira_add_comment', args);
+        throw new Error('a resolved or waiting gate must not call the model again');
+      });
+
+    it('parks the run behind a card showing the proposed call, and delivers notifications', async () => {
+      const { doc, gateId } = gatedDoc({ approvalTimeoutHours: 4 });
+      const { runId } = await seedRun(doc);
+      const { mcp, calls } = recordingMcp([
+        'jira_add_comment',
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
+      const llm = proposesThenNoMore({ issueKey: 'PROJ-42', body: 'Update posted.' });
       const before = Date.now();
-      await handlerWith(noModel(), mcp)({ payload: { runId } });
+      await handlerWith(llm, mcp)({ payload: { runId } });
 
       const run = await db
         .selectFrom('agent_runs')
@@ -2225,7 +2222,7 @@ maybe('agent run engine', () => {
         .executeTakeFirstOrThrow();
       expect(run.status).toBe('waiting');
       expect(run.error).toBeNull();
-      // The deadline is the node's own wait, not the org cap.
+      // The deadline is the step's own wait, not the org cap.
       const waitingUntil = new Date(run.waiting_until ?? 0).getTime();
       expect(waitingUntil).toBeGreaterThanOrEqual(before + 3.9 * 3_600_000);
       expect(waitingUntil).toBeLessThanOrEqual(Date.now() + 4 * 3_600_000);
@@ -2235,39 +2232,43 @@ maybe('agent run engine', () => {
         .select(['step_id', 'status', 'outcome'])
         .where('run_id', '=', runId)
         .execute();
-      expect(rows).toEqual([{ step_id: approvalId, status: 'waiting', outcome: 'approval' }]);
+      expect(rows).toEqual([{ step_id: gateId, status: 'waiting', outcome: 'guard' }]);
 
       const card = await cardOf(runId);
       expect(card.status).toBe('suggested');
       expect(card.kind).toBe('approval');
       expect(card.owner_subject).toBe(subject);
-      expect(card.step_id).toBe(approvalId);
-      expect(card.summary).toContain('PROJ-42 is broken');
+      expect(card.step_id).toBe(gateId);
+      // The card carries the proposed call verbatim — never an authored
+      // message, since there is nothing to author.
+      expect(JSON.stringify(card.suggested_action)).toContain('jira_add_comment');
+      expect(JSON.stringify(card.suggested_action)).toContain('Update posted.');
+      // The tool itself never actually ran — only the notifications did.
+      expect(calls.some((call) => call.name === 'jira_add_comment')).toBe(false);
 
-      // Both channels got the rendered question.
       const mail = calls.find((call) => call.name === 'outlook_send_mail');
       expect(mail?.args).toMatchObject({ to: ['owner@example.com'] });
-      expect(String(mail?.args.body)).toContain('Send the report for PROJ-42 is broken?');
+      expect(String(mail?.args.body)).toContain('Add comment');
       const note = calls.find((call) => call.name === 'webex_note_to_self');
-      expect(String(note?.args.markdown)).toContain('Send the report for PROJ-42 is broken?');
+      expect(note).toBeDefined();
     });
 
     it('re-parks a spurious wake without extending the deadline or re-notifying', async () => {
-      const { doc } = approvalDoc({ notifyEmail: true, timeoutHours: 4 });
+      const { doc } = gatedDoc({ approvalTimeoutHours: 4 });
       const { runId } = await seedRun(doc);
-      const calls: string[] = [];
-      const mcp = stubMcp(['outlook_send_mail', 'webex_note_to_self'], (name) => {
-        calls.push(name);
-        return okToolResult;
-      });
-      const handler = handlerWith(noModel(), mcp);
+      const { mcp, calls } = recordingMcp([
+        'jira_add_comment',
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
+      const handler = handlerWith(proposesThenNoMore(), mcp);
       await handler({ payload: { runId } });
       const first = await db
         .selectFrom('agent_runs')
         .select('waiting_until')
         .where('id', '=', runId)
         .executeTakeFirstOrThrow();
-      expect(calls).toEqual(['outlook_send_mail']);
+      expect(calls.map((call) => call.name)).toEqual(['outlook_send_mail', 'webex_note_to_self']);
 
       // A duplicate delivery while the owner is still thinking.
       await handler({ payload: { runId } });
@@ -2281,46 +2282,26 @@ maybe('agent run engine', () => {
       expect(new Date(again.waiting_until ?? 0).toISOString()).toBe(
         new Date(first.waiting_until ?? 0).toISOString()
       );
-      // Exactly one card, exactly one notification.
+      // Exactly one card, no repeated notifications.
       const cards = await db
         .selectFrom('actionable_items')
         .select('id')
         .where('run_id', '=', runId)
         .execute();
       expect(cards).toHaveLength(1);
-      expect(calls).toEqual(['outlook_send_mail']);
+      expect(calls.map((call) => call.name)).toEqual(['outlook_send_mail', 'webex_note_to_self']);
     });
 
-    it('tells the steps after an approval that it was approved, by whom, and when', async () => {
-      // The bug this covers cost a real run: the owner clicked Approve, the
-      // engine routed correctly into onApproved, and the very next step
-      // refused to act — its prompt listed `approval.link` and nothing
-      // else, so an agent whose guardrails demand explicit approval saw a
-      // request for one and no evidence of one. Routing is invisible to a
-      // model; only variables reach the prompt.
-      const acting = {
-        id: randomUUID(),
-        name: 'Do the approved thing',
-        instruction: [{ t: 'text' as const, v: 'Proceed.' }],
-        tool: null,
-        maxAttempts: 1,
-        failureHandling: [],
-      };
-      const { doc } = approvalDoc({ onApproved: [acting] });
+    it('on approval, fires the recorded call for real — no fresh model turn — and advances', async () => {
+      const { doc, gateId } = gatedDoc({ saveAs: 'commentResult' });
       const { runId } = await seedRun(doc);
-      const prompts: string[] = [];
-      const llm = stubLlm((request) => {
-        for (const message of request.messages) {
-          for (const block of message.content) {
-            if (block.type === 'text') prompts.push(block.text);
-          }
-        }
-        return finish('success');
-      });
-      const handler = handlerWith(
-        llm,
-        stubMcp([], () => okToolResult)
-      );
+      const { mcp, calls } = recordingMcp([
+        'jira_add_comment',
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
+      const proposedArgs = { issueKey: 'PROJ-42', body: 'Update posted.' };
+      const handler = handlerWith(proposesThenNoMore(proposedArgs), mcp);
       await handler({ payload: { runId } });
 
       const card = await cardOf(runId);
@@ -2337,258 +2318,43 @@ maybe('agent run engine', () => {
 
       const run = await db
         .selectFrom('agent_runs')
-        .select('status')
+        .select(['status', 'error'])
         .where('id', '=', runId)
         .executeTakeFirstOrThrow();
       expect(run.status).toBe('succeeded');
 
-      // The acting step's prompt states the approval as a fact, names the
-      // decider, and is not merely a link to go ask for one.
-      const acted = prompts.join('\n');
-      expect(acted).toContain('approval.decision: approved');
-      expect(acted).toMatch(/The owner approved .*owner@example\.com/);
-      expect(acted).toContain('approval.decidedBy: owner@example.com');
-    });
+      // The recorded call fired for real, with the exact args proposed —
+      // never re-asked of the model.
+      const fired = calls.find((call) => call.name === 'jira_add_comment');
+      expect(fired?.args).toEqual(proposedArgs);
 
-    it('says plainly when a decision was a decline rather than an approval', async () => {
-      const acting = {
-        id: randomUUID(),
-        name: 'Runs on the declined path',
-        instruction: [{ t: 'text' as const, v: 'Clean up.' }],
-        tool: null,
-        maxAttempts: 1,
-        failureHandling: [],
-      };
-      const { doc } = approvalDoc({ onDeclined: [acting] });
-      const { runId } = await seedRun(doc);
-      const prompts: string[] = [];
-      const llm = stubLlm((request) => {
-        for (const message of request.messages) {
-          for (const block of message.content) {
-            if (block.type === 'text') prompts.push(block.text);
-          }
-        }
-        return finish('success');
-      });
-      const handler = handlerWith(
-        llm,
-        stubMcp([], () => okToolResult)
-      );
-      await handler({ payload: { runId } });
-
-      const card = await cardOf(runId);
-      await db
-        .updateTable('actionable_items')
-        .set({ status: 'declined', decided_at: sql`NOW()` })
-        .where('id', '=', card.id)
-        .execute();
-      await handler({ payload: { runId } });
-
-      const acted = prompts.join('\n');
-      expect(acted).toContain('approval.decision: declined');
-      // A step on the declined path must not be able to read the variable
-      // as permission — the wording has to carry the negative.
-      expect(acted).toContain('DECLINED');
-    });
-
-    it('an answered card binds the answer and routes the approved path', async () => {
-      const { doc, approvalId } = approvalDoc({
-        mode: 'input',
-        saveAs: 'the decision',
-        onApproved: [
-          terminalNode('failure', [
-            { t: 'text', v: 'Answer was: ' },
-            { t: 'var', name: 'the decision' },
-          ]),
-        ],
-      });
-      const { runId } = await seedRun(doc);
-      const handler = handlerWith(
-        noModel(),
-        stubMcp([], () => okToolResult)
-      );
-      await handler({ payload: { runId } });
-
-      const card = await cardOf(runId);
-      await db
-        .updateTable('actionable_items')
-        .set({
-          status: 'approved',
-          result: JSON.stringify({ answer: 'ship it' }),
-          decided_at: sql`NOW()`,
-          archived_at: sql`NOW()`,
-        })
-        .where('id', '=', card.id)
-        .execute();
-      await handler({ payload: { runId } });
-
-      // Routed into onApproved, whose terminal message SAW the bound answer.
-      const run = await db
-        .selectFrom('agent_runs')
-        .select(['status', 'error', 'waiting_until'])
-        .where('id', '=', runId)
-        .executeTakeFirstOrThrow();
-      expect(run.status).toBe('failed');
-      expect(run.error).toContain('Answer was: ship it');
-      expect(run.waiting_until).toBeNull();
-
-      const approvalRow = await db
+      const gateRow = await db
         .selectFrom('agent_run_steps')
-        .select(['status', 'detail'])
+        .select(['status', 'outcome', 'detail'])
         .where('run_id', '=', runId)
-        .where('step_id', '=', approvalId)
+        .where('step_id', '=', gateId)
         .executeTakeFirstOrThrow();
-      expect(approvalRow.status).toBe('succeeded');
-      expect(JSON.stringify(approvalRow.detail)).toContain('"decision":"approved"');
-      expect(JSON.stringify(approvalRow.detail)).toContain('ship it');
+      expect(gateRow.status).toBe('succeeded');
+      expect(gateRow.outcome).toBe('tool_ok');
+      expect(JSON.stringify(gateRow.detail)).toContain('Approved');
     });
 
-    it('tells the next step an ANSWER was given, not that anything was approved', async () => {
-      const acting = {
-        id: randomUUID(),
-        name: 'Runs on the answered path',
-        instruction: [{ t: 'text' as const, v: 'Use it.' }],
-        tool: null,
-        maxAttempts: 1,
-        failureHandling: [],
-      };
-      const { doc } = approvalDoc({
-        mode: 'input',
-        saveAs: 'the issue key',
-        onApproved: [acting],
-      });
+    it('on denial, skips the tool call and advances when there is no recovery path', async () => {
+      const { doc, gateId } = gatedDoc({});
       const { runId } = await seedRun(doc);
-      const prompts: string[] = [];
-      const llm = stubLlm((request) => {
-        for (const message of request.messages) {
-          for (const block of message.content) {
-            if (block.type === 'text') prompts.push(block.text);
-          }
-        }
-        return finish('success');
-      });
-      const handler = handlerWith(
-        llm,
-        stubMcp([], () => okToolResult)
-      );
+      const { mcp, calls } = recordingMcp([
+        'jira_add_comment',
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
+      const handler = handlerWith(proposesThenNoMore(), mcp);
       await handler({ payload: { runId } });
-
       const card = await cardOf(runId);
       await db
         .updateTable('actionable_items')
         .set({
-          status: 'approved',
-          result: JSON.stringify({ answer: 'CIO-12' }),
-          decided_at: sql`NOW()`,
-        })
-        .where('id', '=', card.id)
-        .execute();
-      await handler({ payload: { runId } });
-
-      const acted = prompts.join('\n');
-      // A typed string is evidence to check, never permission to act — the
-      // step that reads it must be told which of the two it holds.
-      expect(acted).toContain('The owner answered');
-      expect(acted).not.toContain('The owner approved');
-      expect(acted).toContain('the issue key');
-      expect(acted).toContain('check they are usable');
-      // A fact a person just supplied is the one worth keeping: the next
-      // run should not have to ask the same question again.
-      expect(acted).toContain('record it');
-    });
-
-    it('an input card declined reads as "no answer", not as a refusal to act', async () => {
-      const acting = {
-        id: randomUUID(),
-        name: 'Runs on the skipped path',
-        instruction: [{ t: 'text' as const, v: 'Move on.' }],
-        tool: null,
-        maxAttempts: 1,
-        failureHandling: [],
-      };
-      const { doc } = approvalDoc({
-        mode: 'input',
-        saveAs: 'the issue key',
-        onDeclined: [acting],
-      });
-      const { runId } = await seedRun(doc);
-      const prompts: string[] = [];
-      const llm = stubLlm((request) => {
-        for (const message of request.messages) {
-          for (const block of message.content) {
-            if (block.type === 'text') prompts.push(block.text);
-          }
-        }
-        return finish('success');
-      });
-      const handler = handlerWith(
-        llm,
-        stubMcp([], () => okToolResult)
-      );
-      await handler({ payload: { runId } });
-
-      const card = await cardOf(runId);
-      await db
-        .updateTable('actionable_items')
-        .set({ status: 'declined', decided_at: sql`NOW()` })
-        .where('id', '=', card.id)
-        .execute();
-      await handler({ payload: { runId } });
-
-      const acted = prompts.join('\n');
-      expect(acted).toContain('SKIPPED');
-      expect(acted).toContain('Do not invent one');
-    });
-
-    it('a form card binds one variable per field, and a list for a multi-select', async () => {
-      const { doc } = approvalDoc({
-        mode: 'input',
-        saveAs: 'what you told me',
-        fields: [
-          {
-            name: 'the issue key',
-            label: 'Which issue?',
-            type: 'text',
-            required: true,
-          },
-          {
-            name: 'the comments',
-            label: 'Which comments?',
-            type: 'multi',
-            required: false,
-            options: ['decision 1', 'risk 2'],
-          },
-        ],
-        onApproved: [
-          terminalNode('failure', [
-            { t: 'text', v: 'Post ' },
-            { t: 'var', name: 'the comments' },
-            { t: 'text', v: ' to ' },
-            { t: 'var', name: 'the issue key' },
-            { t: 'text', v: ' — all of it: ' },
-            { t: 'var', name: 'what you told me' },
-          ]),
-        ],
-      });
-      const { runId } = await seedRun(doc);
-      const handler = handlerWith(
-        noModel(),
-        stubMcp([], () => okToolResult)
-      );
-      await handler({ payload: { runId } });
-
-      // The card carries the form, so the feed can render controls without
-      // loading the agent.
-      const card = await cardOf(runId);
-      expect(JSON.stringify(card.suggested_action)).toContain('Which comments?');
-
-      await db
-        .updateTable('actionable_items')
-        .set({
-          status: 'approved',
-          result: JSON.stringify({
-            answers: { 'the issue key': 'CIO-12', 'the comments': ['decision 1', 'risk 2'] },
-          }),
+          status: 'declined',
+          result: JSON.stringify({ comment: 'not yet' }),
           decided_at: sql`NOW()`,
         })
         .where('id', '=', card.id)
@@ -2600,28 +2366,55 @@ maybe('agent run engine', () => {
         .select(['status', 'error'])
         .where('id', '=', runId)
         .executeTakeFirstOrThrow();
-      // Each field bound under its OWN name; the multi-select rendered the
-      // way a collected list renders.
-      expect(run.error).toContain('Post decision 1\nrisk 2 to CIO-12');
-      // And the whole reply under the node's own name: every label with its
-      // answer, for a step that relays what was said.
-      expect(run.error).toContain('Which issue?: CIO-12');
-      expect(run.error).toContain('Which comments?: decision 1, risk 2');
-      expect(run.status).toBe('failed');
+      // Nothing after the gate in this doc — advancing past it ends the run.
+      expect(run.status).toBe('succeeded');
+      expect(calls.some((call) => call.name === 'jira_add_comment')).toBe(false);
+
+      const gateRow = await db
+        .selectFrom('agent_run_steps')
+        .select(['status', 'outcome', 'outcome_code', 'detail'])
+        .where('run_id', '=', runId)
+        .where('step_id', '=', gateId)
+        .executeTakeFirstOrThrow();
+      expect(gateRow.status).toBe('succeeded');
+      expect(gateRow.outcome).toBe('guard');
+      expect(gateRow.outcome_code).toBe('not_approved');
+      expect(JSON.stringify(gateRow.detail)).toContain('"decision":"denied"');
+      expect(JSON.stringify(gateRow.detail)).toContain('not yet');
     });
 
-    it('a declined card routes the declined path', async () => {
-      const { doc } = approvalDoc({ onDeclined: [terminalNode('stop')] });
+    it('on denial with a recovery path, routes into onNotApproved with approval.outcome/comment bound', async () => {
+      const prompts: string[] = [];
+      const recovery: AgentStepNode = {
+        id: randomUUID(),
+        name: 'Note the feedback',
+        instruction: [{ t: 'text', v: 'Noted.' }],
+        tool: null,
+        maxAttempts: 1,
+        failureHandling: [],
+      };
+      const { doc } = gatedDoc({ onNotApproved: [recovery] });
       const { runId } = await seedRun(doc);
-      const handler = handlerWith(
-        noModel(),
-        stubMcp([], () => okToolResult)
-      );
+      const { mcp } = recordingMcp(['jira_add_comment']);
+      const llm = stubLlm((request, call) => {
+        if (call === 0) return useTool('jira_add_comment', { issueKey: 'PROJ-42' });
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        return finish('success');
+      });
+      const handler = handlerWith(llm, mcp);
       await handler({ payload: { runId } });
       const card = await cardOf(runId);
       await db
         .updateTable('actionable_items')
-        .set({ status: 'declined', decided_at: sql`NOW()`, archived_at: sql`NOW()` })
+        .set({
+          status: 'declined',
+          result: JSON.stringify({ comment: 'wrong ticket' }),
+          decided_at: sql`NOW()`,
+        })
         .where('id', '=', card.id)
         .execute();
       await handler({ payload: { runId } });
@@ -2631,18 +2424,17 @@ maybe('agent run engine', () => {
         .select('status')
         .where('id', '=', runId)
         .executeTakeFirstOrThrow();
-      expect(run.status).toBe('stopped');
+      expect(run.status).toBe('succeeded');
+      const acted = prompts.join('\n');
+      expect(acted).toContain('approval.outcome: denied');
+      expect(acted).toContain('approval.comment: wrong ticket');
     });
 
-    it('past the deadline the engine claims expiry and routes the timed-out path', async () => {
-      // Empty onTimeout: the run falls through past the approval and, with
-      // nothing after it, finishes.
-      const { doc, approvalId } = approvalDoc({ timeoutHours: 1 });
+    it('past the deadline the engine claims expiry and treats it as timedOut', async () => {
+      const { doc, gateId } = gatedDoc({ approvalTimeoutHours: 1 });
       const { runId } = await seedRun(doc);
-      const handler = handlerWith(
-        noModel(),
-        stubMcp([], () => okToolResult)
-      );
+      const { mcp, calls } = recordingMcp(['jira_add_comment']);
+      const handler = handlerWith(proposesThenNoMore(), mcp);
       await handler({ payload: { runId } });
       await db
         .updateTable('agent_runs')
@@ -2658,60 +2450,60 @@ maybe('agent run engine', () => {
         .executeTakeFirstOrThrow();
       expect(run.status).toBe('succeeded');
       expect(run.error).toBeNull();
+      expect(calls.some((call) => call.name === 'jira_add_comment')).toBe(false);
 
       const card = await cardOf(runId);
       expect(card.status).toBe('expired');
       expect(card.archived_at).not.toBeNull();
 
-      const approvalRow = await db
+      const gateRow = await db
         .selectFrom('agent_run_steps')
         .select(['status', 'detail'])
         .where('run_id', '=', runId)
-        .where('step_id', '=', approvalId)
+        .where('step_id', '=', gateId)
         .executeTakeFirstOrThrow();
-      expect(approvalRow.status).toBe('succeeded');
-      expect(JSON.stringify(approvalRow.detail)).toContain('"decision":"expired"');
+      expect(gateRow.status).toBe('succeeded');
+      expect(JSON.stringify(gateRow.detail)).toContain('"decision":"timedOut"');
     });
 
-    it('replays a finished approval without touching the archived card', async () => {
-      const { doc } = approvalDoc({ onDeclined: [terminalNode('stop')] });
+    it('replays a resolved gate without touching the archived card or re-firing the tool', async () => {
+      const { doc } = gatedDoc({});
       const { runId } = await seedRun(doc);
-      const handler = handlerWith(
-        noModel(),
-        stubMcp([], () => okToolResult)
-      );
+      const { mcp, calls } = recordingMcp(['jira_add_comment']);
+      const handler = handlerWith(proposesThenNoMore(), mcp);
       await handler({ payload: { runId } });
       const card = await cardOf(runId);
       await db
         .updateTable('actionable_items')
-        .set({ status: 'declined', decided_at: sql`NOW()`, archived_at: sql`NOW()` })
+        .set({ status: 'approved', decided_at: sql`NOW()`, archived_at: sql`NOW()` })
         .where('id', '=', card.id)
         .execute();
       await handler({ payload: { runId } });
+      expect(calls.filter((call) => call.name === 'jira_add_comment')).toHaveLength(1);
       const decidedAt = (await cardOf(runId)).decided_at;
 
-      // Redelivery of the finished run: nothing moves.
+      // Redelivery of the finished run: nothing moves, the tool never
+      // fires again, and the archived card is left untouched.
       await handler({ payload: { runId } });
       const run = await db
         .selectFrom('agent_runs')
         .select('status')
         .where('id', '=', runId)
         .executeTakeFirstOrThrow();
-      expect(run.status).toBe('stopped');
+      expect(run.status).toBe('succeeded');
+      expect(calls.filter((call) => call.name === 'jira_add_comment')).toHaveLength(1);
       const after = await cardOf(runId);
-      expect(after.status).toBe('declined');
+      expect(after.status).toBe('approved');
       expect(new Date(after.decided_at ?? 0).toISOString()).toBe(
         new Date(decidedAt ?? 0).toISOString()
       );
     });
 
     it('disabling the agent cancels the waiting run and archives its card', async () => {
-      const { doc } = approvalDoc({});
+      const { doc } = gatedDoc({});
       const { runId, agentId } = await seedRun(doc);
-      const handler = handlerWith(
-        noModel(),
-        stubMcp([], () => okToolResult)
-      );
+      const { mcp } = recordingMcp(['jira_add_comment']);
+      const handler = handlerWith(proposesThenNoMore(), mcp);
       await handler({ payload: { runId } });
       await db.updateTable('agents').set({ enabled: false }).where('id', '=', agentId).execute();
       await handler({ payload: { runId } });
@@ -2729,13 +2521,10 @@ maybe('agent run engine', () => {
     });
 
     it('the sweep expires due waits, re-enqueues them, and clears cards of dead runs', async () => {
-      const { doc } = approvalDoc({ timeoutHours: 1 });
+      const { doc } = gatedDoc({ approvalTimeoutHours: 1 });
       const { runId, agentId } = await seedRun(doc);
-      const handler = handlerWith(
-        noModel(),
-        stubMcp([], () => okToolResult)
-      );
-      await handler({ payload: { runId } });
+      const { mcp } = recordingMcp(['jira_add_comment']);
+      await handlerWith(proposesThenNoMore(), mcp)({ payload: { runId } });
       await db
         .updateTable('agent_runs')
         .set({ waiting_until: new Date(Date.now() - 60_000) })
@@ -2744,8 +2533,10 @@ maybe('agent run engine', () => {
 
       // A second, already-finished run whose card was never resolved — the
       // mirror-orphan arm must clear it WITHOUT enqueueing anything.
-      const { runId: deadRunId } = await seedRun(approvalDoc({}).doc);
-      await handler({ payload: { runId: deadRunId } });
+      const { doc: deadDoc } = gatedDoc({});
+      const { runId: deadRunId } = await seedRun(deadDoc);
+      const { mcp: deadMcp } = recordingMcp(['jira_add_comment']);
+      await handlerWith(proposesThenNoMore(), deadMcp)({ payload: { runId: deadRunId } });
       await db
         .updateTable('agent_runs')
         .set({ status: 'canceled', waiting_until: null, finished_at: sql`NOW()` })
@@ -2773,6 +2564,262 @@ maybe('agent run engine', () => {
       const deadCard = await cardOf(deadRunId);
       expect(deadCard.status).toBe('expired');
       expect(JSON.stringify(deadCard.result)).toContain('run-ended');
+    });
+  });
+  describe('ask_person (canAskQuestions)', () => {
+    function askableDoc(overrides: Record<string, unknown> = {}): {
+      doc: AgentStepsDoc;
+      stepId: string;
+    } {
+      const step: AgentStepNode = {
+        id: randomUUID(),
+        name: 'Draft the update',
+        instruction: [{ t: 'text', v: 'Draft a status update.' }],
+        tool: null,
+        maxAttempts: 3,
+        failureHandling: [],
+        ...overrides,
+      };
+      const doc: AgentStepsDoc = { version: CURRENT_STEPS_VERSION, steps: [step] };
+      if (!isAgentStepsDoc(doc)) throw new Error('test doc is not a valid steps doc');
+      return { doc, stepId: step.id };
+    }
+
+    async function seedAskableRun(
+      canAskQuestions: boolean,
+      overrides: Record<string, unknown> = {}
+    ): Promise<{ runId: string; stepId: string }> {
+      const { doc, stepId } = askableDoc(overrides);
+      const { runId, agentId } = await seedRun(doc);
+      if (canAskQuestions) {
+        await db
+          .updateTable('agents')
+          .set({ can_ask_questions: true })
+          .where('id', '=', agentId)
+          .execute();
+      }
+      return { runId, stepId };
+    }
+
+    const cardOf = async (runId: string) =>
+      db
+        .selectFrom('actionable_items')
+        .selectAll()
+        .where('run_id', '=', runId)
+        .executeTakeFirstOrThrow();
+
+    function recordingMcp(tools: string[]): {
+      mcp: McpClient;
+      calls: { name: string; args: Record<string, unknown> }[];
+    } {
+      const calls: { name: string; args: Record<string, unknown> }[] = [];
+      const mcp: McpClient = {
+        initialize: async () => undefined,
+        listTools: async () =>
+          tools.map((name) => ({ name, description: name, inputSchema: { type: 'object' } })),
+        callTool: async (name, args) => {
+          calls.push({ name, args });
+          return okToolResult;
+        },
+      };
+      return { mcp, calls };
+    }
+
+    it('is refused unless the agent can ask questions', async () => {
+      const { runId } = await seedAskableRun(false);
+      const seen: string[] = [];
+      const llm = stubLlm((request, call) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'tool_result' && typeof block.content === 'string') {
+              seen.push(block.content);
+            }
+          }
+        }
+        if (call === 0) return useTool('ask_person', { message: 'Which project?' });
+        return finish('success');
+      });
+      await handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      )({ payload: { runId } });
+
+      expect(seen.some((text) => text.includes('not available'))).toBe(true);
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+    });
+
+    it('parks behind a question card showing the message and form, and delivers notifications', async () => {
+      const { runId, stepId } = await seedAskableRun(true);
+      const { mcp, calls } = recordingMcp(['outlook_send_mail', 'webex_note_to_self']);
+      const llm = stubLlm((_request, call) => {
+        if (call === 0) {
+          return useTool('ask_person', {
+            message: 'Which project does this belong to?',
+            form: [
+              { kind: 'field', name: 'project', label: 'Project', type: 'text', required: true },
+            ],
+          });
+        }
+        throw new Error('a waiting question must not call the model again');
+      });
+      await handlerWith(llm, mcp)({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'error'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('waiting');
+      expect(run.error).toBeNull();
+
+      const rows = await db
+        .selectFrom('agent_run_steps')
+        .select(['step_id', 'status', 'outcome'])
+        .where('run_id', '=', runId)
+        .execute();
+      expect(rows).toEqual([{ step_id: stepId, status: 'waiting', outcome: 'question' }]);
+
+      const card = await cardOf(runId);
+      expect(card.status).toBe('suggested');
+      expect(card.kind).toBe('question');
+      expect(card.owner_subject).toBe(subject);
+      expect(JSON.stringify(card.suggested_action)).toContain('Which project does this belong to?');
+      expect(JSON.stringify(card.suggested_action)).toContain('"name":"project"');
+
+      expect(calls.map((call) => call.name).sort()).toEqual([
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
+    });
+
+    it('answered: rebinds per-field vars on a FRESH attempt, no model call while waiting', async () => {
+      const { runId } = await seedAskableRun(true);
+      const prompts: string[] = [];
+      const llm = stubLlm((request, call) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        if (call === 0) {
+          return useTool('ask_person', {
+            message: 'Which project does this belong to?',
+            form: [
+              { kind: 'field', name: 'project', label: 'Project', type: 'text', required: true },
+            ],
+          });
+        }
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'answered',
+          result: JSON.stringify({ answers: { project: 'PROJ-42' } }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+      const acted = prompts.join('\n');
+      expect(acted).toContain('question.message: Which project does this belong to?');
+      expect(acted).toContain('project: PROJ-42');
+      expect(acted).toContain('question.answer:');
+    });
+
+    it('timed out: the fresh attempt sees that nobody answered', async () => {
+      const { runId } = await seedAskableRun(true);
+      const prompts: string[] = [];
+      const llm = stubLlm((request, call) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        if (call === 0)
+          return useTool('ask_person', { message: 'Which project?', timeoutHours: 1 });
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+      await db
+        .updateTable('agent_runs')
+        .set({ waiting_until: new Date(Date.now() - 60_000) })
+        .where('id', '=', runId)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+      const acted = prompts.join('\n');
+      expect(acted).toContain('Nobody answered before the deadline.');
+
+      const card = await cardOf(runId);
+      expect(card.status).toBe('expired');
+    });
+
+    it('replays a resolved question without re-notifying or asking the model again', async () => {
+      const { runId } = await seedAskableRun(true);
+      const { mcp, calls } = recordingMcp(['outlook_send_mail', 'webex_note_to_self']);
+      const llm = stubLlm((_request, call) => {
+        if (call === 0) return useTool('ask_person', { message: 'Which project?' });
+        return finish('success');
+      });
+      const handler = handlerWith(llm, mcp);
+      await handler({ payload: { runId } });
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'answered',
+          result: JSON.stringify({ answers: {} }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+      expect(calls.map((call) => call.name).sort()).toEqual([
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
+
+      // Redelivery of the finished run: no further notifications.
+      await handler({ payload: { runId } });
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+      expect(calls.map((call) => call.name).sort()).toEqual([
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
     });
   });
 });

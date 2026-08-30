@@ -10,10 +10,21 @@ import { getRunForOwner } from '@/lib/agents/runs-view';
 import { RunTimeline, StatusPill } from '../../../run-timeline';
 import RunActivitySection from '../../../run-activity';
 import ApprovalActions from '../../../../approval-actions';
+import QuestionActions from '../../../../question-actions';
+import { parseFormNodes } from '@renkei/agents';
 import LocalTime from '@/components/local-time';
 import CopyDebugButton from '@/components/copy-debug-button';
 import RerunButton from './rerun-button';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
+
+/** The `form` field a question card's suggested_action carries, if any. */
+function formFieldOf(suggestedAction: unknown): unknown {
+  if (typeof suggestedAction !== 'object' || suggestedAction === null) return undefined;
+  const record: { form?: unknown } =
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+    suggestedAction as { form?: unknown };
+  return record.form;
+}
 
 /**
  * One run with every attempt's full content — the owner's view, which a
@@ -42,31 +53,24 @@ export default async function AgentRunDetailPage({
   const run = await getRunForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, runId);
   if (!run) notFound();
 
-  // The run page mirrors the home-page approval card while the run waits,
-  // so the person reading the timeline can decide right here. The card is
+  // The run page mirrors the home-page pause card while the run waits, so
+  // the person reading the timeline can decide right here. The card is
   // the OWNER's decision to make — approving spends their grants — so a
   // grantee reads the timeline without it.
-  const approvalCard =
+  const pauseCard =
     access.viewerIsOwner && run.status === 'waiting'
       ? await dbResult.val
           .selectFrom('actionable_items')
-          .select(['id', 'status', 'summary', 'suggested_action'])
+          .select(['id', 'kind', 'status', 'summary', 'suggested_action'])
           .where('run_id', '=', runId)
-          .where('kind', '=', 'approval')
+          .where((eb) => eb.or([eb('kind', '=', 'approval'), eb('kind', '=', 'question')]))
           .where('status', '=', 'suggested')
           .where('owner_subject', '=', session.subject)
           .orderBy('created_at', 'desc')
           .executeTakeFirst()
       : null;
-  const approvalMode = (() => {
-    if (
-      typeof approvalCard?.suggested_action !== 'object' ||
-      approvalCard.suggested_action === null
-    )
-      return 'approve' as const;
-    const record: Record<string, unknown> = { ...approvalCard.suggested_action };
-    return record.approvalMode === 'input' ? ('input' as const) : ('approve' as const);
-  })();
+  const questionForm =
+    pauseCard?.kind === 'question' ? parseFormNodes(formFieldOf(pauseCard.suggested_action)) : [];
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -87,10 +91,14 @@ export default async function AgentRunDetailPage({
           <RerunButton tenantId={tenant.id} slug={slug} agentId={agentId} runId={runId} />
         )}
       </div>
-      {approvalCard ? (
+      {pauseCard ? (
         <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50/50 p-4 dark:border-sky-900 dark:bg-sky-950/30">
-          <p className="mb-2 whitespace-pre-wrap text-sm font-medium">{approvalCard.summary}</p>
-          <ApprovalActions tenantId={tenant.id} itemId={approvalCard.id} mode={approvalMode} />
+          <p className="mb-2 whitespace-pre-wrap text-sm font-medium">{pauseCard.summary}</p>
+          {pauseCard.kind === 'question' ? (
+            <QuestionActions tenantId={tenant.id} itemId={pauseCard.id} form={questionForm} />
+          ) : (
+            <ApprovalActions tenantId={tenant.id} itemId={pauseCard.id} />
+          )}
         </div>
       ) : null}
       {run.error ? (

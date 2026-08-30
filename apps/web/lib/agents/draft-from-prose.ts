@@ -24,23 +24,17 @@ import { z } from 'zod';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import {
+  APPROVAL_DEFAULT_TIMEOUT_HOURS,
   BUILTIN_VARIABLES,
   MAX_BRANCH_DEPTH_V3,
   MAX_BRANCH_PATHS,
   MAX_CONTAINER_DEPTH,
-  MAX_APPROVAL_FIELDS,
-  MAX_APPROVAL_FIELD_HELP_CHARS,
-  MAX_APPROVAL_FIELD_KEY_CHARS,
-  MAX_APPROVAL_FIELD_LABEL_CHARS,
-  MAX_APPROVAL_FIELD_OPTIONS,
   MAX_LOOP_ITERATIONS,
   MAX_SCHEDULE_RULES,
   LOOP_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
   MAX_STEPS,
   TRIGGER_EVENT_CATALOG,
-  approvalFieldsOf,
-  approvalPathsOf,
   flattenActionSteps,
   isBranchStep,
   isValidTimezone,
@@ -52,7 +46,6 @@ import {
   walkSteps,
   type ActionStep,
   type AgentStepNode,
-  type ApprovalField,
   type AgentStepsDoc,
   type BranchPath,
   type FailureHandling,
@@ -146,35 +139,14 @@ function currentLinesOf(nodes: AgentStepNode[]): string {
               : '; no notification')
           );
         }
-        case 'approval': {
-          // A form is spelled out, not summarised: this text is what the
-          // model revises FROM, and a field it cannot see is a field it
-          // silently drops.
-          const form = approvalFieldsOf(node)
-            .map(
-              (field) =>
-                `${field.name}: ${field.label} (${field.type}` +
-                `${field.required ? ', required' : ''}` +
-                `${field.options?.length ? `, one of: ${field.options.join(' | ')}` : ''}` +
-                `${field.min !== undefined ? `, min ${field.min}` : ''}` +
-                `${field.max !== undefined ? `, max ${field.max}` : ''}` +
-                `${field.key ? `, writes to ${field.key}` : ''})`
-            )
-            .join('; ');
-          return (
-            `${indent}s${ordinal + 1}. [ask] "${node.name}" — pauses for the owner ` +
-            `(${node.mode === 'input' ? 'typed answer' : 'approve/decline'}, up to ${node.timeoutHours}h)` +
-            (node.saveAs ? `, saves the answer as "${node.saveAs}"` : '') +
-            (form ? `, asks for — ${form}` : '') +
-            ` — asks: ${segmentsToTokens(node.message)} (the indented steps below belong to its ` +
-            'approved/declined/timed-out paths)'
-          );
-        }
         case 'action':
         case undefined:
           return (
             `${indent}s${ordinal + 1}. "${node.name}" — ${segmentsToTokens(node.instruction)}` +
-            (node.saveAs ? ` (saves result as "${node.saveAs}")` : '')
+            (node.saveAs ? ` (saves result as "${node.saveAs}")` : '') +
+            (node.needsApproval
+              ? ` [needs approval before this tool call fires, up to ${node.approvalTimeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS}h; if not approved, skipped and the automation continues]`
+              : '')
           );
         default: {
           const unhandled: never = node;
@@ -293,28 +265,19 @@ function promptOf(
     '- Only when the user NAMES a phase ("triage", "the cleanup part"), you may wrap steps ' +
       'in a GROUP object: {"kind": "group", "name": the phase name, "steps": [...]}. Groups ' +
       'change nothing about execution — never invent them.',
-    '- When the user wants a HUMAN DECISION mid-flow ("ask me before sending", "wait for my ' +
-      'approval", "let me pick the wording"), use an ASK object: {"kind": "ask", "name": short ' +
-      'label, "message": what to ask (may use {{var:...}} for context, never {{tool:...}}), ' +
-      '"mode": "approve" (approve/decline buttons) | "input" (the user answers, and later ' +
-      'steps use what they said), "timeoutHours": how long to wait (default 72), ' +
-      '"notify": array of "email"/"webex" to alert the user with a link, and OPTIONAL ' +
-      '"onApproved"/"onDeclined"/"onTimeout": step arrays for each outcome (empty/omitted = ' +
-      'just continue). The run PAUSES at an ask until the user acts or the wait expires. Only ' +
-      'add one when the description asks for human sign-off or input.',
-    '- An "input" ask collects EITHER one plain answer ("saveAs": its name for later steps) ' +
-      'OR a FORM: "fields", one entry per thing you need, each {"name": the name later steps ' +
-      'use it by, "label": what the user reads, "type": "text"|"longtext"|"number"|"date"|' +
-      '"choice"|"multi", "required": true/false, "options": [...] for choice/multi (at least ' +
-      'two), "min"/"max" for number, "help": an optional hint, "key": what the destination ' +
-      'system calls this field if the description names one (e.g. "customfield_10016")}. ' +
-      'With "fields" you may ALSO give "saveAs" — it names the whole reply, one chip holding ' +
-      'every label and answer, for a step that relays it. PREFER FIELDS whenever the answer has a shape ' +
-      'you already know — an issue key, a number of points, a date, one of a set the ' +
-      'description lists — because the card refuses an answer that does not fit, so no later ' +
-      'step has to parse or re-check one. Use the plain "saveAs" answer only for genuinely ' +
-      'open prose ("anything else I should say?"). A "multi" field also gives later steps a ' +
-      'LIST, which a loop can go over.',
+    '- When the user wants a HUMAN OK before a specific tool call fires ("ask me before ' +
+      'sending", "wait for my approval before closing it"), set that step\'s "needsApproval": ' +
+      'true and, if the description gives a wait, "approvalTimeoutHours" (default ' +
+      `${APPROVAL_DEFAULT_TIMEOUT_HOURS}). The run PAUSES before the tool call for the owner; ` +
+      'if they decline or the wait expires, the call is skipped and the automation continues. ' +
+      'Only a step with a "tool" may carry it — never on a pure-reasoning step.',
+    '- The description may also want the automation to ask the user something and use their ' +
+      'reply ("ask which project", "let me pick the wording") rather than gate one tool call. ' +
+      'That is not something to draft as a step: add a short entry to "questions" instead, so ' +
+      'the user is asked in the builder up front, OR — when the need can only be known partway ' +
+      'through the run — leave it out of the steps and add an "edgeCases" note that the ' +
+      'automation may need to ask mid-run; the user enables that from the builder\'s "Can ask ' +
+      'questions" toggle, which is separate from these drafted steps.',
     '- When the user wants to be NOTIFIED about how the flow ends ("email me if it fails", ' +
       '"send me a WebEx note when it\'s done"), or wants a branch path to deliberately end ' +
       'the whole run, use an END object as the LAST entry of that list: {"kind": "end", ' +
@@ -497,7 +460,13 @@ function promptOf(
     '          reasoning over the result, so a call that technically succeeded can still',
     '          match,',
     '        "onExhausted": "stop" (default), "continue", or "stop-quiet" — only with',
-    '          action "retry": what happens when every try fails }' + (revising ? ',' : ''),
+    '          action "retry": what happens when every try fails },',
+    '    "needsApproval": boolean or omitted — ONLY on a step with a "tool": true pauses the',
+    '      run before that tool call fires for the owner to approve or decline; declined or',
+    '      timed out skips the call and the automation continues,',
+    '    "approvalTimeoutHours": integer or omitted — only with "needsApproval": true, how',
+    `      long to wait before treating it as not approved (default ${APPROVAL_DEFAULT_TIMEOUT_HOURS})` +
+      (revising ? ',' : ''),
     ...(revising
       ? [
           '    "from": string or null — the sN id of the existing step this one is based',
@@ -538,29 +507,6 @@ function promptOf(
     '    "name": string — the phase name, never empty,',
     '    "steps": array of steps — never empty' + (revising ? ',' : ''),
     ...(revising ? ['    "from": string or null — the sN id of the existing group, or null'] : []),
-    '  }',
-    '  Or an ask (ONLY when the description wants a human decision mid-flow):',
-    '  {',
-    '    "kind": "ask",',
-    '    "name": string — a short label, never empty,',
-    '    "message": string — what to ask the user; {{var:...}} allowed, {{tool:...}} forbidden,',
-    '    "mode": "approve" (buttons) or "input" (the user answers),',
-    '    "saveAs": string — for an "input" ask with no "fields": the name of the one open',
-    '      answer, required. WITH "fields" it is optional and names the WHOLE reply (every',
-    '      label and answer, one per line) for a step that relays what was said,',
-    '    "fields": array or omitted — an "input" ask\'s form; prefer it whenever the answer',
-    '      has a known shape. Each: {"name": string — what later steps call it,',
-    '      "label": string — what the user reads, "type": "text" | "longtext" | "number" |',
-    '      "date" | "choice" | "multi", "required": boolean, "options": array of strings',
-    '      (choice/multi, at least two), "min"/"max": numbers (number only), "help": string',
-    '      or null, "key": string or null — the destination system\'s own id for this field},',
-    '    "timeoutHours": integer — how long to wait before the timed-out path (default 72),',
-    '    "notify": array containing "email" and/or "webex", or empty,',
-    '    "onApproved": array of steps or omitted — runs when approved/answered,',
-    '    "onDeclined": array of steps or omitted — runs when declined,',
-    '    "onTimeout": array of steps or omitted — runs when nobody acts in time' +
-      (revising ? ',' : ''),
-    ...(revising ? ['    "from": string or null — the sN id of the existing ask, or null'] : []),
     '  }',
     '  Or an end marker (ONLY when the description asks for a notification or an explicit ending):',
     '  {',
@@ -731,6 +677,8 @@ const STEP_SHAPE = z.object({
       })
     )
     .optional(),
+  needsApproval: z.boolean().optional(),
+  approvalTimeoutHours: z.number().int().min(1).optional(),
 });
 
 /**
@@ -782,41 +730,6 @@ const END_SHAPE = z.object({
   result: z.enum(['success', 'failure', 'stop']),
   message: z.string().nullable().optional(),
   notify: z.array(z.enum(['email', 'webex'])).optional(),
-  from: z.string().nullable().optional(),
-});
-
-/**
- * One control of an ask's form, as the drafting model writes it.
- *
- * Everything is lenient on the wire and tightened in the parse: a model
- * that gives a choice field two options and calls it "single" should get
- * a working form and a note, not a rejected draft it has to guess its way
- * out of.
- */
-const ASK_FIELD_SHAPE = z.object({
-  name: z.string().nullable().optional(),
-  label: z.string().trim().min(1, 'is required and must be a non-empty string'),
-  type: z.enum(['text', 'longtext', 'number', 'date', 'choice', 'multi']),
-  required: z.boolean().optional(),
-  options: z.array(z.string()).optional(),
-  min: z.number().nullable().optional(),
-  max: z.number().nullable().optional(),
-  help: z.string().nullable().optional(),
-  key: z.string().nullable().optional(),
-});
-
-const ASK_SHAPE = z.object({
-  kind: z.literal('ask'),
-  name: z.string().trim().min(1, 'is required and must be a non-empty string'),
-  message: z.string().trim().min(1, 'is required and must be a non-empty string'),
-  mode: z.enum(['approve', 'input']).optional(),
-  saveAs: z.string().nullable().optional(),
-  fields: z.array(ASK_FIELD_SHAPE).optional(),
-  timeoutHours: z.number().int().min(1).optional(),
-  notify: z.array(z.enum(['email', 'webex'])).optional(),
-  onApproved: z.array(z.unknown()).optional(),
-  onDeclined: z.array(z.unknown()).optional(),
-  onTimeout: z.array(z.unknown()).optional(),
   from: z.string().nullable().optional(),
 });
 
@@ -1045,15 +958,14 @@ function parseTriggerEntries(
   return drafts;
 }
 
-function wireKindOf(entry: unknown): 'branch' | 'loop' | 'group' | 'end' | 'ask' | 'action' {
+function wireKindOf(entry: unknown): 'branch' | 'loop' | 'group' | 'end' | 'action' {
   if (typeof entry === 'object' && entry !== null) {
     const candidate: { kind?: unknown } = entry;
     if (
       candidate.kind === 'branch' ||
       candidate.kind === 'loop' ||
       candidate.kind === 'group' ||
-      candidate.kind === 'end' ||
-      candidate.kind === 'ask'
+      candidate.kind === 'end'
     ) {
       return candidate.kind;
     }
@@ -1191,12 +1103,6 @@ function parseDraftReply(
         case 'group':
           dedupe(node.steps);
           break;
-        case 'approval':
-          for (const { path } of approvalPathsOf(node)) {
-            path.id = claimId(path.id);
-            dedupe(path.steps);
-          }
-          break;
         case 'terminal':
         case 'action':
         case undefined:
@@ -1268,11 +1174,6 @@ function parseNodeList(
         if (parsedEnd) nodes.push(parsedEnd);
         break;
       }
-      case 'ask': {
-        const parsedAsk = parseAskEntry(entry, label, state, nesting);
-        if (parsedAsk) nodes.push(parsedAsk);
-        break;
-      }
       case 'action': {
         const checked = STEP_SHAPE.safeParse(entry);
         if (!checked.success) {
@@ -1339,77 +1240,6 @@ function claimBoundName(raw: string, label: string, what: string, state: ParseSt
     state.knownVars.add(name);
   }
   return name;
-}
-
-/**
- * The drafted form, tightened.
- *
- * Every field name goes through `claimBoundName` like any other binding —
- * so a form's answers are chippable in later steps, collide with nothing,
- * and are reported when the model reuses one. A field the model wrote
- * badly is FIXED where fixing is unambiguous (a missing name derived from
- * the label, a choice list of one dropped to plain text) and reported as
- * a soft problem either way: this path exists to hand a person a draft to
- * edit, and a refusal teaches the model nothing a note does not.
- */
-function askFieldsOf(
-  wire: z.infer<typeof ASK_FIELD_SHAPE>[] | undefined,
-  label: string,
-  state: ParseState
-): ApprovalField[] {
-  if (!Array.isArray(wire) || wire.length === 0) return [];
-  const fields: ApprovalField[] = [];
-  for (const [index, entry] of wire.entries()) {
-    const at = `${label} (ask field ${index + 1})`;
-    if (fields.length >= MAX_APPROVAL_FIELDS) {
-      state.softProblems.push(
-        `${label} asks for more than ${MAX_APPROVAL_FIELDS} things — the extra fields were dropped.`
-      );
-      break;
-    }
-    const name = claimBoundName(
-      typeof entry.name === 'string' && entry.name.trim() ? entry.name : entry.label,
-      at,
-      'field',
-      state
-    );
-    if (!name) {
-      state.softProblems.push(`${at} has no usable name — the field was dropped.`);
-      continue;
-    }
-    const options = (entry.options ?? []).map((option) => option.trim()).filter(Boolean);
-    let type = entry.type;
-    if ((type === 'choice' || type === 'multi') && options.length < 2) {
-      // One choice is not a question. Asking for it as text keeps the
-      // draft usable, and the note says what happened.
-      state.softProblems.push(
-        `${at} is a choice with fewer than two options — it was made a text field instead.`
-      );
-      type = 'text';
-    }
-    fields.push({
-      name,
-      label: entry.label.slice(0, MAX_APPROVAL_FIELD_LABEL_CHARS),
-      type,
-      required: entry.required !== false,
-      ...(type === 'choice' || type === 'multi'
-        ? { options: options.slice(0, MAX_APPROVAL_FIELD_OPTIONS) }
-        : {}),
-      ...(type === 'number' && typeof entry.min === 'number' && Number.isFinite(entry.min)
-        ? { min: entry.min }
-        : {}),
-      ...(type === 'number' && typeof entry.max === 'number' && Number.isFinite(entry.max)
-        ? { max: entry.max }
-        : {}),
-      ...(typeof entry.help === 'string' && entry.help.trim()
-        ? { help: entry.help.trim().slice(0, MAX_APPROVAL_FIELD_HELP_CHARS) }
-        : {}),
-      ...(typeof entry.key === 'string' && entry.key.trim()
-        ? { key: entry.key.trim().slice(0, MAX_APPROVAL_FIELD_KEY_CHARS) }
-        : {}),
-    });
-  }
-  return fields;
 }
 
 function parseBranchEntry(
@@ -1652,101 +1482,6 @@ function parseEndEntry(entry: unknown, label: string, state: ParseState): Termin
   };
 }
 
-function parseAskEntry(
-  entry: unknown,
-  label: string,
-  state: ParseState,
-  nesting: WireNesting
-): AgentStepNode | null {
-  const checked = ASK_SHAPE.safeParse(entry);
-  if (!checked.success) {
-    state.problems.push(...zodProblems(`${label} (ask): `, checked.error));
-    return null;
-  }
-  const wire = checked.data;
-
-  // Branch-like containment, same budgets as a branch entry.
-  const inner: WireNesting = {
-    branchDepth: nesting.branchDepth + 1,
-    containerDepth: nesting.containerDepth + 1,
-    inLoop: nesting.inLoop,
-  };
-  if (inner.branchDepth > MAX_BRANCH_DEPTH_V3 || inner.containerDepth > MAX_CONTAINER_DEPTH) {
-    state.softProblems.push(
-      `${label} nests an ask deeper than the limit (${MAX_BRANCH_DEPTH_V3} branch levels, ${MAX_CONTAINER_DEPTH} container levels) — move it up.`
-    );
-    return null;
-  }
-
-  const mode = wire.mode ?? 'approve';
-  // A form beats a plain box wherever the model drafted one. A saveAs
-  // beside fields is not a second answer — it is the whole reply under one
-  // name — so it is claimed either way, and only REQUIRED without fields.
-  const fields = mode === 'input' ? askFieldsOf(wire.fields, label, state) : [];
-  let saveAs = '';
-  if (
-    mode === 'input' &&
-    fields.length > 0 &&
-    typeof wire.saveAs === 'string' &&
-    wire.saveAs.trim()
-  ) {
-    saveAs = claimBoundName(wire.saveAs, label, 'form', state);
-  }
-  if (mode === 'input' && fields.length === 0) {
-    saveAs = claimBoundName(
-      typeof wire.saveAs === 'string' && wire.saveAs.trim() ? wire.saveAs : 'the answer',
-      label,
-      'answer',
-      state
-    );
-    if (!saveAs) {
-      state.problems.push(`${label} (ask): input mode needs a usable "saveAs" name.`);
-      return null;
-    }
-  }
-  for (const match of wire.message.matchAll(TOKEN_PATTERN)) {
-    const [, kind, rawName] = match;
-    const name = rawName.trim();
-    if (kind === 'var' && !state.knownVars.has(name)) {
-      state.softProblems.push(
-        name.startsWith('trigger.')
-          ? unknownTriggerVarProblem(`${label} (ask message)`, name, state.knownVars)
-          : `${label} references {{var:${name}}} in its message, which no earlier step saves and no trigger provides.`
-      );
-    }
-  }
-
-  const origin = originOf(state, wire.from);
-  const askOrigin = origin && origin.kind === 'approval' ? origin : undefined;
-  const notify = new Set(wire.notify ?? []);
-  const pathOf = (
-    key: 'onApproved' | 'onDeclined' | 'onTimeout',
-    fallbackName: string,
-    steps: unknown[] | undefined
-  ) => ({
-    id: askOrigin?.[key]?.id ?? randomUUID(),
-    name: fallbackName,
-    steps: steps ? parseNodeList(steps, `${label}.${key}`, state, inner) : [],
-  });
-
-  return {
-    id: askOrigin?.id ?? randomUUID(),
-    kind: 'approval',
-    name: wire.name.slice(0, 80),
-    // Tool chips never belong in an ask's message.
-    message: segmentsOf(wire.message, new Set<string>(), state.knownVars),
-    mode,
-    ...(saveAs ? { saveAs } : {}),
-    ...(fields.length > 0 ? { fields } : {}),
-    timeoutHours: wire.timeoutHours ?? askOrigin?.timeoutHours ?? 72,
-    notifyEmail: notify.has('email'),
-    notifyWebex: notify.has('webex'),
-    onApproved: pathOf('onApproved', mode === 'input' ? 'Answered' : 'Approved', wire.onApproved),
-    onDeclined: pathOf('onDeclined', 'Declined', wire.onDeclined),
-    onTimeout: pathOf('onTimeout', 'No answer in time', wire.onTimeout),
-  };
-}
-
 function parseActionEntry(
   step: z.infer<typeof STEP_SHAPE>,
   label: string,
@@ -1911,6 +1646,16 @@ function parseActionEntry(
     }
   }
 
+  // A gate is meaningless without a call to gate — dropped with a note
+  // rather than handed to the save-time validator to reject outright.
+  if (step.needsApproval && !tool) {
+    softProblems.push(
+      `${label} sets "needsApproval" but has no tool — a pause before a tool call needs a tool to gate; the gate was dropped.`
+    );
+  }
+  const needsApproval = step.needsApproval === true && Boolean(tool);
+  const keepOriginGate = step.needsApproval === undefined && sameTool && origin?.needsApproval;
+
   return {
     id: origin?.id ?? randomUUID(),
     name: typeof step.name === 'string' ? step.name.slice(0, 80) : (origin?.name ?? ''),
@@ -1928,6 +1673,15 @@ function parseActionEntry(
       : step.onSuccess === undefined && origin?.onSuccess
         ? { onSuccess: origin.onSuccess }
         : {}),
+    ...(needsApproval || keepOriginGate
+      ? {
+          needsApproval: true,
+          approvalTimeoutHours:
+            step.approvalTimeoutHours ??
+            origin?.approvalTimeoutHours ??
+            APPROVAL_DEFAULT_TIMEOUT_HOURS,
+        }
+      : {}),
   };
 }
 

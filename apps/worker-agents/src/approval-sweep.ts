@@ -1,5 +1,8 @@
 /**
  * The approval sweep — what keeps waiting runs honest when nobody clicks.
+ * Generic over card KIND: a `needsApproval` gate's 'approval' card and an
+ * `ask_person` pause's 'question' card share the same run_id/waiting_until
+ * plumbing, so one sweep drives both — nothing here reads `kind` at all.
  *
  * Three healing arms, every one replica-safe (the card's optimistic
  * status claim is the arbiter, and duplicate {runId} enqueues are
@@ -7,19 +10,20 @@
  *
  *  1. TIMEOUTS: a waiting run past `waiting_until` gets its card claimed
  *     `suggested → expired` (archived, reason recorded) and the run
- *     re-enqueued — the engine routes the node's timed-out path. A LOST
- *     claim means a human decided in the same instant; the run is
+ *     re-enqueued — the engine treats the timeout as denied/unanswered. A
+ *     LOST claim means a human decided in the same instant; the run is
  *     re-enqueued anyway, because their decision route may have crashed
  *     before its own enqueue.
  *  2. DECIDED-BUT-STUCK: a run still waiting minutes after its card was
- *     decided means the decision route claimed the card but died before
- *     enqueueing the resume. Re-enqueue; the engine reads the card.
+ *     decided (approved/declined/expired, or a question answered) means
+ *     the decision route claimed the card but died before enqueueing the
+ *     resume. Re-enqueue; the engine reads the card.
  *  3. ORPHANS: a waiting run with no linked card at all (a crash between
  *     the attempt row and the card insert) is re-enqueued after a grace
  *     hour — the engine re-runs the pause and recreates the card. And the
- *     mirror orphan: a still-suggested approval card whose run is already
- *     terminal (canceled elsewhere) is expired+archived so the feed never
- *     shows a dead decision.
+ *     mirror orphan: a still-suggested card whose run is already terminal
+ *     (canceled elsewhere) is expired+archived so the feed never shows a
+ *     dead decision.
  */
 
 import { sql, type Kysely } from 'kysely';
@@ -95,8 +99,12 @@ export function createApprovalSweep(db: Kysely<DB>, producer: QueueProducer) {
       .innerJoin('actionable_items as c', 'c.run_id', 'r.id')
       .select(['r.id', 'r.tenant_id', 'r.agent_id'])
       .where('r.status', '=', 'waiting')
-      .where('c.status', 'in', ['approved', 'declined', 'expired'])
-      .where('c.decided_at', '<=', sql<Date>`NOW() - make_interval(mins => ${DECIDED_STUCK_MINUTES})`)
+      .where('c.status', 'in', ['approved', 'declined', 'expired', 'answered'])
+      .where(
+        'c.decided_at',
+        '<=',
+        sql<Date>`NOW() - make_interval(mins => ${DECIDED_STUCK_MINUTES})`
+      )
       .limit(100)
       .execute();
     for (const run of stuck) {
@@ -115,7 +123,11 @@ export function createApprovalSweep(db: Kysely<DB>, producer: QueueProducer) {
       .select(['r.id', 'r.tenant_id', 'r.agent_id'])
       .where('r.status', '=', 'waiting')
       .where('c.id', 'is', null)
-      .where('r.updated_at', '<=', sql<Date>`NOW() - make_interval(mins => ${ORPHAN_GRACE_MINUTES})`)
+      .where(
+        'r.updated_at',
+        '<=',
+        sql<Date>`NOW() - make_interval(mins => ${ORPHAN_GRACE_MINUTES})`
+      )
       .limit(100)
       .execute();
     for (const run of orphans) {

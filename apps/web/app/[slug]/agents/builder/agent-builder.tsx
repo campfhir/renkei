@@ -17,7 +17,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   BUILTIN_VARIABLES,
-  approvalFieldsOf,
   findNodeById,
   flattenActionSteps,
   isContainerNode,
@@ -47,7 +46,6 @@ import {
   newGroup,
   newLoop,
   newStep,
-  newApproval,
   newTerminal,
   removeNode,
   updateNode,
@@ -61,7 +59,6 @@ import { BranchEditor } from './branch-editor';
 import { LoopEditor } from './loop-editor';
 import { GroupEditor } from './group-editor';
 import { TerminalEditor } from './terminal-editor';
-import { ApprovalEditor } from './approval-editor';
 import { GuardrailsPanel } from './guardrails-panel';
 import { FieldIssues, fieldClass } from './field-issues';
 import { summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
@@ -113,8 +110,6 @@ function kindWord(node: AgentStepNode): string {
       return 'group';
     case 'terminal':
       return 'ending';
-    case 'approval':
-      return 'approval';
     case 'action':
     case undefined:
       return 'step';
@@ -162,6 +157,7 @@ export function AgentBuilder({
   const [llmModelId, setLlmModelId] = useState<string | null>(existing?.llmModelId ?? null);
   const [guardrails, setGuardrails] = useState(existing?.guardrails ?? '');
   const [blockedTools, setBlockedTools] = useState<string[]>(existing?.blockedTools ?? []);
+  const [canAskQuestions, setCanAskQuestions] = useState(existing?.canAskQuestions ?? false);
   const [saving, setSaving] = useState(false);
   const [serverIssues, setServerIssues] = useState<ValidationIssue[]>([]);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -394,10 +390,6 @@ export function AgentBuilder({
           // An end marker is real config the moment it exists — its result
           // and notification settings are meaning a redraft would erase.
           return true;
-        case 'approval':
-          // Likewise an approval: mode, wait, and outcome paths are meaning
-          // a redraft would erase.
-          return true;
         case 'action':
         case undefined:
           return node.instruction.length > 0 || node.tool !== null || node.name.trim().length > 0;
@@ -500,8 +492,9 @@ export function AgentBuilder({
       llmModelId,
       guardrails: guardrails.trim() ? guardrails : null,
       blockedTools,
+      canAskQuestions,
     }),
-    [name, stepsDoc, triggers, enabled, llmModelId, guardrails, blockedTools]
+    [name, stepsDoc, triggers, enabled, llmModelId, guardrails, blockedTools, canAskQuestions]
   );
 
   const variables: VariableOption[] = useMemo(() => {
@@ -545,69 +538,15 @@ export function AgentBuilder({
           : []),
       ];
     });
-    // Approvals bind names too: the typed answer OR the form's fields, and
-    // the card link once any approval exists (the engine binds it when the
-    // run pauses). A form's answers were missing here, which made them
-    // unreachable from the menu — and a variable you cannot insert is a
-    // variable no step can write to memory, into a knowledge note, or
-    // anywhere else.
-    const fromApprovals = walkSteps(steps).flatMap(({ node }) => {
-      if (node.kind !== 'approval') return [];
-      const asked = node.name.trim() || 'unnamed';
-      const fields = approvalFieldsOf(node);
-      if (fields.length > 0) {
-        return [
-          ...fields
-            .filter((field) => field.name)
-            .map((field) => ({
-              name: field.name,
-              label: field.name,
-              description:
-                `Your answer to “${field.label.trim() || field.name}” on the approval “${asked}”` +
-                `${field.key ? ` (writes to ${field.key})` : ''}.`,
-              source: 'step' as const,
-            })),
-          ...(node.saveAs
-            ? [
-                {
-                  name: node.saveAs,
-                  label: node.saveAs,
-                  description: `Everything you filled in on the approval “${asked}”, one line per answer.`,
-                  source: 'step' as const,
-                },
-              ]
-            : []),
-        ];
-      }
-      return node.saveAs
-        ? [
-            {
-              name: node.saveAs,
-              label: node.saveAs,
-              description: `Your answer to the approval “${asked}”.`,
-              source: 'step' as const,
-            },
-          ]
-        : [];
-    });
-    const approvalLink = walkSteps(steps).some(({ node }) => node.kind === 'approval')
-      ? [
-          {
-            name: 'approval.link',
-            label: 'approval.link',
-            description: 'Link to the most recent approval card of this run.',
-            source: 'step' as const,
-          },
-        ]
-      : [];
-    return toVariableOptions([
-      ...BUILTIN_VARIABLES,
-      ...fromTriggers,
-      ...fromSteps,
-      ...fromLoops,
-      ...fromApprovals,
-      ...approvalLink,
-    ]);
+    // The old approval node's outcome-answer/form-field/approval.link
+    // variable surfacing lived here; that node kind is gone (replaced by
+    // the needsApproval gate + canAskQuestions, see @renkei/agents). The
+    // gate's own approval.outcome/approval.comment/approval.link builtins
+    // (packages/agents/src/validate.ts, containsApprovalGate) aren't yet
+    // offered by this menu — richer gate-authoring UI is deferred to a
+    // later phase, and this is a display-only completion hint (chip-editor
+    // styling), not a save-blocking check.
+    return toVariableOptions([...BUILTIN_VARIABLES, ...fromTriggers, ...fromSteps, ...fromLoops]);
   }, [draft.triggers, steps]);
 
   const knownVarNames = useMemo(() => new Set(variables.map((v) => v.name)), [variables]);
@@ -623,8 +562,6 @@ export function AgentBuilder({
           case 'group':
             return [];
           case 'terminal':
-            return node.message;
-          case 'approval':
             return node.message;
           case 'action':
           case undefined:
@@ -670,6 +607,7 @@ export function AgentBuilder({
       llmModelId,
       guardrails: guardrails.trim() ? guardrails : null,
       blockedTools,
+      canAskQuestions,
       // Every save is content the owner may have changed — rewrite the
       // summary in the background (see the PUT route).
       refreshDescription: true,
@@ -774,8 +712,6 @@ export function AgentBuilder({
           return newGroup();
         case 'terminal':
           return newTerminal();
-        case 'approval':
-          return newApproval();
         case 'step':
           return newStep(attemptsCap);
         default: {
@@ -827,8 +763,6 @@ export function AgentBuilder({
           return selectedNode.name.trim() || 'Group';
         case 'terminal':
           return selectedNode.name.trim() || 'End here';
-        case 'approval':
-          return selectedNode.name.trim() || 'Ask for approval';
         case 'action':
         case undefined:
           return selectedNode.name.trim() || `Step ${ordinal}`;
@@ -992,16 +926,6 @@ export function AgentBuilder({
                 return (
                   <TerminalEditor
                     terminal={selectedNode}
-                    onChange={(next) => changeNode(selectedNode.id, next)}
-                    variables={variables}
-                    invalidVars={invalidVars}
-                    issues={issueMap.get(selectedNode.id) ?? []}
-                  />
-                );
-              case 'approval':
-                return (
-                  <ApprovalEditor
-                    approval={selectedNode}
                     onChange={(next) => changeNode(selectedNode.id, next)}
                     variables={variables}
                     invalidVars={invalidVars}
@@ -1281,6 +1205,23 @@ export function AgentBuilder({
                   }))}
                 issues={issuesAt('guardrails')}
               />
+
+              <div className="flex items-start gap-2">
+                <input
+                  id="agent-can-ask-questions"
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={canAskQuestions}
+                  onChange={(event) => setCanAskQuestions(event.target.checked)}
+                />
+                <label htmlFor="agent-can-ask-questions" className="text-sm">
+                  <span className="font-medium">Can ask questions</span>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Any step may pause and raise a card asking you something, instead of guessing or
+                    failing for lack of it.
+                  </p>
+                </label>
+              </div>
 
               {agentId ? (
                 <div className="rounded-md border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/40">

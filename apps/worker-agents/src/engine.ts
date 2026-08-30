@@ -26,27 +26,27 @@ import { randomUUID } from 'node:crypto';
 import { describeActor as describeActorRaw } from '@renkei/db';
 import type { DB, Json } from '@renkei/db';
 import {
+  APPROVAL_DEFAULT_TIMEOUT_HOURS,
   MAX_COLLECTED_ITEMS,
-  approvalAnswerText,
-  approvalFieldsOf,
-  describeApprovalAnswer,
   attemptVariables,
+  describeQuestionAnswer,
   findNodeById,
+  flattenFormFields,
   friendlyToolName,
   flattenActionSteps,
   isAgentStepsDoc,
+  parseFormNodes,
+  questionAnswerText,
   renderInstruction,
   toolSegments,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
+  type FormNode,
   resolveTime,
   TIME_UNITS,
-  type ApprovalAnswerValue,
-  type ApprovalOutcomeKey,
   type ResolveTimeRequest,
   type TimeUnit,
-  type ApprovalStep,
   type BranchPath,
   type BranchStep,
   type FailureHandling,
@@ -75,6 +75,8 @@ import {
 } from '@renkei/agents/memory';
 import { recordAgentRunFailure } from '@renkei/agents/runs';
 import {
+  ASK_PERSON_DEF,
+  ASK_PERSON_TOOL,
   BRANCH_SYSTEM_PROMPT,
   ROUTER_SYSTEM_PROMPT,
   LOOP_SYSTEM_PROMPT,
@@ -167,12 +169,23 @@ interface RunRow {
   waiting_until: Date | null;
 }
 
-/** actionable_items decision → the approval node's outcome slot. */
-function approvalOutcomeOf(decision: unknown): ApprovalOutcomeKey | null {
-  if (decision === 'approved') return 'onApproved';
-  if (decision === 'declined') return 'onDeclined';
-  if (decision === 'expired') return 'onTimeout';
-  return null;
+/** actionable_items decision → the gate's outcome vocabulary. */
+function gateOutcomeOf(decision: unknown): 'approved' | 'denied' | 'timedOut' {
+  if (decision === 'approved') return 'approved';
+  if (decision === 'declined') return 'denied';
+  return 'timedOut';
+}
+
+/** A 'question' card's `result.answers` — the form reply keyed by field name. */
+function answersOf(result: unknown): Record<string, unknown> {
+  const resultObj: { answers?: unknown } =
+    typeof result === 'object' && result !== null && !Array.isArray(result) ? result : {};
+  return typeof resultObj.answers === 'object' &&
+    resultObj.answers !== null &&
+    !Array.isArray(resultObj.answers)
+    ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+      (resultObj.answers as Record<string, unknown>)
+    : {};
 }
 
 /**
@@ -306,6 +319,21 @@ interface AttemptOutcome {
    * reproduce the instruction 1:1, runtime data included.
    */
   promptText: string;
+  /**
+   * Set instead of every other field above when a `needsApproval` step's
+   * model turn reached for the gated tool — the call never ran. Carries
+   * exactly what the card shows and what an approval later replays
+   * verbatim (see runAttempt's primary-tool branch and executeStep's gate
+   * handling).
+   */
+  proposedCall?: { tool: string; args: Record<string, unknown> };
+  /**
+   * Set instead of every other field above when the model called
+   * `ask_person` (only offered with the agent's `canAskQuestions` on) —
+   * the attempt ends here, parked behind a 'question' card, the same way
+   * a gate parks behind an 'approval' one.
+   */
+  askPerson?: { message: string; form: FormNode[]; timeoutHours?: number };
 }
 
 /** The run-scoped context blocks every attempt's prompt carries. */
@@ -499,52 +527,6 @@ interface SeqFrame {
   index: number;
 }
 
-/**
- * A resolved approval, on its way to the path it routes into.
- *
- * `decision` and `decidedBy` exist because ROUTING ALONE IS INVISIBLE TO THE
- * MODEL. A step inside the approved path is only reachable after a human
- * approved, but the step's prompt is built from variables — and binding only
- * `approval.link` told the next step that an approval had been *requested*,
- * never that one was *given*. An agent whose owner wrote "require explicit
- * approval before creating a ticket" into its guardrails then correctly
- * refused to act, having been shown no evidence, and the run died one step
- * after the owner clicked Approve.
- */
-/**
- * A form's answers as one readable line per field — the run timeline's
- * record of what was actually sent, and the summary a person reads back
- * months later. Fields left blank are omitted rather than shown empty:
- * "(nothing)" against six optional fields is noise, and the binding is
- * absent either way.
- */
-function describeAnswers(node: ApprovalStep, answers: Record<string, ApprovalAnswerValue>): string {
-  const lines: string[] = [];
-  for (const field of approvalFieldsOf(node)) {
-    const value = answers[field.name];
-    if (value === undefined) continue;
-    if (Array.isArray(value) ? value.length === 0 : !value) continue;
-    lines.push(describeApprovalAnswer(field, value));
-  }
-  return lines.join('\n');
-}
-
-interface ApprovalRoute {
-  kind: 'route';
-  outcome: ApprovalOutcomeKey;
-  /** The single free-text answer, for a form-less input node. */
-  answer: string | null;
-  /** A form's answers, keyed by the field NAME each one binds. */
-  answers: Record<string, ApprovalAnswerValue> | null;
-  link: string | null;
-  /** The card's own status: 'approved' | 'declined' | 'expired'. */
-  decision: string;
-  /** Who decided, when the card recorded it. */
-  decidedBy: string | null;
-  /** ISO timestamp of the decision. */
-  decidedAt: string | null;
-}
-
 interface LoopFrame {
   kind: 'loop';
   loop: LoopStep;
@@ -599,11 +581,11 @@ function buildResumeStack(nodes: AgentStepNode[], startId: string | null): Frame
         container = ancestor.group.steps;
         break;
       }
-      case 'approval': {
-        // Branch-like: past the node, then down the outcome path the id
-        // lives in — popping the path frame lands after the approval.
-        const approvalIndex = container.indexOf(ancestor.approval);
-        stack.push({ kind: 'seq', nodes: container, index: Math.max(0, approvalIndex) + 1 });
+      case 'gate': {
+        // Branch-like: past the step, then down the recovery path the id
+        // lives in — popping the path frame lands after the gate.
+        const gateIndex = container.indexOf(ancestor.step);
+        stack.push({ kind: 'seq', nodes: container, index: Math.max(0, gateIndex) + 1 });
         container = ancestor.path.steps;
         break;
       }
@@ -756,6 +738,28 @@ function finishArgsOf(input: unknown): {
   };
 }
 
+/**
+ * ask_person's arguments. Only `message` is required — a malformed or
+ * missing `form` degrades to a message-only question (`parseFormNodes`
+ * drops what it cannot read) rather than refusing the whole call, the
+ * same leniency the card rendering already extends to a saved form.
+ */
+function askPersonArgsOf(
+  input: unknown
+): { message: string; form: FormNode[]; timeoutHours?: number } | null {
+  if (typeof input !== 'object' || input === null) return null;
+  const args: { message?: unknown; form?: unknown; timeoutHours?: unknown } = input;
+  const message = typeof args.message === 'string' ? args.message.trim() : '';
+  if (!message) return null;
+  return {
+    message,
+    form: parseFormNodes(args.form),
+    ...(typeof args.timeoutHours === 'number' && Number.isFinite(args.timeoutHours)
+      ? { timeoutHours: args.timeoutHours }
+      : {}),
+  };
+}
+
 export function createAgentRunHandler(deps: EngineDeps) {
   const db = deps.db;
   const createClient =
@@ -846,7 +850,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // blocked-tool set are LIVE-READ here on purpose (see RunContextText).
     const agentRow = await db
       .selectFrom('agents')
-      .select(['enabled', 'name', 'guardrails', 'blocked_tools'])
+      .select(['enabled', 'name', 'guardrails', 'blocked_tools', 'can_ask_questions'])
       .where('id', '=', run.agent_id)
       .executeTakeFirst();
     if (!agentRow) {
@@ -1116,108 +1120,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
             });
             continue;
           }
-          case 'approval': {
-            // A human-in-the-loop pause: park the run behind a card on the
-            // owner's home-page feed, or — woken with the card decided or
-            // expired — route the matching outcome path. Deterministic, no
-            // LLM; the card's status claim is the single arbiter.
-            const outcome = await executeApproval(
-              run,
-              node,
-              agentRow.name ?? 'Your agent',
-              mcp,
-              toolsByName,
-              vars,
-              ordinals,
-              iteration,
-              settings.agentApprovalMaxWaitDays * 24
-            );
-            if (outcome.kind === 'waiting') {
-              logger.info('run {runId} waiting for approval at {stepId}', {
-                component: 'worker-agents/engine',
-                runId,
-                tenantId,
-                stepId: node.id,
-              });
-              // Job acks; the decision route or the timeout sweep
-              // re-enqueues {runId} when there is something to route.
-              return;
-            }
-            if (outcome.link) vars['approval.link'] = outcome.link;
-            // THE DECISION ITSELF, as a variable every later step's prompt
-            // lists. Without this the only approval-shaped thing in scope
-            // was the link — which reads as "an approval was requested",
-            // the opposite of what a guardrail asking for explicit approval
-            // needs to see. Phrased as a sentence rather than a bare enum
-            // because it is read by a model, not switched on by code.
-            vars['approval.decision'] = outcome.decision;
-            const asked = node.name.trim() || 'this step';
-            const who =
-              (outcome.decidedBy ? ` (${outcome.decidedBy})` : '') +
-              (outcome.decidedAt ? ` at ${outcome.decidedAt}` : '');
-            // An INPUT node asked a question; an APPROVE node proposed an
-            // act. Saying "the owner approved" for a typed answer told the
-            // next step it had permission when what it actually has is a
-            // string somebody typed — which may be "no idea", a typo, or
-            // the wrong shape entirely. The answer is evidence to check,
-            // not a verdict to act on, and the wording has to say so.
-            const answerHome = (() => {
-              const fields = approvalFieldsOf(node);
-              if (fields.length === 0) return `"${node.saveAs ?? 'the saved answer'}"`;
-              // A destination key belongs beside the variable holding its
-              // value: the step writing this answer needs both, and
-              // resolving "Story Points" to customfield_10016 at run time
-              // is exactly the guesswork the field spared it.
-              const named = fields.map(
-                (field) => `"${field.name}"${field.key ? ` (${field.key})` : ''}`
-              );
-              return named.length === 1
-                ? named[0]
-                : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`;
-            })();
-            vars['approval.status'] =
-              node.mode === 'input'
-                ? outcome.decision === 'approved'
-                  ? `The owner answered "${asked}"${who}. Their answers are in ${answerHome} — ` +
-                    'check they are usable before acting on them, and take your own fallback if ' +
-                    'they are not. If an answer will still be true next time (a mapping, a ' +
-                    'preference, a key), record it — remember it when you finish a step, or ' +
-                    'write it as a knowledge note — so a later run need not ask again.'
-                  : outcome.decision === 'declined'
-                    ? `The owner SKIPPED "${asked}" — they had no answer to give. Do not invent one.`
-                    : `Nobody answered "${asked}" before the deadline. Treat it as unanswered; do not invent an answer.`
-                : outcome.decision === 'approved'
-                  ? `The owner approved "${asked}"${who}. This run may proceed with what that approval covered.`
-                  : outcome.decision === 'declined'
-                    ? `The owner DECLINED "${asked}". Do not carry out what was declined.`
-                    : `Nobody answered "${asked}" before the deadline. Treat it as not approved.`;
-            if (outcome.decidedBy) vars['approval.decidedBy'] = outcome.decidedBy;
-            if (outcome.decidedAt) vars['approval.decidedAt'] = outcome.decidedAt;
-            if (node.mode === 'input' && node.saveAs && outcome.answer !== null) {
-              vars[node.saveAs] = outcome.answer;
-            }
-            // A form binds one variable per FIELD, under the name the
-            // answer already came back keyed by — the reply IS the
-            // key/value pairs, so there is nothing to look up. A
-            // multi-select also binds a LIST, so a loop can iterate the
-            // picks the way it iterates any collected list.
-            if (outcome.answers) {
-              for (const field of approvalFieldsOf(node)) {
-                const value = outcome.answers[field.name];
-                if (value === undefined) continue;
-                vars[field.name] = approvalAnswerText(value);
-                if (Array.isArray(value)) lists[field.name] = value;
-              }
-              // And the WHOLE reply under the node's own name, when it has
-              // one: a step that relays what someone said — into a comment,
-              // a note, a mail — wants the labels and the destination ids
-              // with the values, not five chips it has to reassemble.
-              if (node.saveAs) vars[node.saveAs] = describeAnswers(node, outcome.answers);
-            }
-            frame.index += 1;
-            stack.push({ kind: 'seq', nodes: node[outcome.outcome].steps, index: 0 });
-            continue;
-          }
           case 'terminal': {
             // An explicit end marker: the run ends HERE with the configured
             // result — inside a branch path or loop body too — after the
@@ -1283,11 +1185,31 @@ export function createAgentRunHandler(deps: EngineDeps) {
           deadline,
           settings.agentMaxStepAttempts,
           ordinals,
-          iteration
+          iteration,
+          settings.agentApprovalMaxWaitDays * 24,
+          agentRow.can_ask_questions === true
         );
         if (result.kind === 'advance') {
           frame.index += 1;
           continue;
+        }
+        if (result.kind === 'route') {
+          // A needsApproval gate resolved to 'denied'/'timedOut' with a
+          // recovery path configured — take it, exactly like a branch.
+          frame.index += 1;
+          stack.push({ kind: 'seq', nodes: result.path.steps, index: 0 });
+          continue;
+        }
+        if (result.kind === 'waiting') {
+          logger.info('run {runId} waiting for approval at {stepId}', {
+            component: 'worker-agents/engine',
+            runId,
+            tenantId,
+            stepId: node.id,
+          });
+          // Job acks; the decision route or the timeout sweep re-enqueues
+          // {runId} when there is something to route.
+          return;
         }
         if (result.kind === 'finish') {
           // A deliberate early success — configured on the step or declared
@@ -1381,16 +1303,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
     vars: Record<string, string>,
     lists: Record<string, string[]>
   ): void {
-    // Action steps AND approval nodes bind saveAs — an answered card's
-    // binding must survive crash-resume like any other saved result.
-    const saveAsByStep = new Map([
-      ...flattenActionSteps(nodes).flatMap((step) =>
+    // saveAs bindings must survive crash-resume like any other saved
+    // result — flattenActionSteps already walks into a gate's
+    // onNotApproved path, so a step saved there is covered too.
+    const saveAsByStep = new Map(
+      flattenActionSteps(nodes).flatMap((step) =>
         step.saveAs ? [[step.id, step.saveAs] as const] : []
-      ),
-      ...walkSteps(nodes).flatMap(({ node }) =>
-        node.kind === 'approval' && node.saveAs ? [[node.id, node.saveAs] as const] : []
-      ),
-    ]);
+      )
+    );
     for (const attempt of prior) {
       if (attempt.status !== 'succeeded') continue;
       const name = saveAsByStep.get(attempt.step_id);
@@ -1559,12 +1479,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
     deadline: number,
     orgAttemptCap: number,
     ordinals: Map<string, number>,
-    iteration: number
+    iteration: number,
+    approvalWaitCapHours: number,
+    canAskQuestions: boolean
   ): Promise<
     | { kind: 'advance' }
     | { kind: 'finish'; quiet: boolean }
     | { kind: 'stop'; reason: string }
     | { kind: 'fail'; errorKind: string; error: string }
+    | { kind: 'route'; path: BranchPath }
+    | { kind: 'waiting' }
   > {
     // Pre-flight: the step's tool must exist in the OWNER's live projection.
     // No LLM spend on a run that cannot work.
@@ -1594,162 +1518,25 @@ export function createAgentRunHandler(deps: EngineDeps) {
     let lastFailureSummary: string | undefined;
     let lastFailureCode: string | null = null;
 
-    for (;;) {
-      // Close an attempt a crashed worker left open, then recount. All
-      // bookkeeping is scoped to THIS iteration — a looped step's budget
-      // and its succeeded-short-circuit are per round, or a loop would
-      // run its body once and skip every later round.
-      await db
-        .updateTable('agent_run_steps')
-        .set({
-          status: 'failed',
-          outcome: 'llm_error',
-          outcome_code: 'other',
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', step.id)
-        .where('iteration', '=', iteration)
-        .where('status', '=', 'running')
-        .execute();
+    type StepResult =
+      | { kind: 'advance' }
+      | { kind: 'finish'; quiet: boolean }
+      | { kind: 'stop'; reason: string }
+      | { kind: 'fail'; errorKind: string; error: string }
+      | { kind: 'route'; path: BranchPath };
 
-      const counted = await db
-        .selectFrom('agent_run_steps')
-        .select(({ fn }) => fn.countAll<string>().as('count'))
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', step.id)
-        .where('iteration', '=', iteration)
-        .executeTakeFirst();
-      const attemptsUsed = Number(counted?.count ?? 0);
-
-      // Advance past a step that already succeeded (resume/fast-forward).
-      const succeeded = await db
-        .selectFrom('agent_run_steps')
-        .select('id')
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', step.id)
-        .where('iteration', '=', iteration)
-        .where('status', '=', 'succeeded')
-        .executeTakeFirst();
-      if (succeeded) return { kind: 'advance' };
-
-      const onIteration = iteration > 0 ? ` on round ${iteration}` : '';
-      if (attemptsUsed >= budget) {
-        // Every try is spent. A retry handling may name where to land when
-        // that happens (`exhausted`, version 7); the default is the fail
-        // below — the pre-v7 behavior. After a redelivery the in-memory
-        // failure state is gone, so it is re-read from the last attempt
-        // row rather than silently ignoring the configured choice.
-        let code = lastFailureCode;
-        let summary = lastFailureSummary;
-        if (code === null) {
-          const lastFailed = await db
-            .selectFrom('agent_run_steps')
-            .select(['outcome_code', 'detail'])
-            .where('run_id', '=', run.id)
-            .where('step_id', '=', step.id)
-            .where('iteration', '=', iteration)
-            .where('status', '=', 'failed')
-            .orderBy('attempt', 'desc')
-            .limit(1)
-            .executeTakeFirst();
-          code = lastFailed?.outcome_code ?? null;
-          const lastDetail: { llmSummary?: unknown } =
-            typeof lastFailed?.detail === 'object' &&
-            lastFailed.detail !== null &&
-            !Array.isArray(lastFailed.detail)
-              ? lastFailed.detail
-              : {};
-          summary = typeof lastDetail.llmSummary === 'string' ? lastDetail.llmSummary : undefined;
-        }
-        const matched = code === null ? undefined : handlingFor(step, code);
-        const exhausted = matched?.action === 'retry' ? matched.exhausted : undefined;
-        const spent =
-          summary ??
-          `Step "${step.name}" did not succeed after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}.`;
-        if (exhausted === 'continue') {
-          // Move on with the failure on record; the saved result, when the
-          // step names one, binds to the failure summary so later steps
-          // and branches see what happened instead of an unbound chip.
-          if (step.saveAs) vars[step.saveAs] = clip(spent, PREVIEW_CHARS);
-          return { kind: 'advance' };
-        }
-        if (exhausted === 'stop-quiet') {
-          return { kind: 'stop', reason: clip(spent, 300) };
-        }
-        return {
-          kind: 'fail',
-          errorKind: 'step_failed',
-          error: `Step "${step.name}" failed after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}${onIteration}${code ? ` (${code})` : ''}.`,
-        };
-      }
-      if (Date.now() > deadline) {
-        return { kind: 'fail', errorKind: 'timeout', error: 'The run exceeded its time budget.' };
-      }
-      if (await runBudgetExceeded(run.id)) {
-        return { kind: 'fail', errorKind: 'guard', error: RUN_BUDGET_ERROR };
-      }
-
-      const attempt = attemptsUsed + 1;
-      const matched = lastFailureCode === null ? undefined : handlingFor(step, lastFailureCode);
-      const guidance = attempt > 1 ? matched?.guidance : undefined;
-
-      const rowId = randomUUID();
-      // The tripwire: a racing second executor violates the unique
-      // constraint here and backs off via queue redelivery.
-      try {
-        await db
-          .insertInto('agent_run_steps')
-          .values({
-            id: rowId,
-            tenant_id: run.tenant_id,
-            run_id: run.id,
-            step_id: step.id,
-            step_index: ordinals.get(step.id) ?? 0,
-            attempt,
-            iteration,
-            status: 'running',
-            started_at: sql`NOW()`,
-          })
-          .execute();
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('agent_run_steps_attempt')) {
-          throw new TransientFailure('another executor holds this run');
-        }
-        throw error;
-      }
-
-      let outcome: AttemptOutcome;
-      try {
-        outcome = await runAttempt(
-          run,
-          step,
-          attempt,
-          guidance,
-          toolsByName,
-          llm,
-          mcp,
-          vars,
-          context,
-          blockedTools,
-          iteration,
-          Boolean(step.saveAs && loopSourceVars.has(step.saveAs))
-        );
-      } catch (error) {
-        if (error instanceof TransientFailure) {
-          // No tool ran; void the attempt row so the user-visible budget is
-          // untouched, and let the queue back off.
-          await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
-          throw error;
-        }
-        if (error instanceof RunAbort) {
-          await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
-          return { kind: 'fail', errorKind: error.kind, error: error.message };
-        }
-        throw error;
-      }
-
+    /**
+     * The post-processing every closed attempt shares, gated or not:
+     * record the detail, remember what finish_step asked to, bind saveAs,
+     * and route succeeded/failed into advance/finish/stop/fail — or, on a
+     * retriable failure, hand back 'retry' for the caller's own loop to
+     * act on (this function has no loop of its own to `continue`).
+     */
+    async function finishAttempt(
+      rowId: string,
+      outcome: AttemptOutcome,
+      guidance: FailureHandling['guidance'] | undefined
+    ): Promise<StepResult | { kind: 'retry' }> {
       const detail = {
         resolvedInstruction: clip(outcome.resolvedInstruction, PREVIEW_CHARS),
         ...(outcome.promptText
@@ -1868,8 +1655,871 @@ export function createAgentRunHandler(deps: EngineDeps) {
           error: `Step "${step.name}" stopped the agent (${lastFailureCode}): ${clip(lastFailureSummary, 300)}`,
         };
       }
-      // action === 'retry' → loop; the budget check at the top decides
-      // whether another attempt actually starts.
+      // action === 'retry' → the caller's loop decides whether another
+      // attempt actually starts (the budget check at its top).
+      return { kind: 'retry' };
+    }
+
+    /**
+     * Raise (or re-raise, after a crash between the row and the card) the
+     * card a needsApproval gate pauses behind — the proposed call, never
+     * an authored message: there is nothing to author, the point of the
+     * flag is "gate whatever this step is about to do."
+     */
+    async function raiseApprovalCard(
+      gatedStep: ActionStep,
+      currentIteration: number,
+      currentAttempt: number,
+      tool: string,
+      args: Record<string, unknown>,
+      waitCapHours: number
+    ): Promise<void> {
+      const clampedHours = Math.min(
+        Math.max(1, gatedStep.approvalTimeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS),
+        Math.max(1, waitCapHours)
+      );
+      const waitingUntil = new Date(Date.now() + clampedHours * 3_600_000);
+      const link = await approvalLink(run);
+      const agentName = await agentNameOf(run.tenant_id, run.agent_id);
+      try {
+        await db
+          .insertInto('actionable_items')
+          .values({
+            id: randomUUID(),
+            tenant_id: run.tenant_id,
+            source: 'agents',
+            status: 'suggested',
+            kind: 'approval',
+            title: `${agentName} — ${gatedStep.name.trim() || 'needs your approval'}`,
+            summary: clip(`Wants to call ${friendlyToolName(tool, null)}.`, PREVIEW_CHARS),
+            evidence: JSON.stringify([]),
+            // Not an executable action: the card UI reads tool/args here to
+            // render the proposed call, and reuses them verbatim to fire it
+            // for real if approved — a snapshot on purpose, so a card a
+            // person is looking at keeps showing what it showed even if the
+            // step is edited while it waits.
+            suggested_action: JSON.stringify({ tool, args }),
+            owner_subject: run.owner_subject,
+            created_by: run.owner_subject,
+            created_by_agent_id: run.agent_id,
+            run_id: run.id,
+            step_id: gatedStep.id,
+            iteration: currentIteration,
+            attempt: currentAttempt,
+          })
+          .execute();
+      } catch (error) {
+        // The unique (run, step, iteration, attempt) card index: a racing
+        // executor won — its card (and notification) stand; back off and
+        // re-enter.
+        if (error instanceof Error && error.message.includes('idx_actionable_items_run_step')) {
+          throw new TransientFailure('another executor created the approval card');
+        }
+        throw error;
+      }
+
+      vars['approval.link'] = link ?? '';
+      const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
+      await deliverOwnerNotifications({
+        email: true,
+        webex: true,
+        heading: `Agent “${agentName}” needs your approval${gatedStep.name.trim() ? `: ${gatedStep.name.trim()}` : ''}`,
+        body: [
+          `Wants to call ${friendlyToolName(tool, null)} with:`,
+          clip(JSON.stringify(args, null, 2), PREVIEW_CHARS),
+          ...(link ? [`Respond here: ${link}`] : []),
+        ].join('\n\n'),
+        ownerEmail: vars['user.email'],
+      });
+
+      await db
+        .updateTable('agent_runs')
+        .set({ status: 'waiting', waiting_until: waitingUntil, updated_at: sql`NOW()` })
+        .where('id', '=', run.id)
+        .execute();
+    }
+
+    /**
+     * Raise the card an `ask_person` call pauses behind — a `'question'`
+     * kind actionable_item, distinct from a gate's `'approval'` one so
+     * the feed and the answer route can tell them apart at a glance.
+     */
+    async function raiseQuestionCard(
+      askingStep: ActionStep,
+      currentIteration: number,
+      currentAttempt: number,
+      message: string,
+      form: FormNode[],
+      timeoutHours: number | undefined,
+      waitCapHours: number
+    ): Promise<void> {
+      const clampedHours = Math.min(
+        Math.max(1, timeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS),
+        Math.max(1, waitCapHours)
+      );
+      const waitingUntil = new Date(Date.now() + clampedHours * 3_600_000);
+      const link = await approvalLink(run);
+      const agentName = await agentNameOf(run.tenant_id, run.agent_id);
+      try {
+        await db
+          .insertInto('actionable_items')
+          .values({
+            id: randomUUID(),
+            tenant_id: run.tenant_id,
+            source: 'agents',
+            status: 'suggested',
+            kind: 'question',
+            title: `${agentName} — ${askingStep.name.trim() || 'has a question'}`,
+            summary: clip(message, PREVIEW_CHARS),
+            evidence: JSON.stringify([]),
+            // A snapshot, like the gate's card: what a person is looking
+            // at keeps asking what it asked even if the step changes
+            // before they answer.
+            suggested_action: JSON.stringify({ message, form }),
+            owner_subject: run.owner_subject,
+            created_by: run.owner_subject,
+            created_by_agent_id: run.agent_id,
+            run_id: run.id,
+            step_id: askingStep.id,
+            iteration: currentIteration,
+            attempt: currentAttempt,
+          })
+          .execute();
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('idx_actionable_items_run_step')) {
+          throw new TransientFailure('another executor created the question card');
+        }
+        throw error;
+      }
+
+      vars['question.link'] = link ?? '';
+      const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
+      await deliverOwnerNotifications({
+        email: true,
+        webex: true,
+        heading: `Agent “${agentName}” has a question${askingStep.name.trim() ? `: ${askingStep.name.trim()}` : ''}`,
+        body: [message, ...(link ? [`Answer here: ${link}`] : [])].join('\n\n'),
+        ownerEmail: vars['user.email'],
+      });
+
+      await db
+        .updateTable('agent_runs')
+        .set({ status: 'waiting', waiting_until: waitingUntil, updated_at: sql`NOW()` })
+        .where('id', '=', run.id)
+        .execute();
+    }
+
+    /**
+     * A needsApproval gate's re-entry: the CARD IS THE SINGLE ARBITER.
+     * Decided → resolve the waiting row (firing the recorded call for
+     * real on approval) and return the routed StepResult. Suggested past
+     * the deadline → claim expiry through the same optimistic status
+     * UPDATE the decision route uses (a lost claim means a human decided
+     * in the same instant — their decision wins). Suggested and not yet
+     * due → re-park with the SAME deadline. Already-resolved rows replay
+     * from `detail` without touching the card at all, so an archived or
+     * retention-pruned card cannot re-route history. Returns null when
+     * there is no prior row at all — nothing to resolve, propose fresh.
+     */
+    async function resolveGate(
+      gatedStep: ActionStep,
+      currentIteration: number,
+      waitCapHours: number
+    ): Promise<StepResult | { kind: 'waiting' } | null> {
+      const row = await db
+        .selectFrom('agent_run_steps')
+        .select(['id', 'status', 'detail', 'attempt'])
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', gatedStep.id)
+        .where('iteration', '=', currentIteration)
+        .where((eb) => eb.or([eb('status', '=', 'waiting'), eb('status', '=', 'succeeded')]))
+        .orderBy('attempt', 'desc')
+        .limit(1)
+        .executeTakeFirst();
+      if (!row) return null;
+
+      const rowDetail: {
+        decision?: unknown;
+        comment?: unknown;
+        proposedTool?: unknown;
+        proposedArgs?: unknown;
+        pauseKind?: unknown;
+      } =
+        typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
+          ? row.detail
+          : {};
+
+      if (row.status === 'succeeded') {
+        // Replay: this gate already resolved. A 'denied'/'timedOut'
+        // resolution recorded its own `decision` and must rebind the vars
+        // a routed path reads and re-route; an APPROVED-and-executed row
+        // has no `decision` field (it closed through finishAttempt like
+        // any ordinary succeeded attempt) and just advances, same as the
+        // generic succeeded-check right after this call handles it. A
+        // row that is neither — an ordinary succeeded attempt, or a
+        // resolved `ask_person` pause (resolveQuestion's job, not ours) —
+        // is not this function's to touch.
+        const decision = rowDetail.decision;
+        if (decision === 'denied' || decision === 'timedOut') {
+          vars['approval.outcome'] = decision;
+          if (typeof rowDetail.comment === 'string' && rowDetail.comment) {
+            vars['approval.comment'] = rowDetail.comment;
+          }
+          if (gatedStep.onNotApproved) return { kind: 'route', path: gatedStep.onNotApproved };
+          return { kind: 'advance' };
+        }
+        return null;
+      }
+
+      // status === 'waiting'. Not every waiting row is a gate's — the same
+      // step, with canAskQuestions on, may be parked behind an ask_person
+      // pause instead (resolveQuestion's job).
+      if (rowDetail.pauseKind !== 'approval') return null;
+      const proposedTool =
+        typeof rowDetail.proposedTool === 'string' ? rowDetail.proposedTool : null;
+      const proposedArgs =
+        typeof rowDetail.proposedArgs === 'object' &&
+        rowDetail.proposedArgs !== null &&
+        !Array.isArray(rowDetail.proposedArgs)
+          ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+            (rowDetail.proposedArgs as Record<string, unknown>)
+          : {};
+
+      const card = await db
+        .selectFrom('actionable_items')
+        .select(['id', 'status', 'result', 'created_at'])
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', gatedStep.id)
+        .where('iteration', '=', currentIteration)
+        .where('attempt', '=', row.attempt)
+        .executeTakeFirst();
+
+      const resolveDecision = async (status: string, result: unknown): Promise<StepResult> => {
+        const decision = gateOutcomeOf(status);
+        const resultObj: { comment?: unknown } =
+          typeof result === 'object' && result !== null && !Array.isArray(result) ? result : {};
+        const comment =
+          typeof resultObj.comment === 'string' && resultObj.comment.trim()
+            ? resultObj.comment.trim()
+            : null;
+        vars['approval.outcome'] = decision;
+        if (comment) vars['approval.comment'] = comment;
+
+        if (decision !== 'approved') {
+          const wording =
+            decision === 'denied'
+              ? 'You declined the proposed action.'
+              : 'Nobody responded before the deadline.';
+          await db
+            .updateTable('agent_run_steps')
+            .set({
+              status: 'succeeded',
+              outcome: 'guard',
+              outcome_code: 'not_approved',
+              tool_call_count: 0,
+              detail: clip(
+                JSON.stringify({ llmSummary: wording, decision, ...(comment ? { comment } : {}) }),
+                DETAIL_CHARS
+              ),
+              finished_at: sql`NOW()`,
+              updated_at: sql`NOW()`,
+            })
+            .where('id', '=', row.id)
+            .execute();
+          if (gatedStep.onNotApproved) return { kind: 'route', path: gatedStep.onNotApproved };
+          return { kind: 'advance' };
+        }
+
+        // Approved: claim the row before firing the real call so a
+        // redelivered job cannot fire it twice — the same 'running' status
+        // a fresh attempt uses, cleaned up by this loop's own crash-cleanup
+        // UPDATE if the executor dies mid-call (an accepted, pre-existing
+        // risk any non-idempotent step tool already carries).
+        const claimed = await db
+          .updateTable('agent_run_steps')
+          .set({ status: 'running', updated_at: sql`NOW()` })
+          .where('id', '=', row.id)
+          .where('status', '=', 'waiting')
+          .executeTakeFirst();
+        if (Number(claimed.numUpdatedRows ?? 0) === 0) {
+          throw new TransientFailure('another executor is resolving this approval');
+        }
+        if (!proposedTool) {
+          // Defensive: nothing recorded to execute.
+          return { kind: 'advance' };
+        }
+        let toolResult: McpToolResult;
+        try {
+          toolResult = await mcp.callTool(proposedTool, proposedArgs);
+        } catch (error) {
+          toolResult = {
+            content: [
+              {
+                type: 'text',
+                text: `The tool could not be reached: ${error instanceof Error ? error.message : String(error)}`,
+              },
+            ],
+            isError: true,
+            meta: {},
+          };
+        }
+        const resultText = textOf(toolResult);
+        const decidedNote = comment ? ` (comment: ${comment})` : '';
+        const synthetic: AttemptOutcome = {
+          succeeded: !toolResult.isError,
+          outcome: toolResult.isError ? 'tool_error' : 'tool_ok',
+          outcomeCode: toolResult.isError ? classifyFailure([toolResult], null) : null,
+          summary: toolResult.isError
+            ? clip(resultText, PREVIEW_CHARS) || 'The tool reported an error.'
+            : clip(`Approved${decidedNote}. ${resultText}`, PREVIEW_CHARS),
+          saveValue: gatedStep.saveAs ? clip(resultText, PREVIEW_CHARS) : null,
+          saveItems: null,
+          remember: null,
+          toolCalls: [
+            {
+              tool: proposedTool,
+              argsPreview: clip(JSON.stringify(proposedArgs), PREVIEW_CHARS),
+              resultPreview: clip(resultText, PREVIEW_CHARS),
+              isError: toolResult.isError,
+              durationMs: 0,
+            },
+          ],
+          usage: { inputTokens: 0, outputTokens: 0 },
+          unbound: [],
+          resolvedInstruction: renderInstruction(gatedStep.instruction, vars).text,
+          promptText: '',
+        };
+        const finished = await finishAttempt(row.id, synthetic, undefined);
+        // A gate's approved call never retries on its own initiative — a
+        // failed approved call is this attempt's failure like any other,
+        // routed by the step's own failureHandling; 'retry' from there
+        // means "spend another attempt", which re-enters the loop below
+        // and gates the NEXT proposal fresh, exactly as a first pause
+        // would. There is nothing sensible to retry HERE with no loop.
+        return finished.kind === 'retry' ? { kind: 'advance' } : finished;
+      };
+
+      if (!card) {
+        // A crash between marking the row 'waiting' and inserting the
+        // card: recreate the card from what the row already recorded.
+        if (!proposedTool) return { kind: 'advance' };
+        await raiseApprovalCard(
+          gatedStep,
+          currentIteration,
+          row.attempt ?? 0,
+          proposedTool,
+          proposedArgs,
+          waitCapHours
+        );
+        return { kind: 'waiting' };
+      }
+
+      if (card.status !== 'suggested') {
+        return resolveDecision(card.status, card.result);
+      }
+
+      const clampedHours = Math.min(
+        Math.max(1, gatedStep.approvalTimeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS),
+        Math.max(1, waitCapHours)
+      );
+      const dueAt = run.waiting_until
+        ? new Date(run.waiting_until).getTime()
+        : new Date(card.created_at).getTime() + clampedHours * 3_600_000;
+      if (Date.now() < dueAt) {
+        await db
+          .updateTable('agent_runs')
+          .set({ status: 'waiting', waiting_until: new Date(dueAt), updated_at: sql`NOW()` })
+          .where('id', '=', run.id)
+          .execute();
+        return { kind: 'waiting' };
+      }
+      const claimed = await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'expired',
+          decided_at: sql`NOW()`,
+          archived_at: sql`NOW()`,
+          result: JSON.stringify({ reason: 'timeout' }),
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .where('status', '=', 'suggested')
+        .executeTakeFirst();
+      if (Number(claimed.numUpdatedRows ?? 0) === 0) {
+        const decided = await db
+          .selectFrom('actionable_items')
+          .select(['status', 'result'])
+          .where('id', '=', card.id)
+          .executeTakeFirst();
+        return resolveDecision(decided?.status ?? 'expired', decided?.result ?? null);
+      }
+      return resolveDecision('expired', { reason: 'timeout' });
+    }
+
+    /**
+     * Bind what an `ask_person` pause asked and, once resolved, what came
+     * back — the vars a FRESH attempt's prompt lists under "Known
+     * information" (see buildAttemptMessages), which is the entire
+     * mechanism that lets the model "pick the thread back up": no
+     * in-flight conversation is persisted or replayed, the next attempt
+     * just starts already knowing the answer.
+     */
+    function bindQuestionAnswer(
+      message: string,
+      form: FormNode[],
+      answered: boolean,
+      answers: Record<string, unknown>
+    ): void {
+      vars['question.message'] = message;
+      if (!answered) {
+        vars['question.answer'] = 'Nobody answered before the deadline.';
+        return;
+      }
+      const lines: string[] = [];
+      for (const field of flattenFormFields(form)) {
+        const raw = answers[field.name];
+        const value: string | string[] | null = Array.isArray(raw)
+          ? raw.filter((entry): entry is string => typeof entry === 'string')
+          : typeof raw === 'string'
+            ? raw
+            : null;
+        if (value === null) continue;
+        vars[field.name] = questionAnswerText(value);
+        if (Array.isArray(value)) lists[field.name] = value;
+        lines.push(describeQuestionAnswer(field, value));
+      }
+      vars['question.answer'] = lines.join('\n') || 'Answered, with nothing filled in.';
+    }
+
+    /**
+     * An `ask_person` pause's re-entry — the same single-arbiter shape as
+     * resolveGate, simplified: there is nothing to execute on an answer,
+     * only vars to bind, so a resolved pause always returns null (bind,
+     * then let the caller's loop spend a FRESH attempt) rather than a
+     * StepResult of its own. Available to every step, not just gated
+     * ones — canAskQuestions is agent-wide.
+     */
+    async function resolveQuestion(
+      askingStep: ActionStep,
+      currentIteration: number,
+      waitCapHours: number
+    ): Promise<{ kind: 'waiting' } | null> {
+      const row = await db
+        .selectFrom('agent_run_steps')
+        .select(['id', 'status', 'detail', 'attempt'])
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', askingStep.id)
+        .where('iteration', '=', currentIteration)
+        .where((eb) => eb.or([eb('status', '=', 'waiting'), eb('status', '=', 'succeeded')]))
+        .orderBy('attempt', 'desc')
+        .limit(1)
+        .executeTakeFirst();
+      if (!row) return null;
+
+      const rowDetail: {
+        pauseKind?: unknown;
+        message?: unknown;
+        form?: unknown;
+        answers?: unknown;
+        timedOut?: unknown;
+        timeoutHours?: unknown;
+      } =
+        typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
+          ? row.detail
+          : {};
+      if (rowDetail.pauseKind !== 'question') return null;
+      const message = typeof rowDetail.message === 'string' ? rowDetail.message : '';
+      const form = parseFormNodes(rowDetail.form);
+      const timeoutHours =
+        typeof rowDetail.timeoutHours === 'number' && Number.isFinite(rowDetail.timeoutHours)
+          ? rowDetail.timeoutHours
+          : undefined;
+
+      if (row.status === 'succeeded') {
+        // Replay: rebind what a fresh attempt needs, then let the caller
+        // spend one — this row's only job was ever to carry the pause.
+        const answers: Record<string, unknown> =
+          typeof rowDetail.answers === 'object' &&
+          rowDetail.answers !== null &&
+          !Array.isArray(rowDetail.answers)
+            ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+              (rowDetail.answers as Record<string, unknown>)
+            : {};
+        bindQuestionAnswer(message, form, rowDetail.timedOut !== true, answers);
+        return null;
+      }
+
+      // status === 'waiting'.
+      const card = await db
+        .selectFrom('actionable_items')
+        .select(['id', 'status', 'result', 'created_at'])
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', askingStep.id)
+        .where('iteration', '=', currentIteration)
+        .where('attempt', '=', row.attempt)
+        .executeTakeFirst();
+
+      const close = async (answered: boolean, answers: Record<string, unknown>): Promise<null> => {
+        bindQuestionAnswer(message, form, answered, answers);
+        await db
+          .updateTable('agent_run_steps')
+          .set({
+            status: 'succeeded',
+            outcome: 'question',
+            outcome_code: null,
+            tool_call_count: 0,
+            detail: clip(
+              JSON.stringify({
+                pauseKind: 'question',
+                llmSummary: answered ? 'Answered.' : 'Nobody answered before the deadline.',
+                message,
+                form,
+                answers,
+                timedOut: !answered,
+              }),
+              DETAIL_CHARS
+            ),
+            finished_at: sql`NOW()`,
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', row.id)
+          .execute();
+        return null;
+      };
+
+      if (!card) {
+        // A crash between marking the row 'waiting' and inserting the
+        // card: recreate it from what the row already recorded.
+        if (!message) return null;
+        await raiseQuestionCard(
+          askingStep,
+          currentIteration,
+          row.attempt ?? 0,
+          message,
+          form,
+          timeoutHours,
+          waitCapHours
+        );
+        return { kind: 'waiting' };
+      }
+
+      if (card.status === 'suggested') {
+        const clampedHours = Math.min(
+          Math.max(1, timeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS),
+          Math.max(1, waitCapHours)
+        );
+        const dueAt = run.waiting_until
+          ? new Date(run.waiting_until).getTime()
+          : new Date(card.created_at).getTime() + clampedHours * 3_600_000;
+        if (Date.now() < dueAt) {
+          await db
+            .updateTable('agent_runs')
+            .set({ status: 'waiting', waiting_until: new Date(dueAt), updated_at: sql`NOW()` })
+            .where('id', '=', run.id)
+            .execute();
+          return { kind: 'waiting' };
+        }
+        const claimed = await db
+          .updateTable('actionable_items')
+          .set({
+            status: 'expired',
+            decided_at: sql`NOW()`,
+            archived_at: sql`NOW()`,
+            result: JSON.stringify({ reason: 'timeout' }),
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', card.id)
+          .where('status', '=', 'suggested')
+          .executeTakeFirst();
+        if (Number(claimed.numUpdatedRows ?? 0) === 0) {
+          const decided = await db
+            .selectFrom('actionable_items')
+            .select(['status', 'result'])
+            .where('id', '=', card.id)
+            .executeTakeFirst();
+          if (decided?.status === 'answered') {
+            return close(true, answersOf(decided.result));
+          }
+          return close(false, {});
+        }
+        return close(false, {});
+      }
+
+      // Already decided (answered, most likely a spurious wake replaying
+      // a decision the sweep or a redelivery already resolved once).
+      if (card.status === 'answered') {
+        return close(true, answersOf(card.result));
+      }
+      return close(false, {});
+    }
+
+    for (;;) {
+      // Close an attempt a crashed worker left open, then recount. All
+      // bookkeeping is scoped to THIS iteration — a looped step's budget
+      // and its succeeded-short-circuit are per round, or a loop would
+      // run its body once and skip every later round.
+      await db
+        .updateTable('agent_run_steps')
+        .set({
+          status: 'failed',
+          outcome: 'llm_error',
+          outcome_code: 'other',
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+        })
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', step.id)
+        .where('iteration', '=', iteration)
+        .where('status', '=', 'running')
+        .execute();
+
+      // An ask_person pause: a prior attempt asked a question and is
+      // either still waiting on an answer, or was resolved while this
+      // executor was away. Checked for every step (canAskQuestions is
+      // agent-wide, not gated-step-only) before the gate check below —
+      // resolved, it only binds vars and falls through to spend a fresh
+      // attempt, same as `null`.
+      const asked = await resolveQuestion(step, iteration, approvalWaitCapHours);
+      if (asked) return asked;
+
+      // A needsApproval gate: a prior attempt reached the gated tool call
+      // and is either still waiting on a decision, or was resolved while
+      // this executor was away (a decision route woke the run, or the
+      // sweep did). At most one such row exists per iteration — nothing
+      // else moves a gated step's row to 'waiting'. Checked before the
+      // budget/insert path below so a resolved gate never spends a fresh
+      // attempt, and a crash after resolving replays from `detail` instead
+      // of re-touching the card or (worse) re-firing an approved tool call.
+      if (step.needsApproval) {
+        const gated = await resolveGate(step, iteration, approvalWaitCapHours);
+        if (gated) return gated;
+      }
+
+      const counted = await db
+        .selectFrom('agent_run_steps')
+        .select(({ fn }) => fn.countAll<string>().as('count'))
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', step.id)
+        .where('iteration', '=', iteration)
+        .executeTakeFirst();
+      const attemptsUsed = Number(counted?.count ?? 0);
+
+      // Advance past a step that already succeeded (resume/fast-forward) —
+      // EXCEPT a resolved ask_person pause, whose whole point is that the
+      // step is NOT done: resolveQuestion above already replayed its vars
+      // and returned null specifically so a fresh attempt gets spent here,
+      // not skipped by this generic fast-path.
+      const succeeded = await db
+        .selectFrom('agent_run_steps')
+        .select(['id', 'detail'])
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', step.id)
+        .where('iteration', '=', iteration)
+        .where('status', '=', 'succeeded')
+        .executeTakeFirst();
+      if (succeeded) {
+        const detail: { pauseKind?: unknown } =
+          typeof succeeded.detail === 'object' &&
+          succeeded.detail !== null &&
+          !Array.isArray(succeeded.detail)
+            ? succeeded.detail
+            : {};
+        if (detail.pauseKind !== 'question') return { kind: 'advance' };
+      }
+
+      const onIteration = iteration > 0 ? ` on round ${iteration}` : '';
+      if (attemptsUsed >= budget) {
+        // Every try is spent. A retry handling may name where to land when
+        // that happens (`exhausted`, version 7); the default is the fail
+        // below — the pre-v7 behavior. After a redelivery the in-memory
+        // failure state is gone, so it is re-read from the last attempt
+        // row rather than silently ignoring the configured choice.
+        let code: string | null = lastFailureCode;
+        let summary: string | undefined = lastFailureSummary;
+        if (code === null) {
+          const lastFailed = await db
+            .selectFrom('agent_run_steps')
+            .select(['outcome_code', 'detail'])
+            .where('run_id', '=', run.id)
+            .where('step_id', '=', step.id)
+            .where('iteration', '=', iteration)
+            .where('status', '=', 'failed')
+            .orderBy('attempt', 'desc')
+            .limit(1)
+            .executeTakeFirst();
+          code = lastFailed?.outcome_code ?? null;
+          const lastDetail: { llmSummary?: unknown } =
+            typeof lastFailed?.detail === 'object' &&
+            lastFailed.detail !== null &&
+            !Array.isArray(lastFailed.detail)
+              ? lastFailed.detail
+              : {};
+          summary = typeof lastDetail.llmSummary === 'string' ? lastDetail.llmSummary : undefined;
+        }
+        const matched = code === null ? undefined : handlingFor(step, code);
+        const exhausted = matched?.action === 'retry' ? matched.exhausted : undefined;
+        const spent =
+          summary ??
+          `Step "${step.name}" did not succeed after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}.`;
+        if (exhausted === 'continue') {
+          // Move on with the failure on record; the saved result, when the
+          // step names one, binds to the failure summary so later steps
+          // and branches see what happened instead of an unbound chip.
+          if (step.saveAs) vars[step.saveAs] = clip(spent, PREVIEW_CHARS);
+          return { kind: 'advance' };
+        }
+        if (exhausted === 'stop-quiet') {
+          return { kind: 'stop', reason: clip(spent, 300) };
+        }
+        return {
+          kind: 'fail',
+          errorKind: 'step_failed',
+          error: `Step "${step.name}" failed after ${attemptsUsed} attempt${attemptsUsed === 1 ? '' : 's'}${onIteration}${code ? ` (${code})` : ''}.`,
+        };
+      }
+      if (Date.now() > deadline) {
+        return { kind: 'fail', errorKind: 'timeout', error: 'The run exceeded its time budget.' };
+      }
+      if (await runBudgetExceeded(run.id)) {
+        return { kind: 'fail', errorKind: 'guard', error: RUN_BUDGET_ERROR };
+      }
+
+      const attempt = attemptsUsed + 1;
+      const matched = lastFailureCode === null ? undefined : handlingFor(step, lastFailureCode);
+      const guidance = attempt > 1 ? matched?.guidance : undefined;
+
+      const rowId = randomUUID();
+      // The tripwire: a racing second executor violates the unique
+      // constraint here and backs off via queue redelivery.
+      try {
+        await db
+          .insertInto('agent_run_steps')
+          .values({
+            id: rowId,
+            tenant_id: run.tenant_id,
+            run_id: run.id,
+            step_id: step.id,
+            step_index: ordinals.get(step.id) ?? 0,
+            attempt,
+            iteration,
+            status: 'running',
+            started_at: sql`NOW()`,
+          })
+          .execute();
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('agent_run_steps_attempt')) {
+          throw new TransientFailure('another executor holds this run');
+        }
+        throw error;
+      }
+
+      let outcome: AttemptOutcome;
+      try {
+        outcome = await runAttempt(
+          run,
+          step,
+          attempt,
+          guidance,
+          toolsByName,
+          llm,
+          mcp,
+          vars,
+          context,
+          blockedTools,
+          iteration,
+          Boolean(step.saveAs && loopSourceVars.has(step.saveAs)),
+          canAskQuestions
+        );
+      } catch (error) {
+        if (error instanceof TransientFailure) {
+          // No tool ran; void the attempt row so the user-visible budget is
+          // untouched, and let the queue back off.
+          await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
+          throw error;
+        }
+        if (error instanceof RunAbort) {
+          await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
+          return { kind: 'fail', errorKind: error.kind, error: error.message };
+        }
+        throw error;
+      }
+
+      if (outcome.proposedCall) {
+        // The gate fired: this attempt ends here, parked — not succeeded,
+        // not failed. Record exactly what the card will show, then raise
+        // it (or surface the race if another executor already has).
+        await db
+          .updateTable('agent_run_steps')
+          .set({
+            status: 'waiting',
+            outcome: 'guard',
+            tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
+            detail: clip(
+              JSON.stringify({
+                pauseKind: 'approval',
+                llmSummary: 'Waiting for your approval.',
+                proposedTool: outcome.proposedCall.tool,
+                proposedArgs: outcome.proposedCall.args,
+                toolCalls: outcome.toolCalls,
+              }),
+              DETAIL_CHARS
+            ),
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', rowId)
+          .execute();
+        await raiseApprovalCard(
+          step,
+          iteration,
+          attempt,
+          outcome.proposedCall.tool,
+          outcome.proposedCall.args,
+          approvalWaitCapHours
+        );
+        return { kind: 'waiting' };
+      }
+
+      if (outcome.askPerson) {
+        // ask_person fired: this attempt ends here too, the same shape as
+        // a gate's pause — parked, not succeeded, not failed.
+        await db
+          .updateTable('agent_run_steps')
+          .set({
+            status: 'waiting',
+            outcome: 'question',
+            tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
+            detail: clip(
+              JSON.stringify({
+                pauseKind: 'question',
+                llmSummary: 'Waiting for your answer.',
+                message: outcome.askPerson.message,
+                form: outcome.askPerson.form,
+                ...(outcome.askPerson.timeoutHours !== undefined
+                  ? { timeoutHours: outcome.askPerson.timeoutHours }
+                  : {}),
+                toolCalls: outcome.toolCalls,
+              }),
+              DETAIL_CHARS
+            ),
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', rowId)
+          .execute();
+        await raiseQuestionCard(
+          step,
+          iteration,
+          attempt,
+          outcome.askPerson.message,
+          outcome.askPerson.form,
+          outcome.askPerson.timeoutHours,
+          approvalWaitCapHours
+        );
+        return { kind: 'waiting' };
+      }
+
+      const stepResult = await finishAttempt(rowId, outcome, guidance);
+      if (stepResult.kind === 'retry') continue;
+      return stepResult;
     }
   }
 
@@ -2008,374 +2658,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
       .where('id', '=', run.tenant_id)
       .executeTakeFirst();
     return tenant ? `${base}/${tenant.slug}/agents/${run.agent_id}/runs/${run.id}` : null;
-  }
-
-  /**
-   * Execute an approval node. On first arrival: insert a 'waiting' attempt
-   * row, create the interactive card on the OWNER's home-page feed, send
-   * the configured notifications (message + link, via the run's own MCP
-   * tools), park the run as status='waiting' with a concrete deadline, and
-   * ACK the job — nothing polls; the decision route and the timeout sweep
-   * re-enqueue {runId} when there is something to route.
-   *
-   * On a wake: the CARD IS THE SINGLE ARBITER. Decided → resolve the
-   * waiting row and route the matching outcome path. Suggested past the
-   * deadline → claim expiry through the same optimistic status UPDATE the
-   * decision route uses (a lost claim means a human decided in the same
-   * instant — their decision wins). Suggested and not yet due → re-park
-   * with the SAME deadline (a spurious wake never extends the wait).
-   * Already-resolved attempt rows replay without touching the card at all,
-   * so archived or retention-pruned cards cannot re-route history.
-   */
-  async function executeApproval(
-    run: RunRow,
-    node: ApprovalStep,
-    agentName: string,
-    mcp: McpClient,
-    toolsByName: Map<string, McpToolInfo>,
-    vars: Record<string, string>,
-    ordinals: Map<string, number>,
-    iteration: number,
-    waitCapHours: number
-  ): Promise<{ kind: 'waiting' } | ApprovalRoute> {
-    const link = await approvalLink(run);
-
-    // Replay: crash-after-resolve-before-advance, and history whose card
-    // is long archived or pruned.
-    const resolved = await db
-      .selectFrom('agent_run_steps')
-      .select('detail')
-      .where('run_id', '=', run.id)
-      .where('step_id', '=', node.id)
-      .where('iteration', '=', iteration)
-      .where('status', '=', 'succeeded')
-      .executeTakeFirst();
-    if (resolved) {
-      const detail: {
-        decision?: unknown;
-        saveValue?: unknown;
-        answers?: unknown;
-        decidedBy?: unknown;
-        decidedAt?: unknown;
-      } =
-        typeof resolved.detail === 'object' &&
-        resolved.detail !== null &&
-        !Array.isArray(resolved.detail)
-          ? resolved.detail
-          : {};
-      const outcome = approvalOutcomeOf(detail.decision);
-      if (outcome) {
-        return {
-          kind: 'route',
-          outcome,
-          answer: typeof detail.saveValue === 'string' ? detail.saveValue : null,
-          answers:
-            typeof detail.answers === 'object' &&
-            detail.answers !== null &&
-            !Array.isArray(detail.answers)
-              ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
-                (detail.answers as Record<string, ApprovalAnswerValue>)
-              : null,
-          link,
-          // Replay must rebind the same evidence the first pass did, or a
-          // resumed run reaches the approved path having forgotten why.
-          decision: typeof detail.decision === 'string' ? detail.decision : 'approved',
-          decidedBy: typeof detail.decidedBy === 'string' ? detail.decidedBy : null,
-          decidedAt: typeof detail.decidedAt === 'string' ? detail.decidedAt : null,
-        };
-      }
-    }
-
-    const clampedHours = Math.min(Math.max(1, node.timeoutHours), Math.max(1, waitCapHours));
-    const card = await db
-      .selectFrom('actionable_items')
-      .select(['id', 'status', 'result', 'created_at'])
-      .where('run_id', '=', run.id)
-      .where('step_id', '=', node.id)
-      .where('iteration', '=', iteration)
-      .executeTakeFirst();
-
-    // Resolve a decided/expired card: update the waiting row in place to
-    // 'succeeded' (all three outcomes ROUTE onward — run-ending semantics
-    // belong to terminal nodes placed inside the paths) and hand back the
-    // route. detail.decision is what replay re-derives from.
-    const resolveDecision = async (status: string, result: unknown): Promise<ApprovalRoute> => {
-      const outcome = approvalOutcomeOf(status) ?? 'onTimeout';
-      const resultObj: { answer?: unknown; answers?: unknown; decidedBy?: unknown } =
-        typeof result === 'object' && result !== null && !Array.isArray(result) ? result : {};
-      const answer =
-        node.mode === 'input' && typeof resultObj.answer === 'string' && resultObj.answer.trim()
-          ? resultObj.answer.trim()
-          : null;
-      // A form's answers were already checked against the field spec by
-      // whoever accepted them (approval-answers.ts, one rule set); this
-      // reads back what was stored, keyed by field id.
-      const answers =
-        node.mode === 'input' &&
-        typeof resultObj.answers === 'object' &&
-        resultObj.answers !== null &&
-        !Array.isArray(resultObj.answers)
-          ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
-            (resultObj.answers as Record<string, ApprovalAnswerValue>)
-          : null;
-      const wording =
-        status === 'approved'
-          ? node.mode === 'input'
-            ? 'You answered.'
-            : 'You approved.'
-          : status === 'declined'
-            ? 'You declined.'
-            : 'Nobody answered in time.';
-      const decidedBy = typeof resultObj.decidedBy === 'string' ? resultObj.decidedBy : null;
-      const decidedAt = new Date().toISOString();
-      const detail = {
-        llmSummary: wording,
-        declaredOutcome: 'success',
-        decision: approvalOutcomeOf(status) ? status : 'expired',
-        // Persisted so replay rebinds identical evidence — see ApprovalRoute.
-        ...(decidedBy !== null ? { decidedBy } : {}),
-        decidedAt,
-        ...(answer !== null ? { saveValue: clip(answer, PREVIEW_CHARS) } : {}),
-        // The form's answers go in RAW as well as summarised: replay rebinds
-        // from here, and rebinding one field per line of a summary would be
-        // parsing back what we just formatted.
-        ...(answers !== null
-          ? { answers, saveValue: clip(describeAnswers(node, answers), PREVIEW_CHARS) }
-          : {}),
-      };
-      const updated = await db
-        .updateTable('agent_run_steps')
-        .set({
-          status: 'succeeded',
-          outcome: 'approval',
-          outcome_code: null,
-          detail: clip(JSON.stringify(detail), DETAIL_CHARS),
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', node.id)
-        .where('iteration', '=', iteration)
-        .where('status', '=', 'waiting')
-        .executeTakeFirst();
-      if (Number(updated.numUpdatedRows ?? 0) === 0) {
-        // No waiting row (a crash between card insert and row insert, or a
-        // historical anomaly) — record the resolution as a fresh row so the
-        // timeline and replay both have it.
-        const counted = await db
-          .selectFrom('agent_run_steps')
-          .select(({ fn }) => fn.countAll<string>().as('count'))
-          .where('run_id', '=', run.id)
-          .where('step_id', '=', node.id)
-          .where('iteration', '=', iteration)
-          .executeTakeFirst();
-        await db
-          .insertInto('agent_run_steps')
-          .values({
-            id: randomUUID(),
-            tenant_id: run.tenant_id,
-            run_id: run.id,
-            step_id: node.id,
-            step_index: ordinals.get(node.id) ?? 0,
-            attempt: Number(counted?.count ?? 0) + 1,
-            iteration,
-            status: 'succeeded',
-            outcome: 'approval',
-            detail: clip(JSON.stringify(detail), DETAIL_CHARS),
-            started_at: sql`NOW()`,
-            finished_at: sql`NOW()`,
-          })
-          .execute();
-      }
-      return {
-        kind: 'route',
-        outcome,
-        answer,
-        answers,
-        link,
-        decision: approvalOutcomeOf(status) ? status : 'expired',
-        decidedBy,
-        decidedAt,
-      };
-    };
-
-    if (card && card.status !== 'suggested') {
-      return resolveDecision(card.status, card.result);
-    }
-
-    if (card) {
-      // Undecided. Past the deadline → claim expiry (single arbiter); not
-      // yet due → re-park with the SAME deadline.
-      const dueAt = run.waiting_until
-        ? new Date(run.waiting_until).getTime()
-        : new Date(card.created_at).getTime() + clampedHours * 3_600_000;
-      if (Date.now() >= dueAt) {
-        const claimed = await db
-          .updateTable('actionable_items')
-          .set({
-            status: 'expired',
-            decided_at: sql`NOW()`,
-            archived_at: sql`NOW()`,
-            result: JSON.stringify({ reason: 'timeout' }),
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', card.id)
-          .where('status', '=', 'suggested')
-          .executeTakeFirst();
-        if (Number(claimed.numUpdatedRows ?? 0) === 0) {
-          // Lost the claim — a human decided in the same instant.
-          const decided = await db
-            .selectFrom('actionable_items')
-            .select(['status', 'result'])
-            .where('id', '=', card.id)
-            .executeTakeFirst();
-          return resolveDecision(decided?.status ?? 'expired', decided?.result ?? null);
-        }
-        return resolveDecision('expired', { reason: 'timeout' });
-      }
-      await db
-        .updateTable('agent_runs')
-        .set({ status: 'waiting', waiting_until: new Date(dueAt), updated_at: sql`NOW()` })
-        .where('id', '=', run.id)
-        .execute();
-      return { kind: 'waiting' };
-    }
-
-    // FRESH PAUSE. The waiting attempt row first (the unique-constraint
-    // tripwire for racing executors), then the card, notifications, park.
-    const existingWaiting = await db
-      .selectFrom('agent_run_steps')
-      .select('id')
-      .where('run_id', '=', run.id)
-      .where('step_id', '=', node.id)
-      .where('iteration', '=', iteration)
-      .where('status', '=', 'waiting')
-      .executeTakeFirst();
-    let rowId = existingWaiting?.id ?? null;
-    if (!rowId) {
-      const counted = await db
-        .selectFrom('agent_run_steps')
-        .select(({ fn }) => fn.countAll<string>().as('count'))
-        .where('run_id', '=', run.id)
-        .where('step_id', '=', node.id)
-        .where('iteration', '=', iteration)
-        .executeTakeFirst();
-      rowId = randomUUID();
-      try {
-        await db
-          .insertInto('agent_run_steps')
-          .values({
-            id: rowId,
-            tenant_id: run.tenant_id,
-            run_id: run.id,
-            step_id: node.id,
-            step_index: ordinals.get(node.id) ?? 0,
-            attempt: Number(counted?.count ?? 0) + 1,
-            iteration,
-            status: 'waiting',
-            started_at: sql`NOW()`,
-          })
-          .execute();
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('agent_run_steps_attempt')) {
-          throw new TransientFailure('another executor holds this run');
-        }
-        throw error;
-      }
-    }
-
-    const formFields = approvalFieldsOf(node);
-    const rendered = renderInstruction(node.message, vars);
-    const message =
-      rendered.text.trim() ||
-      node.name.trim() ||
-      (node.mode === 'input' ? 'An agent needs your answer.' : 'An agent needs your approval.');
-    const waitingUntil = new Date(Date.now() + clampedHours * 3_600_000);
-    try {
-      await db
-        .insertInto('actionable_items')
-        .values({
-          id: randomUUID(),
-          tenant_id: run.tenant_id,
-          source: 'agents',
-          status: 'suggested',
-          kind: 'approval',
-          title: `${agentName} — ${node.name.trim() || (node.mode === 'input' ? 'needs your answer' : 'needs your approval')}`,
-          summary: clip(message, PREVIEW_CHARS),
-          evidence: JSON.stringify([]),
-          // Not an executable action: the card UI reads the MODE here to
-          // render approve/decline buttons vs an answer box — and, for a
-          // form, the FIELDS, so the feed builds the controls without
-          // loading the agent. A snapshot on purpose: the card a person is
-          // looking at keeps asking what it asked, even if the step is
-          // edited while it waits, and answers come back under field ids
-          // the step can still resolve.
-          suggested_action: JSON.stringify({
-            approvalMode: node.mode,
-            ...(formFields.length > 0 ? { fields: formFields } : {}),
-          }),
-          owner_subject: run.owner_subject,
-          created_by: run.owner_subject,
-          created_by_agent_id: run.agent_id,
-          run_id: run.id,
-          step_id: node.id,
-          iteration,
-        })
-        .execute();
-    } catch (error) {
-      // The unique (run, step, iteration) card index: a racing executor won
-      // — its card (and notification) stand; back off and re-enter.
-      if (error instanceof Error && error.message.includes('idx_actionable_items_run_step')) {
-        throw new TransientFailure('another executor created the approval card');
-      }
-      throw error;
-    }
-
-    // First pause only — a re-parked wake never re-notifies.
-    vars['approval.link'] = link ?? '';
-    const { toolCalls, notes, deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
-    await deliverOwnerNotifications({
-      email: node.notifyEmail,
-      webex: node.notifyWebex,
-      heading:
-        `Agent “${agentName}” ${node.mode === 'input' ? 'needs your answer' : 'needs your approval'}` +
-        `${node.name.trim() ? `: ${node.name.trim()}` : ''}`,
-      body: [
-        message,
-        // A form's labels, so the mail says what it will take to answer —
-        // "needs your answer" over a link is a worse ask than "needs an
-        // issue key and a date".
-        ...(formFields.length > 0
-          ? [`Asks for: ${formFields.map((field) => field.label.trim() || field.name).join(', ')}`]
-          : []),
-        ...(link ? [`Respond here: ${link}`] : []),
-      ].join('\n\n'),
-      ownerEmail: vars['user.email'],
-    });
-
-    const waitingDetail = {
-      llmSummary: [`Waiting for you (until ${waitingUntil.toISOString()}).`, ...notes].join(' '),
-      approvalMessage: clip(message, PREVIEW_CHARS),
-      ...(rendered.unbound.length > 0 ? { unboundVariables: rendered.unbound } : {}),
-      toolCalls,
-    };
-    await db
-      .updateTable('agent_run_steps')
-      .set({
-        outcome: 'approval',
-        tool_call_count: toolCalls.length,
-        detail: clip(JSON.stringify(waitingDetail), DETAIL_CHARS),
-        updated_at: sql`NOW()`,
-      })
-      .where('id', '=', rowId)
-      .execute();
-
-    await db
-      .updateTable('agent_runs')
-      .set({ status: 'waiting', waiting_until: waitingUntil, updated_at: sql`NOW()` })
-      .where('id', '=', run.id)
-      .execute();
-    return { kind: 'waiting' };
   }
 
   /**
@@ -2937,7 +3219,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     context: RunContextText,
     blockedTools: ReadonlySet<string>,
     iteration: number,
-    savesItemsForLoop: boolean
+    savesItemsForLoop: boolean,
+    canAskQuestions: boolean
   ): Promise<AttemptOutcome> {
     // Corrective guidance is the likeliest place for "try [attempt] of
     // [attempt.max]" to be written, so it renders against the same bindings
@@ -2973,9 +3256,17 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // free of the budget, and NOT the step's "one tool" — a step whose one
     // skill is a mail search must still be able to work out what
     // "yesterday 19:00 Los Angeles" means without spending its only call.
-    const offered: LlmToolDef[] = [FINISH_STEP_DEF, RESOLVE_TIME_DEF];
+    const offered: LlmToolDef[] = [
+      FINISH_STEP_DEF,
+      RESOLVE_TIME_DEF,
+      ...(canAskQuestions ? [ASK_PERSON_DEF] : []),
+    ];
     const primaryTool = step.tool;
-    const offeredNames = new Set<string>([FINISH_STEP_TOOL, RESOLVE_TIME_TOOL]);
+    const offeredNames = new Set<string>(
+      canAskQuestions
+        ? [FINISH_STEP_TOOL, RESOLVE_TIME_TOOL, ASK_PERSON_TOOL]
+        : [FINISH_STEP_TOOL, RESOLVE_TIME_TOOL]
+    );
     const offer = (name: string) => {
       if (blockedTools.has(name)) return;
       const info = toolsByName.get(name);
@@ -3097,6 +3388,29 @@ export function createAgentRunHandler(deps: EngineDeps) {
           return decideOutcome(step, finish, primaryResults, base);
         }
 
+        if (use.name === ASK_PERSON_TOOL && canAskQuestions) {
+          const asked = askPersonArgsOf(use.input);
+          if (!asked) {
+            results.push({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: 'ask_person needs at least {message}.',
+              isError: true,
+            });
+            continue;
+          }
+          return {
+            ...base,
+            succeeded: false,
+            outcome: 'guard',
+            outcomeCode: null,
+            summary: 'Waiting for an answer.',
+            saveValue: null,
+            saveItems: null,
+            askPerson: asked,
+          };
+        }
+
         // Free and local: answered here, never sent to MCP, never charged
         // against the budget. Placed ahead of the budget check on purpose
         // — a model that has spent its calls must still be able to get a
@@ -3137,6 +3451,31 @@ export function createAgentRunHandler(deps: EngineDeps) {
           });
           continue;
         }
+
+        if (use.name === primaryTool && step.needsApproval) {
+          // The gate: this attempt ends the moment the model reaches for
+          // the step's own tool — the call never runs. executeStep parks
+          // it behind a card showing exactly this proposal (tool + args)
+          // and raises a fresh attempt (or fires this recorded call
+          // directly on approval) once a person decides. Free of the
+          // budget: proposing costs nothing, only calling does.
+          const args =
+            typeof use.input === 'object' && use.input !== null && !Array.isArray(use.input)
+              ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+                (use.input as Record<string, unknown>)
+              : {};
+          return {
+            ...base,
+            succeeded: false,
+            outcome: 'guard',
+            outcomeCode: null,
+            summary: 'Waiting for your approval before calling this tool.',
+            saveValue: null,
+            saveItems: null,
+            proposedCall: { tool: use.name, args },
+          };
+        }
+
         const billedCalls = toolCalls.filter((call) => !call.free);
         if (billedCalls.length >= toolCap) {
           // Out of budget — but the model has context worth a verdict.

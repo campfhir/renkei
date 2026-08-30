@@ -29,6 +29,7 @@ export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 export interface ActionableItems {
   archived_at: Timestamp | null;
   archived_by: string | null;
+  attempt: number | null;
   created_at: Generated<Timestamp>;
   created_by: string | null;
   created_by_agent_id: string | null;
@@ -193,6 +194,7 @@ export interface AgentRunSteps {
 
 export interface Agents {
   blocked_tools: Json | null;
+  can_ask_questions: Generated<boolean>;
   created_at: Generated<Timestamp>;
   description: string | null;
   description_status: Generated<string>;

@@ -9,7 +9,6 @@
  */
 
 import {
-  approvalFieldsOf,
   describeFailureHandling,
   findNodeById,
   instructionPreview,
@@ -37,8 +36,6 @@ function stepNameOf(run: RunDetail, stepId: string, stepIndex: number): string {
           return `Group: ${found.node.name}`;
         case 'terminal':
           return `End: ${found.node.name}`;
-        case 'approval':
-          return `Approval: ${found.node.name}`;
         case 'action':
         case undefined:
           return found.node.name;
@@ -148,27 +145,6 @@ function snapshotLines(run: RunDetail): string[] {
         if (message) lines.push(`${indent}   message: ${message}`);
         break;
       }
-      case 'approval': {
-        lines.push(
-          `${indent}${ordinal + 1}. Approval: ${node.name} — pauses for the owner (` +
-            `${
-              node.mode === 'input'
-                ? approvalFieldsOf(node).length > 0
-                  ? `a form of ${approvalFieldsOf(node).length}`
-                  : 'typed answer'
-                : 'approve/decline'
-            }, waits up to ${node.timeoutHours}h)` +
-            (node.saveAs ? `; saves the answer as: ${node.saveAs}` : '') +
-            (approvalFieldsOf(node).length > 0
-              ? `; saves: ${approvalFieldsOf(node)
-                  .map((field) => field.name)
-                  .join(', ')}`
-              : '')
-        );
-        const ask = instructionPreview(node.message);
-        if (ask) lines.push(`${indent}   asks: ${ask}`);
-        break;
-      }
       case 'action':
       case undefined: {
         lines.push(`${indent}${ordinal + 1}. ${node.name}`);
@@ -181,6 +157,14 @@ function snapshotLines(run: RunDetail): string[] {
         for (const handling of node.failureHandling) {
           lines.push(
             `${indent}   ${describeFailureHandling(handling, node.maxAttempts, node.saveAs)}`
+          );
+        }
+        if (node.needsApproval) {
+          lines.push(
+            `${indent}   needs approval: pauses for the owner before this tool call, waits up to ${node.approvalTimeoutHours ?? 96}h` +
+              (node.onNotApproved
+                ? `; if not approved, path: ${node.onNotApproved.name}`
+                : '; if not approved, continues below')
           );
         }
         break;

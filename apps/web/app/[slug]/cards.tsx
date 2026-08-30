@@ -1,10 +1,11 @@
 import React from 'react';
 import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
-import { parseApprovalFields, type ApprovalField } from '@renkei/agents';
+import { friendlyToolName, parseFormNodes, type FormNode } from '@renkei/agents';
 import { Icon, ICONS } from '@/components/icons';
 import CardActions from './card-actions';
 import ApprovalActions from './approval-actions';
+import QuestionActions from './question-actions';
 import ArchiveAction from './archive-action';
 
 /**
@@ -88,115 +89,140 @@ export default async function ActionableCards({
 
   return (
     <div className="space-y-4">
-      {items.map((item) => (
-        <div
-          key={item.id}
-          className={`rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950 ${
-            item.archived_at !== null ? 'opacity-70' : ''
-          }`}
-        >
-          <div className="flex justify-between gap-4">
-            <strong className="min-w-0">
-              {item.kind === 'approval' && item.status === 'suggested' ? (
-                <ApprovalKindChip mode={approvalModeOf(item.suggested_action)} />
-              ) : null}
-              {item.title}
-            </strong>
-            <span className="whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-              {item.agent_name ? `via ${item.agent_name}` : item.source} · {item.status}
-              {item.archived_at !== null && ' · archived'}
-            </span>
+      {items.map((item) => {
+        const isPause = item.kind === 'approval' || item.kind === 'question';
+        return (
+          <div
+            key={item.id}
+            className={`rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950 ${
+              item.archived_at !== null ? 'opacity-70' : ''
+            }`}
+          >
+            <div className="flex justify-between gap-4">
+              <strong className="min-w-0">
+                {isPause && item.status === 'suggested' ? (
+                  <PauseKindChip kind={item.kind === 'question' ? 'question' : 'approval'} />
+                ) : null}
+                {item.title}
+              </strong>
+              <span className="whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                {item.agent_name ? `via ${item.agent_name}` : item.source} · {item.status}
+                {item.archived_at !== null && ' · archived'}
+              </span>
+            </div>
+            <p className="my-2 whitespace-pre-wrap text-sm">{item.summary}</p>
+
+            <RelatedEvidence evidence={item.evidence} />
+
+            {item.kind === 'approval' && <ProposedCall suggestedAction={item.suggested_action} />}
+
+            {isPause && item.run_id && item.agent_id ? (
+              <p className="mb-2 text-sm">
+                <Link
+                  href={`/${slug}/agents/${item.agent_id}/runs/${item.run_id}`}
+                  className="text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  View the paused run →
+                </Link>
+              </p>
+            ) : null}
+
+            {item.status === 'suggested' &&
+              (item.kind === 'approval' ? (
+                // No dismiss here: declining is the "no", and doing nothing
+                // lets the wait treat it as not approved.
+                <ApprovalActions tenantId={tenantId} itemId={item.id} />
+              ) : item.kind === 'question' ? (
+                <QuestionActions
+                  tenantId={tenantId}
+                  itemId={item.id}
+                  form={questionFormFrom(item.suggested_action)}
+                />
+              ) : (
+                <CardActions
+                  tenantId={tenantId}
+                  itemId={item.id}
+                  dismissOnly={item.kind === 'info'}
+                />
+              ))}
+
+            {isPause && item.status !== 'suggested' && (
+              <PauseOutcome
+                kind={item.kind === 'question' ? 'question' : 'approval'}
+                status={item.status}
+                result={item.result}
+              />
+            )}
+            {item.status === 'executed' && <ExecutionResult result={item.result} />}
+            {item.status === 'failed' && <ExecutionResult result={item.result} failed />}
+
+            {item.status !== 'suggested' && !isPause && (
+              <ArchiveAction
+                tenantId={tenantId}
+                itemId={item.id}
+                archived={item.archived_at !== null}
+              />
+            )}
           </div>
-          <p className="my-2 whitespace-pre-wrap text-sm">{item.summary}</p>
-
-          <RelatedEvidence evidence={item.evidence} />
-
-          {item.kind === 'approval' && item.run_id && item.agent_id ? (
-            <p className="mb-2 text-sm">
-              <Link
-                href={`/${slug}/agents/${item.agent_id}/runs/${item.run_id}`}
-                className="text-blue-600 hover:underline dark:text-blue-400"
-              >
-                View the paused run →
-              </Link>
-            </p>
-          ) : null}
-
-          {item.status === 'suggested' &&
-            (item.kind === 'approval' ? (
-              // No dismiss here: declining is the "no", and doing nothing
-              // lets the wait route the flow's timed-out path.
-              <ApprovalActions
-                tenantId={tenantId}
-                itemId={item.id}
-                mode={approvalModeOf(item.suggested_action)}
-                fields={approvalFieldsFrom(item.suggested_action)}
-              />
-            ) : (
-              <CardActions
-                tenantId={tenantId}
-                itemId={item.id}
-                dismissOnly={item.kind === 'info'}
-              />
-            ))}
-
-          {item.kind === 'approval' && item.status !== 'suggested' && (
-            <ApprovalOutcome status={item.status} result={item.result} />
-          )}
-          {item.status === 'executed' && <ExecutionResult result={item.result} />}
-          {item.status === 'failed' && <ExecutionResult result={item.result} failed />}
-
-          {item.status !== 'suggested' && item.kind !== 'approval' && (
-            <ArchiveAction
-              tenantId={tenantId}
-              itemId={item.id}
-              archived={item.archived_at !== null}
-            />
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
-/** The engine stamps the node's mode on the card so the UI knows its controls. */
-function approvalModeOf(suggestedAction: unknown): 'approve' | 'input' {
-  if (typeof suggestedAction === 'object' && suggestedAction !== null) {
-    const record: Record<string, unknown> = { ...suggestedAction };
-    if (record.approvalMode === 'input') return 'input';
-  }
-  return 'approve';
+/** The form an ask_person call snapshotted onto its card. */
+function questionFormFrom(suggestedAction: unknown): FormNode[] {
+  if (typeof suggestedAction !== 'object' || suggestedAction === null) return [];
+  const record: { form?: unknown } = { ...suggestedAction };
+  return parseFormNodes(record.form);
 }
 
 /**
- * The form the engine snapshotted onto the card, if it asked with one.
- *
- * The card carries its own spec rather than the feed loading the agent:
- * fifty cards would be fifty step lookups, and a card must keep asking
- * what it asked even after its step is edited.
+ * The proposed call a `needsApproval` gate's card shows — never an
+ * authored message, since there is nothing to author: the point of the
+ * flag is "gate whatever this step is about to do." Shown only while the
+ * card is still undecided; a decided one's outcome line below covers it.
  */
-function approvalFieldsFrom(suggestedAction: unknown): ApprovalField[] {
-  if (typeof suggestedAction !== 'object' || suggestedAction === null) return [];
-  const record: { fields?: unknown } = { ...suggestedAction };
-  return parseApprovalFields(record.fields);
+function ProposedCall({ suggestedAction }: { suggestedAction: unknown }): React.ReactNode {
+  if (typeof suggestedAction !== 'object' || suggestedAction === null) return null;
+  const record: { tool?: unknown; args?: unknown } = { ...suggestedAction };
+  if (typeof record.tool !== 'string') return null;
+  const args =
+    typeof record.args === 'object' && record.args !== null && !Array.isArray(record.args)
+      ? { ...record.args }
+      : {};
+  const entries = Object.entries(args);
+  return (
+    <div className="my-2 rounded-md bg-gray-100 p-2 text-xs dark:bg-gray-900">
+      <strong>Wants to call {friendlyToolName(record.tool, null)}</strong>
+      {entries.length > 0 && (
+        <ul className="mt-1 space-y-0.5 text-gray-600 dark:text-gray-400">
+          {entries.map(([key, value]) => (
+            <li key={key}>
+              <span className="font-mono">{key}</span>: {String(value)}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /**
  * Which KIND of pause this is, before anyone reads a word of the card.
  *
- * The two modes ask for opposite things — one wants a verdict on an act
- * already specified, the other wants a fact the agent could not determine —
- * and in a feed they were indistinguishable until you scrolled to the
- * controls: same title shape, same "via <agent> · suggested". Someone
- * triaging six cards decides in what order to open them from this line, so
- * the line has to carry it.
+ * An approval wants a verdict on an act already specified; a question
+ * wants a fact the agent could not determine — and in a feed they were
+ * indistinguishable until you scrolled to the controls: same title shape,
+ * same "via <agent> · suggested". Someone triaging six cards decides in
+ * what order to open them from this line, so the line has to carry it.
  *
- * Only on an undecided card: a decided one renders its outcome underneath
- * ("You answered: …"), which is the more useful thing to say about it, and
- * a "needs your answer" chip above that would just be stale.
+ * Only on an undecided card: a decided one renders its outcome underneath,
+ * which is the more useful thing to say about it, and a "needs your
+ * answer" chip above that would just be stale.
  */
-function ApprovalKindChip({ mode }: { mode: 'approve' | 'input' }): React.ReactNode {
-  const asking = mode === 'input';
+function PauseKindChip({ kind }: { kind: 'approval' | 'question' }): React.ReactNode {
+  const asking = kind === 'question';
   return (
     <span
       className={`mr-2 inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 align-middle text-xs font-medium ${
@@ -211,20 +237,36 @@ function ApprovalKindChip({ mode }: { mode: 'approve' | 'input' }): React.ReactN
   );
 }
 
-/** What happened to a decided approval card — the feed's audit line. */
-function ApprovalOutcome({ status, result }: { status: string; result: unknown }): React.ReactNode {
+/** What happened to a decided approval or question card — the feed's audit line. */
+function PauseOutcome({
+  kind,
+  status,
+  result,
+}: {
+  kind: 'approval' | 'question';
+  status: string;
+  result: unknown;
+}): React.ReactNode {
   const record: Record<string, unknown> =
     typeof result === 'object' && result !== null ? { ...result } : {};
   const wording =
-    status === 'approved'
-      ? typeof record.answer === 'string' && record.answer
-        ? `You answered: ${record.answer}`
-        : 'You approved — the run continued.'
-      : status === 'declined'
-        ? 'You declined.'
+    kind === 'question'
+      ? status === 'answered'
+        ? 'You answered — the run continued.'
         : record.reason === 'run-ended' || record.reason === 'agent-disabled'
-          ? 'The run ended before anyone decided.'
-          : 'Nobody decided in time — the run took its timed-out path.';
+          ? 'The run ended before anyone answered.'
+          : 'Nobody answered in time — the run treated it as unanswered.'
+      : status === 'approved'
+        ? typeof record.comment === 'string' && record.comment
+          ? `You approved: ${record.comment}`
+          : 'You approved — the run continued.'
+        : status === 'declined'
+          ? typeof record.comment === 'string' && record.comment
+            ? `You declined: ${record.comment}`
+            : 'You declined.'
+          : record.reason === 'run-ended' || record.reason === 'agent-disabled'
+            ? 'The run ended before anyone decided.'
+            : 'Nobody decided in time — the run treated it as not approved.';
   return <p className="whitespace-pre-wrap text-sm text-gray-600 dark:text-gray-400">{wording}</p>;
 }
 

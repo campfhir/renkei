@@ -12,7 +12,6 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import {
-  approvalFieldsOf,
   describeFailureHandling,
   describeSchedule,
   instructionPreview,
@@ -20,7 +19,6 @@ import {
   type ActionStep,
   type AgentStepNode,
   type AgentStepsDoc,
-  type BranchPath,
   type TriggerDraft,
 } from '@renkei/agents';
 import { resolveAgentLlm } from '@renkei/agent-llm';
@@ -98,8 +96,22 @@ function nodeLines(
       const label = `Step ${(ordinals.get(node.id) ?? 0) + 1}:`;
       switch (node.kind) {
         case 'action':
-        case undefined:
-          return actionStepLines(node, label, indent);
+        case undefined: {
+          const base = actionStepLines(node, label, indent);
+          if (!node.needsApproval) return base;
+          const recovery = node.onNotApproved;
+          const recoveryBody = recovery
+            ? recovery.steps.length
+              ? nodeLines(recovery.steps, ordinals, `${indent}      `)
+              : `${indent}      (nothing — continues below the step)`
+            : `${indent}      (nothing — continues below the step)`;
+          return [
+            base,
+            `${indent}   needs approval: the run PAUSES before this tool call and waits for the OWNER, up to ${node.approvalTimeoutHours ?? 96} hours`,
+            `${indent}   if not approved (denied or timed out)${recovery ? `, path "${recovery.name}"` : ''}:\n${recoveryBody}`,
+            `${indent}   after the recovery path finishes, the automation continues below the step`,
+          ].join('\n');
+        }
         case 'branch': {
           const pathBlock = (path: (typeof node.paths)[number], heading: string) => {
             const body = path.steps.length
@@ -155,43 +167,6 @@ function nodeLines(
             `${indent}${label} ${node.name} (a group — organizes the steps below; changes nothing about execution)`,
             nodeLines(node.steps, ordinals, `${indent}      `),
           ].join('\n');
-        case 'approval': {
-          const pathBlock = (path: BranchPath, heading: string) => {
-            const body = path.steps.length
-              ? nodeLines(path.steps, ordinals, `${indent}      `)
-              : `${indent}      (nothing — continues after the approval)`;
-            return `${indent}   ${heading} "${path.name}":\n${body}`;
-          };
-          const channels = [
-            ...(node.notifyEmail ? ['an email'] : []),
-            ...(node.notifyWebex ? ['a WebEx note'] : []),
-          ];
-          return [
-            `${indent}${label} ${node.name} (an approval — the run PAUSES here and waits for the OWNER, up to ${node.timeoutHours} hours)`,
-            `${indent}   asks: ${instructionPreview(node.message)}${
-              node.mode === 'input'
-                ? approvalFieldsOf(node).length > 0
-                  ? ` (the owner fills in a form: ${approvalFieldsOf(node)
-                      .map(
-                        (field) =>
-                          `"${field.label || field.name}" → ${field.type}, saved as "${field.name}"`
-                      )
-                      .join('; ')})`
-                  : ` (the owner types an answer${node.saveAs ? `, saved as "${node.saveAs}"` : ''})`
-                : ' (the owner approves or declines)'
-            }`,
-            channels.length > 0
-              ? `${indent}   at the pause the owner gets ${channels.join(' and ')} with the message and a link`
-              : `${indent}   no notification — the owner sees the card on their home page`,
-            pathBlock(
-              node.onApproved,
-              node.mode === 'input' ? 'if answered, path' : 'if approved, path'
-            ),
-            pathBlock(node.onDeclined, 'if declined, path'),
-            pathBlock(node.onTimeout, 'if nobody acts in time, path'),
-            `${indent}   after a path finishes, the automation continues below the approval`,
-          ].join('\n');
-        }
         case 'terminal': {
           const wording =
             node.result === 'failure'
@@ -269,7 +244,7 @@ export function buildAgentReviewPrompt(
     "- The runner checks each step's tool is available before running, and verifies tool errors against the declared success.",
     '- Loop round limits and the collected-list size are engine-enforced ceilings with truncation notes — do not flag them as missing safeguards.',
     '- An end marker ends the WHOLE run exactly as configured (success, failure, or a graceful skip) and delivers only its own configured notifications — the editor already prevents steps after it, and a failure ending without notifications is a deliberate choice, not a flaw.',
-    '- An approval pauses the run safely for the owner: exactly one of its three paths runs (approved/answered, declined, or timed out — every wait has an engine-enforced ceiling), and an empty path just continues below. Do not flag the pause, the wait, or an empty outcome path as problems.',
+    '- A step marked "needs approval" pauses safely before its tool call for the owner (every wait has an engine-enforced ceiling): approved fires the call, denied or timed out takes the recovery path (or, with none, just continues). Do not flag the pause, the wait, or an empty recovery path as problems.',
     '',
     'Reply with JSON only, no code fences: {"summary": "...", "concerns": [{"issue": "...", "fix": "..."}]}.',
     'summary: 2-3 plain sentences telling the OWNER what this agent does, no technical terms, no tool identifiers.',
