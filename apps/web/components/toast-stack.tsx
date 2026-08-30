@@ -12,9 +12,11 @@ import { useNotifications, type AppNotification } from '@/components/notificatio
  * some more" without spending three cards' worth of screen saying it.
  * Hovering fans them apart.
  *
- * `z-30` is chosen against the nav, not picked for luck: the drawer is
- * z-50 and its menu is z-40, so a toast can never cover the menu somebody
- * just opened to get away from it.
+ * The corner, width and z-index (against the nav — the drawer is z-50 and
+ * its menu is z-40, so a toast can never cover the menu somebody just
+ * opened to get away from it) all live in the parent, `NotificationCorner`
+ * — this renders as a plain block so it can share that one fixed-position
+ * box with `NotificationPermissionNudge` instead of anchoring itself.
  *
  * Auto-dismiss PAUSES on hover and on focus. A card that carries a link and
  * then vanishes as the pointer reaches it is the classic toast failure, and
@@ -57,7 +59,7 @@ function coalesce(arrivals: AppNotification[]): { entry: AppNotification; extra:
   return [...groups.values()];
 }
 
-export default function ToastStack({ corner }: { corner: 'bottom-left' | 'bottom-right' }) {
+export default function ToastStack() {
   const { arrivals, dismiss } = useNotifications();
   const [paused, setPaused] = useState(false);
   const [fanned, setFanned] = useState(false);
@@ -115,9 +117,7 @@ export default function ToastStack({ corner }: { corner: 'bottom-left' | 'bottom
       }}
       onFocusCapture={() => setPaused(true)}
       onBlurCapture={() => setPaused(false)}
-      className={`pointer-events-auto fixed bottom-4 z-30 w-[22rem] max-w-[calc(100vw-2rem)] ${
-        corner === 'bottom-left' ? 'left-4' : 'right-4'
-      }`}
+      className="pointer-events-auto w-full"
     >
       {/* Fixed height so the pile does not make the page jump as cards
           arrive and leave; the cards are absolutely positioned inside it. */}

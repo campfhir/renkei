@@ -29,6 +29,10 @@ export default [
       // Plain Node CJS jest setupFiles entry — no tsconfig project covers it,
       // same category as the standalone scripts above.
       'apps/web/jest.env-integration.js',
+      // Service worker: runs in its own global scope (`self`, `clients`),
+      // served as-is from public/, outside every tsconfig project — same
+      // category as the standalone scripts above.
+      'apps/web/public/sw.js',
       // Standalone vendoring script: runs via tsx, no tsconfig project covers it.
       'scripts/trim-graph-openapi.ts',
       // The local ESLint rules themselves — plain ESM consumed by this config,
