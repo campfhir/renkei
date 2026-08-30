@@ -117,6 +117,22 @@ export interface DateSegment {
   format?: 'iso' | 'date' | 'datetime';
 }
 
+/**
+ * A `var` segment inserts that variable's CURRENT value VERBATIM — there is
+ * no formatting step in between. A variable an earlier action step saved
+ * for a LATER step to parse (a raw loop item, a pipe-delimited or
+ * JSON-shaped record built as an internal hand-off) renders exactly that
+ * way in a message a PERSON reads too, if that is the variable a
+ * person-facing `message` (an approval or terminal node) names.
+ *
+ * A message meant for a person should reference a variable that already
+ * holds plain prose written FOR a person — add a `tool: null` reasoning
+ * step right before the approval/terminal node that turns the raw value
+ * into a one- or two-sentence summary and saves that under its own name,
+ * then put that name in the message instead of the raw one. This matters
+ * most inside a loop, where each round's "current item" is exactly the
+ * kind of internal record this warns about.
+ */
 export type InstructionSegment =
   { t: 'text'; v: string } | { t: 'tool'; name: string } | { t: 'var'; name: string } | DateSegment;
 
@@ -322,7 +338,9 @@ export interface TerminalStep {
   /**
    * The notification body — prose + var chips (never tool chips), rendered
    * with the run's live variables so what lands in the inbox carries real
-   * context. May be empty when no channel is on.
+   * context. May be empty when no channel is on. See the `var` segment's
+   * doc on InstructionSegment: a chip here renders whatever the named
+   * variable holds verbatim, so it should name one written FOR a person.
    */
   message: InstructionSegment[];
   /** Email the rendered message to the owner (sent from their own grant). */
@@ -402,7 +420,10 @@ export interface ApprovalStep {
   /**
    * What the owner is being asked — prose + var chips (never tool chips),
    * rendered with the run's live values. The card body AND the
-   * notification body.
+   * notification body. See the `var` segment's doc on InstructionSegment:
+   * a chip here renders verbatim, so it should name a variable already
+   * written FOR a person, not a raw record an earlier step built for a
+   * LATER step to parse.
    */
   message: InstructionSegment[];
   /** 'approve' = approve/decline buttons; 'input' = a typed answer. */
@@ -433,6 +454,15 @@ export interface ApprovalStep {
    * notification and every outcome caption are keyed off; a form is the
    * same pause asking for its answer in pieces. A third mode would have
    * duplicated all three read paths to say the same thing.
+   *
+   * FIXED AT AUTHORING TIME: the same labels every time this node runs,
+   * never computed from a run's live values. A node inside a loop that
+   * asks something DIFFERENT each round (about THIS item) has nothing a
+   * per-round field could bind to — that question belongs in `message` as
+   * a variable a reasoning step wrote fresh that round (see the `var`
+   * segment's doc on InstructionSegment), with `fields` reserved for
+   * whatever about the ANSWER stays the same shape every round (an issue
+   * key, a yes/no, a number).
    */
   fields?: ApprovalField[];
   /**
