@@ -1,7 +1,7 @@
 /**
- * What a form card accepts back.
+ * What a form (an `ask_person` call's `FormNode` fields) accepts back.
  *
- * ONE rule set, three callers: the card validates as you type, the decision
+ * ONE rule set, three callers: the card validates as you type, the answer
  * paths (the web route and the MCP tool) validate what arrives, and the
  * engine binds what was stored. Three copies of "is this a number" would
  * differ within a month, and the one that matters — the server's — is the
@@ -22,15 +22,15 @@
  */
 
 import { isValidDateString } from './recurrence';
-import { type ApprovalField } from './steps';
+import { type QuestionField } from './steps';
 
 /** The longest a single text answer may be. */
-export const MAX_APPROVAL_ANSWER_CHARS = 10_000;
+export const MAX_QUESTION_ANSWER_CHARS = 10_000;
 
 /** One field's answer: a string, or the picks of a multi-select. */
-export type ApprovalAnswerValue = string | string[];
+export type QuestionAnswerValue = string | string[];
 
-export interface ApprovalAnswerIssue {
+export interface QuestionAnswerIssue {
   /** The field's name — what the answer was keyed by. */
   name: string;
   /** The field's label, so a caller can say which control is wrong. */
@@ -38,11 +38,11 @@ export interface ApprovalAnswerIssue {
   message: string;
 }
 
-export interface ApprovalAnswersResult {
+export interface QuestionAnswersResult {
   ok: boolean;
-  issues: ApprovalAnswerIssue[];
+  issues: QuestionAnswerIssue[];
   /** name → cleaned value. Only fields that answered appear. */
-  values: Record<string, ApprovalAnswerValue>;
+  values: Record<string, QuestionAnswerValue>;
 }
 
 function asStrings(raw: unknown): string[] {
@@ -54,15 +54,15 @@ function asStrings(raw: unknown): string[] {
  * Check a submitted answer set against the form that asked for it.
  *
  * Unknown keys are ignored rather than rejected: a card open in a browser
- * while its step was edited will post the fields it was rendered with, and
- * refusing the whole submission for a field that no longer exists loses a
- * person's typing over an author's edit.
+ * while the run moved on will post the fields it was rendered with, and
+ * refusing the whole submission for a field that no longer matters loses a
+ * person's typing over a race that isn't their fault.
  */
-export function checkApprovalAnswers(fields: ApprovalField[], raw: unknown): ApprovalAnswersResult {
+export function checkQuestionAnswers(fields: QuestionField[], raw: unknown): QuestionAnswersResult {
   const submitted: Record<string, unknown> =
     typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? { ...raw } : {};
-  const issues: ApprovalAnswerIssue[] = [];
-  const values: Record<string, ApprovalAnswerValue> = {};
+  const issues: QuestionAnswerIssue[] = [];
+  const values: Record<string, QuestionAnswerValue> = {};
 
   for (const field of fields) {
     const label = field.label.trim() || field.name.trim() || 'This field';
@@ -79,8 +79,8 @@ export function checkApprovalAnswers(fields: ApprovalField[], raw: unknown): App
           if (field.required) fail('Needs an answer.');
           break;
         }
-        if (text.length > MAX_APPROVAL_ANSWER_CHARS) {
-          fail(`Must stay under ${MAX_APPROVAL_ANSWER_CHARS} characters.`);
+        if (text.length > MAX_QUESTION_ANSWER_CHARS) {
+          fail(`Must stay under ${MAX_QUESTION_ANSWER_CHARS} characters.`);
           break;
         }
         values[field.name] = text;
@@ -159,7 +159,7 @@ export function checkApprovalAnswers(fields: ApprovalField[], raw: unknown): App
       }
       default: {
         const unhandled: never = field.type;
-        throw new Error(`unknown approval field type: ${JSON.stringify(unhandled)}`);
+        throw new Error(`unknown question field type: ${JSON.stringify(unhandled)}`);
       }
     }
   }
@@ -174,7 +174,7 @@ export function checkApprovalAnswers(fields: ApprovalField[], raw: unknown): App
  * writing to Jira needs `customfield_10016` beside the 8, not a display
  * name it would have to resolve.
  */
-export function describeApprovalAnswer(field: ApprovalField, value: ApprovalAnswerValue): string {
+export function describeQuestionAnswer(field: QuestionField, value: QuestionAnswerValue): string {
   const shown = Array.isArray(value) ? value.join(', ') : value;
   const named = field.label.trim() || field.name;
   return `${named}${field.key ? ` [${field.key}]` : ''}: ${shown}`;
@@ -187,6 +187,6 @@ export function describeApprovalAnswer(field: ApprovalField, value: ApprovalAnsw
  * binds as its string form — a var chip for either renders the same way,
  * so nothing has to know which produced it.
  */
-export function approvalAnswerText(value: ApprovalAnswerValue): string {
+export function questionAnswerText(value: QuestionAnswerValue): string {
   return Array.isArray(value) ? value.join('\n') : value;
 }

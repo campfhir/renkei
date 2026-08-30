@@ -57,27 +57,44 @@
  *     context-free failure mail: the endpoint says what to send and where.
  *     A leaf: no children, no LLM call, deterministic.
  *
- * VERSION 5 adds one construct:
- *   - `ApprovalStep` — a human-in-the-loop pause. Reaching it parks the
- *     whole run as 'waiting', puts an interactive card on the owner's
- *     home-page feed (approve/reject, or a typed answer in 'input' mode),
- *     optionally notifies them with the card link, and resumes down ONE
- *     of three outcome paths — approved/answered, declined, or timed out
- *     (every wait has a ceiling, org-bounded). Branch-like on purpose:
- *     the outcome paths are nested step lists, an empty path falls
- *     through, and the node counts toward the same nesting budgets as a
- *     branch.
- *
  * VERSION 7 adds no construct — it widens FAILURE HANDLING: an entry may
  * carry `action: 'continue'` (record the failure, move on to the next
  * step) and, on retry entries, an `exhausted` choice for when the attempt
  * budget runs out ('continue' or 'stop-quiet' instead of failing the run).
  *
- * `requiredVersion` is the single version rule: 7 iff any failure handling
- * uses the v7 vocabulary, else 6 iff a date chip is present, else 5 iff an
- * approval node is, else 4 iff a terminal node is, else 3 iff any v3
- * construct is, else 2 iff a branch exists, else 1 — so every document any
- * older writer could produce keeps its exact old version and bytes.
+ * VERSION 9 replaces the standalone approval-pause NODE (versions 5-8) with
+ * two narrower primitives — see git history for the removed `ApprovalStep`:
+ *   - `needsApproval` — a GATE on an `ActionStep`, not a node of its own.
+ *     Before the step's tool call fires, the run pauses, a card proposes
+ *     the exact call (tool + rendered args — nothing to author, there is
+ *     nothing to say beyond what the step is already about to do), and the
+ *     person approves, denies (optionally with a comment), or lets it time
+ *     out. Approved calls the tool as normal; denied or timed out — both
+ *     "not approved" — take `onNotApproved` (empty = skip the call, carry
+ *     on), with `approval.outcome`/`approval.comment` bound for a branch in
+ *     that path to tell denied from timed-out if it cares to. One path, not
+ *     three: the old node's onDeclined/onTimeout split is judged not worth
+ *     the extra authoring surface when a branch already does the same job
+ *     on demand. A gate reusing a comment to re-plan and re-ask wraps
+ *     itself in a bounded `until` loop (existing primitive) rather than
+ *     needing a backward jump — the steps model stays a forward-only tree.
+ *   - the agent-level `canAskQuestions` flag (on the agent record, not in
+ *     this document at all — see packages/agents/src/index.ts) unlocks a
+ *     free `ask_person` tool in EVERY step's turn loop, for a question
+ *     whose shape the model only knows at run time: a dynamic form
+ *     (`FormNode[]`, packages/agents/src/question-form.ts) built and raised
+ *     on demand, no pre-planned node and no loop-of-approvals required.
+ * This is a hard replacement, not an additive version: a document
+ * containing the old `{kind:"approval"}` shape no longer parses as a
+ * steps document at all (`isAgentStepsDoc` rejects it, same as any other
+ * structurally invalid value) rather than loading read-only for editing.
+ *
+ * `requiredVersion` (validate.ts) is the single version rule: 9 iff any
+ * step sets `needsApproval`, else 7 iff any failure handling uses the v7
+ * vocabulary, else 6 iff a date chip is present, else 4 iff a terminal node
+ * is, else 3 iff any v3 construct is, else 2 iff a branch exists, else 1 —
+ * so every document any older writer could produce keeps its exact old
+ * version and bytes.
  */
 
 /**
@@ -117,6 +134,23 @@ export interface DateSegment {
   format?: 'iso' | 'date' | 'datetime';
 }
 
+/**
+ * A `var` segment inserts that variable's CURRENT value VERBATIM — there is
+ * no formatting step in between. A variable an earlier action step saved
+ * for a LATER step to parse (a raw loop item, a pipe-delimited or
+ * JSON-shaped record built as an internal hand-off) renders exactly that
+ * way in a message a PERSON reads too, if that is the variable a
+ * person-facing `message` (a terminal node, or the prompt context a gate's
+ * `onNotApproved` path or `ask_person` builds) names.
+ *
+ * A message meant for a person should reference a variable that already
+ * holds plain prose written FOR a person — add a `tool: null` reasoning
+ * step right before the point it is used that turns the raw value into a
+ * one- or two-sentence summary and saves that under its own name, then put
+ * that name in the message instead of the raw one. This matters most
+ * inside a loop, where each round's "current item" is exactly the kind of
+ * internal record this warns about.
+ */
 export type InstructionSegment =
   { t: 'text'; v: string } | { t: 'tool'; name: string } | { t: 'var'; name: string } | DateSegment;
 
@@ -195,6 +229,31 @@ export interface ActionStep {
    * prose.
    */
   onSuccess?: 'continue' | 'stop' | 'stop-quiet';
+  /**
+   * Version 9: pause and ask a person before THIS step's tool call fires.
+   * Meaningless without `tool` set — the validator rejects it on a
+   * reasoning-only step, since there is no call to gate. See the header
+   * doc's VERSION 9 note for the full pause/resume story and why this
+   * replaced the standalone approval node.
+   */
+  needsApproval?: boolean;
+  /**
+   * How long the run may wait, in hours — default
+   * APPROVAL_DEFAULT_TIMEOUT_HOURS, clamped by the org's
+   * agentApprovalMaxWaitDays cap at save AND live at pause time, same rule
+   * the old approval node used. Meaningless without `needsApproval`.
+   */
+  approvalTimeoutHours?: number;
+  /**
+   * Taken when the decision is 'denied' OR the wait times out — both read
+   * as "not approved" here; there is no separate onTimeout path. Empty or
+   * absent = skip the tool call and continue to the next step. The
+   * decision (`approval.outcome`: 'approved' | 'denied' | 'timedOut') and
+   * the person's optional `approval.comment` are bound as vars for a
+   * branch inside this path to read, if the author wants denied and
+   * timed-out handled differently. Meaningless without `needsApproval`.
+   */
+  onNotApproved?: BranchPath;
 }
 
 /**
@@ -285,6 +344,12 @@ export interface UntilLoopStep {
    * REQUIRED, 1..MAX_LOOP_ITERATIONS. Reaching it with the condition still
    * unmet FAILS the run — the guard is a tripwire for a premise that never
    * came true, not a quiet exit.
+   *
+   * This is also the mechanism a `needsApproval` gate uses to react to a
+   * denial's comment WITHOUT a backward jump: wrap "decide the value →
+   * gated step" in an until-loop whose condition reads `approval.outcome`
+   * — a denial drives another bounded round, replanning with the comment
+   * now in scope as a variable. The steps model stays a forward-only tree.
    */
   maxIterations: number;
   collectFrom?: string;
@@ -322,7 +387,9 @@ export interface TerminalStep {
   /**
    * The notification body — prose + var chips (never tool chips), rendered
    * with the run's live variables so what lands in the inbox carries real
-   * context. May be empty when no channel is on.
+   * context. May be empty when no channel is on. See the `var` segment's
+   * doc on InstructionSegment: a chip here renders verbatim, so it should
+   * name a variable already written FOR a person.
    */
   message: InstructionSegment[];
   /** Email the rendered message to the owner (sent from their own grant). */
@@ -331,36 +398,35 @@ export interface TerminalStep {
   notifyWebex: boolean;
 }
 
-export type ApprovalMode = 'approve' | 'input';
-
 /**
- * What one form field collects.
+ * What one QUESTION control collects — used by the agent-level
+ * `ask_person` tool's dynamic form (packages/agents/src/question-form.ts),
+ * never by a `needsApproval` gate: a gate is a plain approve/deny/comment
+ * decision, nothing about its shape is knowable at authoring time the way
+ * a pre-planned form's fields are, so it has no fields of its own.
  *
  * 'text' and 'longtext' differ only in the control's height — both bind a
- * string, and both are what the mode did before fields existed. The other
- * four exist because the answer's SHAPE is knowable at authoring time and
- * an agent should not have to parse for it: a number arrives as digits, a
- * choice arrives as one of the options the author wrote, a date arrives as
- * YYYY-MM-DD. What cannot be checked at the card is still the agent's job
- * — "CIO-12" is a well-formed string and a wrong issue either way.
+ * string. The other four exist because the answer's SHAPE is knowable when
+ * the model builds the form and it should not have to parse for it: a
+ * number arrives as digits, a choice arrives as one of the options given,
+ * a date arrives as YYYY-MM-DD. What cannot be checked at the card is still
+ * the agent's job — "CIO-12" is a well-formed string and a wrong issue
+ * either way.
  */
-export type ApprovalFieldType = 'text' | 'longtext' | 'number' | 'choice' | 'multi' | 'date';
+export type QuestionFieldType = 'text' | 'longtext' | 'number' | 'choice' | 'multi' | 'date';
 
-export interface ApprovalField {
+export interface QuestionField {
   /**
-   * The variable this field binds, in the SAME namespace as saveAs and
-   * loop items: two fields cannot share a name, and neither can a field
-   * and a saved result.
+   * The variable this field binds. Two fields in the same form cannot
+   * share a name, and neither can a field and a saved result.
    *
    * It is also the KEY an answer comes back under. A form is a key/value
    * reply and this is the key — there is deliberately no id beside it. An
    * id would survive renaming a field while a card waits behind it, which
    * sounds worth having until you notice that renaming a binding already
-   * breaks every chip referencing it (the validator refuses the save until
-   * they are updated too). Paying for that everywhere — uuids in
-   * hand-written JSON, a name→id map at every boundary, `{"f-3": [...]}`
-   * in the audit trail — buys consistency in one rare window and costs
-   * legibility in all of them.
+   * breaks every chip referencing it. Paying for that everywhere — uuids
+   * in hand-built JSON, a name→id map at every boundary — buys consistency
+   * in one rare window and costs legibility in all of them.
    */
   name: string;
   /** What the person is asked for, rendered above the control. */
@@ -374,7 +440,7 @@ export interface ApprovalField {
    * instead of resolving a display name at run time and hoping.
    */
   key?: string;
-  type: ApprovalFieldType;
+  type: QuestionFieldType;
   /** Nothing sends until it has a value. */
   required: boolean;
   /** choice/multi: what the card offers, and the only values it accepts. */
@@ -386,84 +452,24 @@ export interface ApprovalField {
   help?: string;
 }
 
-/** How many controls one card may carry. A form, not a questionnaire. */
-export const MAX_APPROVAL_FIELDS = 10;
-export const MAX_APPROVAL_FIELD_OPTIONS = 25;
-export const MAX_APPROVAL_FIELD_LABEL_CHARS = 200;
-export const MAX_APPROVAL_FIELD_OPTION_CHARS = 200;
-export const MAX_APPROVAL_FIELD_HELP_CHARS = 500;
-export const MAX_APPROVAL_FIELD_KEY_CHARS = 200;
+/** How many controls one form may carry. A form, not a questionnaire. */
+export const MAX_QUESTION_FIELDS = 10;
+export const MAX_QUESTION_FIELD_OPTIONS = 25;
+export const MAX_QUESTION_FIELD_LABEL_CHARS = 200;
+export const MAX_QUESTION_FIELD_OPTION_CHARS = 200;
+export const MAX_QUESTION_FIELD_HELP_CHARS = 500;
+export const MAX_QUESTION_FIELD_KEY_CHARS = 200;
 
-export interface ApprovalStep {
-  /** uuid, same doc-wide id space as every node. */
-  id: string;
-  kind: 'approval';
-  name: string;
-  /**
-   * What the owner is being asked — prose + var chips (never tool chips),
-   * rendered with the run's live values. The card body AND the
-   * notification body.
-   */
-  message: InstructionSegment[];
-  /** 'approve' = approve/decline buttons; 'input' = a typed answer. */
-  mode: ApprovalMode;
-  /**
-   * The owner's answer binds to this name for the outcome paths and
-   * everything after the node. Same namespace as field/loop bindings.
-   *
-   * With a plain box it is REQUIRED and holds what they typed. With
-   * `fields` it is OPTIONAL and holds the WHOLE reply — every label, its
-   * destination id where it has one, and the answer, one per line:
-   *
-   *     Which issue tracks this?: CIO-12
-   *     Story Points [customfield_10016]: 8
-   *
-   * Both readings exist because both are wanted: a step that writes one
-   * answer somewhere takes the field's own variable, and a step that
-   * relays the reply — a comment, a note, a mail — takes the form.
-   */
-  saveAs?: string;
-  /**
-   * Input mode WITH STRUCTURE: one control per field, each binding its own
-   * variable. Absent or empty = the single free-text box, which is what
-   * every agent saved before this existed still has.
-   *
-   * Deliberately NOT a new mode. 'input' already means "this pause wants
-   * information rather than a verdict", and that is the fact the card, the
-   * notification and every outcome caption are keyed off; a form is the
-   * same pause asking for its answer in pieces. A third mode would have
-   * duplicated all three read paths to say the same thing.
-   */
-  fields?: ApprovalField[];
-  /**
-   * How long the run may wait, in hours — clamped by the org's
-   * agentApprovalMaxWaitDays cap at save AND live at pause time. Reaching
-   * it routes onTimeout; it never fails the run by itself.
-   */
-  timeoutHours: number;
-  /** Send the message + card link to the owner's own inbox at pause. */
-  notifyEmail: boolean;
-  /** Post the message + card link to the owner's WebEx note-to-self. */
-  notifyWebex: boolean;
-  /** Approved (or, in input mode, answered). Empty = continue after. */
-  onApproved: BranchPath;
-  /**
-   * Declined — the Decline button, or in input mode "I don't know": an
-   * explicit no-answer, not a stop. Empty = continue after the node.
-   */
-  onDeclined: BranchPath;
-  /** Nobody acted before the ceiling. Empty = continue after the node. */
-  onTimeout: BranchPath;
-}
-
-export type AgentStepNode =
-  ActionStep | BranchStep | LoopStep | GroupStep | TerminalStep | ApprovalStep;
+export type AgentStepNode = ActionStep | BranchStep | LoopStep | GroupStep | TerminalStep;
 
 export interface AgentStepsDoc {
   /**
    * CURRENT_STEPS_VERSION on everything this build writes. Older numbers
    * still LOAD (so the builder can open a stale agent for updating) but
-   * never RUN — see isCurrentStepsDoc.
+   * never RUN — see isCurrentStepsDoc. The one exception: a document that
+   * still contains the removed `{kind:"approval"}` node shape does not
+   * load at all (see the header doc's VERSION 9 note) — there is no
+   * version number for it to fall back to.
    */
   version: number;
   /** Array order is execution order; success is linear within a list. */
@@ -514,9 +520,9 @@ export function customOutcomeSlug(text: string): string {
 /** Conditionals may nest three deep. */
 export const MAX_BRANCH_DEPTH_V3 = 3;
 /**
- * Version 3's combined containment ceiling: branch and loop levels count,
- * groups do not — a loop wrapped around three nested branches is legal and
- * is the deepest legal shape.
+ * Version 3's combined containment ceiling: branch, loop and gate-recovery
+ * levels count, groups do not — a loop wrapped around three nested
+ * branches is legal and is the deepest legal shape.
  */
 export const MAX_CONTAINER_DEPTH = 4;
 /** Version 3: a branch routes between 2 and this many labeled paths. */
@@ -539,12 +545,16 @@ export const LOOP_DEFAULT_ITERATIONS = 10;
  * megabyte-scale blob in every prompt.
  */
 export const MAX_GUARDRAILS_CHARS = 1_000_000;
-/** Default wait ceiling the approval editor seeds: three days. */
-export const APPROVAL_DEFAULT_TIMEOUT_HOURS = 72;
+/**
+ * Default wait ceiling a `needsApproval` gate (or an `ask_person` call
+ * that doesn't set its own) seeds: four days.
+ */
+export const APPROVAL_DEFAULT_TIMEOUT_HOURS = 96;
 /**
  * The approval wait cap used when no org settings are in hand — matches
  * the org setting's default (agentApprovalMaxWaitDays = 14). The live
  * setting binds at save (normalizeAgentDraft option) and again at pause.
+ * Shared by `needsApproval` gates and `ask_person` calls alike.
  */
 export const DEFAULT_APPROVAL_WAIT_CAP_HOURS = 14 * 24;
 
@@ -642,42 +652,6 @@ function isFailureHandling(value: unknown): value is FailureHandling {
   return true;
 }
 
-function isActionStep(value: unknown): value is ActionStep {
-  if (typeof value !== 'object' || value === null) return false;
-  const step: {
-    id?: unknown;
-    kind?: unknown;
-    name?: unknown;
-    instruction?: unknown;
-    tool?: unknown;
-    maxAttempts?: unknown;
-    saveAs?: unknown;
-    failureHandling?: unknown;
-    onSuccess?: unknown;
-  } = value;
-  if (step.kind !== undefined && step.kind !== 'action') return false;
-  if (typeof step.id !== 'string' || step.id.length === 0) return false;
-  if (typeof step.name !== 'string') return false;
-  if (!Array.isArray(step.instruction) || !step.instruction.every(isInstructionSegment)) {
-    return false;
-  }
-  if (step.tool !== null && typeof step.tool !== 'string') return false;
-  if (typeof step.maxAttempts !== 'number') return false;
-  if (step.saveAs !== undefined && typeof step.saveAs !== 'string') return false;
-  if (!Array.isArray(step.failureHandling) || !step.failureHandling.every(isFailureHandling)) {
-    return false;
-  }
-  if (
-    step.onSuccess !== undefined &&
-    step.onSuccess !== 'continue' &&
-    step.onSuccess !== 'stop' &&
-    step.onSuccess !== 'stop-quiet'
-  ) {
-    return false;
-  }
-  return true;
-}
-
 export function isBranchStep(node: AgentStepNode): node is BranchStep {
   return node.kind === 'branch';
 }
@@ -694,8 +668,9 @@ export function isTerminalStep(node: AgentStepNode): node is TerminalStep {
   return node.kind === 'terminal';
 }
 
-export function isApprovalStep(node: AgentStepNode): node is ApprovalStep {
-  return node.kind === 'approval';
+/** An action step (the default — `kind` is absent on every v1 document). */
+export function isActionStepNode(node: AgentStepNode): node is ActionStep {
+  return node.kind === undefined || node.kind === 'action';
 }
 
 /** A node whose `steps`/`paths` contain other nodes. */
@@ -710,54 +685,25 @@ export function isContainerNode(node: AgentStepNode): node is BranchStep | LoopS
  * treats every future kind as an ActionStep, which is exactly how a new
  * construct would misexecute.
  */
-export type NodeKind = 'action' | 'branch' | 'loop' | 'group' | 'terminal' | 'approval';
+export type NodeKind = 'action' | 'branch' | 'loop' | 'group' | 'terminal';
 
 export function nodeKind(node: AgentStepNode): NodeKind {
   return node.kind ?? 'action';
 }
 
-/** The three outcome slots of an approval node, in display order. */
-export const APPROVAL_OUTCOME_KEYS = ['onApproved', 'onDeclined', 'onTimeout'] as const;
-export type ApprovalOutcomeKey = (typeof APPROVAL_OUTCOME_KEYS)[number];
-
-/** An approval node's outcome paths as key/path pairs — the shared walk vocabulary. */
-export function approvalPathsOf(
-  node: ApprovalStep
-): { key: ApprovalOutcomeKey; path: BranchPath }[] {
-  return APPROVAL_OUTCOME_KEYS.map((key) => ({ key, path: node[key] }));
-}
-
 /**
- * Form fields out of untrusted JSON — the card stores a SNAPSHOT of the
- * step's fields so the feed can render controls without loading the agent,
- * and this reads that snapshot back. Anything malformed is dropped rather
- * than thrown on: a card whose spec cannot be read still has to render as
- * something a person can answer or decline.
+ * Form fields out of untrusted JSON — a `'question'` card stores a
+ * SNAPSHOT of the run-time form the model built so the feed can render
+ * controls without re-reading the run, and this reads one field list back
+ * out of it (question-form.ts's `parseFormNodes` reads the whole tree,
+ * groups and paragraphs included; this is the flat-list half other
+ * consumers — answer checking, the old single-list card — still want).
+ * Anything malformed is dropped rather than thrown on: a card whose spec
+ * cannot be read still has to render as something a person can answer.
  */
-export function parseApprovalFields(value: unknown): ApprovalField[] {
+export function parseQuestionFields(value: unknown): QuestionField[] {
   if (!Array.isArray(value)) return [];
-  return value.filter(isApprovalField).slice(0, MAX_APPROVAL_FIELDS);
-}
-
-/** The fields of an input-mode form, or [] for every other approval. */
-export function approvalFieldsOf(node: ApprovalStep): ApprovalField[] {
-  return node.mode === 'input' && Array.isArray(node.fields) ? node.fields : [];
-}
-
-/**
- * Every variable name this approval binds — one per form field, or the
- * single saveAs. The validator's namespace check, the builder's chip list
- * and the run's binding all read this, so they cannot disagree about what
- * a pause makes available.
- */
-export function approvalBindingNames(node: ApprovalStep): string[] {
-  const fields = approvalFieldsOf(node);
-  // A form binds each field AND, when it is named, the whole reply — the
-  // second is what a step wanting "everything they said" reaches for.
-  return [
-    ...fields.map((field) => field.name).filter(Boolean),
-    ...(node.saveAs ? [node.saveAs] : []),
-  ];
+  return value.filter(isQuestionField).slice(0, MAX_QUESTION_FIELDS);
 }
 
 /* ---------------- structural node guard ----------------------------- */
@@ -766,12 +712,14 @@ export function approvalBindingNames(node: ApprovalStep): string[] {
 /* pass — the version NUMBER decides whether it may RUN (see             */
 /* isCurrentStepsDoc): old versions load in the builder for updating,    */
 /* and the runtime disables the agent and tells the owner to re-save.    */
+/* The one exception is the removed approval node — see the header doc's */
+/* VERSION 9 note: a document containing one no longer parses at all.    */
 
 /** Containment counters the v3+ shape checks thread through the tree. */
 interface GuardContext {
   /** Nested branch levels entered so far. */
   branchDepth: number;
-  /** Branch + loop levels entered so far (groups are free). */
+  /** Branch + loop + gate-recovery levels entered so far (groups are free). */
   containerDepth: number;
   /** Loops never nest. */
   inLoop: boolean;
@@ -911,7 +859,7 @@ function isTerminalStepShape(value: unknown): value is TerminalStep {
   return typeof step.notifyEmail === 'boolean' && typeof step.notifyWebex === 'boolean';
 }
 
-const APPROVAL_FIELD_TYPES = new Set<string>([
+const QUESTION_FIELD_TYPES = new Set<string>([
   'text',
   'longtext',
   'number',
@@ -921,7 +869,7 @@ const APPROVAL_FIELD_TYPES = new Set<string>([
 ]);
 
 /** One form field, structurally. Business rules are the validator's. */
-function isApprovalField(value: unknown): value is ApprovalField {
+export function isQuestionField(value: unknown): value is QuestionField {
   if (typeof value !== 'object' || value === null) return false;
   const field: {
     name?: unknown;
@@ -937,7 +885,7 @@ function isApprovalField(value: unknown): value is ApprovalField {
   if (typeof field.name !== 'string') return false;
   if (typeof field.label !== 'string') return false;
   if (field.key !== undefined && typeof field.key !== 'string') return false;
-  if (typeof field.type !== 'string' || !APPROVAL_FIELD_TYPES.has(field.type)) return false;
+  if (typeof field.type !== 'string' || !QUESTION_FIELD_TYPES.has(field.type)) return false;
   if (typeof field.required !== 'boolean') return false;
   if (
     field.options !== undefined &&
@@ -951,52 +899,68 @@ function isApprovalField(value: unknown): value is ApprovalField {
   return true;
 }
 
-function isApprovalStepShape(
+/**
+ * Structural check for an action step, INCLUDING the `needsApproval` gate
+ * fields — `onNotApproved` nests other nodes, so (unlike before version 9)
+ * this needs the same context-threading every container check gets.
+ */
+function isActionStepShape(
   value: unknown,
   context: GuardContext,
   isNode: NodeShapeCheck
-): value is ApprovalStep {
+): value is ActionStep {
   if (typeof value !== 'object' || value === null) return false;
   const step: {
     id?: unknown;
     kind?: unknown;
     name?: unknown;
-    message?: unknown;
-    mode?: unknown;
+    instruction?: unknown;
+    tool?: unknown;
+    maxAttempts?: unknown;
     saveAs?: unknown;
-    fields?: unknown;
-    timeoutHours?: unknown;
-    notifyEmail?: unknown;
-    notifyWebex?: unknown;
-    onApproved?: unknown;
-    onDeclined?: unknown;
-    onTimeout?: unknown;
+    failureHandling?: unknown;
+    onSuccess?: unknown;
+    needsApproval?: unknown;
+    approvalTimeoutHours?: unknown;
+    onNotApproved?: unknown;
   } = value;
-  if (step.kind !== 'approval') return false;
-  // Branch-like containment: the pause consumes a branch level and a
-  // container level, same budgets as a BranchStep.
-  const inner: GuardContext = {
-    branchDepth: context.branchDepth + 1,
-    containerDepth: context.containerDepth + 1,
-    inLoop: context.inLoop,
-  };
-  if (inner.branchDepth > MAX_BRANCH_DEPTH_V3) return false;
-  if (inner.containerDepth > MAX_CONTAINER_DEPTH) return false;
+  if (step.kind !== undefined && step.kind !== 'action') return false;
   if (typeof step.id !== 'string' || step.id.length === 0) return false;
   if (typeof step.name !== 'string') return false;
-  if (!Array.isArray(step.message) || !step.message.every(isInstructionSegment)) return false;
-  if (step.mode !== 'approve' && step.mode !== 'input') return false;
-  if (step.saveAs !== undefined && typeof step.saveAs !== 'string') return false;
-  if (step.fields !== undefined) {
-    if (!Array.isArray(step.fields) || !step.fields.every(isApprovalField)) return false;
+  if (!Array.isArray(step.instruction) || !step.instruction.every(isInstructionSegment)) {
+    return false;
   }
-  if (typeof step.timeoutHours !== 'number') return false;
-  if (typeof step.notifyEmail !== 'boolean' || typeof step.notifyWebex !== 'boolean') return false;
-  return (
-    isBranchPathV3(step.onApproved, inner, isNode) &&
-    isBranchPathV3(step.onDeclined, inner, isNode) &&
-    isBranchPathV3(step.onTimeout, inner, isNode)
-  );
+  if (step.tool !== null && typeof step.tool !== 'string') return false;
+  if (typeof step.maxAttempts !== 'number') return false;
+  if (step.saveAs !== undefined && typeof step.saveAs !== 'string') return false;
+  if (!Array.isArray(step.failureHandling) || !step.failureHandling.every(isFailureHandling)) {
+    return false;
+  }
+  if (
+    step.onSuccess !== undefined &&
+    step.onSuccess !== 'continue' &&
+    step.onSuccess !== 'stop' &&
+    step.onSuccess !== 'stop-quiet'
+  ) {
+    return false;
+  }
+  if (step.needsApproval !== undefined && typeof step.needsApproval !== 'boolean') return false;
+  if (step.approvalTimeoutHours !== undefined && typeof step.approvalTimeoutHours !== 'number') {
+    return false;
+  }
+  if (step.onNotApproved !== undefined) {
+    // Gate recovery consumes a container-depth level, same budget a loop
+    // or group level costs — not a branch level, since nothing is being
+    // DECIDED here, just recovered from.
+    const inner: GuardContext = {
+      branchDepth: context.branchDepth,
+      containerDepth: context.containerDepth + 1,
+      inLoop: context.inLoop,
+    };
+    if (inner.containerDepth > MAX_CONTAINER_DEPTH) return false;
+    if (!isBranchPathV3(step.onNotApproved, inner, isNode)) return false;
+  }
+  return true;
 }
 
 function isNode(value: unknown, context: GuardContext): value is AgentStepNode {
@@ -1006,9 +970,12 @@ function isNode(value: unknown, context: GuardContext): value is AgentStepNode {
     if (candidate.kind === 'loop') return isLoopStepShape(value, context, isNode);
     if (candidate.kind === 'group') return isGroupStepShape(value, context, isNode);
     if (candidate.kind === 'terminal') return isTerminalStepShape(value);
-    if (candidate.kind === 'approval') return isApprovalStepShape(value, context, isNode);
+    // The removed approval node: reject explicitly rather than falling
+    // through to isActionStepShape, which would refuse it anyway (kind
+    // mismatch) but with a less legible reason if anyone goes looking.
+    if (candidate.kind === 'approval') return false;
   }
-  return isActionStep(value);
+  return isActionStepShape(value, context, isNode);
 }
 
 /**
@@ -1017,11 +984,13 @@ function isNode(value: unknown, context: GuardContext): value is AgentStepNode {
  * run creation demands it (isCurrentStepsDoc), and an agent found carrying
  * an older number is disabled with a notification telling the owner to
  * open it in the builder and save — which re-stamps it. History, for the
- * curious: 8 outcome prose/custom conditions, 7 continue-handling, 6 date
- * chips, 5 approvals, 4 terminals, 3 loops/groups/n-way branches, 2
- * branches, 1 linear steps.
+ * curious: 9 approval gate + agent-level questions (replacing the
+ * standalone approval node), 8 outcome prose/custom conditions, 7
+ * continue-handling, 6 date chips, 5 the now-removed approval node
+ * (versions 5-8 could carry it), 4 terminals, 3 loops/groups/n-way
+ * branches, 2 branches, 1 linear steps.
  */
-export const CURRENT_STEPS_VERSION = 8;
+export const CURRENT_STEPS_VERSION = 9;
 
 /**
  * Whether a stored `steps` jsonb value is structurally a steps document.
@@ -1031,7 +1000,10 @@ export const CURRENT_STEPS_VERSION = 8;
  * today's node shapes are supersets of every version this product ever
  * wrote, so old documents still LOAD (the builder needs them to, so an
  * owner can update a stale agent) — whether a document may RUN is
- * isCurrentStepsDoc's stricter question.
+ * isCurrentStepsDoc's stricter question. The one exception is the removed
+ * approval node (versions 5-8): a document containing one fails this
+ * structural guard outright and does not load, since there is no reader
+ * left for its shape.
  */
 export function isAgentStepsDoc(value: unknown): value is AgentStepsDoc {
   if (typeof value !== 'object' || value === null) return false;
@@ -1113,14 +1085,13 @@ export function walkSteps(nodes: AgentStepNode[]): WalkedNode[] {
         case 'group':
           visit(node.steps, `${path}.steps`, depth + 1);
           break;
-        case 'approval':
-          for (const { key, path: outcomePath } of approvalPathsOf(node)) {
-            visit(outcomePath.steps, `${path}.${key}.steps`, depth + 1);
-          }
-          break;
         case 'terminal':
+          break;
         case 'action':
         case undefined:
+          if (node.onNotApproved) {
+            visit(node.onNotApproved.steps, `${path}.onNotApproved.steps`, depth + 1);
+          }
           break;
         default: {
           const unhandled: never = node;
@@ -1135,9 +1106,7 @@ export function walkSteps(nodes: AgentStepNode[]): WalkedNode[] {
 
 /** Every action step in pre-order — for saved-var recovery and previews. */
 export function flattenActionSteps(nodes: AgentStepNode[]): ActionStep[] {
-  return walkSteps(nodes).flatMap(({ node }) =>
-    node.kind === undefined || node.kind === 'action' ? [node] : []
-  );
+  return walkSteps(nodes).flatMap(({ node }) => (isActionStepNode(node) ? [node] : []));
 }
 
 /** Total node count — container nodes count 1 (their evaluation/structure costs a step). */
@@ -1173,7 +1142,6 @@ export function nodeUsesModel(node: AgentStepNode): boolean {
     case 'loop':
       return node.mode === 'until';
     case 'group':
-    case 'approval':
     case 'terminal':
       return false;
   }
@@ -1184,7 +1152,7 @@ export type FoundAncestor =
   | { kind: 'branch'; branch: BranchStep; path: BranchPath; isFailurePath: boolean }
   | { kind: 'loop'; loop: LoopStep }
   | { kind: 'group'; group: GroupStep }
-  | { kind: 'approval'; approval: ApprovalStep; path: BranchPath; outcome: ApprovalOutcomeKey };
+  | { kind: 'gate'; step: ActionStep; path: BranchPath };
 
 export interface FoundNode {
   node: AgentStepNode;
@@ -1234,19 +1202,17 @@ export function findNodeById(nodes: AgentStepNode[], id: string): FoundNode | nu
           if (found) return found;
           break;
         }
-        case 'approval': {
-          for (const { key, path } of approvalPathsOf(node)) {
-            const found = search(path.steps, [
+        case 'terminal':
+          break;
+        case 'action':
+        case undefined:
+          if (node.onNotApproved) {
+            const found = search(node.onNotApproved.steps, [
               ...ancestors,
-              { kind: 'approval', approval: node, path, outcome: key },
+              { kind: 'gate', step: node, path: node.onNotApproved },
             ]);
             if (found) return found;
           }
-          break;
-        }
-        case 'terminal':
-        case 'action':
-        case undefined:
           break;
         default: {
           const unhandled: never = node;
@@ -1260,9 +1226,11 @@ export function findNodeById(nodes: AgentStepNode[], id: string): FoundNode | nu
 }
 
 /**
- * Whether the tree contains an approval node. No longer a version test —
- * it decides whether the approval.link builtin variable is offered.
+ * Whether the tree contains a `needsApproval` gate. Decides whether the
+ * `approval.outcome`/`approval.comment`/`approval.link` builtin variables
+ * are offered — the direct successor of the old `containsApproval`, which
+ * asked the same question of the removed approval node.
  */
-export function containsApproval(nodes: AgentStepNode[]): boolean {
-  return walkSteps(nodes).some(({ node }) => isApprovalStep(node));
+export function containsApprovalGate(nodes: AgentStepNode[]): boolean {
+  return walkSteps(nodes).some(({ node }) => isActionStepNode(node) && node.needsApproval === true);
 }

@@ -19,7 +19,6 @@ import {
   walkSteps,
   type ActionStep,
   type AgentStepNode,
-  type ApprovalStep,
   type BranchStep,
   type TerminalStep,
 } from './steps';
@@ -164,7 +163,7 @@ describe('isAgentStepsDoc', () => {
   });
 
   it('isCurrentStepsDoc demands exactly the current version', () => {
-    expect(CURRENT_STEPS_VERSION).toBe(8);
+    expect(CURRENT_STEPS_VERSION).toBe(9);
     expect(isCurrentStepsDoc({ version: CURRENT_STEPS_VERSION, steps: [action()] })).toBe(true);
     // Loads, but may not run — the disable-and-notify path's trigger.
     expect(isCurrentStepsDoc({ version: 7, steps: [action()] })).toBe(false);
@@ -396,31 +395,51 @@ describe('tree helpers', () => {
   });
 });
 
-describe('approval nodes (version 5)', () => {
-  const approval = (overrides: Partial<ApprovalStep> = {}): ApprovalStep => ({
-    id: randomUUID(),
-    kind: 'approval',
-    name: 'Ship it?',
-    message: [{ t: 'text', v: 'OK to send the report?' }],
-    mode: 'approve',
-    timeoutHours: 72,
-    notifyEmail: true,
-    notifyWebex: false,
-    onApproved: { id: randomUUID(), name: 'Approved', steps: [] },
-    onDeclined: { id: randomUUID(), name: 'Rejected', steps: [] },
-    onTimeout: { id: randomUUID(), name: 'No answer in time', steps: [] },
-    ...overrides,
+describe('needsApproval gate (version 9)', () => {
+  const gated = (overrides: Partial<ActionStep> = {}): ActionStep =>
+    action({
+      name: 'Post the comment',
+      tool: 'jira_add_comment',
+      needsApproval: true,
+      approvalTimeoutHours: 96,
+      onNotApproved: { id: randomUUID(), name: 'Skip it', steps: [] },
+      ...overrides,
+    });
+
+  it('admits a gated action step at any loaded version, rejecting malformation', () => {
+    const node = gated();
+    expect(isAgentStepsDoc({ version: 9, steps: [node] })).toBe(true);
+    expect(isAgentStepsDoc({ version: 8, steps: [node] })).toBe(true);
+    expect(isAgentStepsDoc({ version: 9, steps: [{ ...node, needsApproval: 'yes' }] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 9, steps: [{ ...node, onNotApproved: { id: 'x' } }] })).toBe(
+      false
+    );
   });
 
-  it('admits approval nodes at any loaded version, rejecting malformation', () => {
-    const node = approval();
-    expect(isAgentStepsDoc({ version: 5, steps: [node] })).toBe(true);
-    expect(isAgentStepsDoc({ version: 4, steps: [node] })).toBe(true);
-    expect(isAgentStepsDoc({ version: 5, steps: [{ ...node, mode: 'shout' }] })).toBe(false);
-    expect(isAgentStepsDoc({ version: 5, steps: [{ ...node, onTimeout: undefined }] })).toBe(false);
+  it('a gate with no recovery path is still valid — empty/absent just continues', () => {
+    const node = gated({ onNotApproved: undefined });
+    expect(isAgentStepsDoc({ version: 9, steps: [node] })).toBe(true);
   });
 
-  it('admits terminals inside approval outcome paths', () => {
+  it('rejects the removed approval node shape outright', () => {
+    const oldApproval = {
+      id: randomUUID(),
+      kind: 'approval',
+      name: 'Ship it?',
+      message: [{ t: 'text', v: 'OK to send the report?' }],
+      mode: 'approve',
+      timeoutHours: 72,
+      notifyEmail: true,
+      notifyWebex: false,
+      onApproved: { id: randomUUID(), name: 'Approved', steps: [] },
+      onDeclined: { id: randomUUID(), name: 'Rejected', steps: [] },
+      onTimeout: { id: randomUUID(), name: 'No answer in time', steps: [] },
+    };
+    expect(isAgentStepsDoc({ version: 5, steps: [oldApproval] })).toBe(false);
+    expect(isAgentStepsDoc({ version: CURRENT_STEPS_VERSION, steps: [oldApproval] })).toBe(false);
+  });
+
+  it('admits terminals inside the recovery path', () => {
     const terminal: TerminalStep = {
       id: randomUUID(),
       kind: 'terminal',
@@ -430,32 +449,33 @@ describe('approval nodes (version 5)', () => {
       notifyEmail: false,
       notifyWebex: false,
     };
-    const node = approval({ onDeclined: { id: randomUUID(), name: 'R', steps: [terminal] } });
+    const node = gated({ onNotApproved: { id: randomUUID(), name: 'R', steps: [terminal] } });
     expect(isAgentStepsDoc({ version: CURRENT_STEPS_VERSION, steps: [node] })).toBe(true);
   });
 
-  it('walks and finds nodes inside outcome paths with the path grammar', () => {
+  it('walks and finds nodes inside the recovery path with the gate grammar', () => {
     const inner: ActionStep = {
       id: randomUUID(),
-      name: 'Send it',
-      instruction: [{ t: 'text', v: 'send' }],
+      name: 'Record the skip',
+      instruction: [{ t: 'text', v: 'note it' }],
       tool: null,
       maxAttempts: 1,
       failureHandling: [],
     };
-    const node = approval({ onApproved: { id: randomUUID(), name: 'Approved', steps: [inner] } });
+    const node = gated({ onNotApproved: { id: randomUUID(), name: 'Skip it', steps: [inner] } });
     const walked = walkSteps([node]);
-    expect(walked.map((entry) => entry.path)).toEqual(['steps.0', 'steps.0.onApproved.steps.0']);
+    expect(walked.map((entry) => entry.path)).toEqual(['steps.0', 'steps.0.onNotApproved.steps.0']);
 
     const found = findNodeById([node], inner.id);
     expect(found?.ancestors).toHaveLength(1);
     const ancestor = found?.ancestors[0];
-    expect(ancestor?.kind).toBe('approval');
-    if (ancestor?.kind === 'approval') expect(ancestor.outcome).toBe('onApproved');
+    expect(ancestor?.kind).toBe('gate');
+    if (ancestor?.kind === 'gate') expect(ancestor.step).toBe(node);
   });
 
-  it('counts approval toward the branch nesting budget', () => {
-    // approval > branch > branch > branch exceeds the 3-level branch cap.
+  it('counts a gate toward the container nesting budget, not the branch one', () => {
+    // A gate's recovery path is structurally like a loop/group level — it
+    // costs a container slot, never a branch-decision slot.
     const deepBranch = (steps: AgentStepNode[]): BranchStep => ({
       id: randomUUID(),
       kind: 'branch',
@@ -467,14 +487,25 @@ describe('approval nodes (version 5)', () => {
       ],
       maxAttempts: 2,
     });
-    const tooDeep = approval({
-      onApproved: {
+    // Four container levels (the cap) inside the gate's recovery path is
+    // fine; a fifth is not.
+    const fourDeep = gated({
+      onNotApproved: {
         id: randomUUID(),
-        name: 'Approved',
+        name: 'Skip it',
         steps: [deepBranch([deepBranch([deepBranch([])])])],
       },
     });
-    expect(isAgentStepsDoc({ version: 5, steps: [tooDeep] })).toBe(false);
+    expect(isAgentStepsDoc({ version: 9, steps: [fourDeep] })).toBe(true);
+
+    const fiveDeep = gated({
+      onNotApproved: {
+        id: randomUUID(),
+        name: 'Skip it',
+        steps: [deepBranch([deepBranch([deepBranch([deepBranch([])])])])],
+      },
+    });
+    expect(isAgentStepsDoc({ version: 9, steps: [fiveDeep] })).toBe(false);
   });
 });
 
@@ -563,22 +594,19 @@ describe('nodeUsesModel', () => {
     expect(nodeUsesModel({ id: id(), kind: 'group', name: 'G', steps: body() })).toBe(false);
   });
 
-  it('is false for an approval', () => {
+  it('is true for a gated action step — needsApproval does not change what runs the step', () => {
     expect(
       nodeUsesModel({
         id: id(),
-        kind: 'approval',
-        name: 'Ask',
-        mode: 'approve',
-        message: [{ t: 'text', v: 'ok?' }],
-        timeoutHours: 24,
-        onApproved: { id: id(), name: 'Approved', steps: [] },
-        onDeclined: { id: id(), name: 'Declined', steps: [] },
-        onTimeout: { id: id(), name: 'Timed out', steps: [] },
-        notifyEmail: false,
-        notifyWebex: false,
+        name: 'Post it',
+        instruction: [{ t: 'text', v: 'post' }],
+        tool: 'jira_add_comment',
+        maxAttempts: 1,
+        failureHandling: [],
+        needsApproval: true,
+        approvalTimeoutHours: 96,
       })
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('is false for a terminal — it calls tools, but with no model deciding', () => {
