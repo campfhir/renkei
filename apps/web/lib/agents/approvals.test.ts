@@ -16,6 +16,8 @@ function stubDb(options: {
   row?: unknown;
   updated?: number;
   wheres?: [string, unknown][];
+  /** Every `.set({...})` the call made, in order. */
+  sets?: Record<string, unknown>[];
 }): Kysely<DB> {
   const chain = {
     selectFrom: () => chain,
@@ -23,7 +25,10 @@ function stubDb(options: {
     leftJoin: () => chain,
     updateTable: () => chain,
     select: () => chain,
-    set: () => chain,
+    set: (values: Record<string, unknown>) => {
+      options.sets?.push(values);
+      return chain;
+    },
     orderBy: () => chain,
     limit: () => chain,
     where: (column: string, _op?: unknown, value?: unknown) => {
@@ -167,5 +172,106 @@ describe('decideApproval', () => {
     expect(result.outcome).toBe('answer-too-long');
     // Nothing was read or written: an over-long answer must not half-decide.
     expect(wheres).toEqual([]);
+  });
+});
+
+describe('decideApproval on a form card', () => {
+  const FORM = [
+    {
+      name: 'the issue key',
+      label: 'Which issue?',
+      type: 'text' as const,
+      required: true,
+    },
+    {
+      name: 'the points',
+      label: 'Points',
+      type: 'number' as const,
+      required: false,
+      min: 1,
+      max: 13,
+    },
+    {
+      name: 'the comments',
+      label: 'Which comments?',
+      type: 'multi' as const,
+      required: false,
+      options: ['decision 1', 'risk 2'],
+    },
+  ];
+  const formCard = (extra: Record<string, unknown> = {}) => ({
+    id: 'card-1',
+    kind: 'approval',
+    status: 'suggested',
+    run_id: 'run-1',
+    suggested_action: { approvalMode: 'input', fields: FORM },
+    ...extra,
+  });
+
+  it('refuses answers the form does not accept, and records nothing', async () => {
+    const sets: Record<string, unknown>[] = [];
+    const result = await decideApproval(
+      stubDb({ row: formCard(), updated: 1, sets }),
+      producer(true),
+      't',
+      'alice',
+      {
+        cardId: 'card-1',
+        decision: 'approve',
+        answers: { 'the issue key': '', 'the points': 'eight', 'the comments': ['risk 9'] },
+      }
+    );
+
+    expect(result.outcome).toBe('invalid-answers');
+    if (result.outcome !== 'invalid-answers') throw new Error('expected invalid-answers');
+    expect(result.issues.map((issue) => issue.label)).toEqual([
+      'Which issue?',
+      'Points',
+      'Which comments?',
+    ]);
+    // The claim is what makes a decision real; a rejected form must not
+    // have made one.
+    expect(sets).toHaveLength(0);
+  });
+
+  it('stores the answers under the same names they arrived with', async () => {
+    const sets: Record<string, unknown>[] = [];
+    const result = await decideApproval(
+      stubDb({ row: formCard(), updated: 1, sets }),
+      producer(true),
+      't',
+      'alice',
+      {
+        cardId: 'card-1',
+        decision: 'approve',
+        answers: { 'the issue key': 'CIO-12', 'the points': ' 8 ', 'the comments': ['risk 2'] },
+      }
+    );
+
+    expect(result.outcome).toBe('decided');
+    const stored: { answers?: Record<string, unknown> } = JSON.parse(String(sets[0]?.result));
+    // The reply IS the key/value pairs: what is stored reads the same as
+    // what was sent, and as what the run will bind.
+    expect(stored.answers).toEqual({
+      'the issue key': 'CIO-12',
+      'the points': '8',
+      'the comments': ['risk 2'],
+    });
+  });
+
+  it('declines without demanding a well-formed answer', async () => {
+    const sets: Record<string, unknown>[] = [];
+    const result = await decideApproval(
+      stubDb({ row: formCard(), updated: 1, sets }),
+      producer(true),
+      't',
+      'alice',
+      { cardId: 'card-1', decision: 'decline' }
+    );
+
+    // "I don't know" is the whole point of the button — requiring the form
+    // to be filled in before you may say it would be a trap.
+    expect(result.outcome).toBe('decided');
+    expect(String(sets[0]?.status)).toBe('declined');
   });
 });

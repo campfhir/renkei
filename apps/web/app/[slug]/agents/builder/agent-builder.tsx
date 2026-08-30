@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   BUILTIN_VARIABLES,
+  approvalFieldsOf,
   findNodeById,
   flattenActionSteps,
   isContainerNode,
@@ -544,18 +545,50 @@ export function AgentBuilder({
           : []),
       ];
     });
-    // Approvals bind names too: the typed answer, and the card link once
-    // any approval exists (the engine binds it when the run pauses).
+    // Approvals bind names too: the typed answer OR the form's fields, and
+    // the card link once any approval exists (the engine binds it when the
+    // run pauses). A form's answers were missing here, which made them
+    // unreachable from the menu — and a variable you cannot insert is a
+    // variable no step can write to memory, into a knowledge note, or
+    // anywhere else.
     const fromApprovals = walkSteps(steps).flatMap(({ node }) => {
-      if (node.kind !== 'approval' || !node.saveAs) return [];
-      return [
-        {
-          name: node.saveAs,
-          label: node.saveAs,
-          description: `Your answer to the approval “${node.name.trim() || 'unnamed'}”.`,
-          source: 'step' as const,
-        },
-      ];
+      if (node.kind !== 'approval') return [];
+      const asked = node.name.trim() || 'unnamed';
+      const fields = approvalFieldsOf(node);
+      if (fields.length > 0) {
+        return [
+          ...fields
+            .filter((field) => field.name)
+            .map((field) => ({
+              name: field.name,
+              label: field.name,
+              description:
+                `Your answer to “${field.label.trim() || field.name}” on the approval “${asked}”` +
+                `${field.key ? ` (writes to ${field.key})` : ''}.`,
+              source: 'step' as const,
+            })),
+          ...(node.saveAs
+            ? [
+                {
+                  name: node.saveAs,
+                  label: node.saveAs,
+                  description: `Everything you filled in on the approval “${asked}”, one line per answer.`,
+                  source: 'step' as const,
+                },
+              ]
+            : []),
+        ];
+      }
+      return node.saveAs
+        ? [
+            {
+              name: node.saveAs,
+              label: node.saveAs,
+              description: `Your answer to the approval “${asked}”.`,
+              source: 'step' as const,
+            },
+          ]
+        : [];
     });
     const approvalLink = walkSteps(steps).some(({ node }) => node.kind === 'approval')
       ? [

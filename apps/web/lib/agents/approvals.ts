@@ -28,9 +28,21 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
+import {
+  MAX_APPROVAL_ANSWER_CHARS,
+  checkApprovalAnswers,
+  parseApprovalFields,
+  type ApprovalAnswerIssue,
+  type ApprovalAnswerValue,
+  type ApprovalField,
+} from '@renkei/agents';
 
-/** The longest answer an 'input' approval accepts. */
-export const MAX_APPROVAL_ANSWER_CHARS = 10_000;
+/**
+ * Re-exported so the route and the MCP tools keep importing the cap from
+ * the module that enforces it; the value itself belongs with the checking
+ * rules in @renkei/agents, which the card also runs client-side.
+ */
+export { MAX_APPROVAL_ANSWER_CHARS };
 
 export type ApprovalMode = 'approve' | 'input';
 
@@ -46,6 +58,12 @@ export interface PendingApproval {
   message: string;
   /** 'approve' wants a verdict; 'input' wants a typed answer with it. */
   mode: ApprovalMode;
+  /**
+   * The form the card is asking with, as the engine snapshotted it. Empty
+   * for an approve card, and for an input card that asks with one plain
+   * box — which is every input card saved before forms existed.
+   */
+  fields: ApprovalField[];
   raisedAt: string;
   /**
    * When the wait runs out and the run takes its timed-out path. Null only
@@ -59,6 +77,13 @@ function modeOf(suggestedAction: unknown): ApprovalMode {
   if (typeof suggestedAction !== 'object' || suggestedAction === null) return 'approve';
   const action: { approvalMode?: unknown } = suggestedAction;
   return action.approvalMode === 'input' ? 'input' : 'approve';
+}
+
+/** The form the engine snapshotted onto the card, or [] for a plain one. */
+function fieldsOf(suggestedAction: unknown): ApprovalField[] {
+  if (typeof suggestedAction !== 'object' || suggestedAction === null) return [];
+  const action: { fields?: unknown } = suggestedAction;
+  return parseApprovalFields(action.fields);
 }
 
 /**
@@ -112,6 +137,7 @@ export async function listPendingApprovals(
             title: row.title,
             message: row.summary ?? '',
             mode: modeOf(row.suggestedAction),
+            fields: fieldsOf(row.suggestedAction),
             raisedAt: new Date(row.createdAt).toISOString(),
             waitingUntil: row.waitingUntil ? new Date(row.waitingUntil).toISOString() : null,
           },
@@ -127,6 +153,8 @@ export type DecideApprovalResult =
   | { outcome: 'not-approval' }
   | { outcome: 'already-decided'; status: string }
   | { outcome: 'answer-too-long'; max: number }
+  /** A form card whose answers do not fit the form that asked. */
+  | { outcome: 'invalid-answers'; issues: ApprovalAnswerIssue[] }
   /** The claim won. `resumed` false means the sweep will wake the run. */
   | { outcome: 'decided'; decision: ApprovalDecision; runId: string; resumed: boolean };
 
@@ -142,7 +170,13 @@ export async function decideApproval(
   producer: QueueProducer,
   tenantId: string,
   subject: string,
-  input: { cardId: string; decision: ApprovalDecision; answer?: string | undefined }
+  input: {
+    cardId: string;
+    decision: ApprovalDecision;
+    answer?: string | undefined;
+    /** A form card's answers: one entry per field, keyed by field name. */
+    answers?: unknown;
+  }
 ): Promise<DecideApprovalResult> {
   const answer = typeof input.answer === 'string' ? input.answer.trim() : '';
   if (answer.length > MAX_APPROVAL_ANSWER_CHARS) {
@@ -153,7 +187,7 @@ export async function decideApproval(
   // forbidden — the same rule every agents read follows.
   const item = await db
     .selectFrom('actionable_items')
-    .select(['id', 'kind', 'status', 'run_id'])
+    .select(['id', 'kind', 'status', 'run_id', 'suggested_action'])
     .where('id', '=', input.cardId)
     .where('tenant_id', '=', tenantId)
     .where('owner_subject', '=', subject)
@@ -162,12 +196,34 @@ export async function decideApproval(
   if (item.kind !== 'approval' || !item.run_id) return { outcome: 'not-approval' };
   if (item.status !== 'suggested') return { outcome: 'already-decided', status: item.status };
 
+  /*
+    A form's answers are checked HERE, against the spec the card was raised
+    with, because this is the last place both are in hand: the browser's
+    copy of the form can be stale, and an MCP caller never saw one. The
+    rules themselves live in @renkei/agents so the card can run the same
+    ones as you type.
+
+    Only on the approve path — declining is "I have no answer", and
+    demanding a well-formed one to say so would be a trap.
+  */
+  const fields = fieldsOf(item.suggested_action);
+  let answers: Record<string, ApprovalAnswerValue> | null = null;
+  if (fields.length > 0 && input.decision === 'approve') {
+    const checked = checkApprovalAnswers(fields, input.answers);
+    if (!checked.ok) return { outcome: 'invalid-answers', issues: checked.issues };
+    answers = checked.values;
+  }
+
   // The optimistic claim: exactly one decider wins; decided beats expired.
   const claimed = await db
     .updateTable('actionable_items')
     .set({
       status: input.decision === 'approve' ? 'approved' : 'declined',
-      result: JSON.stringify({ ...(answer ? { answer } : {}), decidedBy: subject }),
+      result: JSON.stringify({
+        ...(answer ? { answer } : {}),
+        ...(answers ? { answers } : {}),
+        decidedBy: subject,
+      }),
       decided_by: subject,
       decided_at: sql`NOW()`,
       archived_at: sql`NOW()`,

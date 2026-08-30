@@ -2148,6 +2148,7 @@ maybe('agent run engine', () => {
       options: {
         mode?: 'approve' | 'input';
         saveAs?: string;
+        fields?: ApprovalStep['fields'];
         timeoutHours?: number;
         notifyEmail?: boolean;
         notifyWebex?: boolean;
@@ -2167,6 +2168,7 @@ maybe('agent run engine', () => {
         ],
         mode: options.mode ?? 'approve',
         ...(options.saveAs ? { saveAs: options.saveAs } : {}),
+        ...(options.fields ? { fields: options.fields } : {}),
         timeoutHours: options.timeoutHours ?? 72,
         notifyEmail: options.notifyEmail ?? false,
         notifyWebex: options.notifyWebex ?? false,
@@ -2439,6 +2441,173 @@ maybe('agent run engine', () => {
       expect(approvalRow.status).toBe('succeeded');
       expect(JSON.stringify(approvalRow.detail)).toContain('"decision":"approved"');
       expect(JSON.stringify(approvalRow.detail)).toContain('ship it');
+    });
+
+    it('tells the next step an ANSWER was given, not that anything was approved', async () => {
+      const acting = {
+        id: randomUUID(),
+        name: 'Runs on the answered path',
+        instruction: [{ t: 'text' as const, v: 'Use it.' }],
+        tool: null,
+        maxAttempts: 1,
+        failureHandling: [],
+      };
+      const { doc } = approvalDoc({
+        mode: 'input',
+        saveAs: 'the issue key',
+        onApproved: [acting],
+      });
+      const { runId } = await seedRun(doc);
+      const prompts: string[] = [];
+      const llm = stubLlm((request) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'approved',
+          result: JSON.stringify({ answer: 'CIO-12' }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const acted = prompts.join('\n');
+      // A typed string is evidence to check, never permission to act — the
+      // step that reads it must be told which of the two it holds.
+      expect(acted).toContain('The owner answered');
+      expect(acted).not.toContain('The owner approved');
+      expect(acted).toContain('the issue key');
+      expect(acted).toContain('check they are usable');
+      // A fact a person just supplied is the one worth keeping: the next
+      // run should not have to ask the same question again.
+      expect(acted).toContain('record it');
+    });
+
+    it('an input card declined reads as "no answer", not as a refusal to act', async () => {
+      const acting = {
+        id: randomUUID(),
+        name: 'Runs on the skipped path',
+        instruction: [{ t: 'text' as const, v: 'Move on.' }],
+        tool: null,
+        maxAttempts: 1,
+        failureHandling: [],
+      };
+      const { doc } = approvalDoc({
+        mode: 'input',
+        saveAs: 'the issue key',
+        onDeclined: [acting],
+      });
+      const { runId } = await seedRun(doc);
+      const prompts: string[] = [];
+      const llm = stubLlm((request) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({ status: 'declined', decided_at: sql`NOW()` })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const acted = prompts.join('\n');
+      expect(acted).toContain('SKIPPED');
+      expect(acted).toContain('Do not invent one');
+    });
+
+    it('a form card binds one variable per field, and a list for a multi-select', async () => {
+      const { doc } = approvalDoc({
+        mode: 'input',
+        saveAs: 'what you told me',
+        fields: [
+          {
+            name: 'the issue key',
+            label: 'Which issue?',
+            type: 'text',
+            required: true,
+          },
+          {
+            name: 'the comments',
+            label: 'Which comments?',
+            type: 'multi',
+            required: false,
+            options: ['decision 1', 'risk 2'],
+          },
+        ],
+        onApproved: [
+          terminalNode('failure', [
+            { t: 'text', v: 'Post ' },
+            { t: 'var', name: 'the comments' },
+            { t: 'text', v: ' to ' },
+            { t: 'var', name: 'the issue key' },
+            { t: 'text', v: ' — all of it: ' },
+            { t: 'var', name: 'what you told me' },
+          ]),
+        ],
+      });
+      const { runId } = await seedRun(doc);
+      const handler = handlerWith(
+        noModel(),
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+
+      // The card carries the form, so the feed can render controls without
+      // loading the agent.
+      const card = await cardOf(runId);
+      expect(JSON.stringify(card.suggested_action)).toContain('Which comments?');
+
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'approved',
+          result: JSON.stringify({
+            answers: { 'the issue key': 'CIO-12', 'the comments': ['decision 1', 'risk 2'] },
+          }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'error'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      // Each field bound under its OWN name; the multi-select rendered the
+      // way a collected list renders.
+      expect(run.error).toContain('Post decision 1\nrisk 2 to CIO-12');
+      // And the whole reply under the node's own name: every label with its
+      // answer, for a step that relays what was said.
+      expect(run.error).toContain('Which issue?: CIO-12');
+      expect(run.error).toContain('Which comments?: decision 1, risk 2');
+      expect(run.status).toBe('failed');
     });
 
     it('a declined card routes the declined path', async () => {

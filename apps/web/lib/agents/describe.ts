@@ -12,6 +12,7 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import {
+  approvalFieldsOf,
   describeFailureHandling,
   describeSchedule,
   instructionPreview,
@@ -167,7 +168,18 @@ function nodeLines(
           ];
           return [
             `${indent}${label} ${node.name} (an approval — the run PAUSES here and waits for the OWNER, up to ${node.timeoutHours} hours)`,
-            `${indent}   asks: ${instructionPreview(node.message)}${node.mode === 'input' ? ` (the owner types an answer${node.saveAs ? `, saved as "${node.saveAs}"` : ''})` : ' (the owner approves or declines)'}`,
+            `${indent}   asks: ${instructionPreview(node.message)}${
+              node.mode === 'input'
+                ? approvalFieldsOf(node).length > 0
+                  ? ` (the owner fills in a form: ${approvalFieldsOf(node)
+                      .map(
+                        (field) =>
+                          `"${field.label || field.name}" → ${field.type}, saved as "${field.name}"`
+                      )
+                      .join('; ')})`
+                  : ` (the owner types an answer${node.saveAs ? `, saved as "${node.saveAs}"` : ''})`
+                : ' (the owner approves or declines)'
+            }`,
             channels.length > 0
               ? `${indent}   at the pause the owner gets ${channels.join(' and ')} with the message and a link`
               : `${indent}   no notification — the owner sees the card on their home page`,

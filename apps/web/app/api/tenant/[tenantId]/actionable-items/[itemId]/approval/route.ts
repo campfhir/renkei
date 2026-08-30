@@ -39,6 +39,10 @@ export async function POST(
     return NextResponse.json({ error: "decision must be 'approve' or 'decline'" }, { status: 400 });
   }
   const answer = typeof body.answer === 'string' ? body.answer : '';
+  // A form card posts { answers: { <fieldId>: string | string[] } }; the
+  // shape is checked against the card's own spec in decideApproval, which
+  // is the only place that has it.
+  const answers = isRecord(body.answers) ? body.answers : undefined;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) {
@@ -50,10 +54,20 @@ export async function POST(
     agentJobsQueue().producer,
     tenantId,
     session.subject,
-    { cardId: itemId, decision: body.decision, answer }
+    { cardId: itemId, decision: body.decision, answer, answers }
   );
 
   switch (result.outcome) {
+    case 'invalid-answers':
+      // 422: the request was understood and the form was not satisfied.
+      // Per-field messages travel with it — the card marks the controls.
+      return NextResponse.json(
+        {
+          error: 'Some answers need another look.',
+          issues: result.issues,
+        },
+        { status: 422 }
+      );
     case 'answer-too-long':
       return NextResponse.json(
         { error: `answer must stay under ${MAX_APPROVAL_ANSWER_CHARS} characters` },

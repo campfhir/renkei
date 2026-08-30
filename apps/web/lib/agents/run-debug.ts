@@ -9,6 +9,7 @@
  */
 
 import {
+  approvalFieldsOf,
   describeFailureHandling,
   findNodeById,
   instructionPreview,
@@ -150,8 +151,19 @@ function snapshotLines(run: RunDetail): string[] {
       case 'approval': {
         lines.push(
           `${indent}${ordinal + 1}. Approval: ${node.name} — pauses for the owner (` +
-            `${node.mode === 'input' ? 'typed answer' : 'approve/decline'}, waits up to ${node.timeoutHours}h)` +
-            (node.saveAs ? `; saves the answer as: ${node.saveAs}` : '')
+            `${
+              node.mode === 'input'
+                ? approvalFieldsOf(node).length > 0
+                  ? `a form of ${approvalFieldsOf(node).length}`
+                  : 'typed answer'
+                : 'approve/decline'
+            }, waits up to ${node.timeoutHours}h)` +
+            (node.saveAs ? `; saves the answer as: ${node.saveAs}` : '') +
+            (approvalFieldsOf(node).length > 0
+              ? `; saves: ${approvalFieldsOf(node)
+                  .map((field) => field.name)
+                  .join(', ')}`
+              : '')
         );
         const ask = instructionPreview(node.message);
         if (ask) lines.push(`${indent}   asks: ${ask}`);
@@ -167,7 +179,9 @@ function snapshotLines(run: RunDetail): string[] {
         // "why did the run keep going after this failed?" finds the answer
         // here instead of in the builder.
         for (const handling of node.failureHandling) {
-          lines.push(`${indent}   ${describeFailureHandling(handling, node.maxAttempts, node.saveAs)}`);
+          lines.push(
+            `${indent}   ${describeFailureHandling(handling, node.maxAttempts, node.saveAs)}`
+          );
         }
         break;
       }
@@ -199,7 +213,12 @@ function attemptLines(attempt: AttemptView): string[] {
   // summaries, tool calls, errors — is appended context; this block is the
   // 1:1 part.
   if (str(detail.promptText)) {
-    lines.push('  Prompt (verbatim, as sent to the model):', '```text', str(detail.promptText), '```');
+    lines.push(
+      '  Prompt (verbatim, as sent to the model):',
+      '```text',
+      str(detail.promptText),
+      '```'
+    );
   }
   if (str(detail.chosenPathName)) lines.push(`  Took path: ${str(detail.chosenPathName)}`);
   // A skip ends the WHOLE run from inside a "Succeeded" attempt — without

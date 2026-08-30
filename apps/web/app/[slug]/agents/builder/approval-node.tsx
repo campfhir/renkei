@@ -7,7 +7,7 @@
  */
 
 import { useMemo } from 'react';
-import { instructionPreview, type ApprovalStep } from '@renkei/agents';
+import { approvalFieldsOf, instructionPreview, type ApprovalStep } from '@renkei/agents';
 import { FixedMark } from './fixed-marker';
 
 function waitLabel(hours: number): string {
@@ -74,7 +74,11 @@ export function ApprovalNode({
       )}
       <span className="mt-1.5 flex flex-wrap items-center gap-1">
         <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] text-sky-700 dark:bg-sky-900 dark:text-sky-300">
-          {approval.mode === 'input' ? 'asks for an answer' : 'approve / decline'}
+          {approval.mode === 'input'
+            ? approvalFieldsOf(approval).length > 0
+              ? `asks for ${approvalFieldsOf(approval).length} things`
+              : 'asks for an answer'
+            : 'approve / decline'}
         </span>
         <span className="rounded-full bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-700 dark:bg-gray-700 dark:text-gray-200">
           waits ≤ {waitLabel(approval.timeoutHours)}

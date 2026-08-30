@@ -51,6 +51,7 @@ import {
   isBranchStep,
   type ActionStep,
   type AgentStepNode,
+  type ApprovalStep,
   type BranchStep,
   type LoopStep,
 } from '@renkei/agents';
@@ -71,6 +72,11 @@ function branchOf(node: AgentStepNode | undefined): BranchStep {
 
 function loopOf(node: AgentStepNode | undefined): LoopStep {
   if (!node || node.kind !== 'loop') throw new Error('expected a loop');
+  return node;
+}
+
+function askOf(node: AgentStepNode | undefined): ApprovalStep {
+  if (!node || node.kind !== 'approval') throw new Error('expected an ask');
   return node;
 }
 
@@ -1039,5 +1045,114 @@ describe('the interactive draft path costs one model call', () => {
     expect(result.steps).toHaveLength(1);
     // The whole point of the change: one call, not draft + review + refine.
     expect(requests).toHaveLength(1);
+  });
+});
+
+describe('drafting an ask that collects a form', () => {
+  it('offers the form vocabulary and a reason to prefer it', async () => {
+    replies = [GOOD_REPLY];
+    await draftAgentFromProse(db, 't1', 'find my tickets please', TOOLS);
+
+    const prompt = JSON.stringify(requests[0].messages);
+    // The shape, and the judgement call that decides between the two —
+    // a model told only that fields exist writes the plain box anyway.
+    expect(prompt).toContain('ask collects EITHER one plain answer');
+    expect(prompt).toContain('choice');
+    expect(prompt).toContain('customfield_10016');
+    expect(prompt).toContain('PREFER FIELDS');
+  });
+
+  it('builds the fields, binds each name, and needs no saveAs', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'Reconcile',
+        steps: [
+          {
+            kind: 'ask',
+            name: 'Where do these go?',
+            message: 'Which issue tracks this work?',
+            mode: 'input',
+            fields: [
+              { name: 'the issue key', label: 'Which issue?', type: 'text', required: true },
+              {
+                name: 'the points',
+                label: 'Story Points',
+                type: 'number',
+                required: false,
+                min: 1,
+                max: 13,
+                key: 'customfield_10016',
+              },
+              {
+                name: 'the comments',
+                label: 'Which comments?',
+                type: 'multi',
+                options: ['decision 1', 'risk 2'],
+              },
+            ],
+            onApproved: [
+              {
+                name: 'Post them',
+                instruction: 'Post {{var:the comments}} to {{var:the issue key}}',
+                tool: 'jira_search_issues',
+              },
+            ],
+          },
+        ],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'ask me where the decisions go', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const ask = askOf(result.steps[0]);
+
+    expect(ask.mode).toBe('input');
+    // A form binds its own names, so there is no single answer to name.
+    expect(ask.saveAs).toBeUndefined();
+    expect(ask.fields?.map((field) => field.name)).toEqual([
+      'the issue key',
+      'the points',
+      'the comments',
+    ]);
+    expect(ask.fields?.[1]).toMatchObject({
+      type: 'number',
+      min: 1,
+      max: 13,
+      key: 'customfield_10016',
+    });
+    // And the names are BOUND: the step on the answered path chips them,
+    // which only parses because the fields registered them.
+    const posting = actionOf(ask.onApproved.steps[0]);
+    expect(posting.instruction).toContainEqual({ t: 'var', name: 'the comments' });
+    expect(posting.instruction).toContainEqual({ t: 'var', name: 'the issue key' });
+  });
+
+  it('rescues a one-option choice as text rather than refusing the draft', async () => {
+    replies = [
+      JSON.stringify({
+        name: 'Reconcile',
+        steps: [
+          {
+            kind: 'ask',
+            name: 'Where?',
+            message: 'Which issue?',
+            mode: 'input',
+            fields: [
+              { name: 'the issue key', label: 'Which issue?', type: 'choice', options: ['CIO-12'] },
+            ],
+          },
+        ],
+      }),
+    ];
+
+    const result = await draftAgentFromProse(db, 't1', 'ask me where', TOOLS);
+    if ('error' in result) throw new Error(result.error);
+    const ask = askOf(result.steps[0]);
+    // Usable draft, and the person is told what was changed under them.
+    expect(ask.fields?.[0]).toMatchObject({ name: 'the issue key', type: 'text' });
+    expect(ask.fields?.[0]?.options).toBeUndefined();
+    // And the model is told what was changed under it, on the corrective
+    // round trip that every soft problem earns.
+    expect(JSON.stringify(requests[1].messages)).toContain('fewer than two options');
   });
 });
