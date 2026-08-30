@@ -29,6 +29,7 @@ export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 export interface ActionableItems {
   archived_at: Timestamp | null;
   archived_by: string | null;
+  attempt: number | null;
   created_at: Generated<Timestamp>;
   created_by: string | null;
   created_by_agent_id: string | null;

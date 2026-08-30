@@ -29,15 +29,20 @@ import {
   APPROVAL_DEFAULT_TIMEOUT_HOURS,
   MAX_COLLECTED_ITEMS,
   attemptVariables,
+  describeQuestionAnswer,
   findNodeById,
+  flattenFormFields,
   friendlyToolName,
   flattenActionSteps,
   isAgentStepsDoc,
+  parseFormNodes,
+  questionAnswerText,
   renderInstruction,
   toolSegments,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
+  type FormNode,
   resolveTime,
   TIME_UNITS,
   type ResolveTimeRequest,
@@ -70,6 +75,8 @@ import {
 } from '@renkei/agents/memory';
 import { recordAgentRunFailure } from '@renkei/agents/runs';
 import {
+  ASK_PERSON_DEF,
+  ASK_PERSON_TOOL,
   BRANCH_SYSTEM_PROMPT,
   ROUTER_SYSTEM_PROMPT,
   LOOP_SYSTEM_PROMPT,
@@ -167,6 +174,18 @@ function gateOutcomeOf(decision: unknown): 'approved' | 'denied' | 'timedOut' {
   if (decision === 'approved') return 'approved';
   if (decision === 'declined') return 'denied';
   return 'timedOut';
+}
+
+/** A 'question' card's `result.answers` — the form reply keyed by field name. */
+function answersOf(result: unknown): Record<string, unknown> {
+  const resultObj: { answers?: unknown } =
+    typeof result === 'object' && result !== null && !Array.isArray(result) ? result : {};
+  return typeof resultObj.answers === 'object' &&
+    resultObj.answers !== null &&
+    !Array.isArray(resultObj.answers)
+    ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+      (resultObj.answers as Record<string, unknown>)
+    : {};
 }
 
 /**
@@ -308,6 +327,13 @@ interface AttemptOutcome {
    * handling).
    */
   proposedCall?: { tool: string; args: Record<string, unknown> };
+  /**
+   * Set instead of every other field above when the model called
+   * `ask_person` (only offered with the agent's `canAskQuestions` on) —
+   * the attempt ends here, parked behind a 'question' card, the same way
+   * a gate parks behind an 'approval' one.
+   */
+  askPerson?: { message: string; form: FormNode[]; timeoutHours?: number };
 }
 
 /** The run-scoped context blocks every attempt's prompt carries. */
@@ -712,6 +738,28 @@ function finishArgsOf(input: unknown): {
   };
 }
 
+/**
+ * ask_person's arguments. Only `message` is required — a malformed or
+ * missing `form` degrades to a message-only question (`parseFormNodes`
+ * drops what it cannot read) rather than refusing the whole call, the
+ * same leniency the card rendering already extends to a saved form.
+ */
+function askPersonArgsOf(
+  input: unknown
+): { message: string; form: FormNode[]; timeoutHours?: number } | null {
+  if (typeof input !== 'object' || input === null) return null;
+  const args: { message?: unknown; form?: unknown; timeoutHours?: unknown } = input;
+  const message = typeof args.message === 'string' ? args.message.trim() : '';
+  if (!message) return null;
+  return {
+    message,
+    form: parseFormNodes(args.form),
+    ...(typeof args.timeoutHours === 'number' && Number.isFinite(args.timeoutHours)
+      ? { timeoutHours: args.timeoutHours }
+      : {}),
+  };
+}
+
 export function createAgentRunHandler(deps: EngineDeps) {
   const db = deps.db;
   const createClient =
@@ -802,7 +850,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // blocked-tool set are LIVE-READ here on purpose (see RunContextText).
     const agentRow = await db
       .selectFrom('agents')
-      .select(['enabled', 'name', 'guardrails', 'blocked_tools'])
+      .select(['enabled', 'name', 'guardrails', 'blocked_tools', 'can_ask_questions'])
       .where('id', '=', run.agent_id)
       .executeTakeFirst();
     if (!agentRow) {
@@ -1138,7 +1186,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
           settings.agentMaxStepAttempts,
           ordinals,
           iteration,
-          settings.agentApprovalMaxWaitDays * 24
+          settings.agentApprovalMaxWaitDays * 24,
+          agentRow.can_ask_questions === true
         );
         if (result.kind === 'advance') {
           frame.index += 1;
@@ -1431,7 +1480,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     orgAttemptCap: number,
     ordinals: Map<string, number>,
     iteration: number,
-    approvalWaitCapHours: number
+    approvalWaitCapHours: number,
+    canAskQuestions: boolean
   ): Promise<
     | { kind: 'advance' }
     | { kind: 'finish'; quiet: boolean }
@@ -1619,6 +1669,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     async function raiseApprovalCard(
       gatedStep: ActionStep,
       currentIteration: number,
+      currentAttempt: number,
       tool: string,
       args: Record<string, unknown>,
       waitCapHours: number
@@ -1654,11 +1705,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
             run_id: run.id,
             step_id: gatedStep.id,
             iteration: currentIteration,
+            attempt: currentAttempt,
           })
           .execute();
       } catch (error) {
-        // The unique (run, step, iteration) card index: a racing executor
-        // won — its card (and notification) stand; back off and re-enter.
+        // The unique (run, step, iteration, attempt) card index: a racing
+        // executor won — its card (and notification) stand; back off and
+        // re-enter.
         if (error instanceof Error && error.message.includes('idx_actionable_items_run_step')) {
           throw new TransientFailure('another executor created the approval card');
         }
@@ -1676,6 +1729,76 @@ export function createAgentRunHandler(deps: EngineDeps) {
           clip(JSON.stringify(args, null, 2), PREVIEW_CHARS),
           ...(link ? [`Respond here: ${link}`] : []),
         ].join('\n\n'),
+        ownerEmail: vars['user.email'],
+      });
+
+      await db
+        .updateTable('agent_runs')
+        .set({ status: 'waiting', waiting_until: waitingUntil, updated_at: sql`NOW()` })
+        .where('id', '=', run.id)
+        .execute();
+    }
+
+    /**
+     * Raise the card an `ask_person` call pauses behind — a `'question'`
+     * kind actionable_item, distinct from a gate's `'approval'` one so
+     * the feed and the answer route can tell them apart at a glance.
+     */
+    async function raiseQuestionCard(
+      askingStep: ActionStep,
+      currentIteration: number,
+      currentAttempt: number,
+      message: string,
+      form: FormNode[],
+      timeoutHours: number | undefined,
+      waitCapHours: number
+    ): Promise<void> {
+      const clampedHours = Math.min(
+        Math.max(1, timeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS),
+        Math.max(1, waitCapHours)
+      );
+      const waitingUntil = new Date(Date.now() + clampedHours * 3_600_000);
+      const link = await approvalLink(run);
+      const agentName = await agentNameOf(run.tenant_id, run.agent_id);
+      try {
+        await db
+          .insertInto('actionable_items')
+          .values({
+            id: randomUUID(),
+            tenant_id: run.tenant_id,
+            source: 'agents',
+            status: 'suggested',
+            kind: 'question',
+            title: `${agentName} — ${askingStep.name.trim() || 'has a question'}`,
+            summary: clip(message, PREVIEW_CHARS),
+            evidence: JSON.stringify([]),
+            // A snapshot, like the gate's card: what a person is looking
+            // at keeps asking what it asked even if the step changes
+            // before they answer.
+            suggested_action: JSON.stringify({ message, form }),
+            owner_subject: run.owner_subject,
+            created_by: run.owner_subject,
+            created_by_agent_id: run.agent_id,
+            run_id: run.id,
+            step_id: askingStep.id,
+            iteration: currentIteration,
+            attempt: currentAttempt,
+          })
+          .execute();
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('idx_actionable_items_run_step')) {
+          throw new TransientFailure('another executor created the question card');
+        }
+        throw error;
+      }
+
+      vars['question.link'] = link ?? '';
+      const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
+      await deliverOwnerNotifications({
+        email: true,
+        webex: true,
+        heading: `Agent “${agentName}” has a question${askingStep.name.trim() ? `: ${askingStep.name.trim()}` : ''}`,
+        body: [message, ...(link ? [`Answer here: ${link}`] : [])].join('\n\n'),
         ownerEmail: vars['user.email'],
       });
 
@@ -1705,7 +1828,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     ): Promise<StepResult | { kind: 'waiting' } | null> {
       const row = await db
         .selectFrom('agent_run_steps')
-        .select(['id', 'status', 'detail'])
+        .select(['id', 'status', 'detail', 'attempt'])
         .where('run_id', '=', run.id)
         .where('step_id', '=', gatedStep.id)
         .where('iteration', '=', currentIteration)
@@ -1720,6 +1843,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         comment?: unknown;
         proposedTool?: unknown;
         proposedArgs?: unknown;
+        pauseKind?: unknown;
       } =
         typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
           ? row.detail
@@ -1731,7 +1855,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // a routed path reads and re-route; an APPROVED-and-executed row
         // has no `decision` field (it closed through finishAttempt like
         // any ordinary succeeded attempt) and just advances, same as the
-        // generic succeeded-check right after this call handles it.
+        // generic succeeded-check right after this call handles it. A
+        // row that is neither — an ordinary succeeded attempt, or a
+        // resolved `ask_person` pause (resolveQuestion's job, not ours) —
+        // is not this function's to touch.
         const decision = rowDetail.decision;
         if (decision === 'denied' || decision === 'timedOut') {
           vars['approval.outcome'] = decision;
@@ -1744,7 +1871,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
         return null;
       }
 
-      // status === 'waiting'.
+      // status === 'waiting'. Not every waiting row is a gate's — the same
+      // step, with canAskQuestions on, may be parked behind an ask_person
+      // pause instead (resolveQuestion's job).
+      if (rowDetail.pauseKind !== 'approval') return null;
       const proposedTool =
         typeof rowDetail.proposedTool === 'string' ? rowDetail.proposedTool : null;
       const proposedArgs =
@@ -1761,6 +1891,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .where('run_id', '=', run.id)
         .where('step_id', '=', gatedStep.id)
         .where('iteration', '=', currentIteration)
+        .where('attempt', '=', row.attempt)
         .executeTakeFirst();
 
       const resolveDecision = async (status: string, result: unknown): Promise<StepResult> => {
@@ -1875,6 +2006,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         await raiseApprovalCard(
           gatedStep,
           currentIteration,
+          row.attempt ?? 0,
           proposedTool,
           proposedArgs,
           waitCapHours
@@ -1924,6 +2056,203 @@ export function createAgentRunHandler(deps: EngineDeps) {
       return resolveDecision('expired', { reason: 'timeout' });
     }
 
+    /**
+     * Bind what an `ask_person` pause asked and, once resolved, what came
+     * back — the vars a FRESH attempt's prompt lists under "Known
+     * information" (see buildAttemptMessages), which is the entire
+     * mechanism that lets the model "pick the thread back up": no
+     * in-flight conversation is persisted or replayed, the next attempt
+     * just starts already knowing the answer.
+     */
+    function bindQuestionAnswer(
+      message: string,
+      form: FormNode[],
+      answered: boolean,
+      answers: Record<string, unknown>
+    ): void {
+      vars['question.message'] = message;
+      if (!answered) {
+        vars['question.answer'] = 'Nobody answered before the deadline.';
+        return;
+      }
+      const lines: string[] = [];
+      for (const field of flattenFormFields(form)) {
+        const raw = answers[field.name];
+        const value: string | string[] | null = Array.isArray(raw)
+          ? raw.filter((entry): entry is string => typeof entry === 'string')
+          : typeof raw === 'string'
+            ? raw
+            : null;
+        if (value === null) continue;
+        vars[field.name] = questionAnswerText(value);
+        if (Array.isArray(value)) lists[field.name] = value;
+        lines.push(describeQuestionAnswer(field, value));
+      }
+      vars['question.answer'] = lines.join('\n') || 'Answered, with nothing filled in.';
+    }
+
+    /**
+     * An `ask_person` pause's re-entry — the same single-arbiter shape as
+     * resolveGate, simplified: there is nothing to execute on an answer,
+     * only vars to bind, so a resolved pause always returns null (bind,
+     * then let the caller's loop spend a FRESH attempt) rather than a
+     * StepResult of its own. Available to every step, not just gated
+     * ones — canAskQuestions is agent-wide.
+     */
+    async function resolveQuestion(
+      askingStep: ActionStep,
+      currentIteration: number,
+      waitCapHours: number
+    ): Promise<{ kind: 'waiting' } | null> {
+      const row = await db
+        .selectFrom('agent_run_steps')
+        .select(['id', 'status', 'detail', 'attempt'])
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', askingStep.id)
+        .where('iteration', '=', currentIteration)
+        .where((eb) => eb.or([eb('status', '=', 'waiting'), eb('status', '=', 'succeeded')]))
+        .orderBy('attempt', 'desc')
+        .limit(1)
+        .executeTakeFirst();
+      if (!row) return null;
+
+      const rowDetail: {
+        pauseKind?: unknown;
+        message?: unknown;
+        form?: unknown;
+        answers?: unknown;
+        timedOut?: unknown;
+        timeoutHours?: unknown;
+      } =
+        typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
+          ? row.detail
+          : {};
+      if (rowDetail.pauseKind !== 'question') return null;
+      const message = typeof rowDetail.message === 'string' ? rowDetail.message : '';
+      const form = parseFormNodes(rowDetail.form);
+      const timeoutHours =
+        typeof rowDetail.timeoutHours === 'number' && Number.isFinite(rowDetail.timeoutHours)
+          ? rowDetail.timeoutHours
+          : undefined;
+
+      if (row.status === 'succeeded') {
+        // Replay: rebind what a fresh attempt needs, then let the caller
+        // spend one — this row's only job was ever to carry the pause.
+        const answers: Record<string, unknown> =
+          typeof rowDetail.answers === 'object' &&
+          rowDetail.answers !== null &&
+          !Array.isArray(rowDetail.answers)
+            ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+              (rowDetail.answers as Record<string, unknown>)
+            : {};
+        bindQuestionAnswer(message, form, rowDetail.timedOut !== true, answers);
+        return null;
+      }
+
+      // status === 'waiting'.
+      const card = await db
+        .selectFrom('actionable_items')
+        .select(['id', 'status', 'result', 'created_at'])
+        .where('run_id', '=', run.id)
+        .where('step_id', '=', askingStep.id)
+        .where('iteration', '=', currentIteration)
+        .where('attempt', '=', row.attempt)
+        .executeTakeFirst();
+
+      const close = async (answered: boolean, answers: Record<string, unknown>): Promise<null> => {
+        bindQuestionAnswer(message, form, answered, answers);
+        await db
+          .updateTable('agent_run_steps')
+          .set({
+            status: 'succeeded',
+            outcome: 'question',
+            outcome_code: null,
+            tool_call_count: 0,
+            detail: clip(
+              JSON.stringify({
+                pauseKind: 'question',
+                llmSummary: answered ? 'Answered.' : 'Nobody answered before the deadline.',
+                message,
+                form,
+                answers,
+                timedOut: !answered,
+              }),
+              DETAIL_CHARS
+            ),
+            finished_at: sql`NOW()`,
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', row.id)
+          .execute();
+        return null;
+      };
+
+      if (!card) {
+        // A crash between marking the row 'waiting' and inserting the
+        // card: recreate it from what the row already recorded.
+        if (!message) return null;
+        await raiseQuestionCard(
+          askingStep,
+          currentIteration,
+          row.attempt ?? 0,
+          message,
+          form,
+          timeoutHours,
+          waitCapHours
+        );
+        return { kind: 'waiting' };
+      }
+
+      if (card.status === 'suggested') {
+        const clampedHours = Math.min(
+          Math.max(1, timeoutHours ?? APPROVAL_DEFAULT_TIMEOUT_HOURS),
+          Math.max(1, waitCapHours)
+        );
+        const dueAt = run.waiting_until
+          ? new Date(run.waiting_until).getTime()
+          : new Date(card.created_at).getTime() + clampedHours * 3_600_000;
+        if (Date.now() < dueAt) {
+          await db
+            .updateTable('agent_runs')
+            .set({ status: 'waiting', waiting_until: new Date(dueAt), updated_at: sql`NOW()` })
+            .where('id', '=', run.id)
+            .execute();
+          return { kind: 'waiting' };
+        }
+        const claimed = await db
+          .updateTable('actionable_items')
+          .set({
+            status: 'expired',
+            decided_at: sql`NOW()`,
+            archived_at: sql`NOW()`,
+            result: JSON.stringify({ reason: 'timeout' }),
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', card.id)
+          .where('status', '=', 'suggested')
+          .executeTakeFirst();
+        if (Number(claimed.numUpdatedRows ?? 0) === 0) {
+          const decided = await db
+            .selectFrom('actionable_items')
+            .select(['status', 'result'])
+            .where('id', '=', card.id)
+            .executeTakeFirst();
+          if (decided?.status === 'answered') {
+            return close(true, answersOf(decided.result));
+          }
+          return close(false, {});
+        }
+        return close(false, {});
+      }
+
+      // Already decided (answered, most likely a spurious wake replaying
+      // a decision the sweep or a redelivery already resolved once).
+      if (card.status === 'answered') {
+        return close(true, answersOf(card.result));
+      }
+      return close(false, {});
+    }
+
     for (;;) {
       // Close an attempt a crashed worker left open, then recount. All
       // bookkeeping is scoped to THIS iteration — a looped step's budget
@@ -1943,6 +2272,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .where('iteration', '=', iteration)
         .where('status', '=', 'running')
         .execute();
+
+      // An ask_person pause: a prior attempt asked a question and is
+      // either still waiting on an answer, or was resolved while this
+      // executor was away. Checked for every step (canAskQuestions is
+      // agent-wide, not gated-step-only) before the gate check below —
+      // resolved, it only binds vars and falls through to spend a fresh
+      // attempt, same as `null`.
+      const asked = await resolveQuestion(step, iteration, approvalWaitCapHours);
+      if (asked) return asked;
 
       // A needsApproval gate: a prior attempt reached the gated tool call
       // and is either still waiting on a decision, or was resolved while
@@ -1966,16 +2304,28 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .executeTakeFirst();
       const attemptsUsed = Number(counted?.count ?? 0);
 
-      // Advance past a step that already succeeded (resume/fast-forward).
+      // Advance past a step that already succeeded (resume/fast-forward) —
+      // EXCEPT a resolved ask_person pause, whose whole point is that the
+      // step is NOT done: resolveQuestion above already replayed its vars
+      // and returned null specifically so a fresh attempt gets spent here,
+      // not skipped by this generic fast-path.
       const succeeded = await db
         .selectFrom('agent_run_steps')
-        .select('id')
+        .select(['id', 'detail'])
         .where('run_id', '=', run.id)
         .where('step_id', '=', step.id)
         .where('iteration', '=', iteration)
         .where('status', '=', 'succeeded')
         .executeTakeFirst();
-      if (succeeded) return { kind: 'advance' };
+      if (succeeded) {
+        const detail: { pauseKind?: unknown } =
+          typeof succeeded.detail === 'object' &&
+          succeeded.detail !== null &&
+          !Array.isArray(succeeded.detail)
+            ? succeeded.detail
+            : {};
+        if (detail.pauseKind !== 'question') return { kind: 'advance' };
+      }
 
       const onIteration = iteration > 0 ? ` on round ${iteration}` : '';
       if (attemptsUsed >= budget) {
@@ -2077,7 +2427,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
           context,
           blockedTools,
           iteration,
-          Boolean(step.saveAs && loopSourceVars.has(step.saveAs))
+          Boolean(step.saveAs && loopSourceVars.has(step.saveAs)),
+          canAskQuestions
         );
       } catch (error) {
         if (error instanceof TransientFailure) {
@@ -2105,6 +2456,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
             tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
             detail: clip(
               JSON.stringify({
+                pauseKind: 'approval',
                 llmSummary: 'Waiting for your approval.',
                 proposedTool: outcome.proposedCall.tool,
                 proposedArgs: outcome.proposedCall.args,
@@ -2119,8 +2471,47 @@ export function createAgentRunHandler(deps: EngineDeps) {
         await raiseApprovalCard(
           step,
           iteration,
+          attempt,
           outcome.proposedCall.tool,
           outcome.proposedCall.args,
+          approvalWaitCapHours
+        );
+        return { kind: 'waiting' };
+      }
+
+      if (outcome.askPerson) {
+        // ask_person fired: this attempt ends here too, the same shape as
+        // a gate's pause — parked, not succeeded, not failed.
+        await db
+          .updateTable('agent_run_steps')
+          .set({
+            status: 'waiting',
+            outcome: 'question',
+            tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
+            detail: clip(
+              JSON.stringify({
+                pauseKind: 'question',
+                llmSummary: 'Waiting for your answer.',
+                message: outcome.askPerson.message,
+                form: outcome.askPerson.form,
+                ...(outcome.askPerson.timeoutHours !== undefined
+                  ? { timeoutHours: outcome.askPerson.timeoutHours }
+                  : {}),
+                toolCalls: outcome.toolCalls,
+              }),
+              DETAIL_CHARS
+            ),
+            updated_at: sql`NOW()`,
+          })
+          .where('id', '=', rowId)
+          .execute();
+        await raiseQuestionCard(
+          step,
+          iteration,
+          attempt,
+          outcome.askPerson.message,
+          outcome.askPerson.form,
+          outcome.askPerson.timeoutHours,
           approvalWaitCapHours
         );
         return { kind: 'waiting' };
@@ -2828,7 +3219,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     context: RunContextText,
     blockedTools: ReadonlySet<string>,
     iteration: number,
-    savesItemsForLoop: boolean
+    savesItemsForLoop: boolean,
+    canAskQuestions: boolean
   ): Promise<AttemptOutcome> {
     // Corrective guidance is the likeliest place for "try [attempt] of
     // [attempt.max]" to be written, so it renders against the same bindings
@@ -2864,9 +3256,17 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // free of the budget, and NOT the step's "one tool" — a step whose one
     // skill is a mail search must still be able to work out what
     // "yesterday 19:00 Los Angeles" means without spending its only call.
-    const offered: LlmToolDef[] = [FINISH_STEP_DEF, RESOLVE_TIME_DEF];
+    const offered: LlmToolDef[] = [
+      FINISH_STEP_DEF,
+      RESOLVE_TIME_DEF,
+      ...(canAskQuestions ? [ASK_PERSON_DEF] : []),
+    ];
     const primaryTool = step.tool;
-    const offeredNames = new Set<string>([FINISH_STEP_TOOL, RESOLVE_TIME_TOOL]);
+    const offeredNames = new Set<string>(
+      canAskQuestions
+        ? [FINISH_STEP_TOOL, RESOLVE_TIME_TOOL, ASK_PERSON_TOOL]
+        : [FINISH_STEP_TOOL, RESOLVE_TIME_TOOL]
+    );
     const offer = (name: string) => {
       if (blockedTools.has(name)) return;
       const info = toolsByName.get(name);
@@ -2986,6 +3386,29 @@ export function createAgentRunHandler(deps: EngineDeps) {
             continue;
           }
           return decideOutcome(step, finish, primaryResults, base);
+        }
+
+        if (use.name === ASK_PERSON_TOOL && canAskQuestions) {
+          const asked = askPersonArgsOf(use.input);
+          if (!asked) {
+            results.push({
+              type: 'tool_result',
+              toolUseId: use.id,
+              content: 'ask_person needs at least {message}.',
+              isError: true,
+            });
+            continue;
+          }
+          return {
+            ...base,
+            succeeded: false,
+            outcome: 'guard',
+            outcomeCode: null,
+            summary: 'Waiting for an answer.',
+            saveValue: null,
+            saveItems: null,
+            askPerson: asked,
+          };
         }
 
         // Free and local: answered here, never sent to MCP, never charged

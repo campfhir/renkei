@@ -99,6 +99,7 @@ export const EXPECTED_MIGRATIONS = [
   '066-agent-note-scope',
   '067-push-subscriptions',
   '069-agent-can-ask-questions',
+  '070-actionable-items-attempt',
 ];
 
 export interface MigrationStatus {

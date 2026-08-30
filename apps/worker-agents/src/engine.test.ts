@@ -2566,6 +2566,262 @@ maybe('agent run engine', () => {
       expect(JSON.stringify(deadCard.result)).toContain('run-ended');
     });
   });
+  describe('ask_person (canAskQuestions)', () => {
+    function askableDoc(overrides: Record<string, unknown> = {}): {
+      doc: AgentStepsDoc;
+      stepId: string;
+    } {
+      const step: AgentStepNode = {
+        id: randomUUID(),
+        name: 'Draft the update',
+        instruction: [{ t: 'text', v: 'Draft a status update.' }],
+        tool: null,
+        maxAttempts: 3,
+        failureHandling: [],
+        ...overrides,
+      };
+      const doc: AgentStepsDoc = { version: CURRENT_STEPS_VERSION, steps: [step] };
+      if (!isAgentStepsDoc(doc)) throw new Error('test doc is not a valid steps doc');
+      return { doc, stepId: step.id };
+    }
+
+    async function seedAskableRun(
+      canAskQuestions: boolean,
+      overrides: Record<string, unknown> = {}
+    ): Promise<{ runId: string; stepId: string }> {
+      const { doc, stepId } = askableDoc(overrides);
+      const { runId, agentId } = await seedRun(doc);
+      if (canAskQuestions) {
+        await db
+          .updateTable('agents')
+          .set({ can_ask_questions: true })
+          .where('id', '=', agentId)
+          .execute();
+      }
+      return { runId, stepId };
+    }
+
+    const cardOf = async (runId: string) =>
+      db
+        .selectFrom('actionable_items')
+        .selectAll()
+        .where('run_id', '=', runId)
+        .executeTakeFirstOrThrow();
+
+    function recordingMcp(tools: string[]): {
+      mcp: McpClient;
+      calls: { name: string; args: Record<string, unknown> }[];
+    } {
+      const calls: { name: string; args: Record<string, unknown> }[] = [];
+      const mcp: McpClient = {
+        initialize: async () => undefined,
+        listTools: async () =>
+          tools.map((name) => ({ name, description: name, inputSchema: { type: 'object' } })),
+        callTool: async (name, args) => {
+          calls.push({ name, args });
+          return okToolResult;
+        },
+      };
+      return { mcp, calls };
+    }
+
+    it('is refused unless the agent can ask questions', async () => {
+      const { runId } = await seedAskableRun(false);
+      const seen: string[] = [];
+      const llm = stubLlm((request, call) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'tool_result' && typeof block.content === 'string') {
+              seen.push(block.content);
+            }
+          }
+        }
+        if (call === 0) return useTool('ask_person', { message: 'Which project?' });
+        return finish('success');
+      });
+      await handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      )({ payload: { runId } });
+
+      expect(seen.some((text) => text.includes('not available'))).toBe(true);
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+    });
+
+    it('parks behind a question card showing the message and form, and delivers notifications', async () => {
+      const { runId, stepId } = await seedAskableRun(true);
+      const { mcp, calls } = recordingMcp(['outlook_send_mail', 'webex_note_to_self']);
+      const llm = stubLlm((_request, call) => {
+        if (call === 0) {
+          return useTool('ask_person', {
+            message: 'Which project does this belong to?',
+            form: [
+              { kind: 'field', name: 'project', label: 'Project', type: 'text', required: true },
+            ],
+          });
+        }
+        throw new Error('a waiting question must not call the model again');
+      });
+      await handlerWith(llm, mcp)({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'error'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('waiting');
+      expect(run.error).toBeNull();
+
+      const rows = await db
+        .selectFrom('agent_run_steps')
+        .select(['step_id', 'status', 'outcome'])
+        .where('run_id', '=', runId)
+        .execute();
+      expect(rows).toEqual([{ step_id: stepId, status: 'waiting', outcome: 'question' }]);
+
+      const card = await cardOf(runId);
+      expect(card.status).toBe('suggested');
+      expect(card.kind).toBe('question');
+      expect(card.owner_subject).toBe(subject);
+      expect(JSON.stringify(card.suggested_action)).toContain('Which project does this belong to?');
+      expect(JSON.stringify(card.suggested_action)).toContain('"name":"project"');
+
+      expect(calls.map((call) => call.name).sort()).toEqual([
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
+    });
+
+    it('answered: rebinds per-field vars on a FRESH attempt, no model call while waiting', async () => {
+      const { runId } = await seedAskableRun(true);
+      const prompts: string[] = [];
+      const llm = stubLlm((request, call) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        if (call === 0) {
+          return useTool('ask_person', {
+            message: 'Which project does this belong to?',
+            form: [
+              { kind: 'field', name: 'project', label: 'Project', type: 'text', required: true },
+            ],
+          });
+        }
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'answered',
+          result: JSON.stringify({ answers: { project: 'PROJ-42' } }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+      const acted = prompts.join('\n');
+      expect(acted).toContain('question.message: Which project does this belong to?');
+      expect(acted).toContain('project: PROJ-42');
+      expect(acted).toContain('question.answer:');
+    });
+
+    it('timed out: the fresh attempt sees that nobody answered', async () => {
+      const { runId } = await seedAskableRun(true);
+      const prompts: string[] = [];
+      const llm = stubLlm((request, call) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        if (call === 0)
+          return useTool('ask_person', { message: 'Which project?', timeoutHours: 1 });
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+      await db
+        .updateTable('agent_runs')
+        .set({ waiting_until: new Date(Date.now() - 60_000) })
+        .where('id', '=', runId)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+      const acted = prompts.join('\n');
+      expect(acted).toContain('Nobody answered before the deadline.');
+
+      const card = await cardOf(runId);
+      expect(card.status).toBe('expired');
+    });
+
+    it('replays a resolved question without re-notifying or asking the model again', async () => {
+      const { runId } = await seedAskableRun(true);
+      const { mcp, calls } = recordingMcp(['outlook_send_mail', 'webex_note_to_self']);
+      const llm = stubLlm((_request, call) => {
+        if (call === 0) return useTool('ask_person', { message: 'Which project?' });
+        return finish('success');
+      });
+      const handler = handlerWith(llm, mcp);
+      await handler({ payload: { runId } });
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'answered',
+          result: JSON.stringify({ answers: {} }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+      expect(calls.map((call) => call.name).sort()).toEqual([
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
+
+      // Redelivery of the finished run: no further notifications.
+      await handler({ payload: { runId } });
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+      expect(calls.map((call) => call.name).sort()).toEqual([
+        'outlook_send_mail',
+        'webex_note_to_self',
+      ]);
+    });
+  });
 });
 
 maybe('resolve_time — the free, deterministic clock', () => {
