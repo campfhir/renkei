@@ -637,6 +637,9 @@ describe('agent_approvals_list', () => {
     const text = (await handlers.get('agent_approvals_list')!({})).content[0]?.text ?? '';
 
     expect(text).toContain('Wants a typed ANSWER');
+    // And how to give it — a caller told only that an answer is wanted
+    // still has to guess which parameter carries it.
+    expect(text).toContain('answer');
   });
 
   it('says nothing is waiting rather than answering with an empty list', async () => {

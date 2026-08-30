@@ -189,8 +189,11 @@ function approvalLines(approval: PendingApproval, now: number): string[] {
   return [
     `- ${approval.title}`,
     `  cardId: ${approval.cardId} · agent "${approval.agentName}" (${approval.agentId}) · run ${approval.runId}`,
-    `  ${approval.mode === 'input' ? 'Wants a typed ANSWER alongside the decision' : 'Wants approve or decline'}` +
-      ` · raised ${approval.raisedAt}${remaining}`,
+    `  ${
+      approval.mode === 'input'
+        ? 'Wants a typed ANSWER — decide with `answer`, or decline to say you have none'
+        : 'Wants approve or decline'
+    }` + ` · raised ${approval.raisedAt}${remaining}`,
     ...(approval.message ? [`  ${approval.message.replace(/\n/g, '\n  ')}`] : []),
   ];
 }

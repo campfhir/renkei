@@ -100,7 +100,10 @@ function NodeList({
                 label: node.mode === 'input' ? 'If answered' : 'If approved',
                 path: node.onApproved,
               },
-              { label: 'If declined', path: node.onDeclined },
+              {
+                label: node.mode === 'input' ? 'If skipped' : 'If declined',
+                path: node.onDeclined,
+              },
               { label: 'If nobody acts in time', path: node.onTimeout },
             ];
             return (

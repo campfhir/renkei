@@ -5,11 +5,18 @@ import { useRouter } from 'next/navigation';
 
 /**
  * The decision controls of an APPROVAL card — the human half of a paused
- * agent run. Approve/decline in 'approve' mode; a typed answer plus "Stop
- * the run" in 'input' mode. There is deliberately no dismiss: a dismissed
- * card would leave the run waiting on a decision nobody can see anymore —
- * declining is the "no", and doing nothing lets the wait run out onto the
- * flow's timed-out path.
+ * agent run. Approve/decline in 'approve' mode; a typed answer plus "I
+ * don't know" in 'input' mode. There is deliberately no dismiss: a
+ * dismissed card would leave the run waiting on a decision nobody can see
+ * anymore — declining is the "no", and doing nothing lets the wait run out
+ * onto the flow's timed-out path.
+ *
+ * Both modes send the same `decision: 'decline'`; only the WORD differs,
+ * and it has to. "Stop the run" is what the second button used to say in
+ * input mode, and it described something that does not happen: declining
+ * routes the node's declined path like any other outcome, and where that
+ * path is empty the run simply carries on. What the person means by
+ * pressing it is "I have no answer" — so that is what it says.
  *
  * A 502 still refreshes: the decision is durably recorded and the worker's
  * sweep resumes the run on its own — the warning is about latency, not loss.
@@ -53,9 +60,7 @@ export default function ApprovalActions({
       }
       if (!response.ok) {
         setError(
-          typeof record.error === 'string'
-            ? record.error
-            : `Request failed (${response.status})`
+          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`
         );
         return;
       }
@@ -89,9 +94,10 @@ export default function ApprovalActions({
             <button
               onClick={() => void decide('decline')}
               disabled={busy}
-              className="rounded-md border border-red-300 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
+              title="Send no answer — the run continues down the path its author wrote for that."
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
             >
-              Stop the run
+              I don&apos;t know
             </button>
           </div>
         </>

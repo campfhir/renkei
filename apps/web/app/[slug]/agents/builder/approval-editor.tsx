@@ -27,7 +27,7 @@ const WAIT_PRESETS: { hours: number; label: string }[] = [
 
 const OUTCOME_CAPTIONS: Record<ApprovalOutcomeKey, { approve: string; input: string }> = {
   onApproved: { approve: 'If approved', input: 'If answered' },
-  onDeclined: { approve: 'If declined', input: 'If stopped' },
+  onDeclined: { approve: 'If declined', input: 'If skipped' },
   onTimeout: { approve: 'If nobody acts', input: 'If nobody acts' },
 };
 

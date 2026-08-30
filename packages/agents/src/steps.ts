@@ -364,7 +364,10 @@ export interface ApprovalStep {
   notifyWebex: boolean;
   /** Approved (or, in input mode, answered). Empty = continue after. */
   onApproved: BranchPath;
-  /** Declined — the Reject / "Stop the run" button. Empty = continue. */
+  /**
+   * Declined — the Decline button, or in input mode "I don't know": an
+   * explicit no-answer, not a stop. Empty = continue after the node.
+   */
   onDeclined: BranchPath;
   /** Nobody acted before the ceiling. Empty = continue after the node. */
   onTimeout: BranchPath;
@@ -1103,5 +1106,3 @@ export function findNodeById(nodes: AgentStepNode[], id: string): FoundNode | nu
 export function containsApproval(nodes: AgentStepNode[]): boolean {
   return walkSteps(nodes).some(({ node }) => isApprovalStep(node));
 }
-
-

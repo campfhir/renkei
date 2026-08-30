@@ -409,7 +409,7 @@ function ApprovalBlock({
     },
     {
       path: approval.onDeclined,
-      caption: approval.mode === 'input' ? 'If stopped' : 'If declined',
+      caption: approval.mode === 'input' ? 'If skipped' : 'If declined',
     },
     { path: approval.onTimeout, caption: 'If nobody acts in time' },
   ];

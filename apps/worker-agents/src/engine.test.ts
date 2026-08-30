@@ -2441,6 +2441,100 @@ maybe('agent run engine', () => {
       expect(JSON.stringify(approvalRow.detail)).toContain('ship it');
     });
 
+    it('tells the next step an ANSWER was given, not that anything was approved', async () => {
+      const acting = {
+        id: randomUUID(),
+        name: 'Runs on the answered path',
+        instruction: [{ t: 'text' as const, v: 'Use it.' }],
+        tool: null,
+        maxAttempts: 1,
+        failureHandling: [],
+      };
+      const { doc } = approvalDoc({
+        mode: 'input',
+        saveAs: 'the issue key',
+        onApproved: [acting],
+      });
+      const { runId } = await seedRun(doc);
+      const prompts: string[] = [];
+      const llm = stubLlm((request) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'approved',
+          result: JSON.stringify({ answer: 'CIO-12' }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const acted = prompts.join('\n');
+      // A typed string is evidence to check, never permission to act — the
+      // step that reads it must be told which of the two it holds.
+      expect(acted).toContain('The owner answered');
+      expect(acted).not.toContain('The owner approved');
+      expect(acted).toContain('the issue key');
+      expect(acted).toContain('check it is usable');
+    });
+
+    it('an input card declined reads as "no answer", not as a refusal to act', async () => {
+      const acting = {
+        id: randomUUID(),
+        name: 'Runs on the skipped path',
+        instruction: [{ t: 'text' as const, v: 'Move on.' }],
+        tool: null,
+        maxAttempts: 1,
+        failureHandling: [],
+      };
+      const { doc } = approvalDoc({
+        mode: 'input',
+        saveAs: 'the issue key',
+        onDeclined: [acting],
+      });
+      const { runId } = await seedRun(doc);
+      const prompts: string[] = [];
+      const llm = stubLlm((request) => {
+        for (const message of request.messages) {
+          for (const block of message.content) {
+            if (block.type === 'text') prompts.push(block.text);
+          }
+        }
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({ status: 'declined', decided_at: sql`NOW()` })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const acted = prompts.join('\n');
+      expect(acted).toContain('SKIPPED');
+      expect(acted).toContain('Do not invent one');
+    });
+
     it('a declined card routes the declined path', async () => {
       const { doc } = approvalDoc({ onDeclined: [terminalNode('stop')] });
       const { runId } = await seedRun(doc);

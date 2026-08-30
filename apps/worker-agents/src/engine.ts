@@ -1126,15 +1126,30 @@ export function createAgentRunHandler(deps: EngineDeps) {
             // needs to see. Phrased as a sentence rather than a bare enum
             // because it is read by a model, not switched on by code.
             vars['approval.decision'] = outcome.decision;
+            const asked = node.name.trim() || 'this step';
+            const who =
+              (outcome.decidedBy ? ` (${outcome.decidedBy})` : '') +
+              (outcome.decidedAt ? ` at ${outcome.decidedAt}` : '');
+            // An INPUT node asked a question; an APPROVE node proposed an
+            // act. Saying "the owner approved" for a typed answer told the
+            // next step it had permission when what it actually has is a
+            // string somebody typed — which may be "no idea", a typo, or
+            // the wrong shape entirely. The answer is evidence to check,
+            // not a verdict to act on, and the wording has to say so.
             vars['approval.status'] =
-              outcome.decision === 'approved'
-                ? `The owner approved "${node.name.trim() || 'this step'}"` +
-                  (outcome.decidedBy ? ` (${outcome.decidedBy})` : '') +
-                  (outcome.decidedAt ? ` at ${outcome.decidedAt}` : '') +
-                  '. This run may proceed with what that approval covered.'
-                : outcome.decision === 'declined'
-                  ? `The owner DECLINED "${node.name.trim() || 'this step'}". Do not carry out what was declined.`
-                  : `Nobody answered "${node.name.trim() || 'this step'}" before the deadline. Treat it as not approved.`;
+              node.mode === 'input'
+                ? outcome.decision === 'approved'
+                  ? `The owner answered "${asked}"${who}. Their answer is in "${
+                      node.saveAs ?? 'the saved answer'
+                    }" — check it is usable before acting on it, and take your own fallback if it is not.`
+                  : outcome.decision === 'declined'
+                    ? `The owner SKIPPED "${asked}" — they had no answer to give. Do not invent one.`
+                    : `Nobody answered "${asked}" before the deadline. Treat it as unanswered; do not invent an answer.`
+                : outcome.decision === 'approved'
+                  ? `The owner approved "${asked}"${who}. This run may proceed with what that approval covered.`
+                  : outcome.decision === 'declined'
+                    ? `The owner DECLINED "${asked}". Do not carry out what was declined.`
+                    : `Nobody answered "${asked}" before the deadline. Treat it as not approved.`;
             if (outcome.decidedBy) vars['approval.decidedBy'] = outcome.decidedBy;
             if (outcome.decidedAt) vars['approval.decidedAt'] = outcome.decidedAt;
             if (node.mode === 'input' && node.saveAs && outcome.answer !== null) {
@@ -2228,7 +2243,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
     await deliverOwnerNotifications({
       email: node.notifyEmail,
       webex: node.notifyWebex,
-      heading: `Agent “${agentName}” is waiting for you${node.name.trim() ? `: ${node.name.trim()}` : ''}`,
+      heading:
+        `Agent “${agentName}” ${node.mode === 'input' ? 'needs your answer' : 'needs your approval'}` +
+        `${node.name.trim() ? `: ${node.name.trim()}` : ''}`,
       body: [message, ...(link ? [`Respond here: ${link}`] : [])].join('\n\n'),
       ownerEmail: vars['user.email'],
     });

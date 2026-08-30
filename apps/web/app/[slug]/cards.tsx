@@ -1,6 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
+import { Icon, ICONS } from '@/components/icons';
 import CardActions from './card-actions';
 import ApprovalActions from './approval-actions';
 import ArchiveAction from './archive-action';
@@ -94,7 +95,12 @@ export default async function ActionableCards({
           }`}
         >
           <div className="flex justify-between gap-4">
-            <strong>{item.title}</strong>
+            <strong className="min-w-0">
+              {item.kind === 'approval' && item.status === 'suggested' ? (
+                <ApprovalKindChip mode={approvalModeOf(item.suggested_action)} />
+              ) : null}
+              {item.title}
+            </strong>
             <span className="whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
               {item.agent_name ? `via ${item.agent_name}` : item.source} · {item.status}
               {item.archived_at !== null && ' · archived'}
@@ -158,6 +164,36 @@ function approvalModeOf(suggestedAction: unknown): 'approve' | 'input' {
     if (record.approvalMode === 'input') return 'input';
   }
   return 'approve';
+}
+
+/**
+ * Which KIND of pause this is, before anyone reads a word of the card.
+ *
+ * The two modes ask for opposite things — one wants a verdict on an act
+ * already specified, the other wants a fact the agent could not determine —
+ * and in a feed they were indistinguishable until you scrolled to the
+ * controls: same title shape, same "via <agent> · suggested". Someone
+ * triaging six cards decides in what order to open them from this line, so
+ * the line has to carry it.
+ *
+ * Only on an undecided card: a decided one renders its outcome underneath
+ * ("You answered: …"), which is the more useful thing to say about it, and
+ * a "needs your answer" chip above that would just be stale.
+ */
+function ApprovalKindChip({ mode }: { mode: 'approve' | 'input' }): React.ReactNode {
+  const asking = mode === 'input';
+  return (
+    <span
+      className={`mr-2 inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 align-middle text-xs font-medium ${
+        asking
+          ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
+          : 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300'
+      }`}
+    >
+      <Icon path={asking ? ICONS.question : ICONS.approval} className="h-3.5 w-3.5" />
+      {asking ? 'Answer needed' : 'Approval needed'}
+    </span>
+  );
 }
 
 /** What happened to a decided approval card — the feed's audit line. */
