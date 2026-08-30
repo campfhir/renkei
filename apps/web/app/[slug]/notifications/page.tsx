@@ -2,10 +2,12 @@ import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
+import { getNotificationPrefs } from '@renkei/user-prefs';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import AutoRefresh from '@/components/auto-refresh';
+import NotificationPermissionNudge from '@/components/notification-permission-nudge';
 import NotificationsList, { type NotificationCard } from './notifications-list';
 
 /**
@@ -33,6 +35,8 @@ export default async function NotificationsPage({
 
   const session = await getSessionFromCookies(tenant.id);
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/notifications`));
+
+  const notifications = await getNotificationPrefs(tenant.id, session.subject, { fresh: true });
 
   const dbResult = getDatabase();
   const rows = dbResult.ok
@@ -64,6 +68,10 @@ export default async function NotificationsPage({
 
   return (
     <div className="mx-auto max-w-3xl">
+      <NotificationPermissionNudge
+        tenantId={tenant.id}
+        desktopEnabled={notifications.desktopEnabled}
+      />
       <AutoRefresh />
       <h1 className="mb-1 text-xl font-bold">Notifications</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
