@@ -16,6 +16,8 @@
 import { randomUUID } from 'node:crypto';
 import { getDatabase } from '@renkei/db';
 import { getNotificationPrefs } from '@renkei/user-prefs';
+import { parseEncryptionKey } from '@renkei/crypto';
+import { sendPush } from '@renkei/notifications';
 import { getIdentityDisplay } from '@/lib/identity';
 import { logger } from '@/lib/logger';
 
@@ -39,19 +41,35 @@ export function notifyAgentEdited(input: {
 
     const who = await getIdentityDisplay(input.tenantId, input.actorSubject);
     const editorName = who?.displayName || who?.email || 'Someone you shared it with';
+    const id = randomUUID();
+    const headline = `${editorName} edited your agent "${input.agentName}"`;
 
     await dbResult.val
       .insertInto('agent_notifications')
       .values({
-        id: randomUUID(),
+        id,
         tenant_id: input.tenantId,
         subject: input.ownerSubject,
         kind: 'agent_edited',
-        headline: `${editorName} edited your agent "${input.agentName}"`,
+        headline,
         agent_id: input.agentId,
         agent_name: input.agentName,
       })
       .execute();
+
+    // Fire-and-forget, same as the row above it: see notifications.ts's
+    // write() (the worker's twin of this function) for why.
+    const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+    if (keyResult.ok) {
+      void sendPush(
+        dbResult.val,
+        input.tenantId,
+        input.ownerSubject,
+        keyResult.val,
+        { title: headline, body: input.agentName, tag: id, refUrl: null },
+        { log: (message, meta) => logger.warn(message, meta) }
+      );
+    }
   })().catch((error: unknown) => {
     logger.warn('agent-edited notification not recorded', {
       component: 'agents/edit-notification',

@@ -23,6 +23,16 @@
  * Preferences are read ONCE per run, beside the org settings, rather than
  * per tool call — a foreach loop over forty issues should not be forty
  * cache lookups and, on a cold cache, forty queries.
+ *
+ * ## The row and the push are two different promises
+ *
+ * The `agent_notifications` row is what the poll-based UI (the toast pile,
+ * the nav badge, the notifications page) reads — it only ever updates while
+ * a tab is open and running. `@renkei/notifications`' `sendPush` is the
+ * other half: it wakes a device with NOTHING open, iOS chief among them,
+ * where a suspended tab simply cannot poll at all. Both come from this one
+ * write, and the push is fired without being awaited — a slow or
+ * unreachable push service must never add its latency to a run's step.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -30,6 +40,8 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { resolveAct } from '@renkei/tool-outcomes';
 import { getNotificationPrefs, wantsAct, type NotificationPrefs } from '@renkei/user-prefs';
+import { parseEncryptionKey } from '@renkei/crypto';
+import { sendPush } from '@renkei/notifications';
 import { logger } from './logger';
 
 export interface NotifierContext {
@@ -70,11 +82,12 @@ async function write(
     stepId?: string | null;
   }
 ): Promise<void> {
+  const id = randomUUID();
   try {
     await db
       .insertInto('agent_notifications')
       .values({
-        id: randomUUID(),
+        id,
         tenant_id: context.tenantId,
         subject: context.subject,
         kind: row.kind,
@@ -98,6 +111,27 @@ async function write(
       runId: context.runId,
       error: error instanceof Error ? error.message : String(error),
     });
+    return;
+  }
+
+  // Fire-and-forget, deliberately not awaited: a push service's own latency
+  // must never add to a step's. The row above is the record; this is only
+  // reach, same distinction the file's own header draws.
+  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+  if (keyResult.ok) {
+    void sendPush(
+      db,
+      context.tenantId,
+      context.subject,
+      keyResult.val,
+      {
+        title: row.headline,
+        body: context.agentName || 'An agent',
+        tag: context.runId && row.tool ? `${context.runId}:${row.tool}` : id,
+        refUrl: row.refUrl ?? null,
+      },
+      { log: (message, meta) => logger.warn(message, meta) }
+    );
   }
 }
 

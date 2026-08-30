@@ -10,6 +10,11 @@ import {
   getDesktopNotificationsEnabled,
   setDesktopNotificationsEnabled,
 } from '@/lib/desktop-notifications-storage';
+import {
+  enableDesktopNotifications,
+  disableDesktopNotifications,
+  ensurePushSubscription,
+} from '@/lib/push-subscription';
 
 /**
  * What to be told about, and where.
@@ -127,39 +132,39 @@ export default function PreferencesForm({
   */
   const [desktopEnabled, setDesktopEnabled] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported' | null>(null);
+  // A distinct third failure mode from 'denied': the browser said yes but
+  // telling the server about the subscription didn't work — a network
+  // blip, or push not configured server-side. Worth its own sentence,
+  // since "allow notifications" is not the fix for it.
+  const [subscribeError, setSubscribeError] = useState(false);
   useEffect(() => {
     setDesktopEnabled(getDesktopNotificationsEnabled(tenantId));
     setPermission('Notification' in window ? Notification.permission : 'unsupported');
   }, [tenantId]);
 
-  /**
-   * Asks the browser for permission if it hasn't already answered, and
-   * reports whether the two — the person's opt-in and the browser's own
-   * answer — are now both "yes". `requestPermission()` only honours a
-   * user gesture, so this must only ever be called from a click.
-   */
-  async function requestPermission(): Promise<boolean> {
-    let current: NotificationPermission = Notification.permission;
-    if (current === 'default') {
-      try {
-        current = await Notification.requestPermission();
-      } catch {
-        current = 'denied';
-      }
-      setPermission(current);
-    }
-    return current === 'granted';
-  }
-
   /*
-    Flipping the switch ON is the moment permission is normally asked for.
-    If the person then declines the browser's prompt, the switch stays off
-    — storing "on" with permission denied would be a preference that can
-    never fire and would look exactly like a bug.
+    Flipping the switch ON is the moment permission is normally asked for,
+    and — the part `Notification.requestPermission()` alone doesn't cover —
+    the moment this device actually subscribes and tells the server. If the
+    person declines the browser's prompt, or the subscribe call fails, the
+    switch stays off: storing "on" for something that can never fire would
+    look exactly like a bug.
   */
   async function toggleDesktop(on: boolean) {
-    const enabled =
-      on && permission !== 'unsupported' && permission !== null && (await requestPermission());
+    if (!on) {
+      setDesktopEnabled(false);
+      setSubscribeError(false);
+      setDesktopNotificationsEnabled(tenantId, false);
+      void disableDesktopNotifications(tenantId);
+      return;
+    }
+
+    const outcome = await enableDesktopNotifications(tenantId);
+    setPermission(
+      outcome === 'unsupported' ? 'unsupported' : outcome === 'denied' ? 'denied' : 'granted'
+    );
+    setSubscribeError(outcome === 'subscribe-failed');
+    const enabled = outcome === 'granted';
     setDesktopEnabled(enabled);
     setDesktopNotificationsEnabled(tenantId, enabled);
   }
@@ -172,7 +177,17 @@ export default function PreferencesForm({
    * is not obviously how you'd fix that, and the box never changes here.
    */
   async function retryPermission() {
-    await requestPermission();
+    if (Notification.permission === 'default') {
+      let current: NotificationPermission;
+      try {
+        current = await Notification.requestPermission();
+      } catch {
+        current = 'denied';
+      }
+      setPermission(current);
+      if (current !== 'granted') return;
+    }
+    setSubscribeError(!(await ensurePushSubscription(tenantId)));
   }
 
   function update(next: NotificationPrefs) {
@@ -534,6 +549,13 @@ export default function PreferencesForm({
                 won&rsquo;t ask again on its own, so Renkei can&rsquo;t re-prompt for you. Open this
                 page&rsquo;s site settings (usually behind the padlock or the icon left of the
                 address bar), allow notifications, then reload.
+              </p>
+            ) : null}
+            {subscribeError ? (
+              <p className="w-full text-xs text-amber-700 dark:text-amber-400">
+                Your browser allowed it, but telling Renkei&rsquo;s server about this device
+                didn&rsquo;t work — a connection hiccup, most likely. Try the switch again in a
+                moment.
               </p>
             ) : null}
           </div>

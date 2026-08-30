@@ -16,6 +16,7 @@
     "@renkei/agents": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/notifications": "workspace:*",
     "@renkei/queue": "workspace:*",
     "@renkei/settings": "workspace:*",
     "@renkei/tool-outcomes": "workspace:*",

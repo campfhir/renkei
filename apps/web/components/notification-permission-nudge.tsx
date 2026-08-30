@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { getDesktopNotificationsEnabled } from '@/lib/desktop-notifications-storage';
+import { ensurePushSubscription } from '@/lib/push-subscription';
 
 /**
  * A card in the same corner pile as the arrival toasts, nudging someone to
@@ -24,7 +25,9 @@ import { getDesktopNotificationsEnabled } from '@/lib/desktop-notifications-stor
  *
  * `requestPermission()` only honours a user gesture, so the one thing this
  * can do unprompted is offer the button; it can never raise the browser's
- * own prompt on mount.
+ * own prompt on mount. Granting permission is still only half of it —
+ * `enable()` also has to subscribe this device and tell the server, or
+ * the switch would read "fixed" while nothing can actually reach it.
  */
 function dismissKey(tenantId: string): string {
   return `renkei:notification-nudge-dismissed:${tenantId}`;
@@ -72,7 +75,10 @@ export default function NotificationPermissionNudge({ tenantId }: { tenantId: st
       }
     }
     setPermission(current);
-    if (current === 'granted') dismiss();
+    if (current !== 'granted') return;
+    // Permission alone isn't the finish line — a subscription is what lets
+    // the server actually reach this device (see push-subscription.ts).
+    if (await ensurePushSubscription(tenantId)) dismiss();
   }
 
   if (

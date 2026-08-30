@@ -19,6 +19,7 @@ export default {
     '^@renkei/agent-llm$': '<rootDir>/../../packages/agent-llm/src/index.ts',
     '^@renkei/db$': '<rootDir>/../../packages/db/src/index.ts',
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',
+    '^@renkei/notifications$': '<rootDir>/../../packages/notifications/src/index.ts',
     '^@renkei/email-sanitizer$': '<rootDir>/../../packages/email-sanitizer/src/index.ts',
     '^@renkei/provider-grants$': '<rootDir>/../../packages/provider-grants/src/index.ts',
     '^@renkei/capability-registry$': '<rootDir>/../../packages/capability-registry/src/index.ts',

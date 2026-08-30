@@ -633,6 +633,16 @@ export interface ProviderRefreshLocks {
   tenant_id: string;
 }
 
+export interface PushSubscriptions {
+  auth: string;
+  created_at: Generated<Timestamp>;
+  endpoint: string;
+  id: string;
+  p256dh: string;
+  subject: string;
+  tenant_id: string;
+}
+
 export interface ScheduleCalendars {
   created_at: Generated<Timestamp>;
   dates: Generated<Json>;
@@ -804,6 +814,7 @@ export interface DB {
   platform_settings: PlatformSettings;
   provider_grants: ProviderGrants;
   provider_refresh_locks: ProviderRefreshLocks;
+  push_subscriptions: PushSubscriptions;
   schedule_calendars: ScheduleCalendars;
   sessions: Sessions;
   tenant_domains: TenantDomains;

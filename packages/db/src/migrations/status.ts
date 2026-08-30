@@ -97,6 +97,7 @@ export const EXPECTED_MIGRATIONS = [
   '064-agent-access-grants',
   '065-drop-agent-share-token',
   '066-agent-note-scope',
+  '067-push-subscriptions',
 ];
 
 export interface MigrationStatus {
