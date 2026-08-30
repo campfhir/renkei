@@ -16,6 +16,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { sendJsonFull } from '@/lib/fetch-json';
 import Modal from '@/components/modal';
+import { Icon, ICONS } from '@/components/icons';
 
 const dangerButton =
   'rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50';
@@ -73,8 +74,9 @@ export default function CancelRunButton({
             ? 'Ask this run to stop at its next step'
             : 'Cancel this run before it starts'
         }
-        className="rounded-md border border-gray-300 px-2 py-0.5 text-xs font-medium text-gray-700 hover:border-red-500 hover:text-red-700 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:border-red-400 dark:hover:text-red-300"
+        className="inline-flex items-center gap-1.5 rounded-md border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/40"
       >
+        <Icon path={ICONS.stop} className="h-3.5 w-3.5" />
         {status === 'running' ? 'Stop run' : 'Cancel run'}
       </button>
       {error ? <span className="text-xs text-red-600 dark:text-red-400">{error}</span> : null}
@@ -102,8 +104,9 @@ export default function CancelRunButton({
               type="button"
               disabled={busy}
               onClick={() => void cancel()}
-              className={dangerButton}
+              className={`inline-flex items-center gap-1.5 ${dangerButton}`}
             >
+              <Icon path={ICONS.stop} className="h-3.5 w-3.5" />
               {status === 'running' ? 'Stop run' : 'Cancel run'}
             </button>
           </div>

@@ -25,6 +25,8 @@ export const ICONS = {
   chip: 'M8 8h8v8H8zM9 4v3M15 4v3M9 17v3M15 17v3M4 9h3M4 15h3M17 9h3M17 15h3',
   /** A question in a circle — "this card wants information from you". */
   question: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.7 9.4a2.4 2.4 0 1 1 2.8 2.8v1.4M12 17.2h.01',
+  /** A filled square in a circle — the media "stop" glyph, for ending a run. */
+  stop: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9 9h6v6H9z',
   bell: 'M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16zM10 22h4',
   /** Vertical kebab — "more actions on this row". Dots via round linecaps. */
   more: 'M12 5.2h.01M12 12h.01M12 18.8h.01',

@@ -8,6 +8,7 @@
  */
 
 import { useState } from 'react';
+import { Icon, ICONS } from '@/components/icons';
 
 export default function CopyDebugButton({ text }: { text: string }): React.ReactNode {
   const [copied, setCopied] = useState(false);
@@ -33,8 +34,9 @@ export default function CopyDebugButton({ text }: { text: string }): React.React
     <button
       type="button"
       onClick={copy}
-      className="rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+      className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
     >
+      <Icon path={ICONS.copy} className="h-3.5 w-3.5" />
       {copied ? 'Copied ✓' : 'Copy for debugging'}
     </button>
   );
