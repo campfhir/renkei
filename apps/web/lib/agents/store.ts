@@ -67,6 +67,8 @@ export interface StoredAgent {
   guardrails: string | null;
   /** Act tools the engine refuses for this agent's model-driven calls. */
   blockedTools: string[];
+  /** Whether any step's turn may pause and ask the owner a question (ask_person). */
+  canAskQuestions: boolean;
   createdAt: string;
   updatedAt: string;
   triggers: StoredTrigger[];
@@ -208,6 +210,7 @@ interface AgentRow {
   enabled: boolean;
   guardrails: string | null;
   blocked_tools: Json | null;
+  can_ask_questions: boolean;
   created_at: Date;
   updated_at: Date;
 }
@@ -236,6 +239,7 @@ async function toStored(
     enabled: row.enabled,
     guardrails: row.guardrails,
     blockedTools: blockedToolsOf(row.blocked_tools),
+    canAskQuestions: row.can_ask_questions,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     triggers: await triggersOf(db, tenantId, row.id),
@@ -254,6 +258,7 @@ const AGENT_COLUMNS = [
   'enabled',
   'guardrails',
   'blocked_tools',
+  'can_ask_questions',
   'created_at',
   'updated_at',
 ] as const;
@@ -536,6 +541,7 @@ export interface SaveAgentInput {
   llmModelId: string | null;
   guardrails: string | null;
   blockedTools: string[];
+  canAskQuestions: boolean;
 }
 
 export async function createAgent(
@@ -558,6 +564,7 @@ export async function createAgent(
         enabled: input.enabled,
         guardrails: input.guardrails,
         blocked_tools: JSON.stringify(input.blockedTools),
+        can_ask_questions: input.canAskQuestions,
         description_status: 'stale',
       })
       .execute();
@@ -597,6 +604,7 @@ export async function updateAgent(
         enabled: input.enabled,
         guardrails: input.guardrails,
         blocked_tools: JSON.stringify(input.blockedTools),
+        can_ask_questions: input.canAskQuestions,
         ...(options.markDescriptionStale === false ? {} : { description_status: 'stale' }),
         updated_at: sql`NOW()`,
       })

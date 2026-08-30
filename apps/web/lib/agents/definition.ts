@@ -17,6 +17,7 @@ export interface AgentDefinitionInput {
   triggers: { draft: TriggerDraft; enabled: boolean }[];
   guardrails?: string | null;
   blockedTools?: string[];
+  canAskQuestions?: boolean;
   llmModelId?: string | null;
 }
 
@@ -31,11 +32,16 @@ export function agentDefinition(agent: AgentDefinitionInput): Record<string, unk
     ...(agent.blockedTools && agent.blockedTools.length > 0
       ? { blockedTools: agent.blockedTools }
       : {}),
+    ...(agent.canAskQuestions ? { canAskQuestions: true } : {}),
     ...(agent.llmModelId ? { llmModelId: agent.llmModelId } : {}),
   };
 }
 
 /** The definition as a fenced markdown block, ready to embed. */
 export function fencedDefinition(agent: AgentDefinitionInput): string {
-  return ['```' + AGENT_DEFINITION_FENCE, JSON.stringify(agentDefinition(agent), null, 2), '```'].join('\n');
+  return [
+    '```' + AGENT_DEFINITION_FENCE,
+    JSON.stringify(agentDefinition(agent), null, 2),
+    '```',
+  ].join('\n');
 }

@@ -26,9 +26,10 @@ jest.mock('@/lib/agents/agent-notes', () => ({
 }));
 jest.mock('@/lib/mcp-tools/tool-catalog', () => ({ listAvailableTools: jest.fn() }));
 jest.mock('@/lib/agents/approvals', () => ({
-  MAX_APPROVAL_ANSWER_CHARS: 10_000,
   listPendingApprovals: jest.fn(async () => []),
   decideApproval: jest.fn(),
+  listPendingQuestions: jest.fn(async () => []),
+  answerQuestion: jest.fn(),
 }));
 jest.mock('@renkei/queue', () => ({
   agentJobsQueue: () => ({ producer: { enqueue: jest.fn() } }),
@@ -65,6 +66,8 @@ const catalogMock = jest.requireMock<{ listAvailableTools: jest.Mock }>(
 const approvalsMock = jest.requireMock<{
   listPendingApprovals: jest.Mock;
   decideApproval: jest.Mock;
+  listPendingQuestions: jest.Mock;
+  answerQuestion: jest.Mock;
 }>('@/lib/agents/approvals');
 const runNowMock = jest.requireMock<{ createAgentRun: jest.Mock }>('@renkei/agents/runs');
 const memoryMock = jest.requireMock<{
@@ -557,12 +560,10 @@ describe('the approval-card capability is discoverable', () => {
 
     for (const tool of ['agent_create', 'agent_update']) {
       const steps = described(tool, (shape) => shape?.steps);
-      expect(steps).toContain('{kind:"approval"}');
-      expect(steps).toContain('card');
-      // The three outcome paths are the part a caller cannot guess.
-      expect(steps).toContain('onApproved');
-      expect(steps).toContain('onDeclined');
-      expect(steps).toContain('onTimeout');
+      expect(steps).toContain('needsApproval');
+      expect(steps).toContain('CARD');
+      // The recovery path is the part a caller cannot guess.
+      expect(steps).toContain('onNotApproved');
       // Caps come from the constants, so they cannot name a limit the
       // validator does not enforce.
       expect(steps).toContain(`${APPROVAL_DEFAULT_TIMEOUT_HOURS}`);
@@ -578,7 +579,8 @@ describe('the approval-card capability is discoverable', () => {
         { element?: { shape?: Record<string, Zodish> } } | undefined;
       return operations?.element?.shape?.node;
     });
-    expect(node).toContain('{kind:"approval"}');
+    expect(node).toContain('needsApproval');
+    expect(node).toContain('onNotApproved');
   });
 
   it('is named by agent_list_tools, which no skill list could cover', async () => {
@@ -587,9 +589,9 @@ describe('the approval-card capability is discoverable', () => {
 
     const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
 
-    expect(text).toContain('PAUSE FOR A PERSON');
+    expect(text).toContain('PAUSE BEFORE A TOOL CALL');
     expect(text).toContain('home-page feed');
-    expect(text).toContain('there is no skill for it');
+    expect(text).toContain('ASK A PERSON, ANYTIME');
   });
 
   it('names them even when the caller has no connectors at all', async () => {
@@ -599,7 +601,7 @@ describe('the approval-card capability is discoverable', () => {
     const text = (await handlers.get('agent_list_tools')!({})).content[0]?.text ?? '';
 
     expect(text).toContain('no connectors enabled');
-    expect(text).toContain('PAUSE FOR A PERSON');
+    expect(text).toContain('PAUSE BEFORE A TOOL CALL');
   });
 });
 
@@ -609,15 +611,15 @@ const PENDING = {
   agentId: 'agent-1',
   agentName: 'Refund triage',
   title: 'Refund triage — needs your approval',
-  message: 'Refund $240 to Dana Lin?',
-  mode: 'approve' as const,
-  fields: [],
+  summary: 'Wants to call Refund payment.',
+  proposedTool: 'jira_refund_payment',
+  proposedArgs: { amount: 240, customer: 'Dana Lin' },
   raisedAt: '2026-08-28T09:00:00.000Z',
   waitingUntil: '2026-08-31T09:00:00.000Z',
 };
 
 describe('agent_approvals_list', () => {
-  it('carries what a decision needs: the cardId, the ask, and the time left', async () => {
+  it('carries what a decision needs: the cardId, the proposed call, and the time left', async () => {
     approvalsMock.listPendingApprovals.mockResolvedValue([PENDING]);
     jest.useFakeTimers().setSystemTime(new Date('2026-08-30T09:00:00.000Z'));
     const handlers = registerAll({});
@@ -627,37 +629,42 @@ describe('agent_approvals_list', () => {
 
     expect(text).toContain('1 approval(s) waiting on you');
     expect(text).toContain('cardId: card-1');
-    expect(text).toContain('Refund $240 to Dana Lin?');
-    expect(text).toContain('Wants approve or decline');
+    expect(text).toContain('Wants to call');
+    expect(text).toContain('"amount":240');
     expect(text).toContain('24h left before it times out');
     expect(text).toContain('agent_approval_decide');
   });
 
-  it('says an input-mode card wants an answer, not just a verdict', async () => {
-    approvalsMock.listPendingApprovals.mockResolvedValue([{ ...PENDING, mode: 'input' }]);
+  it('says nothing is waiting rather than answering with an empty list', async () => {
+    approvalsMock.listPendingApprovals.mockResolvedValue([]);
     const handlers = registerAll({});
 
     const text = (await handlers.get('agent_approvals_list')!({})).content[0]?.text ?? '';
 
-    expect(text).toContain('Wants a typed ANSWER');
-    // And how to give it — a caller told only that an answer is wanted
-    // still has to guess which parameter carries it.
-    expect(text).toContain('answer');
+    expect(text).toContain('Nothing is waiting on you');
   });
+});
 
-  it('prints the FORM a card asks with — a caller cannot see the card', async () => {
-    approvalsMock.listPendingApprovals.mockResolvedValue([
+describe('agent_questions_list', () => {
+  it('prints the FORM a question card asks with — a caller cannot see the card', async () => {
+    approvalsMock.listPendingQuestions.mockResolvedValue([
       {
-        ...PENDING,
-        mode: 'input',
-        fields: [
+        cardId: 'card-2',
+        runId: 'run-2',
+        agentId: 'agent-2',
+        agentName: 'Sunday Deep Sweep',
+        title: 'Sunday Deep Sweep — has a question',
+        message: 'Which issue tracks this?',
+        form: [
           {
+            kind: 'field',
             name: 'the issue key',
             label: 'Which issue tracks this?',
             type: 'text',
             required: true,
           },
           {
+            kind: 'field',
             name: 'the comments',
             label: 'Which comments to post?',
             type: 'multi',
@@ -665,6 +672,7 @@ describe('agent_approvals_list', () => {
             options: ['decision 1', 'risk 2'],
           },
           {
+            kind: 'field',
             name: 'the points',
             label: 'Story Points',
             type: 'number',
@@ -674,11 +682,13 @@ describe('agent_approvals_list', () => {
             key: 'customfield_10016',
           },
         ],
+        raisedAt: '2026-08-28T09:00:00.000Z',
+        waitingUntil: '2026-08-31T09:00:00.000Z',
       },
     ]);
     const handlers = registerAll({});
 
-    const text = (await handlers.get('agent_approvals_list')!({})).content[0]?.text ?? '';
+    const text = (await handlers.get('agent_questions_list')!({})).content[0]?.text ?? '';
 
     // The parameter to answer with, and enough of each field to answer it
     // without a rejected round trip.
@@ -691,10 +701,10 @@ describe('agent_approvals_list', () => {
   });
 
   it('says nothing is waiting rather than answering with an empty list', async () => {
-    approvalsMock.listPendingApprovals.mockResolvedValue([]);
+    approvalsMock.listPendingQuestions.mockResolvedValue([]);
     const handlers = registerAll({});
 
-    const text = (await handlers.get('agent_approvals_list')!({})).content[0]?.text ?? '';
+    const text = (await handlers.get('agent_questions_list')!({})).content[0]?.text ?? '';
 
     expect(text).toContain('Nothing is waiting on you');
   });
@@ -733,7 +743,7 @@ describe('agent_approval_decide', () => {
       (await handlers.get('agent_approval_decide')!({ cardId: 'card-1', decision: 'approve' }))
         .content[0]?.text ?? '';
 
-    expect(text).toContain('Approved. Run run-1 takes its approved path.');
+    expect(text).toContain('Approved — the call fires for real. Run run-1.');
     expect(text).toContain('queued to resume');
   });
 

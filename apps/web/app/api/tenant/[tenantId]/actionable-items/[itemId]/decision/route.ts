@@ -68,6 +68,14 @@ export async function POST(
       { status: 422 }
     );
   }
+  if (item.kind === 'question') {
+    // Same story as an approval card: a question gates a PAUSED AGENT
+    // RUN — answering it must go through the question route.
+    return NextResponse.json(
+      { error: 'This card resumes an agent run — use its answer controls' },
+      { status: 422 }
+    );
+  }
   if (item.kind === 'info' && body.decision === 'approve') {
     // Named early rather than falling through to "carries no executable
     // action": an info card is WORKING as designed, not missing data.

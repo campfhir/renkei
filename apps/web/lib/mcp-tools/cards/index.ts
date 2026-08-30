@@ -328,22 +328,25 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
       for (const row of rows) {
         const summary = row.summary ?? '';
         const excerpt = summary.length <= 200 ? summary : `${summary.slice(0, 199)}…`;
-        // An approval card is a run waiting on a person, and a caller that
-        // cannot tell it from a note treats a paused agent as something to
-        // acknowledge — or leaves it sitting, which is the same outcome. Its
-        // run is the context that makes it decidable, and `source` says who
-        // put the card here, which was fetched and then dropped.
-        const isApproval = row.kind === 'approval' && row.runId;
+        // An approval or question card is a run waiting on a person, and a
+        // caller that cannot tell it from a note treats a paused agent as
+        // something to acknowledge — or leaves it sitting, which is the
+        // same outcome. Its run is the context that makes it decidable,
+        // and `source` says who put the card here, which was fetched and
+        // then dropped.
+        const pauseKind = row.kind === 'approval' || row.kind === 'question' ? row.kind : null;
+        const decideWith =
+          row.kind === 'approval' ? 'agent_approval_decide' : 'agent_question_answer';
         lines.push(
           '',
           `- ${row.title} — ${row.kind} · ${row.status} · from ${row.source}` +
             `${row.archived_at ? ' · archived' : ''} — ${new Date(row.created_at).toISOString()}`,
           `  cardId: ${row.id}`,
-          ...(isApproval
+          ...(pauseKind && row.runId
             ? [
                 `  Paused run ${row.runId}` +
                   `${row.agentName ? ` of agent "${row.agentName}" (${row.agentId})` : ''}` +
-                  `${row.status === 'suggested' ? ' — decide it with agent_approval_decide' : ''}`,
+                  `${row.status === 'suggested' ? ` — decide it with ${decideWith}` : ''}`,
               ]
             : []),
           `  ${excerpt}`

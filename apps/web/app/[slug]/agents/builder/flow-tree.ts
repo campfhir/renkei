@@ -6,19 +6,15 @@
  */
 
 import {
-  APPROVAL_DEFAULT_TIMEOUT_HOURS,
   BRANCH_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
   MAX_BRANCH_DEPTH_V3,
   MAX_CONTAINER_DEPTH,
-  approvalPathsOf,
   findNodeById,
-  isApprovalStep,
   isBranchStep,
   walkSteps,
   type ActionStep,
   type AgentStepNode,
-  type ApprovalStep,
   type BranchPath,
   type BranchStep,
   type ForEachLoopStep,
@@ -76,22 +72,6 @@ export function newGroup(): GroupStep {
   };
 }
 
-export function newApproval(): ApprovalStep {
-  return {
-    id: randomUUID(),
-    kind: 'approval',
-    name: '',
-    message: [],
-    mode: 'approve',
-    timeoutHours: APPROVAL_DEFAULT_TIMEOUT_HOURS,
-    notifyEmail: true,
-    notifyWebex: false,
-    onApproved: { id: randomUUID(), name: 'Approved', steps: [] },
-    onDeclined: { id: randomUUID(), name: 'Declined', steps: [] },
-    onTimeout: { id: randomUUID(), name: 'No answer in time', steps: [] },
-  };
-}
-
 export function newTerminal(): TerminalStep {
   return {
     id: randomUUID(),
@@ -133,16 +113,24 @@ function clone(nodes: AgentStepNode[]): AgentStepNode[] {
   return structuredClone(nodes);
 }
 
-/** One path-shaped child list: a branch route, a failure route, or an approval outcome. */
+/** One path-shaped child list: a branch route or a failure route. */
 interface PathEntry {
-  /** The owning NODE's id (branch or approval) — nesting context anchor. */
+  /** The owning NODE's id (the branch) — nesting context anchor. */
   ownerId: string;
   path: BranchPath;
   /** Move-menu label, e.g. `Path "A ticket exists" of "Triage"`. */
   label: string;
 }
 
-/** Every BranchPath in the tree — branch routes, failure routes, approval outcomes. */
+/**
+ * Every BranchPath in the tree — branch routes and failure routes. A gated
+ * ActionStep's `onNotApproved` path is structurally similar but is NOT
+ * listed here: authoring into it (move-to targets, insert menus) is part
+ * of the richer gate-authoring UI deferred to a later phase, not this
+ * pass's minimum fix. Existing documents that already have one still load
+ * and walk correctly (walkSteps/findNodeById from @renkei/agents descend
+ * into it); they just cannot be targeted by this menu yet.
+ */
 function allPaths(nodes: AgentStepNode[]): PathEntry[] {
   const out: PathEntry[] = [];
   for (const { node } of walkSteps(nodes)) {
@@ -161,13 +149,6 @@ function allPaths(nodes: AgentStepNode[]): PathEntry[] {
           path: node.failurePath,
           label: `Failure path of "${branchName}"`,
         });
-      }
-    } else if (isApprovalStep(node)) {
-      const approvalName = displayName(node.name, 'approval');
-      for (const { key, path } of approvalPathsOf(node)) {
-        const what =
-          key === 'onApproved' ? 'Approved' : key === 'onDeclined' ? 'Declined' : 'Timed-out';
-        out.push({ ownerId: node.id, path, label: `${what} path of "${approvalName}"` });
       }
     }
   }
@@ -302,29 +283,24 @@ function subtreeMetrics(node: AgentStepNode): SubtreeMetrics {
     case 'group':
       // Depth-neutral, same as the schema's guards.
       return ofList(node.steps);
-    case 'approval': {
-      // Branch-like: the outcome paths consume a branch level and a
-      // container level, same as a BranchStep.
-      const inner = approvalPathsOf(node)
-        .map(({ path }) => ofList(path.steps))
-        .reduce(
-          (a, b) => ({
-            branchDepth: Math.max(a.branchDepth, b.branchDepth),
-            containerDepth: Math.max(a.containerDepth, b.containerDepth),
-            hasLoop: a.hasLoop || b.hasLoop,
-          }),
-          { branchDepth: 0, containerDepth: 0, hasLoop: false }
-        );
+    case 'terminal':
+      return { branchDepth: 0, containerDepth: 0, hasLoop: false };
+    case 'action':
+    case undefined: {
+      // A gated ActionStep's onNotApproved path is branch-like: it
+      // consumes a branch level and a container level, same as the old
+      // approval node's outcome paths did. There's no authoring UI for
+      // this yet (deferred), but an existing document can already carry
+      // one, and skipping it here would silently under-count the depth
+      // budget for a step moved with it.
+      if (!node.onNotApproved) return { branchDepth: 0, containerDepth: 0, hasLoop: false };
+      const inner = ofList(node.onNotApproved.steps);
       return {
         branchDepth: inner.branchDepth + 1,
         containerDepth: inner.containerDepth + 1,
         hasLoop: inner.hasLoop,
       };
     }
-    case 'terminal':
-    case 'action':
-    case undefined:
-      return { branchDepth: 0, containerDepth: 0, hasLoop: false };
     default: {
       const unhandled: never = node;
       throw new Error(`unknown step kind: ${JSON.stringify(unhandled)}`);
@@ -365,7 +341,6 @@ function contextOfLocation(
     context.ancestorIds.push(node.id);
     switch (node.kind) {
       case 'branch':
-      case 'approval':
         context.branchDepth += 1;
         context.containerDepth += 1;
         break;
@@ -395,8 +370,15 @@ function contextOfLocation(
       case 'group':
         enter(ancestor.group);
         break;
-      case 'approval':
-        enter(ancestor.approval);
+      case 'gate':
+        // A gate's onNotApproved path is structurally like a branch path:
+        // it consumes a branch level and a container level. The gating
+        // ActionStep is a depth-neutral leaf in `enter`'s own switch, so
+        // account for the gate directly here instead of dispatching
+        // through it.
+        context.ancestorIds.push(ancestor.step.id);
+        context.branchDepth += 1;
+        context.containerDepth += 1;
         break;
       default: {
         const unhandled: never = ancestor;

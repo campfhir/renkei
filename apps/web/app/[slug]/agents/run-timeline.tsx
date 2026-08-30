@@ -23,8 +23,6 @@ function stepName(run: RunDetail, stepId: string, stepIndex: number): string {
           return `Group: ${found.node.name}`;
         case 'terminal':
           return `End: ${found.node.name}`;
-        case 'approval':
-          return `Approval: ${found.node.name}`;
         case 'action':
         case undefined:
           return found.node.name;

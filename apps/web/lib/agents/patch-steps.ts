@@ -89,12 +89,16 @@ function locationOfList(
   if (!innermost) return topLocation(index);
   switch (innermost.kind) {
     case 'branch':
-    case 'approval':
+    case 'gate':
       return pathLocation(innermost.path.id, index);
     case 'loop':
       return bodyLocation(innermost.loop.id, index);
     case 'group':
       return bodyLocation(innermost.group.id, index);
+    default: {
+      const unhandled: never = innermost;
+      throw new Error(`unknown ancestor kind: ${JSON.stringify(unhandled)}`);
+    }
   }
 }
 

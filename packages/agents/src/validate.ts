@@ -92,6 +92,12 @@ export interface AgentDraft {
    * (engine-initiated, owner-configured).
    */
   blockedTools: string[];
+  /**
+   * Unlocks the free `ask_person` tool in every step's turn — the model
+   * may pause and raise a dynamic question card at any point, not only at
+   * a pre-planned node. Agent-wide, live-read like guardrails/blockedTools.
+   */
+  canAskQuestions: boolean;
 }
 
 export interface ValidationIssue {
@@ -900,6 +906,7 @@ export function normalizeAgentDraft(
     guardrails,
     // Deduped, order preserved; empty entries dropped.
     blockedTools: [...new Set(draft.blockedTools.map((tool) => tool.trim()).filter(Boolean))],
+    canAskQuestions: draft.canAskQuestions === true,
     steps: {
       // Every save stamps the one current version — there is no per-version
       // maintenance any more: an older doc updates by being re-saved, and

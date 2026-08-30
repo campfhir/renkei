@@ -59,7 +59,7 @@ import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
 import {
   APPROVAL_DEFAULT_TIMEOUT_HOURS,
-  MAX_APPROVAL_FIELDS,
+  MAX_QUESTION_FIELDS,
   BUILTIN_VARIABLES,
   CURRENT_STEPS_VERSION,
   DEFAULT_APPROVAL_WAIT_CAP_HOURS,
@@ -69,11 +69,14 @@ import {
   MAX_SCHEDULE_RULES,
   MAX_STEPS,
   MAX_STEP_ATTEMPTS,
+  MAX_QUESTION_ANSWER_CHARS,
   TRIGGER_EVENT_CATALOG,
+  flattenFormFields,
   friendlyToolName,
   isCurrentStepsDoc,
   savesByPathCoverage,
   type AgentStepsDoc,
+  type QuestionField,
 } from '@renkei/agents';
 import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/agents/memory';
 import { createAgentRun } from '@renkei/agents/runs';
@@ -99,12 +102,13 @@ import {
 } from '@/lib/agents/agent-notes';
 import { agentDefinition } from '@/lib/agents/definition';
 import {
+  answerQuestion,
   decideApproval,
   listPendingApprovals,
-  MAX_APPROVAL_ANSWER_CHARS,
+  listPendingQuestions,
   type PendingApproval,
+  type PendingQuestion,
 } from '@/lib/agents/approvals';
-import type { ApprovalField } from '@renkei/agents';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { agentJobsQueue } from '@renkei/queue';
 import { isUuid } from '@/lib/uuid';
@@ -182,40 +186,56 @@ function variableLines(steps: AgentStepsDoc): string[] {
   ];
 }
 
+/** How long is left before a wait runs out, as a trailing clause. */
+function remainingClause(waitingUntil: string | null, now: number): string {
+  const deadline = waitingUntil ? new Date(waitingUntil).getTime() : null;
+  const hoursLeft = deadline === null ? null : Math.round((deadline - now) / 3_600_000);
+  if (hoursLeft === null) return '';
+  return hoursLeft <= 0
+    ? ' — the wait has run out; the run treats it as not approved next'
+    : ` — ${hoursLeft}h left before it times out`;
+}
+
 /**
- * One waiting approval, with everything a decision needs in the lines that
- * announce it: what is being asked, which run it holds up, whether a
- * verdict is enough or an answer is wanted, and how long is left.
+ * One waiting gate, with everything a decision needs in the lines that
+ * announce it: the proposed call, which run it holds up, and how long is
+ * left.
  */
 function approvalLines(approval: PendingApproval, now: number): string[] {
-  const deadline = approval.waitingUntil ? new Date(approval.waitingUntil).getTime() : null;
-  const hoursLeft = deadline === null ? null : Math.round((deadline - now) / 3_600_000);
-  const remaining =
-    hoursLeft === null
-      ? ''
-      : hoursLeft <= 0
-        ? ' — the wait has run out; the run takes its timed-out path next'
-        : ` — ${hoursLeft}h left before it times out`;
   return [
     `- ${approval.title}`,
     `  cardId: ${approval.cardId} · agent "${approval.agentName}" (${approval.agentId}) · run ${approval.runId}`,
+    `  Wants to call ${approval.proposedTool ? friendlyToolName(approval.proposedTool, null) : 'a tool'}` +
+      ` · raised ${approval.raisedAt}${remainingClause(approval.waitingUntil, now)}`,
+    ...(approval.proposedArgs ? [`  args: ${JSON.stringify(approval.proposedArgs)}`] : []),
+  ];
+}
+
+/**
+ * One waiting question, with everything an answer needs in the lines that
+ * announce it: what is being asked, which run it holds up, the form (if
+ * any), and how long is left.
+ */
+function questionLines(question: PendingQuestion, now: number): string[] {
+  const fields = flattenFormFields(question.form);
+  return [
+    `- ${question.title}`,
+    `  cardId: ${question.cardId} · agent "${question.agentName}" (${question.agentId}) · run ${question.runId}`,
     `  ${
-      approval.fields.length > 0
-        ? 'Wants a FORM filled in — decide with `answers`, keyed by the field names below'
-        : approval.mode === 'input'
-          ? 'Wants a typed ANSWER — decide with `answer`, or decline to say you have none'
-          : 'Wants approve or decline'
-    }` + ` · raised ${approval.raisedAt}${remaining}`,
-    ...(approval.message ? [`  ${approval.message.replace(/\n/g, '\n  ')}`] : []),
+      fields.length > 0
+        ? 'Wants a FORM filled in — answer with `answers`, keyed by the field names below'
+        : 'Wants an open answer'
+    }` + ` · raised ${question.raisedAt}${remainingClause(question.waitingUntil, now)}`,
+    ...(question.message ? [`  ${question.message.replace(/\n/g, '\n  ')}`] : []),
     // The form itself, because a caller cannot see the card: without the
     // types and the option lists, answering it is guesswork the checker
     // then rejects.
-    ...approval.fields.map((field) => `  · ${describeApprovalField(field)}`),
+    ...fields.map((field) => `  · ${describeQuestionField(field)}`),
   ];
 }
 
 /** One field as one line: what it wants, and what it will accept. */
-function describeApprovalField(field: ApprovalField): string {
+function describeQuestionField(field: QuestionField): string {
   const shape =
     field.type === 'choice' || field.type === 'multi'
       ? `${field.type === 'multi' ? 'any of' : 'one of'}: ${(field.options ?? []).join(' | ')}`
@@ -236,30 +256,49 @@ function describeApprovalField(field: ApprovalField): string {
 /**
  * What an agent can do that no skill accounts for.
  *
- * The engine provides these as step KINDS, so they are invisible to a
- * catalog built from registered tools — and a model that reads the catalog
- * as "everything this agent could do" concludes an agent cannot pause for a
- * person, because nothing named `*_ask_approval` came back. It then writes a
- * step that says "check with the owner first" and acts anyway.
+ * The engine provides these as step-level FLAGS and an agent-level
+ * CAPABILITY, so they are invisible to a catalog built from registered
+ * tools — and a model that reads the catalog as "everything this agent
+ * could do" concludes an agent cannot pause for a person, because nothing
+ * named `*_ask_approval` came back. It then writes a step that says "check
+ * with the owner first" and acts anyway.
  */
 const NATIVE_CAPABILITIES = [
-  'These are step KINDS, not skills, so no name above covers them:',
-  '- PAUSE FOR A PERSON — a {kind:"approval"} step parks the run as "waiting" and puts an ' +
-    "interactive card on the owner's home-page feed, then resumes down whichever of its " +
-    'three outcome paths applies. This is how an agent gets a human decision; there is no ' +
-    'skill for it. Use it for "ask me before sending", "let me approve this", "check with ' +
-    'me first". agent_approvals_list shows the ones waiting on you right now, and ' +
-    'agent_approval_decide answers one.',
-  '  The card asks in one of two ways. mode:"approve" is a VERDICT on something already ' +
-    'decided — approve or decline. mode:"input" ASKS FOR INFORMATION the agent could not ' +
-    'work out for itself, and it does not have to be prose: give it `fields` and the card ' +
-    'renders a FORM — a number, a date, one of a list of choices, several of them, short or ' +
-    'long text — each binding its own variable for later steps, and each checked before the ' +
-    'run continues. Reach for fields whenever the answer has a shape ("which issue?", "how ' +
-    'many points?", "which of these to post?"): a plain box makes the next step parse a ' +
-    'string that may be anything, while a form cannot come back as anything else. A field ' +
-    'may also carry the destination\'s own id (`key`, e.g. "customfield_10016"), which ' +
-    'travels with the answer so the step that writes it has both halves.',
+  'These are step-level FLAGS and an agent-level CAPABILITY, not skills, so no name above covers them:',
+  '- PAUSE BEFORE A TOOL CALL — set `needsApproval: true` on any step that has a `tool`. Before ' +
+    'that step\'s call fires, the run parks as "waiting" and puts an interactive card on the ' +
+    "owner's home-page feed showing exactly what the step is about to do (the tool and its " +
+    'rendered arguments) — never an authored message, there is nothing to author. Approved: the ' +
+    'call fires for real, with the SAME arguments the card showed. Denied or timed out: the ' +
+    'call is skipped. `approvalTimeoutHours` sets the wait (default ' +
+    `${APPROVAL_DEFAULT_TIMEOUT_HOURS}, clamped by the org's cap, never more than ` +
+    `${DEFAULT_APPROVAL_WAIT_CAP_HOURS}); \`onNotApproved\` is one optional recovery path ` +
+    '({id, name, steps:[...]}) taken when denied OR timed out (empty/absent = just skip the ' +
+    'call and continue below the step). `approval.outcome` ("approved"|"denied"|"timedOut") ' +
+    "and `approval.comment` (the person's typed note, if any) bind as variables so a branch " +
+    'inside onNotApproved can tell denied and timed-out apart, or a later step can read why. ' +
+    'Use this for "ask me before sending", "let me approve this", "check with me first". ' +
+    'agent_approvals_list shows the ones waiting on you right now, and agent_approval_decide ' +
+    'answers one.',
+  '  Retrying with the feedback from a denial needs no backward jump: wrap "decide the value → ' +
+    'gated step" in a {kind:"loop", mode:"until"} whose exit condition reads `approval.outcome` ' +
+    '— a denial with a comment drives another bounded round. Steps are a forward-only tree; ' +
+    'there is no goto.',
+  '- ASK A PERSON, ANYTIME — set the AGENT-level `canAskQuestions: true` (agent_create/' +
+    'agent_update, alongside `guardrails`/`blockedTools`) and every step gains a free ' +
+    '`ask_person` tool it may call mid-reasoning: {message, form?, timeoutHours?}. Calling it ' +
+    'pauses the run exactly like a gate (the same card/waiting/resume mechanics) with ONE card ' +
+    'carrying everything the step needs answered right now: `form` is an array of up to ' +
+    `${MAX_QUESTION_FIELDS} entries — {kind:"field", name, label, ` +
+    'type:"text"|"longtext"|"number"|"date"|"choice"|"multi", required, options?, min?, max?, ' +
+    'help?, key?} (an answerable control, binding its own variable — a two-option "choice" ' +
+    'covers yes/no), {kind:"paragraph", text} (context with nothing to answer), or ' +
+    '{kind:"group", label, nodes} (one level of fields/paragraphs clustered under a heading, ' +
+    'no nesting) — so a step with several pending questions asks them all in ONE card, never a ' +
+    'loop of single-question asks. On answer or timeout the step gets a FRESH attempt whose ' +
+    'prompt states what was asked and what came back (question.message, question.answer, and ' +
+    'one variable per answered field) — nothing to plan ahead of time. agent_questions_list ' +
+    'shows the ones waiting on you, and agent_question_answer answers one.',
   '- END THE RUN AND SAY SO — a {kind:"terminal"} step ends the whole run as a success, a ' +
     'deliberate failure, or a graceful skip, and emails or WebEx-messages the owner the ' +
     'message it carries.',
@@ -367,6 +406,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               triggers: agent.triggers,
               guardrails: agent.guardrails,
               blockedTools: agent.blockedTools,
+              canAskQuestions: agent.canAskQuestions,
               llmModelId: agent.llmModelId,
             }),
           },
@@ -615,13 +655,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Read — Approvals waiting on you',
       description:
-        'The approval cards your agents are PAUSED on, waiting for you to decide — oldest ' +
-        'first, because the oldest is the one about to time out. An agent that reaches an ' +
-        'approval step parks its whole run as "waiting" and raises one of these; until ' +
-        'somebody answers, that run does nothing and the work behind it does not happen. ' +
-        'Each entry carries the cardId agent_approval_decide takes, what is being asked, ' +
-        'which run it holds up, whether a verdict is enough or a typed answer is wanted, and ' +
-        'how long is left before the wait runs out and the run takes its timed-out path.',
+        'The `needsApproval` gate cards your agents are PAUSED on, waiting for you to decide ' +
+        '— oldest first, because the oldest is the one about to time out. A gated step parks ' +
+        'its whole run as "waiting" and raises one of these BEFORE its tool call fires; ' +
+        'until somebody decides, that run does nothing and the call does not happen. Each ' +
+        'entry carries the cardId agent_approval_decide takes, the proposed call (tool + ' +
+        'arguments), which run it holds up, and how long is left before the wait runs out ' +
+        'and the run treats it as not approved.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z
@@ -669,49 +709,37 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Act — Approve or decline a paused run',
       description:
         'Answer one of the approval cards from agent_approvals_list: approve it, or decline ' +
-        'it. The run resumes down whichever outcome path applies — approved, declined, or ' +
-        '(if nobody answers in time) timed out. A declined approval does NOT fail the run by ' +
-        'itself; it takes the path its author wrote for that answer. When the card wants a ' +
-        'typed answer ("input" mode), pass `answer` — it binds to the variable the step ' +
-        'named, and everything after can use it. ' +
+        'it. Approved fires the proposed call for real, with the SAME arguments the card ' +
+        'showed — not a re-ask of the model. Declined skips the call; the run takes its ' +
+        '`onNotApproved` recovery path if the step named one, or just continues if not. A ' +
+        'decline does NOT fail the run by itself. An optional `comment` binds as ' +
+        'approval.comment for the run to read (e.g. a recovery path that acts on WHY it was ' +
+        'declined). ' +
         "This is a REAL DECISION on the owner's behalf, taken immediately and not " +
-        'reversible from here — an approval step exists because a person was meant to weigh ' +
-        'in, so confirm with them before deciding for them. AGENT RUNS CANNOT CALL THIS: an ' +
-        'agent approving its own pause is the whole point of the pause, undone.',
+        'reversible from here — a gate exists because a person was meant to weigh in, so ' +
+        'confirm with them before deciding for them. AGENT RUNS CANNOT CALL THIS: an agent ' +
+        'approving its own pause is the whole point of the pause, undone.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         cardId: z.string().min(1).describe('From agent_approvals_list'),
         decision: z
           .enum(['approve', 'decline'])
-          .describe('"approve" takes the approved path; "decline" takes the declined path'),
-        answer: z
+          .describe('"approve" fires the proposed call; "decline" skips it'),
+        comment: z
           .string()
-          .max(MAX_APPROVAL_ANSWER_CHARS)
+          .max(MAX_QUESTION_ANSWER_CHARS)
           .optional()
-          .describe(
-            'The typed answer, for a card in "input" mode — it binds to the step\'s saveAs ' +
-              'name for everything after it'
-          ),
-        answers: z
-          .record(z.string(), z.union([z.string(), z.array(z.string())]))
-          .optional()
-          .describe(
-            'For a card that asks with a FORM: {"<field name>": value} — the names ' +
-              'agent_approvals_list prints, one entry each. A multi-select takes an array. ' +
-              'Checked against the form before anything is recorded — a number that is not a ' +
-              'number, or a choice that is not on offer, comes back as an error, not as a ' +
-              'bad answer'
-          ),
+          .describe('A short note alongside the decision — binds to approval.comment'),
       }),
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
       // The cards ground rule, at its sharpest: the pause exists so a PERSON
       // decides. A run that could answer its own approval — or another
-      // agent's — would make every approval step decorative.
+      // agent's — would make every gate decorative.
       if (context.agent) {
         return errText(
-          'Agent runs cannot decide approvals — that is the one thing an approval step ' +
+          'Agent runs cannot decide approvals — that is the one thing a needsApproval gate ' +
             'exists to prevent. A person answers this, in the Renkei feed or through their ' +
             'own MCP client.'
         );
@@ -731,22 +759,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         {
           cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
           decision,
-          answer: typeof args.answer === 'string' ? args.answer : undefined,
-          answers: args.answers,
+          comment: typeof args.comment === 'string' ? args.comment : undefined,
         }
       );
 
       switch (result.outcome) {
-        case 'invalid-answers':
-          return errText(
-            [
-              'That card asks with a form, and these answers do not fit it:',
-              ...result.issues.map((issue) => `- ${issue.label}: ${issue.message}`),
-              'agent_approvals_list prints the form — the fields, their types, and what each accepts.',
-            ].join('\n')
-          );
-        case 'answer-too-long':
-          return errText(`The answer must stay under ${result.max} characters.`);
+        case 'comment-too-long':
+          return errText(`The comment must stay under ${result.max} characters.`);
         case 'not-found':
           return errText(
             'No approval of yours has that cardId. Approvals are owner-scoped — ' +
@@ -755,14 +774,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         case 'not-approval':
           return errText(
             'That card is not an approval. Informational cards are dismissed with ' +
-              'card_dismiss; only a paused run raises a decision.'
+              'card_dismiss; a question card is answered with agent_question_answer.'
           );
         case 'already-decided':
           // Someone (or the timeout sweep) got there first. Saying so beats
           // overwriting a decision that already stands.
           return errText(
             `That approval is already ${result.status} — it was decided elsewhere, or the ` +
-              'wait ran out and the run took its timed-out path.'
+              'wait ran out and the run treated it as not approved.'
           );
         case 'decided': {
           logger.info('agent_approval_decide answered a paused run', {
@@ -773,13 +792,159 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           });
           return textResult(
             [
-              `${result.decision === 'approve' ? 'Approved' : 'Declined'}. Run ${result.runId} ` +
-                `takes its ${result.decision === 'approve' ? 'approved' : 'declined'} path.`,
+              `${result.decision === 'approve' ? 'Approved — the call fires for real.' : 'Declined — the call is skipped.'} Run ${result.runId}.`,
               // The claim is durable either way; only the wake is in doubt,
               // and the sweep covers it. Never report this as a failure.
               result.resumed
                 ? 'It has been queued to resume — agent_run_get will show where it went.'
                 : 'The decision is saved; the run will resume automatically within a few minutes.',
+            ].join('\n')
+          );
+        }
+      }
+    }
+  );
+
+  server.registerTool(
+    'agent_questions_list',
+    {
+      title: 'Agents · Read — Questions waiting on you',
+      description:
+        'The ask_person cards your agents are PAUSED on, waiting for you to answer — oldest ' +
+        'first, because the oldest is the one about to time out. A step whose agent has ' +
+        '`canAskQuestions` on may pause mid-reasoning and raise one of these; until somebody ' +
+        'answers, that run does nothing. Each entry carries the cardId ' +
+        'agent_question_answer takes, what is being asked (and its form, if it has one), ' +
+        'which run it holds up, and how long is left before the wait runs out and the run ' +
+        'treats it as unanswered.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        agentId: z
+          .string()
+          .optional()
+          .describe('Only questions raised by this agent (from agent_list)'),
+        limit: z.number().int().min(1).max(50).optional().describe('Max questions (default 20)'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+
+      const questions = await listPendingQuestions(
+        dbResult.val,
+        context.tenantId,
+        context.subject,
+        {
+          agentId: typeof args.agentId === 'string' ? args.agentId : undefined,
+          limit: typeof args.limit === 'number' ? args.limit : undefined,
+        }
+      );
+      if (questions.length === 0) {
+        return textResult(
+          'Nothing is waiting on you — none of your agents has a pending question.'
+        );
+      }
+
+      const now = Date.now();
+      return textResult(
+        [
+          `${questions.length} question(s) waiting on you, longest-waiting first:`,
+          ...questions.flatMap((question) => ['', ...questionLines(question, now)]),
+          '',
+          'Answer one with agent_question_answer, giving its cardId.',
+        ].join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
+    'agent_question_answer',
+    {
+      title: 'Agents · Act — Answer a paused run',
+      description:
+        'Answer one of the question cards from agent_questions_list. The run resumes on a ' +
+        'FRESH attempt that sees both what was asked and what came back — never a re-ask of ' +
+        'the model, and no reasoning is lost, since the step ended its turn the moment it ' +
+        'asked. ' +
+        "This is a REAL ANSWER on the owner's behalf, taken immediately and not reversible " +
+        'from here — a step asked because a person was meant to supply the answer, so confirm ' +
+        'with them before answering for them. AGENT RUNS CANNOT CALL THIS: an agent answering ' +
+        'its own question is the whole point of asking, undone.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        cardId: z.string().min(1).describe('From agent_questions_list'),
+        answers: z
+          .record(z.string(), z.union([z.string(), z.array(z.string())]))
+          .optional()
+          .describe(
+            '{"<field name>": value} — the names agent_questions_list prints, one entry ' +
+              'each. A multi-select takes an array. Checked against the form before anything ' +
+              'is recorded — a number that is not a number, or a choice that is not on offer, ' +
+              'comes back as an error, not as a bad answer. Omit (or {}) for a message-only ' +
+              'question with no fields.'
+          ),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      if (context.agent) {
+        return errText(
+          'Agent runs cannot answer questions — that is the one thing ask_person exists to ' +
+            'prevent. A person answers this, in the Renkei feed or through their own MCP client.'
+        );
+      }
+
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+
+      const result = await answerQuestion(
+        dbResult.val,
+        agentJobsQueue().producer,
+        context.tenantId,
+        context.subject,
+        {
+          cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
+          answers: typeof args.answers === 'object' && args.answers !== null ? args.answers : {},
+        }
+      );
+
+      switch (result.outcome) {
+        case 'invalid-answers':
+          return errText(
+            [
+              'That card asks with a form, and these answers do not fit it:',
+              ...result.issues.map((issue) => `- ${issue.label}: ${issue.message}`),
+              'agent_questions_list prints the form — the fields, their types, and what each accepts.',
+            ].join('\n')
+          );
+        case 'not-found':
+          return errText(
+            'No question of yours has that cardId. Questions are owner-scoped — ' +
+              'agent_questions_list shows the ones you can answer.'
+          );
+        case 'not-question':
+          return errText(
+            'That card is not a question. Informational cards are dismissed with ' +
+              'card_dismiss; an approval card is decided with agent_approval_decide.'
+          );
+        case 'already-decided':
+          return errText(
+            `That question is already ${result.status} — it was answered elsewhere, or the ` +
+              'wait ran out and the run treated it as unanswered.'
+          );
+        case 'answered': {
+          logger.info('agent_question_answer answered a paused run', {
+            component: 'mcp/tool',
+            tenantId: context.tenantId,
+            runId: result.runId,
+          });
+          return textResult(
+            [
+              `Answered. Run ${result.runId} continues with it.`,
+              result.resumed
+                ? 'It has been queued to resume — agent_run_get will show where it went.'
+                : 'The answer is saved; the run will resume automatically within a few minutes.',
             ].join('\n')
           );
         }
@@ -1455,12 +1620,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
    * UI with a node palette — is the only other place the vocabulary
    * appears. A caller here cannot read a palette.
    *
-   * The APPROVAL node is the load-bearing entry. It is a Renkei capability
-   * with NO TOOL BEHIND IT: agent_list_tools cannot mention it, because
-   * pausing a run and raising a card on someone's home page is something
-   * the engine does, not something a connector exposes. So a model asked to
-   * "have it check with me first" had no way to know the construct existed,
-   * and wrote a step that says "ask the owner" and then acts anyway.
+   * needsApproval is the load-bearing entry on the ACTION step. It is a
+   * Renkei capability with NO TOOL BEHIND IT: agent_list_tools cannot
+   * mention it, because pausing before a call fires and raising a card on
+   * someone's home page is something the engine does, not something a
+   * connector exposes. So a model asked to "have it check with me first"
+   * had no way to know the construct existed, and wrote a step that says
+   * "ask the owner" and then acts anyway.
    *
    * Caps come from the constants they enforce, so this cannot name a limit
    * the validator does not.
@@ -1472,40 +1638,28 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     `maxAttempts:1-${MAX_STEP_ATTEMPTS}, saveAs?:<short name later steps reference as a var>,`,
     'failureHandling:[{outcome:<a failure code of THAT skill, from agent_list_tools, or',
     '"other">, action:"retry"|"exit"|"stop-quiet"|"continue", guidance?:[segment,...]}],',
-    'onSuccess?:"continue"|"stop"|"stop-quiet"}. At most one tool per step.',
-    '{kind:"approval"} — PAUSE THE RUN AND ASK A PERSON. This is how an agent gets a human',
-    'decision, and there is no tool for it: reaching the node parks the whole run as',
-    '"waiting" and puts an interactive CARD on the owner\'s home-page feed for them to',
-    'approve or decline (or type an answer). REACH FOR THIS whenever the automation should',
-    'not act without a person saying so — "ask me before sending", "let me approve the',
-    'refund", "check with me first". {id, name, message:[segment,...] (the card body AND the',
-    'notification), mode:"approve" (approve/decline buttons) or "input" (asks for an answer),',
-    'saveAs? (REQUIRED in "input" mode with no fields — it binds the typed answer; WITH fields',
-    'it is optional and binds the WHOLE reply, every label and answer one per line, for a step',
-    'that relays what was said rather than using one answer),',
-    'fields? (input mode WITH STRUCTURE: a form of up to',
-    `${MAX_APPROVAL_FIELDS} controls, each {name:<the variable it binds, and the key its`,
-    'answer comes back under>, label:<what the person is asked>,',
-    'type:"text"|"longtext"|"number"|"date"|"choice"|"multi", required:true|false,',
-    'options?:[...] (choice/multi, at least two), min?/max? (number), help?,',
-    'key?:<what the DESTINATION calls this field, e.g. "customfield_10016" — opaque here,',
-    'carried so the step that writes the answer has the id and the value together>}.',
-    'USE FIELDS when the answer has a shape the agent would otherwise have to parse —',
-    'a number, a date, one of a known set — because the card refuses anything that does not',
-    'fit, so no step has to. Each field binds its own variable and a "multi" also binds a',
-    'LIST a foreach loop can iterate),',
-    'timeoutHours (how long it may wait; default',
-    `${APPROVAL_DEFAULT_TIMEOUT_HOURS}, clamped by the org's cap, never more than`,
-    `${DEFAULT_APPROVAL_WAIT_CAP_HOURS}), notifyEmail, notifyWebex (send the card link to the`,
-    'owner), and three outcome paths onApproved, onDeclined and onTimeout, each',
-    '{id, name, steps:[node,...]} — an EMPTY path just continues after the node, and a',
-    'timeout never fails the run by itself.}',
+    'onSuccess?:"continue"|"stop"|"stop-quiet",',
+    "needsApproval?:true (PAUSE BEFORE THIS STEP'S TOOL CALL fires and ask a person first —",
+    'only meaningful with `tool` set. Reaching for the tool parks the whole run as "waiting"',
+    "and puts an interactive CARD on the owner's home-page feed showing the proposed call —",
+    'the tool name and its rendered arguments, never an authored message: there is nothing to',
+    'author, the flag gates whatever the step is about to do. Approved: the SAME call fires',
+    'for real. Denied or timed out: the call is skipped. REACH FOR THIS whenever the',
+    'automation should not act without a person saying so — "ask me before sending", "let me',
+    'approve the refund", "check with me first"), approvalTimeoutHours? (how long it may',
+    `wait; default ${APPROVAL_DEFAULT_TIMEOUT_HOURS}, clamped by the org's cap, never more`,
+    `than ${DEFAULT_APPROVAL_WAIT_CAP_HOURS}), onNotApproved? ({id, name, steps:[node,...]})`,
+    '— ONE recovery path taken when the decision is denied OR the wait times out (both are',
+    '"not approved"); empty or absent just skips the call and continues below the step.',
+    'approval.outcome ("approved"|"denied"|"timedOut") and approval.comment (the person\'s',
+    'typed note, if any) bind as variables so a branch inside onNotApproved can tell denied',
+    'and timed-out apart, or a later step can read why}. At most one tool per step.',
     '{kind:"branch"} — a fork the model decides: {id, name, condition:[segment,...] (prose and',
     'var segments only, NEVER tool segments — do the tool work in a step before the branch and',
     `save it), paths:[2-${MAX_BRANCH_PATHS} × {id, name, steps:[...]}] where the LAST path is`,
     'the fallback, failurePath?:{id, name, steps} (taken when the EVALUATION itself runs out',
-    `of attempts), maxAttempts}. Branches nest at most ${MAX_BRANCH_DEPTH_V3} deep, and an`,
-    'approval counts toward the same budget.',
+    `of attempts), maxAttempts}. Branches nest at most ${MAX_BRANCH_DEPTH_V3} deep; a step's`,
+    'onNotApproved path counts toward the CONTAINER budget instead (same as a loop or group).',
     '{kind:"loop"} — repeat a body: mode:"foreach" with itemsVar (a saved list) and itemVar',
     '(the per-round binding), or mode:"until" with condition:[segment,...] checked AFTER each',
     `round. Both take maxIterations:1-${MAX_LOOP_ITERATIONS} and steps:[...], and may set`,
@@ -1520,61 +1674,45 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   ].join(' ');
 
   /**
-   * ONE worked node, and it is the approval-with-a-form.
+   * ONE worked example: a gated step retried with the person's feedback.
    *
-   * The grammar above is complete and dense, and the node it describes
-   * least readably is the one with the most parts. What came back without
-   * this was the shape a reader guesses from prose: fields as a bare list
-   * of names, or options on a number, or a form that also sets saveAs. An
-   * example costs a few hundred characters in a description that is read
-   * once per session and copied from every time.
+   * The steps model is a forward-only tree — there is no backward jump —
+   * so "ask again with what they said" is not a construct on the gate
+   * itself, it is a {kind:"loop", mode:"until"} wrapping the gated step,
+   * exiting once approval.outcome reads "approved". Without a worked
+   * example, what came back was a step reaching for onNotApproved to
+   * point BACK at an earlier node — the one shape the tree cannot express.
    */
-  const FORM_EXAMPLE = [
-    'Example of an input node that asks with a form:',
+  const GATE_EXAMPLE = [
+    "Example of a gated step retried with the person's feedback, no backward jump needed:",
     JSON.stringify({
       id: '<uuid>',
-      kind: 'approval',
-      name: 'Where do these go?',
-      message: [{ t: 'text', v: 'I found 7 decisions with no home. Which issue tracks them?' }],
-      mode: 'input',
-      saveAs: 'what you told me',
-      fields: [
+      kind: 'loop',
+      name: 'Post the update, retrying on feedback',
+      mode: 'until',
+      condition: [{ t: 'text', v: 'approval.outcome is "approved"' }],
+      maxIterations: 3,
+      steps: [
         {
-          name: 'the issue key',
-          label: 'Which issue tracks this?',
-          type: 'text',
-          required: true,
-          help: 'e.g. CIO-12',
-        },
-        {
-          name: 'the points',
-          label: 'Story Points',
-          type: 'number',
-          required: false,
-          min: 1,
-          max: 13,
-          key: 'customfield_10016',
-        },
-        {
-          name: 'the comments',
-          label: 'Which of these should I post?',
-          type: 'multi',
-          required: false,
-          options: ['decision 1', 'risk 2', 'action 3'],
+          id: '<uuid>',
+          name: 'Post the comment',
+          instruction: [
+            {
+              t: 'text',
+              v: 'Post the drafted update as a comment. If approval.comment is set, this is a retry — revise the draft to address it first.',
+            },
+          ],
+          tool: 'jira_add_comment',
+          maxAttempts: 1,
+          failureHandling: [],
+          needsApproval: true,
+          approvalTimeoutHours: 24,
         },
       ],
-      timeoutHours: 72,
-      notifyEmail: true,
-      notifyWebex: false,
-      onApproved: { id: '<uuid>', name: 'Answered', steps: [] },
-      onDeclined: { id: '<uuid>', name: 'Skipped', steps: [] },
-      onTimeout: { id: '<uuid>', name: 'No answer', steps: [] },
     }),
-    'The steps inside onApproved then use the chips "the issue key", "the points" and',
-    '"the comments" — that is the whole point of asking: the write the answer unlocks happens',
-    'in the same run, and the answered path is told "Story Points [customfield_10016]: 8" so',
-    'the step posting it needs no second lookup. "what you told me" holds all three answers',
-    'together, for a step that relays the reply rather than using one answer of it.',
+    'The loop reruns the gated step until approval.outcome reads "approved" or the round cap',
+    "is hit; a denial's approval.comment lands in scope for the NEXT round's instruction, so",
+    'the model can act on the feedback without any node pointing backward.',
   ].join(' ');
 
   const STEPS_DESCRIPTION = [
@@ -1582,7 +1720,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     '`steps` value from agent_get. Array order is execution order.',
     `At most ${MAX_STEPS} steps by default (the org may allow more).`,
     STEP_NODE_GRAMMAR,
-    FORM_EXAMPLE,
+    GATE_EXAMPLE,
   ].join(' ');
 
   /**
@@ -1634,6 +1772,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       .array(z.string())
       .optional()
       .describe('Act tools the engine must refuse for this agent, by name from agent_list_tools'),
+    canAskQuestions: z
+      .boolean()
+      .optional()
+      .describe(
+        'Default false. When true, every step gains the free ask_person tool — see the ' +
+          'agent-native-capabilities note above steps.'
+      ),
     confirm: z
       .boolean()
       .optional()
@@ -1659,6 +1804,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       llmModelId: typeof args.llmModelId === 'string' ? args.llmModelId : null,
       guardrails: typeof args.guardrails === 'string' ? args.guardrails : null,
       blockedTools: Array.isArray(args.blockedTools) ? args.blockedTools : [],
+      canAskQuestions: args.canAskQuestions === true,
     });
   }
 
@@ -1788,7 +1934,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
                     'replaces. ' +
                     STEP_NODE_GRAMMAR +
                     ' ' +
-                    FORM_EXAMPLE
+                    GATE_EXAMPLE
                 ),
               at: z
                 .object({
@@ -1954,6 +2100,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           .array(z.string())
           .optional()
           .describe('Replaces the blocked-skill list outright; [] unblocks everything'),
+        canAskQuestions: z
+          .boolean()
+          .optional()
+          .describe(
+            'Default false. When true, every step gains the free ask_person tool — see the ' +
+              'agent-native-capabilities note above steps.'
+          ),
         keepEnabled: z
           .boolean()
           .optional()
@@ -1982,7 +2135,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // this tool is that what a caller does not mention is not touched.
       // `null` is a value here, not an omission — it clears the field.
       const given = (key: string) => key in args && args[key] !== undefined;
-      const fields = ['name', 'triggers', 'guardrails', 'blockedTools', 'llmModelId'];
+      const fields = [
+        'name',
+        'triggers',
+        'guardrails',
+        'blockedTools',
+        'canAskQuestions',
+        'llmModelId',
+      ];
       if (!fields.some(given) && args.keepEnabled === undefined) {
         return errText(`Nothing to change — send at least one of ${fields.join(', ')}.`);
       }
@@ -2014,6 +2174,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           llmModelId: given('llmModelId') ? args.llmModelId : agent.llmModelId,
           guardrails: given('guardrails') ? args.guardrails : agent.guardrails,
           blockedTools: given('blockedTools') ? args.blockedTools : agent.blockedTools,
+          canAskQuestions: given('canAskQuestions') ? args.canAskQuestions : agent.canAskQuestions,
         },
         enabled
       );
@@ -2024,6 +2185,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         ...(given('triggers') ? ['triggers'] : []),
         ...(given('guardrails') ? ['guardrails'] : []),
         ...(given('blockedTools') ? ['blocked skills'] : []),
+        ...(given('canAskQuestions') ? ['canAskQuestions'] : []),
         ...(given('llmModelId') ? ['model'] : []),
         ...(agent.enabled && !enabled ? ['turned off'] : []),
       ].join(', ');

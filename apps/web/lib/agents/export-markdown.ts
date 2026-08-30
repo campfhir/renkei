@@ -19,7 +19,6 @@
  */
 
 import {
-  approvalFieldsOf,
   CURRENT_STEPS_VERSION,
   varSegments,
   walkSteps,
@@ -153,6 +152,15 @@ export function agentMarkdown(agent: AgentExportInput): string {
           `## Step ${ordinal + 1}: ${node.name || '(unnamed)'}`,
           '',
           `Tools offered (schemas ride separately): ${offered}`,
+          ...(node.needsApproval
+            ? [
+                '',
+                `Needs approval: before this tool call fires, the run pauses for the OWNER (up to ${node.approvalTimeoutHours ?? 96}h). ` +
+                  (node.onNotApproved
+                    ? `If not approved, takes the "${node.onNotApproved.name}" path below.`
+                    : 'If not approved, the call is skipped and the run continues.'),
+              ]
+            : []),
           '',
           '```',
           messageText(built),
@@ -234,27 +242,6 @@ export function agentMarkdown(agent: AgentExportInput): string {
           `## Step ${ordinal + 1}: End — ${node.name || '(unnamed)'}`,
           '',
           `No prompt: reaching it ends the run as ${node.result} deterministically.`,
-          ''
-        );
-        break;
-      case 'approval':
-        lines.push(
-          `## Step ${ordinal + 1}: Approval — ${node.name || '(unnamed)'}`,
-          '',
-          'No model prompt: the run pauses for the OWNER (' +
-            `${
-              node.mode === 'input'
-                ? approvalFieldsOf(node).length > 0
-                  ? `a form of ${approvalFieldsOf(node).length}`
-                  : 'typed answer'
-                : 'approve/decline'
-            }, up to ${node.timeoutHours}h).`,
-          ...approvalFieldsOf(node).map(
-            (field) =>
-              `- ${field.label || field.name} (${field.type}${field.required ? ', required' : ''})` +
-              ` → saved as "${field.name}"` +
-              (field.options?.length ? `; one of: ${field.options.join(', ')}` : '')
-          ),
           ''
         );
         break;

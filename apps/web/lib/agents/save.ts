@@ -99,6 +99,7 @@ export async function saveAgent(
     steps: normalized.steps,
     guardrails: normalized.guardrails,
     blockedTools: normalized.blockedTools,
+    canAskQuestions: normalized.canAskQuestions,
   };
   const nameTaken: SaveAgentResult = {
     outcome: 'invalid',
@@ -152,6 +153,7 @@ export async function saveAgent(
       llmModelId: existing.llmModelId,
       guardrails: existing.guardrails,
       blockedTools: existing.blockedTools,
+      canAskQuestions: existing.canAskQuestions,
     },
     {
       attemptsCap: settings.ok ? settings.val.agentMaxStepAttempts : undefined,
@@ -165,6 +167,7 @@ export async function saveAgent(
     // guardrails edit re-describes like a steps edit does.
     existingNormalized.guardrails !== normalized.guardrails ||
     JSON.stringify(existingNormalized.blockedTools) !== JSON.stringify(normalized.blockedTools) ||
+    existingNormalized.canAskQuestions !== normalized.canAskQuestions ||
     JSON.stringify(existingNormalized.triggers) !== JSON.stringify(normalized.triggers);
   // An explicit save (refreshDescription — the builder's Save button)
   // rewrites the summary unconditionally: the review panel is about to

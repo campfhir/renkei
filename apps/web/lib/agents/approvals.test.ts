@@ -8,7 +8,12 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
-import { decideApproval, listPendingApprovals } from './approvals';
+import {
+  answerQuestion,
+  decideApproval,
+  listPendingApprovals,
+  listPendingQuestions,
+} from './approvals';
 
 /** A kysely stub recording the WHERE terms each chain accumulated. */
 function stubDb(options: {
@@ -51,8 +56,8 @@ const CARD_ROW = {
   cardId: 'card-1',
   runId: 'run-1',
   title: 'Refund triage — needs your approval',
-  summary: 'Refund $240 to Dana Lin?',
-  suggestedAction: { approvalMode: 'input' },
+  summary: 'Wants to call Refund payment.',
+  suggestedAction: { tool: 'jira_refund_payment', args: { amount: 240, customer: 'Dana Lin' } },
   createdAt: new Date('2026-08-28T09:00:00.000Z'),
   agentId: 'agent-1',
   agentName: 'Refund triage',
@@ -60,19 +65,18 @@ const CARD_ROW = {
 };
 
 describe('listPendingApprovals', () => {
-  it('reads the mode the engine recorded on the card', async () => {
-    const [input] = await listPendingApprovals(stubDb({ rows: [CARD_ROW] }), 't', 'alice');
-    expect(input?.mode).toBe('input');
+  it('reads the proposed call the engine recorded on the card', async () => {
+    const [approval] = await listPendingApprovals(stubDb({ rows: [CARD_ROW] }), 't', 'alice');
+    expect(approval?.proposedTool).toBe('jira_refund_payment');
+    expect(approval?.proposedArgs).toEqual({ amount: 240, customer: 'Dana Lin' });
 
-    const [verdict] = await listPendingApprovals(
+    const [empty] = await listPendingApprovals(
       stubDb({ rows: [{ ...CARD_ROW, suggestedAction: {} }] }),
       't',
       'alice'
     );
-    // A card with no mode recorded wants a verdict — the safer default,
-    // since an answer box for a yes/no is a worse wrong guess than the
-    // reverse.
-    expect(verdict?.mode).toBe('approve');
+    expect(empty?.proposedTool).toBeNull();
+    expect(empty?.proposedArgs).toBeNull();
   });
 
   it('scopes to the caller and to undecided cards', async () => {
@@ -162,28 +166,88 @@ describe('decideApproval', () => {
     });
   });
 
-  it('refuses an answer past the cap before claiming anything', async () => {
+  it('records a comment alongside the decision', async () => {
+    const sets: Record<string, unknown>[] = [];
+    await decideApproval(
+      stubDb({
+        row: { id: 'c', kind: 'approval', status: 'suggested', run_id: 'run-1' },
+        updated: 1,
+        sets,
+      }),
+      producer(true),
+      't',
+      'alice',
+      { cardId: 'c', decision: 'decline', comment: 'wrong ticket' }
+    );
+    const stored: { comment?: string } = JSON.parse(String(sets[0]?.result));
+    expect(stored.comment).toBe('wrong ticket');
+  });
+
+  it('refuses a comment past the cap before claiming anything', async () => {
     const wheres: [string, unknown][] = [];
     const result = await decideApproval(stubDb({ wheres }), producer(true), 't', 'alice', {
       cardId: 'c',
       decision: 'approve',
-      answer: 'x'.repeat(10_001),
+      comment: 'x'.repeat(10_001),
     });
-    expect(result.outcome).toBe('answer-too-long');
-    // Nothing was read or written: an over-long answer must not half-decide.
+    expect(result.outcome).toBe('comment-too-long');
+    // Nothing was read or written: an over-long comment must not half-decide.
     expect(wheres).toEqual([]);
   });
 });
 
-describe('decideApproval on a form card', () => {
+const QUESTION_ROW = {
+  cardId: 'card-2',
+  runId: 'run-2',
+  title: 'Sunday Deep Sweep — has a question',
+  suggestedAction: {
+    message: 'Which issue tracks this?',
+    form: [
+      { kind: 'field', name: 'the issue key', label: 'Which issue?', type: 'text', required: true },
+    ],
+  },
+  createdAt: new Date('2026-08-28T09:00:00.000Z'),
+  agentId: 'agent-2',
+  agentName: 'Sunday Deep Sweep',
+  waitingUntil: new Date('2026-08-31T09:00:00.000Z'),
+};
+
+describe('listPendingQuestions', () => {
+  it('reads the message and form the engine recorded on the card', async () => {
+    const [question] = await listPendingQuestions(stubDb({ rows: [QUESTION_ROW] }), 't', 'alice');
+    expect(question?.message).toBe('Which issue tracks this?');
+    expect(question?.form).toEqual(QUESTION_ROW.suggestedAction.form);
+  });
+
+  it('scopes to the caller and to undecided cards', async () => {
+    const wheres: [string, unknown][] = [];
+    await listPendingQuestions(stubDb({ rows: [], wheres }), 'tenant-1', 'alice');
+    expect(wheres).toContainEqual(['c.owner_subject', 'alice']);
+    expect(wheres).toContainEqual(['c.kind', 'question']);
+    expect(wheres).toContainEqual(['c.status', 'suggested']);
+  });
+
+  it('drops a card whose run is gone rather than offering an undecidable one', async () => {
+    const rows = await listPendingQuestions(
+      stubDb({ rows: [{ ...QUESTION_ROW, runId: null }] }),
+      't',
+      'alice'
+    );
+    expect(rows).toEqual([]);
+  });
+});
+
+describe('answerQuestion', () => {
   const FORM = [
     {
+      kind: 'field',
       name: 'the issue key',
       label: 'Which issue?',
       type: 'text' as const,
       required: true,
     },
     {
+      kind: 'field',
       name: 'the points',
       label: 'Points',
       type: 'number' as const,
@@ -192,32 +256,66 @@ describe('decideApproval on a form card', () => {
       max: 13,
     },
     {
-      name: 'the comments',
-      label: 'Which comments?',
-      type: 'multi' as const,
-      required: false,
-      options: ['decision 1', 'risk 2'],
+      kind: 'group',
+      label: 'Extra',
+      nodes: [
+        {
+          kind: 'field',
+          name: 'the comments',
+          label: 'Which comments?',
+          type: 'multi' as const,
+          required: false,
+          options: ['decision 1', 'risk 2'],
+        },
+      ],
     },
   ];
-  const formCard = (extra: Record<string, unknown> = {}) => ({
-    id: 'card-1',
-    kind: 'approval',
+  const questionCard = (extra: Record<string, unknown> = {}) => ({
+    id: 'card-2',
+    kind: 'question',
     status: 'suggested',
-    run_id: 'run-1',
-    suggested_action: { approvalMode: 'input', fields: FORM },
+    run_id: 'run-2',
+    suggested_action: { message: 'Which issue tracks this?', form: FORM },
     ...extra,
+  });
+
+  it('refuses a card that is not this caller’s', async () => {
+    const result = await answerQuestion(stubDb({ row: undefined }), producer(true), 't', 'alice', {
+      cardId: 'card-2',
+      answers: {},
+    });
+    expect(result.outcome).toBe('not-found');
+  });
+
+  it('refuses an ordinary card, and one already decided', async () => {
+    const info = await answerQuestion(
+      stubDb({ row: { id: 'c', kind: 'info', status: 'suggested', run_id: null } }),
+      producer(true),
+      't',
+      'alice',
+      { cardId: 'c', answers: {} }
+    );
+    expect(info.outcome).toBe('not-question');
+
+    const done = await answerQuestion(
+      stubDb({ row: { id: 'c', kind: 'question', status: 'expired', run_id: 'run-1' } }),
+      producer(true),
+      't',
+      'alice',
+      { cardId: 'c', answers: {} }
+    );
+    expect(done).toEqual({ outcome: 'already-decided', status: 'expired' });
   });
 
   it('refuses answers the form does not accept, and records nothing', async () => {
     const sets: Record<string, unknown>[] = [];
-    const result = await decideApproval(
-      stubDb({ row: formCard(), updated: 1, sets }),
+    const result = await answerQuestion(
+      stubDb({ row: questionCard(), updated: 1, sets }),
       producer(true),
       't',
       'alice',
       {
-        cardId: 'card-1',
-        decision: 'approve',
+        cardId: 'card-2',
         answers: { 'the issue key': '', 'the points': 'eight', 'the comments': ['risk 9'] },
       }
     );
@@ -229,26 +327,25 @@ describe('decideApproval on a form card', () => {
       'Points',
       'Which comments?',
     ]);
-    // The claim is what makes a decision real; a rejected form must not
+    // The claim is what makes an answer real; a rejected form must not
     // have made one.
     expect(sets).toHaveLength(0);
   });
 
   it('stores the answers under the same names they arrived with', async () => {
     const sets: Record<string, unknown>[] = [];
-    const result = await decideApproval(
-      stubDb({ row: formCard(), updated: 1, sets }),
+    const result = await answerQuestion(
+      stubDb({ row: questionCard(), updated: 1, sets }),
       producer(true),
       't',
       'alice',
       {
-        cardId: 'card-1',
-        decision: 'approve',
+        cardId: 'card-2',
         answers: { 'the issue key': 'CIO-12', 'the points': ' 8 ', 'the comments': ['risk 2'] },
       }
     );
 
-    expect(result.outcome).toBe('decided');
+    expect(result.outcome).toBe('answered');
     const stored: { answers?: Record<string, unknown> } = JSON.parse(String(sets[0]?.result));
     // The reply IS the key/value pairs: what is stored reads the same as
     // what was sent, and as what the run will bind.
@@ -259,19 +356,14 @@ describe('decideApproval on a form card', () => {
     });
   });
 
-  it('declines without demanding a well-formed answer', async () => {
-    const sets: Record<string, unknown>[] = [];
-    const result = await decideApproval(
-      stubDb({ row: formCard(), updated: 1, sets }),
+  it('loses the race rather than overwriting an answer that already stands', async () => {
+    const result = await answerQuestion(
+      stubDb({ row: questionCard(), updated: 0 }),
       producer(true),
       't',
       'alice',
-      { cardId: 'card-1', decision: 'decline' }
+      { cardId: 'card-2', answers: { 'the issue key': 'CIO-12' } }
     );
-
-    // "I don't know" is the whole point of the button — requiring the form
-    // to be filled in before you may say it would be a trap.
-    expect(result.outcome).toBe('decided');
-    expect(String(sets[0]?.status)).toBe('declined');
+    expect(result.outcome).toBe('already-decided');
   });
 });

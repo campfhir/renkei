@@ -65,6 +65,7 @@ function draft(overrides: Partial<AgentDraft> = {}): AgentDraft {
     llmModelId: null,
     guardrails: null,
     blockedTools: [],
+    canAskQuestions: false,
     ...overrides,
   };
 }

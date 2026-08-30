@@ -25,6 +25,7 @@ export function parseAgentPayload(
     llmModelId?: unknown;
     guardrails?: unknown;
     blockedTools?: unknown;
+    canAskQuestions?: unknown;
     refreshDescription?: unknown;
   } = body;
 
@@ -70,6 +71,7 @@ export function parseAgentPayload(
         (entry): entry is string => typeof entry === 'string' && entry.length > 0
       )
     : [];
+  const canAskQuestions = payload.canAskQuestions === true;
 
   return {
     input: {
@@ -80,6 +82,7 @@ export function parseAgentPayload(
       llmModelId,
       guardrails,
       blockedTools,
+      canAskQuestions,
     },
     draft: {
       name: payload.name,
@@ -89,6 +92,7 @@ export function parseAgentPayload(
       llmModelId,
       guardrails,
       blockedTools,
+      canAskQuestions,
     },
     // The builder's Save sets this: an explicit save rewrites the summary
     // unconditionally, because the person is about to be shown it for
