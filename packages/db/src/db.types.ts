@@ -193,6 +193,7 @@ export interface AgentRunSteps {
 
 export interface Agents {
   blocked_tools: Json | null;
+  can_ask_questions: Generated<boolean>;
   created_at: Generated<Timestamp>;
   description: string | null;
   description_status: Generated<string>;

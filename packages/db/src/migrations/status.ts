@@ -98,6 +98,7 @@ export const EXPECTED_MIGRATIONS = [
   '065-drop-agent-share-token',
   '066-agent-note-scope',
   '067-push-subscriptions',
+  '069-agent-can-ask-questions',
 ];
 
 export interface MigrationStatus {
