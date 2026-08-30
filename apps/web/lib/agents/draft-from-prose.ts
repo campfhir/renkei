@@ -28,12 +28,18 @@ import {
   MAX_BRANCH_DEPTH_V3,
   MAX_BRANCH_PATHS,
   MAX_CONTAINER_DEPTH,
+  MAX_APPROVAL_FIELDS,
+  MAX_APPROVAL_FIELD_HELP_CHARS,
+  MAX_APPROVAL_FIELD_KEY_CHARS,
+  MAX_APPROVAL_FIELD_LABEL_CHARS,
+  MAX_APPROVAL_FIELD_OPTIONS,
   MAX_LOOP_ITERATIONS,
   MAX_SCHEDULE_RULES,
   LOOP_DEFAULT_ATTEMPTS,
   LOOP_DEFAULT_ITERATIONS,
   MAX_STEPS,
   TRIGGER_EVENT_CATALOG,
+  approvalFieldsOf,
   approvalPathsOf,
   flattenActionSteps,
   isBranchStep,
@@ -46,6 +52,7 @@ import {
   walkSteps,
   type ActionStep,
   type AgentStepNode,
+  type ApprovalField,
   type AgentStepsDoc,
   type BranchPath,
   type FailureHandling,
@@ -139,14 +146,30 @@ function currentLinesOf(nodes: AgentStepNode[]): string {
               : '; no notification')
           );
         }
-        case 'approval':
+        case 'approval': {
+          // A form is spelled out, not summarised: this text is what the
+          // model revises FROM, and a field it cannot see is a field it
+          // silently drops.
+          const form = approvalFieldsOf(node)
+            .map(
+              (field) =>
+                `${field.name}: ${field.label} (${field.type}` +
+                `${field.required ? ', required' : ''}` +
+                `${field.options?.length ? `, one of: ${field.options.join(' | ')}` : ''}` +
+                `${field.min !== undefined ? `, min ${field.min}` : ''}` +
+                `${field.max !== undefined ? `, max ${field.max}` : ''}` +
+                `${field.key ? `, writes to ${field.key}` : ''})`
+            )
+            .join('; ');
           return (
             `${indent}s${ordinal + 1}. [ask] "${node.name}" — pauses for the owner ` +
             `(${node.mode === 'input' ? 'typed answer' : 'approve/decline'}, up to ${node.timeoutHours}h)` +
             (node.saveAs ? `, saves the answer as "${node.saveAs}"` : '') +
+            (form ? `, asks for — ${form}` : '') +
             ` — asks: ${segmentsToTokens(node.message)} (the indented steps below belong to its ` +
             'approved/declined/timed-out paths)'
           );
+        }
         case 'action':
         case undefined:
           return (
@@ -273,12 +296,24 @@ function promptOf(
     '- When the user wants a HUMAN DECISION mid-flow ("ask me before sending", "wait for my ' +
       'approval", "let me pick the wording"), use an ASK object: {"kind": "ask", "name": short ' +
       'label, "message": what to ask (may use {{var:...}} for context, never {{tool:...}}), ' +
-      '"mode": "approve" (approve/decline buttons) | "input" (the user types an answer, saved ' +
-      'under "saveAs" for later steps), "timeoutHours": how long to wait (default 72), ' +
+      '"mode": "approve" (approve/decline buttons) | "input" (the user answers, and later ' +
+      'steps use what they said), "timeoutHours": how long to wait (default 72), ' +
       '"notify": array of "email"/"webex" to alert the user with a link, and OPTIONAL ' +
       '"onApproved"/"onDeclined"/"onTimeout": step arrays for each outcome (empty/omitted = ' +
       'just continue). The run PAUSES at an ask until the user acts or the wait expires. Only ' +
       'add one when the description asks for human sign-off or input.',
+    '- An "input" ask collects EITHER one plain answer ("saveAs": its name for later steps) ' +
+      'OR a FORM: "fields", one entry per thing you need, each {"name": the name later steps ' +
+      'use it by, "label": what the user reads, "type": "text"|"longtext"|"number"|"date"|' +
+      '"choice"|"multi", "required": true/false, "options": [...] for choice/multi (at least ' +
+      'two), "min"/"max" for number, "help": an optional hint, "key": what the destination ' +
+      'system calls this field if the description names one (e.g. "customfield_10016")}. ' +
+      'Never give both "saveAs" and "fields". PREFER FIELDS whenever the answer has a shape ' +
+      'you already know — an issue key, a number of points, a date, one of a set the ' +
+      'description lists — because the card refuses an answer that does not fit, so no later ' +
+      'step has to parse or re-check one. Use the plain "saveAs" answer only for genuinely ' +
+      'open prose ("anything else I should say?"). A "multi" field also gives later steps a ' +
+      'LIST, which a loop can go over.',
     '- When the user wants to be NOTIFIED about how the flow ends ("email me if it fails", ' +
       '"send me a WebEx note when it\'s done"), or wants a branch path to deliberately end ' +
       'the whole run, use an END object as the LAST entry of that list: {"kind": "end", ' +
@@ -508,8 +543,15 @@ function promptOf(
     '    "kind": "ask",',
     '    "name": string — a short label, never empty,',
     '    "message": string — what to ask the user; {{var:...}} allowed, {{tool:...}} forbidden,',
-    '    "mode": "approve" (buttons) or "input" (typed answer),',
-    '    "saveAs": string — required for "input": the answer\'s name for later steps,',
+    '    "mode": "approve" (buttons) or "input" (the user answers),',
+    '    "saveAs": string — for an "input" ask that wants ONE open answer: its name for',
+    '      later steps. Omit it when you give "fields",',
+    '    "fields": array or omitted — an "input" ask\'s form; prefer it whenever the answer',
+    '      has a known shape. Each: {"name": string — what later steps call it,',
+    '      "label": string — what the user reads, "type": "text" | "longtext" | "number" |',
+    '      "date" | "choice" | "multi", "required": boolean, "options": array of strings',
+    '      (choice/multi, at least two), "min"/"max": numbers (number only), "help": string',
+    '      or null, "key": string or null — the destination system\'s own id for this field},',
     '    "timeoutHours": integer — how long to wait before the timed-out path (default 72),',
     '    "notify": array containing "email" and/or "webex", or empty,',
     '    "onApproved": array of steps or omitted — runs when approved/answered,',
@@ -741,12 +783,33 @@ const END_SHAPE = z.object({
   from: z.string().nullable().optional(),
 });
 
+/**
+ * One control of an ask's form, as the drafting model writes it.
+ *
+ * Everything is lenient on the wire and tightened in the parse: a model
+ * that gives a choice field two options and calls it "single" should get
+ * a working form and a note, not a rejected draft it has to guess its way
+ * out of.
+ */
+const ASK_FIELD_SHAPE = z.object({
+  name: z.string().nullable().optional(),
+  label: z.string().trim().min(1, 'is required and must be a non-empty string'),
+  type: z.enum(['text', 'longtext', 'number', 'date', 'choice', 'multi']),
+  required: z.boolean().optional(),
+  options: z.array(z.string()).optional(),
+  min: z.number().nullable().optional(),
+  max: z.number().nullable().optional(),
+  help: z.string().nullable().optional(),
+  key: z.string().nullable().optional(),
+});
+
 const ASK_SHAPE = z.object({
   kind: z.literal('ask'),
   name: z.string().trim().min(1, 'is required and must be a non-empty string'),
   message: z.string().trim().min(1, 'is required and must be a non-empty string'),
   mode: z.enum(['approve', 'input']).optional(),
   saveAs: z.string().nullable().optional(),
+  fields: z.array(ASK_FIELD_SHAPE).optional(),
   timeoutHours: z.number().int().min(1).optional(),
   notify: z.array(z.enum(['email', 'webex'])).optional(),
   onApproved: z.array(z.unknown()).optional(),
@@ -1276,6 +1339,77 @@ function claimBoundName(raw: string, label: string, what: string, state: ParseSt
   return name;
 }
 
+/**
+ * The drafted form, tightened.
+ *
+ * Every field name goes through `claimBoundName` like any other binding —
+ * so a form's answers are chippable in later steps, collide with nothing,
+ * and are reported when the model reuses one. A field the model wrote
+ * badly is FIXED where fixing is unambiguous (a missing name derived from
+ * the label, a choice list of one dropped to plain text) and reported as
+ * a soft problem either way: this path exists to hand a person a draft to
+ * edit, and a refusal teaches the model nothing a note does not.
+ */
+function askFieldsOf(
+  wire: z.infer<typeof ASK_FIELD_SHAPE>[] | undefined,
+  label: string,
+  state: ParseState
+): ApprovalField[] {
+  if (!Array.isArray(wire) || wire.length === 0) return [];
+  const fields: ApprovalField[] = [];
+  for (const [index, entry] of wire.entries()) {
+    const at = `${label} (ask field ${index + 1})`;
+    if (fields.length >= MAX_APPROVAL_FIELDS) {
+      state.softProblems.push(
+        `${label} asks for more than ${MAX_APPROVAL_FIELDS} things — the extra fields were dropped.`
+      );
+      break;
+    }
+    const name = claimBoundName(
+      typeof entry.name === 'string' && entry.name.trim() ? entry.name : entry.label,
+      at,
+      'field',
+      state
+    );
+    if (!name) {
+      state.softProblems.push(`${at} has no usable name — the field was dropped.`);
+      continue;
+    }
+    const options = (entry.options ?? []).map((option) => option.trim()).filter(Boolean);
+    let type = entry.type;
+    if ((type === 'choice' || type === 'multi') && options.length < 2) {
+      // One choice is not a question. Asking for it as text keeps the
+      // draft usable, and the note says what happened.
+      state.softProblems.push(
+        `${at} is a choice with fewer than two options — it was made a text field instead.`
+      );
+      type = 'text';
+    }
+    fields.push({
+      name,
+      label: entry.label.slice(0, MAX_APPROVAL_FIELD_LABEL_CHARS),
+      type,
+      required: entry.required !== false,
+      ...(type === 'choice' || type === 'multi'
+        ? { options: options.slice(0, MAX_APPROVAL_FIELD_OPTIONS) }
+        : {}),
+      ...(type === 'number' && typeof entry.min === 'number' && Number.isFinite(entry.min)
+        ? { min: entry.min }
+        : {}),
+      ...(type === 'number' && typeof entry.max === 'number' && Number.isFinite(entry.max)
+        ? { max: entry.max }
+        : {}),
+      ...(typeof entry.help === 'string' && entry.help.trim()
+        ? { help: entry.help.trim().slice(0, MAX_APPROVAL_FIELD_HELP_CHARS) }
+        : {}),
+      ...(typeof entry.key === 'string' && entry.key.trim()
+        ? { key: entry.key.trim().slice(0, MAX_APPROVAL_FIELD_KEY_CHARS) }
+        : {}),
+    });
+  }
+  return fields;
+}
+
 function parseBranchEntry(
   entry: unknown,
   label: string,
@@ -1543,8 +1677,12 @@ function parseAskEntry(
   }
 
   const mode = wire.mode ?? 'approve';
+  // A form beats a plain box wherever the model drafted one, and the two
+  // are exclusive: fields bind their own names, so a saveAs beside them
+  // would be a second answer nothing reads.
+  const fields = mode === 'input' ? askFieldsOf(wire.fields, label, state) : [];
   let saveAs = '';
-  if (mode === 'input') {
+  if (mode === 'input' && fields.length === 0) {
     saveAs = claimBoundName(
       typeof wire.saveAs === 'string' && wire.saveAs.trim() ? wire.saveAs : 'the answer',
       label,
@@ -1589,6 +1727,7 @@ function parseAskEntry(
     message: segmentsOf(wire.message, new Set<string>(), state.knownVars),
     mode,
     ...(saveAs ? { saveAs } : {}),
+    ...(fields.length > 0 ? { fields } : {}),
     timeoutHours: wire.timeoutHours ?? askOrigin?.timeoutHours ?? 72,
     notifyEmail: notify.has('email'),
     notifyWebex: notify.has('webex'),
