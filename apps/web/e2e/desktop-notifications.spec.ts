@@ -1,25 +1,22 @@
 /**
- * Does an arrival actually reach the browser's own Notification API?
+ * Does flipping the "show system notifications" switch actually create a
+ * push subscription, and does flipping it back off remove it?
  *
- * `window.Notification` is replaced (not the real thing — headless Chromium
- * under --no-sandbox doesn't reliably surface OS-level banners, and this
- * only needs to prove the app called the constructor with the right
- * arguments) with a spy that records every call. The tab is left "visible"
- * but not focused — `desktop-notifications.tsx` only fires while the tab is
- * NOT in front — and the desktop-notifications-enabled localStorage flag is
- * set before the first poll, same as flipping the switch in Preferences
- * would leave it.
+ * `PushManager.subscribe()` itself is mocked rather than exercised for
+ * real: Chrome refuses the Push API in any context it treats as
+ * incognito-like (crbug.com/401439), which is exactly what Playwright's
+ * default browser contexts are — there is no way to feature-detect around
+ * it, by design. Everything on THIS app's side of that boundary is driven
+ * through the real Preferences UI and hits the real server: the service
+ * worker registration, the public-key fetch, the POST to
+ * /push/subscribe(/unsubscribe), and the row it writes or removes — only
+ * the browser's own subscribe()/getSubscription() calls are stood in for,
+ * with a canned-but-realistic subscription object.
  */
 
 import { test, expect } from '@playwright/test';
 import pg from 'pg';
-import { E2E_SLUG, E2E_TENANT_ID, E2E_SUBJECT, AGENT_DEEP_ID } from './seed';
-
-declare global {
-  interface Window {
-    __notifications: { title: string; options?: NotificationOptions }[];
-  }
-}
+import { E2E_SLUG, E2E_TENANT_ID, E2E_SUBJECT } from './seed';
 
 test.use({
   launchOptions: {
@@ -28,108 +25,129 @@ test.use({
   },
 });
 
-async function insertNotification(headline: string, refUrl: string | null): Promise<void> {
+const FAKE_ENDPOINT = 'https://fake-push-service.example.test/subscription-abc';
+
+async function mockPushManager(page: import('@playwright/test').Page): Promise<void> {
+  // Assigned via defineProperty rather than a direct prototype write: a fake
+  // subscription can't honestly satisfy PushSubscription's full DOM
+  // interface (getKey, options, expirationTime — none of which anything
+  // here reads), and PropertyDescriptor.value is deliberately untyped for
+  // exactly this kind of stand-in.
+  await page.addInitScript(
+    ({ endpoint }) => {
+      if (!('PushManager' in window)) return;
+      const subscriptionJson = {
+        endpoint,
+        keys: { p256dh: 'fake-p256dh-value', auth: 'fake-auth-value' },
+      };
+      let current: typeof subscriptionJson | null = null;
+      Object.defineProperty(window.PushManager.prototype, 'subscribe', {
+        value: () => {
+          current = subscriptionJson;
+          return Promise.resolve({
+            endpoint,
+            toJSON: () => subscriptionJson,
+            unsubscribe: () => {
+              current = null;
+              return Promise.resolve(true);
+            },
+          });
+        },
+      });
+      Object.defineProperty(window.PushManager.prototype, 'getSubscription', {
+        value: () =>
+          Promise.resolve(
+            current
+              ? {
+                  endpoint: current.endpoint,
+                  toJSON: () => current,
+                  unsubscribe: () => Promise.resolve(true),
+                }
+              : undefined
+          ),
+      });
+    },
+    { endpoint: FAKE_ENDPOINT }
+  );
+}
+
+async function subscriptionRow(): Promise<{
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+} | null> {
   const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
   try {
-    await client.query(
-      `INSERT INTO agent_notifications
-         (id, tenant_id, subject, kind, category, connector, tool, entity, headline,
-          ref_url, run_id, agent_id, agent_name, created_at)
-       VALUES (gen_random_uuid(),$1,$2,'act','created','jira','jira_create_issue','issue',$3,
-               $4,null,$5,'Triage yesterday into tickets', now())`,
-      [E2E_TENANT_ID, E2E_SUBJECT, headline, refUrl, AGENT_DEEP_ID]
+    const { rows } = await client.query(
+      'SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE tenant_id = $1 AND subject = $2',
+      [E2E_TENANT_ID, E2E_SUBJECT]
     );
+    return rows[0] ?? null;
   } finally {
     await client.end();
   }
 }
 
-/** Replaces window.Notification with a spy, and leaves the tab visible but
- *  unfocused — "not in front" per desktop-notifications.tsx. */
-async function spyOnNotifications(page: import('@playwright/test').Page): Promise<void> {
-  await page.addInitScript(() => {
-    window.__notifications = [];
-    class SpyNotification {
-      static permission: NotificationPermission = 'granted';
-      static requestPermission(): Promise<NotificationPermission> {
-        return Promise.resolve('granted');
-      }
-      onclick: (() => void) | null = null;
-      constructor(title: string, options?: NotificationOptions) {
-        window.__notifications.push({ title, options });
-      }
-      close(): void {}
-    }
-    Object.defineProperty(window, 'Notification', { value: SpyNotification, writable: true });
-    Object.defineProperty(document, 'hasFocus', { value: () => false, writable: true });
-  });
+async function clearSubscriptions(): Promise<void> {
+  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  try {
+    await client.query('DELETE FROM push_subscriptions WHERE tenant_id = $1 AND subject = $2', [
+      E2E_TENANT_ID,
+      E2E_SUBJECT,
+    ]);
+  } finally {
+    await client.end();
+  }
 }
 
-test('a background arrival reaches window.Notification', async ({ page, context }) => {
-  await context.grantPermissions(['notifications']);
-  await spyOnNotifications(page);
-
-  // Registered BEFORE navigating: NotificationCenter fires its seeding poll
-  // on mount, and that poll must actually complete before the notification
-  // below is inserted — otherwise it can land inside that first (discarded)
-  // fetch and never be re-fetched as an "arrival" at all.
-  const seedingPoll = page.waitForResponse((response) =>
-    response.url().includes(`/api/tenant/${E2E_TENANT_ID}/notifications`)
-  );
-  await page.goto(`/${E2E_SLUG}`);
-  await expect(page.getByRole('heading', { name: 'Actionable items' })).toBeVisible();
-  await seedingPoll;
-
-  // Same write the Preferences checkbox does when it's flipped on.
-  await page.evaluate(
-    (tenantId) =>
-      window.localStorage.setItem(`renkei:desktop-notifications-enabled:${tenantId}`, '1'),
-    E2E_TENANT_ID
-  );
-
-  // DesktopNotifications registers the service worker on mount — confirms
-  // public/sw.js is valid and actually installs, independent of whether the
-  // constructor path (exercised below) or the worker path ends up firing.
-  await expect
-    .poll(() => page.evaluate(() => navigator.serviceWorker.getRegistration().then((r) => !!r)), {
-      timeout: 15_000,
-    })
-    .toBe(true);
-
-  await insertNotification(
-    'Created a Jira issue OPS-9001',
-    'https://example.atlassian.net/browse/OPS-9001'
-  );
-
-  // NotificationCenter polls every 20s; the row above must survive past the
-  // seeding poll (this page's very first fetch) to count as an "arrival".
-  await expect
-    .poll(() => page.evaluate(() => window.__notifications.length), {
-      timeout: 30_000,
-      intervals: [1_000],
-    })
-    .toBeGreaterThan(0);
-
-  const captured = await page.evaluate(() => window.__notifications);
-  expect(captured).toHaveLength(1);
-  expect(captured[0].title).toBe('Created a Jira issue OPS-9001');
-  expect(captured[0].options?.body).toBe('Triage yesterday into tickets');
-  expect(captured[0].options?.data?.refUrl).toBe('https://example.atlassian.net/browse/OPS-9001');
+test.beforeEach(async () => {
+  await clearSubscriptions();
 });
 
-test('with the switch off, nothing reaches window.Notification', async ({ page, context }) => {
+test('flipping the switch on subscribes this device and records it, off removes it', async ({
+  page,
+  context,
+}) => {
   await context.grantPermissions(['notifications']);
-  await spyOnNotifications(page);
+  await mockPushManager(page);
 
-  await page.goto(`/${E2E_SLUG}`);
-  await expect(page.getByRole('heading', { name: 'Actionable items' })).toBeVisible();
-  // Deliberately NOT setting the localStorage flag — the opt-in is off.
+  await page.goto(`/${E2E_SLUG}/preferences`);
+  const checkbox = page.getByRole('checkbox', { name: /Show system notifications/i });
+  await expect(checkbox).toBeVisible();
+  await expect(checkbox).not.toBeChecked();
 
-  await insertNotification('Created a Jira issue OPS-9002', null);
+  // Not .check(): the box is a controlled input whose onChange does real
+  // async work (fetch the VAPID key, subscribe, POST it) before React ever
+  // flips `checked`, so the native click-then-verify .check() action can
+  // observe it as unchanged. A plain click plus a retrying assertion gives
+  // that async chain room to land instead.
+  await checkbox.click();
+  await expect(checkbox).toBeChecked({ timeout: 10_000 });
 
-  // Give it the same window as the positive case, then assert nothing fired.
-  await page.waitForTimeout(25_000);
-  const count = await page.evaluate(() => window.__notifications.length);
-  expect(count).toBe(0);
+  await expect
+    .poll(async () => subscriptionRow(), { timeout: 10_000 })
+    .toEqual({ endpoint: FAKE_ENDPOINT, p256dh: 'fake-p256dh-value', auth: 'fake-auth-value' });
+
+  await checkbox.click();
+  await expect(checkbox).not.toBeChecked({ timeout: 10_000 });
+
+  await expect.poll(async () => subscriptionRow(), { timeout: 10_000 }).toBeNull();
+});
+
+test('with the switch left off, nothing gets subscribed', async ({ page, context }) => {
+  await context.grantPermissions(['notifications']);
+  await mockPushManager(page);
+
+  await page.goto(`/${E2E_SLUG}/preferences`);
+  const checkbox = page.getByRole('checkbox', { name: /Show system notifications/i });
+  await expect(checkbox).toBeVisible();
+  await expect(checkbox).not.toBeChecked();
+
+  // Give DesktopNotifications' mount-time self-heal effect (see
+  // components/desktop-notifications.tsx) the same window the positive
+  // case gets, then confirm it found nothing to heal.
+  await page.waitForTimeout(3_000);
+  expect(await subscriptionRow()).toBeNull();
 });

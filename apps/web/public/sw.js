@@ -1,11 +1,9 @@
-// Notification-only service worker — no push subscription, no caching.
-//
-// Its one job is `showNotification()`: some browsers (Chrome on Android
-// chief among them) refuse the plain `new Notification()` constructor and
-// require an active worker to display anything at all. Registering this
-// lets `DesktopNotifications` (apps/web/components/desktop-notifications.tsx)
-// fall back to a path that works there too, while still preferring the
-// plain constructor where either would do.
+// Service worker for real Web Push — the piece that lets an OS banner show
+// up with NO tab open and no polling running, iOS included. The old design
+// (a page polling for arrivals and locally constructing a Notification)
+// only ever worked while a tab's JS was alive; this worker wakes on its own
+// when the browser's push service delivers a message, whether or not
+// anything Renkei-related is open.
 //
 // `skipWaiting`/`clients.claim` take it from "installed" to "controlling
 // this page" without waiting for a reload — there is nothing here worth
@@ -18,10 +16,44 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// The payload is whatever @renkei/notifications' sendPush encoded — see
+// packages/notifications/src/send.ts for the shape.
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    // A push with no body, or one that isn't JSON — nothing to show.
+    return;
+  }
+
+  event.waitUntil(
+    (async () => {
+      // The same rule the old page-side code enforced with
+      // document.hasFocus(): a tab already looking at Renkei has the
+      // in-page toast covering this, so a second banner would just repeat
+      // it. `WindowClient.focused`/`.visibilityState` are this worker's
+      // only way to ask, since a push can arrive with nothing open at all.
+      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const inFront = windows.some(
+        (client) => client.focused && client.visibilityState === 'visible'
+      );
+      if (inFront) return;
+
+      await self.registration.showNotification(data.title || 'Renkei', {
+        body: data.body,
+        tag: data.tag,
+        icon: data.icon || '/icon.svg',
+        data: { refUrl: data.refUrl },
+      });
+    })()
+  );
+});
+
 // A banner shown via `registration.showNotification()` has no page-side
-// `onclick` to attach to, so the click has to be handled here instead —
-// mirrors what DesktopNotifications does for the constructor path: bring an
-// existing tab forward, or open one, then open the linked item beside it.
+// `onclick` to attach to, so the click has to be handled here instead:
+// bring an existing tab forward, or open one, then open the linked item
+// beside it.
 self.addEventListener('notificationclick', (event) => {
   const refUrl = event.notification.data && event.notification.data.refUrl;
   event.notification.close();

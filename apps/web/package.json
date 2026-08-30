@@ -36,6 +36,7 @@
     "@renkei/email-sanitizer": "workspace:*",
     "@renkei/gates": "workspace:*",
     "@renkei/knowledge": "workspace:*",
+    "@renkei/notifications": "workspace:*",
     "@renkei/provider-grants": "workspace:*",
     "@renkei/queue": "workspace:*",
     "@renkei/redaction": "workspace:*",

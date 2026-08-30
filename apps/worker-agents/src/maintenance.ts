@@ -10,6 +10,8 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { CURRENT_STEPS_VERSION } from '@renkei/agents';
+import { parseEncryptionKey } from '@renkei/crypto';
+import { sendPush } from '@renkei/notifications';
 import { logger } from './logger';
 
 const RETENTION_BATCH = 500;
@@ -172,22 +174,39 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
       RETURNING id, tenant_id, owner_subject, name
     `.execute(db);
 
+    const encryptionKeyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+
     for (const agent of stale.rows) {
+      const id = randomUUID();
+      const headline =
+        `“${agent.name}” was turned off — it is saved in an older format. ` +
+        `Open it in the builder and save to update it, then turn it back on.`;
       try {
         await db
           .insertInto('agent_notifications')
           .values({
-            id: randomUUID(),
+            id,
             tenant_id: agent.tenant_id,
             subject: agent.owner_subject,
             kind: 'agent_disabled',
-            headline:
-              `“${agent.name}” was turned off — it is saved in an older format. ` +
-              `Open it in the builder and save to update it, then turn it back on.`,
+            headline,
             agent_id: agent.id,
             agent_name: agent.name,
           })
           .execute();
+
+        // Fire-and-forget: see notifications.ts's write() for why this is
+        // never awaited alongside the row it accompanies.
+        if (encryptionKeyResult.ok) {
+          void sendPush(
+            db,
+            agent.tenant_id,
+            agent.owner_subject,
+            encryptionKeyResult.val,
+            { title: headline, body: agent.name, tag: id, refUrl: null },
+            { log: (message, meta) => logger.warn(message, meta) }
+          );
+        }
       } catch (error) {
         // The disable already happened and is the part that matters; a
         // missed notification costs reach, not correctness.
