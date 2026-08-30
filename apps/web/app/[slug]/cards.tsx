@@ -95,14 +95,26 @@ export default async function ActionableCards({
             item.archived_at !== null ? 'opacity-70' : ''
           }`}
         >
-          <div className="flex justify-between gap-4">
+          {/*
+            Stacked on narrow screens, side by side from `sm` up. A long
+            agent name used to sit next to the title in one `justify-between`
+            row with `whitespace-nowrap` and no width limit of its own — it
+            never wrapped and had nothing stopping it from overflowing onto
+            the title and its chip the moment the two together outgrew the
+            row, which a merely-descriptive agent name does on a phone
+            without needing any accessibility text-size boost. `truncate`
+            plus a `max-w` on wider screens caps it outright instead; the
+            title keeps `min-w-0` so it still wraps normally rather than
+            being squeezed into one word per line.
+          */}
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-4">
             <strong className="min-w-0">
               {item.kind === 'approval' && item.status === 'suggested' ? (
                 <ApprovalKindChip mode={approvalModeOf(item.suggested_action)} />
               ) : null}
               {item.title}
             </strong>
-            <span className="whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+            <span className="min-w-0 truncate text-sm text-gray-500 dark:text-gray-400 sm:max-w-[50%]">
               {item.agent_name ? `via ${item.agent_name}` : item.source} · {item.status}
               {item.archived_at !== null && ' · archived'}
             </span>
