@@ -171,9 +171,11 @@ export function AgentsList({
   const [error, setError] = useState<string | null>(null);
   const [ranNow, setRanNow] = useState<string | null>(null);
   const [triggersFor, setTriggersFor] = useState<StoredAgent | null>(null);
-  const [confirmRunFor, setConfirmRunFor] = useState<{ agent: StoredAgent; status: string } | null>(
-    null
-  );
+  const [confirmRunFor, setConfirmRunFor] = useState<{
+    agent: StoredAgent;
+    status: string;
+    runId: string;
+  } | null>(null);
 
   // Summaries are written after the save response; while any card is still
   // waiting on one, refresh the server-rendered list a few times so the
@@ -239,7 +241,11 @@ export function AgentsList({
     setBusy(null);
     if (result.error) {
       if (result.data?.code === 'ALREADY_RUNNING' && result.data.liveRun) {
-        setConfirmRunFor({ agent, status: result.data.liveRun.status });
+        setConfirmRunFor({
+          agent,
+          status: result.data.liveRun.status,
+          runId: result.data.liveRun.id,
+        });
         return;
       }
       setError(result.error);
@@ -418,6 +424,16 @@ export function AgentsList({
             &ldquo;{confirmRunFor.agent.name}&rdquo; already has a run that&rsquo;s{' '}
             {confirmRunFor.status} — they won&rsquo;t run at the same time. Starting another queues
             it right behind the current one.
+          </p>
+          <p className="mt-2 text-sm">
+            <Link
+              href={`/${slug}/agents/${confirmRunFor.agent.id}/runs/${confirmRunFor.runId}`}
+              className="text-blue-600 hover:underline dark:text-blue-400"
+              onClick={() => setConfirmRunFor(null)}
+            >
+              View that run →
+            </Link>{' '}
+            to cancel it instead, if it shouldn&rsquo;t be running.
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <button

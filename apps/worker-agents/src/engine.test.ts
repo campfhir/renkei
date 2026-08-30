@@ -626,6 +626,105 @@ maybe('agent run engine', () => {
     expect(run.error_kind).toBeNull();
   });
 
+  it('a run flagged for cancellation before it starts finalizes as canceled, untouched', async () => {
+    const { runId } = await seedRun(singleStep());
+    await db
+      .updateTable('agent_runs')
+      .set({ cancel_requested_at: sql`NOW()` })
+      .where('id', '=', runId)
+      .execute();
+    let llmCalls = 0;
+    const handler = handlerWith(
+      stubLlm(() => {
+        llmCalls += 1;
+        return finish('success');
+      }),
+      stubMcp(['jira_get_issue'], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('canceled');
+    expect(run.error).toBe('Canceled by request.');
+    expect(llmCalls).toBe(0);
+
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select('step_id')
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toHaveLength(0);
+  });
+
+  it('a run canceled mid-execution stops at the next step boundary, never reaching the one after', async () => {
+    const twoSteps: AgentStepsDoc = {
+      version: 1,
+      steps: [
+        {
+          id: randomUUID(),
+          name: 'First step',
+          instruction: [{ t: 'text', v: 'Do the first thing.' }],
+          tool: null,
+          maxAttempts: 1,
+          failureHandling: [],
+        },
+        {
+          id: randomUUID(),
+          name: 'Never reached',
+          instruction: [{ t: 'text', v: 'Do the second thing.' }],
+          tool: null,
+          maxAttempts: 1,
+          failureHandling: [],
+        },
+      ],
+    };
+    const { runId } = await seedRun(twoSteps);
+    // A cancel raised by someone else WHILE the first step is in flight —
+    // the per-node checkpoint must notice it before dispatching the
+    // second step, not just at entry.
+    const llm: ResolvedLlm = {
+      provider: {
+        complete: async () => {
+          await db
+            .updateTable('agent_runs')
+            .set({ cancel_requested_at: sql`NOW()` })
+            .where('id', '=', runId)
+            .execute();
+          return ok(finish('success'));
+        },
+      },
+      modelConfigId: randomUUID(),
+      providerName: 'anthropic',
+      model: 'stub-model',
+      maxOutputTokens: 512,
+    };
+    const handler = handlerWith(
+      llm,
+      stubMcp([], () => okToolResult)
+    );
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status', 'error'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('canceled');
+    expect(run.error).toBe('Canceled by request.');
+
+    // Step 2 never ran — the checkpoint caught the cancel first.
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select('step_id')
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toHaveLength(1);
+  });
+
   it('ends the run early — and quietly — when finish_step declares stop', async () => {
     const twoSteps: AgentStepsDoc = {
       version: 1,

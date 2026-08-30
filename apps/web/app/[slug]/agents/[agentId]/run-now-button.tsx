@@ -34,6 +34,11 @@ interface InvokeResponse {
   liveRun?: { id: string; status: string };
 }
 
+interface LiveRun {
+  id: string;
+  status: string;
+}
+
 export default function RunNowButton({
   slug,
   tenantId,
@@ -47,7 +52,7 @@ export default function RunNowButton({
   const [busy, setBusy] = useState(false);
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pendingLiveRun, setPendingLiveRun] = useState<{ status: string } | null>(null);
+  const [pendingLiveRun, setPendingLiveRun] = useState<LiveRun | null>(null);
 
   const start = async (confirmQueue = false) => {
     setBusy(true);
@@ -61,7 +66,7 @@ export default function RunNowButton({
     setBusy(false);
     if (result.error) {
       if (result.data?.code === 'ALREADY_RUNNING' && result.data.liveRun) {
-        setPendingLiveRun({ status: result.data.liveRun.status });
+        setPendingLiveRun(result.data.liveRun);
         return;
       }
       setError(result.error);
@@ -100,6 +105,16 @@ export default function RunNowButton({
           <p className="text-sm">
             This agent already has a run that&rsquo;s {pendingLiveRun.status} — they won&rsquo;t run
             at the same time. Starting another queues it right behind the current one.
+          </p>
+          <p className="mt-2 text-sm">
+            <Link
+              href={`/${slug}/agents/${agentId}/runs/${pendingLiveRun.id}`}
+              className="text-blue-600 hover:underline dark:text-blue-400"
+              onClick={() => setPendingLiveRun(null)}
+            >
+              View that run →
+            </Link>{' '}
+            to cancel it instead, if it shouldn&rsquo;t be running.
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <button

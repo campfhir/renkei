@@ -33,7 +33,10 @@ jest.mock('@/lib/agents/approvals', () => ({
 jest.mock('@renkei/queue', () => ({
   agentJobsQueue: () => ({ producer: { enqueue: jest.fn() } }),
 }));
-jest.mock('@renkei/agents/runs', () => ({ createAgentRun: jest.fn() }));
+jest.mock('@renkei/agents/runs', () => ({
+  createAgentRun: jest.fn(),
+  requestRunCancel: jest.fn(),
+}));
 jest.mock('@renkei/agents/memory', () => ({
   readAgentMemory: jest.fn(async () => ({ summary: null, entries: [] })),
   renderAgentKnowledgeNotes: jest.fn(async () => ''),
@@ -66,7 +69,9 @@ const approvalsMock = jest.requireMock<{
   listPendingApprovals: jest.Mock;
   decideApproval: jest.Mock;
 }>('@/lib/agents/approvals');
-const runNowMock = jest.requireMock<{ createAgentRun: jest.Mock }>('@renkei/agents/runs');
+const runNowMock = jest.requireMock<{ createAgentRun: jest.Mock; requestRunCancel: jest.Mock }>(
+  '@renkei/agents/runs'
+);
 const memoryMock = jest.requireMock<{
   readAgentMemory: jest.Mock;
   countAgentMemory: jest.Mock;
@@ -415,6 +420,78 @@ test('agent_run_get resolves the run to its agent and renders the debug markdown
   });
   expect(result.isError).toBeUndefined();
   expect(result.content[0]?.text).toBe('DEBUG MD');
+});
+
+describe('agent_run_cancel', () => {
+  beforeEach(() => {
+    runNowMock.requestRunCancel.mockReset();
+  });
+
+  it('REFUSES an agent run — a person stops one, the same rule as approvals', async () => {
+    const handlers = registerAll({ agent: { agentId: 'agent-1' } });
+
+    const result = await handlers.get('agent_run_cancel')!({ runId: 'run-1' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('Agent runs cannot cancel runs');
+    expect(runNowMock.requestRunCancel).not.toHaveBeenCalled();
+  });
+
+  it('is owner-scoped: an id that resolves to no run reads as not-found', async () => {
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_cancel')!({ runId: 'not-a-uuid' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('No run of yours has that id');
+    expect(runNowMock.requestRunCancel).not.toHaveBeenCalled();
+  });
+
+  it('reports an immediate cancel', async () => {
+    stubDb({ row: { agent_id: 'agent-1' } });
+    storeMock.getAgent.mockResolvedValue(AGENT);
+    runNowMock.requestRunCancel.mockResolvedValue({ outcome: 'canceled' });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_cancel')!({
+      runId: '22222222-2222-4222-8222-222222222222',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain('Canceled.');
+  });
+
+  it('reports a pending cancel for a run mid-step, not a false immediate one', async () => {
+    stubDb({ row: { agent_id: 'agent-1' } });
+    storeMock.getAgent.mockResolvedValue(AGENT);
+    runNowMock.requestRunCancel.mockResolvedValue({ outcome: 'cancel-requested' });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_cancel')!({
+      runId: '22222222-2222-4222-8222-222222222222',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain('Cancel requested');
+    expect(result.content[0]?.text).not.toContain('Canceled.');
+  });
+
+  it('says a run already finished rather than pretending to cancel it', async () => {
+    stubDb({ row: { agent_id: 'agent-1' } });
+    storeMock.getAgent.mockResolvedValue(AGENT);
+    runNowMock.requestRunCancel.mockResolvedValue({
+      outcome: 'already-final',
+      status: 'succeeded',
+    });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_cancel')!({
+      runId: '22222222-2222-4222-8222-222222222222',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('already finished (succeeded)');
+  });
 });
 
 test('every agents tool fails closed without a subject', async () => {

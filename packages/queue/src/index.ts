@@ -17,6 +17,7 @@ export type {
   QueueConsumer,
   QueueMessageInput,
   QueueProducer,
+  QueuePurger,
 } from './contract';
 export { failureDisposition, DEFAULT_RETRY_POLICY, type RetryPolicy } from './policy';
 export {

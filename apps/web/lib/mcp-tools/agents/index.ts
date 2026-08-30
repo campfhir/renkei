@@ -76,7 +76,7 @@ import {
   type AgentStepsDoc,
 } from '@renkei/agents';
 import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/agents/memory';
-import { createAgentRun } from '@renkei/agents/runs';
+import { createAgentRun, requestRunCancel } from '@renkei/agents/runs';
 import { sql } from 'kysely';
 import type { MCPToolContext } from '../common';
 import { getAgent, listAgents, type StoredAgent, type TriggerPayload } from '@/lib/agents/store';
@@ -1049,6 +1049,84 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           'It is queued; agent_run_get on that runId shows how it went.',
         ].join('\n')
       );
+    }
+  );
+
+  server.registerTool(
+    'agent_run_cancel',
+    {
+      title: 'Agents · Act — Cancel a run',
+      description:
+        'Stop one of YOUR runs that has not finished — queued, running, or waiting on an ' +
+        'approval. A queued or waiting run stops immediately; a running one is asked to ' +
+        'stop and finishes doing so at its next step boundary, not mid-tool-call. A run ' +
+        'waiting on an approval card is EXPIRED, same as if nobody had answered in time — ' +
+        'the card itself is not decided, it just stops being answerable. AGENT RUNS CANNOT ' +
+        'CALL THIS: a person stops a run, the same rule as agent_approval_decide.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        runId: z.string().min(1).describe('From agent_runs_list or agent_run_get'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      if (context.agent) {
+        return errText(
+          'Agent runs cannot cancel runs — a person stops one, the same rule as ' +
+            'agent_approval_decide.'
+        );
+      }
+      const runId = typeof args.runId === 'string' ? args.runId.trim() : '';
+      if (!isUuid(runId)) return errText('No run of yours has that id.');
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const db = dbResult.val;
+
+      // Owner-scoped via the run row, same lookup agent_run_get uses.
+      const runRow = await db
+        .selectFrom('agent_runs')
+        .select(['agent_id'])
+        .where('id', '=', runId)
+        .where('tenant_id', '=', context.tenantId)
+        .where('owner_subject', '=', context.subject)
+        .executeTakeFirst();
+      if (!runRow) return errText('No run of yours has that id.');
+      const agent = await ownAgent(db, context, runRow.agent_id);
+      if (!agent) return errText('No run of yours has that id.');
+
+      const result = await requestRunCancel(
+        db,
+        agentJobsQueue().purger,
+        context.tenantId,
+        agent.id,
+        runId
+      );
+      switch (result.outcome) {
+        case 'not-found':
+          return errText('No run of yours has that id.');
+        case 'already-final':
+          return errText(
+            `That run already finished (${result.status}) — there is nothing to cancel.`
+          );
+        case 'canceled':
+          logger.info('agent_run_cancel canceled a run', {
+            component: 'mcp/tool',
+            tenantId: context.tenantId,
+            runId,
+          });
+          return textResult(`Canceled. Run ${runId} will not resume.`);
+        case 'cancel-requested':
+          logger.info('agent_run_cancel requested a cancel', {
+            component: 'mcp/tool',
+            tenantId: context.tenantId,
+            runId,
+          });
+          return textResult(
+            `Cancel requested — run ${runId} is mid-step and will stop at its next ` +
+              'boundary, usually within moments. agent_run_get will show it as canceled ' +
+              'once it does.'
+          );
+      }
     }
   );
 

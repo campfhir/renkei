@@ -128,7 +128,7 @@ export interface FinalizedRun {
   agentId: string;
   ownerSubject: string;
   /** 'stopped' = the run ended gracefully as skipped — not a failure. */
-  status: 'succeeded' | 'failed' | 'stopped';
+  status: 'succeeded' | 'failed' | 'stopped' | 'canceled';
   errorKind: string | null;
   error: string | null;
   /** saveAs bindings accumulated over the run, for chained agents. */
@@ -165,6 +165,7 @@ interface RunRow {
   current_step_id: string | null;
   started_at: Date | null;
   waiting_until: Date | null;
+  cancel_requested_at: Date | null;
 }
 
 /** actionable_items decision → the approval node's outcome slot. */
@@ -795,6 +796,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         'current_step_id',
         'started_at',
         'waiting_until',
+        'cancel_requested_at',
       ])
       .where('id', '=', runId)
       .executeTakeFirst();
@@ -825,6 +827,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
   async function executeRun(run: RunRow): Promise<void> {
     const { tenant_id: tenantId, id: runId } = run;
+
+    // A cancel raised while this run was still `queued`/`waiting` may have
+    // lost its race with the claim that got us here (requestRunCancel's
+    // direct status flip only wins if it beats the claim) — the flag is
+    // its fallback, checked here before any real work starts.
+    if (run.cancel_requested_at) {
+      await finalizeRun(run, 'canceled', null, 'Canceled by request.', {}, true);
+      return;
+    }
 
     const settingsResult = await getOrgSettings(tenantId);
     if (!settingsResult.ok) throw new TransientFailure('org settings unavailable');
@@ -1021,11 +1032,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // run started with — null on a fresh run — and the log line then
         // carries a literal "{failedStep}" instead of a step name.
         run.current_step_id = node.id;
-        await db
+        const stepMark = await db
           .updateTable('agent_runs')
           .set({ current_step_id: node.id, updated_at: sql`NOW()` })
           .where('id', '=', runId)
-          .execute();
+          .returning('cancel_requested_at')
+          .executeTakeFirst();
+        // Every node visited — action, branch, loop, approval, terminal —
+        // passes through here first, so this is the one checkpoint a
+        // cancel raised mid-run is guaranteed to hit, riding the write the
+        // loop already makes rather than a query of its own.
+        if (stepMark?.cancel_requested_at) {
+          await finalizeRun(run, 'canceled', null, 'Canceled by request.', vars, true);
+          return;
+        }
 
         // Exhaustive dispatch on the node kind: a kind this switch does not
         // handle is a compile error, never a silent fall-through into the
@@ -3401,7 +3421,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
   async function finalizeRun(
     run: RunRow,
-    status: 'succeeded' | 'failed' | 'stopped',
+    status: 'succeeded' | 'failed' | 'stopped' | 'canceled',
     errorKind: string | null,
     error: string | null,
     vars: Record<string, string>,
@@ -3438,12 +3458,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
     };
     // 'stopped' is a quiet outcome by construction — an agent that decided
     // there was nothing to do. Announcing it would make the quiet ending
-    // the loudest thing in the feed.
+    // the loudest thing in the feed. 'canceled' is quiet for a different
+    // reason: whoever asked for it already knows.
     //
     // Its own notifier rather than the run context's: finalizeRun is also
     // reached from paths that never built a context (a run refused before
     // it started), and the names it needs are already in hand above.
-    if (status !== 'stopped') {
+    if (status !== 'stopped' && status !== 'canceled') {
       const notifier = await notifierFor(db, {
         tenantId: run.tenant_id,
         subject: run.owner_subject,

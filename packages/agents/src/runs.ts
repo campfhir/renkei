@@ -23,7 +23,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import type { QueueProducer } from '@renkei/queue';
+import type { QueueProducer, QueuePurger } from '@renkei/queue';
 import { getOrgSettings } from '@renkei/settings';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -185,6 +185,120 @@ export async function createAgentRun(
   );
 
   return ok({ runId });
+}
+
+export type CancelRunOutcome =
+  /** Was `queued` or `waiting`; the row is `canceled` now, immediately. */
+  | { outcome: 'canceled' }
+  /** Was `running` (or got claimed the instant this ran); the engine's own
+   *  per-step checkpoint will notice and finalize it as `canceled` shortly. */
+  | { outcome: 'cancel-requested' }
+  | { outcome: 'already-final'; status: string }
+  | { outcome: 'not-found' };
+
+/**
+ * Stop a run that hasn't finished — the counterpart to `createAgentRun`,
+ * and like it, the ONE path a REST route and an MCP tool both call so the
+ * two never drift.
+ *
+ * `queued` and `waiting` aren't doing anything an UPDATE can't just undo:
+ * neither holds a claim on the queue's ordering key at the moment of the
+ * request (a queued run's message may still be pending; a waiting run has
+ * none at all until an approval decision or the timeout sweep re-enqueues
+ * one — see decideApproval). So both go straight to `canceled`, and for
+ * `queued` the pending message is best-effort discarded too — if a claim
+ * beat this update, handleRun's own idempotent-redelivery check (a
+ * `canceled` row is simply acknowledged) covers it either way.
+ *
+ * `running` is different: the engine owns the row while it's mid-loop, so
+ * this can only ASK — `cancel_requested_at` — and the engine's per-step
+ * checkpoint stops at the next boundary rather than mid-tool-call. The
+ * same flag is the fallback for a `queued`/`waiting` run that got claimed
+ * in the gap between the read above and the write just after it: the
+ * immediate UPDATE's WHERE guard simply matches zero rows, and this one
+ * catches it instead.
+ */
+export async function requestRunCancel(
+  db: Kysely<DB>,
+  purger: QueuePurger,
+  tenantId: string,
+  agentId: string,
+  runId: string
+): Promise<CancelRunOutcome> {
+  const run = await db
+    .selectFrom('agent_runs')
+    .select(['status'])
+    .where('tenant_id', '=', tenantId)
+    .where('agent_id', '=', agentId)
+    .where('id', '=', runId)
+    .executeTakeFirst();
+  if (!run) return { outcome: 'not-found' };
+  if (
+    run.status === 'succeeded' ||
+    run.status === 'failed' ||
+    run.status === 'canceled' ||
+    run.status === 'stopped'
+  ) {
+    return { outcome: 'already-final', status: run.status };
+  }
+
+  if (run.status === 'queued') {
+    const updated = await db
+      .updateTable('agent_runs')
+      .set({ status: 'canceled', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
+      .where('id', '=', runId)
+      .where('status', '=', 'queued')
+      .executeTakeFirst();
+    if (Number(updated.numUpdatedRows ?? 0) > 0) {
+      await purger.discardPending(tenantId, 'run', [{ path: ['runId'], value: runId }]);
+      return { outcome: 'canceled' };
+    }
+  } else if (run.status === 'waiting') {
+    const updated = await db
+      .updateTable('agent_runs')
+      .set({
+        status: 'canceled',
+        waiting_until: null,
+        finished_at: sql`NOW()`,
+        updated_at: sql`NOW()`,
+      })
+      .where('id', '=', runId)
+      .where('status', '=', 'waiting')
+      .executeTakeFirst();
+    if (Number(updated.numUpdatedRows ?? 0) > 0) {
+      // Mirrors the disabled-agent auto-cancel path (engine.ts): a card
+      // left `suggested` on a run that will never resume is a decision
+      // nobody can make.
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'expired',
+          decided_at: sql`NOW()`,
+          archived_at: sql`NOW()`,
+          result: JSON.stringify({ reason: 'run-ended' }),
+          updated_at: sql`NOW()`,
+        })
+        .where('run_id', '=', runId)
+        .where('status', '=', 'suggested')
+        .execute();
+      return { outcome: 'canceled' };
+    }
+  }
+
+  const flagged = await db
+    .updateTable('agent_runs')
+    .set({ cancel_requested_at: sql`NOW()`, updated_at: sql`NOW()` })
+    .where('id', '=', runId)
+    .where('status', 'in', ['queued', 'running', 'waiting'])
+    .executeTakeFirst();
+  if (Number(flagged.numUpdatedRows ?? 0) > 0) return { outcome: 'cancel-requested' };
+
+  const final = await db
+    .selectFrom('agent_runs')
+    .select(['status'])
+    .where('id', '=', runId)
+    .executeTakeFirst();
+  return { outcome: 'already-final', status: final?.status ?? 'unknown' };
 }
 
 /**

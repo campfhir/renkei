@@ -13,6 +13,7 @@ import ApprovalActions from '../../../../approval-actions';
 import LocalTime from '@/components/local-time';
 import CopyDebugButton from '@/components/copy-debug-button';
 import RerunButton from './rerun-button';
+import CancelRunButton from './cancel-run-button';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 
 /**
@@ -83,7 +84,14 @@ export default async function AgentRunDetailPage({
         <CopyDebugButton text={renderRunDebugMarkdown(agent.name, run)} />
         {/* Only once the run is settled — a rerun while it is still going
             would put two runs on the same message at once. */}
-        {run.status === 'queued' || run.status === 'running' || run.status === 'waiting' ? null : (
+        {run.status === 'queued' || run.status === 'running' || run.status === 'waiting' ? (
+          <CancelRunButton
+            tenantId={tenant.id}
+            agentId={agentId}
+            runId={runId}
+            status={run.status}
+          />
+        ) : (
           <RerunButton tenantId={tenant.id} slug={slug} agentId={agentId} runId={runId} />
         )}
       </div>

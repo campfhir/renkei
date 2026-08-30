@@ -18,13 +18,18 @@
  * run still executes on the OWNER's grants; triggered_by_subject records
  * who pressed the button. Anyone else — an admin reading someone else's
  * run included — gets a 404 here, not a 403.
+ *
+ * This starts a fresh run of the same agent exactly like the invoke route
+ * does, so it asks the same question first: a 409 `ALREADY_RUNNING` names
+ * whichever OTHER run of this agent is still live, and the button re-sends
+ * with `confirmQueue: true` once the person says to go ahead.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { isCurrentStepsDoc } from '@renkei/agents';
-import { createAgentRun } from '@renkei/agents/runs';
+import { createAgentRun, liveRunFor } from '@renkei/agents/runs';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
@@ -78,9 +83,40 @@ export async function POST(
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!isCurrentStepsDoc(agent.steps)) {
     return NextResponse.json(
-      { error: 'This agent is saved in an older format — open it in the builder and save to update it.' },
+      {
+        error:
+          'This agent is saved in an older format — open it in the builder and save to update it.',
+      },
       { status: 409 }
     );
+  }
+
+  let confirmQueue = false;
+  const raw = await request.text();
+  if (raw.trim().length > 0) {
+    try {
+      const body: { confirmQueue?: unknown } = JSON.parse(raw);
+      confirmQueue = body.confirmQueue === true;
+    } catch {
+      return NextResponse.json({ error: 'Body must be JSON' }, { status: 400 });
+    }
+  }
+
+  // A different run of this agent may still be live — the ordering key
+  // already serializes behind it, but pressing "Run again" is easy to do
+  // without meaning to add a second run on top of one already going.
+  if (!confirmQueue) {
+    const liveRun = await liveRunFor(db, tenantId, agentId);
+    if (liveRun) {
+      return NextResponse.json(
+        {
+          error: 'A run of this agent is already in progress.',
+          code: 'ALREADY_RUNNING',
+          liveRun,
+        },
+        { status: 409 }
+      );
+    }
   }
 
   const initialState =
