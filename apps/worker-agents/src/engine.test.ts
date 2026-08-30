@@ -2491,7 +2491,10 @@ maybe('agent run engine', () => {
       expect(acted).toContain('The owner answered');
       expect(acted).not.toContain('The owner approved');
       expect(acted).toContain('the issue key');
-      expect(acted).toContain('check it is usable');
+      expect(acted).toContain('check they are usable');
+      // A fact a person just supplied is the one worth keeping: the next
+      // run should not have to ask the same question again.
+      expect(acted).toContain('record it');
     });
 
     it('an input card declined reads as "no answer", not as a refusal to act', async () => {

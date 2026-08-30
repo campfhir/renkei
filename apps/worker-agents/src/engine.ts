@@ -1179,7 +1179,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
               node.mode === 'input'
                 ? outcome.decision === 'approved'
                   ? `The owner answered "${asked}"${who}. Their answers are in ${answerHome} — ` +
-                    'check they are usable before acting on them, and take your own fallback if they are not.'
+                    'check they are usable before acting on them, and take your own fallback if ' +
+                    'they are not. If an answer will still be true next time (a mapping, a ' +
+                    'preference, a key), record it — remember it when you finish a step, or ' +
+                    'write it as a knowledge note — so a later run need not ask again.'
                   : outcome.decision === 'declined'
                     ? `The owner SKIPPED "${asked}" — they had no answer to give. Do not invent one.`
                     : `Nobody answered "${asked}" before the deadline. Treat it as unanswered; do not invent an answer.`
