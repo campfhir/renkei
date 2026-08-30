@@ -33,6 +33,7 @@ jest.mock('@/lib/agents/approvals', () => ({
 jest.mock('@renkei/queue', () => ({
   agentJobsQueue: () => ({ producer: { enqueue: jest.fn() } }),
 }));
+jest.mock('@renkei/agents/runs', () => ({ createAgentRun: jest.fn() }));
 jest.mock('@renkei/agents/memory', () => ({
   readAgentMemory: jest.fn(async () => ({ summary: null, entries: [] })),
   renderAgentKnowledgeNotes: jest.fn(async () => ''),
@@ -48,7 +49,7 @@ jest.mock('@renkei/agents/memory', () => ({
 import type { McpServer } from '@modelcontextprotocol/server';
 import { registerAgentTools } from './index';
 import type { MCPToolContext } from '../common';
-import { APPROVAL_DEFAULT_TIMEOUT_HOURS } from '@renkei/agents';
+import { APPROVAL_DEFAULT_TIMEOUT_HOURS, CURRENT_STEPS_VERSION } from '@renkei/agents';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const storeMock = jest.requireMock<{ getAgent: jest.Mock; listAgents: jest.Mock }>(
@@ -65,6 +66,7 @@ const approvalsMock = jest.requireMock<{
   listPendingApprovals: jest.Mock;
   decideApproval: jest.Mock;
 }>('@/lib/agents/approvals');
+const runNowMock = jest.requireMock<{ createAgentRun: jest.Mock }>('@renkei/agents/runs');
 const memoryMock = jest.requireMock<{
   readAgentMemory: jest.Mock;
   countAgentMemory: jest.Mock;
@@ -990,5 +992,132 @@ describe('agent_memory_forget', () => {
       { kind: 'summary' }
     );
     expect(result.content[0]?.text).toContain('Rolling summary cleared.');
+  });
+});
+
+describe('agent_run_now', () => {
+  /** An agent the engine would actually accept: steps at the current version. */
+  const RUNNABLE = {
+    ...AGENT,
+    steps: { version: CURRENT_STEPS_VERSION, steps: [] },
+    triggers: [
+      {
+        id: 'trigger-1',
+        draft: { kind: 'schedule', recurrences: [], timezone: 'America/Chicago' },
+        enabled: true,
+        lastFiredAt: null,
+        lastError: null,
+        nextRunAt: '2026-08-30T13:00:00.000Z',
+        keyHint: null,
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    runNowMock.createAgentRun.mockResolvedValue({ ok: true, val: { runId: 'run-7' } });
+  });
+
+  it('starts an enabled agent whose schedule is on, and leaves the schedule alone', async () => {
+    storeMock.getAgent.mockResolvedValue(RUNNABLE);
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
+
+    expect(result.isError).toBeUndefined();
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('runId: run-7');
+    expect(text).toContain('next scheduled run is still 2026-08-30T13:00:00.000Z');
+    // Recorded as the manual run it is, with the state a scheduled run gets
+    // so trigger.scheduledFor binds the same way.
+    expect(runNowMock.createAgentRun).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        agentId: 'agent-1',
+        triggerId: null,
+        triggerKind: 'manual',
+        triggeredBySubject: 'auth0|alice',
+        initialState: expect.objectContaining({ timezone: 'America/Chicago' }),
+      })
+    );
+  });
+
+  it('says the agent is off rather than running it', async () => {
+    storeMock.getAgent.mockResolvedValue({ ...RUNNABLE, enabled: false });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('is turned off');
+    expect(runNowMock.createAgentRun).not.toHaveBeenCalled();
+  });
+
+  it('says the agent is not schedule-triggered, and what does trigger it', async () => {
+    storeMock.getAgent.mockResolvedValue({
+      ...RUNNABLE,
+      triggers: [
+        {
+          id: 'trigger-2',
+          draft: { kind: 'event', eventId: 'microsoft/mail.received' },
+          enabled: true,
+          lastFiredAt: null,
+          lastError: null,
+          nextRunAt: null,
+          keyHint: null,
+        },
+      ],
+    });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('is not triggered by a schedule');
+    expect(text).toContain('It runs: on demand');
+    expect(runNowMock.createAgentRun).not.toHaveBeenCalled();
+  });
+
+  it('separates a switched-off schedule from having none', async () => {
+    storeMock.getAgent.mockResolvedValue({
+      ...RUNNABLE,
+      triggers: [{ ...RUNNABLE.triggers[0], enabled: false }],
+    });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('that trigger is switched off');
+    expect(runNowMock.createAgentRun).not.toHaveBeenCalled();
+  });
+
+  it('refuses agent-run callers — chaining carries the guards, this does not', async () => {
+    storeMock.getAgent.mockResolvedValue(RUNNABLE);
+    const handlers = registerAll({ agent: { agentId: 'agent-9' } });
+
+    const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('chain them instead');
+    expect(runNowMock.createAgentRun).not.toHaveBeenCalled();
+  });
+
+  it("reports the cap's own message when the run is refused", async () => {
+    storeMock.getAgent.mockResolvedValue(RUNNABLE);
+    runNowMock.createAgentRun.mockResolvedValue({
+      ok: false,
+      err: {
+        type: 'DAILY_RUN_CAP',
+        message: 'This organization has reached its 200 runs per day.',
+      },
+    });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('200 runs per day');
   });
 });

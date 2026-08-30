@@ -44,6 +44,18 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'Run a scheduled agent without waiting',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Start a scheduled agent now, from chat',
+        detail:
+          'Your MCP client can bring a scheduled agent\u2019s next run forward with agent_run_now, instead of editing the schedule to make it fire. It only applies to an agent that is on and has a schedule switched on \u2014 anything else comes back saying which of the two is missing \u2014 and the schedule itself is untouched, so the next run still happens at its own time.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'Agent knowledge you chose',
     entries: [
       {

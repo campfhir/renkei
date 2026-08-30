@@ -38,6 +38,12 @@
  *    builder's own REST path (/agents/draft + the worker job); model
  *    callers work at the definition level instead — agent_get hands them
  *    the exact JSON, agent_update validates their edit deterministically.
+ *  - STARTING a run is narrow on purpose: agent_run_now brings a SCHEDULED
+ *    agent's next run forward and does nothing else — an agent that is off,
+ *    or that fires from an event, a chain, or an API key, comes back with
+ *    that reason. It refuses agent-run callers too: an agent starting
+ *    agents outside the chain would bypass the cycle and depth guards,
+ *    which read a lineage only a real trigger carries.
  *  - EDITS ARE PARTIAL BY DEFAULT: agent_update replaces the whole
  *    definition, which makes every untouched step and trigger a
  *    transcription risk, and an omitted trigger an outright delete.
@@ -65,10 +71,12 @@ import {
   MAX_STEP_ATTEMPTS,
   TRIGGER_EVENT_CATALOG,
   friendlyToolName,
+  isCurrentStepsDoc,
   savesByPathCoverage,
   type AgentStepsDoc,
 } from '@renkei/agents';
 import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/agents/memory';
+import { createAgentRun } from '@renkei/agents/runs';
 import { sql } from 'kysely';
 import type { MCPToolContext } from '../common';
 import { getAgent, listAgents, type StoredAgent, type TriggerPayload } from '@/lib/agents/store';
@@ -918,6 +926,127 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
                 'Answer it with agent_approval_decide, giving its cardId.',
               ]
             : []),
+        ].join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
+    'agent_run_now',
+    {
+      title: 'Agents · Act — Run a scheduled agent now',
+      description:
+        'Start one of YOUR scheduled agents immediately, without waiting for its next ' +
+        'scheduled time — the "run it now" you would otherwise get by editing the schedule. ' +
+        'Deliberately narrow: the agent must be ON and must have an enabled schedule ' +
+        'trigger, so this can only bring forward work that already runs by itself. An agent ' +
+        'that is off, or that fires from an event, another agent, or an API key, is refused ' +
+        'with the reason. The schedule itself is left alone — the next scheduled run still ' +
+        'happens at its own time. Follow the run with agent_run_get.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        agentId: z.string().min(1).describe('From agent_list'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      // An agent starting agents outside the chain would bypass the cycle and
+      // depth guards, which are computed from a lineage only a real trigger
+      // carries. The sanctioned path stays the `agent` trigger kind.
+      if (context.agent) {
+        return errText(
+          'Agent runs cannot start other agents from here — chain them instead, by giving ' +
+            'the agent that should follow a trigger of kind "agent" naming this one. That ' +
+            'path carries the lineage the cycle and depth guards read.'
+        );
+      }
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const db = dbResult.val;
+      const agent = await ownAgent(db, context, args.agentId);
+      if (!agent) return errText(NOT_FOUND);
+
+      if (!agent.enabled) {
+        return errText(
+          `"${agent.name}" is turned off, so it is not running on its schedule and this will ` +
+            'not run it either. Turn it on in the builder first — the review panel is where ' +
+            'an agent gets armed.'
+        );
+      }
+
+      // Schedule rows only: the timezone comes from the same config the sweep
+      // reads, so a manual run binds trigger.* exactly as a scheduled one does.
+      const schedules: Array<{ timezone: string; enabled: boolean; nextRunAt: string | null }> = [];
+      for (const trigger of agent.triggers) {
+        if (trigger.draft.kind !== 'schedule') continue;
+        schedules.push({
+          timezone: trigger.draft.timezone,
+          enabled: trigger.enabled,
+          nextRunAt: trigger.nextRunAt,
+        });
+      }
+      if (schedules.length === 0) {
+        return errText(
+          [
+            `"${agent.name}" is not triggered by a schedule, and this tool only brings a ` +
+              'scheduled run forward.',
+            agent.triggers.length > 0
+              ? `It runs: ${agent.triggers
+                  .map(
+                    (trigger) =>
+                      `${triggerSummary(trigger.draft)}${trigger.enabled ? '' : ' (off)'}`
+                  )
+                  .join('; ')}.`
+              : 'It has no triggers at all — it only runs when someone starts it in Renkei.',
+          ].join('\n')
+        );
+      }
+      const armed = schedules.find((schedule) => schedule.enabled);
+      if (!armed) {
+        return errText(
+          `"${agent.name}" has a schedule, but that trigger is switched off — so there is no ` +
+            'scheduled run to bring forward. Turn the schedule back on in the builder.'
+        );
+      }
+      if (!isCurrentStepsDoc(agent.steps)) {
+        return errText(
+          'This agent is saved in an older format — open it in the builder and save it to ' +
+            'update it, then run it.'
+        );
+      }
+
+      // Recorded as the manual run it is (trigger_id stays null), while the
+      // state matches what the sweep hands a scheduled run, so steps that
+      // read trigger.scheduledFor behave the same way they will tonight.
+      const scheduledFor = new Date().toISOString();
+      const result = await createAgentRun(db, agentJobsQueue().producer, {
+        tenantId: context.tenantId,
+        agentId: agent.id,
+        ownerSubject: context.subject,
+        steps: agent.steps,
+        llmModelId: agent.llmModelId,
+        triggerId: null,
+        triggerKind: 'manual',
+        triggeredBySubject: context.subject,
+        initialState: { scheduledFor, timezone: armed.timezone },
+      });
+      if (!result.ok) {
+        return errText(result.err.message ?? `The run could not be started (${result.err.type}).`);
+      }
+
+      logger.info('agent_run_now started a scheduled agent by hand', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        agentId: agent.id,
+        runId: result.val.runId,
+      });
+      return textResult(
+        [
+          `Started "${agent.name}" now — runId: ${result.val.runId}.`,
+          armed.nextRunAt
+            ? `Its schedule is untouched: the next scheduled run is still ${armed.nextRunAt}.`
+            : 'Its schedule is untouched.',
+          'It is queued; agent_run_get on that runId shows how it went.',
         ].join('\n')
       );
     }
