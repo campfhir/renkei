@@ -333,6 +333,49 @@ export interface TerminalStep {
 
 export type ApprovalMode = 'approve' | 'input';
 
+/**
+ * What one form field collects.
+ *
+ * 'text' and 'longtext' differ only in the control's height — both bind a
+ * string, and both are what the mode did before fields existed. The other
+ * four exist because the answer's SHAPE is knowable at authoring time and
+ * an agent should not have to parse for it: a number arrives as digits, a
+ * choice arrives as one of the options the author wrote, a date arrives as
+ * YYYY-MM-DD. What cannot be checked at the card is still the agent's job
+ * — "CIO-12" is a well-formed string and a wrong issue either way.
+ */
+export type ApprovalFieldType = 'text' | 'longtext' | 'number' | 'choice' | 'multi' | 'date';
+
+export interface ApprovalField {
+  /** uuid — stable across edits, and the key answers come back under. */
+  id: string;
+  /**
+   * The variable this field binds, in the SAME namespace as saveAs and
+   * loop items: two fields cannot share a name, and neither can a field
+   * and a saved result.
+   */
+  name: string;
+  /** What the person is asked for, rendered above the control. */
+  label: string;
+  type: ApprovalFieldType;
+  /** Nothing sends until it has a value. */
+  required: boolean;
+  /** choice/multi: what the card offers, and the only values it accepts. */
+  options?: string[];
+  /** number: inclusive bounds, enforced at the card and on submit. */
+  min?: number;
+  max?: number;
+  /** A line under the control — units, format, where to look it up. */
+  help?: string;
+}
+
+/** How many controls one card may carry. A form, not a questionnaire. */
+export const MAX_APPROVAL_FIELDS = 10;
+export const MAX_APPROVAL_FIELD_OPTIONS = 25;
+export const MAX_APPROVAL_FIELD_LABEL_CHARS = 200;
+export const MAX_APPROVAL_FIELD_OPTION_CHARS = 200;
+export const MAX_APPROVAL_FIELD_HELP_CHARS = 500;
+
 export interface ApprovalStep {
   /** uuid, same doc-wide id space as every node. */
   id: string;
@@ -347,11 +390,25 @@ export interface ApprovalStep {
   /** 'approve' = approve/decline buttons; 'input' = a typed answer. */
   mode: ApprovalMode;
   /**
-   * REQUIRED in 'input' mode: the owner's answer binds to this name for
-   * the outcome paths and everything after the node. Same namespace as
-   * saveAs/loop bindings.
+   * The owner's answer binds to this name for the outcome paths and
+   * everything after the node. Same namespace as saveAs/loop bindings.
+   *
+   * REQUIRED in 'input' mode UNLESS `fields` is present — a form binds its
+   * fields' own names instead, and exactly one of the two shapes applies.
    */
   saveAs?: string;
+  /**
+   * Input mode WITH STRUCTURE: one control per field, each binding its own
+   * variable. Absent or empty = the single free-text box, which is what
+   * every agent saved before this existed still has.
+   *
+   * Deliberately NOT a new mode. 'input' already means "this pause wants
+   * information rather than a verdict", and that is the fact the card, the
+   * notification and every outcome caption are keyed off; a form is the
+   * same pause asking for its answer in pieces. A third mode would have
+   * duplicated all three read paths to say the same thing.
+   */
+  fields?: ApprovalField[];
   /**
    * How long the run may wait, in hours — clamped by the org's
    * agentApprovalMaxWaitDays cap at save AND live at pause time. Reaching
@@ -644,6 +701,35 @@ export function approvalPathsOf(
   return APPROVAL_OUTCOME_KEYS.map((key) => ({ key, path: node[key] }));
 }
 
+/**
+ * Form fields out of untrusted JSON — the card stores a SNAPSHOT of the
+ * step's fields so the feed can render controls without loading the agent,
+ * and this reads that snapshot back. Anything malformed is dropped rather
+ * than thrown on: a card whose spec cannot be read still has to render as
+ * something a person can answer or decline.
+ */
+export function parseApprovalFields(value: unknown): ApprovalField[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isApprovalField).slice(0, MAX_APPROVAL_FIELDS);
+}
+
+/** The fields of an input-mode form, or [] for every other approval. */
+export function approvalFieldsOf(node: ApprovalStep): ApprovalField[] {
+  return node.mode === 'input' && Array.isArray(node.fields) ? node.fields : [];
+}
+
+/**
+ * Every variable name this approval binds — one per form field, or the
+ * single saveAs. The validator's namespace check, the builder's chip list
+ * and the run's binding all read this, so they cannot disagree about what
+ * a pause makes available.
+ */
+export function approvalBindingNames(node: ApprovalStep): string[] {
+  const fields = approvalFieldsOf(node);
+  if (fields.length > 0) return fields.map((field) => field.name).filter(Boolean);
+  return node.saveAs ? [node.saveAs] : [];
+}
+
 /* ---------------- structural node guard ----------------------------- */
 /* ONE guard for every stored document. Current shapes are supersets of  */
 /* every version this product ever wrote, so an old doc's NODES always   */
@@ -795,6 +881,46 @@ function isTerminalStepShape(value: unknown): value is TerminalStep {
   return typeof step.notifyEmail === 'boolean' && typeof step.notifyWebex === 'boolean';
 }
 
+const APPROVAL_FIELD_TYPES = new Set<string>([
+  'text',
+  'longtext',
+  'number',
+  'choice',
+  'multi',
+  'date',
+]);
+
+/** One form field, structurally. Business rules are the validator's. */
+function isApprovalField(value: unknown): value is ApprovalField {
+  if (typeof value !== 'object' || value === null) return false;
+  const field: {
+    id?: unknown;
+    name?: unknown;
+    label?: unknown;
+    type?: unknown;
+    required?: unknown;
+    options?: unknown;
+    min?: unknown;
+    max?: unknown;
+    help?: unknown;
+  } = value;
+  if (typeof field.id !== 'string' || field.id.length === 0) return false;
+  if (typeof field.name !== 'string') return false;
+  if (typeof field.label !== 'string') return false;
+  if (typeof field.type !== 'string' || !APPROVAL_FIELD_TYPES.has(field.type)) return false;
+  if (typeof field.required !== 'boolean') return false;
+  if (
+    field.options !== undefined &&
+    (!Array.isArray(field.options) || !field.options.every((option) => typeof option === 'string'))
+  ) {
+    return false;
+  }
+  if (field.min !== undefined && typeof field.min !== 'number') return false;
+  if (field.max !== undefined && typeof field.max !== 'number') return false;
+  if (field.help !== undefined && typeof field.help !== 'string') return false;
+  return true;
+}
+
 function isApprovalStepShape(
   value: unknown,
   context: GuardContext,
@@ -808,6 +934,7 @@ function isApprovalStepShape(
     message?: unknown;
     mode?: unknown;
     saveAs?: unknown;
+    fields?: unknown;
     timeoutHours?: unknown;
     notifyEmail?: unknown;
     notifyWebex?: unknown;
@@ -830,6 +957,9 @@ function isApprovalStepShape(
   if (!Array.isArray(step.message) || !step.message.every(isInstructionSegment)) return false;
   if (step.mode !== 'approve' && step.mode !== 'input') return false;
   if (step.saveAs !== undefined && typeof step.saveAs !== 'string') return false;
+  if (step.fields !== undefined) {
+    if (!Array.isArray(step.fields) || !step.fields.every(isApprovalField)) return false;
+  }
   if (typeof step.timeoutHours !== 'number') return false;
   if (typeof step.notifyEmail !== 'boolean' || typeof step.notifyWebex !== 'boolean') return false;
   return (

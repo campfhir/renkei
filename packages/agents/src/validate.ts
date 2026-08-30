@@ -42,7 +42,14 @@ import {
   MAX_OUTCOME_WHEN_CHARS,
   MAX_STEP_ATTEMPTS,
   MAX_STEPS,
+  MAX_APPROVAL_FIELDS,
+  MAX_APPROVAL_FIELD_HELP_CHARS,
+  MAX_APPROVAL_FIELD_LABEL_CHARS,
+  MAX_APPROVAL_FIELD_OPTIONS,
+  MAX_APPROVAL_FIELD_OPTION_CHARS,
   VARIABLE_NAME_PATTERN,
+  approvalBindingNames,
+  approvalFieldsOf,
   approvalPathsOf,
   containsApproval,
   countNodes,
@@ -53,6 +60,7 @@ import {
   type ActionStep,
   type AgentStepNode,
   type AgentStepsDoc,
+  type ApprovalField,
   type ApprovalStep,
   type BranchPath,
   type BranchStep,
@@ -593,6 +601,119 @@ function validateTerminalStep(
   return issues;
 }
 
+/**
+ * A form's own rules. Every message names the field by its label where it
+ * has one, because an author looking at eight controls needs to know WHICH
+ * is wrong, and a path like `.fields.3.options` is not that.
+ */
+function approvalFieldIssues(fields: ApprovalField[], prefix: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (fields.length > MAX_APPROVAL_FIELDS) {
+    issues.push({
+      path: `${prefix}.fields`,
+      message: `A question may ask for at most ${MAX_APPROVAL_FIELDS} things — split the rest into another step.`,
+    });
+  }
+  const names = new Map<string, number>();
+  fields.forEach((field, index) => {
+    const at = `${prefix}.fields.${index}`;
+    const named = field.label.trim() || field.name.trim() || `field ${index + 1}`;
+    if (!field.label.trim()) {
+      issues.push({ path: `${at}.label`, message: 'Say what this field asks for.' });
+    } else if (field.label.length > MAX_APPROVAL_FIELD_LABEL_CHARS) {
+      issues.push({
+        path: `${at}.label`,
+        message: `"${named}": the prompt must stay under ${MAX_APPROVAL_FIELD_LABEL_CHARS} characters.`,
+      });
+    }
+    if (!field.name || !VARIABLE_NAME_PATTERN.test(field.name)) {
+      issues.push({
+        path: `${at}.name`,
+        message: field.name
+          ? `"${named}": names start with a letter and use letters, numbers, spaces, ".", "-" or "_" (64 characters max).`
+          : `"${named}": name it so later steps can use the answer.`,
+      });
+    } else {
+      names.set(field.name, (names.get(field.name) ?? 0) + 1);
+    }
+    if (field.help !== undefined && field.help.length > MAX_APPROVAL_FIELD_HELP_CHARS) {
+      issues.push({
+        path: `${at}.help`,
+        message: `"${named}": the hint must stay under ${MAX_APPROVAL_FIELD_HELP_CHARS} characters.`,
+      });
+    }
+
+    if (field.type === 'choice' || field.type === 'multi') {
+      const cleaned = (field.options ?? []).map((option) => option.trim()).filter(Boolean);
+      if (cleaned.length < 2) {
+        issues.push({
+          path: `${at}.options`,
+          message: `"${named}": give at least two choices — one choice is not a question.`,
+        });
+      }
+      if (cleaned.length > MAX_APPROVAL_FIELD_OPTIONS) {
+        issues.push({
+          path: `${at}.options`,
+          message: `"${named}": at most ${MAX_APPROVAL_FIELD_OPTIONS} choices.`,
+        });
+      }
+      if (new Set(cleaned).size !== cleaned.length) {
+        issues.push({
+          path: `${at}.options`,
+          message: `"${named}": two choices are identical — the answer could not say which was picked.`,
+        });
+      }
+      if (cleaned.some((option) => option.length > MAX_APPROVAL_FIELD_OPTION_CHARS)) {
+        issues.push({
+          path: `${at}.options`,
+          message: `"${named}": each choice must stay under ${MAX_APPROVAL_FIELD_OPTION_CHARS} characters.`,
+        });
+      }
+    } else if (field.options !== undefined && field.options.length > 0) {
+      issues.push({
+        path: `${at}.options`,
+        message: `"${named}": only a choice field offers choices.`,
+      });
+    }
+
+    if (field.type === 'number') {
+      const { min, max } = field;
+      if (min !== undefined && !Number.isFinite(min)) {
+        issues.push({
+          path: `${at}.min`,
+          message: `"${named}": the lowest value must be a number.`,
+        });
+      }
+      if (max !== undefined && !Number.isFinite(max)) {
+        issues.push({
+          path: `${at}.max`,
+          message: `"${named}": the highest value must be a number.`,
+        });
+      }
+      if (min !== undefined && max !== undefined && min > max) {
+        issues.push({
+          path: `${at}.min`,
+          message: `"${named}": the lowest value is above the highest — no answer could satisfy both.`,
+        });
+      }
+    } else if (field.min !== undefined || field.max !== undefined) {
+      issues.push({
+        path: `${at}.min`,
+        message: `"${named}": only a number field has a lowest and highest value.`,
+      });
+    }
+  });
+  for (const [name, count] of names) {
+    if (count > 1) {
+      issues.push({
+        path: `${prefix}.fields`,
+        message: `Two fields bind "${name}" — a later chip could not say which answer it meant.`,
+      });
+    }
+  }
+  return issues;
+}
+
 function validateApprovalStep(
   approval: ApprovalStep,
   prefix: string,
@@ -654,14 +775,35 @@ function validateApprovalStep(
   }
 
   if (approval.mode === 'input') {
-    if (!approval.saveAs || !VARIABLE_NAME_PATTERN.test(approval.saveAs)) {
+    const fields = approvalFieldsOf(approval);
+    // Exactly one shape: a form, or the single box. Both at once would
+    // leave the card with two things to send and the flow with two
+    // answers, only one of which any later chip could mean.
+    if (fields.length > 0 && approval.saveAs) {
       issues.push({
         path: `${prefix}.saveAs`,
-        message: approval.saveAs
-          ? 'Answer names start with a letter and use letters, numbers, spaces, ".", "-" or "_" (64 characters max).'
-          : 'Name the answer so later steps can use it.',
+        message:
+          'This question collects fields, so it does not also save one plain answer — remove the answer name, or remove the fields.',
       });
+    } else if (fields.length === 0) {
+      if (!approval.saveAs || !VARIABLE_NAME_PATTERN.test(approval.saveAs)) {
+        issues.push({
+          path: `${prefix}.saveAs`,
+          message: approval.saveAs
+            ? 'Answer names start with a letter and use letters, numbers, spaces, ".", "-" or "_" (64 characters max).'
+            : 'Name the answer so later steps can use it — or add fields to ask for it in pieces.',
+        });
+      }
     }
+    issues.push(...approvalFieldIssues(fields, prefix));
+    // Read from the node, not through approvalFieldsOf: that helper answers
+    // "what does this card ask with", which for an approve card is nothing
+    // — the very case this branch exists to catch.
+  } else if ((approval.fields ?? []).length > 0) {
+    issues.push({
+      path: `${prefix}.fields`,
+      message: 'Only a question can collect fields — an approve/decline card has no form.',
+    });
   }
 
   if (!Number.isFinite(approval.timeoutHours) || approval.timeoutHours < 1) {
@@ -782,6 +924,30 @@ function clampIterations(value: number): number {
   );
 }
 
+/** One field, trimmed: same shape in, nothing invented, blanks dropped. */
+function normalizeApprovalField(field: ApprovalField): ApprovalField {
+  const options =
+    field.type === 'choice' || field.type === 'multi'
+      ? (field.options ?? []).map((option) => option.trim()).filter(Boolean)
+      : undefined;
+  const help = field.help?.trim();
+  return {
+    id: field.id,
+    name: field.name.trim(),
+    label: field.label.trim(),
+    type: field.type,
+    required: field.required,
+    ...(options ? { options } : {}),
+    ...(field.type === 'number' && field.min !== undefined && Number.isFinite(field.min)
+      ? { min: field.min }
+      : {}),
+    ...(field.type === 'number' && field.max !== undefined && Number.isFinite(field.max)
+      ? { max: field.max }
+      : {}),
+    ...(help ? { help } : {}),
+  };
+}
+
 function normalizeNode(node: AgentStepNode, cap: number, waitCapHours: number): AgentStepNode {
   switch (node.kind) {
     case 'branch': {
@@ -840,10 +1006,15 @@ function normalizeNode(node: AgentStepNode, cap: number, waitCapHours: number): 
         name: path.name.trim(),
         steps: path.steps.map((child) => normalizeNode(child, cap, waitCapHours)),
       });
+      const fields = approvalFieldsOf(node);
       return {
         ...node,
         name: node.name.trim(),
         ...(node.saveAs !== undefined ? { saveAs: node.saveAs.trim() || undefined } : {}),
+        // A form is stored trimmed and with its empty option rows dropped:
+        // the builder appends a blank row as you type, and a stored blank
+        // is a choice nobody can pick that still fails validation forever.
+        ...(fields.length > 0 ? { fields: fields.map(normalizeApprovalField) } : {}),
         // The org's wait cap binds here AND live at pause time — the
         // stricter of the two always wins.
         timeoutHours: Math.min(
@@ -884,8 +1055,7 @@ function normalizeNode(node: AgentStepNode, cap: number, waitCapHours: number): 
           const { exhausted, guidance, when, ...rest } = handling;
           const trimmedWhen = when?.trim();
           const keepGuidance =
-            guidance !== undefined &&
-            (handling.action === 'retry' || segmentChars(guidance) > 0);
+            guidance !== undefined && (handling.action === 'retry' || segmentChars(guidance) > 0);
           return {
             ...rest,
             ...(keepGuidance ? { guidance } : {}),
@@ -951,9 +1121,10 @@ export function savesByPathCoverage(nodes: AgentStepNode[]): Map<string, 'always
       out.set(node.saveAs, depth === 1 ? 'always' : 'conditional');
     }
     // An approval answer binds only on the answered outcome — conditional
-    // wherever the node sits.
-    if (node.kind === 'approval' && node.saveAs) {
-      out.set(node.saveAs, 'conditional');
+    // wherever the node sits. A form binds one name per field, all on that
+    // same outcome.
+    if (node.kind === 'approval') {
+      for (const name of approvalBindingNames(node)) out.set(name, 'conditional');
     }
   }
   return out;
@@ -1041,9 +1212,10 @@ export function validateAgentDraft(
       ...(node.collectVar ? [node.collectVar] : []),
     ];
   });
-  // Approval answers bind names too (input mode).
+  // Approval answers bind names too (input mode) — one per form field, or
+  // the single saveAs.
   const approvalBindings = walked.flatMap(({ node }) =>
-    node.kind === 'approval' && node.saveAs ? [node.saveAs] : []
+    node.kind === 'approval' ? approvalBindingNames(node) : []
   );
   const boundNames = [...saveAsNames, ...loopBindings, ...approvalBindings];
   if (new Set(boundNames).size !== boundNames.length) {

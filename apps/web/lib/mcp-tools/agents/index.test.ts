@@ -609,6 +609,7 @@ const PENDING = {
   title: 'Refund triage — needs your approval',
   message: 'Refund $240 to Dana Lin?',
   mode: 'approve' as const,
+  fields: [],
   raisedAt: '2026-08-28T09:00:00.000Z',
   waitingUntil: '2026-08-31T09:00:00.000Z',
 };
@@ -640,6 +641,51 @@ describe('agent_approvals_list', () => {
     // And how to give it — a caller told only that an answer is wanted
     // still has to guess which parameter carries it.
     expect(text).toContain('answer');
+  });
+
+  it('prints the FORM a card asks with — a caller cannot see the card', async () => {
+    approvalsMock.listPendingApprovals.mockResolvedValue([
+      {
+        ...PENDING,
+        mode: 'input',
+        fields: [
+          {
+            id: 'f-1',
+            name: 'the issue key',
+            label: 'Which issue tracks this?',
+            type: 'text',
+            required: true,
+          },
+          {
+            id: 'f-2',
+            name: 'the comments',
+            label: 'Which comments to post?',
+            type: 'multi',
+            required: false,
+            options: ['decision 1', 'risk 2'],
+          },
+          {
+            id: 'f-3',
+            name: 'the points',
+            label: 'Points',
+            type: 'number',
+            required: false,
+            min: 1,
+            max: 13,
+          },
+        ],
+      },
+    ]);
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('agent_approvals_list')!({})).content[0]?.text ?? '';
+
+    // The parameter to answer with, and enough of each field to answer it
+    // without a rejected round trip.
+    expect(text).toContain('`answers`');
+    expect(text).toContain('"the issue key" — Which issue tracks this? (text) · required');
+    expect(text).toContain('any of: decision 1 | risk 2');
+    expect(text).toContain('number, min 1, max 13');
   });
 
   it('says nothing is waiting rather than answering with an empty list', async () => {

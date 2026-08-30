@@ -1,6 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { getDatabase } from '@renkei/db';
+import { parseApprovalFields, type ApprovalField } from '@renkei/agents';
 import { Icon, ICONS } from '@/components/icons';
 import CardActions from './card-actions';
 import ApprovalActions from './approval-actions';
@@ -129,6 +130,7 @@ export default async function ActionableCards({
                 tenantId={tenantId}
                 itemId={item.id}
                 mode={approvalModeOf(item.suggested_action)}
+                fields={approvalFieldsFrom(item.suggested_action)}
               />
             ) : (
               <CardActions
@@ -164,6 +166,19 @@ function approvalModeOf(suggestedAction: unknown): 'approve' | 'input' {
     if (record.approvalMode === 'input') return 'input';
   }
   return 'approve';
+}
+
+/**
+ * The form the engine snapshotted onto the card, if it asked with one.
+ *
+ * The card carries its own spec rather than the feed loading the agent:
+ * fifty cards would be fifty step lookups, and a card must keep asking
+ * what it asked even after its step is edited.
+ */
+function approvalFieldsFrom(suggestedAction: unknown): ApprovalField[] {
+  if (typeof suggestedAction !== 'object' || suggestedAction === null) return [];
+  const record: { fields?: unknown } = { ...suggestedAction };
+  return parseApprovalFields(record.fields);
 }
 
 /**

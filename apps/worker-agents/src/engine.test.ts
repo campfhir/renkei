@@ -2148,6 +2148,7 @@ maybe('agent run engine', () => {
       options: {
         mode?: 'approve' | 'input';
         saveAs?: string;
+        fields?: ApprovalStep['fields'];
         timeoutHours?: number;
         notifyEmail?: boolean;
         notifyWebex?: boolean;
@@ -2167,6 +2168,7 @@ maybe('agent run engine', () => {
         ],
         mode: options.mode ?? 'approve',
         ...(options.saveAs ? { saveAs: options.saveAs } : {}),
+        ...(options.fields ? { fields: options.fields } : {}),
         timeoutHours: options.timeoutHours ?? 72,
         notifyEmail: options.notifyEmail ?? false,
         notifyWebex: options.notifyWebex ?? false,
@@ -2533,6 +2535,73 @@ maybe('agent run engine', () => {
       const acted = prompts.join('\n');
       expect(acted).toContain('SKIPPED');
       expect(acted).toContain('Do not invent one');
+    });
+
+    it('a form card binds one variable per field, and a list for a multi-select', async () => {
+      const keyField = randomUUID();
+      const picksField = randomUUID();
+      const { doc } = approvalDoc({
+        mode: 'input',
+        fields: [
+          {
+            id: keyField,
+            name: 'the issue key',
+            label: 'Which issue?',
+            type: 'text',
+            required: true,
+          },
+          {
+            id: picksField,
+            name: 'the comments',
+            label: 'Which comments?',
+            type: 'multi',
+            required: false,
+            options: ['decision 1', 'risk 2'],
+          },
+        ],
+        onApproved: [
+          terminalNode('failure', [
+            { t: 'text', v: 'Post ' },
+            { t: 'var', name: 'the comments' },
+            { t: 'text', v: ' to ' },
+            { t: 'var', name: 'the issue key' },
+          ]),
+        ],
+      });
+      const { runId } = await seedRun(doc);
+      const handler = handlerWith(
+        noModel(),
+        stubMcp([], () => okToolResult)
+      );
+      await handler({ payload: { runId } });
+
+      // The card carries the form, so the feed can render controls without
+      // loading the agent.
+      const card = await cardOf(runId);
+      expect(JSON.stringify(card.suggested_action)).toContain('Which comments?');
+
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'approved',
+          result: JSON.stringify({
+            answers: { [keyField]: 'CIO-12', [picksField]: ['decision 1', 'risk 2'] },
+          }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'error'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      // Each field bound under its OWN name; the multi-select rendered the
+      // way a collected list renders.
+      expect(run.error).toContain('Post decision 1\nrisk 2 to CIO-12');
+      expect(run.status).toBe('failed');
     });
 
     it('a declined card routes the declined path', async () => {

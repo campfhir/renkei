@@ -53,6 +53,7 @@ import { getDatabase, type DB } from '@renkei/db';
 import type { Kysely } from 'kysely';
 import {
   APPROVAL_DEFAULT_TIMEOUT_HOURS,
+  MAX_APPROVAL_FIELDS,
   BUILTIN_VARIABLES,
   CURRENT_STEPS_VERSION,
   DEFAULT_APPROVAL_WAIT_CAP_HOURS,
@@ -95,6 +96,7 @@ import {
   MAX_APPROVAL_ANSWER_CHARS,
   type PendingApproval,
 } from '@/lib/agents/approvals';
+import type { ApprovalField } from '@renkei/agents';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { agentJobsQueue } from '@renkei/queue';
 import { isUuid } from '@/lib/uuid';
@@ -190,12 +192,36 @@ function approvalLines(approval: PendingApproval, now: number): string[] {
     `- ${approval.title}`,
     `  cardId: ${approval.cardId} · agent "${approval.agentName}" (${approval.agentId}) · run ${approval.runId}`,
     `  ${
-      approval.mode === 'input'
-        ? 'Wants a typed ANSWER — decide with `answer`, or decline to say you have none'
-        : 'Wants approve or decline'
+      approval.fields.length > 0
+        ? 'Wants a FORM filled in — decide with `answers`, keyed by the field names below'
+        : approval.mode === 'input'
+          ? 'Wants a typed ANSWER — decide with `answer`, or decline to say you have none'
+          : 'Wants approve or decline'
     }` + ` · raised ${approval.raisedAt}${remaining}`,
     ...(approval.message ? [`  ${approval.message.replace(/\n/g, '\n  ')}`] : []),
+    // The form itself, because a caller cannot see the card: without the
+    // types and the option lists, answering it is guesswork the checker
+    // then rejects.
+    ...approval.fields.map((field) => `  · ${describeApprovalField(field)}`),
   ];
+}
+
+/** One field as one line: what it wants, and what it will accept. */
+function describeApprovalField(field: ApprovalField): string {
+  const shape =
+    field.type === 'choice' || field.type === 'multi'
+      ? `${field.type === 'multi' ? 'any of' : 'one of'}: ${(field.options ?? []).join(' | ')}`
+      : field.type === 'number'
+        ? `number${field.min !== undefined ? `, min ${field.min}` : ''}${
+            field.max !== undefined ? `, max ${field.max}` : ''
+          }`
+        : field.type === 'date'
+          ? 'date, as YYYY-MM-DD'
+          : 'text';
+  return (
+    `"${field.name}" — ${field.label.trim() || field.name} (${shape})` +
+    `${field.required ? ' · required' : ''}${field.help ? ` · ${field.help}` : ''}`
+  );
 }
 
 /**
@@ -647,6 +673,15 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             'The typed answer, for a card in "input" mode — it binds to the step\'s saveAs ' +
               'name for everything after it'
           ),
+        answers: z
+          .record(z.string(), z.union([z.string(), z.array(z.string())]))
+          .optional()
+          .describe(
+            'For a card that asks with a FORM: one entry per field, keyed by the field name ' +
+              'agent_approvals_list prints. A multi-select takes an array. Checked against ' +
+              'the form before anything is recorded — a number that is not a number, or a ' +
+              'choice that is not on offer, comes back as an error, not as a bad answer'
+          ),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -677,10 +712,19 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           cardId: typeof args.cardId === 'string' ? args.cardId.trim() : '',
           decision,
           answer: typeof args.answer === 'string' ? args.answer : undefined,
+          answers: args.answers,
         }
       );
 
       switch (result.outcome) {
+        case 'invalid-answers':
+          return errText(
+            [
+              'That card asks with a form, and these answers do not fit it:',
+              ...result.issues.map((issue) => `- ${issue.label}: ${issue.message}`),
+              'agent_approvals_list prints the form — the fields, their types, and what each accepts.',
+            ].join('\n')
+          );
         case 'answer-too-long':
           return errText(`The answer must stay under ${result.max} characters.`);
         case 'not-found':
@@ -1294,8 +1338,17 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     'approve or decline (or type an answer). REACH FOR THIS whenever the automation should',
     'not act without a person saying so — "ask me before sending", "let me approve the',
     'refund", "check with me first". {id, name, message:[segment,...] (the card body AND the',
-    'notification), mode:"approve" (approve/decline buttons) or "input" (a typed answer,',
-    'which REQUIRES saveAs to bind it), saveAs?, timeoutHours (how long it may wait; default',
+    'notification), mode:"approve" (approve/decline buttons) or "input" (asks for an answer),',
+    'saveAs? (REQUIRED in "input" mode unless fields is given — it binds the typed answer),',
+    'fields? (input mode WITH STRUCTURE: a form of up to',
+    `${MAX_APPROVAL_FIELDS} controls, each {id:<uuid>, name:<the variable it binds>,`,
+    'label:<what the person is asked>, type:"text"|"longtext"|"number"|"date"|"choice"|"multi",',
+    'required:true|false, options?:[...] (choice/multi, at least two), min?/max? (number),',
+    'help?}. USE FIELDS when the answer has a shape the agent would otherwise have to parse —',
+    'a number, a date, one of a known set — because the card refuses anything that does not',
+    'fit, so no step has to. Each field binds its own variable and a "multi" also binds a',
+    'LIST a foreach loop can iterate. A step may have saveAs OR fields, never both),',
+    'timeoutHours (how long it may wait; default',
     `${APPROVAL_DEFAULT_TIMEOUT_HOURS}, clamped by the org's cap, never more than`,
     `${DEFAULT_APPROVAL_WAIT_CAP_HOURS}), notifyEmail, notifyWebex (send the card link to the`,
     'owner), and three outcome paths onApproved, onDeclined and onTimeout, each',

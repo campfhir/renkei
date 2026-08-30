@@ -923,6 +923,126 @@ describe('approval nodes (validation + normalize)', () => {
     expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(8);
   });
 
+  it('accepts a form instead of one answer, and binds every field name', () => {
+    const form = approval({
+      mode: 'input',
+      fields: [
+        {
+          id: uuid(),
+          name: 'the issue key',
+          label: 'Which issue tracks this?',
+          type: 'text',
+          required: true,
+        },
+        {
+          id: uuid(),
+          name: 'the comments',
+          label: 'Which comments to post?',
+          type: 'multi',
+          required: false,
+          options: ['decision 1', 'risk 2'],
+        },
+      ],
+    });
+    const consumer = step({
+      tool: null,
+      instruction: [text('Post '), varChip('the comments'), text(' to '), varChip('the issue key')],
+    });
+
+    expect(
+      validateAgentDraft(draft({ steps: { version: 5, steps: [form, consumer] } }), TOOLS)
+    ).toEqual([]);
+  });
+
+  it('refuses a form that also names one plain answer', () => {
+    // Two shapes at once: the card would have two things to send and a
+    // later chip could not say which answer it meant.
+    const both = approval({
+      mode: 'input',
+      saveAs: 'the decision',
+      fields: [
+        { id: uuid(), name: 'the key', label: 'Which issue?', type: 'text', required: true },
+      ],
+    });
+    expect(
+      messagesOf(validateAgentDraft(draft({ steps: { version: 5, steps: [both] } }), TOOLS)).some(
+        (message) => message.includes('does not also save one plain answer')
+      )
+    ).toBe(true);
+  });
+
+  it('holds each field to its own kind of nonsense', () => {
+    const bad = approval({
+      mode: 'input',
+      fields: [
+        // A choice with one option, two fields sharing a name, and a
+        // number whose bounds exclude every value.
+        {
+          id: uuid(),
+          name: 'the pick',
+          label: 'Pick',
+          type: 'choice',
+          required: true,
+          options: ['only'],
+        },
+        {
+          id: uuid(),
+          name: 'the pick',
+          label: 'Points',
+          type: 'number',
+          required: false,
+          min: 10,
+          max: 2,
+        },
+      ],
+    });
+    const messages = messagesOf(
+      validateAgentDraft(draft({ steps: { version: 5, steps: [bad] } }), TOOLS)
+    );
+    expect(messages.some((message) => message.includes('at least two choices'))).toBe(true);
+    expect(messages.some((message) => message.includes('above the highest'))).toBe(true);
+    expect(messages.some((message) => message.includes('Two fields bind "the pick"'))).toBe(true);
+  });
+
+  it('refuses fields on an approve/decline card', () => {
+    const wrong = approval({
+      fields: [
+        { id: uuid(), name: 'the key', label: 'Which issue?', type: 'text', required: true },
+      ],
+    });
+    expect(
+      messagesOf(validateAgentDraft(draft({ steps: { version: 5, steps: [wrong] } }), TOOLS)).some(
+        (message) => message.includes('has no form')
+      )
+    ).toBe(true);
+  });
+
+  it('normalizes a form: trims, and drops the blank option rows', () => {
+    const messy = approval({
+      mode: 'input',
+      fields: [
+        {
+          id: uuid(),
+          name: '  the pick  ',
+          label: '  Pick one  ',
+          type: 'choice',
+          required: true,
+          // The builder appends a blank line as you type; a stored blank is
+          // a choice nobody can pick that fails validation forever.
+          options: ['first', '', '  second  ', '   '],
+        },
+      ],
+    });
+    const normalized = normalizeAgentDraft(draft({ steps: { version: 5, steps: [messy] } }));
+    const node = normalized.steps.steps[0];
+    if (node.kind !== 'approval') throw new Error('expected the approval back');
+    expect(node.fields?.[0]).toMatchObject({
+      name: 'the pick',
+      label: 'Pick one',
+      options: ['first', 'second'],
+    });
+  });
+
   it('requires a message and refuses tool chips in it', () => {
     const issues = validateAgentDraft(
       draft({ steps: { version: 5, steps: [approval({ message: [] })] } }),
@@ -996,9 +1116,9 @@ describe('outcome lines: custom conditions and prose on every action', () => {
     });
 
   it('accepts a custom condition with a when description', () => {
-    expect(
-      validateAgentDraft(draft({ steps: { version: 8, steps: [custom()] } }), TOOLS)
-    ).toEqual([]);
+    expect(validateAgentDraft(draft({ steps: { version: 8, steps: [custom()] } }), TOOLS)).toEqual(
+      []
+    );
   });
 
   it('rejects an unknown code without a when description', () => {

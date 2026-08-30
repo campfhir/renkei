@@ -27,6 +27,8 @@ import { describeActor as describeActorRaw } from '@renkei/db';
 import type { DB, Json } from '@renkei/db';
 import {
   MAX_COLLECTED_ITEMS,
+  approvalAnswerText,
+  approvalFieldsOf,
   attemptVariables,
   findNodeById,
   friendlyToolName,
@@ -39,6 +41,7 @@ import {
   type AgentStepNode,
   resolveTime,
   TIME_UNITS,
+  type ApprovalAnswerValue,
   type ApprovalOutcomeKey,
   type ResolveTimeRequest,
   type TimeUnit,
@@ -507,10 +510,32 @@ interface SeqFrame {
  * refused to act, having been shown no evidence, and the run died one step
  * after the owner clicked Approve.
  */
+/**
+ * A form's answers as one readable line per field — the run timeline's
+ * record of what was actually sent, and the summary a person reads back
+ * months later. Fields left blank are omitted rather than shown empty:
+ * "(nothing)" against six optional fields is noise, and the binding is
+ * absent either way.
+ */
+function describeAnswers(node: ApprovalStep, answers: Record<string, ApprovalAnswerValue>): string {
+  const lines: string[] = [];
+  for (const field of approvalFieldsOf(node)) {
+    const value = answers[field.id];
+    if (value === undefined) continue;
+    const text = Array.isArray(value) ? value.join(', ') : value;
+    if (!text) continue;
+    lines.push(`${field.label.trim() || field.name}: ${text}`);
+  }
+  return lines.join('\n');
+}
+
 interface ApprovalRoute {
   kind: 'route';
   outcome: ApprovalOutcomeKey;
+  /** The single free-text answer, for a form-less input node. */
   answer: string | null;
+  /** A form's answers, by FIELD ID — see approval-answers.ts on why id. */
+  answers: Record<string, ApprovalAnswerValue> | null;
   link: string | null;
   /** The card's own status: 'approved' | 'declined' | 'expired'. */
   decision: string;
@@ -1136,12 +1161,19 @@ export function createAgentRunHandler(deps: EngineDeps) {
             // string somebody typed — which may be "no idea", a typo, or
             // the wrong shape entirely. The answer is evidence to check,
             // not a verdict to act on, and the wording has to say so.
+            const answerHome = (() => {
+              const fields = approvalFieldsOf(node);
+              if (fields.length === 0) return `"${node.saveAs ?? 'the saved answer'}"`;
+              const named = fields.map((field) => `"${field.name}"`);
+              return named.length === 1
+                ? named[0]
+                : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`;
+            })();
             vars['approval.status'] =
               node.mode === 'input'
                 ? outcome.decision === 'approved'
-                  ? `The owner answered "${asked}"${who}. Their answer is in "${
-                      node.saveAs ?? 'the saved answer'
-                    }" — check it is usable before acting on it, and take your own fallback if it is not.`
+                  ? `The owner answered "${asked}"${who}. Their answers are in ${answerHome} — ` +
+                    'check they are usable before acting on them, and take your own fallback if they are not.'
                   : outcome.decision === 'declined'
                     ? `The owner SKIPPED "${asked}" — they had no answer to give. Do not invent one.`
                     : `Nobody answered "${asked}" before the deadline. Treat it as unanswered; do not invent an answer.`
@@ -1154,6 +1186,19 @@ export function createAgentRunHandler(deps: EngineDeps) {
             if (outcome.decidedAt) vars['approval.decidedAt'] = outcome.decidedAt;
             if (node.mode === 'input' && node.saveAs && outcome.answer !== null) {
               vars[node.saveAs] = outcome.answer;
+            }
+            // A form binds one variable per FIELD, by the field's current
+            // name — the answers were stored under field ids exactly so a
+            // rename between asking and answering lands on the right chip.
+            // A multi-select also binds a LIST, so a loop can iterate the
+            // picks the way it iterates any collected list.
+            if (outcome.answers) {
+              for (const field of approvalFieldsOf(node)) {
+                const value = outcome.answers[field.id];
+                if (value === undefined) continue;
+                vars[field.name] = approvalAnswerText(value);
+                if (Array.isArray(value)) lists[field.name] = value;
+              }
             }
             frame.index += 1;
             stack.push({ kind: 'seq', nodes: node[outcome.outcome].steps, index: 0 });
@@ -1995,6 +2040,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const detail: {
         decision?: unknown;
         saveValue?: unknown;
+        answers?: unknown;
         decidedBy?: unknown;
         decidedAt?: unknown;
       } =
@@ -2009,6 +2055,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
           kind: 'route',
           outcome,
           answer: typeof detail.saveValue === 'string' ? detail.saveValue : null,
+          answers:
+            typeof detail.answers === 'object' &&
+            detail.answers !== null &&
+            !Array.isArray(detail.answers)
+              ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+                (detail.answers as Record<string, ApprovalAnswerValue>)
+              : null,
           link,
           // Replay must rebind the same evidence the first pass did, or a
           // resumed run reaches the approved path having forgotten why.
@@ -2034,11 +2087,22 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // route. detail.decision is what replay re-derives from.
     const resolveDecision = async (status: string, result: unknown): Promise<ApprovalRoute> => {
       const outcome = approvalOutcomeOf(status) ?? 'onTimeout';
-      const resultObj: { answer?: unknown; decidedBy?: unknown } =
+      const resultObj: { answer?: unknown; answers?: unknown; decidedBy?: unknown } =
         typeof result === 'object' && result !== null && !Array.isArray(result) ? result : {};
       const answer =
         node.mode === 'input' && typeof resultObj.answer === 'string' && resultObj.answer.trim()
           ? resultObj.answer.trim()
+          : null;
+      // A form's answers were already checked against the field spec by
+      // whoever accepted them (approval-answers.ts, one rule set); this
+      // reads back what was stored, keyed by field id.
+      const answers =
+        node.mode === 'input' &&
+        typeof resultObj.answers === 'object' &&
+        resultObj.answers !== null &&
+        !Array.isArray(resultObj.answers)
+          ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
+            (resultObj.answers as Record<string, ApprovalAnswerValue>)
           : null;
       const wording =
         status === 'approved'
@@ -2058,6 +2122,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
         ...(decidedBy !== null ? { decidedBy } : {}),
         decidedAt,
         ...(answer !== null ? { saveValue: clip(answer, PREVIEW_CHARS) } : {}),
+        // The form's answers go in RAW as well as summarised: replay rebinds
+        // from here, and rebinding one field per line of a summary would be
+        // parsing back what we just formatted.
+        ...(answers !== null
+          ? { answers, saveValue: clip(describeAnswers(node, answers), PREVIEW_CHARS) }
+          : {}),
       };
       const updated = await db
         .updateTable('agent_run_steps')
@@ -2107,6 +2177,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         kind: 'route',
         outcome,
         answer,
+        answers,
         link,
         decision: approvalOutcomeOf(status) ? status : 'expired',
         decidedBy,
@@ -2199,6 +2270,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
     }
 
+    const formFields = approvalFieldsOf(node);
     const rendered = renderInstruction(node.message, vars);
     const message =
       rendered.text.trim() ||
@@ -2218,8 +2290,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
           summary: clip(message, PREVIEW_CHARS),
           evidence: JSON.stringify([]),
           // Not an executable action: the card UI reads the MODE here to
-          // render approve/decline buttons vs an answer box.
-          suggested_action: JSON.stringify({ approvalMode: node.mode }),
+          // render approve/decline buttons vs an answer box — and, for a
+          // form, the FIELDS, so the feed builds the controls without
+          // loading the agent. A snapshot on purpose: the card a person is
+          // looking at keeps asking what it asked, even if the step is
+          // edited while it waits, and answers come back under field ids
+          // the step can still resolve.
+          suggested_action: JSON.stringify({
+            approvalMode: node.mode,
+            ...(formFields.length > 0 ? { fields: formFields } : {}),
+          }),
           owner_subject: run.owner_subject,
           created_by: run.owner_subject,
           created_by_agent_id: run.agent_id,
@@ -2246,7 +2326,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
       heading:
         `Agent “${agentName}” ${node.mode === 'input' ? 'needs your answer' : 'needs your approval'}` +
         `${node.name.trim() ? `: ${node.name.trim()}` : ''}`,
-      body: [message, ...(link ? [`Respond here: ${link}`] : [])].join('\n\n'),
+      body: [
+        message,
+        // A form's labels, so the mail says what it will take to answer —
+        // "needs your answer" over a link is a worse ask than "needs an
+        // issue key and a date".
+        ...(formFields.length > 0
+          ? [
+              `Asks for: ${formFields
+                .map((field) => field.label.trim() || field.name)
+                .join(', ')}`,
+            ]
+          : []),
+        ...(link ? [`Respond here: ${link}`] : []),
+      ].join('\n\n'),
       ownerEmail: vars['user.email'],
     });
 

@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  approvalFieldsOf,
   instructionPreview,
   walkSteps,
   type ActionStep,
@@ -117,8 +118,19 @@ function NodeList({
                   {instructionPreview(node.message)}
                 </p>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Pauses for {node.mode === 'input' ? 'your typed answer' : 'your approval'} — up to{' '}
-                  {node.timeoutHours}h{node.saveAs ? ` — saves the answer as “${node.saveAs}”` : ''}
+                  Pauses for{' '}
+                  {node.mode === 'input'
+                    ? approvalFieldsOf(node).length > 0
+                      ? `${approvalFieldsOf(node).length} things from you`
+                      : 'your typed answer'
+                    : 'your approval'}{' '}
+                  — up to {node.timeoutHours}h
+                  {node.saveAs ? ` — saves the answer as “${node.saveAs}”` : ''}
+                  {approvalFieldsOf(node).length > 0
+                    ? ` — ${approvalFieldsOf(node)
+                        .map((field) => `${field.label || field.name} (${field.type})`)
+                        .join(', ')}`
+                    : ''}
                 </p>
                 {outcomes.map(({ label, path }) => (
                   <div

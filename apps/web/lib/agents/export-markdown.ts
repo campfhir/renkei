@@ -19,6 +19,7 @@
  */
 
 import {
+  approvalFieldsOf,
   CURRENT_STEPS_VERSION,
   varSegments,
   walkSteps,
@@ -137,9 +138,7 @@ export function agentMarkdown(agent: AgentExportInput): string {
           variables: vars,
           toolBudget: NORMAL_TOOL_CAP,
           ...(guardrailsText ? { guardrailsText } : {}),
-          ...(node.saveAs && loopSourceVars.has(node.saveAs)
-            ? { savesItemsForLoop: true }
-            : {}),
+          ...(node.saveAs && loopSourceVars.has(node.saveAs) ? { savesItemsForLoop: true } : {}),
           ...(() => {
             const guide = outcomeGuideFor(node, vars);
             return guide ? { outcomeGuide: guide } : {};
@@ -164,7 +163,12 @@ export function agentMarkdown(agent: AgentExportInput): string {
       }
       case 'branch': {
         const vars = placeholderVars([node.condition]);
-        const built = buildBranchMessages({ branch: node, variables: vars, attempt: 1, ...(guardrailsText ? { guardrailsText } : {}) });
+        const built = buildBranchMessages({
+          branch: node,
+          variables: vars,
+          attempt: 1,
+          ...(guardrailsText ? { guardrailsText } : {}),
+        });
         const router = node.paths.length !== 2;
         lines.push(
           `## Step ${ordinal + 1}: Branch — ${node.name || '(unnamed)'}`,
@@ -238,7 +242,19 @@ export function agentMarkdown(agent: AgentExportInput): string {
           `## Step ${ordinal + 1}: Approval — ${node.name || '(unnamed)'}`,
           '',
           'No model prompt: the run pauses for the OWNER (' +
-            `${node.mode === 'input' ? 'typed answer' : 'approve/decline'}, up to ${node.timeoutHours}h).`,
+            `${
+              node.mode === 'input'
+                ? approvalFieldsOf(node).length > 0
+                  ? `a form of ${approvalFieldsOf(node).length}`
+                  : 'typed answer'
+                : 'approve/decline'
+            }, up to ${node.timeoutHours}h).`,
+          ...approvalFieldsOf(node).map(
+            (field) =>
+              `- ${field.label || field.name} (${field.type}${field.required ? ', required' : ''})` +
+              ` → saved as "${field.name}"` +
+              (field.options?.length ? `; one of: ${field.options.join(', ')}` : '')
+          ),
           ''
         );
         break;
