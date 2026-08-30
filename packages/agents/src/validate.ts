@@ -783,24 +783,26 @@ function validateApprovalStep(
 
   if (approval.mode === 'input') {
     const fields = approvalFieldsOf(approval);
-    // Exactly one shape: a form, or the single box. Both at once would
-    // leave the card with two things to send and the flow with two
-    // answers, only one of which any later chip could mean.
-    if (fields.length > 0 && approval.saveAs) {
+    /*
+      saveAs means "the answer", and a form has two useful readings of that:
+      each field on its own (the field names), and the WHOLE reply as one
+      value — every label, destination id and answer, ready to hand to a
+      step that writes them somewhere. So with fields, saveAs is optional
+      and names the whole form; without them it is the single typed answer
+      and required, because nothing else would bind.
+    */
+    if (approval.saveAs !== undefined && !VARIABLE_NAME_PATTERN.test(approval.saveAs)) {
       issues.push({
         path: `${prefix}.saveAs`,
         message:
-          'This question collects fields, so it does not also save one plain answer — remove the answer name, or remove the fields.',
+          'Answer names start with a letter and use letters, numbers, spaces, ".", "-" or "_" (64 characters max).',
       });
-    } else if (fields.length === 0) {
-      if (!approval.saveAs || !VARIABLE_NAME_PATTERN.test(approval.saveAs)) {
-        issues.push({
-          path: `${prefix}.saveAs`,
-          message: approval.saveAs
-            ? 'Answer names start with a letter and use letters, numbers, spaces, ".", "-" or "_" (64 characters max).'
-            : 'Name the answer so later steps can use it — or add fields to ask for it in pieces.',
-        });
-      }
+    } else if (fields.length === 0 && !approval.saveAs) {
+      issues.push({
+        path: `${prefix}.saveAs`,
+        message:
+          'Name the answer so later steps can use it — or add fields to ask for it in pieces.',
+      });
     }
     issues.push(...approvalFieldIssues(fields, prefix));
     // Read from the node, not through approvalFieldsOf: that helper answers
@@ -1129,8 +1131,8 @@ export function savesByPathCoverage(nodes: AgentStepNode[]): Map<string, 'always
       out.set(node.saveAs, depth === 1 ? 'always' : 'conditional');
     }
     // An approval answer binds only on the answered outcome — conditional
-    // wherever the node sits. A form binds one name per field, all on that
-    // same outcome.
+    // wherever the node sits. A form binds one name per field plus, when
+    // named, the whole reply, all on that same outcome.
     if (node.kind === 'approval') {
       for (const name of approvalBindingNames(node)) out.set(name, 'conditional');
     }

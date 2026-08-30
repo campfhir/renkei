@@ -556,16 +556,28 @@ export function AgentBuilder({
       const asked = node.name.trim() || 'unnamed';
       const fields = approvalFieldsOf(node);
       if (fields.length > 0) {
-        return fields
-          .filter((field) => field.name)
-          .map((field) => ({
-            name: field.name,
-            label: field.name,
-            description:
-              `Your answer to “${field.label.trim() || field.name}” on the approval “${asked}”` +
-              `${field.key ? ` (writes to ${field.key})` : ''}.`,
-            source: 'step' as const,
-          }));
+        return [
+          ...fields
+            .filter((field) => field.name)
+            .map((field) => ({
+              name: field.name,
+              label: field.name,
+              description:
+                `Your answer to “${field.label.trim() || field.name}” on the approval “${asked}”` +
+                `${field.key ? ` (writes to ${field.key})` : ''}.`,
+              source: 'step' as const,
+            })),
+          ...(node.saveAs
+            ? [
+                {
+                  name: node.saveAs,
+                  label: node.saveAs,
+                  description: `Everything you filled in on the approval “${asked}”, one line per answer.`,
+                  source: 'step' as const,
+                },
+              ]
+            : []),
+        ];
       }
       return node.saveAs
         ? [

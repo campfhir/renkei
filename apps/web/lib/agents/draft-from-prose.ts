@@ -308,7 +308,8 @@ function promptOf(
       '"choice"|"multi", "required": true/false, "options": [...] for choice/multi (at least ' +
       'two), "min"/"max" for number, "help": an optional hint, "key": what the destination ' +
       'system calls this field if the description names one (e.g. "customfield_10016")}. ' +
-      'Never give both "saveAs" and "fields". PREFER FIELDS whenever the answer has a shape ' +
+      'With "fields" you may ALSO give "saveAs" — it names the whole reply, one chip holding ' +
+      'every label and answer, for a step that relays it. PREFER FIELDS whenever the answer has a shape ' +
       'you already know — an issue key, a number of points, a date, one of a set the ' +
       'description lists — because the card refuses an answer that does not fit, so no later ' +
       'step has to parse or re-check one. Use the plain "saveAs" answer only for genuinely ' +
@@ -544,8 +545,9 @@ function promptOf(
     '    "name": string — a short label, never empty,',
     '    "message": string — what to ask the user; {{var:...}} allowed, {{tool:...}} forbidden,',
     '    "mode": "approve" (buttons) or "input" (the user answers),',
-    '    "saveAs": string — for an "input" ask that wants ONE open answer: its name for',
-    '      later steps. Omit it when you give "fields",',
+    '    "saveAs": string — for an "input" ask with no "fields": the name of the one open',
+    '      answer, required. WITH "fields" it is optional and names the WHOLE reply (every',
+    '      label and answer, one per line) for a step that relays what was said,',
     '    "fields": array or omitted — an "input" ask\'s form; prefer it whenever the answer',
     '      has a known shape. Each: {"name": string — what later steps call it,',
     '      "label": string — what the user reads, "type": "text" | "longtext" | "number" |',
@@ -1677,11 +1679,19 @@ function parseAskEntry(
   }
 
   const mode = wire.mode ?? 'approve';
-  // A form beats a plain box wherever the model drafted one, and the two
-  // are exclusive: fields bind their own names, so a saveAs beside them
-  // would be a second answer nothing reads.
+  // A form beats a plain box wherever the model drafted one. A saveAs
+  // beside fields is not a second answer — it is the whole reply under one
+  // name — so it is claimed either way, and only REQUIRED without fields.
   const fields = mode === 'input' ? askFieldsOf(wire.fields, label, state) : [];
   let saveAs = '';
+  if (
+    mode === 'input' &&
+    fields.length > 0 &&
+    typeof wire.saveAs === 'string' &&
+    wire.saveAs.trim()
+  ) {
+    saveAs = claimBoundName(wire.saveAs, label, 'form', state);
+  }
   if (mode === 'input' && fields.length === 0) {
     saveAs = claimBoundName(
       typeof wire.saveAs === 'string' && wire.saveAs.trim() ? wire.saveAs : 'the answer',

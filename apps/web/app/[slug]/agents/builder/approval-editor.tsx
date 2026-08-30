@@ -77,8 +77,8 @@ export function ApprovalEditor({
   };
   const addField = () => {
     const next: ApprovalField = { name: '', label: '', type: 'text', required: true };
-    // The first field takes over from the plain box, so saveAs goes with
-    // it: a step cannot both save one answer and collect several.
+    // The plain box's name goes with it — a form's whole-reply name is
+    // opted into below, not inherited from the box it replaced.
     const { saveAs: _saveAs, ...rest } = approval;
     onChange({ ...rest, fields: [...fields, next] });
   };
@@ -258,6 +258,28 @@ export function ApprovalEditor({
             that id on the field and the step writing it gets the pair. Remove them all to go back
             to one plain answer.
           </p>
+
+          <div className="mt-2">
+            <label className={labelClass} htmlFor={`approval-formname-${approval.id}`}>
+              Name the whole form (optional)
+            </label>
+            <input
+              id={`approval-formname-${approval.id}`}
+              className={fieldClass(saveAsIssues.length > 0)}
+              aria-invalid={saveAsIssues.length > 0 || undefined}
+              value={approval.saveAs ?? ''}
+              maxLength={64}
+              placeholder="e.g. what you told me"
+              onChange={(event) =>
+                onChange({ ...approval, saveAs: event.target.value || undefined })
+              }
+            />
+            <FieldIssues messages={saveAsIssues} />
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              One chip holding every answer with its label — for a step that relays what you said (a
+              comment, a note, an email) rather than using one answer on its own.
+            </p>
+          </div>
         </div>
       ) : null}
 

@@ -1208,6 +1208,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
                 vars[field.name] = approvalAnswerText(value);
                 if (Array.isArray(value)) lists[field.name] = value;
               }
+              // And the WHOLE reply under the node's own name, when it has
+              // one: a step that relays what someone said — into a comment,
+              // a note, a mail — wants the labels and the destination ids
+              // with the values, not five chips it has to reassemble.
+              if (node.saveAs) vars[node.saveAs] = describeAnswers(node, outcome.answers);
             }
             frame.index += 1;
             stack.push({ kind: 'seq', nodes: node[outcome.outcome].steps, index: 0 });

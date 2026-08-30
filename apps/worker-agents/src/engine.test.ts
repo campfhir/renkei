@@ -2543,6 +2543,7 @@ maybe('agent run engine', () => {
     it('a form card binds one variable per field, and a list for a multi-select', async () => {
       const { doc } = approvalDoc({
         mode: 'input',
+        saveAs: 'what you told me',
         fields: [
           {
             name: 'the issue key',
@@ -2564,6 +2565,8 @@ maybe('agent run engine', () => {
             { t: 'var', name: 'the comments' },
             { t: 'text', v: ' to ' },
             { t: 'var', name: 'the issue key' },
+            { t: 'text', v: ' — all of it: ' },
+            { t: 'var', name: 'what you told me' },
           ]),
         ],
       });
@@ -2600,6 +2603,10 @@ maybe('agent run engine', () => {
       // Each field bound under its OWN name; the multi-select rendered the
       // way a collected list renders.
       expect(run.error).toContain('Post decision 1\nrisk 2 to CIO-12');
+      // And the whole reply under the node's own name: every label with its
+      // answer, for a step that relays what was said.
+      expect(run.error).toContain('Which issue?: CIO-12');
+      expect(run.error).toContain('Which comments?: decision 1, risk 2');
       expect(run.status).toBe('failed');
     });
 

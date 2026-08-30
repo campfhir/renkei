@@ -952,17 +952,37 @@ describe('approval nodes (validation + normalize)', () => {
     ).toEqual([]);
   });
 
-  it('refuses a form that also names one plain answer', () => {
-    // Two shapes at once: the card would have two things to send and a
-    // later chip could not say which answer it meant.
+  it('lets a form ALSO name the whole reply, and binds both readings', () => {
+    // Two useful readings of "the answer": each field on its own, and
+    // everything they said as one value a step can relay.
     const both = approval({
       mode: 'input',
-      saveAs: 'the decision',
+      saveAs: 'what you told me',
+      fields: [{ name: 'the key', label: 'Which issue?', type: 'text', required: true }],
+    });
+    const consumer = step({
+      tool: null,
+      instruction: [
+        text('Comment '),
+        varChip('what you told me'),
+        text(' on '),
+        varChip('the key'),
+      ],
+    });
+    expect(
+      validateAgentDraft(draft({ steps: { version: 5, steps: [both, consumer] } }), TOOLS)
+    ).toEqual([]);
+  });
+
+  it('still refuses a form whose whole-reply name is unusable', () => {
+    const bad = approval({
+      mode: 'input',
+      saveAs: '9 lives',
       fields: [{ name: 'the key', label: 'Which issue?', type: 'text', required: true }],
     });
     expect(
-      messagesOf(validateAgentDraft(draft({ steps: { version: 5, steps: [both] } }), TOOLS)).some(
-        (message) => message.includes('does not also save one plain answer')
+      messagesOf(validateAgentDraft(draft({ steps: { version: 5, steps: [bad] } }), TOOLS)).some(
+        (message) => message.includes('start with a letter')
       )
     ).toBe(true);
   });

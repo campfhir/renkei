@@ -409,10 +409,18 @@ export interface ApprovalStep {
   mode: ApprovalMode;
   /**
    * The owner's answer binds to this name for the outcome paths and
-   * everything after the node. Same namespace as saveAs/loop bindings.
+   * everything after the node. Same namespace as field/loop bindings.
    *
-   * REQUIRED in 'input' mode UNLESS `fields` is present — a form binds its
-   * fields' own names instead, and exactly one of the two shapes applies.
+   * With a plain box it is REQUIRED and holds what they typed. With
+   * `fields` it is OPTIONAL and holds the WHOLE reply — every label, its
+   * destination id where it has one, and the answer, one per line:
+   *
+   *     Which issue tracks this?: CIO-12
+   *     Story Points [customfield_10016]: 8
+   *
+   * Both readings exist because both are wanted: a step that writes one
+   * answer somewhere takes the field's own variable, and a step that
+   * relays the reply — a comment, a note, a mail — takes the form.
    */
   saveAs?: string;
   /**
@@ -744,8 +752,12 @@ export function approvalFieldsOf(node: ApprovalStep): ApprovalField[] {
  */
 export function approvalBindingNames(node: ApprovalStep): string[] {
   const fields = approvalFieldsOf(node);
-  if (fields.length > 0) return fields.map((field) => field.name).filter(Boolean);
-  return node.saveAs ? [node.saveAs] : [];
+  // A form binds each field AND, when it is named, the whole reply — the
+  // second is what a step wanting "everything they said" reaches for.
+  return [
+    ...fields.map((field) => field.name).filter(Boolean),
+    ...(node.saveAs ? [node.saveAs] : []),
+  ];
 }
 
 /* ---------------- structural node guard ----------------------------- */

@@ -1351,7 +1351,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     'not act without a person saying so — "ask me before sending", "let me approve the',
     'refund", "check with me first". {id, name, message:[segment,...] (the card body AND the',
     'notification), mode:"approve" (approve/decline buttons) or "input" (asks for an answer),',
-    'saveAs? (REQUIRED in "input" mode unless fields is given — it binds the typed answer),',
+    'saveAs? (REQUIRED in "input" mode with no fields — it binds the typed answer; WITH fields',
+    'it is optional and binds the WHOLE reply, every label and answer one per line, for a step',
+    'that relays what was said rather than using one answer),',
     'fields? (input mode WITH STRUCTURE: a form of up to',
     `${MAX_APPROVAL_FIELDS} controls, each {name:<the variable it binds, and the key its`,
     'answer comes back under>, label:<what the person is asked>,',
@@ -1362,7 +1364,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     'USE FIELDS when the answer has a shape the agent would otherwise have to parse —',
     'a number, a date, one of a known set — because the card refuses anything that does not',
     'fit, so no step has to. Each field binds its own variable and a "multi" also binds a',
-    'LIST a foreach loop can iterate. A step may have saveAs OR fields, never both),',
+    'LIST a foreach loop can iterate),',
     'timeoutHours (how long it may wait; default',
     `${APPROVAL_DEFAULT_TIMEOUT_HOURS}, clamped by the org's cap, never more than`,
     `${DEFAULT_APPROVAL_WAIT_CAP_HOURS}), notifyEmail, notifyWebex (send the card link to the`,
@@ -1406,6 +1408,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       name: 'Where do these go?',
       message: [{ t: 'text', v: 'I found 7 decisions with no home. Which issue tracks them?' }],
       mode: 'input',
+      saveAs: 'what you told me',
       fields: [
         {
           name: 'the issue key',
@@ -1441,7 +1444,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     'The steps inside onApproved then use the chips "the issue key", "the points" and',
     '"the comments" — that is the whole point of asking: the write the answer unlocks happens',
     'in the same run, and the answered path is told "Story Points [customfield_10016]: 8" so',
-    'the step posting it needs no second lookup.',
+    'the step posting it needs no second lookup. "what you told me" holds all three answers',
+    'together, for a step that relays the reply rather than using one answer of it.',
   ].join(' ');
 
   const STEPS_DESCRIPTION = [
