@@ -150,4 +150,36 @@ describe('agent-run-failed handler', () => {
 
     await expect(createAgentRunFailedHandler()(event())).resolves.toBeUndefined();
   });
+
+  it('lets the failing agent\'s own override reach WebEx even when the general preference is off', async () => {
+    mockGetNotificationPrefs.mockResolvedValue({
+      ...DEFAULT_NOTIFICATION_PREFS,
+      runFailed: { app: true, email: false, webex: false },
+      agentOverrides: {
+        'agent-1': { runFailed: { app: true, email: false, webex: true } },
+      },
+    });
+    const sendNoteToSelf = jest.fn().mockResolvedValue({ ok: true, val: { id: 'm1', roomId: 'r1' } });
+    MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
+
+    await createAgentRunFailedHandler()(event());
+
+    expect(mockGraphRequest).not.toHaveBeenCalled();
+    expect(sendNoteToSelf).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays quiet when a DIFFERENT agent's override is on but this run's agent has none", async () => {
+    mockGetNotificationPrefs.mockResolvedValue({
+      ...DEFAULT_NOTIFICATION_PREFS,
+      runFailed: { app: true, email: false, webex: false },
+      agentOverrides: {
+        'some-other-agent': { runFailed: { app: true, email: true, webex: true } },
+      },
+    });
+
+    await createAgentRunFailedHandler()(event());
+
+    expect(mockGraphRequest).not.toHaveBeenCalled();
+    expect(MockWebexClient).not.toHaveBeenCalled();
+  });
 });

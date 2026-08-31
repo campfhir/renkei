@@ -33,7 +33,7 @@ for (const size of WIDTHS) {
     await expect(page.getByRole('heading', { name: 'Preferences' })).toBeVisible();
 
     // Everything sits under one Notifications heading now.
-    await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeVisible();
     const group = page.getByRole('region', { name: 'Notifications' });
     await expect(group.getByRole('heading', { name: 'Runs' })).toBeVisible();
     await expect(group.getByRole('heading', { name: 'Things your agents do' })).toBeVisible();

@@ -249,7 +249,7 @@ maybe('agent notifications', () => {
     await notifier().runStarted();
     expect(await rows()).toHaveLength(0);
 
-    await notifier({ runStarted: true }).runStarted();
+    await notifier({ runStarted: { app: true, email: false, webex: false } }).runStarted();
     const [row] = await rows();
     expect(row?.kind).toBe('run_started');
     expect(row?.headline).toContain('Triage bot');
@@ -261,6 +261,86 @@ maybe('agent notifications', () => {
     const found = await rows();
     expect(found.map((row) => row.kind)).toEqual(['run_finished', 'run_failed']);
     expect(found[1]?.headline).toContain('the tool refused');
+  });
+
+  it('fires email/WebEx for a run starting and a successful finish, independent of App', async () => {
+    const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
+    const notifierWithMcp = createNotifier(db, {
+      tenantId,
+      subject,
+      agentId,
+      agentName: 'Triage bot',
+      runId,
+      prefs: {
+        ...DEFAULT_NOTIFICATION_PREFS,
+        runStarted: { app: false, email: true, webex: true },
+        runFinished: { app: false, email: true, webex: true },
+      },
+      mcp,
+      toolsByName,
+      ownerEmail: 'owner@example.com',
+    });
+
+    await notifierWithMcp.runStarted();
+    await notifierWithMcp.runFinished('succeeded', null);
+
+    // App was off for both, so no rows — only the two channels fired.
+    expect(await rows()).toHaveLength(0);
+    expect(calls.map((c) => c.tool).sort()).toEqual([
+      'outlook_send_mail',
+      'outlook_send_mail',
+      'webex_note_to_self',
+      'webex_note_to_self',
+    ]);
+  });
+
+  it('never sends email/WebEx for a failed run from here — that goes through the run.failed queue handler', async () => {
+    const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
+    const notifierWithMcp = createNotifier(db, {
+      tenantId,
+      subject,
+      agentId,
+      agentName: 'Triage bot',
+      runId,
+      prefs: {
+        ...DEFAULT_NOTIFICATION_PREFS,
+        runFailed: { app: true, email: true, webex: true },
+      },
+      mcp,
+      toolsByName,
+      ownerEmail: 'owner@example.com',
+    });
+
+    await notifierWithMcp.runFinished('failed', 'boom');
+
+    expect(await rows()).toHaveLength(1); // The App row still writes.
+    expect(calls).toHaveLength(0); // But nothing goes out by either channel here.
+  });
+
+  it('lets an agent override reach email/WebEx even when the general preference is off', async () => {
+    const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
+    const notifierWithMcp = createNotifier(db, {
+      tenantId,
+      subject,
+      agentId,
+      agentName: 'Triage bot',
+      runId,
+      prefs: {
+        ...DEFAULT_NOTIFICATION_PREFS,
+        runStarted: { app: false, email: false, webex: false },
+        agentOverrides: {
+          [agentId]: { runStarted: { app: false, email: true, webex: false } },
+        },
+      },
+      mcp,
+      toolsByName,
+      ownerEmail: 'owner@example.com',
+    });
+
+    await notifierWithMcp.runStarted();
+
+    expect(await rows()).toHaveLength(0);
+    expect(calls.map((c) => c.tool)).toEqual(['outlook_send_mail']);
   });
 
   it('never throws when the write fails', async () => {

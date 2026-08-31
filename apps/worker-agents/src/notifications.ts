@@ -39,7 +39,12 @@ import { randomUUID } from 'node:crypto';
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { resolveAct } from '@renkei/tool-outcomes';
-import { getNotificationPrefs, wantsAct, type NotificationPrefs } from '@renkei/user-prefs';
+import {
+  effectiveDelivery,
+  getNotificationPrefs,
+  wantsAct,
+  type NotificationPrefs,
+} from '@renkei/user-prefs';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { logger } from './logger';
@@ -275,27 +280,64 @@ export function createNotifier(db: Kysely<DB>, context: NotifierContext): Notifi
     },
 
     async runStarted() {
-      if (!context.prefs.runStarted) return;
-      await write(db, context, {
-        kind: 'run_started',
-        headline: `“${context.agentName}” started`,
-      });
+      const wanted = effectiveDelivery(context.prefs, context.agentId, 'runStarted');
+      if (!wanted.app && !wanted.email && !wanted.webex) return;
+      const headline = `“${context.agentName}” started`;
+      if (wanted.app) {
+        await write(db, context, { kind: 'run_started', headline });
+      }
+      if ((wanted.email || wanted.webex) && context.mcp && context.toolsByName) {
+        const { deliverOwnerNotifications } = notificationDeliverer(
+          context.mcp,
+          context.toolsByName
+        );
+        await deliverOwnerNotifications({
+          email: wanted.email,
+          webex: wanted.webex,
+          heading: headline,
+          body: `“${context.agentName}” started.`,
+          ownerEmail: context.ownerEmail,
+        });
+      }
     },
 
     async runFinished(status, error) {
-      // runFailed carries email/WebEx too (the interactive worker's own
-      // run-failure notifier reads those, not this in-process one) — only
-      // its App channel gates this row, same as runFinished's plain flag.
-      const wanted =
-        status === 'failed' ? context.prefs.runFailed.app : context.prefs.runFinished;
-      if (!wanted) return;
-      await write(db, context, {
-        kind: status === 'failed' ? 'run_failed' : 'run_finished',
-        headline:
-          status === 'failed'
-            ? `“${context.agentName}” failed${error ? `: ${error}` : ''}`
-            : `“${context.agentName}” finished`,
-      });
+      // A failure's email/WebEx go out through the interactive worker's own
+      // run.failed handler (apps/worker/src/handlers/agent-run-failed.ts),
+      // fired from the queue event finalize.ts emits — so only the App
+      // channel is applied here for a failure, to avoid a duplicate
+      // mail/note. A successful run has no such queue event, so this is the
+      // only place its email/WebEx can go out.
+      const key = status === 'failed' ? 'runFailed' : 'runFinished';
+      const wanted = effectiveDelivery(context.prefs, context.agentId, key);
+      const headline =
+        status === 'failed'
+          ? `“${context.agentName}” failed${error ? `: ${error}` : ''}`
+          : `“${context.agentName}” finished`;
+      if (wanted.app) {
+        await write(db, context, {
+          kind: status === 'failed' ? 'run_failed' : 'run_finished',
+          headline,
+        });
+      }
+      if (
+        status === 'succeeded' &&
+        (wanted.email || wanted.webex) &&
+        context.mcp &&
+        context.toolsByName
+      ) {
+        const { deliverOwnerNotifications } = notificationDeliverer(
+          context.mcp,
+          context.toolsByName
+        );
+        await deliverOwnerNotifications({
+          email: wanted.email,
+          webex: wanted.webex,
+          heading: headline,
+          body: `“${context.agentName}” finished successfully.`,
+          ownerEmail: context.ownerEmail,
+        });
+      }
     },
   };
 }

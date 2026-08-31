@@ -15,7 +15,7 @@
 import { getDatabase } from '@renkei/db';
 import { graphRequest } from '@renkei/connector-microsoft';
 import { WebexClient } from '@renkei/connector-webex';
-import { getNotificationPrefs } from '@renkei/user-prefs';
+import { effectiveDelivery, getNotificationPrefs } from '@renkei/user-prefs';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { resolveMicrosoftAccess } from './microsoft-access';
@@ -91,9 +91,11 @@ export function createAgentRunFailedHandler(): EventHandler {
     const db = dbResult.val;
 
     // Cheapest check first: nothing on either channel means no grant
-    // lookups, no Graph/WebEx calls — just done.
+    // lookups, no Graph/WebEx calls — just done. Resolved through the
+    // agent's own override when it set one, same as every other run event.
     const prefs = await getNotificationPrefs(tenantId, payload.ownerSubject);
-    if (!prefs.runFailed.email && !prefs.runFailed.webex) return;
+    const wanted = effectiveDelivery(prefs, payload.agentId, 'runFailed');
+    if (!wanted.email && !wanted.webex) return;
 
     const [agent, run, identity, base] = await Promise.all([
       db.selectFrom('agents').select('name').where('id', '=', payload.agentId).executeTakeFirst(),
@@ -119,7 +121,7 @@ export function createAgentRunFailedHandler(): EventHandler {
     const bodyText = `Your agent “${agentName}” stopped on a failure: ${reason}${link ? `\n\nSee the run: ${link}` : ''}`;
 
     // Channel 1: email from the owner's own Outlook grant, to themselves.
-    if (prefs.runFailed.email) {
+    if (wanted.email) {
       if (!identity?.email) {
         // No recorded email = nowhere to deliver; the run page still shows it.
       } else {
@@ -166,7 +168,7 @@ export function createAgentRunFailedHandler(): EventHandler {
     // WebEx cannot deliver a 1:1 message to your own address — see
     // WebexClient.sendNoteToSelf for the find-or-create room dance that
     // gets around it.
-    if (prefs.runFailed.webex) {
+    if (wanted.webex) {
       try {
         const access = await resolveWebexUserAccessBySubject(tenantId, payload.ownerSubject);
         if (access) {

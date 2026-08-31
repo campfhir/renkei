@@ -9,6 +9,8 @@ import {
   DEFAULT_NOTIFICATION_PREFS,
   defaultForCategory,
   deliveryForCategory,
+  effectiveDelivery,
+  effectivePauseDelivery,
   parseNotificationPrefs,
   wantsAct,
   type NotificationPrefs,
@@ -41,9 +43,22 @@ describe('defaults', () => {
   });
 
   it('does not announce a run starting', () => {
-    expect(DEFAULT_NOTIFICATION_PREFS.runStarted).toBe(false);
-    expect(DEFAULT_NOTIFICATION_PREFS.runFinished).toBe(true);
+    expect(DEFAULT_NOTIFICATION_PREFS.runStarted).toEqual({
+      app: false,
+      email: false,
+      webex: false,
+    });
+    expect(DEFAULT_NOTIFICATION_PREFS.runFinished).toEqual({
+      app: true,
+      email: false,
+      webex: false,
+    });
     expect(DEFAULT_NOTIFICATION_PREFS.runFailed).toEqual({
+      app: true,
+      email: false,
+      webex: false,
+    });
+    expect(DEFAULT_NOTIFICATION_PREFS.agentEditedByOthers).toEqual({
       app: true,
       email: false,
       webex: false,
@@ -123,9 +138,11 @@ describe('parseNotificationPrefs', () => {
       tools: { jira_create_issue: true },
       unknownKey: 'ignored',
     });
-    expect(parsed.runStarted).toBe(true);
-    // A non-boolean is not a preference; the default stands.
-    expect(parsed.runFinished).toBe(true);
+    // A bare boolean migrates to the App channel alone (see the dedicated
+    // migration test below).
+    expect(parsed.runStarted).toEqual({ app: true, email: false, webex: false });
+    // A non-boolean, non-object value is not a preference; the default stands.
+    expect(parsed.runFinished).toEqual({ app: true, email: false, webex: false });
     expect(parsed.approvalNeeded).toEqual({ email: true, webex: false });
     // "bogus" isn't a valid {app,email,webex} triple, so it's dropped
     // rather than invented as a default-valued entry.
@@ -168,7 +185,81 @@ describe('parseNotificationPrefs', () => {
       approvalNeeded: { email: true, webex: false },
       toastCorner: 'bottom-left',
       toastsEnabled: false,
+      agentOverrides: {
+        'agent-1': { runFailed: { app: true, email: true, webex: false } },
+      },
     });
     expect(parseNotificationPrefs(JSON.parse(JSON.stringify(once)))).toEqual(once);
+  });
+
+  describe('agentOverrides', () => {
+    it('defaults to no overrides', () => {
+      expect(parseNotificationPrefs({}).agentOverrides).toEqual({});
+    });
+
+    it('keeps a valid override, migrating a bare boolean the same as the general prefs', () => {
+      const parsed = parseNotificationPrefs({
+        agentOverrides: {
+          'agent-1': {
+            runFailed: true,
+            approvalNeeded: { email: true, webex: false },
+            bogusKey: 'ignored',
+          },
+        },
+      });
+      expect(parsed.agentOverrides).toEqual({
+        'agent-1': {
+          runFailed: { app: true, email: false, webex: false },
+          approvalNeeded: { email: true, webex: false },
+        },
+      });
+    });
+
+    it('drops an agent id whose entry has nothing usable', () => {
+      const parsed = parseNotificationPrefs({
+        agentOverrides: {
+          'agent-1': { bogusKey: 'nope' },
+          'agent-2': 'not an object',
+        },
+      });
+      expect(parsed.agentOverrides).toEqual({});
+    });
+
+    it('ignores a non-object agentOverrides value', () => {
+      expect(parseNotificationPrefs({ agentOverrides: 'nope' }).agentOverrides).toEqual({});
+      expect(parseNotificationPrefs({ agentOverrides: ['nope'] }).agentOverrides).toEqual({});
+    });
+  });
+});
+
+describe('effectiveDelivery / effectivePauseDelivery', () => {
+  it('falls back to the general preference when there is no agent id', () => {
+    const p = prefs({
+      agentOverrides: { 'agent-1': { runFailed: delivery({ email: true }) } },
+    });
+    expect(effectiveDelivery(p, null, 'runFailed')).toEqual(p.runFailed);
+    expect(effectiveDelivery(p, undefined, 'runFailed')).toEqual(p.runFailed);
+  });
+
+  it('falls back to the general preference when the agent has no override for this key', () => {
+    const p = prefs({
+      agentOverrides: { 'agent-1': { runFinished: delivery({ email: true }) } },
+    });
+    expect(effectiveDelivery(p, 'agent-1', 'runFailed')).toEqual(p.runFailed);
+    expect(effectiveDelivery(p, 'agent-2', 'runFinished')).toEqual(p.runFinished);
+  });
+
+  it('uses the agent override when one is set for this key', () => {
+    const override = delivery({ app: false, email: true, webex: true });
+    const p = prefs({ agentOverrides: { 'agent-1': { runFailed: override } } });
+    expect(effectiveDelivery(p, 'agent-1', 'runFailed')).toEqual(override);
+  });
+
+  it('does the same for the pause events', () => {
+    const override = { email: true, webex: true };
+    const p = prefs({ agentOverrides: { 'agent-1': { approvalNeeded: override } } });
+    expect(effectivePauseDelivery(p, 'agent-1', 'approvalNeeded')).toEqual(override);
+    expect(effectivePauseDelivery(p, 'agent-1', 'questionAsked')).toEqual(p.questionAsked);
+    expect(effectivePauseDelivery(p, null, 'approvalNeeded')).toEqual(p.approvalNeeded);
   });
 });

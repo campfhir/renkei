@@ -7,7 +7,10 @@ import { useEffect, useState, type ReactNode } from 'react';
 import {
   deliveryForCategory,
   type NotificationPrefs,
+  type AgentNotificationOverride,
+  type OverridableEvent,
   type DeliveryPrefs,
+  type PauseDeliveryPrefs,
   type ToastCorner,
 } from '@renkei/user-prefs/prefs';
 import ConnectorIcon from '@/components/connector-icon';
@@ -90,6 +93,37 @@ interface ChannelAvailability {
   webex: boolean;
 }
 
+interface AgentOption {
+  id: string;
+  name: string;
+}
+
+/** The four run/edit events, all `{app, email, webex}`, all in one table. */
+const RUN_EVENTS = [
+  ['runStarted', 'A run starts', 'Frequent, and rarely the interesting part.'],
+  ['runFinished', 'A run finishes', null],
+  ['runFailed', 'A run fails', null],
+  [
+    'agentEditedByOthers',
+    'Someone edits a shared agent of yours',
+    'People you granted access to; edits land in the audit trail either way.',
+  ],
+] as const satisfies readonly [key: keyof NotificationPrefs & OverridableEvent, label: string, hint: string | null][];
+
+/** The two pause events, `{email, webex}` — the App card is always on. */
+const PAUSE_EVENTS = [
+  [
+    'approvalNeeded' as const,
+    'An agent needs your approval',
+    'Something it wants to do needs a yes or no from you.',
+  ],
+  [
+    'questionAsked' as const,
+    'An agent has a question for you',
+    'It hit a fork it can’t resolve on its own.',
+  ],
+] as const;
+
 const CATEGORY_LABEL: Record<string, string> = {
   created: 'Creates something',
   sent: 'Sends something',
@@ -153,15 +187,18 @@ export default function PreferencesForm({
   connectors,
   channels,
   initial,
+  agents,
 }: {
   tenantId: string;
   slug: string;
   connectors: ConnectorRow[];
   channels: ChannelAvailability;
   initial: NotificationPrefs;
+  agents: AgentOption[];
 }) {
   const [prefs, setPrefs] = useState<NotificationPrefs>(initial);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [overrideAgentId, setOverrideAgentId] = useState<string>(agents[0]?.id ?? '');
 
   /*
     The browser's side of the desktop-notification deal, and the person's —
@@ -281,8 +318,93 @@ export default function PreferencesForm({
     update({ ...prefs, [event]: { ...prefs[event], [channel]: on } });
   }
 
-  function setRunFailedChannel(channel: keyof DeliveryPrefs, on: boolean) {
-    update({ ...prefs, runFailed: { ...prefs.runFailed, [channel]: on } });
+  function setDeliveryChannel(
+    key: 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers',
+    channel: keyof DeliveryPrefs,
+    on: boolean
+  ) {
+    update({ ...prefs, [key]: { ...prefs[key], [channel]: on } });
+  }
+
+  /** This agent's override for one run/edit event, or undefined when it has none. */
+  function deliveryOverrideOf(
+    agentId: string,
+    key: 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers'
+  ): DeliveryPrefs | undefined {
+    return prefs.agentOverrides[agentId]?.[key];
+  }
+
+  /** Same idea, for the two pause events. */
+  function pauseOverrideOf(
+    agentId: string,
+    key: 'approvalNeeded' | 'questionAsked'
+  ): PauseDeliveryPrefs | undefined {
+    return prefs.agentOverrides[agentId]?.[key];
+  }
+
+  function setAgentOverride(
+    agentId: string,
+    key: OverridableEvent,
+    next: AgentNotificationOverride[typeof key]
+  ) {
+    const forAgent: AgentNotificationOverride = { ...prefs.agentOverrides[agentId], [key]: next };
+    update({
+      ...prefs,
+      agentOverrides: { ...prefs.agentOverrides, [agentId]: forAgent },
+    });
+  }
+
+  /** Turning the override off for one event reverts this agent to the general preference. */
+  function clearAgentOverride(agentId: string, key: OverridableEvent) {
+    const forAgent = { ...prefs.agentOverrides[agentId] };
+    delete forAgent[key];
+    const agentOverrides = { ...prefs.agentOverrides };
+    if (Object.keys(forAgent).length > 0) {
+      agentOverrides[agentId] = forAgent;
+    } else {
+      delete agentOverrides[agentId];
+    }
+    update({ ...prefs, agentOverrides });
+  }
+
+  function toggleDeliveryOverride(
+    agentId: string,
+    key: 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers',
+    on: boolean
+  ) {
+    if (on) setAgentOverride(agentId, key, { ...prefs[key] });
+    else clearAgentOverride(agentId, key);
+  }
+
+  function setOverrideChannel(
+    agentId: string,
+    key: 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers',
+    channel: keyof DeliveryPrefs,
+    on: boolean
+  ) {
+    const current = deliveryOverrideOf(agentId, key);
+    if (!current) return;
+    setAgentOverride(agentId, key, { ...current, [channel]: on });
+  }
+
+  function togglePauseOverride(
+    agentId: string,
+    key: 'approvalNeeded' | 'questionAsked',
+    on: boolean
+  ) {
+    if (on) setAgentOverride(agentId, key, { ...prefs[key] });
+    else clearAgentOverride(agentId, key);
+  }
+
+  function setOverridePauseChannel(
+    agentId: string,
+    key: 'approvalNeeded' | 'questionAsked',
+    channel: 'email' | 'webex',
+    on: boolean
+  ) {
+    const current = pauseOverrideOf(agentId, key);
+    if (!current) return;
+    setAgentOverride(agentId, key, { ...current, [channel]: on });
   }
 
   /** Curated rows only, App channel — the summary a collapsed connector shows. */
@@ -331,51 +453,11 @@ export default function PreferencesForm({
             <h3 className="font-semibold">Runs</h3>
             <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
               When an agent of yours starts and stops — and when someone you shared one with
-              changes it.
+              changes it. Outlook and WebEx are unlikely choices here, but they&rsquo;re yours to
+              make.
             </p>
           </div>
-          {/* Side by side once there is room, so this does not occupy a
-              third of the page to say very little. */}
-          <div className="@container px-4">
-            <div className="grid grid-cols-1 gap-x-6 gap-y-2 @xl:grid-cols-3">
-              {(
-                [
-                  ['runStarted', 'A run starts', 'Frequent, and rarely the interesting part.'],
-                  ['runFinished', 'A run finishes', null],
-                  [
-                    'agentEditedByOthers',
-                    'Someone edits a shared agent of yours',
-                    'People you granted access to; edits land in the audit trail either way.',
-                  ],
-                ] as const
-              ).map(([key, label, hint]) => (
-                <label key={key} className="flex items-start gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    className="mt-0.5 shrink-0"
-                    checked={prefs[key]}
-                    onChange={(event) => update({ ...prefs, [key]: event.target.checked })}
-                  />
-                  <span className="min-w-0">
-                    {label}
-                    {hint ? (
-                      <span className="block text-xs text-gray-500 dark:text-gray-400">{hint}</span>
-                    ) : null}
-                  </span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/*
-            "A run fails" alone gets a channel row: it is the one run event
-            with an actual email/WebEx sender behind it (the interactive
-            worker's failure notifier), so it is the one that can honestly
-            offer those columns. The other three stay plain checkboxes above
-            rather than gain inert Outlook/WebEx boxes nothing would ever
-            send for.
-          */}
-          <div className="mt-3 overflow-x-auto border-t border-gray-200 dark:border-gray-800">
+          <div className="overflow-x-auto border-t border-gray-200 dark:border-gray-800">
             <table className="w-full min-w-[420px] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 dark:border-gray-800 dark:text-gray-400">
@@ -386,37 +468,42 @@ export default function PreferencesForm({
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td className="px-4 py-3 align-top">
-                    <span className="font-medium">A run fails</span>
-                  </td>
-                  <td className="px-2 py-3 text-center align-top">
-                    <input
-                      type="checkbox"
-                      aria-label="A run fails — App"
-                      checked={prefs.runFailed.app}
-                      onChange={(event) => setRunFailedChannel('app', event.target.checked)}
-                    />
-                  </td>
-                  <td className="px-2 py-3 text-center align-top">
-                    <input
-                      type="checkbox"
-                      aria-label="A run fails — Outlook"
-                      checked={channels.outlook && prefs.runFailed.email}
-                      disabled={!channels.outlook}
-                      onChange={(event) => setRunFailedChannel('email', event.target.checked)}
-                    />
-                  </td>
-                  <td className="px-2 py-3 text-center align-top">
-                    <input
-                      type="checkbox"
-                      aria-label="A run fails — WebEx"
-                      checked={channels.webex && prefs.runFailed.webex}
-                      disabled={!channels.webex}
-                      onChange={(event) => setRunFailedChannel('webex', event.target.checked)}
-                    />
-                  </td>
-                </tr>
+                {RUN_EVENTS.map(([key, label, hint]) => (
+                  <tr key={key} className="border-t border-gray-100 first:border-t-0 dark:border-gray-900">
+                    <td className="px-4 py-3 align-top">
+                      <span className="font-medium">{label}</span>
+                      {hint ? (
+                        <span className="block text-xs text-gray-500 dark:text-gray-400">{hint}</span>
+                      ) : null}
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`${label} — App`}
+                        checked={prefs[key].app}
+                        onChange={(event) => setDeliveryChannel(key, 'app', event.target.checked)}
+                      />
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`${label} — Outlook`}
+                        checked={channels.outlook && prefs[key].email}
+                        disabled={!channels.outlook}
+                        onChange={(event) => setDeliveryChannel(key, 'email', event.target.checked)}
+                      />
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`${label} — WebEx`}
+                        checked={channels.webex && prefs[key].webex}
+                        disabled={!channels.webex}
+                        onChange={(event) => setDeliveryChannel(key, 'webex', event.target.checked)}
+                      />
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -442,20 +529,7 @@ export default function PreferencesForm({
                 </tr>
               </thead>
               <tbody>
-                {(
-                  [
-                    [
-                      'approvalNeeded' as const,
-                      'An agent needs your approval',
-                      'Something it wants to do needs a yes or no from you.',
-                    ],
-                    [
-                      'questionAsked' as const,
-                      'An agent has a question for you',
-                      'It hit a fork it can’t resolve on its own.',
-                    ],
-                  ] as const
-                ).map(([event, label, hint]) => (
+                {PAUSE_EVENTS.map(([event, label, hint]) => (
                   <tr key={event} className="border-t border-gray-100 first:border-t-0 dark:border-gray-900">
                     <td className="px-4 py-3 align-top">
                       <span className="font-medium">{label}</span>
@@ -488,6 +562,172 @@ export default function PreferencesForm({
             </table>
           </div>
           <ChannelHints channels={channels} slug={slug} />
+        </section>
+
+        <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
+          <h3 className="font-semibold">Agent overrides</h3>
+          <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
+            Everything above is your general preference. Pick one of your own agents to set its
+            own delivery for any of these events — an event you don&rsquo;t override here just
+            falls through to the general preference.
+          </p>
+
+          {agents.length === 0 ? (
+            <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+              You don&rsquo;t have any agents of your own yet.
+            </p>
+          ) : (
+            <>
+              <div className="mt-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <span className="shrink-0 text-gray-500 dark:text-gray-400">Agent:</span>
+                  <select
+                    value={overrideAgentId}
+                    onChange={(event) => setOverrideAgentId(event.target.value)}
+                    className="min-w-0 max-w-xs flex-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
+                  >
+                    {agents.map((agent) => (
+                      <option key={agent.id} value={agent.id}>
+                        {agent.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              {overrideAgentId ? (
+                <div className="mt-3 overflow-x-auto border-t border-gray-200 dark:border-gray-800">
+                  <table className="w-full min-w-[520px] border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                        <th className="px-4 py-2 font-medium">When…</th>
+                        <th className="w-24 px-2 py-2 text-center font-medium">Override</th>
+                        <th className="w-16 px-2 py-2 text-center font-medium">App</th>
+                        <th className="w-20 px-2 py-2 text-center font-medium">Outlook</th>
+                        <th className="w-20 px-2 py-2 text-center font-medium">WebEx</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {RUN_EVENTS.map(([key, label]) => {
+                        const override = deliveryOverrideOf(overrideAgentId, key);
+                        const effective = override ?? prefs[key];
+                        return (
+                          <tr
+                            key={key}
+                            className="border-t border-gray-100 first:border-t-0 dark:border-gray-900"
+                          >
+                            <td className="px-4 py-3 align-top">
+                              <span className="font-medium">{label}</span>
+                            </td>
+                            <td className="px-2 py-3 text-center align-top">
+                              <input
+                                type="checkbox"
+                                aria-label={`Override “${label}” for this agent`}
+                                checked={!!override}
+                                onChange={(event) =>
+                                  toggleDeliveryOverride(overrideAgentId, key, event.target.checked)
+                                }
+                              />
+                            </td>
+                            <td className="px-2 py-3 text-center align-top">
+                              <input
+                                type="checkbox"
+                                aria-label={`${label} — App (override)`}
+                                checked={effective.app}
+                                disabled={!override}
+                                onChange={(event) =>
+                                  setOverrideChannel(overrideAgentId, key, 'app', event.target.checked)
+                                }
+                              />
+                            </td>
+                            <td className="px-2 py-3 text-center align-top">
+                              <input
+                                type="checkbox"
+                                aria-label={`${label} — Outlook (override)`}
+                                checked={channels.outlook && effective.email}
+                                disabled={!override || !channels.outlook}
+                                onChange={(event) =>
+                                  setOverrideChannel(overrideAgentId, key, 'email', event.target.checked)
+                                }
+                              />
+                            </td>
+                            <td className="px-2 py-3 text-center align-top">
+                              <input
+                                type="checkbox"
+                                aria-label={`${label} — WebEx (override)`}
+                                checked={channels.webex && effective.webex}
+                                disabled={!override || !channels.webex}
+                                onChange={(event) =>
+                                  setOverrideChannel(overrideAgentId, key, 'webex', event.target.checked)
+                                }
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {PAUSE_EVENTS.map(([key, label]) => {
+                        const override = pauseOverrideOf(overrideAgentId, key);
+                        const effective = override ?? prefs[key];
+                        return (
+                          <tr key={key} className="border-t border-gray-100 dark:border-gray-900">
+                            <td className="px-4 py-3 align-top">
+                              <span className="font-medium">{label}</span>
+                            </td>
+                            <td className="px-2 py-3 text-center align-top">
+                              <input
+                                type="checkbox"
+                                aria-label={`Override “${label}” for this agent`}
+                                checked={!!override}
+                                onChange={(event) =>
+                                  togglePauseOverride(overrideAgentId, key, event.target.checked)
+                                }
+                              />
+                            </td>
+                            <td className="px-2 py-3 text-center align-top">
+                              <AlwaysPill />
+                            </td>
+                            <td className="px-2 py-3 text-center align-top">
+                              <input
+                                type="checkbox"
+                                aria-label={`${label} — Outlook (override)`}
+                                checked={channels.outlook && effective.email}
+                                disabled={!override || !channels.outlook}
+                                onChange={(event) =>
+                                  setOverridePauseChannel(
+                                    overrideAgentId,
+                                    key,
+                                    'email',
+                                    event.target.checked
+                                  )
+                                }
+                              />
+                            </td>
+                            <td className="px-2 py-3 text-center align-top">
+                              <input
+                                type="checkbox"
+                                aria-label={`${label} — WebEx (override)`}
+                                checked={channels.webex && effective.webex}
+                                disabled={!override || !channels.webex}
+                                onChange={(event) =>
+                                  setOverridePauseChannel(
+                                    overrideAgentId,
+                                    key,
+                                    'webex',
+                                    event.target.checked
+                                  )
+                                }
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+              <ChannelHints channels={channels} slug={slug} />
+            </>
+          )}
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
