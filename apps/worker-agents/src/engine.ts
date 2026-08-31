@@ -2355,20 +2355,46 @@ export function createAgentRunHandler(deps: EngineDeps) {
         if (gated) return gated;
       }
 
-      const counted = await db
+      // Every row for this step+iteration, not just a count — needed to
+      // tell a resolved ask_person pause apart from a real attempt below.
+      // Row-fetching a handful of small JSON blobs (bounded by maxAttempts,
+      // never more than a few) is cheaper than it sounds and far simpler
+      // than pushing the pauseKind check into SQL.
+      const stepRows = await db
         .selectFrom('agent_run_steps')
-        .select(({ fn }) => fn.countAll<string>().as('count'))
+        .select(['detail'])
         .where('run_id', '=', run.id)
         .where('step_id', '=', step.id)
         .where('iteration', '=', iteration)
-        .executeTakeFirst();
-      const attemptsUsed = Number(counted?.count ?? 0);
+        .execute();
+      // The NEXT row's attempt number — this MUST count every row ever
+      // written here, pauses included, or a resolved pause and the fresh
+      // attempt after it would fight over the same number and collide on
+      // the (run_id, step_id, iteration, attempt) constraint.
+      const totalRows = stepRows.length;
+      // The step's BUDGET, in contrast, only meant to bound real work: an
+      // ask_person pause asked nothing of the model and risked nothing —
+      // it is the owner's answer being awaited, not a retry — so it must
+      // never count against maxAttempts, or a step could exhaust its
+      // whole budget on pure waiting before doing a single real turn.
+      const attemptsUsed = stepRows.filter((row) => {
+        const detail: { pauseKind?: unknown } =
+          typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
+            ? row.detail
+            : {};
+        return detail.pauseKind !== 'question';
+      }).length;
 
       // Advance past a step that already succeeded (resume/fast-forward) —
       // EXCEPT a resolved ask_person pause, whose whole point is that the
       // step is NOT done: resolveQuestion above already replayed its vars
       // and returned null specifically so a fresh attempt gets spent here,
-      // not skipped by this generic fast-path.
+      // not skipped by this generic fast-path. A step can carry MORE than
+      // one 'succeeded' row per iteration now (migration 070) — one per
+      // resolved pause, plus the step's real completion — so this MUST
+      // read the latest attempt, never an arbitrary one, or a stale
+      // pause row (pauseKind: 'question') can shadow a genuine finish and
+      // burn the step's whole attempt budget re-running work already done.
       const succeeded = await db
         .selectFrom('agent_run_steps')
         .select(['id', 'detail'])
@@ -2376,6 +2402,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .where('step_id', '=', step.id)
         .where('iteration', '=', iteration)
         .where('status', '=', 'succeeded')
+        .orderBy('attempt', 'desc')
         .executeTakeFirst();
       if (succeeded) {
         const detail: { pauseKind?: unknown } =
@@ -2444,7 +2471,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         return { kind: 'fail', errorKind: 'guard', error: RUN_BUDGET_ERROR };
       }
 
-      const attempt = attemptsUsed + 1;
+      const attempt = totalRows + 1;
       const matched = lastFailureCode === null ? undefined : handlingFor(step, lastFailureCode);
       const guidance = attempt > 1 ? matched?.guidance : undefined;
 
