@@ -1,11 +1,12 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import { getNotificationPrefs } from '@renkei/user-prefs';
-import { actsByConnector } from '@renkei/tool-outcomes';
+import { actsByConnector, ACT_CATEGORIES } from '@renkei/tool-outcomes';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
+import { getChannelAvailability } from '@/lib/notification-channels';
 import PreferencesForm from './preferences-form';
 
 /**
@@ -25,35 +26,44 @@ export default async function PreferencesPage({
   const session = await getSessionFromCookies(tenant.id);
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/preferences`));
 
-  const notifications = await getNotificationPrefs(tenant.id, session.subject, { fresh: true });
+  const [notifications, channels] = await Promise.all([
+    getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
+    getChannelAvailability(tenant.id, session.subject),
+  ]);
 
   /*
-    The acts each connector can perform, resolved HERE rather than in the
-    form: the catalog is pure data, so shipping the whole of it to the
-    browser to be grouped there would be work done twice — once at build,
-    once per visit — for a list the server already has in memory.
+    The CATEGORIES each connector's acts fall into, resolved HERE rather
+    than in the form for the same reason the old per-act list was: pure
+    data, so grouping it in the browser would be work done twice for
+    something the server already has in memory.
 
     One row per capability key, not per catalog entry: Jira and Jira
     Service Management share a key, so two rows would be two switches for
     one thing that disagree with each other the moment somebody uses them.
-    That is also why JSM's acts read "service request" — they sit in the
-    Jira group and still have to be tellable apart.
 
-    A connector with no curated acts is dropped rather than shown empty.
-    Everything it does still reaches the "anything else" default, so
-    nothing goes unreported; there is simply nothing here to decide yet.
+    Category, not act: a person choosing delivery for three channels over
+    a couple hundred individual acts does not survive contact with eleven
+    connectors (see the preferences form's own notes). 'other' is always
+    offered, even when no curated act happens to declare it — it is the
+    catch-all for everything this build has no wording for yet, which by
+    definition never shows up in the curated list itself.
+
+    A connector with no curated acts at all is dropped rather than shown
+    empty — there is nothing here to decide yet.
   */
-  const acts = new Map(actsByConnector().map((group) => [group.connector, group.acts]));
+  const actsByKey = new Map(actsByConnector().map((group) => [group.connector, group.acts]));
   const seen = new Set<string>();
   const connectors = CONNECTOR_CATALOG.filter((entry) => {
     if (seen.has(entry.capabilityKey)) return false;
     seen.add(entry.capabilityKey);
-    return acts.has(entry.capabilityKey);
-  }).map((entry) => ({
-    key: entry.capabilityKey,
-    label: entry.label,
-    acts: acts.get(entry.capabilityKey) ?? [],
-  }));
+    return actsByKey.has(entry.capabilityKey);
+  }).map((entry) => {
+    const present = new Set(actsByKey.get(entry.capabilityKey)?.map((act) => act.category) ?? []);
+    const categories = ACT_CATEGORIES.filter(
+      (category) => category === 'other' || present.has(category)
+    );
+    return { key: entry.capabilityKey, label: entry.label, categories };
+  });
 
   return (
     /*
@@ -69,7 +79,13 @@ export default async function PreferencesPage({
         Yours alone — nobody else sees these, and they change nothing about what your agents are
         allowed to do.
       </p>
-      <PreferencesForm tenantId={tenant.id} connectors={connectors} initial={notifications} />
+      <PreferencesForm
+        tenantId={tenant.id}
+        slug={slug}
+        connectors={connectors}
+        channels={channels}
+        initial={notifications}
+      />
     </div>
   );
 }

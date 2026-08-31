@@ -14,6 +14,24 @@ import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { ACT_META_KEY } from '@renkei/tool-outcomes';
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '@renkei/user-prefs';
 import { createNotifier } from './notifications';
+import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
+
+/** A tool set that always succeeds, recording every call it saw. */
+function fakeMcp(toolNames: string[]): { mcp: McpClient; toolsByName: Map<string, McpToolInfo>; calls: { tool: string; args: Record<string, unknown> }[] } {
+  const calls: { tool: string; args: Record<string, unknown> }[] = [];
+  const toolsByName = new Map(
+    toolNames.map((name) => [name, { name, description: '', inputSchema: {} }])
+  );
+  const mcp: McpClient = {
+    initialize: async () => undefined,
+    listTools: async () => [...toolsByName.values()],
+    callTool: async (name, args): Promise<McpToolResult> => {
+      calls.push({ tool: name, args });
+      return { content: [{ type: 'text', text: 'ok' }], isError: false, meta: {} };
+    },
+  };
+  return { mcp, toolsByName, calls };
+}
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
@@ -82,6 +100,9 @@ maybe('agent notifications', () => {
       agentName: 'Triage bot',
       runId,
       prefs: { ...DEFAULT_NOTIFICATION_PREFS, ...prefs },
+      // No MCP session in these tests — every case here exercises the App
+      // (agent_notifications row) channel only, which needs none.
+      ownerEmail: undefined,
     });
 
   const rows = () =>
@@ -126,12 +147,9 @@ maybe('agent notifications', () => {
   });
 
   it('writes NOTHING for a category the person switched off', async () => {
-    await notifier({ acts: { jira: { created: false } } }).act(
-      'jira_create_issue',
-      'act',
-      {},
-      null
-    );
+    await notifier({
+      acts: { jira: { created: { app: false, email: false, webex: false } } },
+    }).act('jira_create_issue', 'act', {}, null);
     expect(await rows()).toHaveLength(0);
   });
 
@@ -145,25 +163,62 @@ maybe('agent notifications', () => {
   });
 
   it('writes an uncurated act once somebody asks for them', async () => {
-    await notifier({ acts: { jira: { other: true } } }).act(
-      'jira_request_attachment_upload',
-      'act',
-      {},
-      null
-    );
+    await notifier({
+      acts: { jira: { other: { app: true, email: false, webex: false } } },
+    }).act('jira_request_attachment_upload', 'act', {}, null);
     const [row] = await rows();
     expect(row?.headline).toBe('Ran jira request attachment upload');
     expect(row?.category).toBe('other');
   });
 
-  it('lets a per-tool switch beat the category', async () => {
-    await notifier({ tools: { jira_create_issue: false } }).act(
-      'jira_create_issue',
-      'act',
-      {},
-      null
-    );
+  it('fires email/WebEx for a category wanted on those channels, independent of App', async () => {
+    const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
+    const notifierWithMcp = createNotifier(db, {
+      tenantId,
+      subject,
+      agentId,
+      agentName: 'Triage bot',
+      runId,
+      prefs: {
+        ...DEFAULT_NOTIFICATION_PREFS,
+        // App off, email/WebEx on: the three channels are independent.
+        acts: { jira: { created: { app: false, email: true, webex: true } } },
+      },
+      mcp,
+      toolsByName,
+      ownerEmail: 'owner@example.com',
+    });
+
+    await notifierWithMcp.act('jira_create_issue', 'act', {}, null);
+
+    // No App row — that channel was off.
     expect(await rows()).toHaveLength(0);
+    expect(calls.map((c) => c.tool).sort()).toEqual(['outlook_send_mail', 'webex_note_to_self']);
+    const mail = calls.find((c) => c.tool === 'outlook_send_mail');
+    expect(mail?.args.to).toEqual(['owner@example.com']);
+  });
+
+  it('skips email silently when the tool is not connected, and does not throw', async () => {
+    const { mcp, toolsByName, calls } = fakeMcp([]); // Neither tool registered.
+    const notifierWithMcp = createNotifier(db, {
+      tenantId,
+      subject,
+      agentId,
+      agentName: 'Triage bot',
+      runId,
+      prefs: {
+        ...DEFAULT_NOTIFICATION_PREFS,
+        acts: { jira: { created: { app: false, email: true, webex: false } } },
+      },
+      mcp,
+      toolsByName,
+      ownerEmail: 'owner@example.com',
+    });
+
+    await expect(
+      notifierWithMcp.act('jira_create_issue', 'act', {}, null)
+    ).resolves.toBeUndefined();
+    expect(calls).toHaveLength(0);
   });
 
   it('stays quiet about a run starting unless asked', async () => {
@@ -195,6 +250,7 @@ maybe('agent notifications', () => {
       agentName: 'Ghost',
       runId,
       prefs: DEFAULT_NOTIFICATION_PREFS,
+      ownerEmail: undefined,
     });
     await expect(orphan.act('jira_create_issue', 'act', {}, null)).resolves.toBeUndefined();
   });

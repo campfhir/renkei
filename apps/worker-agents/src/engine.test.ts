@@ -18,6 +18,7 @@ import {
   type AgentStepNode,
   type AgentStepsDoc,
 } from '@renkei/agents';
+import { setNotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '@renkei/user-prefs';
 import { createAgentRunHandler } from './engine';
 import { createApprovalSweep } from './approval-sweep';
 import type { QueueMessageInput } from '@renkei/queue';
@@ -2214,6 +2215,17 @@ maybe('agent run engine', () => {
   });
 
   describe('needsApproval gate', () => {
+    // Off by default (see @renkei/user-prefs' prefs.test.ts) — most of this
+    // block is testing the DELIVERY mechanism itself, which needs the owner
+    // to have opted in. The one test that leaves this alone (below) covers
+    // the actual default.
+    beforeAll(async () => {
+      await setNotificationPrefs(tenantId, subject, {
+        ...DEFAULT_NOTIFICATION_PREFS,
+        approvalNeeded: { email: true, webex: true },
+      });
+    });
+
     function gatedDoc(
       options: {
         approvalTimeoutHours?: number;
@@ -2375,6 +2387,33 @@ maybe('agent run engine', () => {
         .execute();
       expect(cards).toHaveLength(1);
       expect(calls.map((call) => call.name)).toEqual(['outlook_send_mail', 'webex_note_to_self']);
+    });
+
+    it('delivers nothing by email or WebEx until the owner opts in — the card is still raised', async () => {
+      // The card is never optional — only whether it ALSO pages outside the
+      // app is a preference, and it starts off. Reset-then-restore so the
+      // rest of this block keeps testing the delivery mechanism itself.
+      await setNotificationPrefs(tenantId, subject, DEFAULT_NOTIFICATION_PREFS);
+      try {
+        const { doc, gateId } = gatedDoc({ approvalTimeoutHours: 4 });
+        const { runId } = await seedRun(doc);
+        const { mcp, calls } = recordingMcp([
+          'jira_add_comment',
+          'outlook_send_mail',
+          'webex_note_to_self',
+        ]);
+        await handlerWith(proposesThenNoMore(), mcp)({ payload: { runId } });
+
+        const card = await cardOf(runId);
+        expect(card.status).toBe('suggested');
+        expect(card.step_id).toBe(gateId);
+        expect(calls).toHaveLength(0);
+      } finally {
+        await setNotificationPrefs(tenantId, subject, {
+          ...DEFAULT_NOTIFICATION_PREFS,
+          approvalNeeded: { email: true, webex: true },
+        });
+      }
     });
 
     it('on approval, fires the recorded call for real — no fresh model turn — and advances', async () => {
@@ -2678,6 +2717,15 @@ maybe('agent run engine', () => {
     });
   });
   describe('ask_person (canAskQuestions)', () => {
+    // Same reasoning as the needsApproval block above: most of this suite
+    // tests the delivery mechanism, which needs opt-in to fire at all.
+    beforeAll(async () => {
+      await setNotificationPrefs(tenantId, subject, {
+        ...DEFAULT_NOTIFICATION_PREFS,
+        questionAsked: { email: true, webex: true },
+      });
+    });
+
     function askableDoc(overrides: Record<string, unknown> = {}): {
       doc: AgentStepsDoc;
       stepId: string;
@@ -2806,6 +2854,29 @@ maybe('agent run engine', () => {
         'outlook_send_mail',
         'webex_note_to_self',
       ]);
+    });
+
+    it('delivers nothing by email or WebEx until the owner opts in — the card is still raised', async () => {
+      await setNotificationPrefs(tenantId, subject, DEFAULT_NOTIFICATION_PREFS);
+      try {
+        const { runId } = await seedAskableRun(true);
+        const { mcp, calls } = recordingMcp(['outlook_send_mail', 'webex_note_to_self']);
+        const llm = stubLlm((_request, call) => {
+          if (call === 0) return useTool('ask_person', { message: 'Which project?' });
+          throw new Error('a waiting question must not call the model again');
+        });
+        await handlerWith(llm, mcp)({ payload: { runId } });
+
+        const card = await cardOf(runId);
+        expect(card.status).toBe('suggested');
+        expect(card.kind).toBe('question');
+        expect(calls).toHaveLength(0);
+      } finally {
+        await setNotificationPrefs(tenantId, subject, {
+          ...DEFAULT_NOTIFICATION_PREFS,
+          questionAsked: { email: true, webex: true },
+        });
+      }
     });
 
     it('answered: rebinds per-field vars on a FRESH attempt, no model call while waiting', async () => {

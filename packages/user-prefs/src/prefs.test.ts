@@ -8,9 +8,11 @@
 import {
   DEFAULT_NOTIFICATION_PREFS,
   defaultForCategory,
+  deliveryForCategory,
   parseNotificationPrefs,
   wantsAct,
   type NotificationPrefs,
+  type DeliveryPrefs,
 } from './prefs';
 
 const prefs = (over: Partial<NotificationPrefs> = {}): NotificationPrefs => ({
@@ -18,8 +20,15 @@ const prefs = (over: Partial<NotificationPrefs> = {}): NotificationPrefs => ({
   ...over,
 });
 
+const delivery = (over: Partial<DeliveryPrefs>): DeliveryPrefs => ({
+  app: false,
+  email: false,
+  webex: false,
+  ...over,
+});
+
 describe('defaults', () => {
-  it('says yes to the five curated categories', () => {
+  it('says yes to the five curated categories on App', () => {
     for (const category of ['created', 'sent', 'updated', 'deleted', 'scheduled']) {
       expect(defaultForCategory(category)).toBe(true);
     }
@@ -36,55 +45,48 @@ describe('defaults', () => {
     expect(DEFAULT_NOTIFICATION_PREFS.runFinished).toBe(true);
     expect(DEFAULT_NOTIFICATION_PREFS.runFailed).toBe(true);
   });
+
+  it('starts email and WebEx off for approvals and questions', () => {
+    expect(DEFAULT_NOTIFICATION_PREFS.approvalNeeded).toEqual({ email: false, webex: false });
+    expect(DEFAULT_NOTIFICATION_PREFS.questionAsked).toEqual({ email: false, webex: false });
+  });
 });
 
-describe('wantsAct precedence', () => {
-  it('falls back to the category default when nothing is set', () => {
-    expect(wantsAct(prefs(), 'jira', 'created', 'jira_create_issue')).toBe(true);
-    expect(wantsAct(prefs(), 'jira', 'other', 'jira_add_attachment')).toBe(false);
+describe('deliveryForCategory / wantsAct', () => {
+  it('falls back to the category default on App, and off on Email/WebEx', () => {
+    expect(deliveryForCategory(prefs(), 'jira', 'created')).toEqual(
+      delivery({ app: true })
+    );
+    expect(deliveryForCategory(prefs(), 'jira', 'other')).toEqual(delivery({ app: false }));
+    expect(wantsAct(prefs(), 'jira', 'created', 'app')).toBe(true);
+    expect(wantsAct(prefs(), 'jira', 'created', 'email')).toBe(false);
+    expect(wantsAct(prefs(), 'jira', 'created', 'webex')).toBe(false);
   });
 
-  it('lets the connector×category grid override the default, both ways', () => {
-    expect(wantsAct(prefs({ acts: { jira: { created: false } } }), 'jira', 'created', null)).toBe(
-      false
-    );
-    expect(wantsAct(prefs({ acts: { jira: { other: true } } }), 'jira', 'other', null)).toBe(true);
+  it('lets a stored entry override all three channels at once', () => {
+    const p = prefs({ acts: { jira: { created: delivery({ app: false, email: true }) } } });
+    expect(wantsAct(p, 'jira', 'created', 'app')).toBe(false);
+    expect(wantsAct(p, 'jira', 'created', 'email')).toBe(true);
+    expect(wantsAct(p, 'jira', 'created', 'webex')).toBe(false);
   });
 
   it('scopes the grid to its own connector', () => {
-    const p = prefs({ acts: { jira: { created: false } } });
-    expect(wantsAct(p, 'jira', 'created', null)).toBe(false);
-    expect(wantsAct(p, 'microsoft', 'created', null)).toBe(true);
-  });
-
-  it('lets a per-tool switch beat the grid, both ways', () => {
-    const off = prefs({
-      acts: { jira: { created: true } },
-      tools: { jira_create_issue: false },
-    });
-    expect(wantsAct(off, 'jira', 'created', 'jira_create_issue')).toBe(false);
-    // And the reverse: everything in this category off, this one tool on.
-    const on = prefs({
-      acts: { jira: { other: false } },
-      tools: { jira_add_attachment: true },
-    });
-    expect(wantsAct(on, 'jira', 'other', 'jira_add_attachment')).toBe(true);
+    const p = prefs({ acts: { jira: { created: delivery({ app: false }) } } });
+    expect(wantsAct(p, 'jira', 'created', 'app')).toBe(false);
+    expect(wantsAct(p, 'microsoft', 'created', 'app')).toBe(true);
   });
 
   it('only applies a layer where it was actually set', () => {
     // A grid entry for a DIFFERENT category must not shadow this one.
-    const p = prefs({ acts: { jira: { deleted: false } } });
-    expect(wantsAct(p, 'jira', 'created', 'jira_create_issue')).toBe(true);
-    // And a tool switch for a different tool must not shadow this one.
-    const q = prefs({ tools: { jira_delete_issue: false } });
-    expect(wantsAct(q, 'jira', 'created', 'jira_create_issue')).toBe(true);
+    const p = prefs({ acts: { jira: { deleted: delivery({ app: false }) } } });
+    expect(wantsAct(p, 'jira', 'created', 'app')).toBe(true);
   });
 
   it('handles an act with no connector attribution', () => {
-    expect(wantsAct(prefs(), null, 'created', null)).toBe(true);
-    expect(wantsAct(prefs({ acts: { jira: { created: false } } }), null, 'created', null)).toBe(
-      true
-    );
+    expect(wantsAct(prefs(), null, 'created', 'app')).toBe(true);
+    expect(
+      wantsAct(prefs({ acts: { jira: { created: delivery({ app: false }) } } }), null, 'created', 'app')
+    ).toBe(true);
   });
 });
 
@@ -106,21 +108,30 @@ describe('parseNotificationPrefs', () => {
     const parsed = parseNotificationPrefs({
       runStarted: true,
       runFinished: 'yes',
-      acts: { jira: { created: false, bogus: 'x' }, empty: {} },
-      tools: { jira_create_issue: true, bogus: 1 },
+      approvalNeeded: { email: true, webex: 'nope' },
+      acts: {
+        jira: { created: { app: false, email: true, webex: 'nope' }, bogus: 'x' },
+        empty: {},
+      },
       toastCorner: 'top-left',
       // A key from a build that still stored this — ignored, same as any
       // other unrecognised property.
-      desktopEnabled: 'yes',
+      tools: { jira_create_issue: true },
       unknownKey: 'ignored',
     });
     expect(parsed.runStarted).toBe(true);
     // A non-boolean is not a preference; the default stands.
     expect(parsed.runFinished).toBe(true);
-    expect(parsed.acts).toEqual({ jira: { created: false } });
-    expect(parsed.tools).toEqual({ jira_create_issue: true });
+    expect(parsed.approvalNeeded).toEqual({ email: true, webex: false });
+    // "bogus" isn't a valid {app,email,webex} triple, so it's dropped
+    // rather than invented as a default-valued entry.
+    expect(parsed.acts).toEqual({
+      jira: { created: { app: false, email: true, webex: false } },
+    });
     // Only two corners exist; anything else means the default one.
     expect(parsed.toastCorner).toBe('bottom-right');
+    // 'tools' is gone from the type entirely now — nothing to assert beyond
+    // that the object above type-checks without it.
   });
 
   it('accepts the other corner', () => {
@@ -130,8 +141,8 @@ describe('parseNotificationPrefs', () => {
   it('round-trips its own output', () => {
     const once = parseNotificationPrefs({
       runStarted: true,
-      acts: { webex: { sent: false } },
-      tools: { webex_send_message: true },
+      acts: { webex: { sent: { app: false, email: false, webex: true } } },
+      approvalNeeded: { email: true, webex: false },
       toastCorner: 'bottom-left',
       toastsEnabled: false,
     });

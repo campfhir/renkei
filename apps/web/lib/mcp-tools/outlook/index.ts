@@ -702,7 +702,7 @@ function eventLine(event: Record<string, unknown>): string {
 }
 
 /** Which Graph scope each tool stands on; registration filters against the grant. */
-function outlookScopeFor(toolName: string): string[] {
+export function outlookScopeFor(toolName: string): string[] {
   switch (toolName) {
     case 'outlook_list_events':
     case 'outlook_get_event':
