@@ -109,6 +109,7 @@ import {
   type PendingApproval,
   type PendingQuestion,
 } from '@/lib/agents/approvals';
+import { requestRunCancellation } from '@/lib/agents/run-cancellation';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { agentJobsQueue } from '@renkei/queue';
 import { isUuid } from '@/lib/uuid';
@@ -1093,6 +1094,68 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             : []),
         ].join('\n')
       );
+    }
+  );
+
+  server.registerTool(
+    'agent_run_cancel',
+    {
+      title: 'Agents · Act — Stop a run',
+      description:
+        'Stop one of YOUR runs that has not finished — queued, waiting on you, or actively ' +
+        'running. This only REQUESTS the stop: a queued or waiting run cancels within a ' +
+        'moment, but a running one finishes its current step first and stops before the ' +
+        'next — agent_run_get shows when it lands. Refuses agent-run callers, same as ' +
+        'agent_run_now: stopping runs outside the chain is a human/API decision, not one an ' +
+        'agent makes for itself or another run mid-chain.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        runId: z.string().min(1).describe('From agent_runs_list'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      if (context.agent) {
+        return errText('Agent runs cannot cancel runs from here — that is a human/API decision.');
+      }
+      const runId = typeof args.runId === 'string' ? args.runId.trim() : '';
+      if (!isUuid(runId)) return errText('No run of yours has that id.');
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const db = dbResult.val;
+
+      const runRow = await db
+        .selectFrom('agent_runs')
+        .select(['agent_id', 'owner_subject'])
+        .where('id', '=', runId)
+        .where('tenant_id', '=', context.tenantId)
+        .where('owner_subject', '=', context.subject)
+        .executeTakeFirst();
+      if (!runRow) return errText('No run of yours has that id.');
+      const agent = await ownAgent(db, context, runRow.agent_id);
+      if (!agent) return errText('No run of yours has that id.');
+
+      const result = await requestRunCancellation(db, agentJobsQueue().producer, {
+        tenantId: context.tenantId,
+        agentId: agent.id,
+        runId,
+        ownerSubject: runRow.owner_subject,
+        canceledBySubject: context.subject,
+      });
+      switch (result.outcome) {
+        case 'not-found':
+          return errText('No run of yours has that id.');
+        case 'already-final':
+          return errText(
+            result.status === 'canceled'
+              ? 'That run was already canceled.'
+              : `That run already ${result.status} — nothing to stop.`
+          );
+        case 'canceling':
+          return textResult(
+            'Cancellation requested. agent_run_get on this runId will show "canceled" once it lands.'
+          );
+      }
     }
   );
 

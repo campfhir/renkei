@@ -37,7 +37,11 @@ export function createFinalizeHook(
     // no chained agents. History still has it; nothing else. A 'stopped'
     // run (nothing to do) is quiet by construction — and guarded here
     // explicitly too, because nothing was done to notify or chain from.
-    if (run.quiet || run.status === 'stopped') {
+    // 'canceled' is the same story from the other direction: someone
+    // outside the run asked it to stop, so they already know — engine.ts
+    // always pairs it with quiet: true, but the status check stays here
+    // as a second, explicit guard against ever chaining from one.
+    if (run.quiet || run.status === 'stopped' || run.status === 'canceled') {
       logger.info('run {runId} stopped quietly', {
         component: 'worker-agents/finalize',
         runId: run.runId,
