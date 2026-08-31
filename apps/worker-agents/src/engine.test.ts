@@ -3050,6 +3050,71 @@ maybe('agent run engine', () => {
         .executeTakeFirstOrThrow();
       expect(Number(askRowsAfterThird.count)).toBe(2);
     });
+
+    it("does not charge a question against the step's attempt budget", async () => {
+      // Attempts bound RETRIES of real work; asking the owner something and
+      // waiting is not a retry — it risks nothing and asks nothing of the
+      // model. A step with a budget of exactly 1 must still be able to ask
+      // as many questions as it needs (here: two, sequentially) and finish
+      // on its one real turn — if a pause were charged, this step would be
+      // exhausted before ever doing anything.
+      const { doc } = askableDoc({ maxAttempts: 1 });
+      const { runId, agentId } = await seedRun(doc);
+      await db
+        .updateTable('agents')
+        .set({ can_ask_questions: true })
+        .where('id', '=', agentId)
+        .execute();
+
+      let modelCalls = 0;
+      const llm = stubLlm((_request, call) => {
+        modelCalls += 1;
+        if (call === 0) return useTool('ask_person', { message: 'Which project?' });
+        if (call === 1) return useTool('ask_person', { message: 'Which environment?' });
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+      const latestSuggestedCard = async () =>
+        db
+          .selectFrom('actionable_items')
+          .selectAll()
+          .where('run_id', '=', runId)
+          .where('status', '=', 'suggested')
+          .orderBy('created_at', 'desc')
+          .executeTakeFirstOrThrow();
+      const answer = async (cardId: string) =>
+        db
+          .updateTable('actionable_items')
+          .set({
+            status: 'answered',
+            result: JSON.stringify({ answers: {} }),
+            decided_at: sql`NOW()`,
+          })
+          .where('id', '=', cardId)
+          .execute();
+
+      // 1) First question.
+      await handler({ payload: { runId } });
+      await answer((await latestSuggestedCard()).id);
+
+      // 2) Resolves the first question, asks a second.
+      await handler({ payload: { runId } });
+      await answer((await latestSuggestedCard()).id);
+
+      // 3) Resolves the second question and finishes — its one real turn.
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+      expect(modelCalls).toBe(3); // ask, ask again, then the one real finish
+    });
   });
 });
 
