@@ -3115,6 +3115,136 @@ maybe('agent run engine', () => {
       expect(run.status).toBe('succeeded');
       expect(modelCalls).toBe(3); // ask, ask again, then the one real finish
     });
+
+    it('resets the budget per round: a failed-then-retried success does not carry over to the next question', async () => {
+      // The scenario this guards: ask about item A, create its ticket —
+      // the tool call typos and fails (1 real attempt), retries and
+      // succeeds (2 real attempts) — then ask about item B and update its
+      // issue, succeeding on the first real attempt. Every individual
+      // real attempt here succeeds except the one that got retried; none
+      // of that should carry into item B's budget. It doesn't, structurally
+      // — attemptsUsed is always scoped to (step_id, iteration), and a
+      // successful attempt always ends the step (finishAttempt never
+      // returns 'retry' for a success) — but this pins the behavior the
+      // owner actually cares about: a budget of 3 comfortably covers two
+      // separate ask-then-act rounds with one hiccup, because neither the
+      // questions nor the fresh start each round costs anything from it.
+      const gather = reasoningStep('list the items', { saveAs: 'items' });
+      const askAndAct: AgentStepNode = {
+        id: randomUUID(),
+        name: 'Ask and act',
+        instruction: [
+          { t: 'text', v: 'Ask which project, then act on ' },
+          { t: 'var', name: 'item' },
+        ],
+        tool: 'jira_update_issue',
+        maxAttempts: 3,
+        failureHandling: [{ outcome: 'other', action: 'retry' }],
+        saveAs: 'result',
+      };
+      const loopId = randomUUID();
+      const doc = {
+        version: 3,
+        steps: [
+          gather,
+          {
+            id: loopId,
+            kind: 'loop',
+            mode: 'foreach',
+            name: 'handle each item',
+            itemsVar: 'items',
+            itemVar: 'item',
+            maxIterations: 10,
+            steps: [askAndAct],
+          },
+        ],
+      };
+      if (!isAgentStepsDoc(doc)) throw new Error('fixture is not a valid v3 doc');
+      const { runId, agentId } = await seedRun(doc);
+      await db
+        .updateTable('agents')
+        .set({ can_ask_questions: true })
+        .where('id', '=', agentId)
+        .execute();
+
+      const llm = stubLlm((_request, call) => {
+        if (call === 0) return finish('success', { saveItems: ['ticket-A', 'issue-B'] });
+        if (call === 1) return useTool('ask_person', { message: 'Which project for A?' });
+        // Round 1 (ticket-A): fails once, retries, succeeds.
+        if (call === 2) return finish('failure', { code: 'other' });
+        if (call === 3) return finish('success', { saveValue: 'created ticket-A' });
+        if (call === 4) return useTool('ask_person', { message: 'Which project for B?' });
+        // Round 2 (issue-B): succeeds on its first real attempt.
+        return finish('success', { saveValue: 'updated issue-B' });
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp(['jira_update_issue'], () => okToolResult)
+      );
+      const latestSuggestedCard = async () =>
+        db
+          .selectFrom('actionable_items')
+          .selectAll()
+          .where('run_id', '=', runId)
+          .where('status', '=', 'suggested')
+          .orderBy('created_at', 'desc')
+          .executeTakeFirstOrThrow();
+      const answer = async (cardId: string) =>
+        db
+          .updateTable('actionable_items')
+          .set({
+            status: 'answered',
+            result: JSON.stringify({ answers: {} }),
+            decided_at: sql`NOW()`,
+          })
+          .where('id', '=', cardId)
+          .execute();
+
+      // gather, then round 1's question.
+      await handler({ payload: { runId } });
+      await answer((await latestSuggestedCard()).id);
+      // round 1: fails, retries, succeeds — then round 2's question.
+      await handler({ payload: { runId } });
+      await answer((await latestSuggestedCard()).id);
+      // round 2: succeeds on its first real attempt.
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('succeeded');
+
+      const rows = await db
+        .selectFrom('agent_run_steps')
+        .select(['iteration', 'status', 'detail'])
+        .where('run_id', '=', runId)
+        .where('step_id', '=', askAndAct.id)
+        .orderBy('iteration')
+        .orderBy('attempt')
+        .execute();
+      const isQuestionPause = (row: (typeof rows)[number]): boolean => {
+        const detail: { pauseKind?: unknown } =
+          typeof row.detail === 'object' && row.detail !== null && !Array.isArray(row.detail)
+            ? row.detail
+            : {};
+        return detail.pauseKind === 'question';
+      };
+      // Round 1: the question (excluded), the typo'd failure, the retry
+      // that succeeded — 2 real attempts, comfortably under the budget of
+      // 3. Round 2: the question (excluded) and one real, successful
+      // attempt — its budget never saw round 1's failure at all.
+      const round1 = rows.filter((row) => row.iteration === 1);
+      const round2 = rows.filter((row) => row.iteration === 2);
+      expect(round1.filter((row) => !isQuestionPause(row))).toHaveLength(2);
+      expect(round1.filter((row) => !isQuestionPause(row)).map((row) => row.status)).toEqual([
+        'failed',
+        'succeeded',
+      ]);
+      expect(round2.filter((row) => !isQuestionPause(row))).toHaveLength(1);
+      expect(round2.filter((row) => !isQuestionPause(row))[0]?.status).toBe('succeeded');
+    });
   });
 });
 
