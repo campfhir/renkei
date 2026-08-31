@@ -43,6 +43,98 @@ import { getNotificationPrefs, wantsAct, type NotificationPrefs } from '@renkei/
 import { parseEncryptionKey } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { logger } from './logger';
+import type { McpClient, McpToolInfo } from './mcp-client';
+
+/**
+ * Best-effort owner notifications through the run's own MCP tools — the
+ * shared arm behind every email/WebEx alert an agent sends its owner
+ * (approval and question cards, run outcomes, individual acts). Reusing the
+ * run's own tools rather than a bespoke Graph/WebEx client means org
+ * read-only mode, redaction and scope-gated registration all apply for
+ * free: an unconnected or under-scoped channel just isn't in `toolsByName`,
+ * so it degrades to a note, never a failed run.
+ */
+export interface DelivererToolCallRecord {
+  tool: string;
+  argsPreview: string;
+  resultPreview: string;
+  isError: boolean;
+  durationMs: number;
+}
+
+const PREVIEW_CHARS = 4_000;
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
+}
+function textOf(result: { content: { type: string; text?: string }[] }): string {
+  return result.content
+    .flatMap((block) => (typeof block.text === 'string' ? [block.text] : []))
+    .join('\n');
+}
+
+export function notificationDeliverer(mcp: McpClient, toolsByName: Map<string, McpToolInfo>) {
+  const toolCalls: DelivererToolCallRecord[] = [];
+  const notes: string[] = [];
+  const deliver = async (
+    channel: string,
+    tool: string,
+    args: Record<string, unknown>
+  ): Promise<void> => {
+    if (!toolsByName.has(tool)) {
+      notes.push(`${channel} skipped — the "${tool}" skill is not connected.`);
+      return;
+    }
+    const startedAt = Date.now();
+    let result: Awaited<ReturnType<McpClient['callTool']>>;
+    try {
+      result = await mcp.callTool(tool, args);
+    } catch (error) {
+      result = {
+        content: [
+          {
+            type: 'text',
+            text: `The tool could not be reached: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+        meta: {},
+      };
+    }
+    toolCalls.push({
+      tool,
+      argsPreview: clip(JSON.stringify(args), PREVIEW_CHARS),
+      resultPreview: clip(textOf(result), PREVIEW_CHARS),
+      isError: result.isError,
+      durationMs: Date.now() - startedAt,
+    });
+    if (result.isError) notes.push(`${channel} could not be delivered.`);
+  };
+  const deliverOwnerNotifications = async (input: {
+    email: boolean;
+    webex: boolean;
+    heading: string;
+    body: string;
+    ownerEmail: string | undefined;
+  }): Promise<void> => {
+    if (input.email) {
+      if (!input.ownerEmail) {
+        notes.push('Email skipped — no email address is recorded for you.');
+      } else {
+        await deliver('Email', 'outlook_send_mail', {
+          to: [input.ownerEmail],
+          subject: input.heading,
+          body: input.body,
+        });
+      }
+    }
+    if (input.webex) {
+      await deliver('WebEx note', 'webex_note_to_self', {
+        markdown: `**${input.heading}**\n\n${input.body}`,
+      });
+    }
+  };
+  return { toolCalls, notes, deliverOwnerNotifications };
+}
 
 export interface NotifierContext {
   tenantId: string;
@@ -52,6 +144,15 @@ export interface NotifierContext {
   agentName: string;
   runId: string;
   prefs: NotificationPrefs;
+  /**
+   * For firing email/WebEx alerts through the run's own tools. Absent on
+   * the paths that build a notifier without an active MCP session (a run
+   * that never got that far) — those never call `.act()`, the only method
+   * that needs them, so absence there is inert rather than a bug.
+   */
+  mcp?: McpClient;
+  toolsByName?: Map<string, McpToolInfo>;
+  ownerEmail: string | undefined;
 }
 
 export interface Notifier {
@@ -141,19 +242,36 @@ export function createNotifier(db: Kysely<DB>, context: NotifierContext): Notifi
       const resolved = resolveAct(tool, kind, meta);
       // Null means the tool only read. Nothing to tell anyone.
       if (!resolved) return;
-      if (!wantsAct(context.prefs, resolved.connector, resolved.category, tool)) return;
 
-      await write(db, context, {
-        kind: 'act',
-        category: resolved.category,
-        connector: resolved.connector,
-        tool,
-        entity: resolved.entity,
-        headline: resolved.headline,
-        refId: resolved.id,
-        refUrl: resolved.url,
-        stepId,
-      });
+      const wantsApp = wantsAct(context.prefs, resolved.connector, resolved.category, 'app');
+      const wantsEmail = wantsAct(context.prefs, resolved.connector, resolved.category, 'email');
+      const wantsWebex = wantsAct(context.prefs, resolved.connector, resolved.category, 'webex');
+      if (!wantsApp && !wantsEmail && !wantsWebex) return;
+
+      if (wantsApp) {
+        await write(db, context, {
+          kind: 'act',
+          category: resolved.category,
+          connector: resolved.connector,
+          tool,
+          entity: resolved.entity,
+          headline: resolved.headline,
+          refId: resolved.id,
+          refUrl: resolved.url,
+          stepId,
+        });
+      }
+
+      if ((wantsEmail || wantsWebex) && context.mcp && context.toolsByName) {
+        const { deliverOwnerNotifications } = notificationDeliverer(context.mcp, context.toolsByName);
+        await deliverOwnerNotifications({
+          email: wantsEmail,
+          webex: wantsWebex,
+          heading: resolved.headline,
+          body: `“${context.agentName}” — ${resolved.headline}.`,
+          ownerEmail: context.ownerEmail,
+        });
+      }
     },
 
     async runStarted() {

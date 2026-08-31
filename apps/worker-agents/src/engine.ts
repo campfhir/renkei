@@ -63,7 +63,8 @@ import {
 } from '@renkei/agent-llm';
 import { getOrgSettings, getPublicBaseUrl } from '@renkei/settings';
 import { toolKindOf } from '@renkei/tool-outcomes';
-import { notifierFor, type Notifier } from './notifications';
+import { notifierFor, notificationDeliverer, type Notifier } from './notifications';
+import { getNotificationPrefs } from '@renkei/user-prefs';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 import { AgentMcpClient } from './mcp-client';
 import { mintRunToken, revokeRunToken } from './token';
@@ -190,77 +191,6 @@ function answersOf(result: unknown): Record<string, unknown> {
     ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
       (resultObj.answers as Record<string, unknown>)
     : {};
-}
-
-/**
- * Best-effort owner notifications through the run's own MCP tools — the
- * shared arm of terminal and approval nodes. Engine-initiated and
- * owner-configured, so EXEMPT from the guardrails' blocked-tool set; an
- * unconnected or failing channel becomes a note on the attempt row, never
- * a run failure.
- */
-function notificationDeliverer(mcp: McpClient, toolsByName: Map<string, McpToolInfo>) {
-  const toolCalls: ToolCallRecord[] = [];
-  const notes: string[] = [];
-  const deliver = async (
-    channel: string,
-    tool: string,
-    args: Record<string, unknown>
-  ): Promise<void> => {
-    if (!toolsByName.has(tool)) {
-      notes.push(`${channel} skipped — the "${tool}" skill is not connected.`);
-      return;
-    }
-    const startedAt = Date.now();
-    let result: McpToolResult;
-    try {
-      result = await mcp.callTool(tool, args);
-    } catch (error) {
-      result = {
-        content: [
-          {
-            type: 'text',
-            text: `The tool could not be reached: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
-        isError: true,
-        meta: {},
-      };
-    }
-    toolCalls.push({
-      tool,
-      argsPreview: clip(JSON.stringify(args), PREVIEW_CHARS),
-      resultPreview: clip(textOf(result), PREVIEW_CHARS),
-      isError: result.isError,
-      durationMs: Date.now() - startedAt,
-    });
-    if (result.isError) notes.push(`${channel} could not be delivered.`);
-  };
-  const deliverOwnerNotifications = async (input: {
-    email: boolean;
-    webex: boolean;
-    heading: string;
-    body: string;
-    ownerEmail: string | undefined;
-  }): Promise<void> => {
-    if (input.email) {
-      if (!input.ownerEmail) {
-        notes.push('Email skipped — no email address is recorded for you.');
-      } else {
-        await deliver('Email', 'outlook_send_mail', {
-          to: [input.ownerEmail],
-          subject: input.heading,
-          body: input.body,
-        });
-      }
-    }
-    if (input.webex) {
-      await deliver('WebEx note', 'webex_note_to_self', {
-        markdown: `**${input.heading}**\n\n${input.body}`,
-      });
-    }
-  };
-  return { toolCalls, notes, deliverOwnerNotifications };
 }
 
 interface AttemptRecord {
@@ -1014,6 +944,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
         agentId: run.agent_id,
         agentName: await agentNameOf(run.tenant_id, run.agent_id),
         runId: run.id,
+        mcp,
+        toolsByName,
+        ownerEmail: vars['user.email'],
       });
       // Only on a genuinely NEW run. A crash-resume or a wake from an
       // approval pause re-enters here, and "started" arriving twice for one
@@ -1779,10 +1712,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
 
       vars['approval.link'] = link ?? '';
+      // The card itself is not optional — a waiting run needs it — but
+      // whether it ALSO pages the owner by email or WebEx is their call.
+      const ownerPrefs = await getNotificationPrefs(run.tenant_id, run.owner_subject);
       const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
       await deliverOwnerNotifications({
-        email: true,
-        webex: true,
+        email: ownerPrefs.approvalNeeded.email,
+        webex: ownerPrefs.approvalNeeded.webex,
         heading: `Agent “${agentName}” needs your approval${gatedStep.name.trim() ? `: ${gatedStep.name.trim()}` : ''}`,
         body: [
           `Wants to call ${friendlyToolName(tool, null)} with:`,
@@ -1853,10 +1789,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
 
       vars['question.link'] = link ?? '';
+      const ownerPrefs = await getNotificationPrefs(run.tenant_id, run.owner_subject);
       const { deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
       await deliverOwnerNotifications({
-        email: true,
-        webex: true,
+        email: ownerPrefs.questionAsked.email,
+        webex: ownerPrefs.questionAsked.webex,
         heading: `Agent “${agentName}” has a question${askingStep.name.trim() ? `: ${askingStep.name.trim()}` : ''}`,
         body: [message, ...(link ? [`Answer here: ${link}`] : [])].join('\n\n'),
         ownerEmail: vars['user.email'],
@@ -3868,6 +3805,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
         agentId: run.agent_id,
         agentName,
         runId: run.id,
+        // No MCP session on every path that reaches finalizeRun (a run
+        // refused before it started); runFinished never needs one — it
+        // only writes the in-app row, unlike act()'s email/WebEx arm.
+        ownerEmail: undefined,
       });
       void notifier.runFinished(status, error);
     }

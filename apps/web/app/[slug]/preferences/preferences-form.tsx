@@ -1,10 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 // The PURE half of the package, not its index: the index reaches the
 // database, and a client component that pulls it in drags `pg` — and then
 // `dns` — into the browser bundle. That split is what prefs.ts is for.
-import { wantsAct, type NotificationPrefs, type ToastCorner } from '@renkei/user-prefs/prefs';
+import {
+  deliveryForCategory,
+  type NotificationPrefs,
+  type DeliveryPrefs,
+  type ToastCorner,
+} from '@renkei/user-prefs/prefs';
 import ConnectorIcon from '@/components/connector-icon';
 import {
   getDesktopNotificationsEnabled,
@@ -19,51 +24,50 @@ import {
 /**
  * What to be told about, and where.
  *
- * ## Everything here is one subject, and says so
+ * ## Three channels, not one
  *
- * Runs, acts and pop-ups are three faces of a single question — what
- * Renkei tells you about — but as three sibling cards under a page called
- * "Preferences" they read as three unrelated settings, and nothing on
- * screen connected "Pop-ups" to the notifications page it fills. They sit
- * under one NOTIFICATIONS heading now. It also leaves an obvious place for
- * the second group of preferences to go, whatever it turns out to be,
- * instead of it landing in the same undifferentiated stack.
+ * Everything used to have one switch: on in the app, or nothing. Now an
+ * event can reach someone in the app, by Outlook email, or by a WebEx
+ * message — three independent booleans wherever a choice makes sense.
+ * Outlook and WebEx both start OFF for everyone and stay that way until
+ * turned on by hand; nobody is opted into a new inbox arrival by a
+ * migration.
  *
- * ## Why the acts are a list per connector, laid out as a grid
+ * ## Approvals and questions are not really optional
  *
- * The first version was a connector × category TABLE — Jira across,
- * "Created / Sent / Changed / Deleted / Scheduled" down. It looked tidy
- * and it could not be read: the Jira row offered a checkbox for
- * "Scheduled", and there is no such thing as scheduling in Jira. Most of
- * the cells were like that. A table of that shape asserts every connector
- * does every kind of thing, and connectors do not; each does its own
- * specific handful.
+ * A run pauses behind that card — it is not news, it is the thing the run
+ * is waiting on — so the App column for these two rows is a fixed "Always"
+ * rather than a checkbox. Only Outlook and WebEx are a real choice: "also
+ * page me while it waits."
  *
- * So the CONTENT is a list of the acts a connector can actually perform,
- * in the words of the act — "Commented on an issue", "Accepted or
- * declined an invitation". The LAYOUT is a grid, which is a different
- * claim entirely: it says these are peers worth scanning side by side,
- * not that every column means something for every row. Jira has 39 of
- * them, and one per line is a great deal of scrolling past white space.
+ * ## Category, not per-act, for "things your agents do"
  *
- * The column count comes from a CONTAINER query, not the viewport. The
- * panel's width is set by the page's max-width and the card padding
- * around it, so a viewport breakpoint would be guessing at it — and would
- * guess wrong the moment either changes. This is the same fix the
- * connector scope pickers needed for the same reason.
+ * A version of this page once offered a checkbox per ACT — "Commented on
+ * an issue", "Attached a file" — which was fine for one channel and one
+ * connector's worth of acts on screen at once. Multiplied by three
+ * channels and summed across eleven connectors it stopped being something
+ * a person could scan, let alone decide. What survives per-act is the App
+ * column, since that already existed and nobody asked for it to get
+ * coarser; Outlook and WebEx step back to the CATEGORY every act already
+ * belongs to (created / sent / updated / deleted / scheduled, plus the
+ * "anything else" catch-all) — five or six rows per connector instead of
+ * dozens.
+ *
+ * ## Connector-gated, not just preference-gated
+ *
+ * Outlook and WebEx only work when there is a personal grant behind them
+ * with the right permission (Mail.Send; spark:messages_write and its
+ * friends for a WebEx note). `channels` carries that from the server —
+ * decrypting nothing, just the plaintext granted-scopes column — so an
+ * unusable checkbox reads as unusable, with a link to go connect it,
+ * rather than a preference that silently never fires.
  *
  * ## What is stored
  *
- * A curated row writes `prefs.tools[tool]`, which is the most specific
- * layer of `wantsAct` and therefore wins outright. The "anything else"
- * row per connector writes `prefs.acts[connector].other`, the middle
- * layer, covering every act with no wording yet — a hundred-odd of them,
- * which is why it starts off.
- *
- * Nothing about the stored shape changed when the grid did. A grid entry
- * saved by the old page still applies underneath, so nobody's earlier
- * choices were silently discarded by a redesign of the page that made
- * them.
+ * `prefs.acts[connector][category]` is a `{app, email, webex}` triple. An
+ * explicit choice is stored even when it matches the default: the default
+ * can change, and somebody who chose should not be quietly moved when it
+ * does.
  *
  * ## The one thing this page MUST say out loud
  *
@@ -78,34 +82,82 @@ const TOAST_CORNERS: readonly ToastCorner[] = ['bottom-left', 'bottom-right'];
 interface ConnectorRow {
   key: string;
   label: string;
-  acts: { tool: string; short: string; category: string }[];
+  categories: string[];
 }
 
-/**
- * How many columns a connector's acts are worth, at most.
- *
- * Width alone is the wrong input: WebEx has three acts, and three columns
- * of one item each is not a layout, it is three items flung to the far
- * corners of an empty panel. The ceiling rises with the list, so Jira's
- * thirty-nine get all three and Knowledge's three stay a list.
- *
- * Written out in full because Tailwind scans source for literal class
- * names — a template built from a number produces classes that exist in
- * this file and in no stylesheet.
- */
-function columnsFor(count: number): string {
-  if (count <= 3) return '';
-  if (count <= 8) return '@md:columns-2';
-  return '@md:columns-2 @3xl:columns-3';
+interface ChannelAvailability {
+  outlook: boolean;
+  webex: boolean;
+}
+
+const CATEGORY_LABEL: Record<string, string> = {
+  created: 'Creates something',
+  sent: 'Sends something',
+  updated: 'Updates something',
+  deleted: 'Deletes something',
+  scheduled: 'Schedules something',
+  other: 'Anything else',
+};
+
+const CATEGORY_HINT: Record<string, string> = {
+  other: 'No specific wording yet — off to start with, like today.',
+};
+
+/** A locked "this is always on" pill, for the App column of a pause row. */
+function AlwaysPill(): ReactNode {
+  return (
+    <span
+      title="A waiting run needs this card — it can't be turned off here."
+      className="inline-flex items-center gap-1 whitespace-nowrap rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-800 dark:bg-blue-950 dark:text-blue-300"
+    >
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={3.5}>
+        <path d="M6 12l4 4 8-8" />
+      </svg>
+      Always
+    </span>
+  );
+}
+
+/** The line under a table explaining why Outlook/WebEx are greyed out. */
+function ChannelHints({
+  channels,
+  slug,
+}: {
+  channels: ChannelAvailability;
+  slug: string;
+}): ReactNode {
+  const missing: { label: string; anchor: string }[] = [];
+  if (!channels.outlook) missing.push({ label: 'Outlook', anchor: 'microsoft' });
+  if (!channels.webex) missing.push({ label: 'WebEx', anchor: 'webex' });
+  if (missing.length === 0) return null;
+  return (
+    <div className="space-y-1 border-t border-gray-100 px-4 py-2.5 text-xs text-gray-500 dark:border-gray-900 dark:text-gray-400">
+      {missing.map((channel) => (
+        <p key={channel.label} className="flex flex-wrap items-center gap-1.5">
+          <span>{`${channel.label} isn’t connected with permission to send, so its boxes stay off.`}</span>
+          <a
+            href={`/${slug}/connectors#${channel.anchor}`}
+            className="font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            {`Connect ${channel.label} →`}
+          </a>
+        </p>
+      ))}
+    </div>
+  );
 }
 
 export default function PreferencesForm({
   tenantId,
+  slug,
   connectors,
+  channels,
   initial,
 }: {
   tenantId: string;
+  slug: string;
   connectors: ConnectorRow[];
+  channels: ChannelAvailability;
   initial: NotificationPrefs;
 }) {
   const [prefs, setPrefs] = useState<NotificationPrefs>(initial);
@@ -195,38 +247,48 @@ export default function PreferencesForm({
     setStatus('idle');
   }
 
-  /** One act. An explicit choice is stored even when it matches the
-   *  default: the default can change, and somebody who chose should not be
-   *  quietly moved when it does. */
-  function setTool(tool: string, on: boolean) {
-    update({ ...prefs, tools: { ...prefs.tools, [tool]: on } });
-  }
-
-  /** The per-connector catch-all, which is the 'other' category. */
-  function setCatchAll(connector: string, on: boolean) {
-    const forConnector = { ...(prefs.acts[connector] ?? {}), other: on };
+  /** One category's delivery, all three channels, changed at once. */
+  function setCategory(connector: string, category: string, next: DeliveryPrefs) {
+    const forConnector = { ...(prefs.acts[connector] ?? {}), [category]: next };
     update({ ...prefs, acts: { ...prefs.acts, [connector]: forConnector } });
   }
 
-  function setWholeConnector(row: ConnectorRow, on: boolean) {
-    const tools = { ...prefs.tools };
-    for (const act of row.acts) tools[act.tool] = on;
-    update({ ...prefs, tools });
+  /** One channel within one category, the other two left exactly as they are. */
+  function setCategoryChannel(
+    connector: string,
+    category: string,
+    channel: keyof DeliveryPrefs,
+    on: boolean
+  ) {
+    const current = deliveryForCategory(prefs, connector, category);
+    setCategory(connector, category, { ...current, [channel]: on });
   }
 
-  const wanted = (connector: string, category: string, tool: string | null) =>
-    wantsAct(prefs, connector, category, tool);
+  function setWholeConnector(row: ConnectorRow, channel: keyof DeliveryPrefs, on: boolean) {
+    const forConnector = { ...(prefs.acts[row.key] ?? {}) };
+    for (const category of row.categories) {
+      const current = deliveryForCategory(prefs, row.key, category);
+      forConnector[category] = { ...current, [channel]: on };
+    }
+    update({ ...prefs, acts: { ...prefs.acts, [row.key]: forConnector } });
+  }
 
-  /** Curated rows only — the catch-all is counted separately because it
-   *  stands for a hundred tools, not one. */
-  const countOn = (row: ConnectorRow) =>
-    row.acts.filter((act) => wanted(row.key, act.category, act.tool)).length;
+  function setPauseChannel(
+    event: 'approvalNeeded' | 'questionAsked',
+    channel: 'email' | 'webex',
+    on: boolean
+  ) {
+    update({ ...prefs, [event]: { ...prefs[event], [channel]: on } });
+  }
 
-  /** Tool switches for tools this build no longer has wording for — an
-   *  older page's saves, or a tool that was renamed. Shown only when there
-   *  are some, so nobody's choice is stranded invisibly. */
-  const known = new Set(connectors.flatMap((row) => row.acts.map((act) => act.tool)));
-  const strays = Object.entries(prefs.tools).filter(([tool]) => !known.has(tool));
+  /** Curated rows only, App channel — the summary a collapsed connector shows. */
+  const appOnCount = (row: ConnectorRow) =>
+    row.categories.filter((category) => deliveryForCategory(prefs, row.key, category).app).length;
+  const anyExtraChannel = (row: ConnectorRow) =>
+    row.categories.some((category) => {
+      const d = deliveryForCategory(prefs, row.key, category);
+      return d.email || d.webex;
+    });
 
   async function save() {
     setStatus('saving');
@@ -301,17 +363,83 @@ export default function PreferencesForm({
           </div>
         </section>
 
+        <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+          <div className="p-4 pb-3">
+            <h3 className="font-semibold">Approvals &amp; questions</h3>
+            <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
+              A run pauses until you decide — the card in Renkei is always on. Choose whether it
+              also pages you by Outlook or WebEx while it waits.
+            </p>
+          </div>
+          <div className="overflow-x-auto border-t border-gray-200 dark:border-gray-800">
+            <table className="w-full min-w-[420px] border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                  <th className="px-4 py-2 font-medium">When…</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">App</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">Outlook</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">WebEx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(
+                  [
+                    [
+                      'approvalNeeded' as const,
+                      'An agent needs your approval',
+                      'Something it wants to do needs a yes or no from you.',
+                    ],
+                    [
+                      'questionAsked' as const,
+                      'An agent has a question for you',
+                      'It hit a fork it can’t resolve on its own.',
+                    ],
+                  ] as const
+                ).map(([event, label, hint]) => (
+                  <tr key={event} className="border-t border-gray-100 first:border-t-0 dark:border-gray-900">
+                    <td className="px-4 py-3 align-top">
+                      <span className="font-medium">{label}</span>
+                      <span className="block text-xs text-gray-500 dark:text-gray-400">{hint}</span>
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <AlwaysPill />
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`${label} — Outlook`}
+                        checked={channels.outlook && prefs[event].email}
+                        disabled={!channels.outlook}
+                        onChange={(ev) => setPauseChannel(event, 'email', ev.target.checked)}
+                      />
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`${label} — WebEx`}
+                        checked={channels.webex && prefs[event].webex}
+                        disabled={!channels.webex}
+                        onChange={(ev) => setPauseChannel(event, 'webex', ev.target.checked)}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ChannelHints channels={channels} slug={slug} />
+        </section>
+
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
           <h3 className="font-semibold">Things your agents do</h3>
           <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
             Only actions that change something are ever offered here — reading is never announced.
-            Open a connector to choose which of its actions you hear about.
+            Open a connector to choose which of its kinds of actions you hear about, and where.
           </p>
 
           <div className="mt-3 space-y-1.5">
             {connectors.map((row) => {
-              const on = countOn(row);
-              const catchAll = wanted(row.key, 'other', null);
+              const on = appOnCount(row);
               return (
                 <details
                   key={row.key}
@@ -321,132 +449,104 @@ export default function PreferencesForm({
                     <ConnectorIcon capabilityKey={row.key} label={row.label} size={16} />
                     <span className="min-w-0 flex-1 truncate font-medium">{row.label}</span>
                     <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
-                      {on} of {row.acts.length}
-                      {catchAll ? ', plus anything else' : ''}
+                      {on} of {row.categories.length} in-app
+                      {anyExtraChannel(row) ? ', plus Outlook/WebEx' : ''}
                     </span>
                     <span aria-hidden="true" className="shrink-0 text-gray-400">
                       ▾
                     </span>
                   </summary>
 
-                  <div className="border-t border-gray-200 p-3 dark:border-gray-800">
-                    <div className="mb-2 flex items-center gap-3 text-xs">
+                  <div className="border-t border-gray-200 dark:border-gray-800">
+                    <div className="flex items-center gap-3 px-3 pt-3 text-xs">
+                      <span className="text-gray-500 dark:text-gray-400">App:</span>
                       <button
                         type="button"
-                        onClick={() => setWholeConnector(row, true)}
+                        onClick={() => setWholeConnector(row, 'app', true)}
                         className="text-blue-600 hover:underline dark:text-blue-400"
                       >
                         Select all
                       </button>
                       <button
                         type="button"
-                        onClick={() => setWholeConnector(row, false)}
+                        onClick={() => setWholeConnector(row, 'app', false)}
                         className="text-gray-500 hover:underline"
                       >
                         Select none
                       </button>
                     </div>
 
-                    {/*
-                      Columns from the PANEL's width, not the window's: this
-                      sits inside a card inside a page whose max-width is not
-                      the viewport, so a `md:` here would be measuring the
-                      wrong box. `items-start` keeps the checkbox level with
-                      the first line of a label that wraps.
-
-                      `@container` must be a PARENT of the columns rather
-                      than the element itself — a container-query variant
-                      measures the nearest ANCESTOR container, so putting
-                      both on one element leaves it at a single column for
-                      ever and merely looks unstyled.
-
-                      CSS columns rather than a grid, for the direction they
-                      read in. A grid fills row-major, so a checklist laid
-                      out in one is read left-to-right in threes; columns
-                      fill top-to-bottom, which is how a person goes down a
-                      list of things to tick. The acts are ordered by
-                      category, and that ordering only survives the second
-                      way. `break-inside-avoid` stops a two-line label being
-                      split across a column boundary.
-                    */}
-                    <div className="@container">
-                      <ul className={`list-none ${columnsFor(row.acts.length)}`}>
-                        {row.acts.map((act) => (
-                          <li key={act.tool} className="break-inside-avoid pb-1">
-                            <label className="flex items-start gap-2 pr-6 text-sm">
-                              <input
-                                type="checkbox"
-                                className="mt-0.5 shrink-0"
-                                checked={wanted(row.key, act.category, act.tool)}
-                                onChange={(event) => setTool(act.tool, event.target.checked)}
-                              />
-                              <span className="min-w-0">{act.short}</span>
-                            </label>
-                          </li>
-                        ))}
-                      </ul>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[420px] border-collapse text-sm">
+                        <thead>
+                          <tr className="text-left text-xs font-medium text-gray-500 dark:text-gray-400">
+                            <th className="px-3 py-2 font-medium">Also page me when {row.label}…</th>
+                            <th className="w-20 px-2 py-2 text-center font-medium">App</th>
+                            <th className="w-20 px-2 py-2 text-center font-medium">Outlook</th>
+                            <th className="w-20 px-2 py-2 text-center font-medium">WebEx</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {row.categories.map((category) => {
+                            const delivery = deliveryForCategory(prefs, row.key, category);
+                            return (
+                              <tr
+                                key={category}
+                                className="border-t border-gray-100 dark:border-gray-900"
+                              >
+                                <td className="px-3 py-2 align-top">
+                                  <span>{CATEGORY_LABEL[category] ?? category}</span>
+                                  {CATEGORY_HINT[category] ? (
+                                    <span className="block text-xs text-gray-500 dark:text-gray-400">
+                                      {CATEGORY_HINT[category]}
+                                    </span>
+                                  ) : null}
+                                </td>
+                                <td className="px-2 py-2 text-center align-top">
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`${row.label} ${CATEGORY_LABEL[category] ?? category} — App`}
+                                    checked={delivery.app}
+                                    onChange={(ev) =>
+                                      setCategoryChannel(row.key, category, 'app', ev.target.checked)
+                                    }
+                                  />
+                                </td>
+                                <td className="px-2 py-2 text-center align-top">
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`${row.label} ${CATEGORY_LABEL[category] ?? category} — Outlook`}
+                                    checked={channels.outlook && delivery.email}
+                                    disabled={!channels.outlook}
+                                    onChange={(ev) =>
+                                      setCategoryChannel(row.key, category, 'email', ev.target.checked)
+                                    }
+                                  />
+                                </td>
+                                <td className="px-2 py-2 text-center align-top">
+                                  <input
+                                    type="checkbox"
+                                    aria-label={`${row.label} ${CATEGORY_LABEL[category] ?? category} — WebEx`}
+                                    checked={channels.webex && delivery.webex}
+                                    disabled={!channels.webex}
+                                    onChange={(ev) =>
+                                      setCategoryChannel(row.key, category, 'webex', ev.target.checked)
+                                    }
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
-
-                    {/* Visually separated because it is not one more act: it
-                      stands for every act in this connector that Renkei has
-                      no wording for yet, which is most of them by count. */}
-                    <label className="mt-2 flex items-start gap-2 border-t border-gray-100 pt-2 text-sm dark:border-gray-900">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 shrink-0"
-                        checked={catchAll}
-                        onChange={(event) => setCatchAll(row.key, event.target.checked)}
-                      />
-                      <span>
-                        Anything else in {row.label}
-                        <span className="block text-xs text-gray-500 dark:text-gray-400">
-                          Actions with no specific wording yet. Off to start with — it is by far the
-                          largest group, and it reads as “Ran jira add attachment”.
-                        </span>
-                      </span>
-                    </label>
                   </div>
                 </details>
               );
             })}
           </div>
 
-          {strays.length > 0 ? (
-            <details className="mt-3 rounded-lg border border-dashed border-gray-300 p-3 dark:border-gray-700">
-              <summary className="cursor-pointer text-sm font-medium">
-                Choices for actions this version no longer lists
-                <span className="ml-2 font-normal text-gray-500">{strays.length}</span>
-              </summary>
-              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                Saved against a tool that has since been renamed or removed. They still apply if it
-                comes back; clearing one hands it to the settings above.
-              </p>
-              <ul className="mt-2 space-y-1">
-                {strays.map(([tool, on]) => (
-                  <li key={tool} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      aria-label={tool}
-                      checked={on}
-                      onChange={(event) => setTool(tool, event.target.checked)}
-                    />
-                    <code className="min-w-0 flex-1 truncate font-mono text-xs">{tool}</code>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const tools = { ...prefs.tools };
-                        delete tools[tool];
-                        update({ ...prefs, tools });
-                      }}
-                      className="shrink-0 text-xs text-gray-500 hover:underline"
-                    >
-                      Clear
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          ) : null}
+          <ChannelHints channels={channels} slug={slug} />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">

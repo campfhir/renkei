@@ -22,6 +22,27 @@ export type ToastCorner = 'bottom-left' | 'bottom-right';
  */
 export { ACT_CATEGORIES, type ActCategory } from '@renkei/tool-outcomes';
 
+/**
+ * One event, three places it can reach someone: the in-app feed (and the
+ * push it triggers while Renkei is closed), an email, a WebEx message. Not
+ * every event offers all three — see `PauseDelivery` below.
+ */
+export interface DeliveryPrefs {
+  app: boolean;
+  email: boolean;
+  webex: boolean;
+}
+
+/**
+ * An approval or a question is not really optional in the app: the run is
+ * physically parked behind that card, so there is nothing to turn off —
+ * only whether it ALSO reaches you by email or WebEx while it waits.
+ */
+export interface PauseDeliveryPrefs {
+  email: boolean;
+  webex: boolean;
+}
+
 export interface NotificationPrefs {
   /**
    * Off by default. An agent starting is not news — it is the most frequent
@@ -37,10 +58,18 @@ export interface NotificationPrefs {
    * either way — this switch only controls the notification.
    */
   agentEditedByOthers: boolean;
-  /** connector key → category → wanted. Absent = the default for it. */
-  acts: Record<string, Record<string, boolean>>;
-  /** Tool name → wanted. Overrides `acts` in EITHER direction. */
-  tools: Record<string, boolean>;
+  /** A run pausing for a decision. The card is fixed on; email/WebEx are not. */
+  approvalNeeded: PauseDeliveryPrefs;
+  /** A run pausing for an answer. Same shape, same reasoning. */
+  questionAsked: PauseDeliveryPrefs;
+  /**
+   * connector → category → delivery. Absent = the category default for
+   * `app`, off for `email`/`webex`. Category, not per-act: an act-by-act
+   * grid times three channels was tried (see the preferences form's own
+   * history) and it does not survive contact with eleven connectors and a
+   * couple hundred acts between them.
+   */
+  acts: Record<string, Record<string, DeliveryPrefs>>;
   /** Whether anything pops up in the corner; the page always fills. */
   toastsEnabled: boolean;
   toastCorner: ToastCorner;
@@ -62,65 +91,99 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   runFinished: true,
   runFailed: true,
   agentEditedByOthers: true,
+  // Off for everyone until turned on by hand — an approval or question
+  // already shows in the app regardless, so this is purely "also page me".
+  approvalNeeded: { email: false, webex: false },
+  questionAsked: { email: false, webex: false },
   acts: {},
-  tools: {},
   toastsEnabled: true,
   toastCorner: 'bottom-right',
 };
 
 /**
- * Whether a category is wanted when nobody has said otherwise.
+ * Whether a category is wanted, on the App channel, when nobody has said
+ * otherwise. Email and WebEx have no such default — they start off for
+ * every category, every connector, until someone turns one on.
  *
- * 'other' is OFF: it is the uncurated majority — every act tool with no
- * declared outcome — and switching it on is one control for somebody who
- * wants everything. Defaulting it on would bury the five categories that
- * carry a real sentence under a hundred that say "ran a tool".
+ * 'other' is OFF even on App: it is the uncurated majority — every act tool
+ * with no declared outcome — and switching it on is one control for
+ * somebody who wants everything. Defaulting it on would bury the five
+ * categories that carry a real sentence under a hundred that say "ran a
+ * tool".
  */
 export function defaultForCategory(category: string): boolean {
   return category !== 'other';
 }
 
+/** The three channels' defaults for one category, before anyone has chosen. */
+function defaultDelivery(category: string): DeliveryPrefs {
+  return { app: defaultForCategory(category), email: false, webex: false };
+}
+
 /**
- * Does this person want to hear about this act?
- *
- * Precedence, most specific first: an explicit per-tool switch, then the
- * connector×category grid, then the category default. Each layer only
- * applies where it was actually set, so a grid entry does not silently
- * override the tool switch someone set deliberately.
+ * The effective app/email/webex delivery for one connector's category —
+ * defaults filled in wherever the person hasn't chosen.
  */
+export function deliveryForCategory(
+  prefs: NotificationPrefs,
+  connector: string | null,
+  category: string
+): DeliveryPrefs {
+  const stored = connector ? prefs.acts[connector]?.[category] : undefined;
+  return stored ?? defaultDelivery(category);
+}
+
+/** Does this person want to hear about this category of act, on this channel? */
 export function wantsAct(
   prefs: NotificationPrefs,
   connector: string | null,
   category: string,
-  tool: string | null
+  channel: keyof DeliveryPrefs = 'app'
 ): boolean {
-  if (tool && tool in prefs.tools) return prefs.tools[tool] === true;
-  const forConnector = connector ? prefs.acts[connector] : undefined;
-  if (forConnector && category in forConnector) return forConnector[category] === true;
-  return defaultForCategory(category);
+  return deliveryForCategory(prefs, connector, category)[channel];
 }
 
 function boolOr(current: unknown, fallback: boolean): boolean {
   return typeof current === 'boolean' ? current : fallback;
 }
 
-/** A record of booleans, with anything else dropped rather than trusted. */
-function boolMap(current: unknown): Record<string, boolean> {
-  if (typeof current !== 'object' || current === null || Array.isArray(current)) return {};
-  const out: Record<string, boolean> = {};
-  for (const [key, value] of Object.entries(current)) {
-    if (typeof value === 'boolean') out[key] = value;
-  }
-  return out;
+/** One channel triple, with anything unrecognized falling back per-key. */
+function deliveryPrefs(current: unknown, fallback: DeliveryPrefs): DeliveryPrefs {
+  if (typeof current !== 'object' || current === null || Array.isArray(current)) return fallback;
+  const raw: Record<string, unknown> = { ...current };
+  return {
+    app: boolOr(raw.app, fallback.app),
+    email: boolOr(raw.email, fallback.email),
+    webex: boolOr(raw.webex, fallback.webex),
+  };
 }
 
-/** A record of records of booleans — the connector×category grid. */
-function nestedBoolMap(current: unknown): Record<string, Record<string, boolean>> {
+function pauseDeliveryPrefs(current: unknown, fallback: PauseDeliveryPrefs): PauseDeliveryPrefs {
+  if (typeof current !== 'object' || current === null || Array.isArray(current)) return fallback;
+  const raw: Record<string, unknown> = { ...current };
+  return {
+    email: boolOr(raw.email, fallback.email),
+    webex: boolOr(raw.webex, fallback.webex),
+  };
+}
+
+/** connector → category → DeliveryPrefs, dropping anything malformed. */
+function actsMap(current: unknown): Record<string, Record<string, DeliveryPrefs>> {
   if (typeof current !== 'object' || current === null || Array.isArray(current)) return {};
-  const out: Record<string, Record<string, boolean>> = {};
-  for (const [key, value] of Object.entries(current)) {
-    const inner = boolMap(value);
-    if (Object.keys(inner).length > 0) out[key] = inner;
+  const out: Record<string, Record<string, DeliveryPrefs>> = {};
+  for (const [connector, categories] of Object.entries(current)) {
+    if (typeof categories !== 'object' || categories === null || Array.isArray(categories)) {
+      continue;
+    }
+    const inner: Record<string, DeliveryPrefs> = {};
+    for (const [category, entry] of Object.entries(categories)) {
+      // Dropped, not defaulted: an entry that isn't a valid triple was never
+      // a real choice, and storing one anyway would invent a preference
+      // nobody set.
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+      inner[category] = deliveryPrefs(entry, defaultDelivery(category));
+    }
+    if (Object.keys(inner).length > 0) out[connector] = inner;
   }
   return out;
 }
@@ -140,8 +203,12 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
       raw.agentEditedByOthers,
       DEFAULT_NOTIFICATION_PREFS.agentEditedByOthers
     ),
-    acts: nestedBoolMap(raw.acts),
-    tools: boolMap(raw.tools),
+    approvalNeeded: pauseDeliveryPrefs(
+      raw.approvalNeeded,
+      DEFAULT_NOTIFICATION_PREFS.approvalNeeded
+    ),
+    questionAsked: pauseDeliveryPrefs(raw.questionAsked, DEFAULT_NOTIFICATION_PREFS.questionAsked),
+    acts: actsMap(raw.acts),
     toastsEnabled: boolOr(raw.toastsEnabled, DEFAULT_NOTIFICATION_PREFS.toastsEnabled),
     toastCorner: corner,
   };
