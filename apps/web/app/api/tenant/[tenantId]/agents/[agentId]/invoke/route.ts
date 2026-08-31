@@ -22,7 +22,7 @@ import { sql, type Kysely } from 'kysely';
 import { getDatabase, type DB } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { isCurrentStepsDoc } from '@renkei/agents';
-import { createAgentRun } from '@renkei/agents/runs';
+import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
 import { sha256Hex } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { digestsMatch, getBearerToken } from '@/lib/mcp-token';
@@ -159,15 +159,38 @@ export async function POST(
     return NextResponse.json({ error: 'state must stay under 64KB' }, { status: 413 });
   }
   let state: Record<string, unknown> | undefined;
+  let confirmed = false;
   if (raw.trim().length > 0) {
     try {
-      const body: { state?: unknown } = JSON.parse(raw);
+      const body: { state?: unknown; confirm?: unknown } = JSON.parse(raw);
       if (typeof body.state === 'object' && body.state !== null && !Array.isArray(body.state)) {
         // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above
         state = body.state as Record<string, unknown>;
       }
+      confirmed = body.confirm === true;
     } catch {
       return NextResponse.json({ error: 'Body must be JSON' }, { status: 400 });
+    }
+  }
+
+  // A machine caller (API key, schedule, event, chain) never sees this —
+  // those already run concurrently by design, serialized only by the
+  // queue's ordering key. This is purely the "Run now" button's own
+  // sanity check: a person clicking it twice, or clicking it without
+  // noticing a run from a minute ago is still going, gets asked instead
+  // of silently piling up a second run behind the first.
+  if (triggerId === null && !confirmed) {
+    const inProgress = await findInProgressRun(db, tenantId, agentId);
+    if (inProgress) {
+      return NextResponse.json(
+        {
+          error: `A run of this agent is already ${inProgress.status}.`,
+          code: 'already-in-progress',
+          runId: inProgress.id,
+          status: inProgress.status,
+        },
+        { status: 409 }
+      );
     }
   }
 

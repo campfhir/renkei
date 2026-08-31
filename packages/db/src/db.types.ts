@@ -151,6 +151,8 @@ export interface AgentRunCounters {
 
 export interface AgentRuns {
   agent_id: string;
+  cancel_requested_at: Timestamp | null;
+  cancel_requested_by: string | null;
   created_at: Generated<Timestamp>;
   current_step_id: string | null;
   depth: Generated<number>;

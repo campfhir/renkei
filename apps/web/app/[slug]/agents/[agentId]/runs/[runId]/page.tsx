@@ -15,6 +15,7 @@ import { parseFormNodes } from '@renkei/agents';
 import LocalTime from '@/components/local-time';
 import CopyDebugButton from '@/components/copy-debug-button';
 import RerunButton from './rerun-button';
+import CancelButton from './cancel-button';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 
 /** The `form` field a question card's suggested_action carries, if any. */
@@ -85,10 +86,20 @@ export default async function AgentRunDetailPage({
             "misbehaved" has usually succeeded at doing the wrong thing, and
             that is exactly the run someone needs to paste somewhere. */}
         <CopyDebugButton text={renderRunDebugMarkdown(agent.name, run)} />
-        {/* Only once the run is settled — a rerun while it is still going
-            would put two runs on the same message at once. */}
-        {run.status === 'queued' || run.status === 'running' || run.status === 'waiting' ? null : (
-          <RerunButton tenantId={tenant.id} slug={slug} agentId={agentId} runId={runId} />
+        {/* Exactly one of these two is ever offered: a run that hasn't
+            settled can be canceled; a settled one can be rerun. Never
+            both — a rerun while it is still going would put two runs on
+            the same message at once. */}
+        {run.status === 'queued' || run.status === 'running' || run.status === 'waiting' ? (
+          <CancelButton tenantId={tenant.id} agentId={agentId} runId={runId} />
+        ) : (
+          <RerunButton
+            tenantId={tenant.id}
+            slug={slug}
+            agentId={agentId}
+            runId={runId}
+            agentName={agent.name}
+          />
         )}
       </div>
       {pauseCard ? (

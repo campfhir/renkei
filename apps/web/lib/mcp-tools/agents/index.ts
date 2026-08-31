@@ -79,7 +79,7 @@ import {
   type QuestionField,
 } from '@renkei/agents';
 import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/agents/memory';
-import { createAgentRun } from '@renkei/agents/runs';
+import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
 import { sql } from 'kysely';
 import type { MCPToolContext } from '../common';
 import { getAgent, listAgents, type StoredAgent, type TriggerPayload } from '@/lib/agents/store';
@@ -109,6 +109,7 @@ import {
   type PendingApproval,
   type PendingQuestion,
 } from '@/lib/agents/approvals';
+import { requestRunCancellation } from '@/lib/agents/run-cancellation';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { agentJobsQueue } from '@renkei/queue';
 import { isUuid } from '@/lib/uuid';
@@ -1097,6 +1098,68 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
   );
 
   server.registerTool(
+    'agent_run_cancel',
+    {
+      title: 'Agents · Act — Stop a run',
+      description:
+        'Stop one of YOUR runs that has not finished — queued, waiting on you, or actively ' +
+        'running. This only REQUESTS the stop: a queued or waiting run cancels within a ' +
+        'moment, but a running one finishes its current step first and stops before the ' +
+        'next — agent_run_get shows when it lands. Refuses agent-run callers, same as ' +
+        'agent_run_now: stopping runs outside the chain is a human/API decision, not one an ' +
+        'agent makes for itself or another run mid-chain.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        runId: z.string().min(1).describe('From agent_runs_list'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      if (context.agent) {
+        return errText('Agent runs cannot cancel runs from here — that is a human/API decision.');
+      }
+      const runId = typeof args.runId === 'string' ? args.runId.trim() : '';
+      if (!isUuid(runId)) return errText('No run of yours has that id.');
+      const dbResult = getDatabase();
+      if (!dbResult.ok) return errText('Database unavailable.');
+      const db = dbResult.val;
+
+      const runRow = await db
+        .selectFrom('agent_runs')
+        .select(['agent_id', 'owner_subject'])
+        .where('id', '=', runId)
+        .where('tenant_id', '=', context.tenantId)
+        .where('owner_subject', '=', context.subject)
+        .executeTakeFirst();
+      if (!runRow) return errText('No run of yours has that id.');
+      const agent = await ownAgent(db, context, runRow.agent_id);
+      if (!agent) return errText('No run of yours has that id.');
+
+      const result = await requestRunCancellation(db, agentJobsQueue().producer, {
+        tenantId: context.tenantId,
+        agentId: agent.id,
+        runId,
+        ownerSubject: runRow.owner_subject,
+        canceledBySubject: context.subject,
+      });
+      switch (result.outcome) {
+        case 'not-found':
+          return errText('No run of yours has that id.');
+        case 'already-final':
+          return errText(
+            result.status === 'canceled'
+              ? 'That run was already canceled.'
+              : `That run already ${result.status} — nothing to stop.`
+          );
+        case 'canceling':
+          return textResult(
+            'Cancellation requested. agent_run_get on this runId will show "canceled" once it lands.'
+          );
+      }
+    }
+  );
+
+  server.registerTool(
     'agent_run_now',
     {
       title: 'Agents · Act — Run a scheduled agent now',
@@ -1107,10 +1170,16 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         'trigger, so this can only bring forward work that already runs by itself. An agent ' +
         'that is off, or that fires from an event, another agent, or an API key, is refused ' +
         'with the reason. The schedule itself is left alone — the next scheduled run still ' +
-        'happens at its own time. Follow the run with agent_run_get.',
+        'happens at its own time. If this agent already has a run queued or running, this ' +
+        'refuses and says so instead of piling a second one on — pass confirm: true to start ' +
+        'it anyway. Follow the run with agent_run_get.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe('Start anyway when this agent already has a run queued or running.'),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -1178,6 +1247,22 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           'This agent is saved in an older format — open it in the builder and save it to ' +
             'update it, then run it.'
         );
+      }
+
+      // Same sanity check the "Run now" button's confirm modal makes a
+      // person answer: a run already queued or running for this agent is
+      // not a reason to refuse forever, just a reason to ask first — an
+      // agent-run caller is already refused above, so this is always a
+      // human or API-key caller deciding for themselves.
+      if (args.confirm !== true) {
+        const inProgress = await findInProgressRun(db, context.tenantId, agent.id);
+        if (inProgress) {
+          return errText(
+            `"${agent.name}" already has a run ${inProgress.status} (runId: ${inProgress.id}). ` +
+              'Call again with confirm: true to start another anyway, or agent_run_get that ' +
+              'runId to see how it is going.'
+          );
+        }
       }
 
       // Recorded as the manual run it is (trigger_id stays null), while the

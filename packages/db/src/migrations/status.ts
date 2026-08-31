@@ -102,6 +102,7 @@ export const EXPECTED_MIGRATIONS = [
   '070-actionable-items-attempt',
   '071-agent-run-step-tokens',
   '072-agent-run-counter-tokens',
+  '073-agent-run-cancellation',
 ];
 
 export interface MigrationStatus {

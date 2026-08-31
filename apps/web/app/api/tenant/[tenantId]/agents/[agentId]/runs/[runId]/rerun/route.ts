@@ -12,6 +12,10 @@
  * A new run, not a mutation of the old one, also keeps the history honest —
  * the failure stays on the record next to the retry.
  *
+ * Same concurrency guard as the invoke route, minus its event carve-out's
+ * mirror image: here the carve-out is for the run BEING re-run, not the
+ * one about to start — see the trigger_kind check below.
+ *
  * Owner or grantee, like the invoke route's session path: an unexpired
  * access grant (access-grants.ts) exists precisely for this loop — read
  * the failed run, fix the steps, put the same message back through. The
@@ -24,7 +28,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { isCurrentStepsDoc } from '@renkei/agents';
-import { createAgentRun } from '@renkei/agents/runs';
+import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
@@ -81,6 +85,38 @@ export async function POST(
       { error: 'This agent is saved in an older format — open it in the builder and save to update it.' },
       { status: 409 }
     );
+  }
+
+  const raw = await request.text();
+  let confirmed = false;
+  if (raw.trim().length > 0) {
+    try {
+      const body: { confirm?: unknown } = JSON.parse(raw);
+      confirmed = body.confirm === true;
+    } catch {
+      return NextResponse.json({ error: 'Body must be JSON' }, { status: 400 });
+    }
+  }
+
+  // Same guard as the invoke route, and the same carve-out: an event
+  // agent already tolerates several runs going at once — that's the
+  // normal shape of "a burst of messages each started one" — so
+  // re-running one of its finished runs asks nothing extra. A scheduled
+  // (or manual, api, chained) run is the case someone reruns expecting
+  // ONE thing to happen, so a second one already going is worth a beat.
+  if (run.trigger_kind !== 'event' && !confirmed) {
+    const inProgress = await findInProgressRun(db, tenantId, agentId);
+    if (inProgress) {
+      return NextResponse.json(
+        {
+          error: `A run of this agent is already ${inProgress.status}.`,
+          code: 'already-in-progress',
+          runId: inProgress.id,
+          status: inProgress.status,
+        },
+        { status: 409 }
+      );
+    }
   }
 
   const initialState =

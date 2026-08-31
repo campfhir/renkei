@@ -544,6 +544,91 @@ maybe('agent run engine', () => {
     expect(seen[1]).toContain('theTicket: declared failure');
   });
 
+  it('stops before the next step once a cancel is requested mid-run', async () => {
+    const firstStepId = randomUUID();
+    const secondStepId = randomUUID();
+    const steps: AgentStepsDoc = {
+      version: CURRENT_STEPS_VERSION,
+      steps: [
+        {
+          id: firstStepId,
+          name: 'Find the ticket',
+          instruction: [
+            { t: 'text', v: 'Find the ticket using ' },
+            { t: 'tool', name: 'jira_get_issue' },
+          ],
+          tool: 'jira_get_issue',
+          maxAttempts: 1,
+          saveAs: 'theTicket',
+          failureHandling: [],
+        },
+        {
+          id: secondStepId,
+          name: 'Never reached',
+          instruction: [{ t: 'text', v: 'This must not run once canceled.' }],
+          tool: null,
+          maxAttempts: 1,
+          failureHandling: [],
+        },
+      ],
+    };
+    const { runId } = await seedRun(steps);
+    const llm = stubLlm((_request, call) =>
+      call === 0 ? useTool('jira_get_issue', { issueKey: 'PROJ-42' }) : finish('success')
+    );
+    // Stands in for "the owner clicked cancel while this step was in
+    // flight": by the time the engine reaches its next per-step
+    // checkpoint, cancel_requested_at is already set on the row.
+    const mcp: McpClient = {
+      initialize: async () => undefined,
+      listTools: async () => [
+        { name: 'jira_get_issue', description: 'jira_get_issue', inputSchema: { type: 'object' } },
+      ],
+      callTool: async () => {
+        await db
+          .updateTable('agent_runs')
+          .set({ cancel_requested_at: sql`NOW()`, cancel_requested_by: subject })
+          .where('id', '=', runId)
+          .execute();
+        return okToolResult;
+      },
+    };
+    const finalized: unknown[] = [];
+    const handler = createAgentRunHandler({
+      db,
+      webBaseUrl: 'http://unused.example',
+      createMcpClient: () => mcp,
+      resolveLlm: async () => ok(llm),
+      mintToken: async () => 'stub-token',
+      revokeToken: async () => undefined,
+      onFinalized: async (run) => {
+        finalized.push(run);
+      },
+    });
+    await handler({ payload: { runId } });
+
+    const run = await db
+      .selectFrom('agent_runs')
+      .select(['status'])
+      .where('id', '=', runId)
+      .executeTakeFirstOrThrow();
+    expect(run.status).toBe('canceled');
+
+    // Only the first step ran — the checkpoint caught the flag before the
+    // second step's node ever dispatched.
+    const attempts = await db
+      .selectFrom('agent_run_steps')
+      .select(['step_id', 'status'])
+      .where('run_id', '=', runId)
+      .execute();
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].step_id).toBe(firstStepId);
+    expect(attempts[0].status).toBe('succeeded');
+
+    // Quiet, same as 'stopped': whoever canceled it already knows.
+    expect(finalized[0]).toMatchObject({ status: 'canceled', quiet: true });
+  });
+
   it('takes the exhausted choice when every retry fails', async () => {
     const steps: AgentStepsDoc = {
       version: 7,
@@ -2518,6 +2603,32 @@ maybe('agent run engine', () => {
       const card = await cardOf(runId);
       expect(card.status).toBe('expired');
       expect(JSON.stringify(card.result)).toContain('agent-disabled');
+    });
+
+    it('a cancel request cancels the waiting run and archives its card', async () => {
+      const { doc } = gatedDoc({});
+      const { runId } = await seedRun(doc);
+      const { mcp } = recordingMcp(['jira_add_comment']);
+      const handler = handlerWith(proposesThenNoMore(), mcp);
+      await handler({ payload: { runId } });
+      // What requestRunCancellation writes — see run-cancellation.ts.
+      await db
+        .updateTable('agent_runs')
+        .set({ cancel_requested_at: sql`NOW()`, cancel_requested_by: subject })
+        .where('id', '=', runId)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'waiting_until'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('canceled');
+      expect(run.waiting_until).toBeNull();
+      const card = await cardOf(runId);
+      expect(card.status).toBe('expired');
+      expect(JSON.stringify(card.result)).toContain('canceled-by-owner');
     });
 
     it('the sweep expires due waits, re-enqueues them, and clears cards of dead runs', async () => {

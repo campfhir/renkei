@@ -154,6 +154,31 @@ export async function createAgentRun(
 }
 
 /**
+ * Whether this agent already has a run in flight — queued or actively
+ * running. The single source of truth for the "Run now" button's and the
+ * agent_run_now MCP tool's own concurrency guard: both ask a person before
+ * piling a manual run on top of one already going, rather than silently
+ * queuing a second. Automatic triggers (schedule, event, api key, an agent
+ * chain) never call this — they already run concurrently by design,
+ * serialized only by the queue's ordering key (see `orderingKey` above).
+ */
+export async function findInProgressRun(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string
+): Promise<{ id: string; status: string } | null> {
+  const row = await db
+    .selectFrom('agent_runs')
+    .select(['id', 'status'])
+    .where('tenant_id', '=', tenantId)
+    .where('agent_id', '=', agentId)
+    .where('status', 'in', ['queued', 'running'])
+    .orderBy('created_at', 'desc')
+    .executeTakeFirst();
+  return row ?? null;
+}
+
+/**
  * The failure-side tally (migration 050), bumped when a run finalizes as
  * 'failed'. Lands on TODAY — the day the run became a failure — which may
  * be the day after its start was tallied; the columns are independent
