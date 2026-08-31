@@ -245,7 +245,12 @@ export default async function AgentOverviewPage({
               {/* Beside the schedule, because "every weekday at 8am" is
                   exactly what makes someone want to fire it once by hand. */}
               {eventOnly ? null : (
-                <RunNowButton slug={slug} tenantId={tenant.id} agentId={agentId} />
+                <RunNowButton
+                  slug={slug}
+                  tenantId={tenant.id}
+                  agentId={agentId}
+                  agentName={agent.name}
+                />
               )}
             </div>
             {agent.triggers.length > 0 ? (

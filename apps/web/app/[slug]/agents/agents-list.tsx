@@ -17,9 +17,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { StoredAgent } from '@/lib/agents/store';
 import { sendJsonFull } from '@/lib/fetch-json';
+import { invokeAgentRun } from '@/lib/agents/invoke-client';
 import { Icon, ICONS } from '@/components/icons';
 import { triggerBadge, triggerSummary } from '@/lib/agents/trigger-summary';
 import AgentEnabledToggle from '@/components/agent-enabled-toggle';
+import ConfirmRunModal from './confirm-run-modal';
 
 function IconButton({
   label,
@@ -147,6 +149,9 @@ export function AgentsList({
   const [error, setError] = useState<string | null>(null);
   const [ranNow, setRanNow] = useState<string | null>(null);
   const [triggersFor, setTriggersFor] = useState<StoredAgent | null>(null);
+  const [confirmRun, setConfirmRun] = useState<{ agent: StoredAgent; message: string } | null>(
+    null
+  );
 
   // Summaries are written after the save response; while any card is still
   // waiting on one, refresh the server-rendered list a few times so the
@@ -163,15 +168,22 @@ export function AgentsList({
     return () => clearTimeout(timer);
   }, [anyStale, agents, router]);
 
-  const runNow = async (agent: StoredAgent) => {
+  const runNow = async (agent: StoredAgent, confirm = false) => {
     setBusy(agent.id);
     setError(null);
-    const result = await sendJsonFull(`/api/tenant/${tenantId}/agents/${agent.id}/invoke`, 'POST');
+    const result = await invokeAgentRun(tenantId, agent.id, confirm);
     setBusy(null);
-    if (result.error) setError(result.error);
-    else {
-      setRanNow(agent.id);
-      setTimeout(() => setRanNow(null), 4000);
+    switch (result.kind) {
+      case 'needs-confirm':
+        setConfirmRun({ agent, message: result.message });
+        return;
+      case 'error':
+        setError(result.message);
+        return;
+      case 'started':
+        setConfirmRun(null);
+        setRanNow(agent.id);
+        setTimeout(() => setRanNow(null), 4000);
     }
   };
 
@@ -337,6 +349,15 @@ export function AgentsList({
       ) : null}
       {triggersFor ? (
         <TriggersDialog agent={triggersFor} onClose={() => setTriggersFor(null)} />
+      ) : null}
+      {confirmRun ? (
+        <ConfirmRunModal
+          agentName={confirmRun.agent.name}
+          message={confirmRun.message}
+          busy={busy === confirmRun.agent.id}
+          onCancel={() => setConfirmRun(null)}
+          onConfirm={() => void runNow(confirmRun.agent, true)}
+        />
       ) : null}
     </div>
   );

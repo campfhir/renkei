@@ -16,38 +16,45 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { sendJsonFull } from '@/lib/fetch-json';
+import { invokeAgentRun } from '@/lib/agents/invoke-client';
 import { Icon, ICONS } from '@/components/icons';
+import ConfirmRunModal from '../confirm-run-modal';
 
 export default function RunNowButton({
   slug,
   tenantId,
   agentId,
+  agentName,
 }: {
   slug: string;
   tenantId: string;
   agentId: string;
+  agentName: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmMessage, setConfirmMessage] = useState<string | null>(null);
 
-  const start = async () => {
+  const start = async (confirm = false) => {
     setBusy(true);
     setError(null);
     setStartedRunId(null);
-    const result = await sendJsonFull<{ runId?: string }>(
-      `/api/tenant/${tenantId}/agents/${agentId}/invoke`,
-      'POST'
-    );
+    const result = await invokeAgentRun(tenantId, agentId, confirm);
     setBusy(false);
-    if (result.error) {
-      setError(result.error);
-      return;
+    switch (result.kind) {
+      case 'needs-confirm':
+        setConfirmMessage(result.message);
+        return;
+      case 'error':
+        setError(result.message);
+        return;
+      case 'started':
+        setConfirmMessage(null);
+        setStartedRunId(result.runId);
+        router.refresh();
     }
-    setStartedRunId(result.data?.runId ?? null);
-    router.refresh();
   };
 
   return (
@@ -72,6 +79,15 @@ export default function RunNowButton({
       ) : null}
       {error ? (
         <span className="text-right text-xs text-red-600 dark:text-red-400">{error}</span>
+      ) : null}
+      {confirmMessage ? (
+        <ConfirmRunModal
+          agentName={agentName}
+          message={confirmMessage}
+          busy={busy}
+          onCancel={() => setConfirmMessage(null)}
+          onConfirm={() => void start(true)}
+        />
       ) : null}
     </div>
   );
