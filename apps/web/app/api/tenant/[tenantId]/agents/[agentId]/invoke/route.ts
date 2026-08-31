@@ -22,7 +22,7 @@ import { sql, type Kysely } from 'kysely';
 import { getDatabase, type DB } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { isCurrentStepsDoc } from '@renkei/agents';
-import { createAgentRun } from '@renkei/agents/runs';
+import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
 import { sha256Hex } from '@renkei/crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { digestsMatch, getBearerToken } from '@/lib/mcp-token';
@@ -180,14 +180,7 @@ export async function POST(
   // noticing a run from a minute ago is still going, gets asked instead
   // of silently piling up a second run behind the first.
   if (triggerId === null && !confirmed) {
-    const inProgress = await db
-      .selectFrom('agent_runs')
-      .select(['id', 'status'])
-      .where('tenant_id', '=', tenantId)
-      .where('agent_id', '=', agentId)
-      .where('status', 'in', ['queued', 'running'])
-      .orderBy('created_at', 'desc')
-      .executeTakeFirst();
+    const inProgress = await findInProgressRun(db, tenantId, agentId);
     if (inProgress) {
       return NextResponse.json(
         {

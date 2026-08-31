@@ -34,7 +34,10 @@ jest.mock('@/lib/agents/approvals', () => ({
 jest.mock('@renkei/queue', () => ({
   agentJobsQueue: () => ({ producer: { enqueue: jest.fn() } }),
 }));
-jest.mock('@renkei/agents/runs', () => ({ createAgentRun: jest.fn() }));
+jest.mock('@renkei/agents/runs', () => ({
+  createAgentRun: jest.fn(),
+  findInProgressRun: jest.fn(),
+}));
 jest.mock('@renkei/agents/memory', () => ({
   readAgentMemory: jest.fn(async () => ({ summary: null, entries: [] })),
   renderAgentKnowledgeNotes: jest.fn(async () => ''),
@@ -69,7 +72,9 @@ const approvalsMock = jest.requireMock<{
   listPendingQuestions: jest.Mock;
   answerQuestion: jest.Mock;
 }>('@/lib/agents/approvals');
-const runNowMock = jest.requireMock<{ createAgentRun: jest.Mock }>('@renkei/agents/runs');
+const runNowMock = jest.requireMock<{ createAgentRun: jest.Mock; findInProgressRun: jest.Mock }>(
+  '@renkei/agents/runs'
+);
 const memoryMock = jest.requireMock<{
   readAgentMemory: jest.Mock;
   countAgentMemory: jest.Mock;
@@ -1025,6 +1030,7 @@ describe('agent_run_now', () => {
 
   beforeEach(() => {
     runNowMock.createAgentRun.mockResolvedValue({ ok: true, val: { runId: 'run-7' } });
+    runNowMock.findInProgressRun.mockResolvedValue(null);
   });
 
   it('starts an enabled agent whose schedule is on, and leaves the schedule alone', async () => {
@@ -1129,5 +1135,32 @@ describe('agent_run_now', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toContain('200 runs per day');
+  });
+
+  it('refuses when a run is already queued or running, and says so', async () => {
+    storeMock.getAgent.mockResolvedValue(RUNNABLE);
+    runNowMock.findInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? '';
+    expect(text).toContain('already has a run running');
+    expect(text).toContain('run-3');
+    expect(text).toContain('confirm: true');
+    expect(runNowMock.createAgentRun).not.toHaveBeenCalled();
+  });
+
+  it('starts anyway once confirm: true is given, without asking again', async () => {
+    storeMock.getAgent.mockResolvedValue(RUNNABLE);
+    runNowMock.findInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1', confirm: true });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain('runId: run-7');
+    expect(runNowMock.createAgentRun).toHaveBeenCalledTimes(1);
   });
 });

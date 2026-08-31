@@ -10,7 +10,10 @@ jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@/lib/agents/access-grants', () => ({ hasActiveGrant: jest.fn(async () => false) }));
 jest.mock('@renkei/agents', () => ({ isCurrentStepsDoc: jest.fn(() => true) }));
-jest.mock('@renkei/agents/runs', () => ({ createAgentRun: jest.fn() }));
+jest.mock('@renkei/agents/runs', () => ({
+  createAgentRun: jest.fn(),
+  findInProgressRun: jest.fn(),
+}));
 jest.mock('@renkei/queue', () => ({ agentJobsQueue: jest.fn(() => ({ producer: {} })) }));
 
 import { NextRequest } from 'next/server';
@@ -20,9 +23,10 @@ const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mo
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
 }>('@/lib/session');
-const { createAgentRun: mockCreateAgentRun } = jest.requireMock<{ createAgentRun: jest.Mock }>(
-  '@renkei/agents/runs'
-);
+const { createAgentRun: mockCreateAgentRun, findInProgressRun: mockFindInProgressRun } =
+  jest.requireMock<{ createAgentRun: jest.Mock; findInProgressRun: jest.Mock }>(
+    '@renkei/agents/runs'
+  );
 
 const TENANT = 't-1';
 const AGENT_ID = '00000000-0000-4000-8000-000000000001';
@@ -36,24 +40,20 @@ const AGENT_ROW = {
   enabled: true,
 };
 
-/** Table-aware stub: `agents` resolves the agent row, `agent_runs` the in-progress check. */
-function stubDb(opts: { inProgress?: { id: string; status: string } | undefined }) {
+/** `agents` is the only table this route still reads directly. */
+function stubDb() {
   const chain = {
     selectFrom: (table: string) => {
-      const row = table === 'agents' ? AGENT_ROW : opts.inProgress;
+      const row = table === 'agents' ? AGENT_ROW : undefined;
       return {
-        select: () => chainOf(row),
+        select: () => ({
+          where: () => ({
+            where: () => ({ executeTakeFirst: async () => row }),
+          }),
+        }),
       };
     },
   };
-  function chainOf(row: unknown) {
-    const self = {
-      where: () => self,
-      orderBy: () => self,
-      executeTakeFirst: async () => row,
-    };
-    return self;
-  }
   mockGetDatabase.mockReturnValue({ ok: true, val: chain });
 }
 
@@ -70,13 +70,15 @@ function params() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  stubDb();
   mockGetSession.mockResolvedValue({ subject: 'alice' });
   mockCreateAgentRun.mockResolvedValue({ ok: true, val: { runId: 'new-run' } });
+  mockFindInProgressRun.mockResolvedValue(null);
 });
 
 describe('POST invoke — manual concurrency guard', () => {
   it('refuses with already-in-progress when a run is queued or running, and never calls createAgentRun', async () => {
-    stubDb({ inProgress: { id: 'run-1', status: 'running' } });
+    mockFindInProgressRun.mockResolvedValue({ id: 'run-1', status: 'running' });
     const response = await POST(request({}), params());
     expect(response.status).toBe(409);
     const body = await response.json();
@@ -85,16 +87,16 @@ describe('POST invoke — manual concurrency guard', () => {
   });
 
   it('proceeds normally when nothing is in progress', async () => {
-    stubDb({ inProgress: undefined });
     const response = await POST(request({}), params());
     expect(response.status).toBe(202);
     expect(mockCreateAgentRun).toHaveBeenCalledTimes(1);
   });
 
   it('proceeds once confirm:true is sent, without re-checking', async () => {
-    stubDb({ inProgress: { id: 'run-1', status: 'running' } });
+    mockFindInProgressRun.mockResolvedValue({ id: 'run-1', status: 'running' });
     const response = await POST(request({ confirm: true }), params());
     expect(response.status).toBe(202);
     expect(mockCreateAgentRun).toHaveBeenCalledTimes(1);
+    expect(mockFindInProgressRun).not.toHaveBeenCalled();
   });
 });
