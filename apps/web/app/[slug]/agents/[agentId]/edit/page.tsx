@@ -6,6 +6,7 @@ import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { loadBuilderData } from '@/lib/agents/builder-data';
+import AgentEnabledToggle from '@/components/agent-enabled-toggle';
 import { AgentBuilder } from '../../builder/agent-builder';
 
 export default async function EditAgentPage({
@@ -40,7 +41,22 @@ export default async function EditAgentPage({
   return (
     <div>
       <div className="mx-auto mb-6 lg:max-w-3xl">
-        <h1 className="mb-1 text-xl font-bold">Edit “{agent.name}”</h1>
+        <div className="mb-1 flex flex-wrap items-center gap-2">
+          <h1 className="text-xl font-bold">Edit “{agent.name}”</h1>
+          {access.viewerIsOwner ? (
+            <AgentEnabledToggle tenantId={tenant.id} agent={agent} />
+          ) : (
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                agent.enabled
+                  ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
+                  : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+              }`}
+            >
+              {agent.enabled ? 'On' : 'Off'}
+            </span>
+          )}
+        </div>
         <p className="text-sm text-gray-600 dark:text-gray-400">
           Changes apply to future runs — anything already queued keeps the steps it was queued with.
         </p>

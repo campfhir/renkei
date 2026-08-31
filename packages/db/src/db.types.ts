@@ -143,6 +143,8 @@ export interface AgentRunCounters {
   agent_id: string;
   day: Timestamp;
   failures: Generated<number>;
+  input_tokens: Generated<number>;
+  output_tokens: Generated<number>;
   runs: Generated<number>;
   tenant_id: string;
 }
@@ -178,10 +180,12 @@ export interface AgentRunSteps {
   detail: Json | null;
   finished_at: Timestamp | null;
   id: string;
+  input_tokens: Generated<number>;
   /** 0 = not inside a loop (all pre-v3 rows); 1-based inside a loop. */
   iteration: Generated<number>;
   outcome: string | null;
   outcome_code: string | null;
+  output_tokens: Generated<number>;
   run_id: string;
   started_at: Timestamp | null;
   status: string;

@@ -19,6 +19,7 @@ import type { StoredAgent } from '@/lib/agents/store';
 import { sendJsonFull } from '@/lib/fetch-json';
 import { Icon, ICONS } from '@/components/icons';
 import { triggerBadge, triggerSummary } from '@/lib/agents/trigger-summary';
+import AgentEnabledToggle from '@/components/agent-enabled-toggle';
 
 function IconButton({
   label,
@@ -60,30 +61,6 @@ function IconButton({
       className={className}
     >
       <Icon path={ICONS[icon]} />
-    </button>
-  );
-}
-
-function Toggle({ on, busy, onToggle }: { on: boolean; busy: boolean; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={on ? 'Turn agent off' : 'Turn agent on'}
-      title={on ? 'On — click to turn off' : 'Off — click to turn on'}
-      disabled={busy}
-      onClick={onToggle}
-      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
-        on ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-700'
-      }`}
-    >
-      <span
-        className={`inline-block transform rounded-full bg-white shadow transition-transform ${
-          on ? 'translate-x-6' : 'translate-x-1'
-        }`}
-        style={{ height: '1.125rem', width: '1.125rem' }}
-      />
     </button>
   );
 }
@@ -186,35 +163,6 @@ export function AgentsList({
     return () => clearTimeout(timer);
   }, [anyStale, agents, router]);
 
-  const savePayloadOf = (agent: StoredAgent, enabled: boolean) => ({
-    name: agent.name,
-    steps: agent.steps,
-    triggers: agent.triggers.map((trigger) => ({
-      id: trigger.id,
-      draft: trigger.draft,
-      enabled: trigger.enabled,
-    })),
-    enabled,
-    llmModelId: agent.llmModelId,
-    // Every field the PUT persists must ride along — omitting one here
-    // would make the on/off toggle silently wipe it.
-    guardrails: agent.guardrails,
-    blockedTools: agent.blockedTools,
-  });
-
-  const toggle = async (agent: StoredAgent) => {
-    setBusy(agent.id);
-    setError(null);
-    const result = await sendJsonFull(
-      `/api/tenant/${tenantId}/agents/${agent.id}`,
-      'PUT',
-      savePayloadOf(agent, !agent.enabled)
-    );
-    setBusy(null);
-    if (result.error) setError(result.error);
-    else router.refresh();
-  };
-
   const runNow = async (agent: StoredAgent) => {
     setBusy(agent.id);
     setError(null);
@@ -284,7 +232,7 @@ export function AgentsList({
               </span>
             ) : null}
           </span>
-          <Toggle on={agent.enabled} busy={busy === agent.id} onToggle={() => toggle(agent)} />
+          <AgentEnabledToggle tenantId={tenantId} agent={agent} onError={setError} />
         </div>
 
         <p className="mt-1.5 text-sm text-gray-600 dark:text-gray-400">

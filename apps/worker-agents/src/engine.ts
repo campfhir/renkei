@@ -73,7 +73,7 @@ import {
   renderAgentMemory,
   renderAgentKnowledgeNotes,
 } from '@renkei/agents/memory';
-import { recordAgentRunFailure } from '@renkei/agents/runs';
+import { recordAgentRunFailure, recordAgentRunTokenUsage } from '@renkei/agents/runs';
 import {
   ASK_PERSON_DEF,
   ASK_PERSON_TOOL,
@@ -769,6 +769,35 @@ export function createAgentRunHandler(deps: EngineDeps) {
   const mint = deps.mintToken ?? mintRunToken;
   const revoke = deps.revokeToken ?? revokeRunToken;
   const resolveLlm = deps.resolveLlm ?? resolveAgentLlm;
+
+  /**
+   * The durable per-day token tally (migration 072) — mirrors
+   * recordAgentRunFailure's shape and best-effort posture. Called once per
+   * `agent_run_steps` row that finalizes with token spend; skipped entirely
+   * when both counts are zero (a pure-tool attempt, or a step that never
+   * reached the model) so a no-op upsert doesn't run for every attempt.
+   */
+  async function recordUsage(
+    run: RunRow,
+    usage: { inputTokens: number; outputTokens: number }
+  ): Promise<void> {
+    if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
+    const tally = await recordAgentRunTokenUsage(
+      db,
+      run.tenant_id,
+      run.agent_id,
+      usage.inputTokens,
+      usage.outputTokens
+    );
+    if (!tally.ok) {
+      logger.warn('token tally not recorded for run {runId}', {
+        component: 'worker-agents/engine',
+        runId: run.id,
+        tenantId: run.tenant_id,
+        agentId: run.agent_id,
+      });
+    }
+  }
 
   return async function handleRun(message: { payload: Json }): Promise<void> {
     const payload: { runId?: unknown } =
@@ -1565,12 +1594,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcome: outcome.outcome,
           outcome_code: outcome.outcomeCode,
           tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
+          input_tokens: outcome.usage.inputTokens,
+          output_tokens: outcome.usage.outputTokens,
           detail: detailJson,
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
         })
         .where('id', '=', rowId)
         .execute();
+      await recordUsage(run, outcome.usage);
 
       if (outcome.remember) {
         // The step asked future runs to know something. Best-effort: a
@@ -2454,6 +2486,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
             status: 'waiting',
             outcome: 'guard',
             tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
+            input_tokens: outcome.usage.inputTokens,
+            output_tokens: outcome.usage.outputTokens,
             detail: clip(
               JSON.stringify({
                 pauseKind: 'approval',
@@ -2468,6 +2502,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
+        await recordUsage(run, outcome.usage);
         await raiseApprovalCard(
           step,
           iteration,
@@ -2488,6 +2523,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
             status: 'waiting',
             outcome: 'question',
             tool_call_count: outcome.toolCalls.filter((call) => !call.free).length,
+            input_tokens: outcome.usage.inputTokens,
+            output_tokens: outcome.usage.outputTokens,
             detail: clip(
               JSON.stringify({
                 pauseKind: 'question',
@@ -2505,6 +2542,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
+        await recordUsage(run, outcome.usage);
         await raiseQuestionCard(
           step,
           iteration,
@@ -2922,12 +2960,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcome: 'path_chosen',
             outcome_code: null,
             tool_call_count: 0,
+            input_tokens: usage.inputTokens,
+            output_tokens: usage.outputTokens,
             detail: clip(JSON.stringify(detail), DETAIL_CHARS),
             finished_at: sql`NOW()`,
             updated_at: sql`NOW()`,
           })
           .where('id', '=', rowId)
           .execute();
+        await recordUsage(run, usage);
         return { kind: 'path', path: decidedPath };
       }
 
@@ -2948,12 +2989,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcome: 'llm_error',
           outcome_code: 'other',
           tool_call_count: 0,
+          input_tokens: usage.inputTokens,
+          output_tokens: usage.outputTokens,
           detail: clip(JSON.stringify(detail), DETAIL_CHARS),
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
         })
         .where('id', '=', rowId)
         .execute();
+      await recordUsage(run, usage);
     }
   }
 
@@ -3174,12 +3218,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
             outcome: 'loop_decided',
             outcome_code: null,
             tool_call_count: 0,
+            input_tokens: usage.inputTokens,
+            output_tokens: usage.outputTokens,
             detail: clip(JSON.stringify(detail), DETAIL_CHARS),
             finished_at: sql`NOW()`,
             updated_at: sql`NOW()`,
           })
           .where('id', '=', rowId)
           .execute();
+        await recordUsage(run, usage);
         return { kind: 'decided', choice: decided };
       }
 
@@ -3198,12 +3245,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
           outcome: 'llm_error',
           outcome_code: 'other',
           tool_call_count: 0,
+          input_tokens: usage.inputTokens,
+          output_tokens: usage.outputTokens,
           detail: clip(JSON.stringify(detail), DETAIL_CHARS),
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
         })
         .where('id', '=', rowId)
         .execute();
+      await recordUsage(run, usage);
     }
   }
 

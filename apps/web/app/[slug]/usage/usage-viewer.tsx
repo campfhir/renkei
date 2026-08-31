@@ -690,6 +690,67 @@ export default function UsageViewer({
         </section>
       )}
 
+      {report.byAgent.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+            By agent
+          </h2>
+          <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+            {report.scope === 'tenant'
+              ? 'Every agent in this organization.'
+              : 'Your own agents.'}{' '}
+            Open an agent for its full usage dashboard.
+          </p>
+          <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:bg-gray-900">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Agent</th>
+                  <th className="px-3 py-2 text-right font-medium">Calls</th>
+                  <th className="px-3 py-2 text-right font-medium">Failed</th>
+                  <th className="px-3 py-2 text-right font-medium">Tokens in</th>
+                  <th className="px-3 py-2 text-right font-medium">Tokens out</th>
+                </tr>
+              </thead>
+              <tbody>
+                {report.byAgent.map((agent) => (
+                  <tr key={agent.agentId} className="border-t border-gray-200 dark:border-gray-800">
+                    <td className="px-3 py-2">
+                      <Link
+                        href={
+                          report.scope === 'tenant'
+                            ? `/${slug}/admin/agents/${agent.agentId}`
+                            : `/${slug}/agents/${agent.agentId}`
+                        }
+                        className="font-medium text-blue-600 hover:underline dark:text-blue-400"
+                      >
+                        {agent.name}
+                      </Link>
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {agent.calls.toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {agent.errors > 0 ? (
+                        <span className="text-red-600 dark:text-red-400">{agent.errors}</span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {agent.inputTokens.toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums">
+                      {agent.outputTokens.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
       {groups.length > 1 && (
         <nav
           aria-label="Jump to connector"

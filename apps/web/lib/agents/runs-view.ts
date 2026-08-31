@@ -359,6 +359,56 @@ export interface AdminAgentRow {
   lastRunAt: string | null;
 }
 
+export interface AdminAgentDetail extends AdminAgentRow {
+  description: string | null;
+}
+
+/** One agent, for the admin detail page — the single-row sibling of listAgentsForAdmin. */
+export async function getAgentForAdmin(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string
+): Promise<AdminAgentDetail | null> {
+  if (!isUuid(agentId)) return null;
+  const agent = await db
+    .selectFrom('agents as a')
+    .leftJoin('identities as i', (join) =>
+      join.onRef('i.tenant_id', '=', 'a.tenant_id').onRef('i.subject', '=', 'a.owner_subject')
+    )
+    .select([
+      'a.id',
+      'a.name',
+      'a.owner_subject',
+      'a.enabled',
+      'a.description',
+      'a.description_status',
+      'i.email',
+    ])
+    .where('a.tenant_id', '=', tenantId)
+    .where('a.id', '=', agentId)
+    .executeTakeFirst();
+  if (!agent) return null;
+
+  const lastRun = await db
+    .selectFrom('agent_runs')
+    .select('created_at')
+    .where('agent_id', '=', agentId)
+    .orderBy('created_at', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+
+  return {
+    id: agent.id,
+    name: agent.name,
+    ownerSubject: agent.owner_subject,
+    ownerEmail: agent.email,
+    enabled: agent.enabled,
+    description: agent.description,
+    descriptionStatus: agent.description_status,
+    lastRunAt: lastRun ? lastRun.created_at.toISOString() : null,
+  };
+}
+
 /**
  * Every agent in the org — the oversight list. Run and failure tallies come
  * from agent_run_counters on the page itself, not from here: run ROWS are

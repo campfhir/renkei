@@ -116,7 +116,7 @@ export default function OversightTable({
                 <tr key={agent.id} className="border-b border-gray-100 dark:border-gray-900">
                   <td className="py-2 pr-3">
                     <Link
-                      href={`/${slug}/admin/agents/${agent.id}/runs`}
+                      href={`/${slug}/admin/agents/${agent.id}`}
                       className="font-medium text-blue-600 hover:underline dark:text-blue-400"
                     >
                       {agent.name}
