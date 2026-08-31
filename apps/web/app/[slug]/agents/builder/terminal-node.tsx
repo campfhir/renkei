@@ -2,8 +2,7 @@
 
 /**
  * The terminal (end marker) node card. Color says the result at a glance —
- * green finish, red failure, amber skip — and badges say which
- * notification channels fire when the run ends here.
+ * green finish, red failure, amber skip.
  */
 
 import type { TerminalStep } from '@renkei/agents';
@@ -57,29 +56,12 @@ export function TerminalNode({
         </span>
         <span aria-hidden="true">⏹</span>
         <span className="min-w-0 truncate text-sm font-medium">{terminal.name || 'End here'}</span>
-        {/*
-          An ending does call tools — the email, the WebEx note — but it
-          calls them directly, with no model deciding anything.
-        */}
+        {/* An ending is deterministic — no model decides anything here. */}
         <FixedMark />
       </span>
       <span className="mt-1 block text-xs text-gray-600 dark:text-gray-400">
         {RESULT_WORDING[terminal.result]}
       </span>
-      {terminal.notifyEmail || terminal.notifyWebex ? (
-        <span className="mt-1.5 flex flex-wrap items-center gap-1">
-          {terminal.notifyEmail ? (
-            <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-              ✉ emails you
-            </span>
-          ) : null}
-          {terminal.notifyWebex ? (
-            <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-              WebEx note
-            </span>
-          ) : null}
-        </span>
-      ) : null}
     </button>
   );
 }

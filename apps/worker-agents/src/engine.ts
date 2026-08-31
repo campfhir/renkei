@@ -227,6 +227,9 @@ interface ToolCallRecord {
   free?: boolean;
 }
 
+/** A step whose attempt row always has zero tool calls (a terminal ending). */
+const NO_TOOL_CALLS: ToolCallRecord[] = [];
+
 interface AttemptOutcome {
   succeeded: boolean;
   /**
@@ -1112,18 +1115,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
           }
           case 'terminal': {
             // An explicit end marker: the run ends HERE with the configured
-            // result — inside a branch path or loop body too — after the
-            // node's own notifications go out. Deterministic, no LLM.
-            const ended = await executeTerminal(
-              run,
-              node,
-              agentRow.name ?? 'Your agent',
-              mcp,
-              toolsByName,
-              vars,
-              ordinals,
-              iteration
-            );
+            // result — inside a branch path or loop body too. Deterministic,
+            // no LLM. Whether the owner hears about it is finalizeRun's
+            // call below, same as any other ending — this node no longer
+            // has notification channels of its own.
+            const ended = await executeTerminal(run, node, vars, ordinals, iteration);
             switch (node.result) {
               case 'failure':
                 // quiet=true: the node's OWN channels are the notification
@@ -2569,9 +2565,6 @@ export function createAgentRunHandler(deps: EngineDeps) {
   async function executeTerminal(
     run: RunRow,
     node: TerminalStep,
-    agentName: string,
-    mcp: McpClient,
-    toolsByName: Map<string, McpToolInfo>,
     vars: Record<string, string>,
     ordinals: Map<string, number>,
     iteration: number
@@ -2639,24 +2632,17 @@ export function createAgentRunHandler(deps: EngineDeps) {
         : node.result === 'stop'
           ? 'finished — nothing to do'
           : 'finished';
-    const heading = `Agent “${agentName}” ${resultPhrase}${node.name.trim() ? `: ${node.name.trim()}` : ''}`;
-    const { toolCalls, notes, deliverOwnerNotifications } = notificationDeliverer(mcp, toolsByName);
-    await deliverOwnerNotifications({
-      email: node.notifyEmail,
-      webex: node.notifyWebex,
-      heading,
-      body: message || heading,
-      ownerEmail: vars['user.email'],
-    });
 
     const detail = {
-      llmSummary: [`The flow ended here (${resultPhrase}).`, ...notes].join(' '),
+      llmSummary: `The flow ended here (${resultPhrase}).`,
       declaredOutcome:
         node.result === 'failure' ? 'failure' : node.result === 'stop' ? 'skipped' : 'success',
       terminalResult: node.result,
       ...(message ? { terminalMessage: clip(message, PREVIEW_CHARS) } : {}),
       ...(rendered.unbound.length > 0 ? { unboundVariables: rendered.unbound } : {}),
-      toolCalls,
+      // An ending calls no tools of its own anymore — this stays an empty,
+      // typed array so `detail`'s shape matches every other attempt row's.
+      toolCalls: NO_TOOL_CALLS,
     };
     // The row's status mirrors the run's ending, so the timeline never
     // shows a green pill at the node that failed the run on purpose (the
@@ -2668,7 +2654,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           node.result === 'failure' ? 'failed' : node.result === 'stop' ? 'stopped' : 'succeeded',
         outcome: 'terminal',
         outcome_code: null,
-        tool_call_count: toolCalls.length,
+        tool_call_count: 0,
         detail: clip(JSON.stringify(detail), DETAIL_CHARS),
         finished_at: sql`NOW()`,
         updated_at: sql`NOW()`,

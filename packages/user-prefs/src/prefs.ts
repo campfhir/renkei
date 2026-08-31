@@ -43,21 +43,39 @@ export interface PauseDeliveryPrefs {
   webex: boolean;
 }
 
+/**
+ * The events an AGENT can be overridden on — the same five that carry a
+ * real DeliveryPrefs/PauseDeliveryPrefs shape at the general-preference
+ * level. `acts` is deliberately excluded: connector × category × channel ×
+ * agent is a combinatorial size no table could stay scannable at.
+ */
+export interface AgentNotificationOverride {
+  runStarted?: DeliveryPrefs;
+  runFinished?: DeliveryPrefs;
+  runFailed?: DeliveryPrefs;
+  agentEditedByOthers?: DeliveryPrefs;
+  approvalNeeded?: PauseDeliveryPrefs;
+  questionAsked?: PauseDeliveryPrefs;
+}
+
+/** The five keys `AgentNotificationOverride` and the run/edit events share. */
+export type OverridableEvent = keyof AgentNotificationOverride;
+
 export interface NotificationPrefs {
   /**
    * Off by default. An agent starting is not news — it is the most frequent
    * thing that happens and the least informative, and defaulting it on
    * would teach people to ignore the whole feed in week one.
    */
-  runStarted: boolean;
-  runFinished: boolean;
-  runFailed: boolean;
+  runStarted: DeliveryPrefs;
+  runFinished: DeliveryPrefs;
+  runFailed: DeliveryPrefs;
   /**
    * On by default: when someone the agent was shared with saves a change
    * to it, the owner hears about it. The audit trail records the edit
    * either way — this switch only controls the notification.
    */
-  agentEditedByOthers: boolean;
+  agentEditedByOthers: DeliveryPrefs;
   /** A run pausing for a decision. The card is fixed on; email/WebEx are not. */
   approvalNeeded: PauseDeliveryPrefs;
   /** A run pausing for an answer. Same shape, same reasoning. */
@@ -70,6 +88,16 @@ export interface NotificationPrefs {
    * couple hundred acts between them.
    */
   acts: Record<string, Record<string, DeliveryPrefs>>;
+  /**
+   * agentId → the events THIS agent overrides. Still one person's own
+   * document — an override is a field the person themself chose, for a
+   * moment they read as belonging to that specific agent ("page me for
+   * Sunday Sweep even though I don't want that in general"), not a second,
+   * disconnected preference system: it fills in from, and is read
+   * alongside, everything above rather than replacing it (see
+   * `effectiveDelivery`/`effectivePauseDelivery`).
+   */
+  agentOverrides: Record<string, AgentNotificationOverride>;
   /** Whether anything pops up in the corner; the page always fills. */
   toastsEnabled: boolean;
   toastCorner: ToastCorner;
@@ -87,15 +115,18 @@ export interface NotificationPrefs {
 */
 
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
-  runStarted: false,
-  runFinished: true,
-  runFailed: true,
-  agentEditedByOthers: true,
+  // App defaults match the old plain booleans; email/WebEx start off for
+  // everyone until turned on, same as every other channel in this file.
+  runStarted: { app: false, email: false, webex: false },
+  runFinished: { app: true, email: false, webex: false },
+  runFailed: { app: true, email: false, webex: false },
+  agentEditedByOthers: { app: true, email: false, webex: false },
   // Off for everyone until turned on by hand — an approval or question
   // already shows in the app regardless, so this is purely "also page me".
   approvalNeeded: { email: false, webex: false },
   questionAsked: { email: false, webex: false },
   acts: {},
+  agentOverrides: {},
   toastsEnabled: true,
   toastCorner: 'bottom-right',
 };
@@ -143,12 +174,49 @@ export function wantsAct(
   return deliveryForCategory(prefs, connector, category)[channel];
 }
 
+/**
+ * The delivery that actually applies to one run/edit event — the agent's
+ * own override when it set one for this event, otherwise the general
+ * preference. `agentId` is optional because not every caller has one yet
+ * (a run whose agent was deleted mid-flight, a path with no agent context
+ * at all); no id or no override both mean "just the general preference".
+ */
+export function effectiveDelivery(
+  prefs: NotificationPrefs,
+  agentId: string | null | undefined,
+  key: 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers'
+): DeliveryPrefs {
+  const override = agentId ? prefs.agentOverrides[agentId]?.[key] : undefined;
+  return override ?? prefs[key];
+}
+
+/** Same idea as `effectiveDelivery`, for the two pause events. */
+export function effectivePauseDelivery(
+  prefs: NotificationPrefs,
+  agentId: string | null | undefined,
+  key: 'approvalNeeded' | 'questionAsked'
+): PauseDeliveryPrefs {
+  const override = agentId ? prefs.agentOverrides[agentId]?.[key] : undefined;
+  return override ?? prefs[key];
+}
+
 function boolOr(current: unknown, fallback: boolean): boolean {
   return typeof current === 'boolean' ? current : fallback;
 }
 
-/** One channel triple, with anything unrecognized falling back per-key. */
+/**
+ * One channel triple, with anything unrecognized falling back per-key.
+ *
+ * A bare boolean is also accepted, and treated as the App channel alone
+ * (email/webex default to off, same as they would for a fresh entry):
+ * `runStarted`/`runFinished`/`runFailed`/`agentEditedByOthers` and every
+ * `acts[connector][category]` entry used to BE a plain boolean before this
+ * shape existed, so a person's saved "off" from before that migration must
+ * still read as off, not silently reset to the default the moment they
+ * load this page again.
+ */
 function deliveryPrefs(current: unknown, fallback: DeliveryPrefs): DeliveryPrefs {
+  if (typeof current === 'boolean') return { ...fallback, app: current };
   if (typeof current !== 'object' || current === null || Array.isArray(current)) return fallback;
   const raw: Record<string, unknown> = { ...current };
   return {
@@ -177,13 +245,50 @@ function actsMap(current: unknown): Record<string, Record<string, DeliveryPrefs>
     }
     const inner: Record<string, DeliveryPrefs> = {};
     for (const [category, entry] of Object.entries(categories)) {
-      // Dropped, not defaulted: an entry that isn't a valid triple was never
-      // a real choice, and storing one anyway would invent a preference
-      // nobody set.
-      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+      // A boolean is the pre-migration shape (see deliveryPrefs) and a real
+      // choice someone made — kept. Anything else that isn't a valid triple
+      // was never a real choice, and storing one anyway would invent a
+      // preference nobody set, so THAT is dropped rather than defaulted.
+      const isBoolean = typeof entry === 'boolean';
+      if (!isBoolean && (typeof entry !== 'object' || entry === null || Array.isArray(entry))) {
+        continue;
+      }
       inner[category] = deliveryPrefs(entry, defaultDelivery(category));
     }
     if (Object.keys(inner).length > 0) out[connector] = inner;
+  }
+  return out;
+}
+
+/** One agent's override — every key optional, dropped rather than defaulted when malformed. */
+function agentOverrideOf(entry: unknown): AgentNotificationOverride | null {
+  if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return null;
+  const raw: Record<string, unknown> = { ...entry };
+  const out: AgentNotificationOverride = {};
+  for (const key of ['runStarted', 'runFinished', 'runFailed', 'agentEditedByOthers'] as const) {
+    const value = raw[key];
+    const isBoolean = typeof value === 'boolean';
+    if (isBoolean || (typeof value === 'object' && value !== null && !Array.isArray(value))) {
+      out[key] = deliveryPrefs(value, DEFAULT_NOTIFICATION_PREFS[key]);
+    }
+  }
+  for (const key of ['approvalNeeded', 'questionAsked'] as const) {
+    const value = raw[key];
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      out[key] = pauseDeliveryPrefs(value, DEFAULT_NOTIFICATION_PREFS[key]);
+    }
+  }
+  // An override with nothing valid in it isn't an override at all.
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** agentId → override, dropping any agent id whose entry has nothing usable. */
+function agentOverridesMap(current: unknown): Record<string, AgentNotificationOverride> {
+  if (typeof current !== 'object' || current === null || Array.isArray(current)) return {};
+  const out: Record<string, AgentNotificationOverride> = {};
+  for (const [agentId, entry] of Object.entries(current)) {
+    const parsed = agentOverrideOf(entry);
+    if (parsed) out[agentId] = parsed;
   }
   return out;
 }
@@ -196,10 +301,10 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
   const raw: Record<string, unknown> = { ...stored };
   const corner = raw.toastCorner === 'bottom-left' ? 'bottom-left' : 'bottom-right';
   return {
-    runStarted: boolOr(raw.runStarted, DEFAULT_NOTIFICATION_PREFS.runStarted),
-    runFinished: boolOr(raw.runFinished, DEFAULT_NOTIFICATION_PREFS.runFinished),
-    runFailed: boolOr(raw.runFailed, DEFAULT_NOTIFICATION_PREFS.runFailed),
-    agentEditedByOthers: boolOr(
+    runStarted: deliveryPrefs(raw.runStarted, DEFAULT_NOTIFICATION_PREFS.runStarted),
+    runFinished: deliveryPrefs(raw.runFinished, DEFAULT_NOTIFICATION_PREFS.runFinished),
+    runFailed: deliveryPrefs(raw.runFailed, DEFAULT_NOTIFICATION_PREFS.runFailed),
+    agentEditedByOthers: deliveryPrefs(
       raw.agentEditedByOthers,
       DEFAULT_NOTIFICATION_PREFS.agentEditedByOthers
     ),
@@ -209,6 +314,7 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
     ),
     questionAsked: pauseDeliveryPrefs(raw.questionAsked, DEFAULT_NOTIFICATION_PREFS.questionAsked),
     acts: actsMap(raw.acts),
+    agentOverrides: agentOverridesMap(raw.agentOverrides),
     toastsEnabled: boolOr(raw.toastsEnabled, DEFAULT_NOTIFICATION_PREFS.toastsEnabled),
     toastCorner: corner,
   };

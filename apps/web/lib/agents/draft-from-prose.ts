@@ -128,15 +128,10 @@ function currentLinesOf(nodes: AgentStepNode[]): string {
         case 'group':
           return `${indent}s${ordinal + 1}. [group] "${node.name}" — groups the indented steps below`;
         case 'terminal': {
-          const channels = [
-            ...(node.notifyEmail ? ['email'] : []),
-            ...(node.notifyWebex ? ['webex'] : []),
-          ];
+          const message = segmentsToTokens(node.message);
           return (
             `${indent}s${ordinal + 1}. [end] "${node.name}" — ends the whole run as ${node.result}` +
-            (channels.length > 0
-              ? `; notifies via ${channels.join('+')} with: ${segmentsToTokens(node.message)}`
-              : '; no notification')
+            (message ? `; note: ${message}` : '; no note')
           );
         }
         case 'action':
@@ -278,15 +273,19 @@ function promptOf(
       'through the run — leave it out of the steps and add an "edgeCases" note that the ' +
       'automation may need to ask mid-run; the user enables that from the builder\'s "Can ask ' +
       'questions" toggle, which is separate from these drafted steps.',
-    '- When the user wants to be NOTIFIED about how the flow ends ("email me if it fails", ' +
-      '"send me a WebEx note when it\'s done"), or wants a branch path to deliberately end ' +
-      'the whole run, use an END object as the LAST entry of that list: {"kind": "end", ' +
-      '"name": short label, "result": "success" (finished as intended) | "failure" (a ' +
-      'deliberate failure exit) | "stop" (nothing to do — graceful, silent), "message": what ' +
-      'the notification should say (may use {{var:...}} for real context, never {{tool:...}}), ' +
-      '"notify": array of "email" and/or "webex" (empty = no notification). Reaching an end ' +
-      'object ends the WHOLE run — never put steps after one in the same list. Only add one ' +
-      'when the description asks for a notification or an explicit ending.',
+    '- When a branch path should deliberately end the whole run with its own label, use an ' +
+      'END object as the LAST entry of that list: {"kind": "end", "name": short label, ' +
+      '"result": "success" (finished as intended) | "failure" (a deliberate failure exit) | ' +
+      '"stop" (nothing to do — graceful, silent), "message": an optional note on why, shown ' +
+      'on the run\'s own timeline (may use {{var:...}} for real context, never {{tool:...}}). ' +
+      'Reaching an end object ends the WHOLE run — never put steps after one in the same ' +
+      'list. Only add one when the description calls for an explicit, distinctly-labeled ' +
+      'ending — a plain finish at the end of the last step needs no END object at all. When ' +
+      'the user wants to be NOTIFIED ("email me if it fails", "send me a WebEx note when ' +
+      'it\'s done"), that is NOT something to draft as a step — it is that PERSON\'s own ' +
+      'Preferences (run finished/failed, approvals, questions), separate from these drafted ' +
+      'steps; leave it out of the steps and add an "edgeCases" note pointing them at ' +
+      'Preferences instead.',
     '- Carry the user\'s guardrails into the step that acts (e.g. "if this thread was already ' +
       'handled, do not update the same ticket again — stop instead").',
     '- Think hard about the EDGE CASES of these rules before answering: what happens when the ' +
@@ -508,14 +507,13 @@ function promptOf(
     '    "steps": array of steps — never empty' + (revising ? ',' : ''),
     ...(revising ? ['    "from": string or null — the sN id of the existing group, or null'] : []),
     '  }',
-    '  Or an end marker (ONLY when the description asks for a notification or an explicit ending):',
+    '  Or an end marker (ONLY when the description calls for a distinctly-labeled ending):',
     '  {',
     '    "kind": "end",',
     '    "name": string — a short label for the ending, never empty,',
     '    "result": "success", "failure", or "stop",',
-    '    "message": string or null — the notification text; {{var:...}} allowed,',
-    '      {{tool:...}} forbidden,',
-    '    "notify": array containing "email" and/or "webex", or empty' + (revising ? ',' : ''),
+    '    "message": string or null — an optional note on why; {{var:...}} allowed,',
+    '      {{tool:...}} forbidden' + (revising ? ',' : ''),
     ...(revising
       ? ['    "from": string or null — the sN id of the existing end marker, or null']
       : []),
@@ -729,7 +727,6 @@ const END_SHAPE = z.object({
   name: z.string().trim().min(1, 'is required and must be a non-empty string'),
   result: z.enum(['success', 'failure', 'stop']),
   message: z.string().nullable().optional(),
-  notify: z.array(z.enum(['email', 'webex'])).optional(),
   from: z.string().nullable().optional(),
 });
 
@@ -1467,7 +1464,6 @@ function parseEndEntry(entry: unknown, label: string, state: ParseState): Termin
       );
     }
   }
-  const notify = new Set(wire.notify ?? []);
   const origin = originOf(state, wire.from);
   const endOrigin = origin && origin.kind === 'terminal' ? origin : undefined;
   return {
@@ -1477,8 +1473,6 @@ function parseEndEntry(entry: unknown, label: string, state: ParseState): Termin
     result: wire.result,
     // Tool chips never belong in an ending's message — drop even valid ones.
     message: segmentsOf(messageText, new Set<string>(), state.knownVars),
-    notifyEmail: notify.has('email'),
-    notifyWebex: notify.has('webex'),
   };
 }
 

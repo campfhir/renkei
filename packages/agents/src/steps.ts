@@ -385,17 +385,15 @@ export interface TerminalStep {
   name: string;
   result: TerminalResult;
   /**
-   * The notification body — prose + var chips (never tool chips), rendered
-   * with the run's live variables so what lands in the inbox carries real
-   * context. May be empty when no channel is on. See the `var` segment's
-   * doc on InstructionSegment: a chip here renders verbatim, so it should
-   * name a variable already written FOR a person.
+   * A note on why the run ended here — prose + var chips (never tool
+   * chips), rendered with the run's live variables so it carries real
+   * context. Optional; shown on the run's own timeline as `terminalMessage`.
+   * Not a notification: an owner's "what should I hear about" preferences
+   * live in @renkei/user-prefs, not on the agent's own steps. See the `var`
+   * segment's doc on InstructionSegment: a chip here renders verbatim, so
+   * it should name a variable already written FOR a person.
    */
   message: InstructionSegment[];
-  /** Email the rendered message to the owner (sent from their own grant). */
-  notifyEmail: boolean;
-  /** Post the rendered message to the owner's WebEx note-to-self space. */
-  notifyWebex: boolean;
 }
 
 /**
@@ -840,14 +838,16 @@ function isGroupStepShape(
 
 function isTerminalStepShape(value: unknown): value is TerminalStep {
   if (typeof value !== 'object' || value === null) return false;
+  // Extra properties (a `notifyEmail`/`notifyWebex` pair from a doc saved
+  // before that feature was removed) are simply ignored here, same as any
+  // other unrecognized field — the shape check only requires what a
+  // TerminalStep still needs.
   const step: {
     id?: unknown;
     kind?: unknown;
     name?: unknown;
     result?: unknown;
     message?: unknown;
-    notifyEmail?: unknown;
-    notifyWebex?: unknown;
   } = value;
   if (step.kind !== 'terminal') return false;
   if (typeof step.id !== 'string' || step.id.length === 0) return false;
@@ -855,8 +855,7 @@ function isTerminalStepShape(value: unknown): value is TerminalStep {
   if (step.result !== 'success' && step.result !== 'failure' && step.result !== 'stop') {
     return false;
   }
-  if (!Array.isArray(step.message) || !step.message.every(isInstructionSegment)) return false;
-  return typeof step.notifyEmail === 'boolean' && typeof step.notifyWebex === 'boolean';
+  return Array.isArray(step.message) && step.message.every(isInstructionSegment);
 }
 
 const QUESTION_FIELD_TYPES = new Set<string>([

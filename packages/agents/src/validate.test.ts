@@ -807,8 +807,6 @@ describe('terminal nodes (version 4)', () => {
     name: 'Give up',
     result: 'failure',
     message: [text('The ticket could not be updated.')],
-    notifyEmail: true,
-    notifyWebex: false,
     ...overrides,
   });
 
@@ -818,16 +816,8 @@ describe('terminal nodes (version 4)', () => {
     expect(normalizeAgentDraft(draft({ steps: doc })).steps.version).toBe(9);
   });
 
-  it('requires a message when a notification channel is on', () => {
-    const issues = validateAgentDraft(
-      draft({ steps: { version: 4, steps: [step(), terminal({ message: [] })] } }),
-      TOOLS
-    );
-    expect(messagesOf(issues).some((message) => message.includes('notification'))).toBe(true);
-  });
-
-  it('allows a silent ending with no message', () => {
-    const silent = terminal({ message: [], notifyEmail: false, notifyWebex: false });
+  it('allows an ending with no message — it is only ever an optional note', () => {
+    const silent = terminal({ message: [] });
     expect(
       validateAgentDraft(draft({ steps: { version: 4, steps: [step(), silent] } }), TOOLS)
     ).toEqual([]);

@@ -2,12 +2,15 @@
 
 /**
  * The editor-panel body for a terminal (end marker) node: how the run ends
- * when it reaches this point, and what — if anything — gets sent to the
- * owner about it. The message is a chip editor with var chips so the
- * notification carries the run's real values ("Ticket [the ticket] could
- * not be updated"), which is exactly what the old generic failure mail
- * lacked; tool chips are deliberately not offered — an ending delivers,
- * it doesn't act.
+ * when it reaches this point, and an optional note on why. The message is a
+ * chip editor with var chips so the note carries the run's real values
+ * ("Ticket [the ticket] could not be updated"); tool chips are deliberately
+ * not offered — an ending describes, it doesn't act.
+ *
+ * This node used to also carry its own "email/WebEx me" switches. Removed:
+ * they duplicated (and could silently disagree with) the owner's own
+ * Preferences, which is now the one place that decides what reaches someone
+ * and how — see @renkei/user-prefs.
  */
 
 import type { TerminalResult, TerminalStep } from '@renkei/agents';
@@ -26,7 +29,7 @@ const RESULTS: { value: TerminalResult; label: string; hint: string }[] = [
   {
     value: 'failure',
     label: 'Fail the run',
-    hint: 'The run records as failed. Only the notifications you pick below are sent — the generic failure email is skipped for endings you configure here.',
+    hint: 'The run records as failed, same as any other failure — reflected in the owner’s own Preferences, not configured here.',
   },
   {
     value: 'stop',
@@ -48,7 +51,6 @@ export function TerminalEditor({
   invalidVars?: ReadonlySet<string>;
   issues: NodeIssue[];
 }) {
-  const notifies = terminal.notifyEmail || terminal.notifyWebex;
   const nameIssues = forField(issues, 'name');
   const messageIssues = forField(issues, 'message');
   return (
@@ -103,34 +105,8 @@ export function TerminalEditor({
         </div>
       </fieldset>
 
-      <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
-        <span className={labelClass}>Tell me when this happens</span>
-        <div className="flex flex-col gap-1.5 text-sm">
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={terminal.notifyEmail}
-              onChange={(event) => onChange({ ...terminal, notifyEmail: event.target.checked })}
-            />
-            Email me (sent from your own Outlook connection)
-          </label>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={terminal.notifyWebex}
-              onChange={(event) => onChange({ ...terminal, notifyWebex: event.target.checked })}
-            />
-            WebEx note to self
-          </label>
-        </div>
-        <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
-          A channel that isn’t connected is skipped — the run page always shows the ending either
-          way.
-        </p>
-      </div>
-
       <div>
-        <label className={labelClass}>{notifies ? 'The message' : 'Message (optional)'}</label>
+        <label className={labelClass}>Message (optional)</label>
         <ChipEditor
           value={terminal.message}
           onChange={(message) => onChange({ ...terminal, message })}
@@ -138,15 +114,17 @@ export function TerminalEditor({
           tools={[]}
           variables={variables}
           maxTools={0}
-          placeholder="What should the notification say — type / to include a saved detail"
+          placeholder="What should this ending say — type / to include a saved detail"
           ariaLabel={`Message of ending ${terminal.name || 'unnamed'}`}
           invalidVars={invalidVars}
           invalid={messageIssues.length > 0}
         />
         <FieldIssues messages={messageIssues} />
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          Sent as written, with saved details filled in from this run — so the notification carries
-          the context (which ticket, which email, what failed), not just “an agent failed”.
+          Shown on the run&rsquo;s own timeline, with saved details filled in from this run — so it
+          carries real context (which ticket, which email, what failed), not just “an agent
+          failed”. Whether anyone is told about this run at all is controlled in that person&rsquo;s
+          own Preferences, not here.
         </p>
       </div>
 

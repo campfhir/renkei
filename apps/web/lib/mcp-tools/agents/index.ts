@@ -1753,7 +1753,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     '{kind:"group"} — pure structure for readability: {id, name, steps:[...]}, executed as if',
     'inlined.',
     '{kind:"terminal"} — end the whole run here: {id, name, result:"success"|"failure"|"stop",',
-    'message:[segment,...], notifyEmail, notifyWebex}.',
+    'message:[segment,...] — an optional note on why, shown on the run\'s own timeline; whether',
+    'anyone is notified about the run at all is that PERSON\'s own Preferences, not a step field.',
     'A segment is {t:"text", v:"..."}, {t:"var", name:"<a variable this agent has>"} or',
     '{t:"tool", name:"<a skill name>"}.',
   ].join(' ');

@@ -1,9 +1,11 @@
 /**
  * The agents/run.failed handler — telling the owner their agent broke,
- * over BOTH channels they have connected: an email (sent from their own
- * Outlook grant, to their own address).
- * Each channel is skipped silently when unconnected; the run page shows
- * the failure regardless, so notification is reach, never the record.
+ * over whichever of Outlook/WebEx their own Preferences say they want AND
+ * have connected. Each channel is independently gated: `runFailed.email`
+ * for the Outlook mail, `runFailed.webex` for the WebEx note-to-self, and a
+ * channel that isn't connected is skipped silently either way — the run
+ * page shows the failure regardless, so notification is reach, never the
+ * record.
  *
  * Deliberately never throws on delivery: a notification retrying through
  * the queue would re-mail the owner every backoff. Only missing
@@ -12,9 +14,12 @@
 
 import { getDatabase } from '@renkei/db';
 import { graphRequest } from '@renkei/connector-microsoft';
+import { WebexClient } from '@renkei/connector-webex';
+import { effectiveDelivery, getNotificationPrefs } from '@renkei/user-prefs';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { resolveMicrosoftAccess } from './microsoft-access';
+import { resolveWebexUserAccessBySubject } from './webex-linked-user';
 import { registrationUrl } from './feed-url';
 import { logger } from '../logger';
 
@@ -85,6 +90,13 @@ export function createAgentRunFailedHandler(): EventHandler {
     if (!dbResult.ok) throw new Error('database unavailable');
     const db = dbResult.val;
 
+    // Cheapest check first: nothing on either channel means no grant
+    // lookups, no Graph/WebEx calls — just done. Resolved through the
+    // agent's own override when it set one, same as every other run event.
+    const prefs = await getNotificationPrefs(tenantId, payload.ownerSubject);
+    const wanted = effectiveDelivery(prefs, payload.agentId, 'runFailed');
+    if (!wanted.email && !wanted.webex) return;
+
     const [agent, run, identity, base] = await Promise.all([
       db.selectFrom('agents').select('name').where('id', '=', payload.agentId).executeTakeFirst(),
       db
@@ -100,10 +112,6 @@ export function createAgentRunFailedHandler(): EventHandler {
         .executeTakeFirst(),
       registrationUrl(tenantId),
     ]);
-    if (!identity?.email) {
-      // No recorded email = nowhere to deliver; the run page still shows it.
-      return;
-    }
 
     const agentName = agent?.name ?? 'Your agent';
     const reason =
@@ -113,45 +121,75 @@ export function createAgentRunFailedHandler(): EventHandler {
     const bodyText = `Your agent “${agentName}” stopped on a failure: ${reason}${link ? `\n\nSee the run: ${link}` : ''}`;
 
     // Channel 1: email from the owner's own Outlook grant, to themselves.
-    try {
-      const grant = await db
-        .selectFrom('provider_grants')
-        .select('provider_account_id')
-        .where('tenant_id', '=', tenantId)
-        .where('provider', '=', 'microsoft')
-        .where('subject', '=', payload.ownerSubject)
-        .executeTakeFirst();
-      if (grant) {
-        const access = await resolveMicrosoftAccess(tenantId, grant.provider_account_id);
-        const sent = await graphRequest(access.accessToken, '/me/sendMail', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            message: {
-              subject: `Agent “${agentName}” failed`,
-              body: { contentType: 'Text', content: bodyText },
-              toRecipients: [{ emailAddress: { address: identity.email } }],
-            },
-            saveToSentItems: false,
-          }),
-        });
-        if (!sent.ok) {
-          logger.warn('failure mail not sent for run {runId}', {
+    if (wanted.email) {
+      if (!identity?.email) {
+        // No recorded email = nowhere to deliver; the run page still shows it.
+      } else {
+        try {
+          const grant = await db
+            .selectFrom('provider_grants')
+            .select('provider_account_id')
+            .where('tenant_id', '=', tenantId)
+            .where('provider', '=', 'microsoft')
+            .where('subject', '=', payload.ownerSubject)
+            .executeTakeFirst();
+          if (grant) {
+            const access = await resolveMicrosoftAccess(tenantId, grant.provider_account_id);
+            const sent = await graphRequest(access.accessToken, '/me/sendMail', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: {
+                  subject: `Agent “${agentName}” failed`,
+                  body: { contentType: 'Text', content: bodyText },
+                  toRecipients: [{ emailAddress: { address: identity.email } }],
+                },
+                saveToSentItems: false,
+              }),
+            });
+            if (!sent.ok) {
+              logger.warn('failure mail not sent for run {runId}', {
+                component: 'worker/agent-notify',
+                runId: payload.runId,
+              });
+            }
+          }
+        } catch (error) {
+          logger.warn('failure mail errored for run {runId}: {error}', {
             component: 'worker/agent-notify',
             runId: payload.runId,
+            error: error instanceof Error ? error.message : String(error),
           });
         }
       }
-    } catch (error) {
-      logger.warn('failure mail errored for run {runId}: {error}', {
-        component: 'worker/agent-notify',
-        runId: payload.runId,
-        error: error instanceof Error ? error.message : String(error),
-      });
     }
 
-    // The old second channel — a WebEx DM from the org bot — went with the
-    // bot. WebEx cannot message yourself with your own token, so mail is
-    // the notification channel; the run page has everything either way.
+    // Channel 2: a WebEx note-to-self from the owner's own WebEx grant.
+    // WebEx cannot deliver a 1:1 message to your own address — see
+    // WebexClient.sendNoteToSelf for the find-or-create room dance that
+    // gets around it.
+    if (wanted.webex) {
+      try {
+        const access = await resolveWebexUserAccessBySubject(tenantId, payload.ownerSubject);
+        if (access) {
+          const client = new WebexClient(access.accessToken);
+          const sent = await client.sendNoteToSelf(
+            `**Agent “${agentName}” failed**\n\n${bodyText}`
+          );
+          if (!sent.ok) {
+            logger.warn('failure WebEx note not sent for run {runId}', {
+              component: 'worker/agent-notify',
+              runId: payload.runId,
+            });
+          }
+        }
+      } catch (error) {
+        logger.warn('failure WebEx note errored for run {runId}: {error}', {
+          component: 'worker/agent-notify',
+          runId: payload.runId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   };
 }

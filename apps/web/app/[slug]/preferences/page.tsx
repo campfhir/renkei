@@ -1,5 +1,6 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
+import { getDatabase } from '@renkei/db';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import { actsByConnector, ACT_CATEGORIES } from '@renkei/tool-outcomes';
 import { tenantForSlug } from '@/lib/tenant-slug';
@@ -26,9 +27,22 @@ export default async function PreferencesPage({
   const session = await getSessionFromCookies(tenant.id);
   if (!session) redirect(signInUrl(tenant.id, `/${slug}/preferences`));
 
-  const [notifications, channels] = await Promise.all([
+  const dbResult = getDatabase();
+  const [notifications, channels, myAgents] = await Promise.all([
     getNotificationPrefs(tenant.id, session.subject, { fresh: true }),
     getChannelAvailability(tenant.id, session.subject),
+    // Just id + name: the overrides picker names an agent, it doesn't need
+    // its steps — listAgents()'s full parse would be work spent for nothing
+    // this page shows.
+    dbResult.ok
+      ? dbResult.val
+          .selectFrom('agents')
+          .select(['id', 'name'])
+          .where('tenant_id', '=', tenant.id)
+          .where('owner_subject', '=', session.subject)
+          .orderBy('name')
+          .execute()
+      : [],
   ]);
 
   /*
@@ -85,6 +99,7 @@ export default async function PreferencesPage({
         connectors={connectors}
         channels={channels}
         initial={notifications}
+        agents={myAgents}
       />
     </div>
   );

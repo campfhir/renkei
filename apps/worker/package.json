@@ -28,6 +28,7 @@
     "@renkei/queue": "workspace:*",
     "@renkei/agents": "workspace:*",
     "@renkei/settings": "workspace:*",
+    "@renkei/user-prefs": "workspace:*",
     "@renkei/worker-loop": "workspace:*",
     "kysely": "^0.29.4",
     "pdfjs-dist": "catalog:",
