@@ -156,7 +156,12 @@ export default async function PeoplePage({
             >
               <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                 <div className="min-w-0">
-                  <span className="font-semibold">{person.name}</span>
+                  <Link
+                    href={`/${slug}/admin/people/${encodeURIComponent(person.subject)}`}
+                    className="font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                  >
+                    {person.name}
+                  </Link>
                   {person.email && person.email !== person.name && (
                     <span className="ml-2 break-all text-sm text-gray-500">{person.email}</span>
                   )}

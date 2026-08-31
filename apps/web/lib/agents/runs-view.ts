@@ -410,23 +410,29 @@ export async function getAgentForAdmin(
 }
 
 /**
- * Every agent in the org — the oversight list. Run and failure tallies come
- * from agent_run_counters on the page itself, not from here: run ROWS are
- * pruned by retention, counters are not.
+ * Every agent in the org, or every agent owned by one person — the shared
+ * query behind the oversight list and the people page's drill-down. Run and
+ * failure tallies come from agent_run_counters on the page itself, not from
+ * here: run ROWS are pruned by retention, counters are not.
+ *
+ * `ownerSubject: null` means every agent in the tenant; a subject narrows to
+ * just theirs. Same "null is the only way to widen" shape `getAgentUsageSummaries`
+ * already uses, for the same reason.
  */
-export async function listAgentsForAdmin(
+async function listAgentRows(
   db: Kysely<DB>,
-  tenantId: string
+  tenantId: string,
+  ownerSubject: string | null
 ): Promise<AdminAgentRow[]> {
-  const agents = await db
+  let query = db
     .selectFrom('agents as a')
     .leftJoin('identities as i', (join) =>
       join.onRef('i.tenant_id', '=', 'a.tenant_id').onRef('i.subject', '=', 'a.owner_subject')
     )
     .select(['a.id', 'a.name', 'a.owner_subject', 'a.enabled', 'a.description_status', 'i.email'])
-    .where('a.tenant_id', '=', tenantId)
-    .orderBy('a.name')
-    .execute();
+    .where('a.tenant_id', '=', tenantId);
+  if (ownerSubject !== null) query = query.where('a.owner_subject', '=', ownerSubject);
+  const agents = await query.orderBy('a.name').execute();
 
   const rows: AdminAgentRow[] = [];
   for (const agent of agents) {
@@ -448,4 +454,20 @@ export async function listAgentsForAdmin(
     });
   }
   return rows;
+}
+
+export async function listAgentsForAdmin(
+  db: Kysely<DB>,
+  tenantId: string
+): Promise<AdminAgentRow[]> {
+  return listAgentRows(db, tenantId, null);
+}
+
+/** One person's own agents — the people page's drill-down. */
+export async function listAgentsForOwner(
+  db: Kysely<DB>,
+  tenantId: string,
+  ownerSubject: string
+): Promise<AdminAgentRow[]> {
+  return listAgentRows(db, tenantId, ownerSubject);
 }
