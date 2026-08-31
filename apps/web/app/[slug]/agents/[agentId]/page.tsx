@@ -16,6 +16,9 @@ import { agentMarkdown } from '@/lib/agents/export-markdown';
 import { Icon, ICONS } from '@/components/icons';
 import { triggerBadge, triggerSummary } from '@/lib/agents/trigger-summary';
 import CollapsibleSection from '@/components/collapsible-section';
+import AgentEnabledToggle from '@/components/agent-enabled-toggle';
+import AgentUsagePanel from '@/components/agent-usage-panel';
+import { getAgentTokenUsage, getAgentToolUsage } from '@/lib/agents/agent-usage';
 import MemoryPanel from './memory-panel';
 import KnowledgePanel from './knowledge-panel';
 import ShareAgentButton from './share-agent';
@@ -23,6 +26,8 @@ import CopyMarkdownButton from './copy-markdown-button';
 import RunNowButton from './run-now-button';
 import RecentRuns from './recent-runs';
 import StepsOutline from './steps-outline';
+
+const TOOL_USAGE_WINDOW_DAYS = 30;
 
 interface InvocationCounts {
   today: number;
@@ -112,14 +117,17 @@ export default async function AgentOverviewPage({
   if (!access) notFound();
   const agent = access.agent;
 
-  const [recentRuns, invocations, settingsResult, ownerDisplay] = await Promise.all([
-    listRunsForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, { limit: 5 }),
-    invocationCountsOf(dbResult.val, tenant.id, agentId),
-    getOrgSettings(tenant.id),
-    access.viewerIsOwner
-      ? Promise.resolve(null)
-      : getIdentityDisplay(tenant.id, access.ownerSubject),
-  ]);
+  const [recentRuns, invocations, settingsResult, ownerDisplay, tokenUsage, toolUsage] =
+    await Promise.all([
+      listRunsForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, { limit: 5 }),
+      invocationCountsOf(dbResult.val, tenant.id, agentId),
+      getOrgSettings(tenant.id),
+      access.viewerIsOwner
+        ? Promise.resolve(null)
+        : getIdentityDisplay(tenant.id, access.ownerSubject),
+      getAgentTokenUsage(dbResult.val, tenant.id, agentId),
+      getAgentToolUsage(dbResult.val, tenant.id, agentId, 'owner', TOOL_USAGE_WINDOW_DAYS),
+    ]);
   const reviewNotes = parseReviewNotes(agent.reviewNotes);
   // Same rule the agents list applies: a manual run of an event-only agent
   // starts with every trigger.* variable unbound, which is a confusing
@@ -187,14 +195,20 @@ export default async function AgentOverviewPage({
         <div className="flex min-w-0 items-center gap-2 lg:flex-1">
           <BackLink href={`/${slug}/agents`} label="All agents" />
           <h1 className="min-w-0 truncate text-xl font-bold">{agent.name}</h1>
-          <span
-            className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${
-              agent.enabled
-                ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
-                : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
-            }`}
-          >
-            {agent.enabled ? 'On' : 'Off'}
+          <span className="ml-auto shrink-0">
+            {access.viewerIsOwner ? (
+              <AgentEnabledToggle tenantId={tenant.id} agent={agent} />
+            ) : (
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                  agent.enabled
+                    ? 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
+                    : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
+                }`}
+              >
+                {agent.enabled ? 'On' : 'Off'}
+              </span>
+            )}
           </span>
         </div>
         {/* Beside the name only where the row can hold both — see the rail
@@ -324,6 +338,15 @@ export default async function AgentOverviewPage({
                 {dailyCap.toLocaleString('en-US')}-per-day cap.
               </p>
             ) : null}
+          </CollapsibleSection>
+
+          <CollapsibleSection title="Usage">
+            <AgentUsagePanel
+              tokens={tokenUsage}
+              tools={toolUsage}
+              toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
+              toolsPartial={false}
+            />
           </CollapsibleSection>
 
           <CollapsibleSection title="Recent runs" defaultOpen>

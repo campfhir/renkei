@@ -23,6 +23,7 @@ import { ROLE_OPERATOR, ROLE_USER } from '@/lib/access';
 // Only async functions may be exported from a 'use server' module, so the
 // descriptor type is imported from its own module wherever it is needed.
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
+import { getAgentUsageSummaries, type AgentUsageSummary } from '@/lib/agents/agent-usage';
 import {
   clampDays,
   safeTimeZone,
@@ -76,6 +77,13 @@ export interface UsageReport {
   orgTop: ToolUsageRow[];
   /** The five failing most in the current scope. Empty when nothing failed. */
   troubled: ToolUsageRow[];
+  /**
+   * Usage broken down by agent — the caller's own agents in the 'self'
+   * scope, every agent in the tenant in 'tenant' (an operator only). Same
+   * scope the rest of the report already uses; there is no separate toggle
+   * for it.
+   */
+  byAgent: AgentUsageSummary[];
   error?: string;
   signedOut?: boolean;
 }
@@ -92,6 +100,7 @@ const EMPTY: UsageReport = {
   myTop: [],
   orgTop: [],
   troubled: [],
+  byAgent: [],
 };
 
 /**
@@ -286,6 +295,8 @@ export async function getUsageReport(
       .sort((left, right) => right.errors - left.errors)
       .slice(0, TOP_TOOLS);
 
+    const byAgent = await getAgentUsageSummaries(db, tenantId, tenantWide ? null : ownSubject, days);
+
     return {
       scope,
       canSeeTenant: isOperator,
@@ -296,6 +307,7 @@ export async function getUsageReport(
       myTop,
       orgTop,
       troubled,
+      byAgent,
       trend: zeroFill(
         trendRows.map((row) => ({
           day: row.day,

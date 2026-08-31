@@ -178,3 +178,36 @@ export async function recordAgentRunFailure(
   if (!result.ok) return err('DB_ERROR' as const, { cause: result.err });
   return ok(undefined);
 }
+
+/**
+ * The token-side tally (migration 072), bumped by the worker engine every
+ * time an attempt's token spend is finalized — one call per
+ * `agent_run_steps` row that records non-zero usage, same as that row's own
+ * `input_tokens`/`output_tokens` columns (071). Lands on TODAY, not the
+ * attempt's start day, matching recordAgentRunFailure. A no-op call (both
+ * zero) still round-trips to the database; callers skip it themselves when
+ * there is nothing to add. Best effort: a finished attempt must not fail
+ * over its bookkeeping.
+ */
+export async function recordAgentRunTokenUsage(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string,
+  inputTokens: number,
+  outputTokens: number
+): Promise<Result<void, 'DB_ERROR'>> {
+  const result = await wrapAsync(
+    () =>
+      sql`
+        INSERT INTO agent_run_counters (tenant_id, agent_id, day, runs, input_tokens, output_tokens)
+        VALUES (${tenantId}, ${agentId}, CURRENT_DATE, 0, ${inputTokens}, ${outputTokens})
+        ON CONFLICT (tenant_id, agent_id, day)
+        DO UPDATE SET
+          input_tokens = agent_run_counters.input_tokens + excluded.input_tokens,
+          output_tokens = agent_run_counters.output_tokens + excluded.output_tokens
+      `.execute(db),
+    'DB_ERROR' as const
+  );
+  if (!result.ok) return err('DB_ERROR' as const, { cause: result.err });
+  return ok(undefined);
+}

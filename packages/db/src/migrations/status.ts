@@ -100,6 +100,8 @@ export const EXPECTED_MIGRATIONS = [
   '067-push-subscriptions',
   '069-agent-can-ask-questions',
   '070-actionable-items-attempt',
+  '071-agent-run-step-tokens',
+  '072-agent-run-counter-tokens',
 ];
 
 export interface MigrationStatus {
