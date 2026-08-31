@@ -137,6 +137,20 @@ export function granularJiraScopes(toolName: string, readOnly: boolean): string[
   if (toolName === 'jira_create_remote_link') {
     return ['read:issue:jira', 'write:remote-link:jira'];
   }
+  // Work types (issue types): GET /issuetype and /issuetype/project both
+  // document this exact granular set (docs/jira-cloud-rest-api-open-api-spec.json),
+  // not just read:issue:jira. Project-scoped lookups also resolve a project
+  // key through /project/search (jira_list_projects' own scopes), which
+  // read:project.property:jira covers here too.
+  if (toolName === 'jira_list_work_types') {
+    return [
+      'read:issue-type:jira',
+      'read:avatar:jira',
+      'read:project-category:jira',
+      'read:project:jira',
+      'read:project.property:jira',
+    ];
+  }
   const deleteScope = DELETE_TOOL_SCOPES[toolName];
   if (deleteScope) return ['read:issue:jira', deleteScope];
   return readOnly ? ['read:issue:jira'] : ['read:issue:jira', 'write:issue:jira'];

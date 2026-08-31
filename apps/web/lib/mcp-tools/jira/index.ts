@@ -18,6 +18,7 @@ import { registerUtilityTools } from './utilities';
 import { registerUserTools } from './users';
 import { registerWorklogTools } from './worklogs';
 import { registerIssueLinkTools } from './issue-links';
+import { registerWorkTypeTools } from './work-types';
 import { registerVersionTools } from './versions';
 import { registerComponentTools } from './components';
 import { registerFilterTools } from './filters';
@@ -35,6 +36,7 @@ export async function registerJiraTools(
   await registerSprintTools(server, context, auth);
   await registerUserTools(server, context, auth);
   await registerIssueLinkTools(server, context, auth);
+  await registerWorkTypeTools(server, context, auth);
   await registerVersionTools(server, context, auth);
   await registerComponentTools(server, context, auth);
   await registerFilterTools(server, context, auth);
