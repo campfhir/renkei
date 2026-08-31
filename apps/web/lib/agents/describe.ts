@@ -174,15 +174,11 @@ function nodeLines(
               : node.result === 'stop'
                 ? 'the whole run ends here gracefully as skipped'
                 : 'the whole run finishes successfully here';
-          const channels = [
-            ...(node.notifyEmail ? ['an email to the owner'] : []),
-            ...(node.notifyWebex ? ['a WebEx note to the owner'] : []),
-          ];
           return [
             `${indent}${label} ${node.name} (an end marker) — when reached, ${wording}`,
-            channels.length > 0
-              ? `${indent}   sends ${channels.join(' and ')} with: ${instructionPreview(node.message)}`
-              : `${indent}   sends no notification`,
+            node.message.length > 0
+              ? `${indent}   note: ${instructionPreview(node.message)}`
+              : `${indent}   no note attached`,
           ].join('\n');
         }
         default: {

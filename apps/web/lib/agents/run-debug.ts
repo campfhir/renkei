@@ -133,14 +133,7 @@ function snapshotLines(run: RunDetail): string[] {
             : node.result === 'stop'
               ? 'stops the run (skipped)'
               : 'finishes the run';
-        const channels = [
-          ...(node.notifyEmail ? ['email'] : []),
-          ...(node.notifyWebex ? ['WebEx note'] : []),
-        ];
-        lines.push(
-          `${indent}${ordinal + 1}. End: ${node.name} — ${wording}` +
-            (channels.length > 0 ? `; notifies via ${channels.join(' + ')}` : '')
-        );
+        lines.push(`${indent}${ordinal + 1}. End: ${node.name} — ${wording}`);
         const message = instructionPreview(node.message);
         if (message) lines.push(`${indent}   message: ${message}`);
         break;

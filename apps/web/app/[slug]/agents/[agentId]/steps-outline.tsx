@@ -71,10 +71,6 @@ function NodeList({
                 : node.result === 'stop'
                   ? 'Skips the rest of the run here'
                   : 'Finishes the run here';
-            const channels = [
-              ...(node.notifyEmail ? ['emails you'] : []),
-              ...(node.notifyWebex ? ['sends a WebEx note'] : []),
-            ];
             return (
               <li
                 key={node.id}
@@ -82,10 +78,7 @@ function NodeList({
               >
                 <span className="mr-2 font-semibold">{(ordinals.get(node.id) ?? 0) + 1}.</span>
                 <span className="font-medium">⏹ {node.name}</span>
-                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  {wording}
-                  {channels.length > 0 ? ` — ${channels.join(' and ')}` : ''}
-                </p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{wording}</p>
                 {node.message.length > 0 ? (
                   <p className="mt-1 text-gray-600 dark:text-gray-400">
                     {instructionPreview(node.message)}

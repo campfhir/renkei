@@ -629,13 +629,6 @@ function validateTerminalStep(
   if (terminal.name.trim().length === 0) {
     issues.push({ path: `${prefix}.name`, message: 'Give this ending a short name.' });
   }
-  const notifies = terminal.notifyEmail || terminal.notifyWebex;
-  if (notifies && segmentChars(terminal.message) === 0) {
-    issues.push({
-      path: `${prefix}.message`,
-      message: 'Say what the notification should tell you — that message is the whole point.',
-    });
-  }
   if (segmentChars(terminal.message) > MAX_INSTRUCTION_CHARS) {
     issues.push({
       path: `${prefix}.message`,

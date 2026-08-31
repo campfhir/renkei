@@ -177,17 +177,27 @@ describe('isAgentStepsDoc', () => {
       name: 'Give up',
       result: 'failure',
       message: [{ t: 'text', v: 'It broke.' }],
-      notifyEmail: true,
-      notifyWebex: false,
     };
     expect(isAgentStepsDoc({ version: 4, steps: [terminal] })).toBe(true);
     expect(isAgentStepsDoc({ version: 3, steps: [terminal] })).toBe(true);
     expect(isAgentStepsDoc({ version: 4, steps: [{ ...terminal, result: 'explode' }] })).toBe(
       false
     );
-    expect(isAgentStepsDoc({ version: 4, steps: [{ ...terminal, notifyEmail: 'yes' }] })).toBe(
-      false
-    );
+  });
+
+  it('still admits a terminal node saved before notifyEmail/notifyWebex were removed', () => {
+    // Extra properties from an older doc shape are ignored, not rejected —
+    // the same tolerance any other unrecognized field gets.
+    const terminal = {
+      id: randomUUID(),
+      kind: 'terminal',
+      name: 'Give up',
+      result: 'failure',
+      message: [{ t: 'text', v: 'It broke.' }],
+      notifyEmail: true,
+      notifyWebex: false,
+    };
+    expect(isAgentStepsDoc({ version: 4, steps: [terminal] })).toBe(true);
   });
 
   it('admits the v8 handling vocabulary and rejects a malformed when', () => {
@@ -446,8 +456,6 @@ describe('needsApproval gate (version 9)', () => {
       name: 'Stop',
       result: 'stop',
       message: [],
-      notifyEmail: false,
-      notifyWebex: false,
     };
     const node = gated({ onNotApproved: { id: randomUUID(), name: 'R', steps: [terminal] } });
     expect(isAgentStepsDoc({ version: CURRENT_STEPS_VERSION, steps: [node] })).toBe(true);
@@ -609,7 +617,7 @@ describe('nodeUsesModel', () => {
     ).toBe(true);
   });
 
-  it('is false for a terminal — it calls tools, but with no model deciding', () => {
+  it('is false for a terminal — deterministic, no model deciding', () => {
     expect(
       nodeUsesModel({
         id: id(),
@@ -617,8 +625,6 @@ describe('nodeUsesModel', () => {
         name: 'End',
         result: 'success',
         message: [{ t: 'text', v: 'done' }],
-        notifyEmail: false,
-        notifyWebex: false,
       })
     ).toBe(false);
   });

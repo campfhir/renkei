@@ -81,8 +81,6 @@ export function newTerminal(): TerminalStep {
     // failure or skip ending when that's what it marks.
     result: 'success',
     message: [],
-    notifyEmail: false,
-    notifyWebex: false,
   };
 }
 

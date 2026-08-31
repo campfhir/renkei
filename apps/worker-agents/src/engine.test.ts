@@ -2020,7 +2020,7 @@ maybe('agent run engine', () => {
     ]);
   });
 
-  it('a terminal failure node ends the run failed AND quiet, delivering its own notifications', async () => {
+  it('a terminal failure node ends the run failed AND quiet, with no channels of its own', async () => {
     const terminalId = randomUUID();
     const doc: AgentStepsDoc = {
       version: 4,
@@ -2034,8 +2034,6 @@ maybe('agent run engine', () => {
             { t: 'text', v: 'Could not handle: ' },
             { t: 'var', name: 'trigger.subject' },
           ],
-          notifyEmail: true,
-          notifyWebex: true,
         },
       ],
     };
@@ -2083,9 +2081,6 @@ maybe('agent run engine', () => {
     expect(run.error_kind).toBe('step_failed');
     expect(run.error).toContain('Give up');
     expect(run.error).toContain('PROJ-42 is broken');
-
-    // quiet: the node's own channels are the notification — the generic
-    // run.failed mail must not double up.
     expect(finalized[0]).toMatchObject({ status: 'failed', quiet: true });
 
     const rows = await db
@@ -2096,15 +2091,13 @@ maybe('agent run engine', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('failed');
     expect(rows[0].outcome).toBe('terminal');
-    expect(rows[0].tool_call_count).toBe(2);
-
-    // Both channels got the RENDERED message — real context, not a generic
-    // "your agent failed".
-    const mail = calls.find((call) => call.name === 'outlook_send_mail');
-    expect(mail?.args).toMatchObject({ to: ['owner@example.com'] });
-    expect(String(mail?.args.body)).toContain('Could not handle: PROJ-42 is broken');
-    const note = calls.find((call) => call.name === 'webex_note_to_self');
-    expect(String(note?.args.markdown)).toContain('Could not handle: PROJ-42 is broken');
+    expect(rows[0].tool_call_count).toBe(0);
+    // The ending is a note on the run's own timeline, not a delivery — it
+    // no longer has email/WebEx channels of its own to call.
+    expect(calls).toHaveLength(0);
+    expect(rows[0].detail).toMatchObject({
+      terminalMessage: 'Could not handle: PROJ-42 is broken',
+    });
   });
 
   it('a silent stop terminal ends the run stopped with no delivery', async () => {
@@ -2117,8 +2110,6 @@ maybe('agent run engine', () => {
           name: 'Nothing to do',
           result: 'stop',
           message: [],
-          notifyEmail: false,
-          notifyWebex: false,
         },
       ],
     };
