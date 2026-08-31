@@ -93,7 +93,13 @@ export default async function AgentRunDetailPage({
         {run.status === 'queued' || run.status === 'running' || run.status === 'waiting' ? (
           <CancelButton tenantId={tenant.id} agentId={agentId} runId={runId} />
         ) : (
-          <RerunButton tenantId={tenant.id} slug={slug} agentId={agentId} runId={runId} />
+          <RerunButton
+            tenantId={tenant.id}
+            slug={slug}
+            agentId={agentId}
+            runId={runId}
+            agentName={agent.name}
+          />
         )}
       </div>
       {pauseCard ? (

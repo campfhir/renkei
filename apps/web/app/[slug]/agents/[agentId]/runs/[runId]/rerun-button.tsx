@@ -13,37 +13,44 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { sendJsonFull } from '@/lib/fetch-json';
+import { rerunAgentRun } from '@/lib/agents/invoke-client';
+import ConfirmRunModal from '../../../confirm-run-modal';
 
 export default function RerunButton({
   tenantId,
   slug,
   agentId,
   runId,
+  agentName,
 }: {
   tenantId: string;
   slug: string;
   agentId: string;
   runId: string;
+  agentName: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmMessage, setConfirmMessage] = useState<string | null>(null);
 
-  const rerun = async () => {
+  const rerun = async (confirm = false) => {
     if (busy) return;
     setBusy(true);
     setError(null);
-    const result = await sendJsonFull<{ runId: string }>(
-      `/api/tenant/${tenantId}/agents/${agentId}/runs/${runId}/rerun`,
-      'POST'
-    );
-    if (result.error || !result.data?.runId) {
-      setError(result.error ?? 'The run could not be started.');
-      setBusy(false);
-      return;
+    const result = await rerunAgentRun(tenantId, agentId, runId, confirm);
+    setBusy(false);
+    switch (result.kind) {
+      case 'needs-confirm':
+        setConfirmMessage(result.message);
+        return;
+      case 'error':
+        setError(result.message);
+        return;
+      case 'started':
+        setConfirmMessage(null);
+        if (result.runId) router.push(`/${slug}/agents/${agentId}/runs/${result.runId}`);
     }
-    router.push(`/${slug}/agents/${agentId}/runs/${result.data.runId}`);
   };
 
   return (
@@ -58,6 +65,15 @@ export default function RerunButton({
         {busy ? 'Starting…' : '↻ Run again with current steps'}
       </button>
       {error ? <span className="text-xs text-red-600 dark:text-red-400">{error}</span> : null}
+      {confirmMessage ? (
+        <ConfirmRunModal
+          agentName={agentName}
+          message={confirmMessage}
+          busy={busy}
+          onCancel={() => setConfirmMessage(null)}
+          onConfirm={() => void rerun(true)}
+        />
+      ) : null}
     </>
   );
 }

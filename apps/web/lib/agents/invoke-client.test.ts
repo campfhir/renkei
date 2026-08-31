@@ -5,7 +5,7 @@
  * a red error banner.
  */
 
-import { invokeAgentRun } from './invoke-client';
+import { invokeAgentRun, rerunAgentRun } from './invoke-client';
 
 function mockFetch(status: number, body: unknown) {
   const fetchMock = jest.fn(async (_url: string, init?: RequestInit) => {
@@ -53,5 +53,26 @@ describe('invokeAgentRun', () => {
     await invokeAgentRun('tenant-1', 'agent-1', true);
     const [, init] = fetchMock.mock.calls[0];
     expect(JSON.parse(String(init?.body))).toEqual({ confirm: true });
+  });
+});
+
+describe('rerunAgentRun', () => {
+  it('hits the rerun route for that run, not the invoke route', async () => {
+    const fetchMock = mockFetch(202, { runId: 'run-2' });
+    await rerunAgentRun('tenant-1', 'agent-1', 'run-1');
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/tenant/tenant-1/agents/agent-1/runs/run-1/rerun');
+  });
+
+  it('turns an already-in-progress 409 into needs-confirm here too', async () => {
+    mockFetch(409, {
+      error: 'A run of this agent is already queued.',
+      code: 'already-in-progress',
+    });
+    const result = await rerunAgentRun('tenant-1', 'agent-1', 'run-1');
+    expect(result).toEqual({
+      kind: 'needs-confirm',
+      message: 'A run of this agent is already queued.',
+    });
   });
 });
