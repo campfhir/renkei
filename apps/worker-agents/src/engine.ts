@@ -2368,7 +2368,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // EXCEPT a resolved ask_person pause, whose whole point is that the
       // step is NOT done: resolveQuestion above already replayed its vars
       // and returned null specifically so a fresh attempt gets spent here,
-      // not skipped by this generic fast-path.
+      // not skipped by this generic fast-path. A step can carry MORE than
+      // one 'succeeded' row per iteration now (migration 070) — one per
+      // resolved pause, plus the step's real completion — so this MUST
+      // read the latest attempt, never an arbitrary one, or a stale
+      // pause row (pauseKind: 'question') can shadow a genuine finish and
+      // burn the step's whole attempt budget re-running work already done.
       const succeeded = await db
         .selectFrom('agent_run_steps')
         .select(['id', 'detail'])
@@ -2376,6 +2381,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         .where('step_id', '=', step.id)
         .where('iteration', '=', iteration)
         .where('status', '=', 'succeeded')
+        .orderBy('attempt', 'desc')
         .executeTakeFirst();
       if (succeeded) {
         const detail: { pauseKind?: unknown } =

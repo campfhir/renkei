@@ -2932,6 +2932,124 @@ maybe('agent run engine', () => {
         'webex_note_to_self',
       ]);
     });
+
+    it('does not re-spend a resolved question when a redelivery re-enters the step it just finished', async () => {
+      // A step can carry more than one 'succeeded' row per iteration once
+      // it has paused (migration 070): the pause row that resolveQuestion
+      // closes, and the real completion the fresh attempt after it
+      // records. `current_step_id` is written BEFORE a step runs and only
+      // advances to the next node AFTER it returns — so a crash/redelivery
+      // landing in that narrow window resumes AT a step that has already
+      // truly finished. The step-advance fast-path must read that step's
+      // LATEST row — if it instead finds the stale pause row (pauseKind:
+      // 'question'), it wrongly decides the step still isn't done and
+      // burns another attempt re-running work that already finished,
+      // eventually failing an already-completed round outright once the
+      // budget runs out.
+      const askStep: AgentStepNode = {
+        id: randomUUID(),
+        name: 'Ask which project',
+        instruction: [{ t: 'text', v: 'Find out which project this belongs to.' }],
+        tool: null,
+        maxAttempts: 3,
+        failureHandling: [],
+        saveAs: 'answer',
+      };
+      const nextStep: AgentStepNode = {
+        id: randomUUID(),
+        name: 'Log the project',
+        instruction: [{ t: 'text', v: 'Note the project down.' }],
+        tool: null,
+        maxAttempts: 1,
+        failureHandling: [],
+      };
+      const doc: AgentStepsDoc = { version: CURRENT_STEPS_VERSION, steps: [askStep, nextStep] };
+      if (!isAgentStepsDoc(doc)) throw new Error('test doc is not a valid steps doc');
+      const { runId, agentId } = await seedRun(doc);
+      await db
+        .updateTable('agents')
+        .set({ can_ask_questions: true })
+        .where('id', '=', agentId)
+        .execute();
+
+      let modelCalls = 0;
+      const llm = stubLlm((_request, call) => {
+        modelCalls += 1;
+        if (call === 0) return useTool('ask_person', { message: 'Which project?' });
+        return finish('success');
+      });
+      const handler = handlerWith(
+        llm,
+        stubMcp([], () => okToolResult)
+      );
+
+      // 1) Parks behind the question.
+      await handler({ payload: { runId } });
+      const card = await cardOf(runId);
+      await db
+        .updateTable('actionable_items')
+        .set({
+          status: 'answered',
+          result: JSON.stringify({ answers: {} }),
+          decided_at: sql`NOW()`,
+        })
+        .where('id', '=', card.id)
+        .execute();
+
+      // 2) The question resolves, the ask step genuinely finishes (attempt
+      // 1 = the pause, attempt 2 = the real completion), and the run runs
+      // on to succeed.
+      await handler({ payload: { runId } });
+      const afterSecond = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(afterSecond.status).toBe('succeeded');
+      expect(modelCalls).toBe(3); // ask, finish the ask step, then the next step's own attempt
+      const askRowsAfterSecond = await db
+        .selectFrom('agent_run_steps')
+        .select(({ fn }) => fn.countAll<string>().as('count'))
+        .where('run_id', '=', runId)
+        .where('step_id', '=', askStep.id)
+        .executeTakeFirstOrThrow();
+      expect(Number(askRowsAfterSecond.count)).toBe(2);
+
+      // 3) Simulate a crash in the window between the ask step returning
+      // 'advance' and current_step_id moving to the next node: force the
+      // run back to 'running' with current_step_id still pointing at the
+      // (already-finished) ask step, and redeliver. Resume must land on
+      // the ask step, recognize it as done from its LATEST row, and
+      // advance without asking the model again or inserting a third
+      // attempt row.
+      await db
+        .updateTable('agent_runs')
+        .set({
+          status: 'running',
+          current_step_id: askStep.id,
+          error_kind: null,
+          error: null,
+          finished_at: null,
+        })
+        .where('id', '=', runId)
+        .execute();
+      await handler({ payload: { runId } });
+
+      const afterThird = await db
+        .selectFrom('agent_runs')
+        .select('status')
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(afterThird.status).toBe('succeeded');
+      expect(modelCalls).toBe(3); // unchanged — no wasted redo of the ask step
+      const askRowsAfterThird = await db
+        .selectFrom('agent_run_steps')
+        .select(({ fn }) => fn.countAll<string>().as('count'))
+        .where('run_id', '=', runId)
+        .where('step_id', '=', askStep.id)
+        .executeTakeFirstOrThrow();
+      expect(Number(askRowsAfterThird.count)).toBe(2);
+    });
   });
 });
 
