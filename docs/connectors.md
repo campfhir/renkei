@@ -1,0 +1,77 @@
+# Connectors
+
+Every provider integration lives in its own `packages/connector-*` package and follows the data-contract shape `RENKEI.md`'s "Connectors" section describes: what's stored in the knowledge index, what's live-query-only, and (where indexing happens) a `verifyAccess(userId, refs[]) → allowed subset` implementation that the retrieval gate calls before disclosing anything (see [`knowledge-and-security.md`](./knowledge-and-security.md)). None of the packages below talk to a database directly for their provider calls — connector packages wrap the provider API and export a verifier; the MCP tool handlers in `apps/web/lib/mcp-tools/` are the layer that actually calls them per request.
+
+| Connector | Provider(s) | Auth model | Indexed? |
+| --- | --- | --- | --- |
+| `connector-atlassian` | Jira, Confluence, JSM | Per-user OAuth (Atlassian Cloud 3LO) | Live-verified via re-query |
+| `connector-microsoft` | Outlook mail/calendar/tasks, SharePoint, OneDrive | Per-user delegated OAuth (Graph) | Personal items: ownership-scoped; documents: live-verified |
+| `connector-fileshares` | Org-registered SMB/SFTP shares | Per-share, per-user credentials | Not indexed — no `verifyAccess`, retrieval-only |
+| `connector-onbase` | Hyland OnBase (on-prem) | Auth Code + PKCE against the tenant's own IdP | Not indexed (deferred) — retrieval-only |
+| `connector-webex` | WebEx messaging | Bot token for sending; per-user OAuth for ingestion | Live-verified (room membership) |
+| `connector-zoom` | Zoom meetings/recordings/transcripts | Per-user OAuth + webhook download tokens | Ownership-scoped (host-only, v1) |
+
+## connector-atlassian
+
+Wraps Jira, Confluence, and JSM via a shared `atlassianFetch` gateway (`client.ts`). Auth is per-user OAuth — no service account, so a read is always scoped to what the calling user's own Atlassian token allows. The package stores nothing itself; the MCP tool surface for Jira/JSM/Confluence lives in `apps/web/lib/mcp-tools/`.
+
+`verifier.ts` exports `createJiraAccessVerifier` and `createConfluenceAccessVerifier`. Both re-issue the candidate refs as a single batched query **using the requesting user's own token** — Jira via a `key IN (...)` JQL search, Confluence via a multi-id `GET /wiki/api/v2/pages` — so the provider's filtered response *is* the access answer; nothing is interpreted or cached locally. Default-deny on a missing credential, an API failure, or a malformed ref.
+
+Other exports: `jiraRefId`/`confluenceRefId` (ref-id format for the knowledge index), ADF/wiki-markup converters (`adfToMarkdown`, `wikiToMarkdown`), and `fieldScreenFor`/`createScreenFor` for resolving which fields are editable on a given issue/screen.
+
+## connector-microsoft
+
+Wraps Microsoft Graph: Outlook mail/calendar/tasks, SharePoint document libraries, OneDrive. Auth is per-user delegated OAuth (`provider-grants`'s `MicrosoftAdapter`) — there is no org-wide credential, so ingestion can never see more than the connecting user can.
+
+Two distinct ACL shapes, matching two distinct data shapes:
+
+- **Personal items** (mail, calendar, tasks) are indexed only into their owner's own view. Ref id is `${upn}/${kind}/${id}`. `createMicrosoftAccessVerifier` (`verifier.ts`) does a pure ownership-string comparison — `ownerScoped: true`, no network call, because the only thing that can change is who owns the item, and that's fixed at index time.
+- **Documents** (SharePoint/OneDrive drives) are shared by nature. Ref id is `${driveId}/${itemId}`. `createSharepointAccessVerifier` (`drive-verifier.ts`) checks live, per-reader, via a Graph `$batch` call — a real network round trip on every retrieval.
+
+Sync uses Graph delta queries (`runDeltaRound`/`initialDeltaUrl`) with change-notification subscriptions (`createGraphSubscription`/`renewGraphSubscription`) that the worker renews on a sweep. Other exports: `graphRequest`/`graphBatch`, `graphUploadViaSession`, `microsoftRefId`/`sharepointRefId`.
+
+## connector-fileshares
+
+Wraps org-registered SMB/SFTP network shares. An admin registers only connection details (protocol/host/port/share/root path) — each employee separately connects with **their own** credentials, sealed via `credentials.ts` (`encryptCredentials`/`decryptCredentials`).
+
+No knowledge index and no `verifyAccess`: authorization is delegated entirely to the file server itself, at operation time. This was a deliberate narrowing (migration 062) — an earlier v1 shipped an admin service-credential plus a Renkei-owned ACL engine, and that design was removed as too much security surface for what it bought. See [`fileshares-connector-design.md`](./fileshares-connector-design.md) for the history.
+
+Exports: `openBackend` (protocol backend selection over `smb.ts`/`sftp.ts`), `service*` operations (`serviceListFolder`, `serviceReadFile`, `serviceStatEntry`, …) called by `apps/worker-fileshares`, and `store.ts`'s `createShare`/`upsertConnection`/`listConnectedShares`.
+
+## connector-onbase
+
+Wraps Hyland OnBase document management. Unusually, both the API server *and* the identity provider are tenant-supplied and typically on-prem — not a Renkei-registered SaaS app — so auth is Authorization Code + PKCE against whatever IdP the tenant configures.
+
+The package itself (`packages/connector-onbase`) is deliberately dependency- and I/O-free: OIDC discovery parsing, keyword-type name resolution, the keyword-merge logic that guards the replace-everything `PUT`, query building, and a catalog cache. All actual HTTP happens in `apps/worker-onbase`, a dedicated egress process, because the tenant's private-network host can't go through `apps/web`'s SSRF guard.
+
+Knowledge indexing is explicitly deferred — this connector is retrieval-only in v1, with no content watches and no `verifyAccess` (there is no OnBase entry in the knowledge index today). Search has no free-text mode; queries are scoped to a document type or a saved custom query, per `RENKEI.md`'s design. Sensitive note text is fetched via a separate endpoint intentionally excluded from any index.
+
+Exports: `parseDiscoveryDocument`/`oidcDiscoveryUrl`, `resolveKeywordTypeRef`/`mergeKeywordCollections`, `buildQueryInformation`, `CatalogCache`. See [`onbase-connector-design.md`](./onbase-connector-design.md), which has an "As built (v1)" section documenting the final decisions.
+
+## connector-webex
+
+Wraps WebEx messaging/rooms plus its bot framework (webhooks, Adaptive Cards). Auth is dual: sending messages/cards uses a **bot token** (`WebexClient`), but knowledge **ingestion is user-scoped** — each watcher registers their own all-spaces webhook and token; there's no bot-driven reading.
+
+For opted-in watchers, message text is indexed as `webex` chunks with ref `${roomId}/${messageId}`; metadata indexed is room id, message id, sender email, and timestamps. Everything else (room list, membership, history) is live-query only.
+
+`verifier.ts` exports `createWebexAccessVerifier` (bot-token room-membership check) and `createWebexUserAccessVerifier` (the per-requesting-user-token variant used at retrieval time) — both verify "is this user currently a member of this message's room," asked live, once per distinct room in the candidate set.
+
+Other exports: `verifyWebexSignature`/`parseWebhookPayload`, `ensureWebexWebhooks`/`inspectWebexWebhooks` (webhook health/repair, run on the worker's periodic sweep — see the root README's WebEx section), `buildPushToRenkeiCard`/`parsePushAction` (the "forward to Renkei" card flow, use case #3 in `RENKEI.md`).
+
+## connector-zoom
+
+Wraps Zoom meetings, cloud recordings, and transcripts, driven by webhooks fired on recording/transcript completion. Auth is per-user OAuth (`provider-grants`'s `ZoomAdapter`) plus the webhook's own short-lived `download_token` for fetching transcripts.
+
+Stores meeting transcripts (VTT flattened to text via `vttToText`) and AI Companion summaries fetched on webhook events; metadata indexed is host id/email, meeting id/instance uuid, and timestamps.
+
+`createZoomAccessVerifier` (`verifier.ts`) implements v1's host-only ACL: ref id is `${hostEmail}/${meetingUuid}`, verification is a pure string comparison (`ownerScoped: true`, no network call) since the host of a meeting is immutable once recorded. Participant-based ACL (letting invitees, not just the host, retrieve a transcript) is explicitly future work, not yet implemented.
+
+Other exports: `ZoomClient`, `verifyZoomSignature`/`parseZoomWebhookPayload`, `zoomRefId`/`hostOfZoomRefId`.
+
+## connector-config
+
+Not a provider wrapper — the shared per-tenant connector configuration store every connector above reads through. `getConnectorConfig`/`setConnectorConfig` read/write the `connector_configs` table (enabled flag, non-secret `settings`, `secrets` sealed via `@renkei/crypto`'s envelope); `readConnectorConfigCached`/`invalidateConnectorConfigCache` provide a 60-second cache for hot per-event paths. This is what lets connector credentials and policy live in the database rather than environment variables (`RENKEI.md` Decision #13).
+
+## Cross-cutting
+
+Scoping a connector to an audience of users/groups (a fourth narrowing gate on top of the capability registry) is described in [`connector-access-control-design.md`](./connector-access-control-design.md). The batch/live `verifyAccess` contract itself, and why every candidate is checked at object level rather than a coarser container/space granularity, is Decision #18 in [`RENKEI.md`](../RENKEI.md).
