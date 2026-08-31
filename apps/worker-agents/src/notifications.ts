@@ -283,7 +283,11 @@ export function createNotifier(db: Kysely<DB>, context: NotifierContext): Notifi
     },
 
     async runFinished(status, error) {
-      const wanted = status === 'failed' ? context.prefs.runFailed : context.prefs.runFinished;
+      // runFailed carries email/WebEx too (the interactive worker's own
+      // run-failure notifier reads those, not this in-process one) — only
+      // its App channel gates this row, same as runFinished's plain flag.
+      const wanted =
+        status === 'failed' ? context.prefs.runFailed.app : context.prefs.runFinished;
       if (!wanted) return;
       await write(db, context, {
         kind: status === 'failed' ? 'run_failed' : 'run_finished',

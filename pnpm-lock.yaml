@@ -275,6 +275,9 @@ importers:
       '@renkei/settings':
         specifier: workspace:*
         version: link:../../packages/settings
+      '@renkei/user-prefs':
+        specifier: workspace:*
+        version: link:../../packages/user-prefs
       '@renkei/worker-loop':
         specifier: workspace:*
         version: link:../../packages/worker-loop

@@ -281,6 +281,10 @@ export default function PreferencesForm({
     update({ ...prefs, [event]: { ...prefs[event], [channel]: on } });
   }
 
+  function setRunFailedChannel(channel: keyof DeliveryPrefs, on: boolean) {
+    update({ ...prefs, runFailed: { ...prefs.runFailed, [channel]: on } });
+  }
+
   /** Curated rows only, App channel — the summary a collapsed connector shows. */
   const appOnCount = (row: ConnectorRow) =>
     row.categories.filter((category) => deliveryForCategory(prefs, row.key, category).app).length;
@@ -322,21 +326,22 @@ export default function PreferencesForm({
           </p>
         </div>
 
-        <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
-          <h3 className="font-semibold">Runs</h3>
-          <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
-            When an agent of yours starts and stops — and when someone you shared one with changes
-            it.
-          </p>
+        <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+          <div className="p-4 pb-3">
+            <h3 className="font-semibold">Runs</h3>
+            <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
+              When an agent of yours starts and stops — and when someone you shared one with
+              changes it.
+            </p>
+          </div>
           {/* Side by side once there is room, so this does not occupy a
               third of the page to say very little. */}
-          <div className="@container mt-3">
+          <div className="@container px-4">
             <div className="grid grid-cols-1 gap-x-6 gap-y-2 @xl:grid-cols-3">
               {(
                 [
                   ['runStarted', 'A run starts', 'Frequent, and rarely the interesting part.'],
                   ['runFinished', 'A run finishes', null],
-                  ['runFailed', 'A run fails', null],
                   [
                     'agentEditedByOthers',
                     'Someone edits a shared agent of yours',
@@ -361,6 +366,61 @@ export default function PreferencesForm({
               ))}
             </div>
           </div>
+
+          {/*
+            "A run fails" alone gets a channel row: it is the one run event
+            with an actual email/WebEx sender behind it (the interactive
+            worker's failure notifier), so it is the one that can honestly
+            offer those columns. The other three stay plain checkboxes above
+            rather than gain inert Outlook/WebEx boxes nothing would ever
+            send for.
+          */}
+          <div className="mt-3 overflow-x-auto border-t border-gray-200 dark:border-gray-800">
+            <table className="w-full min-w-[420px] border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                  <th className="px-4 py-2 font-medium">When…</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">App</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">Outlook</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">WebEx</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="px-4 py-3 align-top">
+                    <span className="font-medium">A run fails</span>
+                  </td>
+                  <td className="px-2 py-3 text-center align-top">
+                    <input
+                      type="checkbox"
+                      aria-label="A run fails — App"
+                      checked={prefs.runFailed.app}
+                      onChange={(event) => setRunFailedChannel('app', event.target.checked)}
+                    />
+                  </td>
+                  <td className="px-2 py-3 text-center align-top">
+                    <input
+                      type="checkbox"
+                      aria-label="A run fails — Outlook"
+                      checked={channels.outlook && prefs.runFailed.email}
+                      disabled={!channels.outlook}
+                      onChange={(event) => setRunFailedChannel('email', event.target.checked)}
+                    />
+                  </td>
+                  <td className="px-2 py-3 text-center align-top">
+                    <input
+                      type="checkbox"
+                      aria-label="A run fails — WebEx"
+                      checked={channels.webex && prefs.runFailed.webex}
+                      disabled={!channels.webex}
+                      onChange={(event) => setRunFailedChannel('webex', event.target.checked)}
+                    />
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <ChannelHints channels={channels} slug={slug} />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">

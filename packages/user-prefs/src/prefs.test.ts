@@ -43,7 +43,11 @@ describe('defaults', () => {
   it('does not announce a run starting', () => {
     expect(DEFAULT_NOTIFICATION_PREFS.runStarted).toBe(false);
     expect(DEFAULT_NOTIFICATION_PREFS.runFinished).toBe(true);
-    expect(DEFAULT_NOTIFICATION_PREFS.runFailed).toBe(true);
+    expect(DEFAULT_NOTIFICATION_PREFS.runFailed).toEqual({
+      app: true,
+      email: false,
+      webex: false,
+    });
   });
 
   it('starts email and WebEx off for approvals and questions', () => {
@@ -132,6 +136,25 @@ describe('parseNotificationPrefs', () => {
     expect(parsed.toastCorner).toBe('bottom-right');
     // 'tools' is gone from the type entirely now — nothing to assert beyond
     // that the object above type-checks without it.
+  });
+
+  it('reads a pre-migration plain boolean as the App channel alone, not the default', () => {
+    // runFailed and every acts[connector][category] entry used to BE a
+    // plain boolean. Someone's saved "off" from before this shape existed
+    // must still read as off — not silently reset to the (on) default the
+    // next time this loads, which is what treating it as "unrecognised"
+    // would do.
+    const parsed = parseNotificationPrefs({
+      runFailed: false,
+      acts: { jira: { created: false, other: true } },
+    });
+    expect(parsed.runFailed).toEqual({ app: false, email: false, webex: false });
+    expect(parsed.acts).toEqual({
+      jira: {
+        created: { app: false, email: false, webex: false },
+        other: { app: true, email: false, webex: false },
+      },
+    });
   });
 
   it('accepts the other corner', () => {

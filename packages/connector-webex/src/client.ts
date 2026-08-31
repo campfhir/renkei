@@ -1,6 +1,10 @@
 /**
- * Minimal WebEx API client, bot-token scoped. Live queries only — this
- * connector persists nothing itself (see the data contract in index.ts).
+ * Minimal WebEx API client. Built for the bot token, but the bearer is
+ * just a constructor argument — `listRooms`/`sendNoteToSelf` and friends
+ * work identically against a user's own OAuth token, which is how a
+ * caller with no MCP session of its own (the interactive worker) can
+ * still act as a specific person. Live queries only — this connector
+ * persists nothing itself (see the data contract in index.ts).
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
@@ -15,6 +19,10 @@ const API_BASE = 'https://webexapis.com/v1';
  * message processing has nothing to say why it never came back.
  */
 const REQUEST_TIMEOUT_MS = 15_000;
+/** The space `sendNoteToSelf` finds or creates — see its own doc comment. */
+const NOTE_TO_SELF_TITLE = 'Note to Self';
+/** At most this many group rooms probed for membership before giving up and creating one. */
+const SOLO_PROBE_CAP = 8;
 
 /**
  * Process-scoped, split by lane: every WebexClient in this process shares
@@ -389,5 +397,91 @@ export class WebexClient {
       : [];
 
     return ok({ id, emails, displayName: optionalString(body.displayName) });
+  }
+
+  /**
+   * Group rooms the token's owner belongs to — never 1:1s, which always
+   * have exactly two members and so can never be the solo room
+   * `sendNoteToSelf` is hunting for.
+   */
+  private async listGroupRooms(max = 100): Promise<Result<WebexRoom[], 'WEBEX_API_ERROR'>> {
+    const result = await this.get(`/rooms?max=${max}&type=group&sortBy=lastactivity`);
+    if (!result.ok) return result;
+    const items = result.val.items;
+    if (!Array.isArray(items)) {
+      return err('WEBEX_API_ERROR' as const, { message: 'rooms response missing items' });
+    }
+    const rooms: WebexRoom[] = [];
+    for (const item of items) {
+      if (!isRecord(item)) continue;
+      const room = readRoom(item);
+      if (room) rooms.push(room);
+    }
+    return ok(rooms);
+  }
+
+  /** How many people are currently in a room. */
+  private async roomMemberCount(roomId: string): Promise<Result<number, 'WEBEX_API_ERROR'>> {
+    const result = await this.get(`/memberships?roomId=${encodeURIComponent(roomId)}&max=2`);
+    if (!result.ok) return result;
+    const items = result.val.items;
+    if (!Array.isArray(items)) {
+      return err('WEBEX_API_ERROR' as const, { message: 'memberships response missing items' });
+    }
+    return ok(items.length);
+  }
+
+  private async createRoom(title: string): Promise<Result<{ id: string }, 'WEBEX_API_ERROR'>> {
+    const result = await this.request('POST', '/rooms', { title });
+    if (!result.ok) return result;
+    const id = optionalString(result.val.id);
+    if (!id) return err('WEBEX_API_ERROR' as const, { message: 'room response missing id' });
+    return ok({ id });
+  }
+
+  /**
+   * Post to the token owner's own private note-to-self space. WebEx cannot
+   * deliver a 1:1 message to your own address, so this is THE way to WebEx
+   * yourself: find a group room containing only you (title matches probed
+   * first, so the space this creates is found on the first probe of every
+   * later call), creating one titled "Note to Self" if none exists yet,
+   * then post there.
+   *
+   * A from-scratch twin of the `webex_note_to_self` MCP tool
+   * (apps/web/lib/mcp-tools/webex/index.ts), for callers with no MCP
+   * session of their own to call that tool through — today, the
+   * interactive worker's run-failure notifier.
+   */
+  async sendNoteToSelf(
+    markdown: string
+  ): Promise<Result<{ id: string; roomId: string }, 'WEBEX_API_ERROR'>> {
+    const roomsResult = await this.listGroupRooms(100);
+    if (!roomsResult.ok) return roomsResult;
+    const titled = (room: WebexRoom) =>
+      (room.title ?? '').trim().toLowerCase() === NOTE_TO_SELF_TITLE.toLowerCase();
+    const candidates = [
+      ...roomsResult.val.filter(titled),
+      ...roomsResult.val.filter((room) => !titled(room)),
+    ];
+
+    let roomId = '';
+    for (const room of candidates.slice(0, SOLO_PROBE_CAP)) {
+      const countResult = await this.roomMemberCount(room.id);
+      if (!countResult.ok) return countResult;
+      if (countResult.val === 1) {
+        roomId = room.id;
+        break;
+      }
+    }
+
+    if (!roomId) {
+      const created = await this.createRoom(NOTE_TO_SELF_TITLE);
+      if (!created.ok) return created;
+      roomId = created.val.id;
+    }
+
+    const sent = await this.postMessage({ roomId, markdown });
+    if (!sent.ok) return sent;
+    return ok({ id: sent.val.id, roomId });
   }
 }

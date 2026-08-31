@@ -51,7 +51,15 @@ export interface NotificationPrefs {
    */
   runStarted: boolean;
   runFinished: boolean;
-  runFailed: boolean;
+  /**
+   * The one run event with a real email/WebEx delivery behind it (the
+   * interactive worker's run-failure notifier — see
+   * apps/worker/src/handlers/agent-run-failed.ts), so it alone carries
+   * the full three-channel shape. `runStarted`/`runFinished` stay plain
+   * booleans until something actually sends for them too — a checkbox
+   * with no send behind it is worse than not offering it.
+   */
+  runFailed: DeliveryPrefs;
   /**
    * On by default: when someone the agent was shared with saves a change
    * to it, the owner hears about it. The audit trail records the edit
@@ -89,7 +97,9 @@ export interface NotificationPrefs {
 export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   runStarted: false,
   runFinished: true,
-  runFailed: true,
+  // App on by default (matches the old plain boolean); email/WebEx off for
+  // everyone until turned on, same as every other channel in this file.
+  runFailed: { app: true, email: false, webex: false },
   agentEditedByOthers: true,
   // Off for everyone until turned on by hand — an approval or question
   // already shows in the app regardless, so this is purely "also page me".
@@ -148,7 +158,18 @@ function boolOr(current: unknown, fallback: boolean): boolean {
 }
 
 /** One channel triple, with anything unrecognized falling back per-key. */
+/**
+ * One channel triple, with anything unrecognized falling back per-key.
+ *
+ * A bare boolean is also accepted, and treated as the App channel alone
+ * (email/webex default to off, same as they would for a fresh entry): both
+ * `runFailed` and every `acts[connector][category]` entry used to BE a
+ * plain boolean before this shape existed, so a person's saved "off" from
+ * before this migration must still read as off, not silently reset to the
+ * default the moment they load this page again.
+ */
 function deliveryPrefs(current: unknown, fallback: DeliveryPrefs): DeliveryPrefs {
+  if (typeof current === 'boolean') return { ...fallback, app: current };
   if (typeof current !== 'object' || current === null || Array.isArray(current)) return fallback;
   const raw: Record<string, unknown> = { ...current };
   return {
@@ -177,10 +198,14 @@ function actsMap(current: unknown): Record<string, Record<string, DeliveryPrefs>
     }
     const inner: Record<string, DeliveryPrefs> = {};
     for (const [category, entry] of Object.entries(categories)) {
-      // Dropped, not defaulted: an entry that isn't a valid triple was never
-      // a real choice, and storing one anyway would invent a preference
-      // nobody set.
-      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
+      // A boolean is the pre-migration shape (see deliveryPrefs) and a real
+      // choice someone made — kept. Anything else that isn't a valid triple
+      // was never a real choice, and storing one anyway would invent a
+      // preference nobody set, so THAT is dropped rather than defaulted.
+      const isBoolean = typeof entry === 'boolean';
+      if (!isBoolean && (typeof entry !== 'object' || entry === null || Array.isArray(entry))) {
+        continue;
+      }
       inner[category] = deliveryPrefs(entry, defaultDelivery(category));
     }
     if (Object.keys(inner).length > 0) out[connector] = inner;
@@ -198,7 +223,7 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
   return {
     runStarted: boolOr(raw.runStarted, DEFAULT_NOTIFICATION_PREFS.runStarted),
     runFinished: boolOr(raw.runFinished, DEFAULT_NOTIFICATION_PREFS.runFinished),
-    runFailed: boolOr(raw.runFailed, DEFAULT_NOTIFICATION_PREFS.runFailed),
+    runFailed: deliveryPrefs(raw.runFailed, DEFAULT_NOTIFICATION_PREFS.runFailed),
     agentEditedByOthers: boolOr(
       raw.agentEditedByOthers,
       DEFAULT_NOTIFICATION_PREFS.agentEditedByOthers
