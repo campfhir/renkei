@@ -39,6 +39,8 @@ export default function OversightTable({
   failuresByAgent,
   totals,
   failureTotals,
+  tokenInTotals,
+  tokenOutTotals,
   dailyCap,
 }: {
   slug: string;
@@ -47,6 +49,8 @@ export default function OversightTable({
   failuresByAgent: Record<string, RunBuckets>;
   totals: RunBuckets;
   failureTotals: RunBuckets;
+  tokenInTotals: RunBuckets;
+  tokenOutTotals: RunBuckets;
   dailyCap: number | null;
 }): React.ReactNode {
   const [bucket, setBucket] = useState<keyof RunBuckets>('today');
@@ -92,6 +96,12 @@ export default function OversightTable({
               ? ` — of the ${dailyCap.toLocaleString('en-US')}-per-day cap`
               : ''}
           </span>
+        </p>
+        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          <span className="tabular-nums">{tokenInTotals[bucket].toLocaleString('en-US')}</span>{' '}
+          tokens in ·{' '}
+          <span className="tabular-nums">{tokenOutTotals[bucket].toLocaleString('en-US')}</span>{' '}
+          tokens out, across all agents
         </p>
       </div>
 

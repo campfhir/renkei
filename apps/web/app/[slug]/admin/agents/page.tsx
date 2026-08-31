@@ -37,6 +37,21 @@ interface BucketRow {
   failed_all_time: string;
 }
 
+interface TokenBucketRow {
+  in_today: string;
+  in_week: string;
+  in_month: string;
+  in_quarter: string;
+  in_year: string;
+  in_all_time: string;
+  out_today: string;
+  out_week: string;
+  out_month: string;
+  out_quarter: string;
+  out_year: string;
+  out_all_time: string;
+}
+
 function toBuckets(row: BucketRow | undefined): RunBuckets {
   return {
     today: Number(row?.today ?? 0),
@@ -59,6 +74,28 @@ function toFailureBuckets(row: BucketRow | undefined): RunBuckets {
   };
 }
 
+function toTokenInBuckets(row: TokenBucketRow | undefined): RunBuckets {
+  return {
+    today: Number(row?.in_today ?? 0),
+    week: Number(row?.in_week ?? 0),
+    month: Number(row?.in_month ?? 0),
+    quarter: Number(row?.in_quarter ?? 0),
+    year: Number(row?.in_year ?? 0),
+    allTime: Number(row?.in_all_time ?? 0),
+  };
+}
+
+function toTokenOutBuckets(row: TokenBucketRow | undefined): RunBuckets {
+  return {
+    today: Number(row?.out_today ?? 0),
+    week: Number(row?.out_week ?? 0),
+    month: Number(row?.out_month ?? 0),
+    quarter: Number(row?.out_quarter ?? 0),
+    year: Number(row?.out_year ?? 0),
+    allTime: Number(row?.out_all_time ?? 0),
+  };
+}
+
 const BUCKET_COLUMNS = sql`
   COALESCE(SUM(runs) FILTER (WHERE day = CURRENT_DATE), 0) AS today,
   COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS week,
@@ -72,6 +109,21 @@ const BUCKET_COLUMNS = sql`
   COALESCE(SUM(failures) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS failed_quarter,
   COALESCE(SUM(failures) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS failed_year,
   COALESCE(SUM(failures), 0) AS failed_all_time
+`;
+
+const TOKEN_BUCKET_COLUMNS = sql`
+  COALESCE(SUM(input_tokens) FILTER (WHERE day = CURRENT_DATE), 0) AS in_today,
+  COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS in_week,
+  COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS in_month,
+  COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS in_quarter,
+  COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS in_year,
+  COALESCE(SUM(input_tokens), 0) AS in_all_time,
+  COALESCE(SUM(output_tokens) FILTER (WHERE day = CURRENT_DATE), 0) AS out_today,
+  COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS out_week,
+  COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS out_month,
+  COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS out_quarter,
+  COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS out_year,
+  COALESCE(SUM(output_tokens), 0) AS out_all_time
 `;
 
 export default async function AdminAgentsPage({
@@ -91,13 +143,15 @@ export default async function AdminAgentsPage({
   const agents = await listAgentsForAdmin(dbResult.val, tenant.id);
   const settingsResult = await getOrgSettings(tenant.id);
 
-  const totalsResult = await sql<BucketRow>`
-    SELECT ${BUCKET_COLUMNS}
+  const totalsResult = await sql<BucketRow & TokenBucketRow>`
+    SELECT ${BUCKET_COLUMNS}, ${TOKEN_BUCKET_COLUMNS}
     FROM agent_run_counters
     WHERE tenant_id = ${tenant.id}
   `.execute(dbResult.val);
   const totals = toBuckets(totalsResult.rows[0]);
   const failureTotals = toFailureBuckets(totalsResult.rows[0]);
+  const tokenInTotals = toTokenInBuckets(totalsResult.rows[0]);
+  const tokenOutTotals = toTokenOutBuckets(totalsResult.rows[0]);
   const dailyCap = settingsResult.ok ? settingsResult.val.agentMaxRunsPerDay : null;
 
   const perAgentResult = await sql<BucketRow & { agent_id: string }>`
@@ -133,6 +187,8 @@ export default async function AdminAgentsPage({
         failuresByAgent={failuresByAgent}
         totals={totals}
         failureTotals={failureTotals}
+        tokenInTotals={tokenInTotals}
+        tokenOutTotals={tokenOutTotals}
         dailyCap={dailyCap}
       />
 
