@@ -221,6 +221,30 @@ maybe('agent notifications', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('never calls outlook_send_mail or webex_note_to_self when email/WebEx are off, even though both tools are connected and ready', async () => {
+    const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
+    const notifierWithMcp = createNotifier(db, {
+      tenantId,
+      subject,
+      agentId,
+      agentName: 'Triage bot',
+      runId,
+      prefs: {
+        ...DEFAULT_NOTIFICATION_PREFS,
+        // App on (so something DOES happen) — email/WebEx explicitly off.
+        acts: { jira: { created: { app: true, email: false, webex: false } } },
+      },
+      mcp,
+      toolsByName,
+      ownerEmail: 'owner@example.com',
+    });
+
+    await notifierWithMcp.act('jira_create_issue', 'act', {}, null);
+
+    expect(await rows()).toHaveLength(1); // The App row still writes.
+    expect(calls).toHaveLength(0); // But nothing goes out by either channel.
+  });
+
   it('stays quiet about a run starting unless asked', async () => {
     await notifier().runStarted();
     expect(await rows()).toHaveLength(0);
