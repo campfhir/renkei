@@ -46,9 +46,8 @@ export default async function AdminAgentDetailPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <BackLink href={`/${slug}/admin/agents`} label="Agent oversight" />
-
-      <div className="mt-2 mb-1 flex flex-wrap items-center gap-3">
+      <div className="mb-1 flex flex-wrap items-center gap-3">
+        <BackLink href={`/${slug}/admin/agents`} label="Agent oversight" />
         <h1 className="text-xl font-bold">{agent.name}</h1>
         <AdminAgentToggle slug={slug} agentId={agent.id} enabled={agent.enabled} />
         <Link
