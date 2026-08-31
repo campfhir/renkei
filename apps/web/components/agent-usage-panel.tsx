@@ -64,6 +64,11 @@ function TokenBuckets({ input, output }: { input: UsageBuckets; output: UsageBuc
   );
 }
 
+function formatMs(ms: number): string {
+  if (ms <= 0) return '—';
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
+
 function ToolsByConnector({ rows }: { rows: AgentToolUsageRow[] }) {
   if (rows.length === 0) {
     return <p className="text-sm text-gray-500 dark:text-gray-400">No tool calls in this window.</p>;
@@ -104,6 +109,11 @@ function ToolsByConnector({ rows }: { rows: AgentToolUsageRow[] }) {
                     {row.errors > 0 ? (
                       <span className="ml-1.5 font-medium text-red-600 dark:text-red-400">
                         {row.errors.toLocaleString('en-US')} failed
+                      </span>
+                    ) : null}
+                    {row.p95Ms > 0 ? (
+                      <span className="ml-1.5 text-gray-400" title="95th percentile latency">
+                        p95 {formatMs(row.p95Ms)}
                       </span>
                     ) : null}
                   </span>

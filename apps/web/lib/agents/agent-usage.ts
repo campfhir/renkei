@@ -43,16 +43,26 @@ interface TokenBucketRow {
   out_all_time: string;
 }
 
+/** One agent, or several summed together — the person page passes its whole roster. */
+function idsOf(agentId: string | readonly string[]): string[] {
+  return typeof agentId === 'string' ? [agentId] : [...agentId];
+}
+
+const ZERO_BUCKETS: UsageBuckets = { today: 0, week: 0, month: 0, quarter: 0, year: 0, allTime: 0 };
+
 /**
- * Token buckets for one agent, calendar-shaped like the run/failure buckets
- * on the oversight page — the point of a rollup like this is reading
- * "this quarter" without caring where retention's cutoff currently sits.
+ * Token buckets for one agent (or a set of them, summed), calendar-shaped
+ * like the run/failure buckets on the oversight page — the point of a
+ * rollup like this is reading "this quarter" without caring where
+ * retention's cutoff currently sits.
  */
 export async function getAgentTokenUsage(
   db: Kysely<DB>,
   tenantId: string,
-  agentId: string
+  agentId: string | readonly string[]
 ): Promise<{ input: UsageBuckets; output: UsageBuckets }> {
+  const ids = idsOf(agentId);
+  if (ids.length === 0) return { input: ZERO_BUCKETS, output: ZERO_BUCKETS };
   const result = await sql<TokenBucketRow>`
     SELECT
       COALESCE(SUM(input_tokens) FILTER (WHERE day = CURRENT_DATE), 0) AS in_today,
@@ -68,7 +78,7 @@ export async function getAgentTokenUsage(
       COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS out_year,
       COALESCE(SUM(output_tokens), 0) AS out_all_time
     FROM agent_run_counters
-    WHERE tenant_id = ${tenantId} AND agent_id = ${agentId}
+    WHERE tenant_id = ${tenantId} AND agent_id IN (${sql.join(ids)})
   `.execute(db);
   const row = result.rows[0];
   return {
@@ -96,13 +106,16 @@ export interface AgentToolUsageRow {
   connector: string | null;
   calls: number;
   errors: number;
+  /** Median and tail latency, in ms — the same pair the tools page shows. */
+  medianMs: number;
+  p95Ms: number;
 }
 
 /**
- * Tool calls this agent made, grouped by tool — over `days` (bounded by
- * retention, since it reads live run rows). `free` in-process calls
- * (resolve_time, finish_step, ask_person) are excluded, matching what
- * `tool_call_count` already excludes.
+ * Tool calls this agent (or a set of them, summed) made, grouped by tool —
+ * over `days` (bounded by retention, since it reads live run rows). `free`
+ * in-process calls (resolve_time, finish_step, ask_person) are excluded,
+ * matching what `tool_call_count` already excludes.
  *
  * `audience: 'admin'` applies the SAME redaction runDetail does: only
  * FAILED attempts' tool calls are visible, so an admin's breakdown is
@@ -111,22 +124,32 @@ export interface AgentToolUsageRow {
 export async function getAgentToolUsage(
   db: Kysely<DB>,
   tenantId: string,
-  agentId: string,
+  agentId: string | readonly string[],
   audience: 'owner' | 'admin',
   days = 30
 ): Promise<AgentToolUsageRow[]> {
+  const ids = idsOf(agentId);
+  if (ids.length === 0) return [];
   const visibility = audience === 'admin' ? sql`AND s.status = 'failed'` : sql``;
-  const rows = await sql<{ tool: string; calls: string; errors: string }>`
+  const rows = await sql<{
+    tool: string;
+    calls: string;
+    errors: string;
+    median_ms: string | null;
+    p95_ms: string | null;
+  }>`
     SELECT
       elem->>'tool' AS tool,
       COUNT(*) AS calls,
-      COUNT(*) FILTER (WHERE (elem->>'isError')::boolean) AS errors
+      COUNT(*) FILTER (WHERE (elem->>'isError')::boolean) AS errors,
+      percentile_disc(0.5) WITHIN GROUP (ORDER BY (elem->>'durationMs')::numeric) AS median_ms,
+      percentile_disc(0.95) WITHIN GROUP (ORDER BY (elem->>'durationMs')::numeric) AS p95_ms
     FROM agent_run_steps s
     JOIN agent_runs r ON r.id = s.run_id
     CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.detail->'toolCalls', '[]'::jsonb)) AS elem
     WHERE s.tenant_id = ${tenantId}
       AND r.tenant_id = ${tenantId}
-      AND r.agent_id = ${agentId}
+      AND r.agent_id IN (${sql.join(ids)})
       AND r.created_at >= NOW() - MAKE_INTERVAL(days => ${days})
       AND COALESCE((elem->>'free')::boolean, false) = false
       ${visibility}
@@ -139,6 +162,8 @@ export async function getAgentToolUsage(
     connector: connectorKeyForTool(row.tool),
     calls: Number(row.calls),
     errors: Number(row.errors),
+    medianMs: Number(row.median_ms ?? 0),
+    p95Ms: Number(row.p95_ms ?? 0),
   }));
 }
 
@@ -226,4 +251,53 @@ export async function getAgentUsageSummaries(
         right.calls - left.calls ||
         right.inputTokens + right.outputTokens - (left.inputTokens + left.outputTokens)
     );
+}
+
+export interface DailyTokenPoint {
+  /** Calendar date, YYYY-MM-DD — the same shape agent_run_counters.day is stored in. */
+  day: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * Daily token spend for one agent, or several summed — the raw series the
+ * person page's trend chart buckets into day/week/month, and the input the
+ * chart's per-agent breakdown filters down to a single id.
+ *
+ * Reads `agent_run_counters` (durable, content-free), so a year-long window
+ * is safe to ask for — unlike `getAgentToolUsage`, which reads live run rows
+ * bounded by retention.
+ */
+export async function getAgentTokenTrend(
+  db: Kysely<DB>,
+  tenantId: string,
+  agentId: string | readonly string[],
+  days: number
+): Promise<DailyTokenPoint[]> {
+  const ids = idsOf(agentId);
+  if (ids.length === 0) return [];
+  const rows = await db
+    .selectFrom('agent_run_counters')
+    .select([
+      sql<string>`to_char(day, 'YYYY-MM-DD')`.as('day'),
+      (eb) => eb.fn.sum<string>('input_tokens').as('input_tokens'),
+      (eb) => eb.fn.sum<string>('output_tokens').as('output_tokens'),
+    ])
+    .where('tenant_id', '=', tenantId)
+    .where('agent_id', 'in', ids)
+    .where(
+      'day',
+      '>=',
+      sql<Date>`(CURRENT_DATE - MAKE_INTERVAL(days => ${Math.max(0, days - 1)}))::date`
+    )
+    .groupBy(sql`day`)
+    .orderBy(sql`day`, 'asc')
+    .execute();
+
+  return rows.map((row) => ({
+    day: row.day,
+    inputTokens: Number(row.input_tokens ?? 0),
+    outputTokens: Number(row.output_tokens ?? 0),
+  }));
 }
