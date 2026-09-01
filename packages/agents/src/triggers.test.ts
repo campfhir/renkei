@@ -102,6 +102,59 @@ describe('validateTriggerDrafts reports filter problems against the catalog', ()
   });
 });
 
+describe('validateTriggerDrafts reports schedule active-hours problems', () => {
+  it('accepts a schedule with valid active-hours windows', () => {
+    expect(
+      validateTriggerDrafts([
+        {
+          kind: 'schedule',
+          recurrences: [{ every: 'hour' }],
+          timezone: 'UTC',
+          activeHours: [
+            { start: '00:00', end: '08:00' },
+            { start: '19:00', end: '24:00' },
+          ],
+        },
+      ])
+    ).toEqual([]);
+  });
+
+  it('rejects a reversed window', () => {
+    const issues = validateTriggerDrafts([
+      {
+        kind: 'schedule',
+        recurrences: [{ every: 'hour' }],
+        timezone: 'UTC',
+        activeHours: [{ start: '20:00', end: '08:00' }],
+      },
+    ]);
+    expect(issues).toEqual([
+      {
+        index: 0,
+        message:
+          'An active-hours window needs a "start" before its "end", both "HH:MM" ("end" may be "24:00").',
+      },
+    ]);
+  });
+
+  it('rejects more than the max windows', () => {
+    const issues = validateTriggerDrafts([
+      {
+        kind: 'schedule',
+        recurrences: [{ every: 'hour' }],
+        timezone: 'UTC',
+        activeHours: Array.from({ length: 9 }, (_, i) => ({
+          start: `0${i}:00`,
+          end: `0${i}:30`,
+        })),
+      },
+    ]);
+    expect(issues).toEqual([
+      { index: 0, message: 'A schedule can have at most 8 active-hours windows.' },
+    ]);
+  });
+});
+
 describe('triggerDraftIssue explains the rejection', () => {
   it('names the kinds when `kind` is missing or unknown', () => {
     for (const draft of [{}, { kind: 'cron' }, { recurrences: [] }]) {

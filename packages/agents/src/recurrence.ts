@@ -27,6 +27,16 @@
  * Monthly `day` accepts 1–31 and CLAMPS to the month's length ("the 31st"
  * fires Feb 28) — the calendar-app convention; silently skipping short
  * months would produce months with no run.
+ *
+ * ACTIVE HOURS constrain sub-daily rules (today, only `{every:'hour'}`) to
+ * one or more wall-clock windows within the day — "every hour, but only
+ * 8am-8pm". Rules with an explicit `at` (day/week/month) already fire once
+ * at a chosen time, so active hours do not apply to them: pick an `at`
+ * inside the desired range instead. An overnight window is two entries
+ * rather than one that wraps midnight (e.g. 00:00-08:00 and 19:00-24:00) —
+ * `end` may be "24:00" to mean the end of the day. Empty/absent
+ * `activeHours` means unrestricted, so every existing row keeps its exact
+ * behavior.
  */
 
 export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
@@ -42,6 +52,7 @@ export type Recurrence =
 
 export const MAX_SCHEDULE_RULES = 5;
 export const MAX_SCHEDULE_BLACKOUTS = 20;
+export const MAX_ACTIVE_HOURS = 8;
 
 export type BlackoutEntry =
   | { date: string; label?: string } // 'YYYY-MM-DD' one-off
@@ -49,6 +60,12 @@ export type BlackoutEntry =
   | { annual: string; label?: string }; // 'MM-DD', recurs yearly
 
 export type BlackoutPolicy = 'skip' | 'before' | 'after';
+
+/** A wall-clock window, 'HH:MM'; `end` may be "24:00" for the end of day. */
+export interface ActiveHoursWindow {
+  start: string;
+  end: string;
+}
 
 export interface ScheduleConfig {
   /** 1..MAX_SCHEDULE_RULES rules, combined by union (earliest wins). */
@@ -63,9 +80,12 @@ export interface ScheduleConfig {
   blackouts?: BlackoutEntry[];
   /** What happens to an occurrence on a blacked-out date. Default 'after'. */
   blackoutPolicy?: BlackoutPolicy;
+  /** Windows (union) sub-daily rules must land in. Up to MAX_ACTIVE_HOURS. */
+  activeHours?: ActiveHoursWindow[];
 }
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const END_TIME_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d$|^24:00$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const ANNUAL_PATTERN = /^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 
@@ -200,6 +220,25 @@ export function isBlackoutEntry(value: unknown): value is BlackoutEntry {
   return false;
 }
 
+export function isActiveHoursWindow(value: unknown): value is ActiveHoursWindow {
+  if (typeof value !== 'object' || value === null) return false;
+  const window: { start?: unknown; end?: unknown } = value;
+  if (typeof window.start !== 'string' || !TIME_PATTERN.test(window.start)) return false;
+  if (typeof window.end !== 'string' || !END_TIME_PATTERN.test(window.end)) return false;
+  return window.start < window.end;
+}
+
+/**
+ * Does the wall-clock time `hour:minute` fall in one of `windows`? No
+ * windows means unrestricted. `end` is exclusive, so a window ending
+ * "20:00" covers up to 19:59 and "24:00" covers through 23:59.
+ */
+function inActiveHours(hour: number, minute: number, windows?: ActiveHoursWindow[]): boolean {
+  if (!windows || windows.length === 0) return true;
+  const hhmm = `${pad2(hour)}:${pad2(minute)}`;
+  return windows.some((window) => window.start <= hhmm && hhmm < window.end);
+}
+
 /**
  * Fold blackout entries into one date predicate. Dates are compared as
  * 'YYYY-MM-DD' strings in the SCHEDULE's timezone — ISO dates compare
@@ -241,6 +280,7 @@ export function parseScheduleConfig(value: unknown): ScheduleConfig | null {
     calendarId?: unknown;
     blackouts?: unknown;
     blackoutPolicy?: unknown;
+    activeHours?: unknown;
   } = value;
 
   if (typeof config.timezone !== 'string' || !config.timezone) return null;
@@ -272,6 +312,17 @@ export function parseScheduleConfig(value: unknown): ScheduleConfig | null {
   ) {
     return null;
   }
+  let activeHours: ActiveHoursWindow[] | undefined;
+  if (config.activeHours !== undefined) {
+    if (
+      !Array.isArray(config.activeHours) ||
+      config.activeHours.length > MAX_ACTIVE_HOURS ||
+      !config.activeHours.every(isActiveHoursWindow)
+    ) {
+      return null;
+    }
+    activeHours = config.activeHours;
+  }
 
   return {
     recurrences,
@@ -282,6 +333,7 @@ export function parseScheduleConfig(value: unknown): ScheduleConfig | null {
       : {}),
     ...(blackouts && blackouts.length > 0 ? { blackouts } : {}),
     ...(config.blackoutPolicy !== undefined ? { blackoutPolicy: config.blackoutPolicy } : {}),
+    ...(activeHours && activeHours.length > 0 ? { activeHours } : {}),
   };
 }
 
@@ -297,6 +349,9 @@ export function serializeScheduleConfig(config: ScheduleConfig): string {
     ...(config.calendarId ? { calendarId: config.calendarId } : {}),
     ...(config.blackouts && config.blackouts.length > 0 ? { blackouts: config.blackouts } : {}),
     ...(config.blackoutPolicy ? { blackoutPolicy: config.blackoutPolicy } : {}),
+    ...(config.activeHours && config.activeHours.length > 0
+      ? { activeHours: config.activeHours }
+      : {}),
   });
 }
 
@@ -418,9 +473,11 @@ function matchesRuleDay(recurrence: Recurrence, dayCursor: Date): boolean {
   return recurrence.nth === -1 ? day > lastDay - 7 : Math.ceil(day / 7) === recurrence.nth;
 }
 
-interface BlackoutOptions {
+interface RuleOptions {
   isBlackout?: (localDate: string) => boolean;
   policy?: BlackoutPolicy;
+  /** Wall-clock windows an 'hour' rule must land in. Ignored by other kinds. */
+  activeHours?: ActiveHoursWindow[];
 }
 
 /**
@@ -432,22 +489,25 @@ function nextRunOfRule(
   recurrence: Recurrence,
   timezone: string,
   from: Date,
-  blackout: BlackoutOptions = {}
+  options: RuleOptions = {}
 ): Date | null {
-  const isBlackout = blackout.isBlackout ?? (() => false);
-  const policy = blackout.policy ?? 'after';
+  const isBlackout = options.isBlackout ?? (() => false);
+  const policy = options.policy ?? 'after';
 
   if (recurrence.every === 'hour') {
     // Top of the next hour, timezone-independent — except that a blackout
-    // suppresses the whole local day, so the next firing is the first hour
-    // whose local date is clear. Policy is irrelevant: shifting an hourly
-    // run is indistinguishable from skipping to the next clear hour.
+    // suppresses the whole local day and active hours suppress hours
+    // outside the configured windows, so the next firing is the first hour
+    // whose local date is clear AND whose wall-clock time is in-window.
+    // Policy is irrelevant: shifting an hourly run is indistinguishable
+    // from skipping to the next clear, in-window hour.
     const next = new Date(from.getTime());
     next.setUTCMinutes(0, 0, 0);
     next.setUTCHours(next.getUTCHours() + 1);
     for (let hops = 0; hops <= (SHIFT_CAP_DAYS + 2) * 24; hops += 1) {
       const wall = wallClockAt(next, timezone);
-      if (!isBlackout(dateStringOf(wall.year, wall.month, wall.day))) return next;
+      const clear = !isBlackout(dateStringOf(wall.year, wall.month, wall.day));
+      if (clear && inActiveHours(wall.hour, wall.minute, options.activeHours)) return next;
       next.setUTCHours(next.getUTCHours() + 1);
     }
     return null;
@@ -536,7 +596,11 @@ export function computeNextRunForSchedule(
   const isBlackout = calendarBlackout
     ? (localDate: string) => calendarBlackout(localDate) || own(localDate)
     : own;
-  const options: BlackoutOptions = { isBlackout, policy: config.blackoutPolicy ?? 'after' };
+  const options: RuleOptions = {
+    isBlackout,
+    policy: config.blackoutPolicy ?? 'after',
+    activeHours: config.activeHours,
+  };
 
   let earliest: Date | null = null;
   for (const rule of config.recurrences) {
@@ -615,6 +679,10 @@ export function describeSchedule(config: ScheduleConfig): string {
           ? 'shifting blackout dates to the previous clear day'
           : 'shifting blackout dates to the next clear day'
     );
+  }
+  if (config.activeHours && config.activeHours.length > 0) {
+    const windows = config.activeHours.map((window) => `${window.start}–${window.end}`).join(', ');
+    extras.push(`active ${windows}`);
   }
   return extras.length > 0 ? `${sentence} — ${extras.join(', ')}` : sentence;
 }

@@ -11,6 +11,7 @@ import {
   computeNextRunForSchedule,
   describeRecurrence,
   describeSchedule,
+  isActiveHoursWindow,
   isBlackoutEntry,
   isRecurrence,
   recurrenceIssue,
@@ -278,6 +279,51 @@ describe('parseScheduleConfig', () => {
         blackouts: [{ date: 'someday' }],
       })
     ).toBeNull();
+    expect(
+      parseScheduleConfig({
+        recurrences: [{ every: 'hour' }],
+        timezone: 'UTC',
+        activeHours: [{ start: '20:00', end: '08:00' }],
+      })
+    ).toBeNull();
+  });
+
+  it('reads activeHours and drops an empty list', () => {
+    const parsed = parseScheduleConfig({
+      recurrences: [{ every: 'hour' }],
+      timezone: 'UTC',
+      activeHours: [
+        { start: '00:00', end: '08:00' },
+        { start: '19:00', end: '24:00' },
+      ],
+    });
+    expect(parsed?.activeHours).toEqual([
+      { start: '00:00', end: '08:00' },
+      { start: '19:00', end: '24:00' },
+    ]);
+    expect(
+      parseScheduleConfig({
+        recurrences: [{ every: 'hour' }],
+        timezone: 'UTC',
+        activeHours: [],
+      })?.activeHours
+    ).toBeUndefined();
+  });
+});
+
+describe('isActiveHoursWindow', () => {
+  it('accepts HH:MM windows, including "24:00" as an end', () => {
+    expect(isActiveHoursWindow({ start: '08:00', end: '20:00' })).toBe(true);
+    expect(isActiveHoursWindow({ start: '19:00', end: '24:00' })).toBe(true);
+    expect(isActiveHoursWindow({ start: '00:00', end: '00:01' })).toBe(true);
+  });
+
+  it('rejects a reversed or empty range, "24:00" as a start, and junk', () => {
+    expect(isActiveHoursWindow({ start: '20:00', end: '08:00' })).toBe(false);
+    expect(isActiveHoursWindow({ start: '08:00', end: '08:00' })).toBe(false);
+    expect(isActiveHoursWindow({ start: '24:00', end: '08:00' })).toBe(false);
+    expect(isActiveHoursWindow({ start: '08:00', end: '25:00' })).toBe(false);
+    expect(isActiveHoursWindow({ start: '08:00' })).toBe(false);
   });
 });
 
@@ -412,6 +458,66 @@ describe('computeNextRunForSchedule', () => {
     // 00:00 on the 17th is blacked out; first clear hour is midnight the 18th.
     expect(next.toISOString()).toBe('2026-08-18T00:00:00.000Z');
   });
+
+  it('active hours constrain an hourly rule to the window', () => {
+    const config: ScheduleConfig = {
+      recurrences: [{ every: 'hour' }],
+      timezone: 'UTC',
+      activeHours: [{ start: '08:00', end: '20:00' }],
+    };
+    // 09:30Z is already inside the window — next is the top of the next hour.
+    expect(computeNextRunForSchedule(config, new Date('2026-08-16T09:30:00Z')).toISOString()).toBe(
+      '2026-08-16T10:00:00.000Z'
+    );
+    // 19:30Z: the next top-of-hour (20:00) is the window's exclusive end —
+    // skip to tomorrow's first in-window hour.
+    expect(computeNextRunForSchedule(config, new Date('2026-08-16T19:30:00Z')).toISOString()).toBe(
+      '2026-08-17T08:00:00.000Z'
+    );
+  });
+
+  it('active hours union across multiple windows, including an overnight split', () => {
+    const config: ScheduleConfig = {
+      recurrences: [{ every: 'hour' }],
+      timezone: 'UTC',
+      activeHours: [
+        { start: '00:00', end: '08:00' },
+        { start: '19:00', end: '24:00' },
+      ],
+    };
+    // 08:30Z is between the two windows — next in-window hour is 19:00.
+    expect(computeNextRunForSchedule(config, new Date('2026-08-16T08:30:00Z')).toISOString()).toBe(
+      '2026-08-16T19:00:00.000Z'
+    );
+    // 23:30Z is inside the overnight window — next hour (00:00) is too.
+    expect(computeNextRunForSchedule(config, new Date('2026-08-16T23:30:00Z')).toISOString()).toBe(
+      '2026-08-17T00:00:00.000Z'
+    );
+  });
+
+  it('active hours are ignored by rules with an explicit "at" time', () => {
+    const config: ScheduleConfig = {
+      recurrences: [daily('22:00')],
+      timezone: 'UTC',
+      // Would exclude 22:00 for an hourly rule; a daily "at" rule ignores it.
+      activeHours: [{ start: '08:00', end: '20:00' }],
+    };
+    const next = computeNextRunForSchedule(config, new Date('2026-08-16T09:00:00Z'));
+    expect(next.toISOString()).toBe('2026-08-16T22:00:00.000Z');
+  });
+
+  it('active hours compose with blackout dates', () => {
+    const config: ScheduleConfig = {
+      recurrences: [{ every: 'hour' }],
+      timezone: 'UTC',
+      activeHours: [{ start: '08:00', end: '20:00' }],
+      blackouts: [{ date: '2026-08-17' }],
+    };
+    // From 19:30Z on the 16th: the 17th is blacked out entirely, so the
+    // next in-window, clear hour is 08:00 on the 18th.
+    const next = computeNextRunForSchedule(config, new Date('2026-08-16T19:30:00Z'));
+    expect(next.toISOString()).toBe('2026-08-18T08:00:00.000Z');
+  });
 });
 
 describe('describeRecurrence / describeSchedule', () => {
@@ -448,6 +554,19 @@ describe('describeRecurrence / describeSchedule', () => {
       'Every day at 09:00, and the last day of each month at 17:00 — starting 2026-09-01, ' +
         'shifting blackout dates to the next clear day'
     );
+  });
+
+  it('names active-hours windows', () => {
+    expect(
+      describeSchedule({
+        recurrences: [{ every: 'hour' }],
+        timezone: 'UTC',
+        activeHours: [
+          { start: '00:00', end: '08:00' },
+          { start: '19:00', end: '24:00' },
+        ],
+      })
+    ).toBe('Every hour — active 00:00–08:00, 19:00–24:00');
   });
 });
 

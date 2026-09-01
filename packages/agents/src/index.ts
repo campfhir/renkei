@@ -134,15 +134,18 @@ export {
   describeSchedule,
   isRecurrence,
   isBlackoutEntry,
+  isActiveHoursWindow,
   recurrenceIssue,
   isValidDateString,
   isValidTimezone,
   MAX_SCHEDULE_RULES,
   MAX_SCHEDULE_BLACKOUTS,
+  MAX_ACTIVE_HOURS,
   type Recurrence,
   type ScheduleConfig,
   type BlackoutEntry,
   type BlackoutPolicy,
+  type ActiveHoursWindow,
   type Weekday,
 } from './recurrence';
 export { BUILTIN_VARIABLES, attemptVariables, type VariableDescriptor } from './variables';

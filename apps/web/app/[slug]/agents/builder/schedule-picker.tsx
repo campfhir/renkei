@@ -2,8 +2,9 @@
 
 /**
  * The schedule editor — a LIST of structured rules (union, earliest wins)
- * plus the schedule-wide knobs: timezone, start date, and blackouts (an
- * org holiday calendar and/or extra dates, with a skip/shift policy).
+ * plus the schedule-wide knobs: timezone, start date, active hours (windows
+ * an "every hour" rule must land in), and blackouts (an org holiday
+ * calendar and/or extra dates, with a skip/shift policy).
  *
  * No cron anywhere: the structured objects are what the server stores and
  * computes next_run_at from. The live "next run" preview calls the SAME
@@ -17,8 +18,10 @@ import { useId, useMemo, useState } from 'react';
 import {
   blackoutPredicate,
   computeNextRunForSchedule,
+  MAX_ACTIVE_HOURS,
   MAX_SCHEDULE_BLACKOUTS,
   MAX_SCHEDULE_RULES,
+  type ActiveHoursWindow,
   type BlackoutEntry,
   type Recurrence,
   type ScheduleConfig,
@@ -323,6 +326,100 @@ function BlackoutEditor({
   );
 }
 
+/** '24:00' has no Date to format, and reads more clearly as "midnight". */
+function formatClock(hhmm: string): string {
+  if (hhmm === '24:00') return 'midnight';
+  const [hour, minute] = hhmm.split(':').map(Number);
+  return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(
+    new Date(2000, 0, 1, hour, minute)
+  );
+}
+
+function describeWindow(window: ActiveHoursWindow): string {
+  return `${formatClock(window.start)} – ${formatClock(window.end)}`;
+}
+
+/** The active-hours chip editor: start/end time pickers, capped, removable. */
+function ActiveHoursEditor({
+  windows,
+  onChange,
+}: {
+  windows: ActiveHoursWindow[];
+  onChange: (windows: ActiveHoursWindow[]) => void;
+}) {
+  const [start, setStart] = useState('09:00');
+  const [end, setEnd] = useState('17:00');
+  const [untilMidnight, setUntilMidnight] = useState(false);
+
+  const add = () => {
+    const effectiveEnd = untilMidnight ? '24:00' : end;
+    if (!start || !effectiveEnd || start >= effectiveEnd) return;
+    onChange([...windows, { start, end: effectiveEnd }]);
+    setUntilMidnight(false);
+  };
+
+  return (
+    <div className="mt-1">
+      <div className="flex flex-wrap items-center gap-1">
+        {windows.map((window, index) => (
+          <span
+            key={`${window.start}-${window.end}-${index}`}
+            className="inline-flex items-center gap-1 rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-xs text-sky-800 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300"
+          >
+            {describeWindow(window)}
+            <button
+              type="button"
+              aria-label={`Remove active-hours window ${describeWindow(window)}`}
+              onClick={() => onChange(windows.filter((_, at) => at !== index))}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+      </div>
+      {windows.length < MAX_ACTIVE_HOURS ? (
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <input
+            type="time"
+            aria-label="Window start"
+            className={selectClass}
+            value={start}
+            onChange={(event) => setStart(event.target.value)}
+          />
+          <span className="text-xs text-gray-500 dark:text-gray-400">to</span>
+          <input
+            type="time"
+            aria-label="Window end"
+            className={selectClass}
+            value={end}
+            disabled={untilMidnight}
+            onChange={(event) => setEnd(event.target.value)}
+          />
+          <label className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400">
+            <input
+              type="checkbox"
+              checked={untilMidnight}
+              onChange={(event) => setUntilMidnight(event.target.checked)}
+            />
+            Until midnight
+          </label>
+          <button
+            type="button"
+            onClick={add}
+            className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
+          >
+            + Add window
+          </button>
+        </div>
+      ) : (
+        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          {MAX_ACTIVE_HOURS} of {MAX_ACTIVE_HOURS} windows — the limit.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ScheduleEditor({
   value,
   onChange,
@@ -449,6 +546,23 @@ export function ScheduleEditor({
           />
         </label>
       </div>
+
+      {rules.some((rule) => rule.every === 'hour') ? (
+        <div className="rounded-md border border-sky-200 p-2 dark:border-sky-900">
+          <p className="text-xs font-semibold text-sky-700 dark:text-sky-400">Active hours</p>
+          <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+            Constrains &ldquo;every hour&rdquo; rules to these windows. Leave empty to run around
+            the clock.
+          </p>
+          <ActiveHoursEditor
+            windows={value.activeHours ?? []}
+            onChange={(activeHours) => {
+              const { activeHours: _activeHours, ...rest } = value;
+              onChange(activeHours.length > 0 ? { ...rest, activeHours } : rest);
+            }}
+          />
+        </div>
+      ) : null}
 
       <div className="rounded-md border border-gray-100 p-2 dark:border-gray-900">
         <p className="text-xs font-semibold text-gray-600 dark:text-gray-400">Blackout dates</p>
