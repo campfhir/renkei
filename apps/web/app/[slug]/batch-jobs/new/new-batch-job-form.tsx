@@ -12,6 +12,8 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
+import { Icon, ICONS } from '@/components/icons';
+import FolderPicker from './folder-picker';
 
 interface ShareView {
   id: string;
@@ -52,6 +54,7 @@ export default function NewBatchJobForm({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [shareId, setShareId] = useState('');
   const [path, setPath] = useState('/');
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [strategy, setStrategy] = useState<Strategy>('whole-file');
   const [pattern, setPattern] = useState(String.raw`^(?<documentKey>.+)-p(?<page>\d+)\.tif$`);
   const [busy, setBusy] = useState(false);
@@ -70,6 +73,13 @@ export default function NewBatchJobForm({
   const connectedShares = (shares ?? []).filter((share) => share.connection !== null);
   const unconnectedCount = (shares ?? []).length - connectedShares.length;
   const patternError = strategy === 'filename-pattern' ? validatePattern(pattern) : null;
+  const selectedShare = connectedShares.find((share) => share.id === shareId) ?? null;
+
+  function chooseShare(nextShareId: string) {
+    setShareId(nextShareId);
+    // A path picked in one share means nothing in another.
+    setPath('/');
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -126,7 +136,7 @@ export default function NewBatchJobForm({
               id="bj-share"
               required
               value={shareId}
-              onChange={(e) => setShareId(e.target.value)}
+              onChange={(e) => chooseShare(e.target.value)}
               className={inputClass}
             >
               <option value="" disabled>
@@ -153,18 +163,44 @@ export default function NewBatchJobForm({
       </div>
 
       <div>
-        <label htmlFor="bj-path" className={labelClass}>
-          Folder path
-        </label>
-        <input
-          id="bj-path"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          placeholder="/"
-          className={`${inputClass} font-mono`}
-        />
-        <p className={hintClass}>Where in the share to look, from its root. Defaults to /.</p>
+        <span className={labelClass}>Folder</span>
+        <div className="flex items-center gap-2">
+          <p
+            className={`${inputClass} truncate font-mono text-gray-600 dark:text-gray-400`}
+            title={path}
+          >
+            {path}
+          </p>
+          <button
+            type="button"
+            disabled={!selectedShare}
+            onClick={() => setPickerOpen(true)}
+            className="flex shrink-0 items-center gap-1.5 rounded-md border border-gray-300 px-3 py-2 text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
+          >
+            <Icon path={ICONS.folder} className="h-4 w-4" />
+            Browse…
+          </button>
+        </div>
+        <p className={hintClass}>
+          {selectedShare
+            ? 'Where in the share to look. Defaults to the root.'
+            : 'Choose a file share above to browse its folders.'}
+        </p>
       </div>
+
+      {pickerOpen && selectedShare ? (
+        <FolderPicker
+          tenantId={tenantId}
+          shareId={selectedShare.id}
+          shareName={selectedShare.name}
+          initialPath={path}
+          onCancel={() => setPickerOpen(false)}
+          onSelect={(chosen) => {
+            setPath(chosen);
+            setPickerOpen(false);
+          }}
+        />
+      ) : null}
 
       <div>
         <span className={labelClass}>How should documents be grouped?</span>
