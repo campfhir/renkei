@@ -12,7 +12,7 @@
 export type { MistralOcrConfig, MistralOcrPage, MistralOcrResult, MistralOcrError } from './types';
 
 export { callMistralOcr, describeMistralOcrError } from './client';
-export type { MistralOcrInput } from './client';
+export type { MistralOcrInput, MistralOcrCallOptions, MistralOcrLogger } from './client';
 
 export {
   resolveMistralOcrConfig,

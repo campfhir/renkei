@@ -68,6 +68,8 @@ The wire contract (`packages/connector-mistral-ocr/src/client.ts`) targets Mistr
 
 See [`batch-jobs-design.md`](./batch-jobs-design.md) for how this connector fits into the document-ocr-pipeline batch kind — one OCR call per source FILE (even multi-page), never a manual pre-split into page images, since OCR 4 paginates internally and Mistral bills per page either way.
 
+`callMistralOcr` takes an optional `logger` (the same `LoopLogger`-shaped structural type `packages/worker-loop` uses, so this package carries no hard `bored-logs` dependency of its own) and, when given one, debug-logs the outgoing request (endpoint, model, document type, byte size — never the API key or the document bytes) and the raw response (status, a bounded preview of the body) — both call sites pass their own app's logger. Set `CONSOLE_LOG_LEVEL=debug` on `worker-batch-jobs` (or the web app, for `sandbox_ocr_file`) to see it, `LOG_DB_LEVEL=debug` for the persisted copy in the logs table.
+
 ## connector-webex
 
 Wraps WebEx messaging/rooms plus its bot framework (webhooks, Adaptive Cards). Auth is dual: sending messages/cards uses a **bot token** (`WebexClient`), but knowledge **ingestion is user-scoped** — each watcher registers their own all-spaces webhook and token; there's no bot-driven reading.

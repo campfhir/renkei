@@ -41,10 +41,38 @@ import type { MistralOcrConfig, MistralOcrError, MistralOcrPage, MistralOcrResul
 
 const REQUEST_TIMEOUT_MS = 120_000;
 
+/** How much of a raw response body a debug log line keeps — bounded, since a
+ *  successful OCR response's markdown can be sizeable and this exists to show
+ *  the SHAPE of what Foundry sent back, not to capture the full extracted
+ *  text. */
+const DEBUG_BODY_PREVIEW_CHARS = 4_000;
+
+/**
+ * The structural slice of a bored-logs logger this package needs — the
+ * `LoopLogger`/`EventLoopDeps.logger` shape every app already builds
+ * (`apps/web/lib/logger.ts`, `apps/worker/src/logger.ts`, ...). Declared
+ * locally rather than imported so this package stays free of a hard
+ * `@campfhir/bored-logs` dependency; callers pass their own app's logger in.
+ */
+export interface MistralOcrLogger {
+  debug(message: string, attrs?: Record<string, unknown>): void;
+}
+
 export interface MistralOcrInput {
   bytes: Uint8Array;
   filename: string;
   contentType: string;
+}
+
+export interface MistralOcrCallOptions {
+  /**
+   * Enables debug logging of the request (endpoint, model, document type,
+   * byte size — never the API key or the document bytes themselves) and the
+   * response (status, a bounded preview of the raw body). Off by default;
+   * pass the caller's own app logger and set CONSOLE_LOG_LEVEL=debug (or
+   * LOG_DB_LEVEL=debug for the persisted copy) to see it.
+   */
+  logger?: MistralOcrLogger;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -60,13 +88,18 @@ function dataUrl(bytes: Uint8Array, contentType: string): string {
   return `data:${contentType};base64,${Buffer.from(bytes).toString('base64')}`;
 }
 
-function buildRequestBody(config: MistralOcrConfig, input: MistralOcrInput): Record<string, unknown> {
+/** 'document_url' for a PDF, 'image_url' otherwise — shared by the request builder and the debug log line so they can never disagree. */
+function documentTypeFor(input: MistralOcrInput): 'document_url' | 'image_url' {
   const isPdf = input.contentType === 'application/pdf' || /\.pdf$/i.test(input.filename);
+  return isPdf ? 'document_url' : 'image_url';
+}
+
+function buildRequestBody(config: MistralOcrConfig, input: MistralOcrInput): Record<string, unknown> {
+  const type = documentTypeFor(input);
+  const url = dataUrl(input.bytes, input.contentType);
   return {
     model: config.model,
-    document: isPdf
-      ? { type: 'document_url', document_url: dataUrl(input.bytes, input.contentType) }
-      : { type: 'image_url', image_url: dataUrl(input.bytes, input.contentType) },
+    document: type === 'document_url' ? { type, document_url: url } : { type, image_url: url },
   };
 }
 
@@ -88,8 +121,30 @@ function parseResponse(body: unknown): { ok: true; val: MistralOcrResult } | { o
 
 export async function callMistralOcr(
   config: MistralOcrConfig,
-  input: MistralOcrInput
+  input: MistralOcrInput,
+  options: MistralOcrCallOptions = {}
 ): Promise<{ ok: true; val: MistralOcrResult } | { ok: false; err: MistralOcrError }> {
+  const log = options.logger;
+  const component = 'connector-mistral-ocr';
+  const documentType = documentTypeFor(input);
+
+  log?.debug('mistral ocr request POST {endpoint}', {
+    component,
+    endpoint: config.endpoint,
+    model: config.model,
+    documentType,
+    filename: input.filename,
+    contentType: input.contentType,
+    bytesLength: input.bytes.byteLength,
+    // The real key must never reach a log line, even unmasked — this is a
+    // fixed placeholder, not the redacted value.
+    headers: {
+      authorization: 'Bearer [redacted]',
+      'content-type': 'application/json',
+      'extra-parameters': 'pass-through',
+    },
+  });
+
   let response: Response;
   try {
     response = await fetch(config.endpoint, {
@@ -109,17 +164,30 @@ export async function callMistralOcr(
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    return { ok: false, err: { type: 'unreachable', message: error instanceof Error ? error.message : String(error) } };
+    const message = error instanceof Error ? error.message : String(error);
+    log?.debug('mistral ocr request failed: {error}', { component, error: message });
+    return { ok: false, err: { type: 'unreachable', message } };
   }
 
+  // Read the raw text once, up front — .json() consumes the body stream and
+  // gives no access to it on a parse failure, and the debug log wants the
+  // raw shape on every path (success, refusal, or malformed body) rather
+  // than duplicating a .text() fallback into each branch.
+  const bodyText = await response.text().catch(() => '');
+  log?.debug('mistral ocr response {status}', {
+    component,
+    status: response.status,
+    ok: response.ok,
+    bodyPreview: bodyText.slice(0, DEBUG_BODY_PREVIEW_CHARS),
+  });
+
   if (!response.ok) {
-    const bodyText = await response.text().catch(() => '');
     return { ok: false, err: { type: 'refused', status: response.status, message: bodyText.slice(0, 500) } };
   }
 
   let parsedJson: unknown;
   try {
-    parsedJson = await response.json();
+    parsedJson = JSON.parse(bodyText);
   } catch {
     return { ok: false, err: { type: 'malformed', message: 'response was not valid JSON' } };
   }

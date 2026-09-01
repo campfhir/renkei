@@ -116,4 +116,62 @@ describe('callMistralOcr', () => {
     if (result.ok) throw new Error('expected failure');
     expect(result.err.type).toBe('malformed');
   });
+
+  describe('debug logging', () => {
+    function fakeLogger() {
+      return { debug: jest.fn() };
+    }
+
+    it('is silent when no logger is passed', async () => {
+      fetchSpy = jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(JSON.stringify({ pages: [] }), { status: 200 }));
+
+      // No throw, no logger call to assert on — just confirms the optional
+      // param truly is optional.
+      await callMistralOcr(CONFIG, INPUT);
+    });
+
+    it('logs the request without ever including the API key', async () => {
+      fetchSpy = jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(JSON.stringify({ pages: [] }), { status: 200 }));
+      const logger = fakeLogger();
+
+      await callMistralOcr(CONFIG, INPUT, { logger });
+
+      const [message, attrs] = logger.debug.mock.calls[0] as [string, Record<string, unknown>];
+      expect(message).toContain('request');
+      expect(attrs.endpoint).toBe(CONFIG.endpoint);
+      expect(attrs.model).toBe(CONFIG.model);
+      expect(attrs.documentType).toBe('document_url');
+      expect(JSON.stringify(attrs)).not.toContain(CONFIG.apiKey);
+    });
+
+    it('logs the response status and a bounded body preview, even on a refusal', async () => {
+      fetchSpy = jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('x'.repeat(10_000), { status: 422 }));
+      const logger = fakeLogger();
+
+      await callMistralOcr(CONFIG, INPUT, { logger });
+
+      const [message, attrs] = logger.debug.mock.calls[1] as [string, Record<string, unknown>];
+      expect(message).toContain('response');
+      expect(attrs.status).toBe(422);
+      expect(attrs.ok).toBe(false);
+      expect(String(attrs.bodyPreview).length).toBeLessThan(10_000);
+    });
+
+    it('logs a network failure instead of throwing past the caller', async () => {
+      fetchSpy = jest.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+      const logger = fakeLogger();
+
+      await callMistralOcr(CONFIG, INPUT, { logger });
+
+      expect(logger.debug).toHaveBeenCalledTimes(2); // the request line, then the failure line
+      const [, attrs] = logger.debug.mock.calls[1] as [string, Record<string, unknown>];
+      expect(attrs.error).toBe('ECONNREFUSED');
+    });
+  });
 });
