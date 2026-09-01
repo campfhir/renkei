@@ -149,14 +149,17 @@ ENTRYPOINT ["dumb-init", "--"]
 # Start the application
 CMD ["pnpm", "--filter", "renkei", "start"]
 
-# Worker stage - every long-running queue consumer, one image. The three
-# queue-consuming processes (interactive events, embeddings, agent runs) are
-# compose services over this single image with different commands — the
-# embeddings precedent, extended when apps/worker-agents arrived. That is why
-# BOTH worker apps are installed and copied here: the agents worker is a
-# separate app (its own deps and entry point), not a second script in
-# apps/worker. The file-share worker is NOT here: it ships as its own image
-# (the `fileshares` stage below), so this image never carries the SMB/SSH
+# Worker stage - every long-running queue consumer, one image. The
+# queue-consuming processes (interactive events, embeddings, agent runs,
+# batch jobs) are compose services over this single image with different
+# commands — the embeddings precedent, extended when apps/worker-agents
+# arrived and again for batch-jobs-worker. That is why BOTH worker apps are
+# installed and copied here: the agents worker is a separate app (its own
+# deps and entry point), not a second script in apps/worker — batch-jobs,
+# by contrast, IS a second script in apps/worker (start:batch-jobs),
+# because it shares apps/worker's queue/handler plumbing directly. The
+# file-share worker is NOT here: it ships as its own image (the
+# `fileshares` stage below), so this image never carries the SMB/SSH
 # protocol stack and the fileshare container never carries the agents' deps.
 FROM node:24-alpine AS worker
 ARG PNPM_VERSION

@@ -112,6 +112,29 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # The batch-jobs worker (document-ocr-pipeline and future batch kinds):
+  # same image as `worker`, different entrypoint — the embeddings pattern.
+  # Its own queue (batch_job_messages) because item work — an OCR call per
+  # document — is slow, external, per-item I/O that must never sit in
+  # front of the interactive worker's webhook replies. No container_name
+  # on purpose: scale with `--scale worker-batch-jobs=N`, same reasoning as
+  # worker-agents. Reaches the fileshare and sandbox workers directly (to
+  # read source documents and stage OCR results) over the same internal
+  # URLs the web app uses, with the same bearer keys from .env.
+  worker-batch-jobs:
+    image: scotteremiaroden/renkei-worker:latest
+    command: ['pnpm', '--filter', '@renkei/worker', 'start:batch-jobs']
+    env_file:
+      - .env
+    environment:
+      <<: *database-urls
+      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
+      SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   # The file-share I/O worker: the only process that opens SMB/SFTP
   # sessions or decrypts share credentials. Its own image (not the shared
   # worker one), so the SMB/SSH protocol stack ships apart from the queue

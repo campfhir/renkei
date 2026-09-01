@@ -36,6 +36,10 @@ import {
   DEFAULT_MAX_FILE_BYTES,
   DEFAULT_SUBJECT_QUOTA_BYTES,
   MAX_FILES_PER_SUBJECT,
+  DEFAULT_BATCH_FILE_TTL_MS,
+  DEFAULT_BATCH_MAX_FILE_BYTES,
+  DEFAULT_BATCH_QUOTA_BYTES,
+  MAX_FILES_PER_BATCH,
   validateFilename,
   type SandboxFileSummary,
 } from '@renkei/connector-sandbox';
@@ -56,6 +60,12 @@ const FETCH_TIMEOUT_MS = 60_000;
 const SWEEP_INTERVAL_MS = 5 * 60_000;
 const SWEEP_BATCH = 100;
 const SOURCE_PATTERN = /^[a-zA-Z0-9:_.-]{1,255}$/;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A batchId string from the wire, or null when absent/malformed. */
+function batchIdOf(value: unknown): string | null {
+  return typeof value === 'string' && UUID_PATTERN.test(value) ? value : null;
+}
 
 export async function orgMaxFileBytes(tenantId: string): Promise<number> {
   const settings = await getOrgSettings(tenantId);
@@ -121,6 +131,7 @@ function summaryWire(summary: SandboxFileSummary) {
     contentType: summary.contentType,
     sizeBytes: summary.sizeBytes,
     source: summary.source,
+    batchId: summary.batchId,
     createdAt: summary.createdAt.toISOString(),
     expiresAt: summary.expiresAt.toISOString(),
   };
@@ -136,20 +147,32 @@ function targetOf(body: Record<string, unknown>): store.SandboxTarget | null {
 /**
  * How much more this caller may stage right now, after their file-count
  * ceiling — 0 (or less) means "refuse outright," which the caller checks
- * before doing any I/O.
+ * before doing any I/O. A batchId switches to the SEPARATE, much larger
+ * batch pool (packages/connector-sandbox/src/limits.ts) keyed by
+ * (tenantId, batchId) instead of the interactive per-subject one, so a
+ * document-ocr-pipeline batch never competes with the same person's
+ * ordinary scratch space.
  */
 async function quotaHeadroom(
   db: Kysely<DB>,
-  target: store.SandboxTarget
+  target: store.SandboxTarget,
+  batchId: string | null
 ): Promise<{ ok: true; remaining: number } | { ok: false; reason: 'too_many_files' }> {
+  if (batchId) {
+    const count = await store.countFilesForBatch(db, target.tenantId, batchId);
+    if (count >= MAX_FILES_PER_BATCH) return { ok: false, reason: 'too_many_files' };
+    const total = await store.totalStagedBytesForBatch(db, target.tenantId, batchId);
+    return { ok: true, remaining: Math.max(0, DEFAULT_BATCH_QUOTA_BYTES - total) };
+  }
   const count = await store.countFiles(db, target);
   if (count >= MAX_FILES_PER_SUBJECT) return { ok: false, reason: 'too_many_files' };
   const total = await store.totalStagedBytes(db, target);
   return { ok: true, remaining: Math.max(0, DEFAULT_SUBJECT_QUOTA_BYTES - total) };
 }
 
-function expiryFromNow(): Date {
-  return new Date(Date.now() + DEFAULT_FILE_TTL_MS);
+function expiryFromNow(batchId: string | null): Date {
+  const ttl = batchId ? DEFAULT_BATCH_FILE_TTL_MS : DEFAULT_FILE_TTL_MS;
+  return new Date(Date.now() + ttl);
 }
 
 export function createSandboxServer(deps: SandboxServerDeps): Server {
@@ -160,6 +183,7 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     if (!target) return sendError(response, 400, 'bad_request');
     const named = validateFilename(str(body.filename));
     if (!named.ok) return sendError(response, 400, 'bad_filename');
+    const batchId = batchIdOf(body.batchId);
 
     let url: URL;
     try {
@@ -171,15 +195,16 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
       return sendError(response, 400, 'bad_request');
     }
 
-    const headroom = await quotaHeadroom(deps.db, target);
+    const headroom = await quotaHeadroom(deps.db, target, batchId);
     if (!headroom.ok) {
       return sendError(response, 429, 'quota_exceeded', 'Too many files staged — delete some first.');
     }
     if (headroom.remaining <= 0) {
       return sendError(response, 413, 'quota_exceeded', 'The scratch space quota is full.');
     }
-    const fileCeiling = await maxFileBytes(target.tenantId);
-    const cap = Math.min(fileCeiling, DEFAULT_MAX_FILE_BYTES, headroom.remaining);
+    const cap = batchId
+      ? Math.min(DEFAULT_BATCH_MAX_FILE_BYTES, headroom.remaining)
+      : Math.min(await maxFileBytes(target.tenantId), DEFAULT_MAX_FILE_BYTES, headroom.remaining);
 
     let upstream: Response;
     try {
@@ -222,7 +247,8 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
       sizeBytes: written.sizeBytes,
       storageKey,
       source: `fetch:${url.hostname}`,
-      expiresAt: expiryFromNow(),
+      batchId,
+      expiresAt: expiryFromNow(batchId),
     });
     sendJson(response, 200, summaryWire(summary));
   }
@@ -237,16 +263,18 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     const target = { tenantId, subject };
     const rawSource = url.searchParams.get('source') ?? '';
     const source = SOURCE_PATTERN.test(rawSource) ? rawSource : 'write';
+    const batchId = batchIdOf(url.searchParams.get('batchId'));
 
-    const headroom = await quotaHeadroom(deps.db, target);
+    const headroom = await quotaHeadroom(deps.db, target, batchId);
     if (!headroom.ok) {
       return sendError(response, 429, 'quota_exceeded', 'Too many files staged — delete some first.');
     }
     if (headroom.remaining <= 0) {
       return sendError(response, 413, 'quota_exceeded', 'The scratch space quota is full.');
     }
-    const fileCeiling = await maxFileBytes(tenantId);
-    const cap = Math.min(fileCeiling, DEFAULT_MAX_FILE_BYTES, headroom.remaining);
+    const cap = batchId
+      ? Math.min(DEFAULT_BATCH_MAX_FILE_BYTES, headroom.remaining)
+      : Math.min(await maxFileBytes(tenantId), DEFAULT_MAX_FILE_BYTES, headroom.remaining);
 
     const storageKey = disk.newStorageKey(tenantId, subject);
     const written = await disk.writeStream(storageKey, request, cap);
@@ -265,7 +293,8 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
       sizeBytes: written.sizeBytes,
       storageKey,
       source,
-      expiresAt: expiryFromNow(),
+      batchId,
+      expiresAt: expiryFromNow(batchId),
     });
     sendJson(response, 200, summaryWire(summary));
   }
@@ -273,7 +302,8 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
   async function handleList(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
-    const files = await store.listFiles(deps.db, target);
+    const batchId = batchIdOf(body.batchId) ?? undefined;
+    const files = await store.listFiles(deps.db, target, batchId);
     sendJson(response, 200, { files: files.map(summaryWire) });
   }
 

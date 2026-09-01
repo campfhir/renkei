@@ -5,6 +5,13 @@
  * expiry walk. Every function takes tenantId + subject explicitly and
  * filters on both, the same no-cross-caller-reads discipline upload_slots
  * and the fileshare store already keep.
+ *
+ * A staged file may additionally carry a `batchId` (packages/db/src/migrations/075-*):
+ * still scoped by (tenantId, subject) for every read, but quota is checked
+ * against a SEPARATE pool keyed by (tenantId, batchId) when one is given —
+ * `totalStagedBytesForBatch`/`countFilesForBatch` — so a document-ocr-pipeline
+ * batch staging thousands of pages is never measured against, or crowds out,
+ * the same person's ordinary interactive scratch space.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -23,6 +30,7 @@ export interface StageFileInput extends SandboxTarget {
   sizeBytes: number;
   storageKey: string;
   source: string;
+  batchId: string | null;
   expiresAt: Date;
 }
 
@@ -32,6 +40,7 @@ function toSummary(row: {
   content_type: string | null;
   size_bytes: number;
   source: string;
+  batch_id: string | null;
   created_at: Date;
   expires_at: Date;
 }): SandboxFileSummary {
@@ -41,10 +50,22 @@ function toSummary(row: {
     contentType: row.content_type,
     sizeBytes: row.size_bytes,
     source: row.source,
+    batchId: row.batch_id,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
   };
 }
+
+const SUMMARY_COLUMNS = [
+  'id',
+  'filename',
+  'content_type',
+  'size_bytes',
+  'source',
+  'batch_id',
+  'created_at',
+  'expires_at',
+] as const;
 
 export async function insertFile(
   db: Kysely<DB>,
@@ -61,24 +82,26 @@ export async function insertFile(
       size_bytes: input.sizeBytes,
       storage_key: input.storageKey,
       source: input.source,
+      batch_id: input.batchId,
       expires_at: input.expiresAt,
     })
-    .returning(['id', 'filename', 'content_type', 'size_bytes', 'source', 'created_at', 'expires_at'])
+    .returning(SUMMARY_COLUMNS)
     .executeTakeFirstOrThrow();
   return toSummary(row);
 }
 
 export async function listFiles(
   db: Kysely<DB>,
-  target: SandboxTarget
+  target: SandboxTarget,
+  batchId?: string
 ): Promise<SandboxFileSummary[]> {
-  const rows = await db
+  let query = db
     .selectFrom('sandbox_files')
-    .select(['id', 'filename', 'content_type', 'size_bytes', 'source', 'created_at', 'expires_at'])
+    .select(SUMMARY_COLUMNS)
     .where('tenant_id', '=', target.tenantId)
-    .where('subject', '=', target.subject)
-    .orderBy('created_at', 'desc')
-    .execute();
+    .where('subject', '=', target.subject);
+  if (batchId) query = query.where('batch_id', '=', batchId);
+  const rows = await query.orderBy('created_at', 'desc').execute();
   return rows.map(toSummary);
 }
 
@@ -99,6 +122,40 @@ export async function countFiles(db: Kysely<DB>, target: SandboxTarget): Promise
     .select((eb) => eb.fn.countAll<string>().as('count'))
     .where('tenant_id', '=', target.tenantId)
     .where('subject', '=', target.subject)
+    .executeTakeFirst();
+  return row?.count ? Number(row.count) : 0;
+}
+
+/**
+ * The batch quota pool: totals for (tenantId, batchId) rather than the
+ * caller's whole scratch space. A batch is tenant-scoped only — its owning
+ * subject already governs every row's read access, so the quota pool
+ * doesn't need to repeat that filter.
+ */
+export async function totalStagedBytesForBatch(
+  db: Kysely<DB>,
+  tenantId: string,
+  batchId: string
+): Promise<number> {
+  const row = await db
+    .selectFrom('sandbox_files')
+    .select((eb) => eb.fn.sum<string>('size_bytes').as('total'))
+    .where('tenant_id', '=', tenantId)
+    .where('batch_id', '=', batchId)
+    .executeTakeFirst();
+  return row?.total ? Number(row.total) : 0;
+}
+
+export async function countFilesForBatch(
+  db: Kysely<DB>,
+  tenantId: string,
+  batchId: string
+): Promise<number> {
+  const row = await db
+    .selectFrom('sandbox_files')
+    .select((eb) => eb.fn.countAll<string>().as('count'))
+    .where('tenant_id', '=', tenantId)
+    .where('batch_id', '=', batchId)
     .executeTakeFirst();
   return row?.count ? Number(row.count) : 0;
 }

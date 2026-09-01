@@ -104,6 +104,9 @@ export const EXPECTED_MIGRATIONS = [
   '072-agent-run-counter-tokens',
   '073-agent-run-cancellation',
   '074-sandbox-files',
+  '075-sandbox-files-batch-id',
+  '076-batch-jobs',
+  '077-batch-job-messages-queue',
 ];
 
 export interface MigrationStatus {

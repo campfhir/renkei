@@ -67,6 +67,9 @@ importers:
       '@renkei/agents':
         specifier: workspace:*
         version: link:../../packages/agents
+      '@renkei/batch-jobs-store':
+        specifier: workspace:*
+        version: link:../../packages/batch-jobs-store
       '@renkei/capability-registry':
         specifier: workspace:*
         version: link:../../packages/capability-registry
@@ -82,6 +85,9 @@ importers:
       '@renkei/connector-microsoft':
         specifier: workspace:*
         version: link:../../packages/connector-microsoft
+      '@renkei/connector-mistral-ocr':
+        specifier: workspace:*
+        version: link:../../packages/connector-mistral-ocr
       '@renkei/connector-onbase':
         specifier: workspace:*
         version: link:../../packages/connector-onbase
@@ -103,6 +109,9 @@ importers:
       '@renkei/email-sanitizer':
         specifier: workspace:*
         version: link:../../packages/email-sanitizer
+      '@renkei/fileshares-client':
+        specifier: workspace:*
+        version: link:../../packages/fileshares-client
       '@renkei/gates':
         specifier: workspace:*
         version: link:../../packages/gates
@@ -121,6 +130,9 @@ importers:
       '@renkei/redaction':
         specifier: workspace:*
         version: link:../../packages/redaction
+      '@renkei/sandbox-client':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-client
       '@renkei/settings':
         specifier: workspace:*
         version: link:../../packages/settings
@@ -233,6 +245,9 @@ importers:
       '@renkei/agents':
         specifier: workspace:*
         version: link:../../packages/agents
+      '@renkei/batch-jobs-store':
+        specifier: workspace:*
+        version: link:../../packages/batch-jobs-store
       '@renkei/connector-atlassian':
         specifier: workspace:*
         version: link:../../packages/connector-atlassian
@@ -242,6 +257,9 @@ importers:
       '@renkei/connector-microsoft':
         specifier: workspace:*
         version: link:../../packages/connector-microsoft
+      '@renkei/connector-mistral-ocr':
+        specifier: workspace:*
+        version: link:../../packages/connector-mistral-ocr
       '@renkei/connector-webex':
         specifier: workspace:*
         version: link:../../packages/connector-webex
@@ -260,6 +278,9 @@ importers:
       '@renkei/email-sanitizer':
         specifier: workspace:*
         version: link:../../packages/email-sanitizer
+      '@renkei/fileshares-client':
+        specifier: workspace:*
+        version: link:../../packages/fileshares-client
       '@renkei/gates':
         specifier: workspace:*
         version: link:../../packages/gates
@@ -272,6 +293,9 @@ importers:
       '@renkei/queue':
         specifier: workspace:*
         version: link:../../packages/queue
+      '@renkei/sandbox-client':
+        specifier: workspace:*
+        version: link:../../packages/sandbox-client
       '@renkei/settings':
         specifier: workspace:*
         version: link:../../packages/settings
@@ -571,6 +595,34 @@ importers:
         specifier: ^5
         version: 5.9.3
 
+  packages/batch-jobs-store:
+    dependencies:
+      '@renkei/db':
+        specifier: workspace:*
+        version: link:../db
+      '@renkei/queue':
+        specifier: workspace:*
+        version: link:../queue
+      kysely:
+        specifier: ^0.29.4
+        version: 0.29.4
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
   packages/capability-registry:
     devDependencies:
       '@types/jest':
@@ -705,6 +757,31 @@ importers:
       '@renkei/rate-limit':
         specifier: workspace:*
         version: link:../rate-limit
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  packages/connector-mistral-ocr:
+    dependencies:
+      '@renkei/connector-config':
+        specifier: workspace:*
+        version: link:../connector-config
+      '@renkei/crypto':
+        specifier: workspace:*
+        version: link:../crypto
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0
@@ -952,6 +1029,28 @@ importers:
         specifier: ^5
         version: 5.9.3
 
+  packages/fileshares-client:
+    dependencies:
+      '@renkei/connector-fileshares':
+        specifier: workspace:*
+        version: link:../connector-fileshares
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
   packages/gates:
     dependencies:
       '@campfhir/safe-functions':
@@ -1139,6 +1238,24 @@ importers:
       '@renkei/gates':
         specifier: workspace:*
         version: link:../gates
+    devDependencies:
+      '@types/jest':
+        specifier: ^30.0.0
+        version: 30.0.0
+      '@types/node':
+        specifier: ^24
+        version: 24.13.3
+      jest:
+        specifier: ^30.4.2
+        version: 30.4.2(@types/node@24.13.3)
+      ts-jest:
+        specifier: ^29.4.12
+        version: 29.4.12(@babel/core@7.29.7)(@jest/transform@30.4.1)(@jest/types@30.4.1)(babel-jest@30.4.1(@babel/core@7.29.7))(esbuild@0.28.1)(jest-util@30.4.1)(jest@30.4.2(@types/node@24.13.3))(typescript@5.9.3)
+      typescript:
+        specifier: ^5
+        version: 5.9.3
+
+  packages/sandbox-client:
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0

@@ -18,6 +18,8 @@ jest.mock('./store', () => ({
   listFiles: jest.fn(),
   totalStagedBytes: jest.fn(),
   countFiles: jest.fn(),
+  totalStagedBytesForBatch: jest.fn(),
+  countFilesForBatch: jest.fn(),
   getFile: jest.fn(),
   deleteFile: jest.fn(),
   listExpired: jest.fn(),
@@ -42,6 +44,8 @@ const store = jest.requireMock<{
   listFiles: jest.Mock;
   totalStagedBytes: jest.Mock;
   countFiles: jest.Mock;
+  totalStagedBytesForBatch: jest.Mock;
+  countFilesForBatch: jest.Mock;
   getFile: jest.Mock;
   deleteFile: jest.Mock;
 }>('./store');
@@ -71,6 +75,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   store.countFiles.mockResolvedValue(0);
   store.totalStagedBytes.mockResolvedValue(0);
+  store.countFilesForBatch.mockResolvedValue(0);
+  store.totalStagedBytesForBatch.mockResolvedValue(0);
 });
 
 function post(path: string, body: unknown, key: string | null = API_KEY): Promise<Response> {
@@ -140,6 +146,84 @@ describe('quota enforcement', () => {
     });
     expect(response.status).toBe(413);
     expect(disk.writeStream).not.toHaveBeenCalled();
+  });
+});
+
+describe('batch quota pool', () => {
+  const BATCH_ID = '11111111-1111-4111-8111-111111111111';
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    // These two tests pass the quota check and reach the real outbound
+    // fetch(url) call — stand in a real Response so Readable.fromWeb has a
+    // genuine body stream to bridge, without touching the network. The
+    // test's own `post()` helper also calls global fetch (against
+    // 127.0.0.1), so only the non-local URL gets faked.
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith(base)) return realFetch(input, init);
+      return Promise.resolve(new Response('bytes', { status: 200 }));
+    });
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('checks the batch pool, not the per-subject pool, when a batchId is given', async () => {
+    store.countFiles.mockResolvedValue(1_000_000); // per-subject pool would refuse
+    store.countFilesForBatch.mockResolvedValue(0);
+    disk.writeStream.mockResolvedValue({ ok: true, sizeBytes: 4 });
+    store.insertFile.mockResolvedValue({
+      id: 'file-1',
+      filename: 'page-1.tif',
+      contentType: null,
+      sizeBytes: 4,
+      source: 'fetch:example.com',
+      batchId: BATCH_ID,
+      createdAt: new Date(),
+      expiresAt: new Date(),
+    });
+
+    const response = await post('/v1/fetch', {
+      ...TARGET,
+      url: 'https://example.com/page-1.tif',
+      filename: 'page-1.tif',
+      batchId: BATCH_ID,
+    });
+
+    expect(response.status).toBe(200);
+    expect(store.countFilesForBatch).toHaveBeenCalledWith(expect.anything(), 'tenant-1', BATCH_ID);
+    expect(store.countFiles).not.toHaveBeenCalled();
+    const inserted = store.insertFile.mock.calls[0]?.[1] as { batchId: string | null };
+    expect(inserted.batchId).toBe(BATCH_ID);
+  });
+
+  it('ignores a malformed batchId rather than passing it through as a pool key', async () => {
+    disk.writeStream.mockResolvedValue({ ok: true, sizeBytes: 4 });
+    store.insertFile.mockResolvedValue({
+      id: 'file-1',
+      filename: 'page-1.tif',
+      contentType: null,
+      sizeBytes: 4,
+      source: 'fetch:example.com',
+      batchId: null,
+      createdAt: new Date(),
+      expiresAt: new Date(),
+    });
+
+    const response = await post('/v1/fetch', {
+      ...TARGET,
+      url: 'https://example.com/page-1.tif',
+      filename: 'page-1.tif',
+      batchId: 'not-a-uuid',
+    });
+
+    expect(response.status).toBe(200);
+    expect(store.countFilesForBatch).not.toHaveBeenCalled();
+    expect(store.countFiles).toHaveBeenCalled();
   });
 });
 

@@ -146,14 +146,18 @@ export function registerSandboxTools(server: McpServer, context: MCPToolContext)
     'sandbox_list_files',
     {
       title: 'Sandbox · Read — List what you have staged',
-      description: 'The files currently in your scratch space, with size and expiry.',
+      description:
+        'The files currently in your scratch space, with size and expiry. Pass batchId to ' +
+        'narrow to one batch job (from batch_start_document_pipeline or similar).',
       annotations: { readOnlyHint: true },
-      inputSchema: z.object({}),
+      inputSchema: z.object({
+        batchId: z.string().uuid().optional().describe('Narrow to one batch job, if you have its id.'),
+      }),
     },
-    async () => {
+    async (args: Record<string, unknown>) => {
       const target = targetOf(context);
       if (typeof target === 'string') return errText(target);
-      const listed = await sbListFiles(target);
+      const listed = await sbListFiles(target, str(args.batchId) || undefined);
       if (!listed.ok) return errText(clientFailure(listed.err).message);
       if (listed.val.length === 0) return textResult('Nothing is staged in your scratch space.');
       return textResult(listed.val.map(fileLine).join('\n'));

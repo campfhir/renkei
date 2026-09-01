@@ -16,6 +16,8 @@ export interface SandboxFileSummary {
   sizeBytes: number;
   /** Where the bytes came from, for display/audit — never the full URL or a secret. */
   source: string;
+  /** The batch job this file belongs to, if any — see limits.ts's batch quota pool. */
+  batchId: string | null;
   createdAt: Date;
   expiresAt: Date;
 }
