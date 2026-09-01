@@ -12,9 +12,17 @@
  *
  * Ground rules, each load-bearing:
  *
- *  - Everything is OWNER-SCOPED: every lookup goes through the same
- *    subject-scoped queries the web routes use, so someone else's agentId
- *    reads as not-found, never as forbidden.
+ *  - Access is STRUCTURAL, matching the web routes: an agent resolves for
+ *    its owner, or for someone holding an unexpired access grant
+ *    (access-grants.ts — the sharing modal's "share with a person"), through
+ *    the SAME resolveAgentAccess every agent route uses. A grantee sees the
+ *    agent exactly as the owner does — run details unredacted, edits
+ *    allowed — because that is the point of sharing it. Someone with
+ *    neither reads the agentId as not-found, never as forbidden. The one
+ *    thing sharing does NOT extend is the owner's approval/question card
+ *    feed (agent_approvals_list/agent_approval_decide and their question
+ *    siblings) and agent deletion — both stay owner-only, matching every
+ *    web route that touches them.
  *  - The DEFINITION-EDITING tools (agent_create, agent_update, and the
  *    agent_patch_* pair) REFUSE
  *    agent-run callers (`context.agent` set): a run must not rewrite its
@@ -83,7 +91,13 @@ import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/ag
 import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
 import { sql } from 'kysely';
 import type { MCPToolContext } from '../common';
-import { getAgent, listAgents, type StoredAgent, type TriggerPayload } from '@/lib/agents/store';
+import { listAgents, type TriggerPayload } from '@/lib/agents/store';
+import {
+  resolveAgentAccess,
+  listAgentsSharedWith,
+  type AgentAccess,
+} from '@/lib/agents/access-grants';
+import { getIdentityEmail } from '@/lib/identity';
 import { saveAgent } from '@/lib/agents/save';
 import { applyStepPatch, toPatchOperations } from '@/lib/agents/patch-steps';
 import { applyTriggerPatch, toTriggerOperations } from '@/lib/agents/patch-triggers';
@@ -133,7 +147,7 @@ function entryCount(count: number): string {
 }
 
 const NO_SUBJECT = 'This caller has no recorded identity, so it has no agents.';
-const NOT_FOUND = 'No agent of yours has that id.';
+const NOT_FOUND = 'No agent of yours, and none shared with you, has that id.';
 const RUN_REFUSAL =
   'Agent runs cannot edit agent definitions — creating and updating agents is reserved ' +
   'for people. The read, run-history, knowledge, and memory tools remain available.';
@@ -146,15 +160,19 @@ const noteErrorText: Record<AgentNoteError, string> = {
   EMBEDDING_FAILED: 'The embedding provider rejected the content — try again.',
 };
 
-/** The caller's agent, owner-scoped: someone else's id reads as null. */
-async function ownAgent(
+/**
+ * The caller's access to one agent — owner or grantee, through the same
+ * resolver every agent web route uses. Someone with neither resolves to
+ * null, which every caller here reports as not-found.
+ */
+async function agentAccessFor(
   db: Kysely<DB>,
   context: MCPToolContext,
   agentId: unknown
-): Promise<StoredAgent | null> {
+): Promise<AgentAccess | null> {
   const id = typeof agentId === 'string' ? agentId.trim() : '';
   if (!id || !context.subject) return null;
-  return getAgent(db, context.tenantId, context.subject, id);
+  return resolveAgentAccess(db, context.tenantId, context.subject, id);
 }
 
 function outlineOf(steps: AgentStepsDoc): string {
@@ -341,8 +359,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Read — List your agents',
       description:
-        'Your Renkei agents: id, name, on/off, what each does, and when it runs. Start here ' +
-        'to find an agentId for the other agent tools.',
+        'Your Renkei agents, plus any others have shared with you: id, name, on/off, what ' +
+        'each does, when it runs, and (for a shared one) who owns it. Start here to find an ' +
+        'agentId for the other agent tools — a shared agentId works everywhere an owned one ' +
+        'does, except deciding its approval/question cards and deleting it.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({}),
     },
@@ -350,19 +370,48 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!context.subject) return errText(NO_SUBJECT);
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
+      const db = dbResult.val;
 
-      const agents = await listAgents(dbResult.val, context.tenantId, context.subject);
-      if (agents.length === 0) return textResult('You have no agents yet.');
-      const lines = [`${agents.length} agent(s):`];
-      for (const agent of agents) {
-        const triggers = agent.triggers.map((trigger) => triggerSummary(trigger.draft)).join('; ');
-        lines.push(
-          '',
-          `- ${agent.name} — ${agent.enabled ? 'ON' : 'off'}${agent.guardrails ? ' · has guardrails' : ''}`,
-          `  agentId: ${agent.id}`,
-          ...(agent.description ? [`  ${agent.description}`] : []),
-          `  runs: ${triggers || 'no triggers (manual only)'}`
-        );
+      const [agents, shared] = await Promise.all([
+        listAgents(db, context.tenantId, context.subject),
+        listAgentsSharedWith(db, context.tenantId, context.subject),
+      ]);
+      if (agents.length === 0 && shared.length === 0) {
+        return textResult('You have no agents yet, and none have been shared with you.');
+      }
+
+      const lines: string[] = [];
+      if (agents.length > 0) {
+        lines.push(`${agents.length} agent(s) of yours:`);
+        for (const agent of agents) {
+          const triggers = agent.triggers
+            .map((trigger) => triggerSummary(trigger.draft))
+            .join('; ');
+          lines.push(
+            '',
+            `- ${agent.name} — ${agent.enabled ? 'ON' : 'off'}${agent.guardrails ? ' · has guardrails' : ''}`,
+            `  agentId: ${agent.id}`,
+            ...(agent.description ? [`  ${agent.description}`] : []),
+            `  runs: ${triggers || 'no triggers (manual only)'}`
+          );
+        }
+      }
+      if (shared.length > 0) {
+        lines.push('', `${shared.length} agent(s) shared with you:`);
+        for (const listing of shared) {
+          const agent = listing.agent;
+          const triggers = agent.triggers
+            .map((trigger) => triggerSummary(trigger.draft))
+            .join('; ');
+          lines.push(
+            '',
+            `- ${agent.name} — ${agent.enabled ? 'ON' : 'off'}${agent.guardrails ? ' · has guardrails' : ''}`,
+            `  agentId: ${agent.id}`,
+            `  shared by ${listing.ownerName ?? listing.ownerEmail ?? listing.ownerSubject}`,
+            ...(agent.description ? [`  ${agent.description}`] : []),
+            `  runs: ${triggers || 'no triggers (manual only)'}`
+          );
+        }
       }
       return textResult(lines.join('\n'));
     }
@@ -373,7 +422,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Read — The exact definition, as JSON',
       description:
-        "One of your agents' EXACT stored definition, as raw JSON — the machine path. " +
+        "One of your agents' (or one shared with you) EXACT stored definition, as raw JSON — " +
+        'the machine path. ' +
         'To change a STEP, take its id from here and use agent_patch_steps: it inserts, ' +
         'replaces, removes or moves one step at a time and leaves the rest untouched. ' +
         'To change the NAME, a TRIGGER, the guardrails, the blocked skills or the model, ' +
@@ -390,8 +440,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!context.subject) return errText(NO_SUBJECT);
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const agent = await ownAgent(dbResult.val, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
 
       // Raw JSON, nothing else: agentId/enabled are read-only context (the
       // save path ignores them); every other key is exactly what
@@ -424,7 +475,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Read — One agent, described',
       description:
-        'The human-readable rendering of one of your agents: the steps outline, guardrails, ' +
+        'The human-readable rendering of one of your agents (or one shared with you): the ' +
+        'steps outline, guardrails, ' +
         'blocked skills, the variables it saves (for chaining), triggers, and agents ' +
         'chained after it. For the exact definition to edit, use agent_get; for what its ' +
         'runs carry, agent_knowledge_list and agent_memory_list.',
@@ -438,10 +490,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
       const db = dbResult.val;
-      const agent = await ownAgent(db, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(db, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
 
-      // Agents chained AFTER this one — the caller's own only, matching the
+      // Agents chained AFTER this one — the same owner's, matching the
       // finalize query that actually fires them.
       const chained = await db
         .selectFrom('agent_triggers as t')
@@ -451,7 +504,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         .where('t.kind', '=', 'agent')
         .where('t.enabled', '=', true)
         .where(sql<string>`t.config->>'callerAgentId'`, '=', agent.id)
-        .where('a.owner_subject', '=', context.subject)
+        .where('a.owner_subject', '=', access.ownerSubject)
         .execute();
 
       const lines = [
@@ -959,7 +1012,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Read — Recent runs of an agent',
       description:
-        "One of your agents' recent runs: status (including 'waiting' for approval pauses), " +
+        "One of your agents' (or one shared with you) recent runs: status (including " +
+        "'waiting' for approval pauses), " +
         'what failed and where, trigger, timing. Use agent_run_get on a runId for the full story.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -975,8 +1029,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!context.subject) return errText(NO_SUBJECT);
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const agent = await ownAgent(dbResult.val, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
 
       const limit =
         typeof args.limit === 'number' ? Math.min(Math.max(Math.trunc(args.limit), 1), 50) : 20;
@@ -993,7 +1048,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const runs = await listRunsForOwner(
         dbResult.val,
         context.tenantId,
-        context.subject,
+        access.ownerSubject,
         agent.id,
         { status, limit }
       );
@@ -1037,7 +1092,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Read — One run in full',
       description:
-        'The full debugging view of one run of YOUR agent — snapshot outline, timeline, every ' +
+        'The full debugging view of one run of one of your agents (or one shared with you) — ' +
+        'snapshot outline, timeline, every ' +
         'attempt with its tool calls. The same markdown the run page\'s "Copy for debugging" ' +
         'button produces, designed to be handed to a model.',
       annotations: { readOnlyHint: true },
@@ -1053,27 +1109,38 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!dbResult.ok) return errText('Database unavailable.');
       const db = dbResult.val;
 
-      // Resolve the agent from the run row (owner-scoped), then reuse the
-      // owner-audience detail read.
+      // Resolve the agent from the run row FIRST (no owner filter — the
+      // caller may be a grantee, not the owner), then check access to that
+      // agentId the same way every other read here does. A run id whose
+      // agent the caller cannot reach reads as not-found, same as a bad
+      // runId — never "found but not yours".
       const runRow = await db
         .selectFrom('agent_runs')
         .select(['agent_id'])
         .where('id', '=', runId)
         .where('tenant_id', '=', context.tenantId)
-        .where('owner_subject', '=', context.subject)
         .executeTakeFirst();
       if (!runRow) return errText('No run of yours has that id.');
-      const agent = await ownAgent(db, context, runRow.agent_id);
-      if (!agent) return errText('No run of yours has that id.');
-      const run = await getRunForOwner(db, context.tenantId, context.subject, agent.id, runId);
+      const access = await resolveAgentAccess(
+        db,
+        context.tenantId,
+        context.subject,
+        runRow.agent_id
+      );
+      if (!access) return errText('No run of yours has that id.');
+      const agent = access.agent;
+      const run = await getRunForOwner(db, context.tenantId, access.ownerSubject, agent.id, runId);
       if (!run) return errText('No run of yours has that id.');
 
       // A parked run's timeline ends mid-air without this: the last thing it
-      // did was raise a card, and the card is what happens next.
+      // did was raise a card, and the card is what happens next. The card
+      // is the OWNER's decision to make — approving spends their grants —
+      // so a grantee reads the timeline without this section, same as the
+      // run page.
       const approval =
-        run.status === 'waiting'
+        access.viewerIsOwner && run.status === 'waiting'
           ? (
-              await listPendingApprovals(db, context.tenantId, context.subject, {
+              await listPendingApprovals(db, context.tenantId, access.ownerSubject, {
                 agentId: agent.id,
                 limit: 50,
               })
@@ -1103,12 +1170,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Stop a run',
       description:
-        'Stop one of YOUR runs that has not finished — queued, waiting on you, or actively ' +
-        'running. This only REQUESTS the stop: a queued or waiting run cancels within a ' +
-        'moment, but a running one finishes its current step first and stops before the ' +
-        'next — agent_run_get shows when it lands. Refuses agent-run callers, same as ' +
-        'agent_run_now: stopping runs outside the chain is a human/API decision, not one an ' +
-        'agent makes for itself or another run mid-chain.',
+        'Stop a run of one of your agents (or one shared with you) that has not finished — ' +
+        'queued, waiting on you, or actively running. This only REQUESTS the stop: a queued ' +
+        'or waiting run cancels within a moment, but a running one finishes its current step ' +
+        'first and stops before the next — agent_run_get shows when it lands. Refuses ' +
+        'agent-run callers, same as agent_run_now: stopping runs outside the chain is a ' +
+        'human/API decision, not one an agent makes for itself or another run mid-chain.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         runId: z.string().min(1).describe('From agent_runs_list'),
@@ -1125,22 +1192,29 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!dbResult.ok) return errText('Database unavailable.');
       const db = dbResult.val;
 
+      // Resolve the agent from the run row first (no owner filter — the
+      // caller may be a grantee), then check access the same way every
+      // other read here does.
       const runRow = await db
         .selectFrom('agent_runs')
-        .select(['agent_id', 'owner_subject'])
+        .select(['agent_id'])
         .where('id', '=', runId)
         .where('tenant_id', '=', context.tenantId)
-        .where('owner_subject', '=', context.subject)
         .executeTakeFirst();
       if (!runRow) return errText('No run of yours has that id.');
-      const agent = await ownAgent(db, context, runRow.agent_id);
-      if (!agent) return errText('No run of yours has that id.');
+      const access = await resolveAgentAccess(
+        db,
+        context.tenantId,
+        context.subject,
+        runRow.agent_id
+      );
+      if (!access) return errText('No run of yours has that id.');
 
       const result = await requestRunCancellation(db, agentJobsQueue().producer, {
         tenantId: context.tenantId,
-        agentId: agent.id,
+        agentId: access.agent.id,
         runId,
-        ownerSubject: runRow.owner_subject,
+        ownerSubject: access.ownerSubject,
         canceledBySubject: context.subject,
       });
       switch (result.outcome) {
@@ -1165,7 +1239,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Run a scheduled agent now',
       description:
-        'Start one of YOUR scheduled agents immediately, without waiting for its next ' +
+        'Start a scheduled agent of yours (or one shared with you) immediately, without ' +
+        'waiting for its next ' +
         'scheduled time — the "run it now" you would otherwise get by editing the schedule. ' +
         'Deliberately narrow: the agent must be ON and must have an enabled schedule ' +
         'trigger, so this can only bring forward work that already runs by itself. An agent ' +
@@ -1198,8 +1273,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
       const db = dbResult.val;
-      const agent = await ownAgent(db, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(db, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
 
       if (!agent.enabled) {
         return errText(
@@ -1273,7 +1349,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const result = await createAgentRun(db, agentJobsQueue().producer, {
         tenantId: context.tenantId,
         agentId: agent.id,
-        ownerSubject: context.subject,
+        ownerSubject: access.ownerSubject,
         steps: agent.steps,
         llmModelId: agent.llmModelId,
         triggerId: null,
@@ -1308,7 +1384,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: "Agents · Read — An agent's memory",
       description:
-        "One of your agents' memory in full: the rolling summary and the newest entries the " +
+        "One of your agents' (or one shared with you) memory in full: the rolling summary " +
+        'and the newest entries the ' +
         'engine recorded across runs. agent_get shows the bounded slice runs receive; this is ' +
         'the raw list. Returns entryIds for agent_memory_forget.',
       annotations: { readOnlyHint: true },
@@ -1320,8 +1397,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!context.subject) return errText(NO_SUBJECT);
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const agent = await ownAgent(dbResult.val, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
 
       const memory = await readAgentMemory(dbResult.val, context.tenantId, agent.id, {
         maxEntries: 100,
@@ -1350,7 +1428,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: "Agents · Act — Forget an agent's memory",
       description:
-        'Delete what one of your agents remembers: named entries (entryIds from ' +
+        'Delete what one of your agents (or one shared with you) remembers: named entries ' +
+        '(entryIds from ' +
         'agent_memory_list), the rolling summary, or everything. Selective forgetting is the ' +
         'point — an agent that learned one wrong fact should lose that fact, not its whole ' +
         'history. `all: true` needs `confirm: true`; without it you get a count of what would ' +
@@ -1412,8 +1491,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
       const db = dbResult.val;
-      const agent = await ownAgent(db, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(db, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
 
       if (all) {
         const held = await countAgentMemory(db, context.tenantId, agent.id);
@@ -1494,7 +1574,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: "Agents · Read — An agent's knowledge notes",
       description:
-        "One of your agents' knowledge notes in full — the reference material its runs carry " +
+        "One of your agents' (or one shared with you) knowledge notes in full — the " +
+        'reference material its runs carry ' +
         '(agent_get shows only the bounded render). Returns noteIds for update/remove.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -1505,8 +1586,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!context.subject) return errText(NO_SUBJECT);
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const agent = await ownAgent(dbResult.val, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
 
       const notes = await listAgentNotes(dbResult.val, context.tenantId, agent.id);
       if (notes.length === 0) return textResult(`"${agent.name}" has no knowledge notes.`);
@@ -1527,9 +1609,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Add knowledge notes to an agent',
       description:
-        'Write one or MORE knowledge notes onto one of your agents — reference material its ' +
-        'runs will carry (policies, formats, standing facts). Each note is persisted ' +
-        'independently: one bad entry does not void the rest.',
+        'Write one or MORE knowledge notes onto one of your agents (or one shared with you) ' +
+        '— reference material its runs will carry (policies, formats, standing facts). Each ' +
+        'note is persisted independently: one bad entry does not void the rest.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -1547,14 +1629,18 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const ownerEmail = context.userEmail;
-      if (!ownerEmail) {
-        return errText('This caller has no recorded email, which knowledge notes require.');
-      }
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const agent = await ownAgent(dbResult.val, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
+      // Notes are keyed under the OWNER's email regardless of who writes
+      // them — the owner's runs read the notes, whoever authored them.
+      const ownerEmailResult = await getIdentityEmail(context.tenantId, access.ownerSubject);
+      const ownerEmail = ownerEmailResult.ok ? ownerEmailResult.val : null;
+      if (!ownerEmail) {
+        return errText("No email is on record for the agent owner's identity.");
+      }
       const notes = Array.isArray(args.notes) ? args.notes : [];
       if (notes.length === 0) return errText('Pass at least one note.');
 
@@ -1600,8 +1686,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Rewrite one knowledge note',
       description:
-        "Replace a note's title and/or content on one of your agents. Omitted fields keep " +
-        'their current value; the stored note is fully rewritten with the result.',
+        "Replace a note's title and/or content on one of your agents (or one shared with " +
+        'you). Omitted fields keep their current value; the stored note is fully rewritten ' +
+        'with the result.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -1612,10 +1699,6 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const ownerEmail = context.userEmail;
-      if (!ownerEmail) {
-        return errText('This caller has no recorded email, which knowledge notes require.');
-      }
       const noteId = typeof args.noteId === 'string' ? args.noteId.trim() : '';
       const title = typeof args.title === 'string' ? args.title.trim() : undefined;
       const content = typeof args.content === 'string' ? args.content : undefined;
@@ -1625,8 +1708,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       }
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const agent = await ownAgent(dbResult.val, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
+      const ownerEmailResult = await getIdentityEmail(context.tenantId, access.ownerSubject);
+      const ownerEmail = ownerEmailResult.ok ? ownerEmailResult.val : null;
+      if (!ownerEmail) {
+        return errText("No email is on record for the agent owner's identity.");
+      }
 
       // Full-replacement semantics underneath (same as the web panel): an
       // omitted half is carried over from the stored note.
@@ -1653,8 +1742,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Remove knowledge notes',
       description:
-        'Delete one or more knowledge notes from one of your agents. Each note is removed ' +
-        'independently: one bad id does not void the rest.',
+        'Delete one or more knowledge notes from one of your agents (or one shared with ' +
+        'you). Each note is removed independently: one bad id does not void the rest.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -1663,14 +1752,16 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText(NO_SUBJECT);
-      const ownerEmail = context.userEmail;
-      if (!ownerEmail) {
-        return errText('This caller has no recorded email, which knowledge notes require.');
-      }
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const agent = await ownAgent(dbResult.val, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
+      const ownerEmailResult = await getIdentityEmail(context.tenantId, access.ownerSubject);
+      const ownerEmail = ownerEmailResult.ok ? ownerEmailResult.val : null;
+      if (!ownerEmail) {
+        return errText("No email is on record for the agent owner's identity.");
+      }
       const noteIds = Array.isArray(args.noteIds)
         ? args.noteIds.filter((id): id is string => typeof id === 'string' && id.length > 0)
         : [];
@@ -1998,7 +2089,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Change some steps of an agent (confirm-gated)',
       description:
-        "Change PART of one of your agents' steps without resending the whole definition — " +
+        "Change PART of one of your agents' (or one shared with you) steps without resending " +
+        'the whole definition — ' +
         'insert a step between two others, replace one, remove one, or move one. Prefer this ' +
         'over agent_update for anything short of a rewrite: agent_update requires echoing ' +
         'every untouched step back verbatim, and one transcription slip silently rewrites a ' +
@@ -2065,8 +2157,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (context.agent) return errText(RUN_REFUSAL);
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const agent = await ownAgent(dbResult.val, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
 
       const operations = toPatchOperations(args.operations);
       if ('error' in operations) return errText(operations.error);
@@ -2097,6 +2190,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const result = await saveAgent(dbResult.val, context.tenantId, context.subject, parsed, {
         agentId: agent.id,
         dryRun,
+        ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),
       });
       if (result.outcome === 'not-found') return errText(NOT_FOUND);
       if (result.outcome === 'invalid') return errText(issueLines(result.issues));
@@ -2127,7 +2221,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Change one part of an agent (confirm-gated)',
       description:
-        'Change PART of one of your agents WITHOUT resending its steps — its name, its ' +
+        'Change PART of one of your agents (or one shared with you) WITHOUT resending its ' +
+        'steps — its name, its ' +
         'triggers (one at a time, by id), its guardrails, its blocked skills, or its model. ' +
         'ONLY the fields you send change; everything you leave out is kept exactly as ' +
         'stored. Prefer this over agent_update for anything short of a rewrite: agent_update ' +
@@ -2222,8 +2317,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       }
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const agent = await ownAgent(dbResult.val, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
 
       // Present means change it, absent means keep it: the whole point of
       // this tool is that what a caller does not mention is not touched.
@@ -2288,6 +2384,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const result = await saveAgent(dbResult.val, context.tenantId, context.subject, parsed, {
         agentId: agent.id,
         dryRun,
+        ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),
       });
       if (result.outcome === 'not-found') return errText(NOT_FOUND);
       if (result.outcome === 'invalid') return errText(issueLines(result.issues));
@@ -2328,8 +2425,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Update an agent (confirm-gated)',
       description:
-        "REPLACE one of your agents' definition (name, steps, triggers, guardrails, blocked " +
-        'skills) — the whole-document path, for a REWRITE. ' +
+        "REPLACE one of your agents' (or one shared with you) definition (name, steps, " +
+        'triggers, guardrails, blocked skills) — the whole-document path, for a REWRITE. ' +
         'FOR ANYTHING SHORT OF ONE, PATCH INSTEAD: agent_patch_steps changes steps by id, ' +
         'agent_patch changes the name, a trigger, the guardrails, the blocked skills or the ' +
         'model. This tool requires echoing everything untouched back verbatim, where one ' +
@@ -2366,8 +2463,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       }
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const agent = await ownAgent(dbResult.val, context, args.agentId);
-      if (!agent) return errText(NOT_FOUND);
+      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      if (!access) return errText(NOT_FOUND);
+      const agent = access.agent;
 
       // enabled is never RAISED here: an off agent stays off; an on agent
       // stays on (the owner armed it knowingly) unless keepEnabled:false.
@@ -2379,6 +2477,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const result = await saveAgent(dbResult.val, context.tenantId, context.subject, parsed, {
         agentId: agent.id,
         dryRun,
+        ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),
       });
       if (result.outcome === 'not-found') return errText(NOT_FOUND);
       if (result.outcome === 'invalid') return errText(issueLines(result.issues));
