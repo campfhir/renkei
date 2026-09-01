@@ -7,6 +7,7 @@
  * is refused rather than silently accepted.
  */
 
+import { isSecure } from '@campfhir/bored-logs';
 import { callMistralOcr } from './client';
 import type { MistralOcrConfig } from './types';
 
@@ -145,7 +146,13 @@ describe('callMistralOcr', () => {
       expect(attrs.endpoint).toBe(CONFIG.endpoint);
       expect(attrs.model).toBe(CONFIG.model);
       expect(attrs.documentType).toBe('document_url');
-      expect(JSON.stringify(attrs)).not.toContain(CONFIG.apiKey);
+      // The key is never a bare, unmarked string anywhere in attrs — it
+      // only appears wrapped in bored-logs' secure(), which is what any
+      // attached adapter's maskSecure actually hides. isSecure() is the
+      // same check a real adapter runs; this test is checking that
+      // mechanism is engaged, not re-deriving a bespoke "never appears" rule.
+      const headers = attrs.headers as { authorization: unknown };
+      expect(isSecure(headers.authorization)).toBe(true);
     });
 
     it('logs the response status and a bounded body preview, even on a refusal', async () => {

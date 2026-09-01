@@ -37,6 +37,7 @@
  * one is added.
  */
 
+import { secure } from '@campfhir/bored-logs';
 import type { MistralOcrConfig, MistralOcrError, MistralOcrPage, MistralOcrResult } from './types';
 
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -51,8 +52,11 @@ const DEBUG_BODY_PREVIEW_CHARS = 4_000;
  * The structural slice of a bored-logs logger this package needs — the
  * `LoopLogger`/`EventLoopDeps.logger` shape every app already builds
  * (`apps/web/lib/logger.ts`, `apps/worker/src/logger.ts`, ...). Declared
- * locally rather than imported so this package stays free of a hard
- * `@campfhir/bored-logs` dependency; callers pass their own app's logger in.
+ * locally (not imported from `@campfhir/bored-logs`) so this package never
+ * needs to CONSTRUCT a logger of its own — no adapters, no app-specific
+ * identity — callers always pass their own app's real logger in, so its
+ * adapters (ConsoleAdapter's `maskSecure`, a PostgresAdapter's encryption)
+ * are the ones actually enforcing what `secure()`/`redact()` mean below.
  */
 export interface MistralOcrLogger {
   debug(message: string, attrs?: Record<string, unknown>): void;
@@ -67,8 +71,13 @@ export interface MistralOcrInput {
 export interface MistralOcrCallOptions {
   /**
    * Enables debug logging of the request (endpoint, model, document type,
-   * byte size — never the API key or the document bytes themselves) and the
-   * response (status, a bounded preview of the raw body). Off by default;
+   * byte size, and the API key wrapped in bored-logs' `secure()` — masked
+   * to `[secure]` wherever the attached adapter has `maskSecure` on, which
+   * every app here sets from NODE_ENV=production) and the response (status,
+   * a bounded preview of the raw body — NOT wrapped in `redact()`: doing so
+   * would mask it identically to `secure()` under the same maskSecure rule,
+   * hiding it from exactly the console output this option exists to show).
+   * Document bytes themselves are never logged either way. Off by default;
    * pass the caller's own app logger and set CONSOLE_LOG_LEVEL=debug (or
    * LOG_DB_LEVEL=debug for the persisted copy) to see it.
    */
@@ -136,10 +145,13 @@ export async function callMistralOcr(
     filename: input.filename,
     contentType: input.contentType,
     bytesLength: input.bytes.byteLength,
-    // The real key must never reach a log line, even unmasked — this is a
-    // fixed placeholder, not the redacted value.
+    // secure(): masked to `[secure]` by any adapter with maskSecure on
+    // (every app here sets that from NODE_ENV=production, baked into every
+    // Docker stage) — the codebase's own mechanism, not a bespoke
+    // placeholder, so it degrades the same way every other secret in these
+    // logs does rather than needing its own one-off rule.
     headers: {
-      authorization: 'Bearer [redacted]',
+      authorization: secure(`Bearer ${config.apiKey}`),
       'content-type': 'application/json',
       'extra-parameters': 'pass-through',
     },

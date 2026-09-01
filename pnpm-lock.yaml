@@ -776,6 +776,9 @@ importers:
 
   packages/connector-mistral-ocr:
     dependencies:
+      '@campfhir/bored-logs':
+        specifier: ^0.7.1
+        version: 0.7.1(kysely@0.29.4)(pg@8.22.0)(react@19.2.4)
       '@renkei/connector-config':
         specifier: workspace:*
         version: link:../connector-config
