@@ -1,13 +1,15 @@
 /**
  * The admin run detail page's live view — same mechanism as the owner
- * route (apps/web/app/api/tenant/[tenantId]/agents/[agentId]/runs/[runId]/stream),
- * against the admin's already-redacted projection (getRunForAdmin) and no
- * pause card, since oversight is read-only.
+ * route (apps/web/app/api/tenant/[tenantId]/agents/[agentId]/runs/[runId]/stream):
+ * this route polls the database on the server, and only pushes an SSE
+ * message to the browser when a re-read actually differs. Against the
+ * admin's already-redacted projection (getRunForAdmin) and no pause card,
+ * since oversight is read-only.
  */
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { getDatabase, subscribeToRunChanges } from '@renkei/db';
+import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getRunForAdmin, type RunDetail } from '@/lib/agents/runs-view';
@@ -16,8 +18,7 @@ import { isUuid } from '@/lib/uuid';
 
 export const runtime = 'nodejs';
 
-const HEARTBEAT_MS = 25_000;
-const SAFETY_NET_MS = 30_000;
+const POLL_MS = 2_000;
 
 export async function GET(
   _request: NextRequest,
@@ -44,18 +45,14 @@ export async function GET(
   const encoder = new TextEncoder();
   let closed = false;
   let lastSent = '';
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
-  let safetyNet: ReturnType<typeof setInterval> | undefined;
-  let unsubscribe: (() => void) | null = null;
+  let timer: ReturnType<typeof setInterval> | undefined;
 
   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
+    start(controller) {
       const close = () => {
         if (closed) return;
         closed = true;
-        clearInterval(heartbeat);
-        clearInterval(safetyNet);
-        unsubscribe?.();
+        clearInterval(timer);
         try {
           controller.close();
         } catch {
@@ -66,7 +63,10 @@ export async function GET(
       const send = (run: RunDetail) => {
         if (closed) return;
         const payload = JSON.stringify({ run });
-        if (payload === lastSent) return;
+        if (payload === lastSent) {
+          controller.enqueue(encoder.encode(': ping\n\n'));
+          return;
+        }
         lastSent = payload;
         controller.enqueue(encoder.encode(`event: run\ndata: ${payload}\n\n`));
         if (isRunSettled(run.status)) close();
@@ -75,30 +75,17 @@ export async function GET(
       send(initial);
       if (closed) return;
 
-      const refresh = async () => {
+      timer = setInterval(() => {
         if (closed) return;
-        const run = await getRunForAdmin(db, tenant.id, agentId, runId);
-        if (run) send(run);
-      };
-
-      unsubscribe = await subscribeToRunChanges(runId, () => void refresh());
-      if (closed) {
-        unsubscribe();
-        return;
-      }
-
-      heartbeat = setInterval(() => {
-        if (closed) return;
-        controller.enqueue(encoder.encode(': ping\n\n'));
-      }, HEARTBEAT_MS);
-      safetyNet = setInterval(() => void refresh(), SAFETY_NET_MS);
+        void getRunForAdmin(db, tenant.id, agentId, runId).then((run) => {
+          if (run) send(run);
+        });
+      }, POLL_MS);
     },
     cancel() {
       if (closed) return;
       closed = true;
-      clearInterval(heartbeat);
-      clearInterval(safetyNet);
-      unsubscribe?.();
+      clearInterval(timer);
     },
   });
 

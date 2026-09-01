@@ -107,7 +107,6 @@ export const EXPECTED_MIGRATIONS = [
   '075-sandbox-files-batch-id',
   '076-batch-jobs',
   '077-batch-job-messages-queue',
-  '078-agent-run-change-notify',
 ];
 
 export interface MigrationStatus {

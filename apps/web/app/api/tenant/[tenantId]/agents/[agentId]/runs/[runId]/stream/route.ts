@@ -1,22 +1,26 @@
 /**
  * The run detail page's live view: one run, pushed to the browser as it
- * changes, instead of the page polling for it.
+ * changes, instead of the page (or the browser) polling for it.
  *
- * A plain `text/event-stream` response — one dedicated Postgres LISTEN
- * connection per process (subscribeToRunChanges, packages/db/run-events.ts)
- * fans out to however many of these are open, each re-reading just the one
- * run it cares about through the same redaction-aware projection the page
- * itself uses (getOwnerRunPageData). No WebSocket upgrade, no client-side
- * poll loop: the browser holds one long-lived GET and reacts to whatever
- * arrives on it.
+ * The polling still happens — nothing tells this route when a run changes,
+ * so it re-reads the run every POLL_MS — but it happens HERE, once, on the
+ * server, against the database directly. The browser never sees a poll: it
+ * holds one long-lived `text/event-stream` GET and only receives a message
+ * when the re-read actually differs from what it already has. That is the
+ * whole fix over the page polling itself: no client-visible interval, no
+ * full-page `router.refresh()`, and the DB load is one query per open run
+ * page per tick rather than one per browser tab's own timer racing to
+ * reload the entire page.
  *
- * `runtime = 'nodejs'` is required, not decorative — `pg`'s LISTEN client
- * needs a real TCP socket, which the edge runtime does not provide.
+ * `runtime = 'nodejs'` — a Route Handler can run on the edge runtime by
+ * default, but a `ReadableStream` kept open with `setInterval` for minutes
+ * at a time is exactly what the edge runtime's short execution budget is
+ * not built for.
  */
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { getDatabase, subscribeToRunChanges } from '@renkei/db';
+import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { getOwnerRunPageData, type OwnerRunPageData } from '@/lib/agents/run-page-data';
@@ -25,12 +29,10 @@ import { isUuid } from '@/lib/uuid';
 
 export const runtime = 'nodejs';
 
-const HEARTBEAT_MS = 25_000;
-// A correcting re-read in case a NOTIFY was ever missed — a reconnect
-// window on the shared LISTEN connection, say. Long enough to never be
-// mistaken for the polling this replaces; short enough that a missed
-// notification never leaves the page stale for more than a few refreshes.
-const SAFETY_NET_MS = 30_000;
+// Short enough that a change reads as instant; long enough that watching a
+// run stay open all afternoon costs one query every couple of seconds, not
+// a busy loop.
+const POLL_MS = 2_000;
 
 export async function GET(
   request: NextRequest,
@@ -64,22 +66,16 @@ export async function GET(
   const encoder = new TextEncoder();
   let closed = false;
   let lastSent = '';
-  // Shared with `cancel()` below, so a client disconnect tears down the
-  // same timers and subscription a settled run's own `close()` does —
-  // declared here, above `start`, rather than inside it, for exactly that
-  // reason.
-  let heartbeat: ReturnType<typeof setInterval> | undefined;
-  let safetyNet: ReturnType<typeof setInterval> | undefined;
-  let unsubscribe: (() => void) | null = null;
+  // Shared with `cancel()` below, so a client disconnect stops the same
+  // timer a settled run's own `close()` does.
+  let timer: ReturnType<typeof setInterval> | undefined;
 
   const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
+    start(controller) {
       const close = () => {
         if (closed) return;
         closed = true;
-        clearInterval(heartbeat);
-        clearInterval(safetyNet);
-        unsubscribe?.();
+        clearInterval(timer);
         try {
           controller.close();
         } catch {
@@ -90,7 +86,13 @@ export async function GET(
       const send = (data: OwnerRunPageData) => {
         if (closed) return;
         const payload = JSON.stringify(data);
-        if (payload === lastSent) return;
+        if (payload === lastSent) {
+          // Nothing changed — a comment line, not a `run` event, so the
+          // connection reads as alive to any proxy in front of it without
+          // giving the browser a duplicate to parse.
+          controller.enqueue(encoder.encode(': ping\n\n'));
+          return;
+        }
         lastSent = payload;
         controller.enqueue(encoder.encode(`event: run\ndata: ${payload}\n\n`));
         if (isRunSettled(data.run.status)) close();
@@ -99,30 +101,19 @@ export async function GET(
       send(initial);
       if (closed) return;
 
-      const refresh = async () => {
+      timer = setInterval(() => {
         if (closed) return;
-        const data = await getOwnerRunPageData(
+        void getOwnerRunPageData(
           db,
           tenantId,
           access.ownerSubject,
           access.viewerIsOwner,
           agentId,
           runId
-        );
-        if (data) send(data);
-      };
-
-      unsubscribe = await subscribeToRunChanges(runId, () => void refresh());
-      if (closed) {
-        unsubscribe();
-        return;
-      }
-
-      heartbeat = setInterval(() => {
-        if (closed) return;
-        controller.enqueue(encoder.encode(': ping\n\n'));
-      }, HEARTBEAT_MS);
-      safetyNet = setInterval(() => void refresh(), SAFETY_NET_MS);
+        ).then((data) => {
+          if (data) send(data);
+        });
+      }, POLL_MS);
     },
     cancel() {
       // The browser navigated away or the EventSource was closed. Mirrors
@@ -130,9 +121,7 @@ export async function GET(
       // controller is already gone by the time `cancel` runs.
       if (closed) return;
       closed = true;
-      clearInterval(heartbeat);
-      clearInterval(safetyNet);
-      unsubscribe?.();
+      clearInterval(timer);
     },
   });
 
