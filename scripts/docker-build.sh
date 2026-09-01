@@ -108,6 +108,7 @@ prompt_yes_no BUILD_MIGRATE "Also build the migration image (docker/Dockerfile's
 prompt_yes_no BUILD_WORKER "Also build the worker image (docker/Dockerfile's 'worker' target)?" "${BUILD_WORKER:-n}"
 prompt_yes_no BUILD_FILESHARES "Also build the file-share worker image (docker/Dockerfile's 'fileshares' target)?" "${BUILD_FILESHARES:-n}"
 prompt_yes_no BUILD_ONBASE "Also build the OnBase egress worker image (docker/Dockerfile's 'onbase' target)?" "${BUILD_ONBASE:-n}"
+prompt_yes_no BUILD_SANDBOX "Also build the sandbox scratch-space worker image (docker/Dockerfile's 'sandbox' target)?" "${BUILD_SANDBOX:-n}"
 
 IMAGE_NAME="${ARG_NAME:-$PKG_NAME}"
 VERSION="${ARG_VERSION:-$PKG_VERSION}"
@@ -237,6 +238,27 @@ else
   fi
 fi
 
+# The sandbox worker is the only process that writes staged agent-scratch
+# file bytes to disk — its own repository (renkei-sandbox) so it rolls out
+# independently, versioned in step with the app.
+LOCAL_SANDBOX_SEMVER_TAG="${IMAGE_NAME}-sandbox:${VERSION}"
+LOCAL_SANDBOX_LATEST_TAG="${IMAGE_NAME}-sandbox:latest"
+REMOTE_SANDBOX_SEMVER_TAG=""
+REMOTE_SANDBOX_LATEST_TAG=""
+if [[ -n "$REGISTRY_PREFIX" ]]; then
+  REMOTE_SANDBOX_SEMVER_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}-sandbox:${VERSION}"
+  REMOTE_SANDBOX_LATEST_TAG="${REGISTRY_PREFIX}/${IMAGE_NAME}-sandbox:latest"
+fi
+
+if $MULTI_PLATFORM; then
+  SANDBOX_TAG_ARGS=(--tag "$REMOTE_SANDBOX_SEMVER_TAG" --tag "$REMOTE_SANDBOX_LATEST_TAG")
+else
+  SANDBOX_TAG_ARGS=(--tag "$LOCAL_SANDBOX_SEMVER_TAG" --tag "$LOCAL_SANDBOX_LATEST_TAG")
+  if [[ -n "$REGISTRY_PREFIX" ]]; then
+    SANDBOX_TAG_ARGS+=(--tag "$REMOTE_SANDBOX_SEMVER_TAG" --tag "$REMOTE_SANDBOX_LATEST_TAG")
+  fi
+fi
+
 # ── Save config ──────────────────────────────────────────────────────────────
 {
   echo "BUILD_ENV=$BUILD_ENV"
@@ -245,6 +267,7 @@ fi
   echo "BUILD_WORKER=$BUILD_WORKER"
   echo "BUILD_FILESHARES=$BUILD_FILESHARES"
   echo "BUILD_ONBASE=$BUILD_ONBASE"
+  echo "BUILD_SANDBOX=$BUILD_SANDBOX"
   registry_config_lines
 } > "$CONFIG_FILE"
 echo ""
@@ -399,6 +422,28 @@ if [[ "$BUILD_ONBASE" == y ]]; then
       echo "✅  Also tagged: $REMOTE_ONBASE_LATEST_TAG"
       echo ""
       echo "Run scripts/docker-push.sh to push $REMOTE_ONBASE_SEMVER_TAG"
+    fi
+  fi
+fi
+
+if [[ "$BUILD_SANDBOX" == y ]]; then
+  echo ""
+  echo "Building: ${SANDBOX_TAG_ARGS[*]} (env=$BUILD_ENV, platform=$PLATFORM_LABEL, registry=$REGISTRY_LABEL)"
+  echo "──────────────────────────────────────────────────────────────────────────────"
+  build_target sandbox "${SANDBOX_TAG_ARGS[@]}"
+
+  echo ""
+  if $MULTI_PLATFORM; then
+    echo "✅  Built and pushed: $REMOTE_SANDBOX_SEMVER_TAG"
+    echo "✅  Pushed: $REMOTE_SANDBOX_LATEST_TAG"
+  else
+    echo "✅  Built: $LOCAL_SANDBOX_SEMVER_TAG"
+    echo "✅  Tagged: $LOCAL_SANDBOX_LATEST_TAG"
+    if [[ -n "$REGISTRY_PREFIX" ]]; then
+      echo "✅  Also tagged: $REMOTE_SANDBOX_SEMVER_TAG"
+      echo "✅  Also tagged: $REMOTE_SANDBOX_LATEST_TAG"
+      echo ""
+      echo "Run scripts/docker-push.sh to push $REMOTE_SANDBOX_SEMVER_TAG"
     fi
   fi
 fi

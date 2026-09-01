@@ -20,7 +20,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { hashUploadToken } from '@/lib/mcp-tools/upload-slots';
-import { executeUpload } from '@/lib/upload-executors';
+import { completeUploadSlot } from '@/lib/upload-executors';
 import { logger } from '@/lib/logger';
 
 export async function GET(
@@ -166,7 +166,7 @@ export async function POST(
   if (total === 0) return finish(false, 'The request body was empty.', 400);
   const bytes = Buffer.concat(chunks);
 
-  const outcome = await executeUpload(db, claimed, bytes);
+  const outcome = await completeUploadSlot(db, claimed, bytes);
   logger.info('upload slot {slotId} {status}: {detail}', {
     component: 'upload/route',
     tenantId: claimed.tenant_id,
@@ -175,5 +175,5 @@ export async function POST(
     status: outcome.ok ? 'completed' : 'failed',
     detail: outcome.detail,
   });
-  return finish(outcome.ok, outcome.detail, outcome.ok ? 200 : 502);
+  return NextResponse.json({ ok: outcome.ok, detail: outcome.detail }, { status: outcome.ok ? 200 : 502 });
 }

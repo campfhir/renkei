@@ -24,6 +24,7 @@ export {
   webhookEventsQueue,
   embeddingJobsQueue,
   agentJobsQueue,
+  batchJobsQueue,
   type PostgresQueueConfig,
 } from './postgres';
 export { InMemoryQueue, type MemoryMessage, type InMemoryQueueOptions } from './memory';

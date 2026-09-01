@@ -344,7 +344,7 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
 }
 
 /**
- * The two queues Renkei runs today, table pairs from migrations 013/030.
+ * The queues Renkei runs today, table pairs from migrations 013/030/036/077.
  * Constructed here — and only here — so worker and web can never disagree
  * about a queue's configuration.
  */
@@ -369,6 +369,21 @@ export function embeddingJobsQueue(): Queue {
     // one connector re-indexing a large space cannot put every other
     // connector's work behind it. Without this the queue is strictly
     // oldest-first, and a 1,000-page space is 1,000 places in the line.
+    fairAcrossSources: true,
+  });
+}
+
+export function batchJobsQueue(): Queue {
+  return createPostgresQueue({
+    table: 'batch_job_messages',
+    deadLetterTable: 'batch_job_messages_dead_letters',
+    // An OCR call (or whatever a future batch kind's item work is) is slow,
+    // external, per-item I/O — closer to a Graph batch call than an LLM
+    // loop, so the default 10-minute lease is plenty; no override needed.
+    // Producers tag the source `batch:{batchJobId}` (see the migration's
+    // own comment), so one huge batch cannot starve a smaller concurrent
+    // one — the embedding_jobs provider-lane precedent applied per batch
+    // instead of per connector.
     fairAcrossSources: true,
   });
 }

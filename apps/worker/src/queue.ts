@@ -1,17 +1,19 @@
 /**
- * The worker's two queues, constructed from @renkei/queue's Postgres
- * adapter (Decision #20): `events` — webhook/interactive traffic — and
- * `embedding_jobs` — everything that talks to the org-configured
- * embeddings endpoint. Row-locked claims (FOR UPDATE SKIP LOCKED) let any
- * number of worker instances consume either queue; ordering keys keep
- * purge/ingest/delete sequences serial where producers asked for it.
+ * The worker's queues, constructed from @renkei/queue's Postgres adapter
+ * (Decision #20): `events` — webhook/interactive traffic — `embedding_jobs`
+ * — everything that talks to the org-configured embeddings endpoint — and
+ * `batch_job_messages` — per-item fan-out for batch jobs (document-ocr-pipeline
+ * and future kinds), consumed by the dedicated batch-jobs-worker entrypoint.
+ * Row-locked claims (FOR UPDATE SKIP LOCKED) let any number of worker
+ * instances consume any queue; ordering keys keep purge/ingest/delete
+ * sequences serial where producers asked for it.
  *
  * `ClaimedEvent` is the historical name for the queue package's
  * ClaimedMessage — re-exported so the handler modules stay
  * adapter-agnostic.
  */
 
-import { webhookEventsQueue, embeddingJobsQueue } from '@renkei/queue';
+import { webhookEventsQueue, embeddingJobsQueue, batchJobsQueue } from '@renkei/queue';
 import type { Queue } from '@renkei/queue';
 
 export type { ClaimedMessage as ClaimedEvent, Disposition } from '@renkei/queue';
@@ -44,3 +46,4 @@ function eventSourcesFromEnv(): readonly string[] | undefined {
 
 export const eventsQueue: Queue = webhookEventsQueue({ sources: eventSourcesFromEnv() });
 export const embeddingQueue: Queue = embeddingJobsQueue();
+export const batchJobQueue: Queue = batchJobsQueue();

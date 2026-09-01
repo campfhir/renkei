@@ -37,6 +37,8 @@ services:
       FILESHARES_WORKER_API_KEY: ${FILESHARES_WORKER_API_KEY:-renkei-dev-fileshares-key}
       ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
       ONBASE_WORKER_API_KEY: ${ONBASE_WORKER_API_KEY:-renkei-dev-onbase-key}
+      SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
+      SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
     ports:
       - "3000:3000"
     depends_on:
@@ -113,6 +115,32 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # The batch-jobs worker (document-ocr-pipeline and future batch kinds):
+  # same image as `worker`, different entrypoint — the embeddings pattern.
+  # Its own queue (batch_job_messages) because item work — an OCR call per
+  # document — is slow, external, per-item I/O. Reaches the fileshare and
+  # sandbox services directly (to read source documents and stage OCR
+  # results) with the same dev bearer-key defaults those services use.
+  worker-batch-jobs:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: worker
+    image: renkei-worker:latest
+    command: ['pnpm', '--filter', '@renkei/worker', 'start:batch-jobs']
+    environment:
+      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      NODE_ENV: production
+      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
+      FILESHARES_WORKER_API_KEY: ${FILESHARES_WORKER_API_KEY:-renkei-dev-fileshares-key}
+      SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
+      SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   # The file-share I/O service — its own image (target `fileshares`), the
   # only container holding the SMB/SFTP stack or decrypting share
   # credentials. The app reaches it via FILESHARES_WORKER_URL with the
@@ -166,6 +194,31 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # The agent scratch-space service — its own image (target `sandbox`), the
+  # only container that writes staged file bytes to disk (see
+  # docs/sandbox-connector-design.md). The app reaches it via
+  # SANDBOX_WORKER_URL with the shared bearer key; the dev default below
+  # keeps the stack turnkey — export SANDBOX_WORKER_API_KEY to override
+  # both sides at once.
+  worker-sandbox:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: sandbox
+    image: renkei-sandbox:latest
+    container_name: renkei-worker-sandbox
+    environment:
+      DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
+      SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
+      NODE_ENV: production
+    volumes:
+      - sandbox_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   migrate:
     build:
       context: .
@@ -181,3 +234,4 @@ services:
 
 volumes:
   postgres_data:
+  sandbox_data:

@@ -112,6 +112,29 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # The batch-jobs worker (document-ocr-pipeline and future batch kinds):
+  # same image as `worker`, different entrypoint — the embeddings pattern.
+  # Its own queue (batch_job_messages) because item work — an OCR call per
+  # document — is slow, external, per-item I/O that must never sit in
+  # front of the interactive worker's webhook replies. No container_name
+  # on purpose: scale with `--scale worker-batch-jobs=N`, same reasoning as
+  # worker-agents. Reaches the fileshare and sandbox workers directly (to
+  # read source documents and stage OCR results) over the same internal
+  # URLs the web app uses, with the same bearer keys from .env.
+  worker-batch-jobs:
+    image: scotteremiaroden/renkei-worker:latest
+    command: ['pnpm', '--filter', '@renkei/worker', 'start:batch-jobs']
+    env_file:
+      - .env
+    environment:
+      <<: *database-urls
+      FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
+      SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   # The file-share I/O worker: the only process that opens SMB/SFTP
   # sessions or decrypts share credentials. Its own image (not the shared
   # worker one), so the SMB/SSH protocol stack ships apart from the queue
@@ -151,6 +174,29 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # The agent scratch-space worker: the only process that writes staged
+  # file bytes to disk (see docs/sandbox-connector-design.md — this is the
+  # first place Renkei deliberately holds bytes at rest outside a provider
+  # or a browser). Its own image and its own volume, same isolation as the
+  # fileshares/onbase workers below. The web app reaches it over HTTP on
+  # the compose network (SANDBOX_WORKER_URL below) with the shared
+  # SANDBOX_WORKER_API_KEY from .env — generate one with
+  # `openssl rand -base64 32`. No published ports on purpose: nothing
+  # outside the compose network may speak to it.
+  worker-sandbox:
+    image: scotteremiaroden/renkei-sandbox:latest
+    container_name: renkei-worker-sandbox
+    command: ['pnpm', '--filter', '@renkei/worker-sandbox', 'start']
+    env_file:
+      - .env
+    environment: *database-urls
+    volumes:
+      - renkei-sandbox-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   renkei:
     image: scotteremiaroden/renkei:latest
     container_name: renkei-app
@@ -164,6 +210,11 @@ services:
       # Where the web app reaches the OnBase egress worker; the bearer key
       # (ONBASE_WORKER_API_KEY) comes from the shared .env.
       ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
+      # Where the web app reaches the sandbox worker; the bearer key
+      # (SANDBOX_WORKER_API_KEY) comes from the shared .env. Omit both to
+      # run without an agent scratch space — the sandbox_* tools simply
+      # don't register.
+      SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       # PUBLIC_BASE_URL in .env is the authoritative origin when set — it is
       # the address registered with every OAuth provider. Without it, the app
       # falls back to X-Forwarded-Proto/Host from the reverse proxy, which it
@@ -179,3 +230,4 @@ services:
 
 volumes:
   renkei-postgres:
+  renkei-sandbox-data:

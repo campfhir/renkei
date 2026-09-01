@@ -252,6 +252,63 @@ export interface AuditEvents {
   tenant_id: string;
 }
 
+export interface BatchJobItems {
+  batch_id: string;
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  id: string;
+  payload: Generated<Json>;
+  result: Json | null;
+  status: Generated<string>;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface BatchJobMessages {
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  id: string;
+  last_error: string | null;
+  locked_at: Timestamp | null;
+  ordering_key: string | null;
+  payload: Json;
+  run_after: Generated<Timestamp>;
+  source: string;
+  status: Generated<string>;
+  tenant_id: string;
+  type: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface BatchJobMessagesDeadLetters {
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  dead_at: Generated<Timestamp>;
+  id: string;
+  last_error: string | null;
+  ordering_key: string | null;
+  payload: Json;
+  source: string;
+  tenant_id: string;
+  type: string;
+}
+
+export interface BatchJobs {
+  config: Generated<Json>;
+  created_at: Generated<Timestamp>;
+  failed: Generated<number>;
+  finished_at: Timestamp | null;
+  id: string;
+  kind: string;
+  last_error: string | null;
+  started_at: Timestamp | null;
+  status: Generated<string>;
+  subject: string;
+  succeeded: Generated<number>;
+  tenant_id: string;
+  total: number | null;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface ConnectorConfigs {
   connector: string;
   created_at: Generated<Timestamp>;
@@ -651,6 +708,20 @@ export interface PushSubscriptions {
   tenant_id: string;
 }
 
+export interface SandboxFiles {
+  batch_id: string | null;
+  content_type: string | null;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  filename: string;
+  id: string;
+  size_bytes: number;
+  source: string;
+  storage_key: string;
+  subject: string;
+  tenant_id: string;
+}
+
 export interface ScheduleCalendars {
   created_at: Generated<Timestamp>;
   dates: Generated<Json>;
@@ -791,6 +862,10 @@ export interface DB {
   agent_triggers: AgentTriggers;
   agents: Agents;
   audit_events: AuditEvents;
+  batch_job_items: BatchJobItems;
+  batch_job_messages: BatchJobMessages;
+  batch_job_messages_dead_letters: BatchJobMessagesDeadLetters;
+  batch_jobs: BatchJobs;
   connector_configs: ConnectorConfigs;
   content_watches: ContentWatches;
   email_classification_log: EmailClassificationLog;
@@ -823,6 +898,7 @@ export interface DB {
   provider_grants: ProviderGrants;
   provider_refresh_locks: ProviderRefreshLocks;
   push_subscriptions: PushSubscriptions;
+  sandbox_files: SandboxFiles;
   schedule_calendars: ScheduleCalendars;
   sessions: Sessions;
   tenant_domains: TenantDomains;

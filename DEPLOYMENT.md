@@ -108,7 +108,7 @@ ls -la .next/
 
 ## Worker Processes and Queues
 
-The queue consumer ships as **two processes off the same `renkei-worker`
+The queue consumer ships as **three processes off the same `renkei-worker`
 image**, one per queue (RENKEI.md Decision #20; queues live behind
 `@renkei/queue`, whose Postgres adapter carries them today and could be
 swapped for RabbitMQ/Kafka without touching producers or consumers):
@@ -120,6 +120,15 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   ingest-time call to the org-configured embeddings endpoint (chunk
   ingestion, index deletes and purges, related-items back-fill).
   Entrypoint: `pnpm --filter @renkei/worker start:embeddings`.
+- `worker-batch-jobs` — consumes the `batch_job_messages` queue: one
+  message per unit of work in a batch job (document-ocr-pipeline's OCR
+  calls today; a future batch kind is a new handler, not a new queue). Item
+  work is slow, external, per-item network I/O, the same reasoning that
+  moved embedding work off the interactive queue — so it never sits in
+  front of a webhook reply either. Reaches `worker-fileshares` and
+  `worker-sandbox` directly (`FILESHARES_WORKER_URL`/`SANDBOX_WORKER_URL`
+  + their bearer keys, same as the web app uses) to read source documents
+  and stage OCR results. Entrypoint: `pnpm --filter @renkei/worker start:batch-jobs`.
 - `worker-fileshares` — not a queue consumer but an internal HTTP service,
   and not on the shared worker image: it ships as its **own image**
   (`renkei-fileshares`, the `fileshares` target in `docker/Dockerfile`,
@@ -146,6 +155,22 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `ONBASE_WORKER_PORT`, default 8091). Without them the OnBase connector
   answers "worker not configured" everywhere — closed, never open.
   Entrypoint: `pnpm --filter @renkei/worker-onbase start`.
+- `worker-sandbox` — the same shape again, for the agent scratch space: an
+  internal HTTP service on its **own image** (`renkei-sandbox`, the
+  `sandbox` target in `docker/Dockerfile`, opt-in prompts in the build/push
+  scripts). It is the only process that writes staged file bytes to disk —
+  the first place Renkei deliberately holds file bytes at rest outside a
+  provider or a browser (`docs/sandbox-connector-design.md`) — so it gets
+  its own named volume (`renkei-sandbox-data` / `sandbox_data`), mounted at
+  `SANDBOX_DATA_DIR` (default `/data`) and nowhere else. The web app
+  reaches it at `SANDBOX_WORKER_URL` (compose wires
+  `http://renkei-worker-sandbox:8092`) presenting the shared bearer key
+  `SANDBOX_WORKER_API_KEY` — set both in `.env` (`openssl rand -base64 32`
+  makes a good key; the worker also honors `SANDBOX_WORKER_PORT`, default
+  8092). Without them the `sandbox_*` tools simply don't register — closed,
+  never open, same as the other two. Staged files expire on a fixed TTL and
+  a per-caller quota regardless of whether anything ever deletes them
+  explicitly. Entrypoint: `pnpm --filter @renkei/worker-sandbox start`.
 
 **Horizontal scale:** either process may run as N instances. Claims take
 row locks (`FOR UPDATE SKIP LOCKED`), and messages sharing an ordering key
@@ -155,7 +180,8 @@ instances — distinct keys drain in parallel. With docker compose, drop the
 hardcoded `container_name` and use `--scale embeddings-worker=N`.
 
 **Dead letters:** each queue pairs with a `*_dead_letters` table
-(`events_dead_letters`, `embedding_jobs_dead_letters`). A message that
+(`events_dead_letters`, `embedding_jobs_dead_letters`,
+`batch_job_messages_dead_letters`). A message that
 spends its retry budget (5 deliveries, exponential backoff) MOVES there
 with its last error. Reprocess after fixing the underlying fault via
 `@renkei/queue`'s `deadLetters.requeue(ids)` (fresh attempt budget,
