@@ -36,6 +36,7 @@ describe('callMistralOcr', () => {
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(CONFIG.endpoint);
     expect((init.headers as Record<string, string>).authorization).toBe('Bearer test-key');
+    expect((init.headers as Record<string, string>)['extra-parameters']).toBe('pass-through');
     const body = JSON.parse(String(init.body)) as { model: string; document: { type: string; document_url: string } };
     expect(body.model).toBe('mistral-ocr-4-0');
     expect(body.document.type).toBe('document_url');

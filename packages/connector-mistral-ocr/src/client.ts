@@ -8,16 +8,33 @@
  * one call per source FILE, never a manual pre-split into page images.
  *
  * *** VERIFY BEFORE PRODUCTION USE ***
- * This is built against Mistral's own public OCR API contract
+ * This targets Mistral's own public OCR API contract
  * (`POST /v1/ocr` on api.mistral.ai: `{model, document: {type, ...}}` →
- * `{pages: [{index, markdown, ...}], usage_info: {pages_processed}}`),
- * since no Foundry-specific sample code was available while writing this.
- * Azure AI Foundry model deployments sometimes proxy a third-party model's
- * native API verbatim and sometimes wrap it differently — check the
- * "Sample inference code" tab for this deployment in the Foundry portal
- * and adjust `buildRequestBody`/`parseResponse`/the auth header below if
- * it differs. Everything specific to the wire contract is isolated to
- * those three spots on purpose, so a mismatch is a small, local fix.
+ * `{pages: [{index, markdown, ...}], usage_info: {pages_processed}}`).
+ * Confirmed (not just assumed) that Foundry proxies this model's native API
+ * rather than wrapping it in the chat-completions shape: Microsoft's own
+ * guidance for Mistral Document AI on Foundry says not to append
+ * `/v1/chat/completions` to the dashboard's Target URI, and that the native
+ * `@mistralai/mistralai` SDK works against a Foundry deployment by simply
+ * pointing its `serverURL` at the Azure endpoint — which only works if the
+ * wire shape matches Mistral's own. So `config.endpoint` should be the
+ * dashboard's Target URI with `/v1/ocr` appended (e.g.
+ * `https://<resource>.services.ai.azure.com/v1/ocr`), and this file's
+ * request/response shape should already be correct. Still worth checking
+ * the "Sample inference code" tab in the Foundry portal for this specific
+ * deployment before production use — Foundry's per-model proxying has been
+ * known to vary — and adjust `buildRequestBody`/`parseResponse`/the auth
+ * header below if it differs. Everything specific to the wire contract is
+ * isolated to those three spots on purpose, so a mismatch is a small,
+ * local fix.
+ *
+ * The Azure-hosted schema also rejects Mistral-native-only request fields
+ * (e.g. `confidence_scores_granularity`) with a 422 unless the request
+ * carries `extra-parameters: pass-through`, telling the Azure gateway to
+ * forward unrecognized fields through instead of validating them strictly.
+ * `buildRequestBody` doesn't send any such fields today, but the header
+ * costs nothing to always include and avoids a confusing 422 the moment
+ * one is added.
  */
 
 import type { MistralOcrConfig, MistralOcrError, MistralOcrPage, MistralOcrResult } from './types';
@@ -83,6 +100,10 @@ export async function callMistralOcr(
         // instead — see this file's header comment.
         authorization: `Bearer ${config.apiKey}`,
         'content-type': 'application/json',
+        // Tells the Azure gateway to forward request fields it doesn't
+        // recognize straight to the model instead of rejecting them with a
+        // 422 — see this file's header comment.
+        'extra-parameters': 'pass-through',
       },
       body: JSON.stringify(buildRequestBody(config, input)),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
