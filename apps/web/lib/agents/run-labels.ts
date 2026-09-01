@@ -32,6 +32,21 @@ export function statusLabel(status: string): string {
 }
 
 /**
+ * Statuses a run can still leave on its own — mirrors RUN_STATUSES in
+ * runs-view.ts minus the terminal ones. Duplicated as a literal here,
+ * rather than imported, because runs-view.ts pulls in kysely and
+ * `@renkei/db` to run its queries — neither of which may reach the client
+ * bundle that also needs this check (the run page's live view, deciding
+ * whether to keep listening for more updates).
+ */
+const UNSETTLED_RUN_STATUSES = new Set(['queued', 'running', 'waiting']);
+
+/** True once a run can never change again — nothing left for a live view to catch. */
+export function isRunSettled(status: string): boolean {
+  return !UNSETTLED_RUN_STATUSES.has(status);
+}
+
+/**
  * One phrase for why a run failed. `llm_rate_limit` and `guard` are in the
  * migration's taxonomy though today's engine never writes them — cheap
  * insurance. Unknown kinds pass through raw: never hide a truth we can't
