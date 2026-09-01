@@ -11,14 +11,21 @@
  * serializing the huge batch's own items against each other.
  */
 
-import { closeDatabase } from '@renkei/db';
+import { closeDatabase, getDatabase } from '@renkei/db';
+import { schedulePeriodicSweep } from '@renkei/worker-loop';
 import { batchJobQueue } from './queue';
 import { handlerFor, registerHandler } from './handlers';
 import { createEventLoop } from './loop';
 import { createBatchDiscoverHandler, createBatchItemHandler } from './handlers/batch-jobs';
 import { BATCH_JOB_SOURCE } from './batch-jobs/enqueue';
+import { createBatchScheduleSweep } from './batch-jobs/schedule-sweep';
 import './batch-jobs/register-kinds';
 import { logger, attachPersistentLogging } from './logger';
+
+// Same cadence as the agents worker's schedule sweep — a due batch job
+// fires within ~15s on average, cheap since the sweep is one indexed
+// select plus optimistic updates.
+const SCHEDULE_SWEEP_MS = 30_000;
 
 function registerBatchJobHandlers(): void {
   registerHandler(BATCH_JOB_SOURCE, 'discover', createBatchDiscoverHandler(batchJobQueue.producer));
@@ -37,10 +44,25 @@ const loop = createEventLoop({
 async function main(): Promise<void> {
   await attachPersistentLogging();
   registerBatchJobHandlers();
+
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error('Database unavailable at boot');
+
+  // The schedule sweep runs on its own timer, independent of the queue
+  // consumption loop below — a quiet queue never delays a due schedule.
+  const stopSweep = schedulePeriodicSweep(
+    logger,
+    'batch job schedules',
+    'worker/batch-jobs-schedule',
+    SCHEDULE_SWEEP_MS,
+    createBatchScheduleSweep(dbResult.val, batchJobQueue.producer)
+  );
+
   logger.info('started {application} {version} (batch-job queue)', {
     component: 'worker/batch-jobs-loop',
   });
   await loop.run();
+  stopSweep();
   logger.info('stopped', { component: 'worker/batch-jobs-loop' });
   await logger.flush();
   await closeDatabase();

@@ -82,6 +82,7 @@ describe('batch_start_document_pipeline', () => {
     const handlers = registerAll();
 
     const result = await handlers.get('batch_start_document_pipeline')!({
+      name: 'Inbox OCR',
       shareId: 'share-1',
       path: '/in',
       grouping: { strategy: 'whole-file' },
@@ -90,8 +91,10 @@ describe('batch_start_document_pipeline', () => {
     expect(createBatchMock).toHaveBeenCalledWith(FAKE_DB, {
       tenantId: 'tenant-1',
       subject: 'auth0|alice',
+      name: 'Inbox OCR',
       kind: 'document-ocr-pipeline',
       config: { shareId: 'share-1', path: '/in', grouping: { strategy: 'whole-file' } },
+      scheduleId: undefined,
     });
     expect(enqueueDiscoverMock).toHaveBeenCalledWith('the-producer', 'tenant-1', 'batch-1');
     expect(result.content[0]?.text).toContain('batch-1');

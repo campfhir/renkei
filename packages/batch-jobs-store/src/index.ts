@@ -34,3 +34,16 @@ export type {
 export { enqueueDiscover, enqueueItem, BATCH_JOB_SOURCE } from './enqueue';
 
 export { DOCUMENT_OCR_PIPELINE_KIND } from './kind-names';
+
+export {
+  createSchedule,
+  getSchedule,
+  listSchedules,
+  updateSchedule,
+  deleteSchedule,
+} from './schedules';
+export type {
+  BatchJobScheduleRow,
+  CreateScheduleInput,
+  UpdateScheduleInput,
+} from './schedules';

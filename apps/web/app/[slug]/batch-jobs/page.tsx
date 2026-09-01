@@ -44,12 +44,20 @@ export default async function BatchJobsPage({
       <AutoRefresh />
       <div className="mb-1 flex items-center justify-between gap-3">
         <h1 className="min-w-0 truncate text-xl font-bold">Batch Jobs</h1>
-        <Link
-          href={`/${slug}/batch-jobs/new`}
-          className="shrink-0 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-        >
-          New batch job
-        </Link>
+        <div className="flex shrink-0 items-center gap-2">
+          <Link
+            href={`/${slug}/batch-jobs/schedules`}
+            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+          >
+            Schedules
+          </Link>
+          <Link
+            href={`/${slug}/batch-jobs/new`}
+            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          >
+            New batch job
+          </Link>
+        </div>
       </div>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         Long-running work over many documents at once — pull a fileshare folder through OCR and
@@ -95,7 +103,7 @@ export default async function BatchJobsPage({
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <BatchStatusPill status={batch.status} />
-                  <span className="truncate text-gray-600 dark:text-gray-400">{batch.kind}</span>
+                  <span className="truncate">{batch.name}</span>
                 </span>
                 <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
                   {batchProgress(batch)} · <LocalTime at={batch.created_at} format="date" />
