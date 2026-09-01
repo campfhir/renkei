@@ -6,6 +6,7 @@
  * message attachment) — base64's implicit cap is gone.
  */
 
+jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
 jest.mock('@renkei/crypto', () => ({
   parseEncryptionKey: jest.fn(() => ({ ok: true, val: 'key' })),
 }));
@@ -46,7 +47,12 @@ jest.mock('@/lib/file-shares/service-client', () => {
 
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
-import { executeUpload, type UploadSlotRow } from './upload-executors';
+import {
+  executeUpload,
+  finalizeUploadSlot,
+  completeUploadSlot,
+  type UploadSlotRow,
+} from './upload-executors';
 
 const { getGrant } = jest.requireMock<{ getGrant: jest.Mock }>('@renkei/provider-grants');
 const { graphUploadViaSession } = jest.requireMock<{ graphUploadViaSession: jest.Mock }>(
@@ -324,5 +330,61 @@ describe('fileshare-file', () => {
       '/reports/report.pdf',
       expect.any(Uint8Array)
     );
+  });
+});
+
+/** A minimal updateTable() stand-in that records what finalizeUploadSlot sets. */
+function dbRecordingUpdates(): { db: Kysely<DB>; updates: Array<Record<string, unknown>> } {
+  const updates: Array<Record<string, unknown>> = [];
+  const chain = {
+    set(values: Record<string, unknown>) {
+      updates.push(values);
+      return chain;
+    },
+    where: () => chain,
+    execute: async () => undefined,
+  };
+  return { db: { updateTable: () => chain } as unknown as Kysely<DB>, updates };
+}
+
+describe('finalizeUploadSlot', () => {
+  it('marks a successful outcome completed with its detail as the result', async () => {
+    const { db: recordingDb, updates } = dbRecordingUpdates();
+
+    const outcome = await finalizeUploadSlot(recordingDb, { id: 'slot-1' }, { ok: true, detail: 'done' });
+
+    expect(outcome).toEqual({ ok: true, detail: 'done' });
+    expect(updates).toEqual([{ status: 'completed', result: 'done', completed_at: 'sql-fragment' }]);
+  });
+
+  it('marks a failed outcome failed with its detail as the result', async () => {
+    const { db: recordingDb, updates } = dbRecordingUpdates();
+
+    const outcome = await finalizeUploadSlot(
+      recordingDb,
+      { id: 'slot-1' },
+      { ok: false, detail: 'no good' }
+    );
+
+    expect(outcome).toEqual({ ok: false, detail: 'no good' });
+    expect(updates).toEqual([{ status: 'failed', result: 'no good', completed_at: 'sql-fragment' }]);
+  });
+});
+
+describe('completeUploadSlot', () => {
+  it('runs executeUpload then finalizes the slot with its outcome', async () => {
+    const { db: recordingDb, updates } = dbRecordingUpdates();
+    jiraFetch.mockResolvedValue({ text: async () => '[]' });
+
+    const outcome = await completeUploadSlot(
+      recordingDb,
+      slotOf('jira-attachment', { issueKey: 'PROJ-1' }),
+      Buffer.from('bytes')
+    );
+
+    expect(outcome.ok).toBe(true);
+    expect(updates).toEqual([
+      { status: 'completed', result: outcome.detail, completed_at: 'sql-fragment' },
+    ]);
   });
 });

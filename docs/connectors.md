@@ -8,6 +8,7 @@ Every provider integration lives in its own `packages/connector-*` package and f
 | `connector-microsoft` | Outlook mail/calendar/tasks, SharePoint, OneDrive | Per-user delegated OAuth (Graph) | Personal items: ownership-scoped; documents: live-verified |
 | `connector-fileshares` | Org-registered SMB/SFTP shares | Per-share, per-user credentials | Not indexed — no `verifyAccess`, retrieval-only |
 | `connector-onbase` | Hyland OnBase (on-prem) | Auth Code + PKCE against the tenant's own IdP | Not indexed (deferred) — retrieval-only |
+| `connector-sandbox` | Renkei's own agent scratch space (no external provider) | The caller's own signed-in Renkei session | Not indexed — transient staging data |
 | `connector-webex` | WebEx messaging | Bot token for sending; per-user OAuth for ingestion | Live-verified (room membership) |
 | `connector-zoom` | Zoom meetings/recordings/transcripts | Per-user OAuth + webhook download tokens | Ownership-scoped (host-only, v1) |
 
@@ -47,6 +48,14 @@ The package itself (`packages/connector-onbase`) is deliberately dependency- and
 Knowledge indexing is explicitly deferred — this connector is retrieval-only in v1, with no content watches and no `verifyAccess` (there is no OnBase entry in the knowledge index today). Search has no free-text mode; queries are scoped to a document type or a saved custom query, per `RENKEI.md`'s design. Sensitive note text is fetched via a separate endpoint intentionally excluded from any index.
 
 Exports: `parseDiscoveryDocument`/`oidcDiscoveryUrl`, `resolveKeywordTypeRef`/`mergeKeywordCollections`, `buildQueryInformation`, `CatalogCache`. See [`onbase-connector-design.md`](./onbase-connector-design.md), which has an "As built (v1)" section documenting the final decisions.
+
+## connector-sandbox
+
+A per-caller scratch space for staging a file mid-task — the piece that lets an agent move a file from a connector that only offers a download link (`connector-fileshares`) to one that only accepts staged upload bytes (`connector-onbase`, Jira attachments) without a human relaying it by hand. Unlike every connector above, there is no external account behind this one: "auth" is simply the caller's own `(tenantId, subject)`, scoped exactly like `upload_slots`.
+
+This is deliberately the first place Renkei holds file bytes at rest outside a provider or a browser, so it is held to a tighter bar than the rest of this table: a fixed TTL, a hard per-caller quota, no knowledge indexing, and isolation matching the credential-holding workers (`apps/worker-sandbox` is its own image, its own volume, no published ports). See [`sandbox-connector-design.md`](./sandbox-connector-design.md) for the full reasoning, including the SSRF guard on `sandbox_download_url` and how `sandbox_send_to_upload` authorizes without a bearer token.
+
+The package itself (`packages/connector-sandbox`) is dependency- and I/O-free, the `connector-onbase` shape: filename validation, quota/TTL constants, and the egress guard — all the HTTP and disk I/O lives in `apps/worker-sandbox`.
 
 ## connector-webex
 

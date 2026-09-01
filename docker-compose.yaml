@@ -151,6 +151,29 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # The agent scratch-space worker: the only process that writes staged
+  # file bytes to disk (see docs/sandbox-connector-design.md — this is the
+  # first place Renkei deliberately holds bytes at rest outside a provider
+  # or a browser). Its own image and its own volume, same isolation as the
+  # fileshares/onbase workers below. The web app reaches it over HTTP on
+  # the compose network (SANDBOX_WORKER_URL below) with the shared
+  # SANDBOX_WORKER_API_KEY from .env — generate one with
+  # `openssl rand -base64 32`. No published ports on purpose: nothing
+  # outside the compose network may speak to it.
+  worker-sandbox:
+    image: scotteremiaroden/renkei-sandbox:latest
+    container_name: renkei-worker-sandbox
+    command: ['pnpm', '--filter', '@renkei/worker-sandbox', 'start']
+    env_file:
+      - .env
+    environment: *database-urls
+    volumes:
+      - renkei-sandbox-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   renkei:
     image: scotteremiaroden/renkei:latest
     container_name: renkei-app
@@ -164,6 +187,11 @@ services:
       # Where the web app reaches the OnBase egress worker; the bearer key
       # (ONBASE_WORKER_API_KEY) comes from the shared .env.
       ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
+      # Where the web app reaches the sandbox worker; the bearer key
+      # (SANDBOX_WORKER_API_KEY) comes from the shared .env. Omit both to
+      # run without an agent scratch space — the sandbox_* tools simply
+      # don't register.
+      SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       # PUBLIC_BASE_URL in .env is the authoritative origin when set — it is
       # the address registered with every OAuth provider. Without it, the app
       # falls back to X-Forwarded-Proto/Host from the reverse proxy, which it
@@ -179,3 +207,4 @@ services:
 
 volumes:
   renkei-postgres:
+  renkei-sandbox-data:

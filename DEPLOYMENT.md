@@ -146,6 +146,22 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `ONBASE_WORKER_PORT`, default 8091). Without them the OnBase connector
   answers "worker not configured" everywhere — closed, never open.
   Entrypoint: `pnpm --filter @renkei/worker-onbase start`.
+- `worker-sandbox` — the same shape again, for the agent scratch space: an
+  internal HTTP service on its **own image** (`renkei-sandbox`, the
+  `sandbox` target in `docker/Dockerfile`, opt-in prompts in the build/push
+  scripts). It is the only process that writes staged file bytes to disk —
+  the first place Renkei deliberately holds file bytes at rest outside a
+  provider or a browser (`docs/sandbox-connector-design.md`) — so it gets
+  its own named volume (`renkei-sandbox-data` / `sandbox_data`), mounted at
+  `SANDBOX_DATA_DIR` (default `/data`) and nowhere else. The web app
+  reaches it at `SANDBOX_WORKER_URL` (compose wires
+  `http://renkei-worker-sandbox:8092`) presenting the shared bearer key
+  `SANDBOX_WORKER_API_KEY` — set both in `.env` (`openssl rand -base64 32`
+  makes a good key; the worker also honors `SANDBOX_WORKER_PORT`, default
+  8092). Without them the `sandbox_*` tools simply don't register — closed,
+  never open, same as the other two. Staged files expire on a fixed TTL and
+  a per-caller quota regardless of whether anything ever deletes them
+  explicitly. Entrypoint: `pnpm --filter @renkei/worker-sandbox start`.
 
 **Horizontal scale:** either process may run as N instances. Claims take
 row locks (`FOR UPDATE SKIP LOCKED`), and messages sharing an ordering key

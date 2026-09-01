@@ -10,6 +10,7 @@
  */
 
 import type { Kysely } from 'kysely';
+import { sql } from 'kysely';
 import type { DB } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { ATLASSIAN, ATLASSIAN_JSM, getGrant, readAtlassianMetadata } from '@renkei/provider-grants';
@@ -430,6 +431,36 @@ async function onbaseDocument(
       `Staged "${slot.filename}" (${bytes.byteLength} bytes) in OnBase. Complete it with ` +
       `onbase_archive_document using uploadId "${slot.id}", a document type, and keywords.`,
   };
+}
+
+/**
+ * Record an outcome on a claimed slot — the status/result write every
+ * caller needs after executeUpload runs (or after a caller-side refusal,
+ * like an oversized `sandbox_send_to_upload` payload, that never reaches
+ * executeUpload at all). Split out so /api/upload/[slotId]'s token-claimed
+ * POST and sandbox_send_to_upload's ownership-claimed tool call share one
+ * finish path instead of two copies of the same UPDATE.
+ */
+export async function finalizeUploadSlot(
+  db: Kysely<DB>,
+  slot: { id: string },
+  outcome: UploadOutcome
+): Promise<UploadOutcome> {
+  await db
+    .updateTable('upload_slots')
+    .set({ status: outcome.ok ? 'completed' : 'failed', result: outcome.detail, completed_at: sql`NOW()` })
+    .where('id', '=', slot.id)
+    .execute();
+  return outcome;
+}
+
+/** executeUpload, then finalizeUploadSlot — the common case for both callers. */
+export async function completeUploadSlot(
+  db: Kysely<DB>,
+  slot: UploadSlotRow,
+  bytes: Buffer
+): Promise<UploadOutcome> {
+  return finalizeUploadSlot(db, slot, await executeUpload(db, slot, bytes));
 }
 
 export async function executeUpload(

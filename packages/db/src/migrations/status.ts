@@ -103,6 +103,7 @@ export const EXPECTED_MIGRATIONS = [
   '071-agent-run-step-tokens',
   '072-agent-run-counter-tokens',
   '073-agent-run-cancellation',
+  '074-sandbox-files',
 ];
 
 export interface MigrationStatus {

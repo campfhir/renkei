@@ -288,6 +288,56 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["pnpm", "--filter", "@renkei/worker-onbase", "start"]
 
+# Sandbox stage - the agent scratch-space worker, its own image on purpose:
+# it is the first process that holds staged file bytes at rest, so it gets
+# the same isolation as the fileshares/onbase workers — its own container,
+# no published ports, and it rolls out independently of the queue workers.
+FROM node:24-alpine AS sandbox
+ARG PNPM_VERSION
+
+WORKDIR /app
+
+RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+
+# Created before anything it owns — see the runtime stage for why a trailing
+# chown -R would double the image.
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S worker -u 1001
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
+COPY --parents apps/*/package.json packages/*/package.json ./
+RUN pnpm install --frozen-lockfile --prod --no-optional \
+      --filter @renkei/worker-sandbox... && \
+    rm -rf /root/.pnpm-store /root/.npm
+
+# tsx runs TypeScript source directly; workspace links need the package
+# sources present (only the filtered deps' node_modules were installed).
+COPY --chown=worker:nodejs --parents packages/*/src ./
+COPY --chown=worker:nodejs apps/worker-sandbox/src ./apps/worker-sandbox/src
+COPY --chown=worker:nodejs apps/worker-sandbox/tsconfig.json ./apps/worker-sandbox/
+
+# The scratch disk itself — a dedicated volume mounts here in compose so the
+# staged bytes survive a container restart but stay off every other image.
+RUN mkdir -p /data && chown worker:nodejs /data
+
+USER worker
+
+ARG GIT_COMMIT
+ENV NODE_ENV=production \
+    GIT_COMMIT=${GIT_COMMIT} \
+    SANDBOX_DATA_DIR=/data
+
+EXPOSE 8092
+
+# The service's own unauthenticated liveness endpoint (everything else on
+# the port requires the bearer key).
+HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:' + (process.env.SANDBOX_WORKER_PORT || 8092) + '/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["pnpm", "--filter", "@renkei/worker-sandbox", "start"]
+
 # Migration stage - runs migrations only
 FROM node:24-alpine AS migrate
 ARG PNPM_VERSION

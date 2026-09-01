@@ -11,7 +11,12 @@ jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: jest.fn(() => '') }));
 import { createHash } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from './common';
-import { createUploadSlot, hashUploadToken, registerUploadStatusTool } from './upload-slots';
+import {
+  claimPendingUploadSlotByOwner,
+  createUploadSlot,
+  hashUploadToken,
+  registerUploadStatusTool,
+} from './upload-slots';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getPublicBaseUrl: mockGetPublicBaseUrl } = jest.requireMock<{
@@ -195,5 +200,75 @@ describe('check_file_upload', () => {
     const result = await handler({ uploadId: '00000000-0000-4000-8000-000000000001' });
 
     expect(result.content[0]?.text).toContain('expired');
+  });
+});
+
+describe('claimPendingUploadSlotByOwner', () => {
+  interface ClaimRecorded {
+    filters: Array<[string, string, unknown]>;
+    setValues: Record<string, unknown> | null;
+  }
+
+  /** Minimal Kysely stand-in for the ownership-based claim UPDATE. */
+  function stubClaimDb(row: Record<string, unknown> | undefined): ClaimRecorded {
+    const recorded: ClaimRecorded = { filters: [], setValues: null };
+    const chain = {
+      set(values: Record<string, unknown>) {
+        recorded.setValues = values;
+        return chain;
+      },
+      where(column: string, op: string, value: unknown) {
+        recorded.filters.push([column, op, value]);
+        return chain;
+      },
+      returning: () => chain,
+      executeTakeFirst: async () => row,
+    };
+    mockGetDatabase.mockReturnValue({ ok: true, val: { updateTable: () => chain } });
+    return recorded;
+  }
+
+  const CLAIMED_ROW = {
+    id: 'upload-1',
+    tenant_id: 'tenant-1',
+    subject: 'subject-1',
+    account_id: 'acct-1',
+    kind: 'onbase-document',
+    destination: {},
+    filename: 'report.pdf',
+    content_type: 'application/pdf',
+    max_bytes: 1024,
+  };
+
+  it('claims by tenant + subject, never by a bearer token', async () => {
+    const recorded = stubClaimDb(CLAIMED_ROW);
+
+    const claimed = await claimPendingUploadSlotByOwner(context(), 'upload-1');
+
+    if (!claimed.ok) throw new Error(claimed.error);
+    expect(claimed.val).toEqual(CLAIMED_ROW);
+    expect(recorded.setValues?.status).toBe('completed');
+    expect(recorded.filters).toContainEqual(['id', '=', 'upload-1']);
+    expect(recorded.filters).toContainEqual(['tenant_id', '=', 'tenant-1']);
+    expect(recorded.filters).toContainEqual(['subject', '=', 'subject-1']);
+    expect(recorded.filters).toContainEqual(['status', '=', 'pending']);
+  });
+
+  it('refuses a foreign, wrong, expired, or already-used id with one message', async () => {
+    stubClaimDb(undefined);
+
+    const claimed = await claimPendingUploadSlotByOwner(context(), 'upload-1');
+
+    expect(claimed.ok).toBe(false);
+    if (claimed.ok) throw new Error('expected a failure');
+    expect(claimed.error).toContain('No pending upload');
+  });
+
+  it('refuses without a signed-in subject', async () => {
+    stubClaimDb(CLAIMED_ROW);
+
+    const claimed = await claimPendingUploadSlotByOwner(context({ subject: undefined }), 'upload-1');
+
+    expect(claimed.ok).toBe(false);
   });
 });

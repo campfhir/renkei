@@ -651,6 +651,19 @@ export interface PushSubscriptions {
   tenant_id: string;
 }
 
+export interface SandboxFiles {
+  content_type: string | null;
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  filename: string;
+  id: string;
+  size_bytes: number;
+  source: string;
+  storage_key: string;
+  subject: string;
+  tenant_id: string;
+}
+
 export interface ScheduleCalendars {
   created_at: Generated<Timestamp>;
   dates: Generated<Json>;
@@ -823,6 +836,7 @@ export interface DB {
   provider_grants: ProviderGrants;
   provider_refresh_locks: ProviderRefreshLocks;
   push_subscriptions: PushSubscriptions;
+  sandbox_files: SandboxFiles;
   schedule_calendars: ScheduleCalendars;
   sessions: Sessions;
   tenant_domains: TenantDomains;

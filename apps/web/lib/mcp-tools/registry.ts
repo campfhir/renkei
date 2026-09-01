@@ -53,6 +53,11 @@ import { registerFileshareTools, FILESHARES_MCP_CONNECTOR } from '@/lib/mcp-tool
 import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
 import { registerOnbaseTools, ONBASE_MCP_CONNECTOR } from '@/lib/mcp-tools/onbase';
 import { oauthOnbaseAuth } from '@/lib/mcp-tools/onbase/onbase-auth';
+import {
+  registerSandboxTools,
+  SANDBOX_MCP_CONNECTOR,
+  sandboxWorkerConfigured,
+} from '@/lib/mcp-tools/sandbox';
 import { registerSummaryTools, type SummaryProvider } from '@/lib/mcp-tools/summary';
 import { collectCalendar, collectUnreadMail } from '@/lib/mcp-tools/summary/collect-outlook';
 import { collectSprint, collectWorkItems } from '@/lib/mcp-tools/summary/collect-jira';
@@ -84,6 +89,7 @@ export interface ConnectorAvailability {
   fileshareWrite: boolean;
   fileshareDelete: boolean;
   onbaseAvailable: boolean;
+  sandboxAvailable: boolean;
 }
 
 async function grantRow(
@@ -191,6 +197,11 @@ export async function resolveConnectorAvailability(
   const onbaseGrantRow = await grantRow(db, tenantId, ONBASE, subject);
   const onbaseAvailable = onbaseGrantRow !== undefined;
 
+  // The sandbox has no external account to grant — it's Renkei's own
+  // scratch space — so "available" just means this deployment runs the
+  // worker at all (a deployment-level env check, not a per-caller lookup).
+  const sandboxAvailable = sandboxWorkerConfigured();
+
   return {
     knowledgeAvailable,
     webexAvailable,
@@ -209,6 +220,7 @@ export async function resolveConnectorAvailability(
     fileshareWrite,
     fileshareDelete,
     onbaseAvailable,
+    sandboxAvailable,
   };
 }
 
@@ -236,6 +248,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.bitbucketAvailable ? [BITBUCKET_MCP_CONNECTOR] : []),
     ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
     ...(availability.onbaseAvailable ? [ONBASE_MCP_CONNECTOR] : []),
+    ...(availability.sandboxAvailable ? [SANDBOX_MCP_CONNECTOR] : []),
   ];
 }
 
@@ -273,6 +286,7 @@ export async function registerRenkeiTools(
     bitbucketAvailable,
     filesharesAvailable,
     onbaseAvailable,
+    sandboxAvailable,
   } = availability;
 
   await registerAllTools(withCapabilityGate(server, projection), context);
@@ -466,5 +480,11 @@ export async function registerRenkeiTools(
       context,
       oauthOnbaseAuth(context)
     );
+  }
+  if (sandboxAvailable) {
+    // No scope gate and no per-caller grant to check: every signed-in
+    // caller on a deployment that runs worker-sandbox gets the same
+    // scratch space, scoped to their own (tenantId, subject).
+    registerSandboxTools(withCapabilityGate(server, projection, SANDBOX_MCP_CONNECTOR), context);
   }
 }

@@ -11,7 +11,7 @@
 jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: jest.fn(() => '') }));
-jest.mock('@/lib/upload-executors', () => ({ executeUpload: jest.fn() }));
+jest.mock('@/lib/upload-executors', () => ({ completeUploadSlot: jest.fn() }));
 jest.mock('@/lib/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
@@ -21,9 +21,9 @@ import { hashUploadToken } from '@/lib/mcp-tools/upload-slots';
 import { GET, POST } from './route';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
-const { executeUpload: mockExecuteUpload } = jest.requireMock<{ executeUpload: jest.Mock }>(
-  '@/lib/upload-executors'
-);
+const { completeUploadSlot: mockCompleteUploadSlot } = jest.requireMock<{
+  completeUploadSlot: jest.Mock;
+}>('@/lib/upload-executors');
 
 interface Recorded {
   claimFilters: Array<[string, string, unknown]>;
@@ -98,7 +98,7 @@ function post(body: BodyInit | null, token?: string): Promise<Response> {
 
 beforeEach(() => {
   mockGetDatabase.mockReset();
-  mockExecuteUpload.mockReset();
+  mockCompleteUploadSlot.mockReset();
 });
 
 describe('POST /api/upload/[slotId]', () => {
@@ -106,7 +106,7 @@ describe('POST /api/upload/[slotId]', () => {
     stubDb(CLAIMED);
     const response = await post('bytes');
     expect(response.status).toBe(401);
-    expect(mockExecuteUpload).not.toHaveBeenCalled();
+    expect(mockCompleteUploadSlot).not.toHaveBeenCalled();
   });
 
   it('answers 410 for wrong token / expired / reused alike', async () => {
@@ -116,12 +116,12 @@ describe('POST /api/upload/[slotId]', () => {
     const body = (await response.json()) as { detail: string };
     // One message on purpose — the reasons are indistinguishable.
     expect(body.detail).toContain('wrong token, expired, or already used');
-    expect(mockExecuteUpload).not.toHaveBeenCalled();
+    expect(mockCompleteUploadSlot).not.toHaveBeenCalled();
   });
 
   it('claims with the HASH of the presented token, never the token', async () => {
     const recorded = stubDb(CLAIMED);
-    mockExecuteUpload.mockResolvedValue({ ok: true, detail: 'done' });
+    mockCompleteUploadSlot.mockResolvedValue({ ok: true, detail: 'done' });
 
     await post('bytes', 'token-abc');
 
@@ -138,13 +138,13 @@ describe('POST /api/upload/[slotId]', () => {
     const response = await post(Buffer.alloc(32), 'token-abc');
 
     expect(response.status).toBe(413);
-    expect(mockExecuteUpload).not.toHaveBeenCalled();
+    expect(mockCompleteUploadSlot).not.toHaveBeenCalled();
     expect(recorded.finishes[0]?.status).toBe('failed');
   });
 
-  it('hands the bytes to the executor and reports its outcome', async () => {
-    const recorded = stubDb(CLAIMED);
-    mockExecuteUpload.mockResolvedValue({ ok: true, detail: 'Attached "report.pdf" to PROJ-1.' });
+  it('hands the bytes to completeUploadSlot and reports its outcome', async () => {
+    stubDb(CLAIMED);
+    mockCompleteUploadSlot.mockResolvedValue({ ok: true, detail: 'Attached "report.pdf" to PROJ-1.' });
 
     const response = await post(Buffer.from('file-bytes'), 'token-abc');
 
@@ -152,20 +152,25 @@ describe('POST /api/upload/[slotId]', () => {
     const body = (await response.json()) as { ok: boolean; detail: string };
     expect(body.ok).toBe(true);
     expect(body.detail).toContain('PROJ-1');
-    const [, , bytes] = mockExecuteUpload.mock.calls[0] as [unknown, unknown, Buffer];
+    const [, claimed, bytes] = mockCompleteUploadSlot.mock.calls[0] as [
+      unknown,
+      { id: string },
+      Buffer,
+    ];
+    expect(claimed.id).toBe(CLAIMED.id);
     expect(Buffer.from(bytes).toString()).toBe('file-bytes');
-    expect(recorded.finishes[0]?.status).toBe('completed');
   });
 
-  it('writes a failed outcome to the slot and answers 502', async () => {
-    const recorded = stubDb(CLAIMED);
-    mockExecuteUpload.mockResolvedValue({ ok: false, detail: 'Jira said no.' });
+  it('answers 502 when completeUploadSlot reports a failed outcome', async () => {
+    stubDb(CLAIMED);
+    mockCompleteUploadSlot.mockResolvedValue({ ok: false, detail: 'Jira said no.' });
 
     const response = await post(Buffer.from('file-bytes'), 'token-abc');
 
     expect(response.status).toBe(502);
-    expect(recorded.finishes[0]?.status).toBe('failed');
-    expect(recorded.finishes[0]?.result).toBe('Jira said no.');
+    const body = (await response.json()) as { ok: boolean; detail: string };
+    expect(body.ok).toBe(false);
+    expect(body.detail).toBe('Jira said no.');
   });
 });
 

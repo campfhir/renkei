@@ -17,6 +17,7 @@
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { sql } from 'kysely';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
@@ -94,6 +95,67 @@ export async function createUploadSlot(
     `The response reports the outcome; check_file_upload with uploadId "${uploadId}" confirms it.`,
   ].join('\n');
   return { ok: true, uploadId, instructions };
+}
+
+export interface ClaimedUploadSlot {
+  id: string;
+  tenant_id: string;
+  subject: string;
+  account_id: string;
+  kind: string;
+  destination: unknown;
+  filename: string;
+  content_type: string | null;
+  max_bytes: number;
+}
+
+/**
+ * Claim a pending slot by OWNERSHIP rather than by its bearer token — the
+ * authorization sandbox_send_to_upload uses. Every other claim (the public
+ * /api/upload/[slotId] POST) authenticates the out-of-band bytes with the
+ * slot's token, because that request carries no Renkei session. This tool
+ * call already runs inside one (the same authenticated MCP context that
+ * could have minted the slot in the first place), so ownership —
+ * (tenantId, subject) matching the slot's own — is an equally valid proof:
+ * the uploadId alone is deliberately non-secret (see check_file_upload) and
+ * must never be treated as a credential on its own, which is why this
+ * claim ALSO requires the caller's own subject to match, exactly like
+ * check_file_upload's status lookup.
+ */
+export async function claimPendingUploadSlotByOwner(
+  context: MCPToolContext,
+  uploadId: string
+): Promise<{ ok: true; val: ClaimedUploadSlot } | { ok: false; error: string }> {
+  if (!context.subject) return { ok: false, error: 'No signed-in identity on this request.' };
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return { ok: false, error: 'Database unavailable.' };
+  const claimed = await dbResult.val
+    .updateTable('upload_slots')
+    .set({ status: 'completed', completed_at: sql`NOW()` })
+    .where('id', '=', uploadId)
+    .where('tenant_id', '=', context.tenantId)
+    .where('subject', '=', context.subject)
+    .where('status', '=', 'pending')
+    .where('expires_at', '>', sql<Date>`NOW()`)
+    .returning([
+      'id',
+      'tenant_id',
+      'subject',
+      'account_id',
+      'kind',
+      'destination',
+      'filename',
+      'content_type',
+      'max_bytes',
+    ])
+    .executeTakeFirst();
+  if (!claimed) {
+    return {
+      ok: false,
+      error: 'No pending upload with that id for you (wrong id, expired, or already used).',
+    };
+  }
+  return { ok: true, val: claimed };
 }
 
 /**
