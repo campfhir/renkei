@@ -24,6 +24,7 @@ import { callMistralOcr, resolveMistralOcrConfig, describeMistralOcrError } from
 import { DOCUMENT_OCR_PIPELINE_KIND } from '@renkei/batch-jobs-store';
 import { registerBatchJobKind, type DiscoverOutcome, type RunItemOutcome } from './kinds';
 import type { BatchJobItemRow, BatchJobRow } from './store';
+import { logger } from '../logger';
 
 export { DOCUMENT_OCR_PIPELINE_KIND };
 
@@ -177,11 +178,15 @@ async function runItem(
     const read = await fsReadFile({ tenantId: batch.tenant_id, shareId, subject: batch.subject }, path);
     if (!read.ok) return { ok: false, error: fileshareClientFailure(read.err).message };
 
-    const ocr = await callMistralOcr(mistralConfig.val, {
-      bytes: read.val,
-      filename: path,
-      contentType: contentTypeFor(path),
-    });
+    const ocr = await callMistralOcr(
+      mistralConfig.val,
+      {
+        bytes: read.val,
+        filename: path,
+        contentType: contentTypeFor(path),
+      },
+      { logger }
+    );
     if (!ocr.ok) return { ok: false, error: describeMistralOcrError(ocr.err) };
 
     pageCount += ocr.val.pages.length;

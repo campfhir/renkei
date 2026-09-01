@@ -27,6 +27,7 @@ import {
   startDocumentOcrPipeline,
   type DocumentGrouping,
 } from '@/lib/batch-jobs/start-document-ocr-pipeline';
+import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
 
 /** The connector key the batch-job capabilities register under. */
@@ -220,11 +221,15 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       const read = await sbReadFile(target, str(args.fileId));
       if (!read.ok) return errText(sandboxClientFailure(read.err).message);
 
-      const ocr = await callMistralOcr(mistralConfig.val, {
-        bytes: read.val.bytes,
-        filename: read.val.filename,
-        contentType: read.val.contentType || 'application/octet-stream',
-      });
+      const ocr = await callMistralOcr(
+        mistralConfig.val,
+        {
+          bytes: read.val.bytes,
+          filename: read.val.filename,
+          contentType: read.val.contentType || 'application/octet-stream',
+        },
+        { logger }
+      );
       if (!ocr.ok) return errText(describeMistralOcrError(ocr.err));
 
       const text = ocr.val.pages.map((page) => page.markdown).join('\n\n');
