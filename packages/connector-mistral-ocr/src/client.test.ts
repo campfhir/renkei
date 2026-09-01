@@ -160,7 +160,37 @@ describe('callMistralOcr', () => {
       expect(message).toContain('response');
       expect(attrs.status).toBe(422);
       expect(attrs.ok).toBe(false);
+      // JSON-quoted, not the raw text — so an empty body is unambiguous
+      // ("" vs a value that failed to render) and the length assertion
+      // still confirms it's bounded rather than the full 10,000 chars.
+      expect(String(attrs.bodyPreview).startsWith('"')).toBe(true);
       expect(String(attrs.bodyPreview).length).toBeLessThan(10_000);
+    });
+
+    it('logs an empty body as a visible "" rather than nothing', async () => {
+      fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 200 }));
+      const logger = fakeLogger();
+
+      await callMistralOcr(CONFIG, INPUT, { logger });
+
+      const [, attrs] = logger.debug.mock.calls[1] as [string, Record<string, unknown>];
+      expect(attrs.bodyBytesLength).toBe(0);
+      expect(attrs.bodyPreview).toBe('""');
+      expect(attrs.bodyBase64).toBeUndefined();
+    });
+
+    it('falls back to base64 raw bytes when the body is not valid UTF-8 text', async () => {
+      fetchSpy = jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(new Uint8Array([0xff, 0xfe, 0x00]), { status: 200 }));
+      const logger = fakeLogger();
+
+      await callMistralOcr(CONFIG, INPUT, { logger });
+
+      const [, attrs] = logger.debug.mock.calls[1] as [string, Record<string, unknown>];
+      expect(attrs.bodyBytesLength).toBe(3);
+      expect(attrs.bodyPreview).toBe('""');
+      expect(attrs.bodyBase64).toBe(Buffer.from([0xff, 0xfe, 0x00]).toString('base64'));
     });
 
     it('logs a network failure instead of throwing past the caller', async () => {

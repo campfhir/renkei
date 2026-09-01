@@ -169,16 +169,36 @@ export async function callMistralOcr(
     return { ok: false, err: { type: 'unreachable', message } };
   }
 
-  // Read the raw text once, up front — .json() consumes the body stream and
+  // Read the raw bytes once, up front — .json() consumes the body stream and
   // gives no access to it on a parse failure, and the debug log wants the
   // raw shape on every path (success, refusal, or malformed body) rather
-  // than duplicating a .text() fallback into each branch.
-  const bodyText = await response.text().catch(() => '');
+  // than duplicating a fallback into each branch. Decoded as UTF-8 text
+  // strictly (fatal: true) rather than via response.text() (which silently
+  // replaces bad bytes with U+FFFD) so a genuinely binary or wrongly-encoded
+  // body is DETECTED as such — "empty preview" then means the body really
+  // was empty, not that decoding quietly ate it.
+  const bodyBytes = new Uint8Array(await response.arrayBuffer().catch(() => new ArrayBuffer(0)));
+  let bodyText: string;
+  try {
+    bodyText = new TextDecoder('utf-8', { fatal: true }).decode(bodyBytes);
+  } catch {
+    bodyText = '';
+  }
   log?.debug('mistral ocr response {status}', {
     component,
     status: response.status,
     ok: response.ok,
-    bodyPreview: bodyText.slice(0, DEBUG_BODY_PREVIEW_CHARS),
+    bodyBytesLength: bodyBytes.byteLength,
+    // Stringified so an empty/absent body is unambiguous ("" vs a value
+    // that failed to render) and any embedded braces/newlines can't be
+    // misread as separate attrs by anyone eyeballing the raw log line.
+    bodyPreview: JSON.stringify(bodyText.slice(0, DEBUG_BODY_PREVIEW_CHARS)),
+    // Only when there ARE bytes but they didn't decode as UTF-8 text (bad
+    // encoding, or genuinely binary) — the raw bytes, so nothing is lost to
+    // a failed decode.
+    ...(bodyText === '' && bodyBytes.byteLength > 0
+      ? { bodyBase64: Buffer.from(bodyBytes).toString('base64').slice(0, DEBUG_BODY_PREVIEW_CHARS) }
+      : {}),
   });
 
   if (!response.ok) {
