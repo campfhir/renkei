@@ -44,6 +44,36 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: null,
+    heading: 'Smarter schedules: time windows and recurrence',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Schedules can limit hourly rules to specific times',
+        detail:
+          'A rule that fires every hour can now be constrained to active hours \u2014 "every hour, but only 8am to 6pm" \u2014 with support for split days (e.g. overnight windows as two entries). Schedules with an explicit time like "daily at 3pm" are unaffected. Works for both agent triggers and batch-job schedules.',
+      },
+      {
+        kind: 'added',
+        title: 'Batch jobs can run on a schedule',
+        detail:
+          'Set a batch job to repeat daily, weekly, monthly or on custom rules, the same way agents do. Schedules are managed from a dedicated page where you can edit, view run history and clone existing schedules.',
+      },
+    ],
+  },
+  {
+    date: null,
+    heading: 'Document processing with Mistral OCR',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Extract text from images and PDFs',
+        detail:
+          'Batch jobs can now run the Mistral OCR pipeline to turn documents into searchable text. Admins configure the OCR service on the connectors page; the pipeline appears as a batch-job source and can be scheduled to run on a recurring basis.',
+      },
+    ],
+  },
+  {
+    date: null,
     heading: 'Run a scheduled agent without waiting',
     entries: [
       {
