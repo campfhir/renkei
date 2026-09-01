@@ -10,11 +10,13 @@
  */
 
 import {
+  isActiveHoursWindow,
   isBlackoutEntry,
   isValidDateString,
   isValidTimezone,
   recurrenceIssue,
   shownValue,
+  MAX_ACTIVE_HOURS,
   MAX_SCHEDULE_BLACKOUTS,
   MAX_SCHEDULE_RULES,
   type ScheduleConfig,
@@ -119,6 +121,20 @@ function validateOne(draft: TriggerDraft, index: number): TriggerIssue[] {
         !['skip', 'before', 'after'].includes(draft.blackoutPolicy)
       ) {
         issues.push({ index, message: 'The blackout policy must be skip, before, or after.' });
+      }
+      if (draft.activeHours !== undefined) {
+        if (draft.activeHours.length > MAX_ACTIVE_HOURS) {
+          issues.push({
+            index,
+            message: `A schedule can have at most ${MAX_ACTIVE_HOURS} active-hours windows.`,
+          });
+        } else if (!draft.activeHours.every(isActiveHoursWindow)) {
+          issues.push({
+            index,
+            message:
+              'An active-hours window needs a "start" before its "end", both "HH:MM" ("end" may be "24:00").',
+          });
+        }
       }
       break;
     }
