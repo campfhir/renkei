@@ -17,6 +17,7 @@ import CopyDebugButton from '@/components/copy-debug-button';
 import RerunButton from './rerun-button';
 import CancelButton from './cancel-button';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
+import AutoRefresh from '@/components/auto-refresh';
 
 /** The `form` field a question card's suggested_action carries, if any. */
 function formFieldOf(suggestedAction: unknown): unknown {
@@ -73,8 +74,13 @@ export default async function AgentRunDetailPage({
   const questionForm =
     pauseCard?.kind === 'question' ? parseFormNodes(formFieldOf(pauseCard.suggested_action)) : [];
 
+  // Only worth polling while the run can still change. Once it has
+  // settled, the page will never differ from what the server just sent.
+  const isSettling = run.status === 'queued' || run.status === 'running' || run.status === 'waiting';
+
   return (
     <div className="mx-auto max-w-3xl">
+      {isSettling ? <AutoRefresh intervalMs={15_000} /> : null}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <BackLink href={`/${slug}/agents/${agentId}/runs`} label={`Runs of “${agent.name}”`} />
         <h1 className="text-xl font-bold">Run</h1>

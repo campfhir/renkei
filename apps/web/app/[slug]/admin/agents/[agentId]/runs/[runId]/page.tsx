@@ -10,6 +10,7 @@ import RunActivitySection from '../../../../../agents/run-activity';
 import LocalTime from '@/components/local-time';
 import CopyDebugButton from '@/components/copy-debug-button';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
+import AutoRefresh from '@/components/auto-refresh';
 
 /**
  * Admin run detail. The projection this page receives already withheld
@@ -39,8 +40,13 @@ export default async function AdminRunDetailPage({
     .where('id', '=', agentId)
     .executeTakeFirst();
 
+  // Only worth polling while the run can still change. Once it has
+  // settled, the page will never differ from what the server just sent.
+  const isSettling = run.status === 'queued' || run.status === 'running' || run.status === 'waiting';
+
   return (
     <div className="mx-auto max-w-3xl">
+      {isSettling ? <AutoRefresh intervalMs={15_000} /> : null}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <BackLink href={`/${slug}/admin/agents/${agentId}/runs`} label="Runs" />
         <h1 className="text-xl font-bold">Run</h1>
