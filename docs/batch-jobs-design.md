@@ -41,3 +41,12 @@ Items finish concurrently, potentially across many worker instances, so `recordI
 ## Where a batch lives afterward
 
 Nothing here files anything into OnBase. The finished, assembled documents sit in the sandbox (`sandbox_list_files({batchId})`) for whatever agent the user points at that batch to read (`sandbox_read_file`) and act on — classification, keyword extraction, `onbase_archive_document`. That boundary is deliberate: this framework's job is turning "a folder of documents" into "readable text, one file per document," not deciding what happens to them.
+
+## The web UI
+
+Batches are also a plain part of the app for someone who would rather click than ask an agent — `apps/web/app/[slug]/batch-jobs/`:
+
+- **List** (`page.tsx`) and **detail** (`[batchId]/page.tsx`) are server components that call `listBatches`/`getBatch`/`listItems` from `@renkei/batch-jobs-store` directly, the same "read your own tenant's data without an HTTP hop" pattern the agent-runs pages use — no separate REST surface exists for reading a batch's status. Both scope by `subject`, so a batch id alone is never an existence oracle for someone else's batch (a mismatched subject reads as "not found," matching `batch_get_job`).
+- **New** (`new/page.tsx` + `new-batch-job-form.tsx`) is the one place that mutates: it POSTs to `apps/web/app/api/tenant/[tenantId]/batch-jobs/route.ts`, which validates the chosen share is one the caller has actually connected and the grouping shape is well-formed, then calls the same `startDocumentOcrPipeline` helper (`apps/web/lib/batch-jobs/start-document-ocr-pipeline.ts`) the `batch_start_document_pipeline` MCP tool calls — an agent and a human land on the identical `createBatch`+`enqueueDiscover` path, so the two starting points cannot drift.
+
+A future batch kind that wants its own "start" form adds a route + form the same way, still sharing whatever the kind's own `startXxx` helper turns out to be.

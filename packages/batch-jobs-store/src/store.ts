@@ -43,6 +43,10 @@ export interface BatchJobRow {
   total: number | null;
   succeeded: number;
   failed: number;
+  last_error: string | null;
+  started_at: Date | null;
+  finished_at: Date | null;
+  created_at: Date;
 }
 
 export interface BatchJobItemRow {
@@ -51,6 +55,7 @@ export interface BatchJobItemRow {
   status: string;
   payload: Record<string, unknown>;
   result: Record<string, unknown> | null;
+  error: string | null;
 }
 
 const BATCH_COLUMNS = [
@@ -63,9 +68,13 @@ const BATCH_COLUMNS = [
   'total',
   'succeeded',
   'failed',
+  'last_error',
+  'started_at',
+  'finished_at',
+  'created_at',
 ] as const;
 
-const ITEM_COLUMNS = ['id', 'batch_id', 'status', 'payload', 'result'] as const;
+const ITEM_COLUMNS = ['id', 'batch_id', 'status', 'payload', 'result', 'error'] as const;
 
 function batchOf(row: {
   id: string;
@@ -77,6 +86,10 @@ function batchOf(row: {
   total: number | null;
   succeeded: number;
   failed: number;
+  last_error: string | null;
+  started_at: Date | null;
+  finished_at: Date | null;
+  created_at: Date;
 }): BatchJobRow {
   return { ...row, config: isRecord(row.config) ? row.config : {} };
 }
@@ -87,6 +100,7 @@ function itemOf(row: {
   status: string;
   payload: unknown;
   result: unknown;
+  error: string | null;
 }): BatchJobItemRow {
   return {
     ...row,
@@ -133,6 +147,7 @@ export async function getBatch(
 
 export interface ListBatchesOptions {
   limit?: number;
+  status?: string;
 }
 
 export async function listBatches(
@@ -147,6 +162,7 @@ export async function listBatches(
     .where('tenant_id', '=', tenantId)
     .where('subject', '=', subject)
     .orderBy('created_at', 'desc');
+  if (options.status) query = query.where('status', '=', options.status);
   if (options.limit) query = query.limit(options.limit);
   const rows = await query.execute();
   return rows.map(batchOf);

@@ -50,6 +50,10 @@ function batch(config: Record<string, unknown>): BatchJobRow {
     total: null,
     succeeded: 0,
     failed: 0,
+    last_error: null,
+    started_at: null,
+    finished_at: null,
+    created_at: new Date('2026-01-01T00:00:00Z'),
   };
 }
 
@@ -161,6 +165,7 @@ describe('runItem', () => {
       status: 'processing',
       payload: { documentKey: 'inv-7', shareId: 'share-1', sourcePaths: ['/in/inv-7-p1.tif', '/in/inv-7-p2.tif'], ...overrides },
       result: null,
+      error: null,
     };
   }
 

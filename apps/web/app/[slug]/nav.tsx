@@ -102,6 +102,7 @@ export default function AppNav({
         { href: `/${slug}/files`, label: 'Files' },
         { href: `/${slug}/knowledge`, label: 'Knowledge' },
         { href: `/${slug}/agents`, label: 'Agents' },
+        { href: `/${slug}/batch-jobs`, label: 'Batch Jobs' },
         { href: `/${slug}/usage`, label: 'Tools' },
         // Mail review is deliberately unlinked, not removed: it is the only
         // place a person can correct how their own mail was classified, and

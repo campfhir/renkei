@@ -20,17 +20,13 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
-import {
-  createBatch,
-  getBatch,
-  listBatches,
-  listItems,
-  enqueueDiscover,
-  DOCUMENT_OCR_PIPELINE_KIND,
-} from '@renkei/batch-jobs-store';
-import { batchJobsQueue } from '@renkei/queue';
+import { getBatch, listBatches, listItems } from '@renkei/batch-jobs-store';
 import { callMistralOcr, resolveMistralOcrConfig, describeMistralOcrError } from '@renkei/connector-mistral-ocr';
 import { sbReadFile, clientFailure as sandboxClientFailure } from '@renkei/sandbox-client';
+import {
+  startDocumentOcrPipeline,
+  type DocumentGrouping,
+} from '@/lib/batch-jobs/start-document-ocr-pipeline';
 import type { MCPToolContext } from '../common';
 
 /** The connector key the batch-job capabilities register under. */
@@ -103,13 +99,14 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
 
-      const batch = await createBatch(dbResult.val, {
+      const grouping: DocumentGrouping = groupingSchema.parse(args.grouping);
+      const batch = await startDocumentOcrPipeline(dbResult.val, {
         tenantId: target.tenantId,
         subject: target.subject,
-        kind: DOCUMENT_OCR_PIPELINE_KIND,
-        config: { shareId: str(args.shareId), path: str(args.path) || '/', grouping: args.grouping },
+        shareId: str(args.shareId),
+        path: str(args.path) || '/',
+        grouping,
       });
-      await enqueueDiscover(batchJobsQueue().producer, target.tenantId, batch.id);
 
       return textResult(
         `Started batch ${batch.id}. It's discovering the folder now; check progress with ` +
