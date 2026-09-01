@@ -53,8 +53,17 @@ test('a signed-out request is refused', async () => {
   expect(startDocumentOcrPipeline).not.toHaveBeenCalled();
 });
 
+test('a missing name is a 400 before any share lookup', async () => {
+  const response = await POST(
+    reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }),
+    { params: paramsOf() }
+  );
+  expect(response.status).toBe(400);
+  expect(listConnectedShares).not.toHaveBeenCalled();
+});
+
 test('a missing shareId is a 400 before any share lookup', async () => {
-  const response = await POST(reqOf({ grouping: { strategy: 'whole-file' } }), {
+  const response = await POST(reqOf({ name: 'Inbox OCR', grouping: { strategy: 'whole-file' } }), {
     params: paramsOf(),
   });
   expect(response.status).toBe(400);
@@ -63,9 +72,10 @@ test('a missing shareId is a 400 before any share lookup', async () => {
 
 test('an unknown or unconnected share is refused', async () => {
   listConnectedShares.mockResolvedValue({ ok: true, val: [] });
-  const response = await POST(reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }), {
-    params: paramsOf(),
-  });
+  const response = await POST(
+    reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }),
+    { params: paramsOf() }
+  );
   expect(response.status).toBe(400);
   expect(startDocumentOcrPipeline).not.toHaveBeenCalled();
 });
@@ -73,6 +83,7 @@ test('an unknown or unconnected share is refused', async () => {
 test('a filename-pattern grouping without both named captures is refused', async () => {
   const response = await POST(
     reqOf({
+      name: 'Inbox OCR',
       shareId: SHARE_ID,
       grouping: { strategy: 'filename-pattern', pattern: '^(?<documentKey>.+)\\.tif$' },
     }),
@@ -85,6 +96,7 @@ test('a filename-pattern grouping without both named captures is refused', async
 test('an unparseable regex pattern is refused', async () => {
   const response = await POST(
     reqOf({
+      name: 'Inbox OCR',
       shareId: SHARE_ID,
       grouping: { strategy: 'filename-pattern', pattern: '(?<documentKey>[unterminated' },
     }),
@@ -95,15 +107,16 @@ test('an unparseable regex pattern is refused', async () => {
 });
 
 test('an unrecognized grouping strategy is refused', async () => {
-  const response = await POST(reqOf({ shareId: SHARE_ID, grouping: { strategy: 'by-vibes' } }), {
-    params: paramsOf(),
-  });
+  const response = await POST(
+    reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, grouping: { strategy: 'by-vibes' } }),
+    { params: paramsOf() }
+  );
   expect(response.status).toBe(400);
 });
 
 test('starts the pipeline and returns the new batch id', async () => {
   const response = await POST(
-    reqOf({ shareId: SHARE_ID, path: '/inbox', grouping: { strategy: 'whole-file' } }),
+    reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, path: '/inbox', grouping: { strategy: 'whole-file' } }),
     { params: paramsOf() }
   );
   expect(response.status).toBe(201);
@@ -113,6 +126,7 @@ test('starts the pipeline and returns the new batch id', async () => {
     {
       tenantId: 'tenant-1',
       subject: 'auth0|alice',
+      name: 'Inbox OCR',
       shareId: SHARE_ID,
       path: '/inbox',
       grouping: { strategy: 'whole-file' },
@@ -121,7 +135,7 @@ test('starts the pipeline and returns the new batch id', async () => {
 });
 
 test('an empty path defaults to the share root', async () => {
-  await POST(reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }), {
+  await POST(reqOf({ name: 'Inbox OCR', shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }), {
     params: paramsOf(),
   });
   expect(startDocumentOcrPipeline).toHaveBeenCalledWith(

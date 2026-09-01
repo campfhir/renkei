@@ -37,6 +37,7 @@ export interface BatchJobRow {
   id: string;
   tenant_id: string;
   subject: string;
+  name: string;
   kind: string;
   config: Record<string, unknown>;
   status: string;
@@ -44,6 +45,8 @@ export interface BatchJobRow {
   succeeded: number;
   failed: number;
   last_error: string | null;
+  /** The schedule that spawned this run, or null for a one-off batch. */
+  schedule_id: string | null;
   started_at: Date | null;
   finished_at: Date | null;
   created_at: Date;
@@ -62,6 +65,7 @@ const BATCH_COLUMNS = [
   'id',
   'tenant_id',
   'subject',
+  'name',
   'kind',
   'config',
   'status',
@@ -69,6 +73,7 @@ const BATCH_COLUMNS = [
   'succeeded',
   'failed',
   'last_error',
+  'schedule_id',
   'started_at',
   'finished_at',
   'created_at',
@@ -80,6 +85,7 @@ function batchOf(row: {
   id: string;
   tenant_id: string;
   subject: string;
+  name: string;
   kind: string;
   config: unknown;
   status: string;
@@ -87,6 +93,7 @@ function batchOf(row: {
   succeeded: number;
   failed: number;
   last_error: string | null;
+  schedule_id: string | null;
   started_at: Date | null;
   finished_at: Date | null;
   created_at: Date;
@@ -112,8 +119,11 @@ function itemOf(row: {
 export interface CreateBatchInput {
   tenantId: string;
   subject: string;
+  name: string;
   kind: string;
   config: Record<string, unknown>;
+  /** Set when this run was spawned by a schedule firing, not a one-off start. */
+  scheduleId?: string;
 }
 
 export async function createBatch(db: Kysely<DB>, input: CreateBatchInput): Promise<BatchJobRow> {
@@ -123,8 +133,10 @@ export async function createBatch(db: Kysely<DB>, input: CreateBatchInput): Prom
       id: randomUUID(),
       tenant_id: input.tenantId,
       subject: input.subject,
+      name: input.name,
       kind: input.kind,
       config: JSON.stringify(input.config),
+      schedule_id: input.scheduleId ?? null,
     })
     .returning(BATCH_COLUMNS)
     .executeTakeFirstOrThrow();
@@ -148,6 +160,8 @@ export async function getBatch(
 export interface ListBatchesOptions {
   limit?: number;
   status?: string;
+  /** Only batches spawned by this schedule — the schedule's "recent runs" view. */
+  scheduleId?: string;
 }
 
 export async function listBatches(
@@ -163,6 +177,7 @@ export async function listBatches(
     .where('subject', '=', subject)
     .orderBy('created_at', 'desc');
   if (options.status) query = query.where('status', '=', options.status);
+  if (options.scheduleId) query = query.where('schedule_id', '=', options.scheduleId);
   if (options.limit) query = query.limit(options.limit);
   const rows = await query.execute();
   return rows.map(batchOf);

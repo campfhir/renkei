@@ -89,6 +89,7 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
         'per-page files that need correlating back into one document by filename.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
+        name: z.string().min(1).describe('A human-readable name for this batch, e.g. "Invoices — March 2026".'),
         shareId: z.string().uuid().describe('From fileshare_list_shares.'),
         path: z.string().optional().describe('Folder path from the share root (default "/").'),
         grouping: groupingSchema,
@@ -104,6 +105,7 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       const batch = await startDocumentOcrPipeline(dbResult.val, {
         tenantId: target.tenantId,
         subject: target.subject,
+        name: str(args.name),
         shareId: str(args.shareId),
         path: str(args.path) || '/',
         grouping,

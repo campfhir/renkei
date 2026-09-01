@@ -1,29 +1,41 @@
 'use client';
 
 /**
- * Start a document-ocr-pipeline batch — the plain-form twin of the
- * batch_start_document_pipeline MCP tool, for someone who would rather
- * click through a form than ask an agent. POSTs to
- * /api/tenant/[tenantId]/batch-jobs, which shares startDocumentOcrPipeline
- * with the MCP tool.
+ * Define a recurring document-ocr-pipeline batch — the schedule twin of
+ * new-batch-job-form.tsx: same source/grouping fields, plus the SAME
+ * ScheduleEditor the agent builder uses for its own schedule triggers
+ * (packages/agents' ScheduleConfig, computed next_run_at server-side on
+ * save via /api/tenant/[tenantId]/batch-job-schedules).
  */
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { sendJsonFull } from '@/lib/fetch-json';
+import type { ScheduleConfig } from '@renkei/agents';
 import SourceFields, {
   inputClass,
   labelClass,
   validateGroupingPattern,
   type GroupingStrategy,
-} from '../source-fields';
+} from '../../source-fields';
+import { ScheduleEditor, type CalendarOption } from '../../../agents/builder/schedule-picker';
 
-export default function NewBatchJobForm({
+function defaultTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone;
+  } catch {
+    return 'UTC';
+  }
+}
+
+export default function NewScheduleForm({
   slug,
   tenantId,
+  calendars,
 }: {
   slug: string;
   tenantId: string;
+  calendars: CalendarOption[];
 }) {
   const router = useRouter();
   const [name, setName] = useState('');
@@ -32,6 +44,10 @@ export default function NewBatchJobForm({
   const [strategy, setStrategy] = useState<GroupingStrategy>('whole-file');
   const [pattern, setPattern] = useState(String.raw`^(?<documentKey>.+)-p(?<page>\d+)\.tif$`);
   const [ready, setReady] = useState(false);
+  const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfig>({
+    recurrences: [{ every: 'day', at: '09:00' }],
+    timezone: defaultTimezone(),
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,7 +56,7 @@ export default function NewBatchJobForm({
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) {
-      setError('Give this batch a name.');
+      setError('Give this schedule a name.');
       return;
     }
     if (!shareId) {
@@ -57,31 +73,31 @@ export default function NewBatchJobForm({
       strategy === 'whole-file'
         ? { strategy: 'whole-file' as const }
         : { strategy: 'filename-pattern' as const, pattern };
-    const { data, error: submitError } = await sendJsonFull<{ batchId: string }>(
-      `/api/tenant/${tenantId}/batch-jobs`,
+    const { data, error: submitError } = await sendJsonFull<{ id: string }>(
+      `/api/tenant/${tenantId}/batch-job-schedules`,
       'POST',
-      { name: name.trim(), shareId, path: path.trim() || '/', grouping }
+      { name: name.trim(), shareId, path: path.trim() || '/', grouping, scheduleConfig }
     );
     setBusy(false);
     if (submitError || !data) {
-      setError(submitError ?? 'Could not start the batch job.');
+      setError(submitError ?? 'Could not create the schedule.');
       return;
     }
-    router.push(`/${slug}/batch-jobs/${data.batchId}`);
+    router.push(`/${slug}/batch-jobs/schedules/${data.id}`);
   }
 
   return (
     <form onSubmit={(e) => void submit(e)} className="space-y-4">
       <div>
-        <label htmlFor="bj-name" className={labelClass}>
+        <label htmlFor="bjs-name" className={labelClass}>
           Name
         </label>
         <input
-          id="bj-name"
+          id="bjs-name"
           required
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Invoices — March 2026"
+          placeholder="e.g. Nightly invoice OCR"
           className={inputClass}
         />
       </div>
@@ -100,13 +116,18 @@ export default function NewBatchJobForm({
         onReadyChange={setReady}
       />
 
+      <div>
+        <span className={labelClass}>Recurrence</span>
+        <ScheduleEditor value={scheduleConfig} onChange={setScheduleConfig} calendars={calendars} />
+      </div>
+
       <div className="flex items-center gap-3">
         <button
           type="submit"
           disabled={busy || !ready}
           className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {busy ? 'Starting…' : 'Start batch job'}
+          {busy ? 'Creating…' : 'Create schedule'}
         </button>
         {error && <span className="text-sm text-red-700 dark:text-red-300">{error}</span>}
       </div>

@@ -35,6 +35,7 @@ describe('startDocumentOcrPipeline', () => {
     const batch = await startDocumentOcrPipeline(FAKE_DB as never, {
       tenantId: 'tenant-1',
       subject: 'auth0|alice',
+      name: 'Inbox OCR',
       shareId: 'share-1',
       path: '/inbox',
       grouping: { strategy: 'whole-file' },
@@ -43,8 +44,10 @@ describe('startDocumentOcrPipeline', () => {
     expect(createBatchMock).toHaveBeenCalledWith(FAKE_DB, {
       tenantId: 'tenant-1',
       subject: 'auth0|alice',
+      name: 'Inbox OCR',
       kind: 'document-ocr-pipeline',
       config: { shareId: 'share-1', path: '/inbox', grouping: { strategy: 'whole-file' } },
+      scheduleId: undefined,
     });
     expect(enqueueDiscoverMock).toHaveBeenCalledWith('the-producer', 'tenant-1', 'batch-1');
     expect(batch.id).toBe('batch-1');
@@ -56,6 +59,7 @@ describe('startDocumentOcrPipeline', () => {
     await startDocumentOcrPipeline(FAKE_DB as never, {
       tenantId: 'tenant-1',
       subject: 'auth0|alice',
+      name: 'Scanner dump',
       shareId: 'share-1',
       grouping: { strategy: 'filename-pattern', pattern: '^(?<documentKey>.+)-p(?<page>\\d+)\\.tif$' },
     });

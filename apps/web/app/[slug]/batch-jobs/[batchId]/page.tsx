@@ -52,11 +52,25 @@ export default async function BatchJobDetailPage({
       <AutoRefresh />
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <BackLink href={`/${slug}/batch-jobs`} label="Batch Jobs" />
-        <h1 className="text-xl font-bold">{batch.kind}</h1>
+        <h1 className="min-w-0 truncate text-xl font-bold">{batch.name}</h1>
         <BatchStatusPill status={batch.status} />
       </div>
 
       <div className="mb-6 space-y-1 rounded-md border border-gray-200 p-3 text-sm dark:border-gray-800">
+        <p>
+          <span className="font-medium">Kind:</span> {batch.kind}
+        </p>
+        {batch.schedule_id ? (
+          <p>
+            <span className="font-medium">Schedule:</span>{' '}
+            <Link
+              href={`/${slug}/batch-jobs/schedules/${batch.schedule_id}`}
+              className="text-blue-600 hover:underline dark:text-blue-400"
+            >
+              Started by a schedule
+            </Link>
+          </p>
+        ) : null}
         <p>
           <span className="font-medium">Progress:</span> {batchProgress(batch)}
         </p>

@@ -12,30 +12,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { listConnectedShares } from '@renkei/connector-fileshares';
-import {
-  startDocumentOcrPipeline,
-  type DocumentGrouping,
-} from '@/lib/batch-jobs/start-document-ocr-pipeline';
+import { startDocumentOcrPipeline } from '@/lib/batch-jobs/start-document-ocr-pipeline';
+import { parseGrouping } from '@/lib/batch-jobs/grouping';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function parseGrouping(value: unknown): DocumentGrouping | null {
-  if (!isRecord(value)) return null;
-  if (value.strategy === 'whole-file') return { strategy: 'whole-file' };
-  if (value.strategy === 'filename-pattern') {
-    const pattern = value.pattern;
-    if (typeof pattern !== 'string' || !pattern) return null;
-    if (!pattern.includes('?<documentKey>') || !pattern.includes('?<page>')) return null;
-    try {
-      new RegExp(pattern);
-    } catch {
-      return null;
-    }
-    return { strategy: 'filename-pattern', pattern };
-  }
-  return null;
 }
 
 export async function POST(
@@ -51,6 +32,8 @@ export async function POST(
     return NextResponse.json({ error: 'JSON body required' }, { status: 400 });
   }
 
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) return NextResponse.json({ error: 'name is required' }, { status: 400 });
   const shareId = typeof body.shareId === 'string' ? body.shareId : '';
   if (!shareId) return NextResponse.json({ error: 'shareId is required' }, { status: 400 });
   const path = typeof body.path === 'string' && body.path ? body.path : '/';
@@ -84,6 +67,7 @@ export async function POST(
   const batch = await startDocumentOcrPipeline(dbResult.val, {
     tenantId,
     subject: session.subject,
+    name,
     shareId,
     path,
     grouping,

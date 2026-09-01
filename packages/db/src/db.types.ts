@@ -300,12 +300,30 @@ export interface BatchJobs {
   id: string;
   kind: string;
   last_error: string | null;
+  name: Generated<string>;
+  schedule_id: string | null;
   started_at: Timestamp | null;
   status: Generated<string>;
   subject: string;
   succeeded: Generated<number>;
   tenant_id: string;
   total: number | null;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface BatchJobSchedules {
+  config: Generated<Json>;
+  created_at: Generated<Timestamp>;
+  enabled: Generated<boolean>;
+  id: string;
+  kind: string;
+  last_error: string | null;
+  last_fired_at: Timestamp | null;
+  name: string;
+  next_run_at: Timestamp | null;
+  schedule_config: Generated<Json>;
+  subject: string;
+  tenant_id: string;
   updated_at: Generated<Timestamp>;
 }
 
@@ -865,6 +883,7 @@ export interface DB {
   batch_job_items: BatchJobItems;
   batch_job_messages: BatchJobMessages;
   batch_job_messages_dead_letters: BatchJobMessagesDeadLetters;
+  batch_job_schedules: BatchJobSchedules;
   batch_jobs: BatchJobs;
   connector_configs: ConnectorConfigs;
   content_watches: ContentWatches;
