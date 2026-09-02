@@ -440,18 +440,28 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!context.subject) return errText(NO_SUBJECT);
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
-      const access = await agentAccessFor(dbResult.val, context, args.agentId);
+      const db = dbResult.val;
+      const access = await agentAccessFor(db, context, args.agentId);
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
+      // Get owner info for shared agents so callers know whose agent they're working with
+      let ownerEmail: string | null = null;
+      if (!access.viewerIsOwner) {
+        const ownerEmailResult = await getIdentityEmail(context.tenantId, access.ownerSubject);
+        ownerEmail = ownerEmailResult.ok ? ownerEmailResult.val : null;
+      }
+
       // Raw JSON, nothing else: agentId/enabled are read-only context (the
       // save path ignores them); every other key is exactly what
-      // agent_update takes.
+      // agent_update takes. ownerEmail appears for shared agents so a caller
+      // knows whose agent they are working with.
       return textResult(
         JSON.stringify(
           {
             agentId: agent.id,
             enabled: agent.enabled,
+            ...(ownerEmail ? { ownerEmail } : {}),
             ...agentDefinition({
               name: agent.name,
               description: agent.description,
