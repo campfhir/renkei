@@ -44,6 +44,24 @@ export interface ChangelogRelease {
 export const CHANGELOG: ChangelogRelease[] = [
   {
     date: '2026-09-02',
+    heading: 'WebEx deep linking and desktop notifications',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Click notifications to open WebEx messages and receipts',
+        detail:
+          'Desktop notifications for WebEx actions now use webexteams:// deep links that open the message or receipt directly in WebEx when clicked.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Card headers wrap long titles on narrow screens',
+        detail:
+          'Agent and organization card headers no longer collapse when titles are long on mobile or narrow viewports.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-02',
     heading: 'Smarter schedules: time windows and recurrence',
     entries: [
       {
