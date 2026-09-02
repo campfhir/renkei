@@ -74,6 +74,11 @@ function registerConnectorHandlers(): void {
   registerHandler('domain', 'mail.received', dispatch);
   registerHandler('domain', 'recording.transcript_completed', dispatch);
   registerHandler('domain', 'meeting.summary_completed', dispatch);
+  // Published by the batch-jobs worker (batch-jobs/lifecycle.ts) when a
+  // batch begins or ends; dispatched here so the agent fan-out lives in
+  // one process regardless of who published.
+  registerHandler('domain', 'job.started', dispatch);
+  registerHandler('domain', 'job.completed', dispatch);
   logger.info('webex, microsoft, zoom and dispatch handlers registered', {
     component: 'worker/loop',
   });

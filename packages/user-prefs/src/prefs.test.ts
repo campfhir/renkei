@@ -6,7 +6,9 @@
  */
 
 import {
+  BATCH_EVENTS,
   DEFAULT_NOTIFICATION_PREFS,
+  batchEventForStatus,
   defaultForCategory,
   deliveryForCategory,
   effectiveDelivery,
@@ -261,5 +263,33 @@ describe('effectiveDelivery / effectivePauseDelivery', () => {
     expect(effectivePauseDelivery(p, 'agent-1', 'approvalNeeded')).toEqual(override);
     expect(effectivePauseDelivery(p, 'agent-1', 'questionAsked')).toEqual(p.questionAsked);
     expect(effectivePauseDelivery(p, null, 'approvalNeeded')).toEqual(p.approvalNeeded);
+  });
+});
+
+describe('batch events', () => {
+  it('defaults like the run events: started off, finished and failed on in the app only', () => {
+    expect(DEFAULT_NOTIFICATION_PREFS.batchStarted).toEqual(delivery({}));
+    expect(DEFAULT_NOTIFICATION_PREFS.batchFinished).toEqual(delivery({ app: true }));
+    expect(DEFAULT_NOTIFICATION_PREFS.batchFailed).toEqual(delivery({ app: true }));
+  });
+
+  it('parses stored choices and fills the rest', () => {
+    const parsed = parseNotificationPrefs({
+      batchStarted: { app: true },
+      batchFailed: { email: true, webex: true },
+    });
+    expect(parsed.batchStarted).toEqual(delivery({ app: true }));
+    expect(parsed.batchFinished).toEqual(DEFAULT_NOTIFICATION_PREFS.batchFinished);
+    expect(parsed.batchFailed).toEqual(delivery({ app: true, email: true, webex: true }));
+  });
+
+  it('routes a terminal status to its event — partial is a finish, not a failure', () => {
+    expect(batchEventForStatus('succeeded')).toBe('batchFinished');
+    expect(batchEventForStatus('partial')).toBe('batchFinished');
+    expect(batchEventForStatus('failed')).toBe('batchFailed');
+  });
+
+  it('lists the three events in the order a page shows them', () => {
+    expect(BATCH_EVENTS).toEqual(['batchStarted', 'batchFinished', 'batchFailed']);
   });
 });

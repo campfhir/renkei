@@ -17,6 +17,13 @@ import { listConnectedShares } from '@renkei/connector-fileshares';
 import { createSchedule, listSchedules, DOCUMENT_OCR_PIPELINE_KIND } from '@renkei/batch-jobs-store';
 import { parseScheduleConfig } from '@renkei/agents';
 import { parseGrouping } from '@/lib/batch-jobs/grouping';
+import {
+  AFTER_PROCESSING_SHAPE,
+  afterProcessingRefusal,
+  parseAfterProcessing,
+  parseSkipProcessed,
+} from '@/lib/batch-jobs/pipeline-options';
+import { documentPipelineConfig } from '@/lib/batch-jobs/start-document-ocr-pipeline';
 import { nextRunAtFor } from '@/lib/batch-jobs/schedule-next-run';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -82,6 +89,13 @@ export async function POST(
     );
   }
 
+  const skipProcessed = parseSkipProcessed(body.skipProcessed);
+  if (skipProcessed === null) {
+    return NextResponse.json({ error: 'skipProcessed must be a boolean' }, { status: 400 });
+  }
+  const afterProcessing = parseAfterProcessing(body.afterProcessing);
+  if (!afterProcessing) return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
+
   const scheduleConfig = parseScheduleConfig(body.scheduleConfig);
   if (!scheduleConfig) {
     return NextResponse.json({ error: 'scheduleConfig is missing or malformed' }, { status: 400 });
@@ -91,15 +105,12 @@ export async function POST(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   // The share must exist and this caller must have connected their own
-  // credentials to it — same check the one-off start route makes.
+  // credentials to it, and moving/deleting there must be within what they
+  // allowed on the Connectors page — same check the one-off start route makes.
   const shares = await listConnectedShares(dbResult.val, tenantId, session.subject);
   if (!shares.ok) return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
-  if (!shares.val.some((entry) => entry.share.id === shareId)) {
-    return NextResponse.json(
-      { error: 'Unknown file share, or you have not connected it yet' },
-      { status: 400 }
-    );
-  }
+  const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);
+  if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
 
   let nextRunAt: Date;
   try {
@@ -122,7 +133,7 @@ export async function POST(
       subject: session.subject,
       name,
       kind: DOCUMENT_OCR_PIPELINE_KIND,
-      config: { shareId, path, grouping },
+      config: { ...documentPipelineConfig({ shareId, path, grouping, skipProcessed, afterProcessing }) },
       scheduleConfig: scheduleConfigRecord,
       nextRunAt,
     });

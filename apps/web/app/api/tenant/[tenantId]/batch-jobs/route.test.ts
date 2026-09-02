@@ -130,8 +130,49 @@ test('starts the pipeline and returns the new batch id', async () => {
       shareId: SHARE_ID,
       path: '/inbox',
       grouping: { strategy: 'whole-file' },
+      // Stored explicitly at their defaults: the ledger on, the source kept.
+      skipProcessed: true,
+      afterProcessing: { action: 'keep' },
     }
   );
+});
+
+test('deleting source files is refused unless the connection allows delete tools', async () => {
+  listConnectedShares.mockResolvedValue({
+    ok: true,
+    val: [
+      {
+        share: { id: SHARE_ID, name: 'Scans' },
+        connection: { username: 'alice', toolAccess: 'read_write', allowDelete: false },
+      },
+    ],
+  });
+  const response = await POST(
+    reqOf({
+      name: 'Inbox OCR',
+      shareId: SHARE_ID,
+      grouping: { strategy: 'whole-file' },
+      afterProcessing: { action: 'delete' },
+    }),
+    { params: paramsOf() }
+  );
+  expect(response.status).toBe(400);
+  expect((await response.json()).error).toContain('delete tools');
+  expect(startDocumentOcrPipeline).not.toHaveBeenCalled();
+});
+
+test('a malformed afterProcessing is a 400 before any share lookup', async () => {
+  const response = await POST(
+    reqOf({
+      name: 'Inbox OCR',
+      shareId: SHARE_ID,
+      grouping: { strategy: 'whole-file' },
+      afterProcessing: { action: 'archive' },
+    }),
+    { params: paramsOf() }
+  );
+  expect(response.status).toBe(400);
+  expect(listConnectedShares).not.toHaveBeenCalled();
 });
 
 test('an empty path defaults to the share root', async () => {

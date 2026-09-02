@@ -58,6 +58,7 @@ export default async function NotificationsPage({
     agentId: row.agent_id,
     agentName: row.agent_name,
     runId: row.run_id,
+    meta: row.meta ?? null,
     unread: row.read_at === null,
     createdAt: new Date(row.created_at).toISOString(),
   }));
@@ -67,7 +68,8 @@ export default async function NotificationsPage({
       <AutoRefresh />
       <h1 className="mb-1 text-xl font-bold">Notifications</h1>
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
-        What your agents did — the things that changed something, not every step they took.{' '}
+        What your agents and batch jobs did — the things that changed something, not every step they
+        took.{' '}
         <Link
           href={`/${slug}/preferences`}
           className="text-blue-600 hover:underline dark:text-blue-400"

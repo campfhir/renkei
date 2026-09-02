@@ -81,6 +81,16 @@ export interface NotificationPrefs {
   /** A run pausing for an answer. Same shape, same reasoning. */
   questionAsked: PauseDeliveryPrefs;
   /**
+   * Batch jobs (a document OCR pipeline over a folder of files, and
+   * whatever kinds follow). Addressed to the batch's owner — for a
+   * scheduled batch, whoever owns the schedule. Same three channels as a
+   * run event, the same "started is off, finished and failed are on"
+   * defaults, and NOT per-agent overridable: a batch has no agent.
+   */
+  batchStarted: DeliveryPrefs;
+  batchFinished: DeliveryPrefs;
+  batchFailed: DeliveryPrefs;
+  /**
    * connector → category → delivery. Absent = the category default for
    * `app`, off for `email`/`webex`. Category, not per-act: an act-by-act
    * grid times three channels was tried (see the preferences form's own
@@ -125,6 +135,9 @@ export const DEFAULT_NOTIFICATION_PREFS: NotificationPrefs = {
   // already shows in the app regardless, so this is purely "also page me".
   approvalNeeded: { email: false, webex: false },
   questionAsked: { email: false, webex: false },
+  batchStarted: { app: false, email: false, webex: false },
+  batchFinished: { app: true, email: false, webex: false },
+  batchFailed: { app: true, email: false, webex: false },
   acts: {},
   agentOverrides: {},
   toastsEnabled: true,
@@ -188,6 +201,19 @@ export function effectiveDelivery(
 ): DeliveryPrefs {
   const override = agentId ? prefs.agentOverrides[agentId]?.[key] : undefined;
   return override ?? prefs[key];
+}
+
+/** The three batch-job events, in the order a preferences page lists them. */
+export const BATCH_EVENTS = ['batchStarted', 'batchFinished', 'batchFailed'] as const;
+export type BatchEvent = (typeof BATCH_EVENTS)[number];
+
+/**
+ * Which batch event a batch's terminal status is news for. 'partial' counts
+ * as finished, not failed: the batch did its job for most of its items,
+ * and the failed count is in the notification either way.
+ */
+export function batchEventForStatus(status: string): 'batchFinished' | 'batchFailed' {
+  return status === 'failed' ? 'batchFailed' : 'batchFinished';
 }
 
 /** Same idea as `effectiveDelivery`, for the two pause events. */
@@ -313,6 +339,9 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
       DEFAULT_NOTIFICATION_PREFS.approvalNeeded
     ),
     questionAsked: pauseDeliveryPrefs(raw.questionAsked, DEFAULT_NOTIFICATION_PREFS.questionAsked),
+    batchStarted: deliveryPrefs(raw.batchStarted, DEFAULT_NOTIFICATION_PREFS.batchStarted),
+    batchFinished: deliveryPrefs(raw.batchFinished, DEFAULT_NOTIFICATION_PREFS.batchFinished),
+    batchFailed: deliveryPrefs(raw.batchFailed, DEFAULT_NOTIFICATION_PREFS.batchFailed),
     acts: actsMap(raw.acts),
     agentOverrides: agentOverridesMap(raw.agentOverrides),
     toastsEnabled: boolOr(raw.toastsEnabled, DEFAULT_NOTIFICATION_PREFS.toastsEnabled),

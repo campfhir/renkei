@@ -16,6 +16,10 @@ import SourceFields, {
   validateGroupingPattern,
   type GroupingStrategy,
 } from '../../source-fields';
+import {
+  afterProcessingPayload,
+  type AfterProcessingValue,
+} from '@/lib/batch-jobs/pipeline-form-value';
 import { ScheduleEditor, type CalendarOption } from '../../../agents/builder/schedule-picker';
 
 export interface SourceValue {
@@ -23,6 +27,8 @@ export interface SourceValue {
   path: string;
   strategy: GroupingStrategy;
   pattern: string;
+  skipProcessed: boolean;
+  afterProcessing: AfterProcessingValue;
 }
 
 export default function EditScheduleForm({
@@ -53,6 +59,10 @@ export default function EditScheduleForm({
   const [strategy, setStrategy] = useState<GroupingStrategy>(initialSource.strategy);
   const [pattern, setPattern] = useState(
     initialSource.pattern || String.raw`^(?<documentKey>.+)-p(?<page>\d+)\.tif$`
+  );
+  const [skipProcessed, setSkipProcessed] = useState(initialSource.skipProcessed);
+  const [afterProcessing, setAfterProcessing] = useState<AfterProcessingValue>(
+    initialSource.afterProcessing
   );
   const [ready, setReady] = useState(true); // an existing schedule already has a valid source
   const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfig>(initialScheduleConfig);
@@ -86,7 +96,16 @@ export default function EditScheduleForm({
     const submitError = await sendJson(
       `/api/tenant/${tenantId}/batch-job-schedules/${scheduleId}`,
       'PUT',
-      { name: name.trim(), shareId, path: path.trim() || '/', grouping, scheduleConfig, enabled }
+      {
+        name: name.trim(),
+        shareId,
+        path: path.trim() || '/',
+        grouping,
+        skipProcessed,
+        afterProcessing: afterProcessingPayload(afterProcessing, shareId),
+        scheduleConfig,
+        enabled,
+      }
     );
     setBusy(false);
     if (submitError) {
@@ -149,10 +168,14 @@ export default function EditScheduleForm({
         path={path}
         strategy={strategy}
         pattern={pattern}
+        skipProcessed={skipProcessed}
+        afterProcessing={afterProcessing}
         onShareIdChange={setShareId}
         onPathChange={setPath}
         onStrategyChange={setStrategy}
         onPatternChange={setPattern}
+        onSkipProcessedChange={setSkipProcessed}
+        onAfterProcessingChange={setAfterProcessing}
         onReadyChange={setReady}
       />
 

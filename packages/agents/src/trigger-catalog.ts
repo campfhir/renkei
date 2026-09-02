@@ -123,6 +123,69 @@ const zoomTopicContains = containsField(
   'the meeting title contains "{value}"'
 );
 
+/*
+ * Batch jobs (packages/batch-jobs-store, run by apps/worker's batch-jobs
+ * worker). Both events are published by that worker at the moment a batch
+ * changes state — see apps/worker/src/batch-jobs/lifecycle.ts — and scoped
+ * to the batch's OWNER, so a nightly schedule's batches wake the agents of
+ * whoever owns the schedule.
+ *
+ * The kind filter is a fixed choice rather than free text: a kind is a
+ * handler's registered name, not something a person would guess the
+ * spelling of. Adding a batch kind means adding an option here.
+ */
+const batchKindFilter: TriggerFilterField = {
+  id: 'kinds',
+  payloadKey: 'kind',
+  match: 'equals-any',
+  input: 'select',
+  label: 'Kind of job',
+  hint: 'Only batches of one kind, or any kind.',
+  invalidMessage: 'That is not a batch-job kind this filter knows.',
+  options: [
+    { value: '', label: 'Any kind', describe: '' },
+    {
+      value: 'document-ocr-pipeline',
+      label: 'Document OCR pipeline',
+      describe: 'for a document OCR pipeline',
+    },
+  ],
+  describeOne: 'for a {value} batch',
+};
+
+const batchNameContains = containsField(
+  'nameContains',
+  'name',
+  'Batch name contains',
+  'Case-insensitive. Matches anywhere in the batch’s name — a schedule’s batches all carry its name.',
+  'the batch name contains "{value}"'
+);
+
+/** What a finished batch says about itself, shared by both batch events. */
+const batchIdentity = [
+  trigger(
+    'batchId',
+    'Batch id',
+    'The id of the batch; pass it to batch_get_job for its status, to batch_list_items for every item and what it produced, or as batchId to sandbox_list_files to read what the batch staged.'
+  ),
+  trigger('name', 'Batch name', 'The name the batch was started with.'),
+  trigger(
+    'kind',
+    'Batch kind',
+    'What kind of job this was — "document-ocr-pipeline" for an OCR run over a folder of files.'
+  ),
+  trigger(
+    'kindLabel',
+    'Batch kind (label)',
+    'The kind as a person would say it, e.g. "Document OCR pipeline".'
+  ),
+  trigger(
+    'scheduleId',
+    'Schedule id',
+    'The id of the schedule that started this batch, or empty for a batch started by hand.'
+  ),
+];
+
 export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
   {
     id: 'microsoft/mail.received',
@@ -361,6 +424,80 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
       ),
     ],
     filters: [zoomHostEmails, zoomTopicContains],
+  },
+  {
+    id: 'batch/job.completed',
+    source: 'batch',
+    type: 'job.completed',
+    connector: 'batch-jobs',
+    label: 'A batch job finishes',
+    description:
+      'Runs when one of your batch jobs — a document OCR pipeline, for example — finishes, whether every item succeeded, some failed, or the batch failed outright. What the batch produced is waiting in the sandbox under its batch id.',
+    provides: [
+      ...batchIdentity,
+      trigger(
+        'status',
+        'Outcome',
+        '"succeeded" when every item succeeded, "partial" when some items failed, "failed" when nothing succeeded or the batch stopped before its items.'
+      ),
+      trigger('total', 'Item count', 'How many items (documents) the batch had.'),
+      trigger('succeeded', 'Succeeded', 'How many items succeeded.'),
+      trigger('failed', 'Failed', 'How many items failed.'),
+      trigger(
+        'skipped',
+        'Skipped',
+        'How many items an earlier batch had already processed, so this one did not run them.'
+      ),
+      trigger(
+        'summary',
+        'Summary',
+        'One line on what happened, e.g. "OCR’d 40 of 42 documents, 2 failed".'
+      ),
+      trigger(
+        'error',
+        'Error',
+        'Why the batch failed when it stopped before running its items; empty otherwise.'
+      ),
+    ],
+    filters: [
+      batchKindFilter,
+      {
+        id: 'outcomes',
+        payloadKey: 'status',
+        match: 'equals-any',
+        input: 'select',
+        label: 'Outcome',
+        hint: 'Wake only for a clean finish, only when something failed, or for every finish.',
+        invalidMessage: 'The outcome filter must be "succeeded", "partial" or "failed".',
+        options: [
+          { value: '', label: 'Any outcome', describe: '' },
+          {
+            value: 'succeeded',
+            label: 'Succeeded only',
+            describe: 'only when every item succeeded',
+          },
+          {
+            value: 'partial',
+            label: 'Partially succeeded only',
+            describe: 'only when some items failed',
+          },
+          { value: 'failed', label: 'Failed only', describe: 'only when the batch failed' },
+        ],
+        describeOne: 'when the outcome is {value}',
+      },
+      batchNameContains,
+    ],
+  },
+  {
+    id: 'batch/job.started',
+    source: 'batch',
+    type: 'job.started',
+    connector: 'batch-jobs',
+    label: 'A batch job starts',
+    description:
+      'Runs the moment one of your batch jobs begins work — before any item has been processed. Useful for bookkeeping; to act on what a batch produced, use "A batch job finishes".',
+    provides: [...batchIdentity],
+    filters: [batchKindFilter, batchNameContains],
   },
 ];
 

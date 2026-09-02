@@ -172,7 +172,13 @@ describe('POST', () => {
         subject: 'auth0|alice',
         name: 'Nightly OCR',
         kind: 'document-ocr-pipeline',
-        config: { shareId: SHARE_ID, path: '/inbox', grouping: { strategy: 'whole-file' } },
+        config: {
+          shareId: SHARE_ID,
+          path: '/inbox',
+          grouping: { strategy: 'whole-file' },
+          skipProcessed: true,
+          afterProcessing: { action: 'keep' },
+        },
         scheduleConfig: SCHEDULE_CONFIG,
       })
     );

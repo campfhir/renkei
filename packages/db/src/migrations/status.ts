@@ -117,6 +117,8 @@ export const EXPECTED_MIGRATIONS = [
   '085-llm-calls',
   '086-tool-calls-agent',
   '087-usage-ledger-backfill',
+  '088-agent-notifications-meta',
+  '089-batch-processed-files',
 ];
 
 export interface MigrationStatus {

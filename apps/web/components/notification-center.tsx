@@ -43,11 +43,14 @@ export interface AppNotification {
   category: string | null;
   connector: string | null;
   tool: string | null;
+  entity: string | null;
   headline: string;
   refUrl: string | null;
   agentId: string | null;
   agentName: string | null;
   runId: string | null;
+  /** Batch-job rows carry their counts here — see lib/notifications/batch-meta.ts. */
+  meta: unknown;
   readAt: string | null;
   createdAt: string;
 }

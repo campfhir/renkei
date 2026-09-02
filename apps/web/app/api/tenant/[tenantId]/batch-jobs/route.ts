@@ -14,6 +14,12 @@ import { getSessionFromRequest } from '@/lib/session';
 import { listConnectedShares } from '@renkei/connector-fileshares';
 import { startDocumentOcrPipeline } from '@/lib/batch-jobs/start-document-ocr-pipeline';
 import { parseGrouping } from '@/lib/batch-jobs/grouping';
+import {
+  AFTER_PROCESSING_SHAPE,
+  afterProcessingRefusal,
+  parseAfterProcessing,
+  parseSkipProcessed,
+} from '@/lib/batch-jobs/pipeline-options';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -48,21 +54,24 @@ export async function POST(
       { status: 400 }
     );
   }
+  const skipProcessed = parseSkipProcessed(body.skipProcessed);
+  if (skipProcessed === null) {
+    return NextResponse.json({ error: 'skipProcessed must be a boolean' }, { status: 400 });
+  }
+  const afterProcessing = parseAfterProcessing(body.afterProcessing);
+  if (!afterProcessing) return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   // The share must exist and this caller must have connected their own
   // credentials to it — otherwise discovery would just fail later with a
-  // less helpful error once the batch is already running.
+  // less helpful error once the batch is already running — and moving or
+  // deleting on it must be within what they allowed on the Connectors page.
   const shares = await listConnectedShares(dbResult.val, tenantId, session.subject);
   if (!shares.ok) return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
-  if (!shares.val.some((entry) => entry.share.id === shareId)) {
-    return NextResponse.json(
-      { error: 'Unknown file share, or you have not connected it yet' },
-      { status: 400 }
-    );
-  }
+  const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);
+  if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
 
   const batch = await startDocumentOcrPipeline(dbResult.val, {
     tenantId,
@@ -71,6 +80,8 @@ export async function POST(
     shareId,
     path,
     grouping,
+    skipProcessed,
+    afterProcessing,
   });
 
   return NextResponse.json({ batchId: batch.id }, { status: 201 });

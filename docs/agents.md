@@ -33,7 +33,7 @@ Two separate things, easy to conflate:
 
 ## Triggers and runs
 
-`triggers.ts`/`trigger-catalog.ts`/`trigger-filters.ts`/`recurrence.ts` describe what starts a run: an event match (fed by `apps/worker`'s domain-dispatch fan-out, `fanOutAgentEvents`) or a schedule/recurrence (fired by `apps/worker-agents`'s `schedule-sweep.ts`, checked roughly every 30 seconds). `runs.ts` creates and guards run rows and records failures. Runs can also be started by hand via the `agent_run_now` MCP tool, bypassing both event and schedule triggers.
+`triggers.ts`/`trigger-catalog.ts`/`trigger-filters.ts`/`recurrence.ts` describe what starts a run: an event match (fed by `apps/worker`'s domain-dispatch fan-out, `fanOutAgentEvents`) or a schedule/recurrence (fired by `apps/worker-agents`'s `schedule-sweep.ts`, checked roughly every 30 seconds). Not every catalog event comes from a connector: `batch/job.started` and `batch/job.completed` are published by the batch-jobs worker when one of the owner's batches (a document OCR pipeline, say) begins or ends — see [`batch-jobs-design.md`](./batch-jobs-design.md#announcing-a-batch-the-owner-and-agents) — which is how an agent picks up a finished batch's staged documents and files them. `runs.ts` creates and guards run rows and records failures. Runs can also be started by hand via the `agent_run_now` MCP tool, bypassing both event and schedule triggers.
 
 ## Execution engine (`apps/worker-agents`)
 

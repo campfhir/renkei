@@ -14,6 +14,13 @@ import { listConnectedShares } from '@renkei/connector-fileshares';
 import { getSchedule, updateSchedule, deleteSchedule, type UpdateScheduleInput } from '@renkei/batch-jobs-store';
 import { parseScheduleConfig, type ScheduleConfig } from '@renkei/agents';
 import { parseGrouping } from '@/lib/batch-jobs/grouping';
+import {
+  AFTER_PROCESSING_SHAPE,
+  afterProcessingRefusal,
+  parseAfterProcessing,
+  parseSkipProcessed,
+} from '@/lib/batch-jobs/pipeline-options';
+import { documentPipelineConfig } from '@/lib/batch-jobs/start-document-ocr-pipeline';
 import { nextRunAtFor } from '@/lib/batch-jobs/schedule-next-run';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -79,7 +86,14 @@ export async function PUT(
     updates.name = name;
   }
 
-  const changingConfig = body.shareId !== undefined || body.path !== undefined || body.grouping !== undefined;
+  // The config is replaced wholesale, so any one of its fields arriving
+  // means the whole shape must be present and valid.
+  const changingConfig =
+    body.shareId !== undefined ||
+    body.path !== undefined ||
+    body.grouping !== undefined ||
+    body.skipProcessed !== undefined ||
+    body.afterProcessing !== undefined;
   if (changingConfig) {
     const shareId = typeof body.shareId === 'string' ? body.shareId : '';
     if (!shareId) return NextResponse.json({ error: 'shareId is required' }, { status: 400 });
@@ -95,15 +109,19 @@ export async function PUT(
         { status: 400 }
       );
     }
+    const skipProcessed = parseSkipProcessed(body.skipProcessed);
+    if (skipProcessed === null) {
+      return NextResponse.json({ error: 'skipProcessed must be a boolean' }, { status: 400 });
+    }
+    const afterProcessing = parseAfterProcessing(body.afterProcessing);
+    if (!afterProcessing) return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
     const shares = await listConnectedShares(dbResult.val, tenantId, session.subject);
     if (!shares.ok) return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
-    if (!shares.val.some((entry) => entry.share.id === shareId)) {
-      return NextResponse.json(
-        { error: 'Unknown file share, or you have not connected it yet' },
-        { status: 400 }
-      );
-    }
-    updates.config = { shareId, path, grouping };
+    const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);
+    if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
+    updates.config = {
+      ...documentPipelineConfig({ shareId, path, grouping, skipProcessed, afterProcessing }),
+    };
   }
 
   let newScheduleConfig: ScheduleConfig | undefined;

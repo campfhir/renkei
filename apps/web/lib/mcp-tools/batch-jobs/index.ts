@@ -25,8 +25,11 @@ import { callMistralOcr, resolveMistralOcrConfig, describeMistralOcrError } from
 import { sbReadFile, clientFailure as sandboxClientFailure } from '@renkei/sandbox-client';
 import {
   startDocumentOcrPipeline,
+  type AfterProcessing,
   type DocumentGrouping,
 } from '@/lib/batch-jobs/start-document-ocr-pipeline';
+import { afterProcessingRefusal, normalizeFolderPath } from '@/lib/batch-jobs/pipeline-options';
+import { listConnectedShares } from '@renkei/connector-fileshares';
 import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
 
@@ -62,6 +65,16 @@ const groupingSchema = z.union([
   }),
 ]);
 
+const afterProcessingSchema = z.union([
+  z.object({ action: z.literal('keep') }),
+  z.object({ action: z.literal('delete') }),
+  z.object({
+    action: z.literal('move'),
+    shareId: z.string().uuid().describe('The share to move into — the source share, or another one.'),
+    path: z.string().describe('Destination FOLDER from that share\'s root, Unix style (e.g. /processed).'),
+  }),
+]);
+
 function batchSummaryLine(batch: {
   id: string;
   kind: string;
@@ -69,9 +82,12 @@ function batchSummaryLine(batch: {
   total: number | null;
   succeeded: number;
   failed: number;
+  skipped: number;
 }): string {
-  const progress = batch.total === null ? 'discovering…' : `${batch.succeeded + batch.failed}/${batch.total}`;
-  return `${batch.id} — ${batch.kind} — ${batch.status} — ${progress} (${batch.succeeded} ok, ${batch.failed} failed)`;
+  const done = batch.succeeded + batch.failed + batch.skipped;
+  const progress = batch.total === null ? 'discovering…' : `${done}/${batch.total}`;
+  const skipped = batch.skipped > 0 ? `, ${batch.skipped} skipped as already processed` : '';
+  return `${batch.id} — ${batch.kind} — ${batch.status} — ${progress} (${batch.succeeded} ok, ${batch.failed} failed${skipped})`;
 }
 
 export function registerBatchJobTools(server: McpServer, context: MCPToolContext): void {
@@ -86,13 +102,28 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
         'background — this only starts it; poll with batch_get_job. Use grouping ' +
         '{strategy: "whole-file"} when each source file is already a complete document, or ' +
         '{strategy: "filename-pattern", pattern} when the folder holds a scanner\'s separate ' +
-        'per-page files that need correlating back into one document by filename.',
+        'per-page files that need correlating back into one document by filename. Files an ' +
+        'earlier batch already processed (same bytes, by SHA-256) are skipped by default, so ' +
+        'the same folder can be run again safely; afterProcessing can move or delete each ' +
+        'source file once its document is staged (needs write/delete tools enabled for the ' +
+        'share on the Connectors page).',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         name: z.string().min(1).describe('A human-readable name for this batch, e.g. "Invoices — March 2026".'),
         shareId: z.string().uuid().describe('From fileshare_list_shares.'),
         path: z.string().optional().describe('Folder path from the share root (default "/").'),
         grouping: groupingSchema,
+        skipProcessed: z
+          .boolean()
+          .optional()
+          .describe(
+            'Default true: skip any file whose contents an earlier batch on this share already ' +
+              'processed, and record the files this batch processes. false processes every file ' +
+              'and keeps no record.'
+          ),
+        afterProcessing: afterProcessingSchema
+          .optional()
+          .describe('Default {action:"keep"}. Opt in to delete each source file, or move it to a folder.'),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -102,13 +133,34 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       if (!dbResult.ok) return errText('Database unavailable.');
 
       const grouping: DocumentGrouping = groupingSchema.parse(args.grouping);
+      const shareId = str(args.shareId);
+      const skipProcessed = typeof args.skipProcessed === 'boolean' ? args.skipProcessed : true;
+      const parsedAfter: AfterProcessing =
+        args.afterProcessing === undefined ? { action: 'keep' } : afterProcessingSchema.parse(args.afterProcessing);
+      let afterProcessing: AfterProcessing = parsedAfter;
+      if (parsedAfter.action === 'move') {
+        const folder = normalizeFolderPath(parsedAfter.path);
+        if (!folder) return errText('afterProcessing.path must be a folder path with no ".." segments.');
+        afterProcessing = { ...parsedAfter, path: folder };
+      }
+
+      // The share must be one the caller connected, and moving/deleting on
+      // it must be within what they allowed the tools on the Connectors
+      // page — same gate the plain form goes through.
+      const connected = await listConnectedShares(dbResult.val, target.tenantId, target.subject);
+      if (!connected.ok) return errText('Could not read your file shares.');
+      const refusal = afterProcessingRefusal(connected.val, shareId, afterProcessing);
+      if (refusal) return errText(refusal);
+
       const batch = await startDocumentOcrPipeline(dbResult.val, {
         tenantId: target.tenantId,
         subject: target.subject,
         name: str(args.name),
-        shareId: str(args.shareId),
+        shareId,
         path: str(args.path) || '/',
         grouping,
+        skipProcessed,
+        afterProcessing,
       });
 
       return textResult(
@@ -168,7 +220,7 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         batchId: z.string().uuid(),
-        status: z.enum(['pending', 'processing', 'succeeded', 'failed']).optional(),
+        status: z.enum(['pending', 'processing', 'succeeded', 'failed', 'skipped']).optional(),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -187,7 +239,12 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
           .map((item) => {
             const documentKey = str(item.payload.documentKey) || item.id;
             const sandboxFileId = item.result ? str(item.result.sandboxFileId) : '';
-            return `${item.id} — "${documentKey}" — ${item.status}${sandboxFileId ? ` — sandbox file ${sandboxFileId}` : ''}`;
+            const reason = item.status === 'skipped' && item.result ? str(item.result.reason) : '';
+            return (
+              `${item.id} — "${documentKey}" — ${item.status}` +
+              (sandboxFileId ? ` — sandbox file ${sandboxFileId}` : '') +
+              (reason ? ` (${reason})` : '')
+            );
           })
           .join('\n')
       );

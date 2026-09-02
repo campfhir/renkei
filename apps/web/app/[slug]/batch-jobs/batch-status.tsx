@@ -14,6 +14,8 @@ const STATUS_LABELS: Record<string, string> = {
   pending: 'Pending',
   processing: 'Processing',
   succeeded: 'Succeeded',
+  // An item an earlier batch already processed — deliberately not run.
+  skipped: 'Skipped',
   // A batch that finished with a mix of successes and failures — neither
   // the green of a clean run nor the red of a total loss.
   partial: 'Partially succeeded',
@@ -56,7 +58,11 @@ export function batchProgress(batch: {
   total: number | null;
   succeeded: number;
   failed: number;
+  skipped?: number;
 }): string {
   if (batch.total === null) return 'discovering…';
-  return `${batch.succeeded + batch.failed}/${batch.total} (${batch.succeeded} ok, ${batch.failed} failed)`;
+  const skipped = batch.skipped ?? 0;
+  const done = batch.succeeded + batch.failed + skipped;
+  const skippedPart = skipped > 0 ? `, ${skipped} skipped` : '';
+  return `${done}/${batch.total} (${batch.succeeded} ok, ${batch.failed} failed${skippedPart})`;
 }

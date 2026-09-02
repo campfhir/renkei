@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { useNotifications, type AppNotification } from '@/components/notification-center';
+import { notificationSourceLabel } from '@/lib/notifications/batch-meta';
 
 /**
  * Arrivals, stacked in a corner like a pile of cards.
@@ -164,7 +165,7 @@ export default function ToastStack() {
                   ) : null}
                 </p>
                 <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
-                  {entry.agentName ?? 'An agent'}
+                  {notificationSourceLabel(entry)}
                 </p>
               </div>
               {entry.refUrl ? (

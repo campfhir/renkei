@@ -44,6 +44,12 @@ export interface BatchJobRow {
   total: number | null;
   succeeded: number;
   failed: number;
+  /**
+   * Items the batch deliberately did not process — a file an earlier batch
+   * already handled (see processed-files.ts). Neither a success nor a
+   * failure; counted against `total` like both.
+   */
+  skipped: number;
   last_error: string | null;
   /** The schedule that spawned this run, or null for a one-off batch. */
   schedule_id: string | null;
@@ -72,6 +78,7 @@ const BATCH_COLUMNS = [
   'total',
   'succeeded',
   'failed',
+  'skipped',
   'last_error',
   'schedule_id',
   'started_at',
@@ -92,6 +99,7 @@ function batchOf(row: {
   total: number | null;
   succeeded: number;
   failed: number;
+  skipped: number;
   last_error: string | null;
   schedule_id: string | null;
   started_at: Date | null;
@@ -198,40 +206,113 @@ export async function beginDiscovery(
   return row ? batchOf(row) : undefined;
 }
 
-export async function failBatch(db: Kysely<DB>, batchId: string, message: string): Promise<void> {
-  await db
+/** The statuses a batch never leaves once it reaches them. */
+export const TERMINAL_BATCH_STATUSES = ['succeeded', 'partial', 'failed', 'canceled'] as const;
+
+export function isTerminalBatchStatus(status: string): boolean {
+  return TERMINAL_BATCH_STATUSES.some((terminal) => terminal === status);
+}
+
+/**
+ * Every terminal transition below resolves to the finalized row when THIS
+ * call is the one that ended the batch, and undefined when the batch was
+ * already terminal — the same "only the winner sees a row" shape as
+ * `beginDiscovery`/`claimItem`. The caller that gets a row is the one that
+ * announces the outcome (notifies the owner, publishes the domain event),
+ * so a redelivered message or a concurrent finisher can never announce a
+ * batch twice.
+ */
+export async function failBatch(
+  db: Kysely<DB>,
+  batchId: string,
+  message: string
+): Promise<BatchJobRow | undefined> {
+  const row = await db
     .updateTable('batch_jobs')
     .set({ status: 'failed', last_error: message, finished_at: sql`NOW()`, updated_at: sql`NOW()` })
     .where('id', '=', batchId)
-    .execute();
+    .where('status', 'not in', [...TERMINAL_BATCH_STATUSES])
+    .returning(BATCH_COLUMNS)
+    .executeTakeFirst();
+  return row ? batchOf(row) : undefined;
 }
 
-/** Discovery found zero items — nothing to run, the batch is trivially done. */
-export async function completeEmptyBatch(db: Kysely<DB>, batchId: string): Promise<void> {
-  await db
+/**
+ * Discovery created nothing to run — either it found no files, or every
+ * file it found was skipped as already processed (`skipped` is how many).
+ * Either way there is no item to land last, so the batch is done here.
+ */
+export async function completeEmptyBatch(
+  db: Kysely<DB>,
+  batchId: string,
+  skipped = 0
+): Promise<BatchJobRow | undefined> {
+  const row = await db
     .updateTable('batch_jobs')
-    .set({ status: 'succeeded', total: 0, finished_at: sql`NOW()`, updated_at: sql`NOW()` })
+    .set({
+      status: 'succeeded',
+      total: skipped,
+      skipped: sql`skipped + ${skipped}`,
+      finished_at: sql`NOW()`,
+      updated_at: sql`NOW()`,
+    })
     .where('id', '=', batchId)
-    .execute();
+    .where('status', 'not in', [...TERMINAL_BATCH_STATUSES])
+    .returning(BATCH_COLUMNS)
+    .executeTakeFirst();
+  return row ? batchOf(row) : undefined;
 }
 
-/** Discovery finished creating items — the batch is now live work. */
-export async function activateBatch(db: Kysely<DB>, batchId: string, total: number): Promise<void> {
-  await db
+/**
+ * Discovery finished creating items — the batch is now live work. `total`
+ * counts every item, including the `skipped` ones discovery recorded
+ * without enqueueing (they are added to the counter, never assigned: an
+ * item that already ran and was skipped at item time may have bumped it
+ * first).
+ *
+ * Resolves to the finalized row in one narrow case: every enqueued item
+ * already landed before this ran (items are enqueued before `total` is
+ * known, and a fast item can beat the activation UPDATE). Without this
+ * check nobody would ever flip such a batch — its last item found
+ * `total` null and returned. The caller announces the row like any other
+ * terminal transition.
+ */
+export async function activateBatch(
+  db: Kysely<DB>,
+  batchId: string,
+  total: number,
+  skipped = 0
+): Promise<BatchJobRow | undefined> {
+  const row = await db
     .updateTable('batch_jobs')
-    .set({ status: 'running', total, updated_at: sql`NOW()` })
+    .set({ status: 'running', total, skipped: sql`skipped + ${skipped}`, updated_at: sql`NOW()` })
     .where('id', '=', batchId)
-    .execute();
+    .returning(BATCH_COLUMNS)
+    .executeTakeFirst();
+  return row ? finalizeIfComplete(db, batchOf(row)) : undefined;
+}
+
+export interface InsertItemOptions {
+  /** 'skipped' records an item discovery decided not to run — never enqueued. */
+  status?: 'pending' | 'skipped';
+  result?: Record<string, unknown>;
 }
 
 export async function insertItem(
   db: Kysely<DB>,
   batchId: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  options: InsertItemOptions = {}
 ): Promise<BatchJobItemRow> {
   const row = await db
     .insertInto('batch_job_items')
-    .values({ id: randomUUID(), batch_id: batchId, payload: JSON.stringify(payload) })
+    .values({
+      id: randomUUID(),
+      batch_id: batchId,
+      payload: JSON.stringify(payload),
+      ...(options.status ? { status: options.status } : {}),
+      ...(options.result ? { result: JSON.stringify(options.result) } : {}),
+    })
     .returning(ITEM_COLUMNS)
     .executeTakeFirstOrThrow();
   return itemOf(row);
@@ -263,25 +344,65 @@ export async function getItem(db: Kysely<DB>, itemId: string): Promise<BatchJobI
 
 export interface ItemOutcome {
   ok: boolean;
+  /**
+   * The item was deliberately not processed (its file was already done by
+   * an earlier batch). Only meaningful with `ok: true`; counts under
+   * `skipped`, not `succeeded`.
+   */
+  skipped?: boolean;
   result?: Record<string, unknown>;
   error?: string;
+}
+
+/** Terminal status from the counters: skipped items neither help nor hurt. */
+function terminalStatusOf(batch: { succeeded: number; failed: number }): string {
+  return batch.failed === 0 ? 'succeeded' : batch.succeeded > 0 ? 'partial' : 'failed';
+}
+
+/**
+ * The guarded terminal flip, shared by every path that can be the one to
+ * complete a batch. Resolves to the finalized row only when the counters
+ * cover `total` AND this UPDATE is the one that changed the status —
+ * every other concurrent caller's identical UPDATE affects zero rows.
+ */
+async function finalizeIfComplete(
+  db: Kysely<DB>,
+  batch: BatchJobRow
+): Promise<BatchJobRow | undefined> {
+  if (batch.total === null || batch.succeeded + batch.failed + batch.skipped < batch.total) {
+    return undefined;
+  }
+  const finalized = await db
+    .updateTable('batch_jobs')
+    .set({ status: terminalStatusOf(batch), finished_at: sql`NOW()`, updated_at: sql`NOW()` })
+    .where('id', '=', batch.id)
+    .where('status', '=', 'running')
+    .returning(BATCH_COLUMNS)
+    .executeTakeFirst();
+  return finalized ? batchOf(finalized) : undefined;
 }
 
 /**
  * Record one item's outcome and roll it into the batch's counters,
  * finalizing the batch when this is the last item to land. Safe under
  * concurrent completions — see the module doc comment.
+ *
+ * Resolves to the finalized batch row exactly once per batch: for the one
+ * caller whose completion both reached the total AND won the guarded
+ * terminal flip. Every other call — an item that was not the last, or a
+ * concurrent finisher that lost the race — resolves to undefined.
  */
 export async function recordItemOutcome(
   db: Kysely<DB>,
   batchId: string,
   itemId: string,
   outcome: ItemOutcome
-): Promise<void> {
+): Promise<BatchJobRow | undefined> {
+  const skipped = outcome.ok && outcome.skipped === true;
   await db
     .updateTable('batch_job_items')
     .set({
-      status: outcome.ok ? 'succeeded' : 'failed',
+      status: skipped ? 'skipped' : outcome.ok ? 'succeeded' : 'failed',
       result: outcome.result ? JSON.stringify(outcome.result) : null,
       error: outcome.error ?? null,
       updated_at: sql`NOW()`,
@@ -292,22 +413,15 @@ export async function recordItemOutcome(
   const batch = await db
     .updateTable('batch_jobs')
     .set({
-      succeeded: sql`succeeded + ${outcome.ok ? 1 : 0}`,
+      succeeded: sql`succeeded + ${outcome.ok && !skipped ? 1 : 0}`,
       failed: sql`failed + ${outcome.ok ? 0 : 1}`,
+      skipped: sql`skipped + ${skipped ? 1 : 0}`,
       updated_at: sql`NOW()`,
     })
     .where('id', '=', batchId)
-    .returning(['succeeded', 'failed', 'total'])
+    .returning(BATCH_COLUMNS)
     .executeTakeFirst();
-  if (!batch || batch.total === null || batch.succeeded + batch.failed < batch.total) return;
-
-  const status = batch.failed === 0 ? 'succeeded' : batch.succeeded > 0 ? 'partial' : 'failed';
-  await db
-    .updateTable('batch_jobs')
-    .set({ status, finished_at: sql`NOW()`, updated_at: sql`NOW()` })
-    .where('id', '=', batchId)
-    .where('status', '=', 'running')
-    .execute();
+  return batch ? finalizeIfComplete(db, batchOf(batch)) : undefined;
 }
 
 export interface ListItemsOptions {
