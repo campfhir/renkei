@@ -158,7 +158,7 @@ describe('webex_send_message', () => {
     expect(JSON.parse(init.body as string)).toMatchObject({ roomId: 'room-1', markdown: 'hi' });
   });
 
-  it('links the receipt to the space at /space/<uuid>, decoded from the room id', async () => {
+  it('links the receipt to the space at /spaces/<uuid>, decoded from the room id', async () => {
     // base64 of ciscospark://us/ROOM/bbceb1ad-43f1-3b58-9147-f14bb0c4d154
     const roomId = Buffer.from(
       'ciscospark://us/ROOM/bbceb1ad-43f1-3b58-9147-f14bb0c4d154',
@@ -173,7 +173,33 @@ describe('webex_send_message', () => {
     })) as { _meta?: Record<string, { url?: string }> };
 
     const receipt = Object.values(result._meta ?? {})[0];
-    expect(receipt?.url).toBe('https://web.webex.com/space/bbceb1ad-43f1-3b58-9147-f14bb0c4d154');
+    expect(receipt?.url).toBe('https://web.webex.com/spaces/bbceb1ad-43f1-3b58-9147-f14bb0c4d154');
+  });
+
+  it('anchors the receipt to the message with #act-<uuid>, decoded from the message id', async () => {
+    // base64 of ciscospark://us/ROOM/bbceb1ad-43f1-3b58-9147-f14bb0c4d154
+    const roomId = Buffer.from(
+      'ciscospark://us/ROOM/bbceb1ad-43f1-3b58-9147-f14bb0c4d154',
+      'utf8'
+    ).toString('base64');
+    // base64 of ciscospark://us/MESSAGE/11112222-3333-4444-5555-666677778888
+    const messageId = Buffer.from(
+      'ciscospark://us/MESSAGE/11112222-3333-4444-5555-666677778888',
+      'utf8'
+    ).toString('base64');
+    mockCall.mockResolvedValue(jsonResponse({ id: messageId, roomId }));
+    const tools = await toolsOf();
+
+    const result = (await tools.get('webex_send_message')!({
+      roomId,
+      markdown: 'hi',
+    })) as { _meta?: Record<string, { url?: string }> };
+
+    const receipt = Object.values(result._meta ?? {})[0];
+    expect(receipt?.url).toBe(
+      'https://web.webex.com/spaces/bbceb1ad-43f1-3b58-9147-f14bb0c4d154' +
+        '#act-11112222-3333-4444-5555-666677778888'
+    );
   });
 
   it('omits the receipt link when the room id does not decode to a ROOM uri', async () => {

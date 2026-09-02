@@ -132,22 +132,38 @@ const PARENT_ID_HINT =
 
 /** The title webex_note_to_self creates — and finds first on every later run. */
 /**
- * A browser link to a WebEx space, from the API's room id.
- *
- * The id is base64 of a `ciscospark://…/ROOM/<uuid>` URI; the web client
- * opens the space at /space/<uuid> (singular — /spaces/<uuid> lands on the
- * app shell), the same backend id the webexteams://im?space= deep link
- * takes. Null when the id doesn't decode to that shape — a receipt with no
- * link beats a link to the wrong place.
+ * Decodes a WebEx API id — base64 of a `ciscospark://…/<TYPE>/<uuid>` URI —
+ * to the uuid, when it matches the given type. Room and message ids share
+ * this exact shape, one per resource type. Null when the id doesn't decode
+ * to that shape, or decodes to a different type — a caller asking for a
+ * ROOM must never get a MESSAGE's uuid back.
  */
-function webexSpaceUrl(roomId: string): string | null {
+function decodeSparkId(id: string, type: 'ROOM' | 'MESSAGE'): string | null {
   try {
-    const decoded = Buffer.from(roomId, 'base64').toString('utf8');
-    const match = /\/ROOM\/([0-9a-f-]{36})$/i.exec(decoded);
-    return match ? `https://web.webex.com/space/${match[1]}` : null;
+    const decoded = Buffer.from(id, 'base64').toString('utf8');
+    const match = new RegExp(`/${type}/([0-9a-f-]{36})$`, 'i').exec(decoded);
+    return match ? match[1] : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * A browser link to a WebEx space, optionally anchored to the one message
+ * that landed there — from the API's room id and, when known, message id.
+ *
+ * The web client opens a space at /spaces/<uuid> (plural), scrolled to one
+ * message with a #act-<uuid> anchor — "activity" being the web client's own
+ * name for a message, hence "act". Both uuids are the same ones a
+ * webexteams://im?space=<uuid> deep link takes. Null when the room id
+ * doesn't decode to a ROOM uri — a receipt with no link beats a link to the
+ * wrong place; a message id that doesn't decode just drops the anchor.
+ */
+function webexSpaceUrl(roomId: string, messageId?: string): string | null {
+  const spaceId = decodeSparkId(roomId, 'ROOM');
+  if (!spaceId) return null;
+  const activityId = messageId ? decodeSparkId(messageId, 'MESSAGE') : null;
+  return `https://web.webex.com/spaces/${spaceId}${activityId ? `#act-${activityId}` : ''}`;
 }
 
 const NOTE_TO_SELF_TITLE = 'Note to Self';
@@ -443,7 +459,11 @@ export async function registerWebexUserTools(
       });
       // Room id included so a 1:1 send's room is addressable afterward —
       // follow-ups and thread replies need it, and only this response has it.
-      const sentRoomUrl = str(sent.roomId) ? webexSpaceUrl(str(sent.roomId)) : null;
+      // The message id anchors the link straight to this message, not just
+      // the space it landed in.
+      const sentRoomUrl = str(sent.roomId)
+        ? webexSpaceUrl(str(sent.roomId), str(sent.id))
+        : null;
       return {
         content: [
           {
@@ -550,7 +570,7 @@ export async function registerWebexUserTools(
         roomId,
         created,
       });
-      const noteRoomUrl = webexSpaceUrl(roomId);
+      const noteRoomUrl = webexSpaceUrl(roomId, str(sent.id));
       return {
         content: [
           {

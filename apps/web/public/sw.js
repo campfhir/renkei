@@ -44,7 +44,7 @@ self.addEventListener('push', (event) => {
         body: data.body,
         tag: data.tag,
         icon: data.icon || '/icon.svg',
-        data: { refUrl: data.refUrl },
+        data: { appUrl: data.appUrl },
       });
     })()
   );
@@ -52,10 +52,13 @@ self.addEventListener('push', (event) => {
 
 // A banner shown via `registration.showNotification()` has no page-side
 // `onclick` to attach to, so the click has to be handled here instead:
-// bring an existing tab forward, or open one, then open the linked item
-// beside it.
+// bring an existing tab forward, or open one, on Renkei's own notifications
+// page — never the connector's own link (a Jira issue, a WebEx space…).
+// That link is still one tap away from the notifications list itself; the
+// OS banner's job is to bring you back to Renkei, not out to whichever
+// connector an agent happened to touch.
 self.addEventListener('notificationclick', (event) => {
-  const refUrl = event.notification.data && event.notification.data.refUrl;
+  const appUrl = (event.notification.data && event.notification.data.appUrl) || '/';
   event.notification.close();
 
   event.waitUntil(
@@ -64,11 +67,9 @@ self.addEventListener('notificationclick', (event) => {
       const existing = windows.find((client) => 'focus' in client);
       if (existing) {
         await existing.focus();
+        await existing.navigate(appUrl);
       } else {
-        await self.clients.openWindow('/');
-      }
-      if (refUrl) {
-        await self.clients.openWindow(refUrl);
+        await self.clients.openWindow(appUrl);
       }
     })()
   );

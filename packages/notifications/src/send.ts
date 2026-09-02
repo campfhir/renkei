@@ -22,6 +22,11 @@ export interface PushPayload {
   /** Coalesces the way the toast pile and the OS banner already do — see
    *  desktop-notifications.tsx and public/sw.js. */
   tag: string;
+  /**
+   * The connector's own link (a Jira issue, a WebEx space…), kept on the
+   * payload for parity with the in-app row but deliberately NOT what a
+   * click opens — see `appUrl`.
+   */
   refUrl: string | null;
   icon?: string;
 }
@@ -43,6 +48,23 @@ export interface SendPushOptions {
   agent?: Agent;
 }
 
+/**
+ * Where a click on the OS banner lands: Renkei's own notifications page,
+ * never the connector's own link (see `sw.js`'s `notificationclick` — the
+ * page a person is looking AT should never depend on which connector an
+ * agent happened to touch). Null when the tenant id doesn't resolve to a
+ * slug, which the caller falls back on the same as no link at all.
+ */
+async function inAppNotificationsPath(db: Kysely<DB>, tenantId: string): Promise<string | null> {
+  const tenant = await db
+    .selectFrom('tenants')
+    .select('slug')
+    .where('id', '=', tenantId)
+    .executeTakeFirst()
+    .catch(() => undefined);
+  return tenant ? `/${tenant.slug}/notifications` : null;
+}
+
 export async function sendPush(
   db: Kysely<DB>,
   tenantId: string,
@@ -57,11 +79,13 @@ export async function sendPush(
     if (subscriptions.length === 0) return;
 
     const { publicKey, privateKey } = await getVapidKeys(db, encryptionKey);
+    const appUrl = await inAppNotificationsPath(db, tenantId);
     const body = JSON.stringify({
       title: payload.title,
       body: payload.body,
       tag: payload.tag,
       refUrl: payload.refUrl,
+      appUrl,
       icon: payload.icon ?? '/icon.svg',
     });
     const vapidDetails = { subject: vapidSubject(), publicKey, privateKey };
