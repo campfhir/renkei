@@ -4,6 +4,7 @@
  * lives in the metadata jsonb and is round-tripped untouched.
  */
 
+import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { encrypt, decrypt } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
@@ -52,7 +53,18 @@ export async function setGrant(
         .onConflict((oc) =>
           oc.columns(['tenant_id', 'provider', 'provider_account_id']).doUpdateSet({
             encrypted_access_token: encryptedAccessToken,
-            encrypted_refresh_token: encryptedRefreshToken,
+            // A repeat authorization while a grant already exists can come
+            // back with no refresh_token at all (observed on Bitbucket,
+            // which only reissues one on a genuinely fresh consent) — the
+            // caller then has nothing but '' to offer here. Trusting that
+            // blindly would overwrite a refresh token that still works,
+            // and the breakage wouldn't surface until the access token
+            // from *this* exchange expires and refresh starts failing with
+            // invalid_grant, deleting the grant outright. Keep the stored
+            // token when the new one is empty.
+            encrypted_refresh_token: grant.refreshToken
+              ? encryptedRefreshToken
+              : sql`provider_grants.encrypted_refresh_token`,
             expires_at: grant.expiresAt,
             // Re-stamped on reconnect: the old row's scopes describe the old
             // authorization, and keeping them once hid a narrowed re-consent.
