@@ -30,19 +30,31 @@ import ConnectorIcon from '@/components/connector-icon';
 import LocalTime from '@/components/local-time';
 import { Icon, ICONS } from '@/components/icons';
 import { useNotifications } from '@/components/notification-center';
+import {
+  batchNotificationHref,
+  batchNotificationProgress,
+  isBatchNotificationKind,
+  notificationSourceLabel,
+  parseBatchNotificationMeta,
+} from '@/lib/notifications/batch-meta';
 
 export interface NotificationCard {
   id: string;
-  /** 'run_started' | 'run_finished' | 'run_failed' | 'act' | 'agent_edited'. */
+  /**
+   * 'run_started' | 'run_finished' | 'run_failed' | 'act' | 'agent_edited' |
+   * 'agent_disabled' | 'batch_started' | 'batch_finished' | 'batch_failed'.
+   */
   kind: string;
   connector: string | null;
-  /** Singular noun for the linked thing — 'issue', 'note', 'meeting'. */
+  /** Singular noun for the linked thing — 'issue', 'note', 'meeting', 'batch'. */
   entity: string | null;
   headline: string;
   refUrl: string | null;
   agentId: string | null;
   agentName: string | null;
   runId: string | null;
+  /** Batch-job rows carry their counts here — see lib/notifications/batch-meta.ts. */
+  meta: unknown;
   unread: boolean;
   /** ISO timestamp — serialized by the server page. */
   createdAt: string;
@@ -215,13 +227,22 @@ export default function NotificationsList({
                 row.runId && row.agentId
                   ? `/${slug}/agents/${row.agentId}/runs/${row.runId}`
                   : null;
+              // A batch row points at the batch's own page — in-app, like
+              // the agent links below, and rendered through the same
+              // `agentHref` slot so the card's link/menu logic stays one path.
+              const batch = isBatchNotificationKind(row.kind)
+                ? parseBatchNotificationMeta(row.meta)
+                : null;
+              const batchProgress = batch ? batchNotificationProgress(batch) : '';
               // "Someone edited your agent" and "your agent was turned
               // off — update it" both point at the agent itself — in-app,
               // so no new tab.
-              const agentHref =
-                (row.kind === 'agent_edited' || row.kind === 'agent_disabled') && row.agentId
+              const agentHref = batch
+                ? batchNotificationHref(slug, batch)
+                : (row.kind === 'agent_edited' || row.kind === 'agent_disabled') && row.agentId
                   ? `/${slug}/agents/${row.agentId}`
                   : null;
+              const inAppLabel = batch ? 'Open batch' : 'Open agent';
               return (
                 <li key={row.id} className="relative">
                   <div
@@ -261,6 +282,20 @@ export default function NotificationsList({
                           className="text-amber-600 dark:text-amber-400"
                         >
                           <Icon path={ICONS.pencil} className="h-[18px] w-[18px]" />
+                        </span>
+                      ) : isBatchNotificationKind(row.kind) ? (
+                        // A batch is a stack of files being worked through;
+                        // failed rows go red so a failure reads at a glance
+                        // in a feed of finishes.
+                        <span
+                          title={batch ? batch.kindLabel : 'Batch job'}
+                          className={
+                            row.kind === 'batch_failed'
+                              ? 'text-red-600 dark:text-red-400'
+                              : 'text-blue-600 dark:text-blue-400'
+                          }
+                        >
+                          <Icon path={ICONS.fileText} className="h-[18px] w-[18px]" />
                         </span>
                       ) : row.connector ? (
                         <ConnectorIcon
@@ -323,7 +358,8 @@ export default function NotificationsList({
                         )}
                       </p>
                       <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                        {row.agentName ?? 'An agent'} ·{' '}
+                        {notificationSourceLabel(row)}
+                        {batchProgress ? ` · ${batchProgress}` : ''} ·{' '}
                         <LocalTime at={row.createdAt} format="datetime" />
                       </p>
                     </div>
@@ -375,7 +411,7 @@ export default function NotificationsList({
                               className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800"
                             >
                               <Icon path={ICONS.externalLink} className="h-4 w-4" />
-                              Open agent
+                              {inAppLabel}
                             </Link>
                           ) : null}
                           {runHref ? (

@@ -64,8 +64,12 @@ export async function subjectForMicrosoftAccount(
 
 export interface DomainEventInput {
   tenantId: string;
-  /** Catalog source, e.g. 'webex' — becomes the `domain:{provider}` lane. */
-  provider: 'webex' | 'microsoft' | 'zoom';
+  /**
+   * Catalog source, e.g. 'webex' — becomes the `domain:{provider}` lane.
+   * 'batch' is published by the batch-jobs worker (batch-jobs/lifecycle.ts)
+   * rather than a provider handler, but rides the same seam.
+   */
+  provider: 'webex' | 'microsoft' | 'zoom' | 'batch';
   /** Catalog type, e.g. 'message.received'. */
   type: string;
   /**

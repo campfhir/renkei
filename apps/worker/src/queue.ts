@@ -32,7 +32,11 @@ export type { ClaimedMessage as ClaimedEvent, Disposition } from '@renkei/queue'
  *
  * A fixated deployment must also list 'mailjobs' on SOME instance — the
  * async Outlook bulk mail jobs (handlers/mail-bulk-jobs.ts) arrive on that
- * source, and nothing else drains it.
+ * source, and nothing else drains it — and 'batch' on some instance too:
+ * the batch-jobs worker publishes its `domain:batch` lifecycle events
+ * (batch-jobs/lifecycle.ts) onto this queue for THIS worker to dispatch to
+ * agents, and a fixated instance that never lists 'batch' leaves them
+ * unclaimed.
  */
 function eventSourcesFromEnv(): readonly string[] | undefined {
   const raw = process.env.WORKER_EVENT_SOURCES;

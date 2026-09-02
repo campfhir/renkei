@@ -26,11 +26,18 @@ export interface NotificationView {
   category: string | null;
   connector: string | null;
   tool: string | null;
+  entity: string | null;
   headline: string;
   refUrl: string | null;
   agentId: string | null;
   agentName: string | null;
   runId: string | null;
+  /**
+   * Structured facts about the thing the row is about — a batch job's
+   * counts and status (lib/notifications/batch-meta.ts). Null for the
+   * agent-run and act kinds.
+   */
+  meta: unknown;
   readAt: string | null;
   createdAt: string;
 }
@@ -67,11 +74,13 @@ export async function GET(
       'category',
       'connector',
       'tool',
+      'entity',
       'headline',
       'ref_url',
       'agent_id',
       'agent_name',
       'run_id',
+      'meta',
       'read_at',
       'created_at',
     ])
@@ -100,11 +109,13 @@ export async function GET(
     category: row.category,
     connector: row.connector,
     tool: row.tool,
+    entity: row.entity,
     headline: row.headline,
     refUrl: row.ref_url,
     agentId: row.agent_id,
     agentName: row.agent_name,
     runId: row.run_id,
+    meta: row.meta ?? null,
     readAt: row.read_at ? new Date(row.read_at).toISOString() : null,
     createdAt: new Date(row.created_at).toISOString(),
   }));

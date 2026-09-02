@@ -287,6 +287,9 @@ importers:
       '@renkei/knowledge':
         specifier: workspace:*
         version: link:../../packages/knowledge
+      '@renkei/notifications':
+        specifier: workspace:*
+        version: link:../../packages/notifications
       '@renkei/provider-grants':
         specifier: workspace:*
         version: link:../../packages/provider-grants

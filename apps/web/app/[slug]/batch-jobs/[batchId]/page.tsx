@@ -6,7 +6,7 @@ import { getDatabase } from '@renkei/db';
 import { tenantForSlug } from '@/lib/tenant-slug';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
-import { getBatch, listItems } from '@renkei/batch-jobs-store';
+import { batchKindLabel, getBatch, listItems } from '@renkei/batch-jobs-store';
 import { BatchStatusPill, batchStatusLabel, batchProgress } from '../batch-status';
 import LocalTime from '@/components/local-time';
 import AutoRefresh from '@/components/auto-refresh';
@@ -58,7 +58,7 @@ export default async function BatchJobDetailPage({
 
       <div className="mb-6 space-y-1 rounded-md border border-gray-200 p-3 text-sm dark:border-gray-800">
         <p>
-          <span className="font-medium">Kind:</span> {batch.kind}
+          <span className="font-medium">Kind:</span> {batchKindLabel(batch.kind)}
         </p>
         {batch.schedule_id ? (
           <p>

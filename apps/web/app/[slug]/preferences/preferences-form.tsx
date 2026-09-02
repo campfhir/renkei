@@ -8,6 +8,7 @@ import {
   deliveryForCategory,
   type NotificationPrefs,
   type AgentNotificationOverride,
+  type BatchEvent,
   type OverridableEvent,
   type DeliveryPrefs,
   type PauseDeliveryPrefs,
@@ -109,6 +110,21 @@ const RUN_EVENTS = [
     'People you granted access to; edits land in the audit trail either way.',
   ],
 ] as const satisfies readonly [key: keyof NotificationPrefs & OverridableEvent, label: string, hint: string | null][];
+
+/**
+ * The three batch-job events, `{app, email, webex}` like a run event, but
+ * in their own table: a batch has no agent, so nothing here is overridable
+ * per agent, and the wording is about jobs and files rather than runs.
+ */
+const BATCH_EVENTS = [
+  ['batchStarted', 'A batch job starts', 'The moment it begins working through its items.'],
+  [
+    'batchFinished',
+    'A batch job finishes',
+    'Every item done — including a batch where some items failed; the counts are in the notification.',
+  ],
+  ['batchFailed', 'A batch job fails', 'It stopped before its items, or every item failed.'],
+] as const satisfies readonly [key: BatchEvent, label: string, hint: string | null][];
 
 /** The two pause events, `{email, webex}` — the App card is always on. */
 const PAUSE_EVENTS = [
@@ -319,7 +335,7 @@ export default function PreferencesForm({
   }
 
   function setDeliveryChannel(
-    key: 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers',
+    key: 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers' | BatchEvent,
     channel: keyof DeliveryPrefs,
     on: boolean
   ) {
@@ -469,6 +485,68 @@ export default function PreferencesForm({
               </thead>
               <tbody>
                 {RUN_EVENTS.map(([key, label, hint]) => (
+                  <tr key={key} className="border-t border-gray-100 first:border-t-0 dark:border-gray-900">
+                    <td className="px-4 py-3 align-top">
+                      <span className="font-medium">{label}</span>
+                      {hint ? (
+                        <span className="block text-xs text-gray-500 dark:text-gray-400">{hint}</span>
+                      ) : null}
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`${label} — App`}
+                        checked={prefs[key].app}
+                        onChange={(event) => setDeliveryChannel(key, 'app', event.target.checked)}
+                      />
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`${label} — Outlook`}
+                        checked={channels.outlook && prefs[key].email}
+                        disabled={!channels.outlook}
+                        onChange={(event) => setDeliveryChannel(key, 'email', event.target.checked)}
+                      />
+                    </td>
+                    <td className="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        aria-label={`${label} — WebEx`}
+                        checked={channels.webex && prefs[key].webex}
+                        disabled={!channels.webex}
+                        onChange={(event) => setDeliveryChannel(key, 'webex', event.target.checked)}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <ChannelHints channels={channels} slug={slug} />
+        </section>
+
+        <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+          <div className="p-4 pb-3">
+            <h3 className="font-semibold">Batch jobs</h3>
+            <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
+              When a batch of yours — a document OCR pipeline over a folder, say — starts and
+              finishes. A scheduled batch tells whoever owns the schedule. Each notification says
+              what kind of job it was and how many items succeeded or failed.
+            </p>
+          </div>
+          <div className="overflow-x-auto border-t border-gray-200 dark:border-gray-800">
+            <table className="w-full min-w-[420px] border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 dark:border-gray-800 dark:text-gray-400">
+                  <th className="px-4 py-2 font-medium">When…</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">App</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">Outlook</th>
+                  <th className="w-20 px-2 py-2 text-center font-medium">WebEx</th>
+                </tr>
+              </thead>
+              <tbody>
+                {BATCH_EVENTS.map(([key, label, hint]) => (
                   <tr key={key} className="border-t border-gray-100 first:border-t-0 dark:border-gray-900">
                     <td className="px-4 py-3 align-top">
                       <span className="font-medium">{label}</span>

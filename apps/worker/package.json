@@ -29,6 +29,7 @@
     "@renkei/sandbox-client": "workspace:*",
     "@renkei/gates": "workspace:*",
     "@renkei/knowledge": "workspace:*",
+    "@renkei/notifications": "workspace:*",
     "@renkei/provider-grants": "workspace:*",
     "@renkei/queue": "workspace:*",
     "@renkei/agents": "workspace:*",

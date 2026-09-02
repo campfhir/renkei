@@ -50,6 +50,10 @@ function dedupeKeyFor(event: AgentEventInput): string | null {
   if (messageId) return `msg:${messageId}`;
   const meetingUuid = typeof payload.meetingUuid === 'string' ? payload.meetingUuid : '';
   if (meetingUuid) return `meeting:${meetingUuid}`;
+  // A batch reaches each of its states once, and a trigger listens to one
+  // event type, so the batch id alone names the firing.
+  const batchId = typeof payload.batchId === 'string' ? payload.batchId : '';
+  if (batchId) return `batch:${batchId}`;
   return event.eventId ? `event:${event.eventId}` : null;
 }
 

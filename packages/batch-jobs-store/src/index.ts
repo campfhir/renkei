@@ -21,6 +21,8 @@ export {
   getItem,
   recordItemOutcome,
   listItems,
+  TERMINAL_BATCH_STATUSES,
+  isTerminalBatchStatus,
 } from './store';
 export type {
   BatchJobRow,
@@ -34,6 +36,8 @@ export type {
 export { enqueueDiscover, enqueueItem, BATCH_JOB_SOURCE } from './enqueue';
 
 export { DOCUMENT_OCR_PIPELINE_KIND } from './kind-names';
+
+export { batchKindLabel, describeBatchOutcome } from './describe';
 
 export {
   createSchedule,

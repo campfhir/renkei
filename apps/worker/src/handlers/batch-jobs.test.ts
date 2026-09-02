@@ -21,12 +21,21 @@ jest.mock('../batch-jobs/store', () => ({
 }));
 jest.mock('../batch-jobs/kinds', () => ({ getBatchJobKind: jest.fn() }));
 jest.mock('../batch-jobs/enqueue', () => ({ enqueueItem: jest.fn(), BATCH_JOB_SOURCE: 'batch' }));
+jest.mock('../batch-jobs/lifecycle', () => ({
+  announceBatchStarted: jest.fn(),
+  announceBatchFinished: jest.fn(),
+}));
 jest.mock('../logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
 import { createBatchDiscoverHandler, createBatchItemHandler } from './batch-jobs';
 import type { ClaimedEvent } from '../queue';
+
+const { announceBatchStarted, announceBatchFinished } = jest.requireMock<{
+  announceBatchStarted: jest.Mock;
+  announceBatchFinished: jest.Mock;
+}>('../batch-jobs/lifecycle');
 
 const { getDatabase: getDatabaseMock } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const store = jest.requireMock<{
@@ -144,6 +153,63 @@ describe('discover handler', () => {
 
     expect(store.failBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 'share unreachable');
   });
+
+  describe('announcements', () => {
+    it('announces "started" exactly once, with the claimed row, after winning the claim', async () => {
+      store.getBatch.mockResolvedValue(batch());
+      const claimed = batch({ status: 'discovering' });
+      store.beginDiscovery.mockResolvedValue(claimed);
+      getBatchJobKind.mockReturnValue({ discover: jest.fn().mockResolvedValue({ ok: true, items: [] }) });
+
+      await handler(event('discover', { batchJobId: 'batch-1' }));
+
+      expect(announceBatchStarted).toHaveBeenCalledTimes(1);
+      expect(announceBatchStarted).toHaveBeenCalledWith(FAKE_DB, claimed);
+    });
+
+    it('says nothing when the claim was lost', async () => {
+      store.getBatch.mockResolvedValue(batch());
+      store.beginDiscovery.mockResolvedValue(undefined);
+      await handler(event('discover', { batchJobId: 'batch-1' }));
+      expect(announceBatchStarted).not.toHaveBeenCalled();
+    });
+
+    it('announces the finish with the row a terminal transition returned', async () => {
+      store.getBatch.mockResolvedValue(batch());
+      store.beginDiscovery.mockResolvedValue(batch({ status: 'discovering' }));
+      getBatchJobKind.mockReturnValue({ discover: jest.fn().mockResolvedValue({ ok: true, items: [] }) });
+      const finished = batch({ status: 'succeeded', total: 0 });
+      store.completeEmptyBatch.mockResolvedValue(finished);
+
+      await handler(event('discover', { batchJobId: 'batch-1' }));
+
+      expect(announceBatchFinished).toHaveBeenCalledTimes(1);
+      expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, finished);
+    });
+
+    it('announces a discovery failure as a finish', async () => {
+      store.getBatch.mockResolvedValue(batch());
+      store.beginDiscovery.mockResolvedValue(batch({ status: 'discovering' }));
+      getBatchJobKind.mockReturnValue({ discover: jest.fn().mockResolvedValue({ ok: false, error: 'nope' }) });
+      const failed = batch({ status: 'failed', last_error: 'nope' });
+      store.failBatch.mockResolvedValue(failed);
+
+      await handler(event('discover', { batchJobId: 'batch-1' }));
+
+      expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, failed);
+    });
+
+    it('does not announce when the store says the batch was already terminal', async () => {
+      // A redelivery of a mid-discovery crash whose failBatch lost to an
+      // earlier finalization: the store returns nothing, and so does this.
+      store.getBatch.mockResolvedValue(batch({ status: 'discovering' }));
+      store.failBatch.mockResolvedValue(undefined);
+
+      await handler(event('discover', { batchJobId: 'batch-1' }));
+
+      expect(announceBatchFinished).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('item handler', () => {
@@ -215,5 +281,35 @@ describe('item handler', () => {
       ok: false,
       error: 'OCR timed out',
     });
+  });
+
+  it('announces the finish only for the item whose outcome finalized the batch', async () => {
+    store.getBatch.mockResolvedValue(batch({ status: 'running', total: 2 }));
+    store.getItem.mockResolvedValue(item());
+    store.claimItem.mockResolvedValue(item({ status: 'processing' }));
+    getBatchJobKind.mockReturnValue({ runItem: jest.fn().mockResolvedValue({ ok: true }) });
+
+    // Not the last item: the store returns nothing, nothing is announced.
+    store.recordItemOutcome.mockResolvedValueOnce(undefined);
+    await handler(event('item', { batchJobId: 'batch-1', itemId: 'item-1' }));
+    expect(announceBatchFinished).not.toHaveBeenCalled();
+
+    // The last item: the store hands back the finalized row, announced once.
+    const finished = batch({ status: 'succeeded', total: 2, succeeded: 2 });
+    store.recordItemOutcome.mockResolvedValueOnce(finished);
+    await handler(event('item', { batchJobId: 'batch-1', itemId: 'item-1' }));
+    expect(announceBatchFinished).toHaveBeenCalledTimes(1);
+    expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, finished);
+  });
+
+  it('announces a finish reached through the mid-item crash guard too', async () => {
+    store.getBatch.mockResolvedValue(batch({ status: 'running', total: 1 }));
+    store.getItem.mockResolvedValue(item({ status: 'processing' }));
+    const finished = batch({ status: 'failed', total: 1, failed: 1 });
+    store.recordItemOutcome.mockResolvedValueOnce(finished);
+
+    await handler(event('item', { batchJobId: 'batch-1', itemId: 'item-1' }));
+
+    expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, finished);
   });
 });

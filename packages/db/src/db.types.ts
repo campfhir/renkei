@@ -129,6 +129,7 @@ export interface AgentNotifications {
   headline: string;
   id: string;
   kind: string;
+  meta: Json | null;
   read_at: Timestamp | null;
   ref_id: string | null;
   ref_url: string | null;
