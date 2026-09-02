@@ -1065,7 +1065,6 @@ interface EmbeddingsConfig {
   queryPrefix?: string;
   passagePrefix?: string;
   maxDistance?: number | null;
-  keywordEnrichment?: boolean;
 }
 
 function EmbeddingsForm({ slug }: { slug: string }) {
@@ -1077,7 +1076,6 @@ function EmbeddingsForm({ slug }: { slug: string }) {
   const [queryPrefix, setQueryPrefix] = useState('');
   const [passagePrefix, setPassagePrefix] = useState('');
   const [maxDistance, setMaxDistance] = useState('');
-  const [keywordEnrichment, setKeywordEnrichment] = useState(true);
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1092,7 +1090,6 @@ function EmbeddingsForm({ slug }: { slug: string }) {
     setMaxDistance(
       typeof state.data.maxDistance === 'number' ? String(state.data.maxDistance) : ''
     );
-    setKeywordEnrichment(state.data.keywordEnrichment !== false);
     setEnabled(state.data.configured ? state.data.enabled : true);
   }, [state.data]);
 
@@ -1111,7 +1108,6 @@ function EmbeddingsForm({ slug }: { slug: string }) {
       queryPrefix,
       passagePrefix,
       maxDistance: maxDistance.trim(),
-      keywordEnrichment,
       enabled,
     });
     setBusy(false);
@@ -1241,23 +1237,6 @@ function EmbeddingsForm({ slug }: { slug: string }) {
             Matches farther than this are dropped and reported as a count, and result grades (strong
             / good / possible) are scaled to it. Model-specific: around 0.55 suits bge or e5, around
             0.75 suits text-embedding-3. Keyword matches are always kept.
-          </p>
-        </div>
-        <div>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={keywordEnrichment}
-              onChange={(e) => setKeywordEnrichment(e.target.checked)}
-            />
-            Extract search keywords with the organization&apos;s default model
-          </label>
-          <p className={hintClass}>
-            One call to the default LLM model per indexed item (mail, page, ticket, document),
-            asking for the names, identifiers and topic phrases a person would search for. They rank
-            above the body text in keyword matching and show on result cards. Needs a default model
-            under LLM models; without one, items index without keywords. Off stops new calls;
-            already-extracted keywords stay.
           </p>
         </div>
         <label className="flex items-center gap-2 text-sm">

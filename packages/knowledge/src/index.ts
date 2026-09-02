@@ -65,6 +65,7 @@ export {
   KEYWORD_INPUT_MAX_CHARS,
   MAX_KEYWORDS,
   type KeywordExtractor,
+  type KeywordExtractorOptions,
 } from './keywords';
 
 export {

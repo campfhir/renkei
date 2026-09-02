@@ -14,6 +14,7 @@ export default {
     '^@renkei/connector-config$': '<rootDir>/../../packages/connector-config/src/index.ts',
     '^@renkei/gates$': '<rootDir>/../../packages/gates/src/index.ts',
     '^@renkei/agent-llm$': '<rootDir>/../../packages/agent-llm/src/index.ts',
+    '^@renkei/settings$': '<rootDir>/../../packages/settings/src/index.ts',
   },
   transform: {
     '^.+\\.(t|j)sx?$': [

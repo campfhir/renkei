@@ -6,11 +6,8 @@
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('kysely', () => ({ sql: jest.fn() }));
-jest.mock('@renkei/connector-config', () => ({ readConnectorConfigCached: jest.fn() }));
+jest.mock('@renkei/settings', () => ({ getOrgSettings: jest.fn() }));
 jest.mock('@renkei/agent-llm', () => ({ resolveAgentLlm: jest.fn() }));
-jest.mock('@renkei/crypto', () => ({
-  parseEncryptionKey: jest.fn(() => ({ ok: true, val: Buffer.alloc(32) })),
-}));
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { LlmProvider, LlmRequest } from '@renkei/agent-llm';
@@ -24,9 +21,9 @@ import {
 } from './keywords';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
-const { readConnectorConfigCached: mockReadConfig } = jest.requireMock<{
-  readConnectorConfigCached: jest.Mock;
-}>('@renkei/connector-config');
+const { getOrgSettings: mockOrgSettings } = jest.requireMock<{ getOrgSettings: jest.Mock }>(
+  '@renkei/settings'
+);
 const { resolveAgentLlm: mockResolveLlm } = jest.requireMock<{ resolveAgentLlm: jest.Mock }>(
   '@renkei/agent-llm'
 );
@@ -119,6 +116,17 @@ describe('createLlmKeywordExtractor', () => {
     expect(requests).toHaveLength(0);
   });
 
+  it('skips the call for content under the minimum size, and sends content at it', async () => {
+    const requests: LlmRequest[] = [];
+    const extractor = createLlmKeywordExtractor(providerAnswering('["a"]', requests), {
+      minChars: 10,
+    });
+    expect(await extractor.extract({ title: '', content: ' short  ' })).toEqual(ok([]));
+    expect(requests).toHaveLength(0);
+    expect(await extractor.extract({ title: '', content: 'x'.repeat(10) })).toEqual(ok(['a']));
+    expect(requests).toHaveLength(1);
+  });
+
   it('reports a provider failure as KEYWORDS_FAILED', async () => {
     const extractor = createLlmKeywordExtractor({
       complete: async () => err('timeout' as const),
@@ -130,45 +138,38 @@ describe('createLlmKeywordExtractor', () => {
 });
 
 describe('resolveKeywordExtractor', () => {
-  const savedKey = process.env.TOKEN_ENCRYPTION_KEY;
-  beforeAll(() => {
-    process.env.TOKEN_ENCRYPTION_KEY = 'k';
-  });
-  afterAll(() => {
-    if (savedKey === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;
-    else process.env.TOKEN_ENCRYPTION_KEY = savedKey;
-  });
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetDatabase.mockReturnValue({ ok: true, val: {} });
-    mockReadConfig.mockResolvedValue({
-      ok: true,
-      val: { enabled: true, settings: { baseUrl: 'u', model: 'm' }, secrets: { apiKey: 'k' } },
-    });
+    mockOrgSettings.mockResolvedValue(
+      ok({ knowledgeKeywordEnrichment: true, knowledgeKeywordMinChars: 500 })
+    );
     mockResolveLlm.mockResolvedValue(ok({ provider: { complete: jest.fn() } }));
   });
 
-  it('resolves the org default model when the knowledge layer is on', async () => {
+  it('resolves the org default model when the org setting is on', async () => {
     expect(await resolveKeywordExtractor('tenant-1')).not.toBeNull();
     expect(mockResolveLlm).toHaveBeenCalledWith({}, 'tenant-1', null);
   });
 
-  it('is null when the switch is off, and never asks for a model', async () => {
-    mockReadConfig.mockResolvedValue({
-      ok: true,
-      val: { enabled: true, settings: { keywordEnrichment: false }, secrets: {} },
-    });
+  it('carries the org minimum size into the extractor', async () => {
+    const complete = jest.fn();
+    mockResolveLlm.mockResolvedValue(ok({ provider: { complete } }));
+    const extractor = await resolveKeywordExtractor('tenant-1');
+    expect(await extractor?.extract({ title: '', content: 'x'.repeat(499) })).toEqual(ok([]));
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it('is null when the org setting is off — the default — and never asks for a model', async () => {
+    mockOrgSettings.mockResolvedValue(
+      ok({ knowledgeKeywordEnrichment: false, knowledgeKeywordMinChars: 500 })
+    );
     expect(await resolveKeywordExtractor('tenant-1')).toBeNull();
     expect(mockResolveLlm).not.toHaveBeenCalled();
   });
 
-  it('is null when the knowledge layer itself is off', async () => {
-    mockReadConfig.mockResolvedValue({ ok: true, val: null });
-    expect(await resolveKeywordExtractor('tenant-1')).toBeNull();
-    mockReadConfig.mockResolvedValue({
-      ok: true,
-      val: { enabled: false, settings: {}, secrets: {} },
-    });
+  it('is null when settings cannot be read', async () => {
+    mockOrgSettings.mockResolvedValue(err('DB_ERROR' as const));
     expect(await resolveKeywordExtractor('tenant-1')).toBeNull();
   });
 

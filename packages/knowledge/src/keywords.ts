@@ -16,8 +16,16 @@
  * the keywords describe the document, every chunk of it carries them, and
  * that costs a 60k-char page one call rather than thirty.
  *
- * Failure policy: enrichment, never a gate. No default model, a disabled
- * toggle, a timeout, a malformed reply — each of those means "no keywords
+ * Off by default, as an org setting (`knowledgeKeywordEnrichment`): it is
+ * one model call per indexed item, which for a mailbox backfill is the
+ * dominant cost of ingestion, so an org opts in knowing that. And even
+ * when on, items below `knowledgeKeywordMinChars` are not sent: a
+ * one-line chat message or a two-sentence mail has nothing a model can
+ * add over its own words, and skipping them is the difference between
+ * paying per document and paying per message.
+ *
+ * Failure policy: enrichment, never a gate. No default model, the setting
+ * off, a timeout, a malformed reply — each of those means "no keywords
  * this time", and the object still indexes with its title and body. An
  * LLM outage must not stop the index from growing.
  *
@@ -29,13 +37,11 @@
  */
 
 import { getDatabase } from '@renkei/db';
-import { parseEncryptionKey } from '@renkei/crypto';
-import { readConnectorConfigCached } from '@renkei/connector-config';
+import { getOrgSettings } from '@renkei/settings';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import type { LlmProvider } from '@renkei/agent-llm';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { EMBEDDINGS_CONNECTOR } from './embeddings';
 
 export interface KeywordExtractor {
   extract(input: { title: string; content: string }): Promise<Result<string[], 'KEYWORDS_FAILED'>>;
@@ -126,10 +132,25 @@ export function parseKeywords(text: string): string[] {
   return keywords;
 }
 
-export function createLlmKeywordExtractor(provider: LlmProvider): KeywordExtractor {
+export interface KeywordExtractorOptions {
+  /**
+   * Content shorter than this (trimmed, in characters) is not sent — an
+   * empty list comes back without a model call. 0 sends everything.
+   */
+  minChars?: number;
+}
+
+export function createLlmKeywordExtractor(
+  provider: LlmProvider,
+  options: KeywordExtractorOptions = {}
+): KeywordExtractor {
+  const minChars = Math.max(0, options.minChars ?? 0);
   return {
     async extract({ title, content }) {
-      if (!content.trim()) return ok([]);
+      const trimmed = content.trim();
+      // Too short to be worth a call: the words it has ARE its keywords,
+      // and the lexical index already holds those at weight C.
+      if (!trimmed || trimmed.length < minChars) return ok([]);
       const completion = await provider.complete({
         system: SYSTEM_PROMPT,
         messages: [
@@ -155,26 +176,20 @@ export function createLlmKeywordExtractor(provider: LlmProvider): KeywordExtract
 
 /**
  * The org's keyword extractor, or null when enrichment is off for it —
- * never an error, mirroring resolveEmbeddingProvider. Off means: the
- * knowledge layer itself is unconfigured, the admin switched keyword
- * enrichment off on the Embeddings connector (`keywordEnrichment: false`;
- * absent reads as on), or the org has no default model to ask.
+ * never an error, mirroring resolveEmbeddingProvider. Off means: the org
+ * setting is off (the default), or the org has no default model to ask.
+ * The extractor carries the org's minimum size, so a caller need not
+ * know about it: a short item simply comes back with no keywords.
  */
 export async function resolveKeywordExtractor(tenantId: string): Promise<KeywordExtractor | null> {
-  const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
-  if (!keyResult.ok) return null;
-
-  const configResult = await readConnectorConfigCached(
-    tenantId,
-    EMBEDDINGS_CONNECTOR,
-    keyResult.val
-  );
-  if (!configResult.ok || !configResult.val || !configResult.val.enabled) return null;
-  if (configResult.val.settings.keywordEnrichment === false) return null;
+  const settings = await getOrgSettings(tenantId);
+  if (!settings.ok || !settings.val.knowledgeKeywordEnrichment) return null;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return null;
   const llm = await resolveAgentLlm(dbResult.val, tenantId, null);
   if (!llm.ok) return null;
-  return createLlmKeywordExtractor(llm.val.provider);
+  return createLlmKeywordExtractor(llm.val.provider, {
+    minChars: settings.val.knowledgeKeywordMinChars,
+  });
 }
