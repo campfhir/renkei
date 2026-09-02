@@ -5,13 +5,14 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql } from 'kysely';
+import { sql, type RawBuilder } from 'kysely';
 import { getDatabase } from '@renkei/db';
 import { contentEncryptionKey, encryptContent } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { vectorLiteral } from './embeddings';
 import type { EmbeddingProvider } from './embeddings';
+import { titleOf } from './context';
 
 export interface KnowledgeChunkInput {
   /** SourceRef the retrieval gate verifies — the connector defines refId's shape. */
@@ -30,6 +31,35 @@ export interface KnowledgeChunkInput {
   sourceAt?: string | null;
 }
 
+/**
+ * The text-search configuration the lexical index is built and queried
+ * with. One constant on purpose: a tsvector built under one config does
+ * not match a tsquery parsed under another, so the two sides must never
+ * be able to disagree. 'english' stems and drops stopwords, which is right
+ * for the prose most orgs index, and still tokenises identifiers
+ * ("ENG-787" → eng-787, eng, 787) — the exact tokens dense retrieval is
+ * worst at.
+ */
+export const LEXICAL_CONFIG = 'english';
+
+/** `to_tsvector(config, text)` — the config rides as a bound parameter cast to regconfig. */
+function tsvector(text: string): RawBuilder<string> {
+  return sql<string>`to_tsvector(${LEXICAL_CONFIG}::regconfig, ${text})`;
+}
+
+/**
+ * The lexical index entry for one chunk: its document's title at weight A,
+ * the chunk text at weight B, so a query naming a page ranks that page's
+ * chunks above chunks that merely mention it. Built from PLAINTEXT — the
+ * stored content is ciphertext, so this is the one place a chunk's words
+ * reach Postgres in the clear, and the tsvector that results is a bag of
+ * stemmed lexemes rather than the text itself. See migration 079 for the
+ * at-rest trade-off that accepts.
+ */
+export function searchTextFragment(title: string, content: string): RawBuilder<string> {
+  return sql<string>`setweight(${tsvector(title)}, 'A') || setweight(${tsvector(content)}, 'B')`;
+}
+
 /** An unparseable date is stored as NULL (undated) rather than throwing mid-ingest. */
 function sourceAtValue(sourceAt: string | null | undefined): Date | null {
   if (!sourceAt) return null;
@@ -42,7 +72,7 @@ export async function ingestChunk(
   embedder: EmbeddingProvider,
   chunk: KnowledgeChunkInput
 ): Promise<Result<void, 'EMBEDDING_FAILED' | 'DB_ERROR' | 'ENCRYPTION_FAILED'>> {
-  const embedded = await embedder.embed([chunk.content]);
+  const embedded = await embedder.embed([chunk.content], 'passage');
   if (!embedded.ok) return embedded;
   return upsertChunkRow(tenantId, chunk, embedded.val[0] ?? []);
 }
@@ -67,6 +97,7 @@ export async function upsertChunkRow(
     return err('ENCRYPTION_FAILED' as const, { message: keyResult.err.message });
   }
   const storedContent = encryptContent(chunk.content, keyResult.val);
+  const searchText = searchTextFragment(titleOf(chunk.metadata), chunk.content);
 
   const sourceAt = sourceAtValue(chunk.sourceAt);
   const result = await wrapAsync(
@@ -81,6 +112,7 @@ export async function upsertChunkRow(
           metadata: JSON.stringify(chunk.metadata),
           content: storedContent,
           embedding: sql`${vector}::vector`,
+          search_text: searchText,
           source_at: sourceAt,
         })
         .onConflict((oc) =>
@@ -91,6 +123,7 @@ export async function upsertChunkRow(
             metadata: JSON.stringify(chunk.metadata),
             content: storedContent,
             embedding: sql`${vector}::vector`,
+            search_text: searchText,
             source_at: sourceAt,
           })
         )

@@ -19,6 +19,7 @@ import type { Result } from '@campfhir/safe-functions/types';
 import { upsertChunkRow } from './ingest';
 import type { KnowledgeChunkInput } from './ingest';
 import type { EmbeddingProvider } from './embeddings';
+import { chunkContext, embeddingInput } from './context';
 
 export interface ChunkTextOptions {
   /** Hard per-chunk ceiling in characters. */
@@ -238,6 +239,23 @@ export function escapeLike(value: string): string {
 }
 
 /**
+ * What the embedder sees for each piece of an object.
+ *
+ * A single-chunk object is embedded as it is: every connector's document
+ * already opens with its own head (the Subject line, the `# title`, the
+ * `Meeting:` line), so a header would only repeat it — and, for mail,
+ * would break the sanitizer's precomputed-vector reuse, which embedded
+ * exactly the stored content. The header exists for the pieces of a
+ * multi-chunk object, which are the ones that lost that head (see
+ * context.ts). Chunk 1 of such an object gets it too, harmlessly: one
+ * rule for every piece is easier to reason about, and to reindex.
+ */
+export function embeddingInputs(pieces: readonly string[], context: string): string[] {
+  if (pieces.length <= 1 || !context) return [...pieces];
+  return pieces.map((piece) => embeddingInput(context, piece));
+}
+
+/**
  * Ingest one source object, chunking when it exceeds the chunk ceiling.
  * Stale rows are deleted first so re-ingest is an exact replacement. Each
  * chunk's metadata carries `chunk`/`chunkCount` so hits can say where in
@@ -255,6 +273,12 @@ export async function ingestObjectChunks(
      * boundaries differ from what was embedded and the vector would lie.
      */
     precomputed?: { content: string; vector: readonly number[] };
+    /**
+     * The header prepended to each chunk's embedding input (context.ts).
+     * Derived from the metadata's title when omitted; pass '' to embed the
+     * bare pieces.
+     */
+    context?: string;
   } = {}
 ): Promise<Result<{ chunks: number }, 'EMBEDDING_FAILED' | 'DB_ERROR' | 'ENCRYPTION_FAILED'>> {
   const pieces = chunkText(object.content, options);
@@ -263,12 +287,15 @@ export async function ingestObjectChunks(
   if (!cleared.ok) return cleared;
   if (pieces.length === 0) return ok({ chunks: 0 });
 
+  const context = options.context ?? chunkContext(object.metadata);
+  const inputs = embeddingInputs(pieces, context);
+
   const vectors: number[][] = [];
-  if (pieces.length === 1 && options.precomputed && options.precomputed.content === pieces[0]) {
+  if (pieces.length === 1 && options.precomputed && options.precomputed.content === inputs[0]) {
     vectors.push([...options.precomputed.vector]);
   } else {
-    for (let at = 0; at < pieces.length; at += EMBED_BATCH_MAX) {
-      const embedded = await embedder.embed(pieces.slice(at, at + EMBED_BATCH_MAX));
+    for (let at = 0; at < inputs.length; at += EMBED_BATCH_MAX) {
+      const embedded = await embedder.embed(inputs.slice(at, at + EMBED_BATCH_MAX), 'passage');
       if (!embedded.ok) return embedded;
       vectors.push(...embedded.val);
     }

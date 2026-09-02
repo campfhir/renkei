@@ -114,18 +114,27 @@ function whenFor(hit: KnowledgeSearchHit): string | null {
 }
 
 /**
- * Cosine distance rendered as something a person can act on. The raw number
- * is backwards (smaller is closer) and unitless, so it told a reader
- * nothing; it stays available under "Show details" for debugging.
+ * The relevance grade as a label. The grade itself is computed server-side
+ * (actions.ts) against the org's configured cutoff, so the same distance
+ * reads the same whichever embedding model the org runs; the raw number
+ * stays available under "Show details" for debugging.
  */
-function relevanceLabel(distance: number): { label: string; className: string } {
-  if (!Number.isFinite(distance)) return { label: 'unknown', className: 'text-gray-400' };
-  if (distance < 0.25)
-    return { label: 'Strong match', className: 'text-emerald-700 dark:text-emerald-400' };
-  if (distance < 0.4) return { label: 'Good match', className: 'text-blue-700 dark:text-blue-400' };
-  if (distance < 0.55)
-    return { label: 'Possible match', className: 'text-amber-700 dark:text-amber-400' };
-  return { label: 'Weak match', className: 'text-gray-500 dark:text-gray-400' };
+function relevanceLabel(hit: KnowledgeSearchHit): { label: string; className: string } {
+  switch (hit.relevance) {
+    case 'strong':
+      return { label: 'Strong match', className: 'text-emerald-700 dark:text-emerald-400' };
+    case 'good':
+      return { label: 'Good match', className: 'text-blue-700 dark:text-blue-400' };
+    case 'possible':
+      return { label: 'Possible match', className: 'text-amber-700 dark:text-amber-400' };
+    default:
+      return { label: 'Weak match', className: 'text-gray-500 dark:text-gray-400' };
+  }
+}
+
+/** A hit the lexical arm found — its words matched, whatever its distance says. */
+function isKeywordMatch(hit: KnowledgeSearchHit): boolean {
+  return hit.matched === 'lexical' || hit.matched === 'both';
 }
 
 /** The document a chunk belongs to — chunk refIds are `${refId}#0001`. */
@@ -183,7 +192,12 @@ interface DocumentGroup {
 /**
  * Collapse chunk-level hits into documents. A long page split across five
  * chunks used to occupy five cards and crowd out everything else; now it is
- * one card showing its closest passage, with the rest available on demand.
+ * one card showing its best-ranked passage, with the rest available on
+ * demand.
+ *
+ * The server's order is kept: it is a fusion of meaning and exact words,
+ * and a keyword-found chunk may sit far in vector space and still be the
+ * answer. Re-sorting by distance here would undo exactly that.
  */
 function groupByDocument(hits: KnowledgeSearchHit[]): DocumentGroup[] {
   const groups = new Map<string, DocumentGroup>();
@@ -194,14 +208,14 @@ function groupByDocument(hits: KnowledgeSearchHit[]): DocumentGroup[] {
       groups.set(key, { key, best: hit, others: [] });
       continue;
     }
-    if (hit.distance < existing.best.distance) {
+    if (hit.score > existing.best.score) {
       existing.others.push(existing.best);
       existing.best = hit;
     } else {
       existing.others.push(hit);
     }
   }
-  return [...groups.values()].sort((a, b) => a.best.distance - b.best.distance);
+  return [...groups.values()];
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -228,7 +242,7 @@ function HitCard({ group, terms }: { group: DocumentGroup; terms: string[] }) {
   const [showOthers, setShowOthers] = useState(false);
   const hit = group.best;
   const when = whenFor(hit);
-  const relevance = relevanceLabel(hit.distance);
+  const relevance = relevanceLabel(hit);
   // `url` is what the connectors now record for Jira issues, Confluence
   // pages, SharePoint files and mail alike; the older per-provider keys stay
   // ahead of nothing, so chunks indexed before this keep their link.
@@ -253,6 +267,14 @@ function HitCard({ group, terms }: { group: DocumentGroup; terms: string[] }) {
         {group.others.length > 0 && (
           <span className="text-xs text-gray-500 dark:text-gray-400">
             {group.others.length + 1} matching sections
+          </span>
+        )}
+        {isKeywordMatch(hit) && (
+          <span
+            className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs font-medium text-yellow-800 dark:bg-yellow-900/40 dark:text-yellow-300"
+            title="The query's words appear in this item"
+          >
+            Keyword match
           </span>
         )}
         <span className={`ml-auto text-xs font-medium ${relevance.className}`}>
@@ -551,6 +573,13 @@ export default function KnowledgeSearch({ tenantId }: { tenantId: string }) {
           {groups.map((group) => (
             <HitCard key={group.key} group={group} terms={terms} />
           ))}
+          {(result?.weak ?? 0) > 0 && (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {result?.weak} weaker match{result?.weak === 1 ? '' : 'es'} hidden — beyond the
+              relevance cutoff your organization configured. Try different words, or an exact name
+              or identifier.
+            </p>
+          )}
           {result && result.elided > 0 && (
             <>
               {result.elided - (result.unverified ?? 0) > 0 && (

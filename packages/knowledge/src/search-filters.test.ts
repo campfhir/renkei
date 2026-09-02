@@ -47,6 +47,7 @@ jest.mock('@renkei/gates', () => ({
   verifyCandidates: async (_verifiers: unknown, _userId: string, candidates: unknown[]) => ({
     allowed: candidates,
     elided: 0,
+    unverified: 0,
   }),
 }));
 
@@ -101,6 +102,25 @@ function allValues(): unknown[] {
 }
 
 const embedder = { embed: async () => ({ ok: true as const, val: [[0.1, 0.2]] }) };
+
+/** A candidate row as the hybrid query returns it. */
+function row(
+  refId: string,
+  distance: number,
+  arms: { semantic?: boolean; lexical?: boolean } = { semantic: true }
+): Record<string, unknown> {
+  return {
+    provider: 'confluence',
+    ref_id: refId,
+    content: 'hello',
+    metadata: {},
+    distance,
+    score: 1 / (60 + 1),
+    semantic_hit: arms.semantic ?? false,
+    lexical_hit: arms.lexical ?? false,
+    source_at: null,
+  };
+}
 
 const baseOptions = {
   tenantId: 'tenant-1',
@@ -242,6 +262,119 @@ describe('owner-scoped candidate narrowing', () => {
     const sqlText = renderedSql();
     expect(sqlText).toContain('provider NOT IN');
     expect(allValues()).toContain('scott@example.com/%');
+  });
+});
+
+describe('hybrid retrieval', () => {
+  it('runs a lexical arm beside the vector one and fuses them', async () => {
+    await searchKnowledge({ ...baseOptions, query: 'ENG-787 printers' });
+    const sqlText = renderedSql();
+    expect(sqlText).toContain('embedding <=>');
+    expect(sqlText).toContain('websearch_to_tsquery');
+    expect(sqlText).toContain('search_text @@ query');
+    expect(sqlText).toContain('FULL OUTER JOIN');
+    expect(sqlText).toContain('ORDER BY fused.score DESC');
+    // The raw query reaches the lexical parser as a bound value, never as SQL text.
+    expect(allValues()).toContain('ENG-787 printers');
+  });
+
+  it('applies the same filters to both arms', async () => {
+    await searchKnowledge({ ...baseOptions, sources: [{ provider: 'jira' }] });
+    const sqlText = renderedSql();
+    expect(sqlText.split('provider =').length - 1).toBe(2);
+  });
+
+  it('embeds the query as a query, not a passage', async () => {
+    const calls: unknown[] = [];
+    await searchKnowledge({
+      ...baseOptions,
+      embedder: {
+        embed: async (texts: readonly string[], purpose?: string) => {
+          calls.push(purpose);
+          return { ok: true as const, val: texts.map(() => [0.1]) };
+        },
+      },
+    });
+    expect(calls).toEqual(['query']);
+  });
+
+  it('reports which arm found each hit', async () => {
+    rows = [
+      row('page-1', 0.2, { semantic: true, lexical: true }),
+      row('page-2', 0.9, { lexical: true }),
+      row('page-3', 0.3, { semantic: true }),
+    ];
+    const result = await searchKnowledge({ ...baseOptions });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.val.hits.map((hit) => hit.matched)).toEqual(['both', 'lexical', 'semantic']);
+  });
+});
+
+describe('distance cutoff', () => {
+  it('drops semantic-only candidates beyond the cutoff and counts them', async () => {
+    rows = [row('near', 0.3), row('far', 0.8), row('farther', 0.9)];
+    const result = await searchKnowledge({ ...baseOptions, maxDistance: 0.5 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.val.hits.map((hit) => hit.refId)).toEqual(['near']);
+    expect(result.val.weak).toBe(2);
+  });
+
+  it('keeps a lexical match whatever its distance', async () => {
+    // An exact identifier match is exactly the case the vector is wrong about.
+    rows = [row('ticket', 0.9, { lexical: true }), row('noise', 0.9)];
+    const result = await searchKnowledge({ ...baseOptions, maxDistance: 0.5 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.val.hits.map((hit) => hit.refId)).toEqual(['ticket']);
+    expect(result.val.weak).toBe(1);
+  });
+
+  it('cuts nothing when no cutoff is configured', async () => {
+    rows = [row('a', 0.3), row('b', 1.2)];
+    for (const maxDistance of [undefined, null, 0, -1, Number.NaN]) {
+      const result = await searchKnowledge({ ...baseOptions, maxDistance });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.val.hits).toHaveLength(2);
+      expect(result.val.weak).toBe(0);
+    }
+  });
+});
+
+describe('per-document collapsing', () => {
+  it('keeps one hit per document, the best-ranked, in list order', async () => {
+    rows = [
+      row('page-1#0003', 0.2),
+      row('page-2', 0.25),
+      row('page-1#0001', 0.3),
+      row('page-3#0002', 0.35),
+    ];
+    const result = await searchKnowledge({ ...baseOptions, k: 3, perDocument: true });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.val.hits.map((hit) => hit.refId)).toEqual([
+      'page-1#0003',
+      'page-2',
+      'page-3#0002',
+    ]);
+  });
+
+  it('returns every chunk when not asked to collapse', async () => {
+    rows = [row('page-1#0003', 0.2), row('page-1#0001', 0.3)];
+    const result = await searchKnowledge({ ...baseOptions });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.val.hits).toHaveLength(2);
+  });
+
+  it('overfetches beyond k on each arm, bounded', async () => {
+    await searchKnowledge({ ...baseOptions, k: 5 });
+    // max(4k, k+16) = 21 for k = 5
+    expect(allValues()).toContain(21);
+    await searchKnowledge({ ...baseOptions, k: 30 });
+    expect(allValues()).toContain(60);
   });
 });
 

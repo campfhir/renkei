@@ -533,6 +533,7 @@ export interface KnowledgeChunks {
   metadata: Generated<Json>;
   provider: string;
   ref_id: string;
+  search_text: string | null;
   source_at: Timestamp | null;
   tenant_id: string;
 }

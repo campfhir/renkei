@@ -16,10 +16,14 @@
 import { getSessionFromCookies } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
 import {
-  resolveEmbeddingProvider,
+  resolveKnowledge,
   searchKnowledge,
   listRecentKnowledge,
   splitQuery,
+  relevanceOf,
+  type KnowledgeHit,
+  type MatchKind,
+  type Relevance,
 } from '@renkei/knowledge';
 import { parseLogQueryExpr } from '@campfhir/bored-logs';
 import { buildKnowledgeVerifiers, sourceFiltersFor } from '@/lib/mcp-tools/knowledge';
@@ -34,6 +38,16 @@ export interface KnowledgeSearchHit {
   content: string;
   metadata: Record<string, unknown>;
   distance: number;
+  /** Fused rank score, larger is better — what ordered the list. */
+  score: number;
+  /** Which retrieval arm(s) found it; `lexical` means the words matched, not the vector. */
+  matched: MatchKind;
+  /**
+   * The distance as a grade, computed HERE against the org's configured
+   * cutoff so the client never needs the knowledge package (and the
+   * database client it drags in) to label a result.
+   */
+  relevance: Relevance;
   /** The source document's own date, when the connector recorded one. */
   sourceAt: string | null;
 }
@@ -57,6 +71,12 @@ export interface KnowledgeSearchResult {
   signedOut?: boolean;
   /** True when these are the newest items rather than matches for a query. */
   browsing?: boolean;
+  /** Semantic-only candidates dropped for lying beyond the org's relevance cutoff. */
+  weak?: number;
+}
+
+function toPageHit(hit: KnowledgeHit, maxDistance: number | null): KnowledgeSearchHit {
+  return { ...hit, relevance: relevanceOf(hit.distance, maxDistance) };
 }
 
 /**
@@ -141,7 +161,7 @@ export async function searchMyKnowledge(
       return { hits: [], elided: 0, error: 'The knowledge store could not be read.' };
     }
     return {
-      hits: recent.val.hits,
+      hits: recent.val.hits.map((hit) => toPageHit(hit, null)),
       elided: recent.val.elided,
       unverified: recent.val.unverified,
       error: null,
@@ -149,8 +169,8 @@ export async function searchMyKnowledge(
     };
   }
 
-  const embedder = await resolveEmbeddingProvider(tenantId);
-  if (!embedder) {
+  const knowledge = await resolveKnowledge(tenantId);
+  if (!knowledge) {
     return {
       hits: [],
       elided: 0,
@@ -165,7 +185,8 @@ export async function searchMyKnowledge(
     userEmail,
     query: semanticQuery,
     k: clampedK,
-    embedder,
+    embedder: knowledge.embedder,
+    maxDistance: knowledge.maxDistance,
     verifiers,
     ...(sourceFilters.length > 0 ? { sources: sourceFilters } : {}),
     ...(filters.after ? { after: filters.after } : {}),
@@ -184,9 +205,10 @@ export async function searchMyKnowledge(
   }
 
   return {
-    hits: searched.val.hits,
+    hits: searched.val.hits.map((hit) => toPageHit(hit, knowledge.maxDistance)),
     elided: searched.val.elided,
     unverified: searched.val.unverified,
+    weak: searched.val.weak,
     error: null,
   };
 }

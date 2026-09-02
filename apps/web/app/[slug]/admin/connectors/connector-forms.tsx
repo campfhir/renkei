@@ -1062,6 +1062,9 @@ interface EmbeddingsConfig {
   baseUrl: string | null;
   model: string | null;
   hasApiKey: boolean;
+  queryPrefix?: string;
+  passagePrefix?: string;
+  maxDistance?: number | null;
 }
 
 function EmbeddingsForm({ slug }: { slug: string }) {
@@ -1070,6 +1073,9 @@ function EmbeddingsForm({ slug }: { slug: string }) {
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
   const [apiKey, setApiKey] = useState('');
+  const [queryPrefix, setQueryPrefix] = useState('');
+  const [passagePrefix, setPassagePrefix] = useState('');
+  const [maxDistance, setMaxDistance] = useState('');
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -1079,6 +1085,11 @@ function EmbeddingsForm({ slug }: { slug: string }) {
     if (!state.data) return;
     setBaseUrl(state.data.baseUrl ?? '');
     setModel(state.data.model ?? '');
+    setQueryPrefix(state.data.queryPrefix ?? '');
+    setPassagePrefix(state.data.passagePrefix ?? '');
+    setMaxDistance(
+      typeof state.data.maxDistance === 'number' ? String(state.data.maxDistance) : ''
+    );
     setEnabled(state.data.configured ? state.data.enabled : true);
   }, [state.data]);
 
@@ -1092,6 +1103,11 @@ function EmbeddingsForm({ slug }: { slug: string }) {
       model: model.trim(),
       // Blank means keep the stored key — omit it from the payload.
       ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+      // Prefixes are NOT trimmed: for the models that want one, the
+      // trailing space is part of it ("query: ").
+      queryPrefix,
+      passagePrefix,
+      maxDistance: maxDistance.trim(),
       enabled,
     });
     setBusy(false);
@@ -1172,6 +1188,56 @@ function EmbeddingsForm({ slug }: { slug: string }) {
           {config?.hasApiKey && (
             <p className={hintClass}>A key is stored but never shown; leave blank to keep it.</p>
           )}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label htmlFor="em-qprefix" className={labelClass}>
+              Query prefix
+            </label>
+            <input
+              id="em-qprefix"
+              value={queryPrefix}
+              onChange={(e) => setQueryPrefix(e.target.value)}
+              placeholder="query: "
+              className={`${inputClass} font-mono`}
+            />
+          </div>
+          <div>
+            <label htmlFor="em-pprefix" className={labelClass}>
+              Passage prefix
+            </label>
+            <input
+              id="em-pprefix"
+              value={passagePrefix}
+              onChange={(e) => setPassagePrefix(e.target.value)}
+              placeholder="passage: "
+              className={`${inputClass} font-mono`}
+            />
+          </div>
+        </div>
+        <p className={hintClass}>
+          Only for models that embed queries and documents differently (e5, bge, nomic, mxbai —
+          typically served through vLLM, TEI or Ollama). Prepended verbatim, trailing space
+          included. Leave both blank for OpenAI, Cohere, Voyage and similar. Changing the passage
+          prefix means re-indexing.
+        </p>
+        <div>
+          <label htmlFor="em-cutoff" className={labelClass}>
+            Relevance cutoff (cosine distance)
+          </label>
+          <input
+            id="em-cutoff"
+            inputMode="decimal"
+            value={maxDistance}
+            onChange={(e) => setMaxDistance(e.target.value)}
+            placeholder="blank = no cutoff"
+            className={`${inputClass} font-mono`}
+          />
+          <p className={hintClass}>
+            Matches farther than this are dropped and reported as a count, and result grades (strong
+            / good / possible) are scaled to it. Model-specific: around 0.55 suits bge or e5, around
+            0.75 suits text-embedding-3. Keyword matches are always kept.
+          </p>
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
@@ -1256,8 +1322,8 @@ function MistralOcrForm({ slug }: { slug: string }) {
       }
     >
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
-        Mistral Document AI (OCR 4) as deployed on your org&apos;s Microsoft Foundry — used by
-        batch document pipelines and the ad-hoc OCR tool. One org-wide key, no per-user sign-in.
+        Mistral Document AI (OCR 4) as deployed on your org&apos;s Microsoft Foundry — used by batch
+        document pipelines and the ad-hoc OCR tool. One org-wide key, no per-user sign-in.
       </p>
       <form onSubmit={(e) => void save(e)} className="space-y-3">
         <div>

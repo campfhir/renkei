@@ -363,7 +363,12 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
     const ingested = await ingestObjectChunks(tenantId, embedder, {
       provider,
       refId,
-      content: extracted.val.text,
+      // The document opens with its own name, the way a Confluence page
+      // opens with its title: the file name is often the only place a
+      // document says what it is ("Q3 roadmap.docx" over a body that
+      // never uses the word), and a single-chunk file embeds bare, so
+      // this is the only way its name reaches the vector at all.
+      content: name ? `# ${name}\n\n${extracted.val.text}` : extracted.val.text,
       metadata: {
         kind: 'doc',
         driveId,
@@ -463,6 +468,8 @@ export function createKnowledgeEnrichItemHandler(): EventHandler {
       query,
       k: 3,
       embedder,
+      // Three related ITEMS, not three chunks of one long transcript.
+      perDocument: true,
       verifiers: new Map([
         [
           'webex',
