@@ -136,6 +136,22 @@ export interface ActOutcomeDescriptor {
    * `jsm_create_request` ("Raised a service request", under Jira) wrong.
    */
   short: string;
+  /**
+   * How repeats of this act inside ONE run are reported.
+   *
+   * Absent: every call is its own notification, which is right for an act
+   * that names a distinct thing each time — forty comments on forty issues
+   * are forty links a person may want.
+   *
+   * 'run': the act is a BATCH — one call already acts on up to a thousand
+   * things, so a loop that starts thirteen of them (one per sender, one
+   * per sprint) is thirteen rows saying the same sentence. Those are
+   * folded into one row per run and headline, tallied in place ("×13"),
+   * with the email/WebEx copy and the push going out for the first only.
+   * The run record still lists every call; this is only what the feed
+   * says about them.
+   */
+  coalesce?: 'run';
 }
 
 /** What a caller gets back: enough to render a line and link it. */
@@ -149,6 +165,11 @@ export interface ResolvedAct {
   url: string | null;
   /** False when this came from the generic path. */
   curated: boolean;
+  /**
+   * The descriptor's batch rule (see `ActOutcomeDescriptor.coalesce`);
+   * null for an act reported once per call.
+   */
+  coalesce: 'run' | null;
 }
 
 /**
@@ -256,12 +277,14 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     entity: 'issues',
     label: 'Updated several Jira issues',
     short: 'Edited several issues at once',
+    coalesce: 'run',
   },
   jira_bulk_transition_issues: {
     category: 'updated',
     entity: 'issues',
     label: 'Moved several Jira issues',
     short: 'Moved several issues at once',
+    coalesce: 'run',
   },
   jira_add_comment: {
     category: 'created',
@@ -346,6 +369,7 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     entity: 'issues',
     label: 'Moved several Jira issues into a sprint',
     short: 'Moved several issues into a sprint',
+    coalesce: 'run',
   },
   jira_create_version: {
     category: 'created',
@@ -498,11 +522,17 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Forwarded an email',
     short: 'Forwarded an email',
   },
+  // A bulk job marks, flags, categorises, files or archives — it never
+  // sends anything, so it is 'updated', and the mail-sending switch does
+  // not govern it. The handler overrides the label with the action it
+  // actually queued ("Started archiving a batch of email"); this wording
+  // is the fallback for a receipt that did not arrive.
   outlook_start_bulk_mail_job: {
-    category: 'sent',
+    category: 'updated',
     entity: 'emails',
-    label: 'Started sending a batch of email',
-    short: 'Started a batch of email',
+    label: 'Started a bulk mail job',
+    short: 'Started a bulk mail job (mark read, flag, file or archive many at once)',
+    coalesce: 'run',
   },
   // One tool, opposite acts. The handler overrides the label from the
   // response it chose, so a notification says "Declined" rather than the
@@ -1138,5 +1168,6 @@ export function resolveAct(
     id: receipt.id ?? null,
     url: receipt.url ?? null,
     curated: curated !== undefined,
+    coalesce: curated?.coalesce ?? null,
   };
 }

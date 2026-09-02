@@ -17,7 +17,11 @@ import { createNotifier } from './notifications';
 import type { McpClient, McpToolInfo, McpToolResult } from './mcp-client';
 
 /** A tool set that always succeeds, recording every call it saw. */
-function fakeMcp(toolNames: string[]): { mcp: McpClient; toolsByName: Map<string, McpToolInfo>; calls: { tool: string; args: Record<string, unknown> }[] } {
+function fakeMcp(toolNames: string[]): {
+  mcp: McpClient;
+  toolsByName: Map<string, McpToolInfo>;
+  calls: { tool: string; args: Record<string, unknown> }[];
+} {
   const calls: { tool: string; args: Record<string, unknown> }[] = [];
   const toolsByName = new Map(
     toolNames.map((name) => [name, { name, description: '', inputSchema: {} }])
@@ -139,6 +143,59 @@ maybe('agent notifications', () => {
     expect(row?.agent_name).toBe('Triage bot');
     // Unread is the arrival state; the badge counts on it.
     expect(row?.read_at).toBeNull();
+  });
+
+  it('folds a run’s repeated batch acts into one tallied row', async () => {
+    const meta = { [ACT_META_KEY]: { label: 'Started archiving a batch of email' } };
+    const one = notifier();
+    // Fired the way the engine fires them: without awaiting, all at once.
+    await Promise.all(
+      ['s1', 's2', 's3'].map((step) => one.act('outlook_start_bulk_mail_job', 'act', meta, step))
+    );
+    // A different sentence from the same tool is its own row.
+    await one.act(
+      'outlook_start_bulk_mail_job',
+      'act',
+      { [ACT_META_KEY]: { label: 'Started marking a batch of email read' } },
+      's4'
+    );
+
+    const found = await rows();
+    expect(found.map((row) => row.headline).sort()).toEqual([
+      'Started archiving a batch of email ×3',
+      'Started marking a batch of email read',
+    ]);
+    expect(found.every((row) => row.category === 'updated')).toBe(true);
+
+    // A fresh run starts its own count.
+    await notifier().act('outlook_start_bulk_mail_job', 'act', meta, 's5');
+    expect((await rows()).map((row) => row.headline)).toContain(
+      'Started archiving a batch of email'
+    );
+  });
+
+  it('emails a batch act once per run, not once per call', async () => {
+    const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail']);
+    const notifierWithMcp = createNotifier(db, {
+      tenantId,
+      subject,
+      agentId,
+      agentName: 'Triage bot',
+      runId,
+      prefs: {
+        ...DEFAULT_NOTIFICATION_PREFS,
+        acts: { microsoft: { updated: { app: false, email: true, webex: false } } },
+      },
+      mcp,
+      toolsByName,
+      ownerEmail: 'owner@example.com',
+    });
+    const meta = { [ACT_META_KEY]: { label: 'Started archiving a batch of email' } };
+    for (const step of ['s1', 's2', 's3']) {
+      await notifierWithMcp.act('outlook_start_bulk_mail_job', 'act', meta, step);
+    }
+    expect(await rows()).toHaveLength(0); // App off.
+    expect(calls.map((c) => c.tool)).toEqual(['outlook_send_mail']);
   });
 
   it('writes NOTHING for a read', async () => {

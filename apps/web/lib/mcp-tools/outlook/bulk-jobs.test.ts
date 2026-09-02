@@ -21,11 +21,16 @@ import { getDatabase } from '@renkei/db';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import type { GraphAuth } from '../graph/graph-auth';
-import { registerBulkJobTools } from './bulk-jobs';
+import { ACT_META_KEY } from '@renkei/tool-outcomes';
+import { bulkJobLabel, registerBulkJobTools } from './bulk-jobs';
 
 const getDatabaseMock = getDatabase as jest.Mock;
 
-type ToolResult = { content: { type: string; text?: string }[]; isError?: boolean };
+type ToolResult = {
+  content: { type: string; text?: string }[];
+  isError?: boolean;
+  _meta?: Record<string, unknown>;
+};
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
 
 let inserted: Record<string, unknown>[] = [];
@@ -156,6 +161,40 @@ describe('outlook_start_bulk_mail_job', () => {
     expect(result.isError).toBe(true);
     expect(updates).toHaveLength(1);
     expect(updates[0].status).toBe('failed');
+  });
+
+  it('tells the owner what was queued, not that mail was sent', async () => {
+    // The notification feed reads this receipt. A job marks, flags, files
+    // or archives — "sending" was the wording before, and it was wrong on
+    // every one of the five actions.
+    const submit = tools().get('outlook_start_bulk_mail_job')!;
+    const archive = await submit({
+      action: 'archive',
+      filters: { folder: 'inbox', from: 'no-reply@example.com', isRead: true },
+    });
+    expect(archive._meta?.[ACT_META_KEY]).toEqual({
+      label: 'Started archiving a batch of email',
+    });
+
+    const unread = await submit({ action: 'markRead', isRead: false, messageIds: ['m1'] });
+    expect(unread._meta?.[ACT_META_KEY]).toEqual({
+      label: 'Started marking a batch of email unread',
+    });
+  });
+
+  it('words every action, without the selection in the sentence', () => {
+    expect(bulkJobLabel('markRead', { isRead: true })).toBe(
+      'Started marking a batch of email read'
+    );
+    expect(bulkJobLabel('flag', {})).toBe('Started flagging a batch of email');
+    expect(bulkJobLabel('categorize', {})).toBe('Started categorising a batch of email');
+    expect(bulkJobLabel('move', { destinationFolder: 'x' })).toBe(
+      'Started filing a batch of email'
+    );
+    expect(bulkJobLabel('archive', {})).toBe('Started archiving a batch of email');
+    for (const action of ['markRead', 'flag', 'categorize', 'move', 'archive']) {
+      expect(bulkJobLabel(action, {})).not.toMatch(/send/i);
+    }
   });
 
   it('validates per-action parameters before any I/O', async () => {
