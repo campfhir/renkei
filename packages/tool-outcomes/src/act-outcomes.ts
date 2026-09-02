@@ -448,11 +448,14 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     label: 'Created a service desk customer',
     short: 'Created a customer',
   },
+  // Takes a LIST of emails: one call is already a batch of invitations,
+  // so a loop over service desks is tallied like the Jira bulk tools.
   jsm_invite_customers_to_servicedesk: {
     category: 'sent',
-    entity: 'invitation',
-    label: 'Invited someone to a service desk',
-    short: 'Invited someone to a service desk',
+    entity: 'invitations',
+    label: 'Invited customers to a service desk',
+    short: 'Invited customers to a service desk',
+    coalesce: 'run',
   },
   jsm_add_customer_to_servicedesk: {
     category: 'updated',

@@ -82,10 +82,14 @@ describe('the batch rule', () => {
       .filter(([, d]) => d.coalesce === 'run')
       .map(([tool]) => tool)
       .sort();
+    // The test is the list on purpose: adding a batch act means saying so
+    // here, and flagging a per-item act (whose every call names a
+    // different thing worth its own link) fails loudly.
     expect(coalesced).toEqual([
       'jira_bulk_move_sprint_issues',
       'jira_bulk_transition_issues',
       'jira_bulk_update_issues',
+      'jsm_invite_customers_to_servicedesk',
       'outlook_start_bulk_mail_job',
     ]);
   });

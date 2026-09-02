@@ -21,8 +21,10 @@
  * pair of fakes and no database, which is why it does not live inside the
  * notifier next to the Kysely calls.
  *
- * The tally is per notifier, which is per run: a fresh run starts its
- * count at one, as it should.
+ * The tally is per notifier, which is per run — and so per agent, since a
+ * run has exactly one. Two agents sweeping the same mailbox at once never
+ * share a notifier, so they never share a row; and a fresh run of the
+ * same agent starts its count at one, as it should.
  */
 
 export interface TallyWrites {
