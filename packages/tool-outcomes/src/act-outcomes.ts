@@ -69,7 +69,12 @@ export const ACT_META_KEY = 'renkei/act';
 export interface ActReceipt {
   /** The identifier as a person says it — 'PROJ-1234', not a uuid. */
   id?: string;
-  /** An absolute https link to the thing, for the notification to point at. */
+  /**
+   * An absolute link to the thing, for the notification to point at — https
+   * for every provider's own web link, or one of the handful of other
+   * schemes this codebase itself builds a receipt out of (WebEx's
+   * `webexteams://` deep link; see `ALLOWED_URL_SCHEMES` below).
+   */
   url?: string;
   /** Overrides the descriptor's entity, for a tool that acts on several. */
   entity?: string;
@@ -1060,6 +1065,16 @@ export function actsByConnector(): ConnectorActs[] {
   return [...groups.values()];
 }
 
+/**
+ * Schemes a receipt's link may use. A notification's link is clicked
+ * without much thought, so a tool must never be able to put an arbitrary
+ * scheme behind one — this is an allowlist, not a denylist. `https://`
+ * covers every provider's own web link; `webexteams://` is WebEx's native
+ * deep link (see `mcp-tools/webex/index.ts`'s `webexSpaceUrl`), the one
+ * other scheme this codebase itself ever builds a receipt out of.
+ */
+const ALLOWED_URL_SCHEMES = ['https://', 'webexteams://'];
+
 function receiptOf(meta: Record<string, unknown> | undefined): ActReceipt {
   const raw = meta?.[ACT_META_KEY];
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
@@ -1073,11 +1088,10 @@ function receiptOf(meta: Record<string, unknown> | undefined): ActReceipt {
     if (!text) return undefined;
     return text.length > MAX_LABEL ? `${text.slice(0, MAX_LABEL - 1)}…` : text;
   };
+  const url = str(record.url);
   return {
     ...(line(record.id) ? { id: line(record.id) } : {}),
-    // https only. A notification's link is clicked without much thought,
-    // and a tool should not be able to put an arbitrary scheme behind one.
-    ...(str(record.url)?.startsWith('https://') ? { url: str(record.url) } : {}),
+    ...(url && ALLOWED_URL_SCHEMES.some((scheme) => url.startsWith(scheme)) ? { url } : {}),
     ...(line(record.entity) ? { entity: line(record.entity) } : {}),
     ...(line(record.label) ? { label: line(record.label) } : {}),
   };
