@@ -172,6 +172,24 @@ const handler = async (
     // only lets tools stamp agent provenance on what they write.
     const agentId = tokenRecord.application === 'agent' ? tokenRecord.agentId : null;
 
+    // Captured before any of the reads below that feed tool registration
+    // (Jira grant, connector availability, org settings, JSM grant, email):
+    // those are several separate, unsynchronized round trips, and a write to
+    // any table this version covers (surface-version.ts) landing among them
+    // must never be reflected in `availability`/`context` while the cache
+    // key built here still names the state from before that write — a
+    // stale-tools-cached-under-a-fresh-key handler would then be served
+    // deterministically for up to the cache's TTL instead of self-healing on
+    // the next request. Reading the version first means the reverse can
+    // happen instead — a slightly newer availability snapshot filed under a
+    // slightly older key — which is harmless: the key it lands under either
+    // already has a correct handler cached (a hit, this build is discarded)
+    // or gets rebuilt correctly as soon as a request computes the new
+    // version, exactly the "reuse whatever is cached, next request corrects
+    // it" fallback this cache is designed around.
+    const surfaceVersion = await toolSurfaceVersion(db, tenantId, subject);
+    const cacheKey = `${tenantId}:${subject}:${agentId ?? 'none'}:${surfaceVersion}`;
+
     // This caller's own Jira grant. A grant with a NULL subject predates per-user
     // ownership and is deliberately not matched: we cannot prove it belongs to
     // this caller, and serving it would let one user act as another in Jira.
@@ -335,15 +353,12 @@ const handler = async (
       );
     }
 
-    // Identity plus one version derived from the rows the tool surface is
-    // built from — see lib/mcp-tools/surface-version.ts for why this is not a
-    // fingerprint of the inputs and not an explicit invalidation.
-    //
-    // The agent id stays in the key on its own: it is not stored anywhere the
-    // version reads, and tool closures capture it for provenance stamping, so
-    // one agent's handler must never serve another's calls (or a user's).
-    const surfaceVersion = await toolSurfaceVersion(db, tenantId, subject);
-    const cacheKey = `${tenantId}:${subject}:${agentId ?? 'none'}:${surfaceVersion}`;
+    // cacheKey (identity plus a version derived from the rows the tool
+    // surface is built from) was captured above, before availability/settings/
+    // jsmGrant/email were read — see the comment there for why the ordering
+    // matters. Re-checking here, rather than reusing a lookup from up there,
+    // also picks up a handler a concurrent request may have finished building
+    // in the meantime.
     let cachedHandler = getHandler(cacheKey);
 
     if (!cachedHandler) {
