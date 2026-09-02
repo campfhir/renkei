@@ -77,6 +77,23 @@ export interface OrgSettings {
    */
   agentNotificationRetentionDays: number;
   /**
+   * How long captured run failures (agent_run_failures — the step a run
+   * stopped at, the error kind, a clipped message, what it cost) are kept.
+   * Longer than run retention on purpose: the record exists so "which step
+   * has this agent been failing on all quarter" is answerable after the
+   * runs themselves are pruned. Content-light (a step name and a clipped
+   * error, never arguments or results), but still an org policy.
+   */
+  agentFailureRetentionDays: number;
+  /**
+   * How far back the agent optimizer looks when it gathers evidence —
+   * captured failures, per-step token spend, recent failed runs. Wider
+   * sees more history; narrower reflects the agent as it is now after an
+   * edit. The failed-run samples it reads are bounded by run retention
+   * regardless.
+   */
+  agentOptimizerWindowDays: number;
+  /**
    * How deep an agent-triggers-agent chain may go. The queue's attempt
    * budget bounds retries, not fan-out; this is the fan-out bound.
    */
@@ -144,6 +161,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   redactionMrnFormats: [],
   agentRunRetentionDays: 30,
   agentNotificationRetentionDays: 14,
+  agentFailureRetentionDays: 90,
+  agentOptimizerWindowDays: 30,
   agentMaxChainDepth: 3,
   agentRunTimeoutMinutes: 15,
   agentMaxStepAttempts: 10,
@@ -232,6 +251,12 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     agentRunRetentionDays: Number(
       coerce(stored.get('agent_run_retention_days'), d.agentRunRetentionDays)
     ),
+    agentFailureRetentionDays: Number(
+      coerce(stored.get('agent_failure_retention_days'), d.agentFailureRetentionDays)
+    ),
+    agentOptimizerWindowDays: Number(
+      coerce(stored.get('agent_optimizer_window_days'), d.agentOptimizerWindowDays)
+    ),
     agentMaxChainDepth: Number(coerce(stored.get('agent_max_chain_depth'), d.agentMaxChainDepth)),
     agentRunTimeoutMinutes: Number(
       coerce(stored.get('agent_run_timeout_minutes'), d.agentRunTimeoutMinutes)
@@ -276,6 +301,8 @@ export async function setOrgSettings(
     ['redaction_mrn_formats', updates.redactionMrnFormats],
     ['agent_run_retention_days', updates.agentRunRetentionDays],
     ['agent_notification_retention_days', updates.agentNotificationRetentionDays],
+    ['agent_failure_retention_days', updates.agentFailureRetentionDays],
+    ['agent_optimizer_window_days', updates.agentOptimizerWindowDays],
     ['agent_max_chain_depth', updates.agentMaxChainDepth],
     ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
     ['agent_max_step_attempts', updates.agentMaxStepAttempts],

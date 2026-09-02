@@ -21,6 +21,8 @@ export interface EditableSettings {
   contentPollMinutes: number;
   logRetentionDays: number;
   agentNotificationRetentionDays: number;
+  agentFailureRetentionDays: number;
+  agentOptimizerWindowDays: number;
 }
 
 const inputClass =
@@ -192,6 +194,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
         >
           {numberInput('agentApprovalMaxWaitDays', '1–90')}
         </Row>
+        <Row
+          label="Optimizer window (days)"
+          hint="How far back 'Improve' looks when it reads an agent's failures and token spend (default 30). Wider sees more history; narrower judges the agent as it is now after an edit."
+        >
+          {numberInput('agentOptimizerWindowDays', '1–365')}
+        </Row>
       </Section>
 
       <Section title="Data & logs">
@@ -206,6 +214,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How long the record of what an agent did — filed this ticket, sent that email — is kept before it is pruned. This is the ceiling; each person chooses which of those they want to be told about at all."
         >
           {numberInput('agentNotificationRetentionDays', '1–365')}
+        </Row>
+        <Row
+          label="Agent failure retention (days)"
+          hint="How long the record of each failed run — which step, what kind of error, a short message, what it cost — is kept (default 90). Longer than run history on purpose, so recurring failures stay visible after the runs are pruned."
+        >
+          {numberInput('agentFailureRetentionDays', '1–730')}
         </Row>
         <Row
           label="Log retention (days)"

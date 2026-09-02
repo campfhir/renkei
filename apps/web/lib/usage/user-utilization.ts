@@ -13,10 +13,18 @@
  *     Decision #21). So "tool calls" here means everything done as them.
  *   - `agent_run_failures` (migration 079): which step, what kind, when.
  *
- * Counter days are Postgres CURRENT_DATE buckets; tool calls are bucketed
- * in the viewer's zone. The two can disagree by a day at the edges of a
- * calendar day — accepted, and said on the page, rather than re-keying a
- * durable rollup around whoever happens to be looking.
+ * ## One calendar for every series
+ *
+ * `agent_run_counters.day` is written as Postgres CURRENT_DATE at the
+ * moment of the tally — the database session's calendar day, not any
+ * viewer's — and a durable rollup keyed that way cannot be re-cut per
+ * viewer after the fact. So every series on this page, tool calls
+ * included, is bucketed on that same calendar (`to_char(started_at, ...)`
+ * renders in the session zone, exactly as CURRENT_DATE does) and every
+ * window starts at the same midnight. A bar therefore always shows the
+ * runs and the tool calls of ONE day; the tools page, which has no rollup
+ * to agree with, keeps bucketing in the viewer's zone. The page says
+ * whose midnight it is.
  */
 
 import { sql, type Kysely } from 'kysely';
@@ -74,9 +82,14 @@ export interface FailureSignature {
   lastError: string | null;
 }
 
+/**
+ * The window's first day, as a date — `days` calendar days ending today,
+ * on the session calendar. Comparing a timestamptz column against it
+ * means "on or after that day's midnight in the session zone", the same
+ * boundary the counters were tallied on.
+ */
 const sinceDate = (days: number) =>
   sql<Date>`(CURRENT_DATE - MAKE_INTERVAL(days => ${Math.max(0, days - 1)}))::date`;
-const sinceTs = (days: number) => sql<Date>`NOW() - MAKE_INTERVAL(days => ${days})`;
 
 export async function getUtilizationTotals(
   db: Kysely<DB>,
@@ -108,7 +121,7 @@ export async function getUtilizationTotals(
       ])
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
-      .where('started_at', '>=', sinceTs(days))
+      .where('started_at', '>=', sinceDate(days))
       .executeTakeFirst(),
   ]);
   return {
@@ -129,8 +142,7 @@ export async function getUtilizationSeries(
   db: Kysely<DB>,
   tenantId: string,
   subject: string,
-  days: number,
-  timeZone: string
+  days: number
 ): Promise<UtilizationDay[]> {
   const [counterRows, callRows] = await Promise.all([
     db
@@ -153,17 +165,15 @@ export async function getUtilizationSeries(
     db
       .selectFrom('tool_calls')
       .select([
-        // The viewer's day, as the tools page buckets it. Grouped by the
-        // alias, not a repeat of the expression — see usage/actions.ts.
-        sql<string>`to_char(date_trunc('day', started_at AT TIME ZONE ${timeZone}), 'YYYY-MM-DD')`.as(
-          'day'
-        ),
+        // The session calendar's day — the one the counters were tallied
+        // on (see the header). Grouped by the alias, as usage/actions.ts.
+        sql<string>`to_char(started_at, 'YYYY-MM-DD')`.as('day'),
         sql<string>`count(*)`.as('calls'),
         sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
       ])
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
-      .where('started_at', '>=', sinceTs(days))
+      .where('started_at', '>=', sinceDate(days))
       .groupBy(sql`day`)
       .execute(),
   ]);
@@ -244,7 +254,7 @@ export async function getAgentUtilization(
       WHERE tenant_id = ${tenantId}
         AND owner_subject = ${subject}
         AND agent_id IN (${sql.join(ids)})
-        AND created_at >= NOW() - MAKE_INTERVAL(days => ${days})
+        AND created_at >= ${sinceDate(days)}
       ORDER BY agent_id, created_at DESC
     `.execute(db),
   ]);
@@ -310,7 +320,7 @@ export async function getFailureSignatures(
     JOIN agents a ON a.id = f.agent_id AND a.tenant_id = f.tenant_id
     WHERE f.tenant_id = ${tenantId}
       AND f.owner_subject = ${subject}
-      AND f.created_at >= NOW() - MAKE_INTERVAL(days => ${days})
+      AND f.created_at >= ${sinceDate(days)}
     GROUP BY f.agent_id, a.name, f.step_name, f.error_kind, f.outcome_code
     ORDER BY count DESC, last_at DESC
     LIMIT ${limit}

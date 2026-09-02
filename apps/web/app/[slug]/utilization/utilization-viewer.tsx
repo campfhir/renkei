@@ -156,8 +156,7 @@ export default function UtilizationViewer({
 
   function refresh(periodKey: string) {
     startTransition(async () => {
-      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const next = await getUtilizationReport(tenantId, periodKey, timeZone);
+      const next = await getUtilizationReport(tenantId, periodKey);
       if (next.signedOut) {
         window.location.href = signInUrl(tenantId, `/${slug}/utilization`);
         return;
@@ -430,8 +429,8 @@ export default function UtilizationViewer({
           </div>
         )}
         <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-          Runs and tokens are tallied by calendar day on the server; tool calls by your local day.
-          At the edges of a day the two can differ by one.
+          Days are the server&rsquo;s calendar days (UTC) for runs, tokens, and tool calls alike, so
+          a bar always shows one day&rsquo;s runs with that day&rsquo;s tool calls.
         </p>
       </section>
     </div>

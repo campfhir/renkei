@@ -12,7 +12,6 @@
 import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { ROLE_OPERATOR, ROLE_USER } from '@/lib/access';
-import { safeTimeZone } from '../usage/window';
 import {
   getAgentUtilization,
   getFailureSignatures,
@@ -46,11 +45,9 @@ const ZERO: UtilizationTotals = {
 
 export async function getUtilizationReport(
   tenantId: string,
-  requestedPeriod?: string,
-  requestedTimeZone?: string
+  requestedPeriod?: string
 ): Promise<UtilizationReport> {
   const period = resolvePeriod(requestedPeriod);
-  const timeZone = safeTimeZone(requestedTimeZone);
   const empty: UtilizationReport = {
     periodKey: period.key,
     days: period.days,
@@ -74,7 +71,7 @@ export async function getUtilizationReport(
   try {
     const [totals, daily, agents, attention] = await Promise.all([
       getUtilizationTotals(db, tenantId, subject, period.days),
-      getUtilizationSeries(db, tenantId, subject, period.days, timeZone),
+      getUtilizationSeries(db, tenantId, subject, period.days),
       getAgentUtilization(db, tenantId, subject, period.days),
       getFailureSignatures(db, tenantId, subject, period.days),
     ]);

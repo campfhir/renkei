@@ -228,36 +228,41 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
 }
 
 /**
- * How long a captured failure (migration 079) is kept.
- *
- * Longer than the run it came from on purpose: the whole point of the
- * table is to answer "has this agent been failing at the same step all
- * quarter" after the runs themselves are gone. Not an org setting yet —
- * one number, said here, is easier to reason about than a dial nobody has
- * asked for. The rows hold a step name and a clipped error message, never
- * arguments or results, so a quarter is a modest exposure.
- */
-export const FAILURE_RETENTION_DAYS = 90;
-
-/**
- * Prune captured failures past FAILURE_RETENTION_DAYS. Same bounded,
- * idempotent DELETE shape as the run sweep — safe under N replicas.
+ * Prune captured failures (migration 079) past each org's
+ * agentFailureRetentionDays — the run sweep's shape, one bounded and
+ * idempotent DELETE per tenant per pass. Longer than run retention by
+ * default (90 vs 30 days) because the table exists to answer "which step
+ * has this agent been failing on all quarter" after the runs are gone.
  */
 export function createFailureRetentionSweep(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
-    const deleted = await sql<{ id: string }>`
-      DELETE FROM agent_run_failures WHERE id IN (
-        SELECT id FROM agent_run_failures
-        WHERE created_at < NOW() - make_interval(days => ${FAILURE_RETENTION_DAYS})
-        ORDER BY created_at
-        LIMIT ${RETENTION_BATCH}
-      ) RETURNING id
-    `.execute(db);
-    if (deleted.rows.length > 0) {
-      logger.info('retention pruned {count} captured failure(s)', {
-        component: 'worker-agents/failure-retention',
-        count: deleted.rows.length,
-      });
+    const tenants = await db
+      .selectFrom('agent_run_failures')
+      .select('tenant_id')
+      .distinct()
+      .execute();
+
+    for (const { tenant_id: tenantId } of tenants) {
+      const settingsResult = await getOrgSettings(tenantId);
+      if (!settingsResult.ok) continue;
+      const days = settingsResult.val.agentFailureRetentionDays;
+
+      const deleted = await sql<{ id: string }>`
+        DELETE FROM agent_run_failures WHERE id IN (
+          SELECT id FROM agent_run_failures
+          WHERE tenant_id = ${tenantId}
+            AND created_at < NOW() - make_interval(days => ${days})
+          ORDER BY created_at
+          LIMIT ${RETENTION_BATCH}
+        ) RETURNING id
+      `.execute(db);
+      if (deleted.rows.length > 0) {
+        logger.info('retention pruned {count} captured failure(s) for tenant {tenantId}', {
+          component: 'worker-agents/failure-retention',
+          tenantId,
+          count: deleted.rows.length,
+        });
+      }
     }
   };
 }

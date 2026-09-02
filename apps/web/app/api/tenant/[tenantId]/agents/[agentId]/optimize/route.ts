@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
+import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import {
@@ -18,9 +19,6 @@ import {
   latestOptimization,
 } from '@/lib/agents/optimization-store';
 import { logger } from '@/lib/logger';
-
-/** How far back a pass looks. Matches the captured-failure attention window. */
-const WINDOW_DAYS = 30;
 
 export async function POST(
   request: NextRequest,
@@ -47,11 +45,15 @@ export async function POST(
     return NextResponse.json({ optimizationId: running.id, status: 'queued' }, { status: 202 });
   }
 
+  // The org's window, frozen onto the row: the report says what it looked
+  // at even if the setting changes afterwards.
+  const settings = await getOrgSettings(tenantId);
+  if (!settings.ok) return NextResponse.json({ error: 'Settings unavailable' }, { status: 500 });
   const optimizationId = await createOptimization(db, {
     tenantId,
     ownerSubject: session.subject,
     agentId,
-    request: { windowDays: WINDOW_DAYS },
+    request: { windowDays: settings.val.agentOptimizerWindowDays },
   });
 
   const enqueued = await agentJobsQueue().producer.enqueue({

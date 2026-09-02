@@ -44,6 +44,12 @@ const NUMERIC_BOUNDS = {
   // switching notifications OFF is the per-user preference's job, not this
   // ceiling's. A year is the typo guard.
   agentNotificationRetentionDays: [1, 365],
+  // Captured failures hold a step name and a clipped error, no arguments
+  // or results; two years is the typo guard, 1 the floor.
+  agentFailureRetentionDays: [1, 730],
+  // The optimizer's evidence window. A year is the typo guard; below a
+  // day there is nothing to analyze.
+  agentOptimizerWindowDays: [1, 365],
 } as const;
 
 const NUMERIC_KEYS = [
@@ -62,6 +68,8 @@ const NUMERIC_KEYS = [
   'contentPollMinutes',
   'logRetentionDays',
   'agentNotificationRetentionDays',
+  'agentFailureRetentionDays',
+  'agentOptimizerWindowDays',
 ] as const;
 
 const BOOLEAN_KEYS = ['readOnly', 'enableDcr'] as const;
@@ -87,6 +95,8 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     contentPollMinutes: settings.contentPollMinutes,
     logRetentionDays: settings.logRetentionDays,
     agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
+    agentFailureRetentionDays: settings.agentFailureRetentionDays,
+    agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
   };
 }
 
