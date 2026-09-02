@@ -539,6 +539,22 @@ export interface KnowledgeChunks {
   tenant_id: string;
 }
 
+export interface KnowledgeReindexRuns {
+  created_at: Generated<Timestamp>;
+  cursor: string | null;
+  failed: Generated<number>;
+  finished_at: Timestamp | null;
+  id: string;
+  kind: string;
+  last_error: string | null;
+  processed: Generated<number>;
+  requested_by: string | null;
+  skipped: Generated<number>;
+  started_at: Timestamp | null;
+  status: Generated<string>;
+  tenant_id: string;
+}
+
 export interface LlmModelConfigs {
   base_url: string | null;
   created_at: Generated<Timestamp>;
@@ -910,6 +926,7 @@ export interface DB {
   identities: Identities;
   jira_sessions: JiraSessions;
   knowledge_chunks: KnowledgeChunks;
+  knowledge_reindex_runs: KnowledgeReindexRuns;
   llm_model_configs: LlmModelConfigs;
   log_attr: LogAttr;
   log_attr_blob: LogAttrBlob;

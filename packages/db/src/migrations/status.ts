@@ -111,6 +111,7 @@ export const EXPECTED_MIGRATIONS = [
   '079-knowledge-search-text',
   '080-knowledge-keywords',
   '081-webex-dirty-windows',
+  '082-knowledge-reindex-runs',
 ];
 
 export interface MigrationStatus {

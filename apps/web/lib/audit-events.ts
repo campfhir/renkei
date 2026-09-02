@@ -34,6 +34,7 @@ export type AuditAction =
   | 'agent.access_revoked'
   | 'agent.copied'
   | 'settings.updated'
+  | 'knowledge.reindex.started'
   | 'sanitizer.script_saved'
   | 'sanitizer.script_deleted'
   | 'fileshare.created'

@@ -18,6 +18,9 @@
  *   reconcile.drive{ provider, driveId, syncEpoch }
  *   enrich.item    { itemId, provider: 'webex', refId, query,
  *                    accessSubject }
+ *   reindex.batch  { provider: 'reindex', runId, kind, cursor?, skip? } — one
+ *                    link of an admin-started reindex chain
+ *                    (handlers/knowledge-reindex.ts).
  *   ingest.webex-window { provider: 'webex', roomId, day, subject } — the
  *                    room-day transcript rebuild (handlers/webex-windows.ts);
  *                    carries identifiers only, the text is refetched.
@@ -50,7 +53,8 @@ export type KnowledgeEventType =
   | 'purge.prefix'
   | 'reconcile.drive'
   | 'enrich.item'
-  | 'ingest.webex-window';
+  | 'ingest.webex-window'
+  | 'reindex.batch';
 
 /**
  * Enqueue one knowledge job. A failed enqueue is logged and swallowed:

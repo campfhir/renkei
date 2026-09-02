@@ -70,6 +70,16 @@ export {
 } from './keywords';
 
 export {
+  reindexLexicalBatch,
+  reembedBatch,
+  extractKeywordsBatch,
+  isReindexKind,
+  REINDEX_KINDS,
+  type ReindexKind,
+  type BatchOutcome,
+} from './reindex';
+
+export {
   relevanceOf,
   RELEVANCE_LABELS,
   DEFAULT_RELEVANCE_BANDS,
