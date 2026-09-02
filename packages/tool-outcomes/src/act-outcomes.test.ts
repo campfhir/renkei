@@ -177,12 +177,19 @@ describe('resolveAct', () => {
     expect(found?.entity).toBe('subtask');
   });
 
-  it('refuses a link that is not https', () => {
+  it('refuses a link whose scheme is not allowlisted', () => {
     // A notification's link gets clicked without much thought; a tool must
     // not be able to put an arbitrary scheme behind one.
     for (const url of ['javascript:alert(1)', 'http://example.com', 'data:text/html,x', '']) {
       expect(resolveAct('jira_create_issue', 'act', { [ACT_META_KEY]: { url } })?.url).toBeNull();
     }
+  });
+
+  it('accepts the webexteams:// deep link alongside https', () => {
+    const found = resolveAct('webex_send_message', 'act', {
+      [ACT_META_KEY]: { url: 'webexteams://im?space=bbceb1ad-43f1-3b58-9147-f14bb0c4d154' },
+    });
+    expect(found?.url).toBe('webexteams://im?space=bbceb1ad-43f1-3b58-9147-f14bb0c4d154');
   });
 
   it.each([
