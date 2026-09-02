@@ -1,13 +1,21 @@
 /**
- * The agents tools' contract: everything owner-scoped (someone else's id
- * reads as not-found), the three definition-editing tools refuse agent-run
- * callers and enabled:true, writes are confirm-gated dry runs by default,
- * and batch knowledge operations report per-entry results.
+ * The agents tools' contract: access resolves through resolveAgentAccess
+ * (owner or grantee — someone with neither reads an agentId as not-found),
+ * the three definition-editing tools refuse agent-run callers and
+ * enabled:true, writes are confirm-gated dry runs by default, and batch
+ * knowledge operations report per-entry results.
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
-jest.mock('@/lib/agents/store', () => ({ getAgent: jest.fn(), listAgents: jest.fn() }));
+jest.mock('@/lib/agents/store', () => ({ listAgents: jest.fn() }));
+jest.mock('@/lib/agents/access-grants', () => ({
+  resolveAgentAccess: jest.fn(),
+  listAgentsSharedWith: jest.fn(async () => []),
+}));
+jest.mock('@/lib/identity', () => ({
+  getIdentityEmail: jest.fn(async () => ({ ok: true, val: 'alice@example.com' })),
+}));
 jest.mock('@/lib/agents/save', () => ({ saveAgent: jest.fn() }));
 jest.mock('@/lib/agents/describe', () => ({ renderStepsOutline: jest.fn(() => 'OUTLINE') }));
 jest.mock('@/lib/agents/trigger-summary', () => ({ triggerSummary: jest.fn(() => 'on demand') }));
@@ -38,6 +46,7 @@ jest.mock('@renkei/agents/runs', () => ({
   createAgentRun: jest.fn(),
   findInProgressRun: jest.fn(),
 }));
+jest.mock('@/lib/agents/run-cancellation', () => ({ requestRunCancellation: jest.fn() }));
 jest.mock('@renkei/agents/memory', () => ({
   readAgentMemory: jest.fn(async () => ({ summary: null, entries: [] })),
   renderAgentKnowledgeNotes: jest.fn(async () => ''),
@@ -56,9 +65,12 @@ import type { MCPToolContext } from '../common';
 import { APPROVAL_DEFAULT_TIMEOUT_HOURS, CURRENT_STEPS_VERSION } from '@renkei/agents';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
-const storeMock = jest.requireMock<{ getAgent: jest.Mock; listAgents: jest.Mock }>(
-  '@/lib/agents/store'
-);
+const storeMock = jest.requireMock<{ listAgents: jest.Mock }>('@/lib/agents/store');
+const accessGrantsMock = jest.requireMock<{
+  resolveAgentAccess: jest.Mock;
+  listAgentsSharedWith: jest.Mock;
+}>('@/lib/agents/access-grants');
+const identityMock = jest.requireMock<{ getIdentityEmail: jest.Mock }>('@/lib/identity');
 const saveMock = jest.requireMock<{ saveAgent: jest.Mock }>('@/lib/agents/save');
 const runsMock = jest.requireMock<{ listRunsForOwner: jest.Mock; getRunForOwner: jest.Mock }>(
   '@/lib/agents/runs-view'
@@ -86,6 +98,9 @@ const notesMock = jest.requireMock<{
   updateAgentNote: jest.Mock;
   deleteAgentNote: jest.Mock;
 }>('@/lib/agents/agent-notes');
+const cancelMock = jest.requireMock<{ requestRunCancellation: jest.Mock }>(
+  '@/lib/agents/run-cancellation'
+);
 
 type Handler = (args: Record<string, unknown>) => Promise<{
   content: Array<{ type: string; text?: string }>;
@@ -168,10 +183,20 @@ const STEPS_DOC = {
   ],
 };
 
+/** The AgentAccess shape resolveAgentAccess returns for the caller's own agent. */
+const ownerAccess = (agent: unknown) => ({
+  agent,
+  ownerSubject: 'auth0|alice',
+  viewerIsOwner: true,
+  grant: null,
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
   stubDb();
-  storeMock.getAgent.mockResolvedValue(AGENT);
+  accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
+  accessGrantsMock.listAgentsSharedWith.mockResolvedValue([]);
+  identityMock.getIdentityEmail.mockResolvedValue({ ok: true, val: 'alice@example.com' });
 });
 
 test('the definition-editing tools refuse agent-run callers', async () => {
@@ -337,7 +362,7 @@ test('validation issues come back as per-path lines, nothing saved', async () =>
 });
 
 test("someone else's agentId reads as not-found on every agent-scoped tool", async () => {
-  storeMock.getAgent.mockResolvedValue(null);
+  accessGrantsMock.resolveAgentAccess.mockResolvedValue(null);
   const handlers = registerAll({});
   for (const name of [
     'agent_get',
@@ -806,7 +831,7 @@ describe('a waiting run says what it is waiting on', () => {
     // "waiting" alone reads as stuck. The answer is a decision the caller
     // reading this line can make.
     stubDb({ row: { id: 'agent-1' } });
-    storeMock.getAgent.mockResolvedValue(AGENT);
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
     runsMock.listRunsForOwner.mockResolvedValue([
       {
         id: 'run-1',
@@ -832,7 +857,7 @@ describe('a waiting run says what it is waiting on', () => {
 
   it('spends no query on approvals when nothing is waiting', async () => {
     stubDb({ row: { id: 'agent-1' } });
-    storeMock.getAgent.mockResolvedValue(AGENT);
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
     runsMock.listRunsForOwner.mockResolvedValue([
       {
         id: 'run-2',
@@ -857,7 +882,7 @@ describe('a waiting run says what it is waiting on', () => {
 describe('agent_memory_forget', () => {
   beforeEach(() => {
     stubDb({ row: { id: 'agent-1' } });
-    storeMock.getAgent.mockResolvedValue(AGENT);
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
   });
 
   it('lists entryIds so selective forgetting is reachable at all', async () => {
@@ -1034,7 +1059,7 @@ describe('agent_run_now', () => {
   });
 
   it('starts an enabled agent whose schedule is on, and leaves the schedule alone', async () => {
-    storeMock.getAgent.mockResolvedValue(RUNNABLE);
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(RUNNABLE));
     const handlers = registerAll({});
 
     const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
@@ -1059,7 +1084,9 @@ describe('agent_run_now', () => {
   });
 
   it('says the agent is off rather than running it', async () => {
-    storeMock.getAgent.mockResolvedValue({ ...RUNNABLE, enabled: false });
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(
+      ownerAccess({ ...RUNNABLE, enabled: false })
+    );
     const handlers = registerAll({});
 
     const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
@@ -1070,20 +1097,22 @@ describe('agent_run_now', () => {
   });
 
   it('says the agent is not schedule-triggered, and what does trigger it', async () => {
-    storeMock.getAgent.mockResolvedValue({
-      ...RUNNABLE,
-      triggers: [
-        {
-          id: 'trigger-2',
-          draft: { kind: 'event', eventId: 'microsoft/mail.received' },
-          enabled: true,
-          lastFiredAt: null,
-          lastError: null,
-          nextRunAt: null,
-          keyHint: null,
-        },
-      ],
-    });
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(
+      ownerAccess({
+        ...RUNNABLE,
+        triggers: [
+          {
+            id: 'trigger-2',
+            draft: { kind: 'event', eventId: 'microsoft/mail.received' },
+            enabled: true,
+            lastFiredAt: null,
+            lastError: null,
+            nextRunAt: null,
+            keyHint: null,
+          },
+        ],
+      })
+    );
     const handlers = registerAll({});
 
     const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
@@ -1096,10 +1125,12 @@ describe('agent_run_now', () => {
   });
 
   it('separates a switched-off schedule from having none', async () => {
-    storeMock.getAgent.mockResolvedValue({
-      ...RUNNABLE,
-      triggers: [{ ...RUNNABLE.triggers[0], enabled: false }],
-    });
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(
+      ownerAccess({
+        ...RUNNABLE,
+        triggers: [{ ...RUNNABLE.triggers[0], enabled: false }],
+      })
+    );
     const handlers = registerAll({});
 
     const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
@@ -1110,7 +1141,7 @@ describe('agent_run_now', () => {
   });
 
   it('refuses agent-run callers — chaining carries the guards, this does not', async () => {
-    storeMock.getAgent.mockResolvedValue(RUNNABLE);
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(RUNNABLE));
     const handlers = registerAll({ agent: { agentId: 'agent-9' } });
 
     const result = await handlers.get('agent_run_now')!({ agentId: 'agent-1' });
@@ -1121,7 +1152,7 @@ describe('agent_run_now', () => {
   });
 
   it("reports the cap's own message when the run is refused", async () => {
-    storeMock.getAgent.mockResolvedValue(RUNNABLE);
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(RUNNABLE));
     runNowMock.createAgentRun.mockResolvedValue({
       ok: false,
       err: {
@@ -1138,7 +1169,7 @@ describe('agent_run_now', () => {
   });
 
   it('refuses when a run is already queued or running, and says so', async () => {
-    storeMock.getAgent.mockResolvedValue(RUNNABLE);
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(RUNNABLE));
     runNowMock.findInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
     const handlers = registerAll({});
 
@@ -1153,7 +1184,7 @@ describe('agent_run_now', () => {
   });
 
   it('starts anyway once confirm: true is given, without asking again', async () => {
-    storeMock.getAgent.mockResolvedValue(RUNNABLE);
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(RUNNABLE));
     runNowMock.findInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
     const handlers = registerAll({});
 
@@ -1162,5 +1193,127 @@ describe('agent_run_now', () => {
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain('runId: run-7');
     expect(runNowMock.createAgentRun).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('sharing — a grantee reaches an agent someone else shared with them', () => {
+  /** The AgentAccess shape resolveAgentAccess returns for a grantee. */
+  const granteeAccess = (agent: unknown) => ({
+    agent,
+    ownerSubject: 'auth0|owner',
+    viewerIsOwner: false,
+    grant: { id: 'grant-1', expiresAt: null },
+  });
+
+  it('agent_list lists agents shared with the caller, separately from their own', async () => {
+    storeMock.listAgents.mockResolvedValue([AGENT]);
+    accessGrantsMock.listAgentsSharedWith.mockResolvedValue([
+      {
+        agent: { ...AGENT, id: 'agent-2', name: 'Renewals' },
+        ownerSubject: 'auth0|owner',
+        ownerName: 'Owner Person',
+        ownerEmail: 'owner@example.com',
+        expiresAt: null,
+      },
+    ]);
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('agent_list')!({})).content[0]?.text ?? '';
+
+    expect(text).toContain('1 agent(s) of yours:');
+    expect(text).toContain('Triage');
+    expect(text).toContain('1 agent(s) shared with you:');
+    expect(text).toContain('Renewals');
+    expect(text).toContain('shared by Owner Person');
+  });
+
+  it('agent_get reads a shared agent exactly as the owner would', async () => {
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(granteeAccess(AGENT));
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_get')!({ agentId: 'agent-1' });
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0]?.text ?? '');
+    expect(parsed.agentId).toBe('agent-1');
+  });
+
+  it('agent_runs_list and agent_memory_list read the OWNER-scoped data for a shared agent', async () => {
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(granteeAccess(AGENT));
+    runsMock.listRunsForOwner.mockResolvedValue([]);
+    const handlers = registerAll({});
+
+    await handlers.get('agent_runs_list')!({ agentId: 'agent-1' });
+
+    expect(runsMock.listRunsForOwner).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-1',
+      'auth0|owner',
+      'agent-1',
+      expect.anything()
+    );
+  });
+
+  it('agent_patch saves through the grant, carrying the owner subject', async () => {
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(granteeAccess(AGENT));
+    saveMock.saveAgent.mockResolvedValue({
+      outcome: 'saved',
+      agentId: 'agent-1',
+      apiKeys: [],
+      normalized: { name: 'Triage', steps: AGENT.steps, triggers: [], enabled: true },
+    });
+    const handlers = registerAll({});
+
+    await handlers.get('agent_patch')!({
+      agentId: 'agent-1',
+      name: 'Triage 2',
+      confirm: true,
+    });
+
+    expect(saveMock.saveAgent).toHaveBeenCalledWith(
+      expect.anything(),
+      'tenant-1',
+      // The actor in the audit trail is still the caller, not the owner.
+      'auth0|alice',
+      expect.anything(),
+      expect.objectContaining({ agentId: 'agent-1', ownerSubject: 'auth0|owner' })
+    );
+  });
+
+  it("agent_run_get hides the approval card — deciding it stays the owner's call", async () => {
+    stubDb({ row: { agent_id: 'agent-1' } });
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(granteeAccess(AGENT));
+    runsMock.getRunForOwner.mockResolvedValue({ id: 'run-1', status: 'waiting', attempts: [] });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_get')!({
+      runId: '22222222-2222-4222-8222-222222222222',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(approvalsMock.listPendingApprovals).not.toHaveBeenCalled();
+    expect(result.content[0]?.text ?? '').not.toContain('Waiting on you');
+  });
+
+  it('agent_run_cancel resolves the agent from the run and cancels through the grant', async () => {
+    stubDb({ row: { agent_id: 'agent-1' } });
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(granteeAccess(AGENT));
+    cancelMock.requestRunCancellation.mockResolvedValue({ outcome: 'canceling' });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_cancel')!({
+      runId: '22222222-2222-4222-8222-222222222222',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(cancelMock.requestRunCancellation).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        agentId: 'agent-1',
+        ownerSubject: 'auth0|owner',
+        canceledBySubject: 'auth0|alice',
+      })
+    );
   });
 });
