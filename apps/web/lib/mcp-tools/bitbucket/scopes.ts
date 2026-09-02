@@ -42,12 +42,14 @@ export function bitbucketScopeFor(toolName: string): string[] {
     case 'bitbucket_get_diff':
     case 'bitbucket_browse_source':
     case 'bitbucket_read_file':
+    case 'bitbucket_read_files':
     case 'bitbucket_search_code':
       return ['repository'];
 
     case 'bitbucket_create_branch':
     case 'bitbucket_delete_branch':
     case 'bitbucket_commit_file':
+    case 'bitbucket_commit_files':
       return ['repository:write'];
 
     case 'bitbucket_list_pull_requests':
