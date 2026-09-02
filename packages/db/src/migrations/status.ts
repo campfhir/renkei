@@ -108,11 +108,15 @@ export const EXPECTED_MIGRATIONS = [
   '076-batch-jobs',
   '077-batch-job-messages-queue',
   '078-batch-job-scheduling',
-  '079-agent-run-log',
-  '080-agent-optimizations',
-  '081-llm-calls',
-  '082-tool-calls-agent',
-  '083-usage-ledger-backfill',
+  '079-knowledge-search-text',
+  '080-knowledge-keywords',
+  '081-webex-dirty-windows',
+  '082-knowledge-reindex-runs',
+  '083-agent-run-log',
+  '084-agent-optimizations',
+  '085-llm-calls',
+  '086-tool-calls-agent',
+  '087-usage-ledger-backfill',
 ];
 
 export interface MigrationStatus {

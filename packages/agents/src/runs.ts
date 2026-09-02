@@ -136,7 +136,7 @@ export async function createAgentRun(
     return err('QUEUE_ERROR' as const);
   }
 
-  // The durable run log (migration 079): one timestamped row per run, the
+  // The durable run log (migration 083): one timestamped row per run, the
   // ledger the usage page counts in the viewer's own day. Same best-effort
   // posture; finalization upserts, so a missed insert still leaves a row.
   await wrapAsync(
@@ -207,7 +207,7 @@ export interface RecordAgentRunOutcomeInput {
 }
 
 /**
- * Finalize a run's row in the durable run log (migration 079): its
+ * Finalize a run's row in the durable run log (migration 083): its
  * outcome, and — when it failed — the step, the kind, the code and the
  * clipped message; for every status, what the run cost. Written beside
  * the counter tallies with the same best-effort posture.
@@ -317,7 +317,7 @@ export interface RecordLlmCallInput {
 }
 
 /**
- * One row in the token ledger (migration 081). Skipped when both counts
+ * One row in the token ledger (migration 085). Skipped when both counts
  * are zero, like the counter tally; best effort, like everything here.
  */
 export async function recordLlmCall(

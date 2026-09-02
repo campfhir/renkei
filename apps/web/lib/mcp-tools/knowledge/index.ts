@@ -46,9 +46,12 @@ import type { AccessVerifier } from '@renkei/gates';
 import { withheldNote } from '@renkei/gates';
 import type { KnowledgeHit, SourceFilter } from '@renkei/knowledge';
 import {
-  resolveEmbeddingProvider,
+  resolveKnowledge,
   searchKnowledge,
   listRecentKnowledge,
+  relevanceOf,
+  RELEVANCE_LABELS,
+  titleOf,
   NOTE_KNOWLEDGE_PROVIDER,
   createNoteAccessVerifier,
 } from '@renkei/knowledge';
@@ -325,13 +328,18 @@ export function sourceFiltersFor(sources: readonly string[]): SourceFilter[] {
     );
 }
 
-/** A hit's human title, from whichever metadata key its connector set. */
-function titleOf(metadata: Record<string, unknown>): string {
-  for (const key of ['subject', 'topic', 'title']) {
-    const value = metadata[key];
-    if (typeof value === 'string' && value) return value;
-  }
-  return '';
+/**
+ * How a hit was found and how well, for the model reading the list. The
+ * relevance word is graded against the org's cutoff when one is set (see
+ * relevanceOf), so it means the same thing whichever embedding model the
+ * org runs; the raw distance stays for anyone comparing within one list.
+ * "keyword match" flags a hit the lexical arm found — worth saying, since
+ * its distance may look poor while the match is exact.
+ */
+function matchNote(hit: KnowledgeHit, maxDistance: number | null): string {
+  const grade = RELEVANCE_LABELS[relevanceOf(hit.distance, maxDistance)].toLowerCase();
+  const keyword = hit.matched === 'lexical' || hit.matched === 'both' ? ', keyword match' : '';
+  return ` (${grade}, distance ${formatDistance(hit.distance)}${keyword})`;
 }
 
 /**
@@ -340,10 +348,12 @@ function titleOf(metadata: Record<string, unknown>): string {
  * a distance of 0 would be a lie if it were labelled as a match score.
  */
 function renderHits(
-  result: { hits: KnowledgeHit[]; elided: number; unverified: number },
-  browsing: boolean
+  result: { hits: KnowledgeHit[]; elided: number; unverified: number; weak?: number },
+  browsing: boolean,
+  maxDistance: number | null
 ): string {
   const { hits, elided, unverified } = result;
+  const weak = result.weak ?? 0;
   const lines: string[] = [];
   if (hits.length === 0) {
     lines.push(browsing ? 'Nothing indexed yet for those filters.' : 'No accessible results.');
@@ -351,7 +361,7 @@ function renderHits(
     lines.push(
       browsing
         ? `${hits.length} most recent indexed item(s), newest first:`
-        : `${hits.length} result(s), closest first:`
+        : `${hits.length} result(s), best match first:`
     );
     for (const [index, hit] of hits.entries()) {
       const excerpt = hit.content.length <= 500 ? hit.content : `${hit.content.slice(0, 499)}…`;
@@ -361,10 +371,19 @@ function renderHits(
           (hit.sourceAt ? ` — ${hit.sourceAt}` : '') +
           ` — ${sourceNameOf(hit)}` +
           ` — [${hit.provider}:${hit.refId}]` +
-          (browsing ? '' : ` (distance ${formatDistance(hit.distance)})`),
+          (browsing ? '' : matchNote(hit, maxDistance)),
         excerpt
       );
     }
+  }
+  // Said even when nothing came back: "no results" and "only weak results,
+  // hidden" call for different next moves (rephrase vs. give up).
+  if (weak > 0) {
+    lines.push(
+      '',
+      `${weak} weaker match(es) omitted: beyond the organization's relevance cutoff. ` +
+        'Rephrase, quote an exact identifier, or narrow with `sources` to see closer matches.'
+    );
   }
   // Refusal and timeout are different facts and are worded differently; the
   // gate owns that phrasing so every surface says the same thing.
@@ -382,9 +401,12 @@ export async function registerKnowledgeTools(
     {
       title: 'Knowledge · Read — Search org knowledge',
       description:
-        'Semantic search over what Renkei has indexed from connected tools — ' +
+        'Search over what Renkei has indexed from connected tools — ' +
         'Outlook mail/calendar/tasks, Confluence, Jira, Zoom and WebEx, as far as ' +
-        'each has been indexed — plus your own notes (knowledge_create_note). Results are ' +
+        'each has been indexed — plus your own notes (knowledge_create_note). Matches by ' +
+        "meaning AND by exact words, so a ticket key, file name or person's name in the " +
+        'query finds the item that carries it; quote a phrase to require it. One result ' +
+        'per document, best match first. Results are ' +
         'verified against the source system for YOUR access before disclosure — ' +
         'anything you cannot open at the source is withheld and reported as a count.',
       annotations: { readOnlyHint: true },
@@ -483,11 +505,11 @@ export async function registerKnowledgeTools(
             isError: true,
           };
         }
-        return { content: [{ type: 'text' as const, text: renderHits(recent.val, true) }] };
+        return { content: [{ type: 'text' as const, text: renderHits(recent.val, true, null) }] };
       }
 
-      const embedder = await resolveEmbeddingProvider(context.tenantId);
-      if (!embedder) {
+      const knowledge = await resolveKnowledge(context.tenantId);
+      if (!knowledge) {
         return {
           content: [
             {
@@ -504,7 +526,11 @@ export async function registerKnowledgeTools(
         userEmail,
         query,
         k,
-        embedder,
+        embedder: knowledge.embedder,
+        maxDistance: knowledge.maxDistance,
+        // A model asked for k results wants k documents, not k pieces of
+        // the longest one.
+        perDocument: true,
         verifiers,
         ...(sourceFilters.length > 0 ? { sources: sourceFilters } : {}),
         ...(typeof args.after === 'string' && args.after ? { after: args.after } : {}),
@@ -518,7 +544,11 @@ export async function registerKnowledgeTools(
         return { content: [{ type: 'text' as const, text: reason }], isError: true };
       }
 
-      return { content: [{ type: 'text' as const, text: renderHits(searched.val, false) }] };
+      return {
+        content: [
+          { type: 'text' as const, text: renderHits(searched.val, false, knowledge.maxDistance) },
+        ],
+      };
     }
   );
 

@@ -1,7 +1,7 @@
 import { Kysely, sql } from 'kysely';
 
 /**
- * Seed the usage ledgers (079, 081) from the run history still within
+ * Seed the usage ledgers (083, 085) from the run history still within
  * retention, so the pages that now read them are not empty the moment
  * this deploys.
  *

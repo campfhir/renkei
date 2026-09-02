@@ -44,7 +44,7 @@ interface InvocationCounts {
 }
 
 /**
- * Run tallies from the durable run log (migration 079), which survives the
+ * Run tallies from the durable run log (migration 083), which survives the
  * run-retention prune — that survival is what makes the quarterly/yearly/
  * all-time numbers real rather than "since retention began". Calendar
  * buckets, not trailing windows, because the numbers exist to be read

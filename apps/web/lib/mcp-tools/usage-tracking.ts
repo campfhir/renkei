@@ -80,7 +80,7 @@ export interface UsageContext {
   subject: string | null;
   /**
    * The acting agent when the caller is an agent-runner token (migration
-   * 082) — the subject stays the OWNER's; this says which of their agents
+   * 086) — the subject stays the OWNER's; this says which of their agents
    * made the call. Absent or null for a person's own calls.
    */
   agentId?: string | null;

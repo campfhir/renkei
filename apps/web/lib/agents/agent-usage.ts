@@ -1,7 +1,7 @@
 /**
  * Per-agent usage: token spend, run tallies and tool calls, read from the
- * timestamped ledgers — `llm_calls` (081) for tokens and `tool_calls`
- * (032, agent-stamped by 082) for calls.
+ * timestamped ledgers — `llm_calls` (085) for tokens and `tool_calls`
+ * (032, agent-stamped by 086) for calls.
  *
  * Both are content-free by construction, so the owner and an admin get
  * the SAME numbers: there is no per-audience redaction here any more,
@@ -116,7 +116,7 @@ export interface AgentToolUsageRow {
 /**
  * Tool calls this agent (or a set of them, summed) made over `days`,
  * grouped by tool — from `tool_calls`, where the MCP gateway records every
- * call an agent run makes with the agent's id (082). Free in-process calls
+ * call an agent run makes with the agent's id (086). Free in-process calls
  * (resolve_time, finish_step, ask_person) never reach the gateway and so
  * are never counted, matching what `tool_call_count` already excludes.
  * Complete for every audience: the ledger holds names and timings only.

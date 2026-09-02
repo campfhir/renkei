@@ -7,10 +7,14 @@
 // jest); the pure functions under test never touch either.
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('kysely', () => ({ sql: jest.fn() }));
+// Keyword enrichment resolves the org's default LLM; these tests are about
+// chunking and embedding, so the org has none unless a test passes one.
+jest.mock('./keywords', () => ({ resolveKeywordExtractor: jest.fn(async () => null) }));
 
 import { ok } from '@campfhir/safe-functions/helpers';
 import { chunkText, chunkRefId, ingestObjectChunks } from './chunking';
 import type { EmbeddingProvider } from './embeddings';
+import type { KeywordExtractor } from './keywords';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 
@@ -80,8 +84,10 @@ describe('ingestObjectChunks — embedding batches', () => {
     else process.env.CONTENT_ENCRYPTION_KEY = savedContentKey;
   });
 
-  /** A db stub whose delete and insert chains both succeed silently. */
+  /** A db stub whose delete and insert chains both succeed silently; inserted rows are kept. */
+  let inserted: Record<string, unknown>[] = [];
   function stubDb(): void {
+    inserted = [];
     mockGetDatabase.mockReturnValue({
       ok: true,
       val: {
@@ -91,7 +97,10 @@ describe('ingestObjectChunks — embedding batches', () => {
           },
         }),
         insertInto: () => ({
-          values: () => ({ onConflict: () => ({ execute: async () => [] }) }),
+          values: (row: Record<string, unknown>) => {
+            inserted.push(row);
+            return { onConflict: () => ({ execute: async () => [] }) };
+          },
         }),
       },
     });
@@ -166,5 +175,70 @@ describe('ingestObjectChunks — embedding batches', () => {
       precomputed: { content: 'different content', vector: [0.5] },
     });
     expect(calls).toHaveLength(1);
+  });
+
+  describe('keyword enrichment', () => {
+    function extractorReturning(keywords: string[], seen: string[][]): KeywordExtractor {
+      return {
+        extract: async ({ title, content }) => {
+          seen.push([title, content]);
+          return ok(keywords);
+        },
+      };
+    }
+
+    it('extracts once per object and stores the same list on every chunk', async () => {
+      const seen: string[][] = [];
+      const text = Array.from({ length: 40 }, (_, i) => `paragraph ${i} with some words`).join(
+        '\n\n'
+      );
+      const result = await ingestObjectChunks(
+        'tenant-1',
+        embedderRecording([]),
+        { ...object(text), metadata: { title: 'Runbook' } },
+        { maxChars: 200, overlap: 20, keywords: extractorReturning(['ENG-787', 'printers'], seen) }
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.val.keywords).toBe(2);
+      expect(seen).toEqual([['Runbook', text]]);
+      expect(inserted.length).toBe(result.val.chunks);
+      for (const row of inserted) expect(row.keywords).toEqual(['ENG-787', 'printers']);
+    });
+
+    it('stores NULL (not extracted) when there is no extractor, and on failure', async () => {
+      await ingestObjectChunks('tenant-1', embedderRecording([]), object('short'), {
+        keywords: null,
+      });
+      expect(inserted[0]?.keywords).toBeNull();
+
+      stubDb();
+      const failing: KeywordExtractor = {
+        extract: async () => ({ ok: false, err: { type: 'KEYWORDS_FAILED' as const } }),
+      };
+      const result = await ingestObjectChunks('tenant-1', embedderRecording([]), object('short'), {
+        keywords: failing,
+      });
+      // Enrichment only: the object still indexes.
+      expect(result.ok).toBe(true);
+      expect(inserted[0]?.keywords).toBeNull();
+    });
+
+    it('stores an empty list when extraction ran and found nothing', async () => {
+      await ingestObjectChunks('tenant-1', embedderRecording([]), object('short'), {
+        keywords: extractorReturning([], []),
+      });
+      expect(inserted[0]?.keywords).toEqual([]);
+    });
+
+    it('does not disturb the precomputed-vector fast path', async () => {
+      const calls: string[][] = [];
+      await ingestObjectChunks('tenant-1', embedderRecording(calls), object('short content'), {
+        precomputed: { content: 'short content', vector: [0.5, 0.5] },
+        keywords: extractorReturning(['x'], []),
+      });
+      expect(calls).toHaveLength(0);
+      expect(inserted[0]?.keywords).toEqual(['x']);
+    });
   });
 });

@@ -273,6 +273,43 @@ export class WebexClient {
     return ok(messages);
   }
 
+  /** One room's details — its title, for a day window's heading. */
+  async getRoom(roomId: string): Promise<Result<WebexRoom, 'WEBEX_API_ERROR'>> {
+    const result = await this.get(`/rooms/${encodeURIComponent(roomId)}`);
+    if (!result.ok) return result;
+    const room = readRoom(result.val);
+    if (!room) return err('WEBEX_API_ERROR' as const, { message: 'room response missing id' });
+    return ok(room);
+  }
+
+  /**
+   * A page of a room's history, newest first, ending before a point in
+   * time or before a given message — the two cursors WebEx offers. The
+   * room-day rebuild walks a day backwards with these until it crosses
+   * the day's start.
+   */
+  async listMessagesBefore(
+    roomId: string,
+    options: { before?: string; beforeMessage?: string; max?: number } = {}
+  ): Promise<Result<WebexMessage[], 'WEBEX_API_ERROR'>> {
+    const params = new URLSearchParams({ roomId, max: String(options.max ?? 100) });
+    if (options.beforeMessage) params.set('beforeMessage', options.beforeMessage);
+    else if (options.before) params.set('before', options.before);
+    const result = await this.get(`/messages?${params.toString()}`);
+    if (!result.ok) return result;
+    const items = result.val.items;
+    if (!Array.isArray(items)) {
+      return err('WEBEX_API_ERROR' as const, { message: 'messages response missing items' });
+    }
+    const messages: WebexMessage[] = [];
+    for (const item of items) {
+      if (!isRecord(item)) continue;
+      const message = readMessage(item);
+      if (message) messages.push(message);
+    }
+    return ok(messages);
+  }
+
   /**
    * Is this person currently a member of the room? The live ACL check for
    * WebEx content: room membership is exactly WebEx's own access rule for

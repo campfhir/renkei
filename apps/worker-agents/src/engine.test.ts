@@ -912,7 +912,7 @@ maybe('agent run engine', () => {
       .execute();
     expect(attempts).toHaveLength(1);
 
-    // The failed finalize lands in the durable run log (migration 079) with
+    // The failed finalize lands in the durable run log (migration 083) with
     // the outcome and the taxonomy the usage pages and the optimizer read.
     const logged = await db
       .selectFrom('agent_run_log')

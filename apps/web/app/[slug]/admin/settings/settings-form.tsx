@@ -23,6 +23,8 @@ export interface EditableSettings {
   agentNotificationRetentionDays: number;
   agentUsageRetentionDays: number;
   agentOptimizerWindowDays: number;
+  knowledgeKeywordEnrichment: boolean;
+  knowledgeKeywordMinChars: number;
 }
 
 const inputClass =
@@ -226,6 +228,25 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How long platform logs are kept before being purged. 0 keeps them forever. Deployment-wide: with several organizations, the longest retention wins."
         >
           {numberInput('logRetentionDays', '0–3,650')}
+        </Row>
+      </Section>
+
+      <Section title="Knowledge search">
+        <Row
+          label="Extract search keywords with the default model"
+          hint="One call to the organization's default LLM model per indexed item, asking for the names, identifiers and topic phrases a person would search for. They rank above the body text in keyword matching. Off by default: for a mailbox backfill this is the dominant cost of indexing. Needs a default model under LLM models."
+        >
+          <Toggle
+            on={values.knowledgeKeywordEnrichment}
+            onChange={(next) => set('knowledgeKeywordEnrichment', next)}
+            label="Extract search keywords with the default model"
+          />
+        </Row>
+        <Row
+          label="Minimum item size for keywords (characters)"
+          hint="Items shorter than this are indexed without a model call — a one-line chat message or a two-sentence mail has nothing a model can add over its own words. 0 sends everything."
+        >
+          {numberInput('knowledgeKeywordMinChars', '0–100,000')}
         </Row>
       </Section>
 

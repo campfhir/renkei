@@ -25,14 +25,14 @@
  * copy discloses that watched-space messages are indexed (readable only
  * via live room-membership checks — createWebexUserAccessVerifier). If
  * indexing is ever made optional, gate the map entry AND change that copy
- * together.
+ * together. The unit indexed is a room's day, not a message — see
+ * handlers/webex-windows.ts.
  */
 
 import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { fanOutAgentEvents } from '@renkei/agents/event-fanout';
-import { webexRefId } from '@renkei/connector-webex';
-import { enqueueKnowledgeEvent } from '../enqueue';
+import { markWebexWindowDirty, windowDayOf } from './webex-windows';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { logger } from '../logger';
@@ -73,32 +73,21 @@ type KnowledgeSubscriber = (tenantId: string, payload: DomainPayload) => Promise
  * delta/refetch round.
  */
 const KNOWLEDGE_SUBSCRIBERS: Record<string, KnowledgeSubscriber> = {
+  // A message is not indexed on its own: it marks its room's UTC day dirty,
+  // and the window sweep rebuilds that day as one transcript-shaped
+  // document (handlers/webex-windows.ts). Idempotent across watchers: two
+  // opted-in users in one space mark the same (room, day) row.
   'webex/message.received': async (tenantId, payload) => {
-    const { roomId, messageId, text, sender } = payload.data;
+    const { roomId, messageId, text } = payload.data;
     if (typeof roomId !== 'string' || typeof messageId !== 'string' || typeof text !== 'string') {
       return;
     }
     if (!roomId || !messageId || !text) return;
-    const refId = webexRefId(roomId, messageId);
-    // Idempotent across watchers: two opted-in users in one space publish
-    // two domain events, but the unique (tenant, provider, refId) upsert
-    // makes the second ingest a no-op rewrite of the same chunk.
-    await enqueueKnowledgeEvent(
+    await markWebexWindowDirty(
       tenantId,
-      'ingest.object',
-      {
-        provider: 'webex',
-        refId,
-        content: text,
-        metadata: {
-          kind: 'msg',
-          roomId,
-          ...(typeof sender === 'string' && sender ? { sender } : {}),
-        },
-        sourceAt: payload.occurredAt ?? null,
-      },
-      refId,
-      { strict: true }
+      roomId,
+      windowDayOf(payload.occurredAt),
+      payload.ownerSubject
     );
   },
 };

@@ -6,12 +6,12 @@
  * Every read here is keyed on a SUBJECT, and the subject is the caller's
  * own (the action pins it from the session before calling in). Sources:
  *
- *   - `llm_calls` (migration 081): one row per model call, attributed to
+ *   - `llm_calls` (migration 085): one row per model call, attributed to
  *     the person whose spend it was — a run's owner, or whoever asked for
  *     an optimization pass.
- *   - `agent_run_log` (migration 079): one row per run of an agent this
+ *   - `agent_run_log` (migration 083): one row per run of an agent this
  *     person OWNS, with its outcome and, on failure, the step and kind.
- *   - `tool_calls` (migration 032, agent stamped by 082): every MCP tool
+ *   - `tool_calls` (migration 032, agent stamped by 086): every MCP tool
  *     call made under this subject — their own calls from a chat client
  *     AND their agents' calls, which execute under a run token bound to
  *     the owner (RENKEI.md Decision #21). So "tool calls" means everything

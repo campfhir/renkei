@@ -6,7 +6,7 @@ import { Kysely, sql } from 'kysely';
  * the model call takes minutes, nobody should have to keep a tab open for
  * it, and the answer has to survive a reload.
  *
- * The pass reads the agent's captured failures (079), its recent runs'
+ * The pass reads the agent's captured failures (083), its recent runs'
  * step-level token spend and tool calls, and the definition itself, then
  * asks the org's model for a report: what is going wrong and why, what is
  * costing tokens it need not, and a concrete revision brief. The report

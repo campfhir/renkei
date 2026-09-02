@@ -35,7 +35,7 @@ import {
   type MailSearchFilters,
 } from '@renkei/connector-microsoft';
 import { actMeta } from '@renkei/tool-outcomes';
-import { resolveEmbeddingProvider, searchKnowledge } from '@renkei/knowledge';
+import { resolveKnowledge, searchKnowledge } from '@renkei/knowledge';
 import { withheldNote } from '@renkei/gates';
 import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
@@ -1618,8 +1618,8 @@ export async function registerOutlookTools(
         );
       }
 
-      const embedder = await resolveEmbeddingProvider(context.tenantId);
-      if (!embedder) {
+      const knowledge = await resolveKnowledge(context.tenantId);
+      if (!knowledge) {
         return errText(
           'Semantic search needs the knowledge layer, which is not configured for this ' +
             'organization. Use outlook_bulk_search_messages instead.'
@@ -1631,10 +1631,12 @@ export async function registerOutlookTools(
         tenantId: context.tenantId,
         userEmail,
         query,
-        // Overfetch: several chunks of one long message collapse to a single
-        // result below, so k results here can be far fewer messages.
-        k: max * 3,
-        embedder,
+        k: max,
+        embedder: knowledge.embedder,
+        maxDistance: knowledge.maxDistance,
+        // One hit per message: the search collapses a long mail's chunks
+        // to its best-ranked one before the gate.
+        perDocument: true,
         verifiers,
         sources: [{ provider: 'microsoft', kind: 'msg' }],
         ...(str(args.after) ? { after: str(args.after) } : {}),
@@ -1648,8 +1650,10 @@ export async function registerOutlookTools(
         );
       }
 
-      // Collapse chunks back to messages, keeping each message's closest
-      // chunk — otherwise one long mail floods the whole result list.
+      // Already one hit per message, in fused-rank order (meaning and exact
+      // words together), which is why the list is NOT re-sorted by distance
+      // below: a keyword-found message may sit far in vector space and
+      // still be the answer. The map only guards the id derivation.
       const byMessage = new Map<
         string,
         { messageId: string; subject: string; when: string | null; distance: number }
@@ -1659,8 +1663,7 @@ export async function registerOutlookTools(
         if (!objectId) continue;
         // Strip the `#0001` chunk suffix so the id is usable as a message id.
         const messageId = objectId.split('#')[0] ?? objectId;
-        const existing = byMessage.get(messageId);
-        if (existing && existing.distance <= hit.distance) continue;
+        if (byMessage.has(messageId)) continue;
         byMessage.set(messageId, {
           messageId,
           subject: typeof hit.metadata.subject === 'string' ? hit.metadata.subject : '',
@@ -1669,7 +1672,7 @@ export async function registerOutlookTools(
         });
       }
 
-      const results = [...byMessage.values()].sort((a, b) => a.distance - b.distance).slice(0, max);
+      const results = [...byMessage.values()].slice(0, max);
       // A refusal and a timeout both withhold, but only one of them means the
       // user lacks access; saying "no access" for a slow source would be a
       // false statement about their permissions.
@@ -1686,7 +1689,7 @@ export async function registerOutlookTools(
           (result.when ? ` — ${result.when}` : '') +
           ` — id: ${result.messageId}`
       );
-      const footer = `\n\n${results.length} message(s), closest match first.${withheld}`;
+      const footer = `\n\n${results.length} message(s), best match first.${withheld}`;
       return textResult(
         withPresentationHint(
           lines.join('\n') + footer,

@@ -239,7 +239,7 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
 }
 
 /**
- * Prune the usage ledgers — the run log (079) and the token ledger (081)
+ * Prune the usage ledgers — the run log (083) and the token ledger (085)
  * — past each org's agentUsageRetentionDays. The run sweep's shape: one
  * bounded, idempotent DELETE per table per tenant per pass. Longer than
  * run retention by default (a year vs 30 days) because these are what

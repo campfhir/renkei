@@ -97,7 +97,7 @@ function toTokenOutBuckets(row: TokenBucketRow | undefined): RunBuckets {
 }
 
 /**
- * Run and failure buckets over the durable run log (migration 079), cut on
+ * Run and failure buckets over the durable run log (migration 083), cut on
  * the database session's calendar the way the per-day counters they
  * replace were — the numbers exist to be read against the per-day cap.
  */
@@ -116,7 +116,7 @@ const BUCKET_COLUMNS = sql`
   COUNT(*) FILTER (WHERE status = 'failed') AS failed_all_time
 `;
 
-/** The same buckets over the token ledger (migration 081). */
+/** The same buckets over the token ledger (migration 085). */
 const TOKEN_BUCKET_COLUMNS = sql`
   COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS in_today,
   COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS in_week,

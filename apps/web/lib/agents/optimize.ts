@@ -6,7 +6,7 @@
  *
  *   - The definition itself, rendered the way "Copy as Markdown" renders
  *     it — the same text a person would paste to ask a colleague for help.
- *   - The run log (migration 079): every run's outcome, and for the failed
+ *   - The run log (migration 083): every run's outcome, and for the failed
  *     ones which step, what kind, how often.
  *   - The per-step cost profile from `agent_run_steps`: attempts, failed
  *     attempts, and average tokens per attempt for every step that ran in

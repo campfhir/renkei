@@ -75,6 +75,8 @@ export default async function SettingsPage({
     agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
     agentUsageRetentionDays: settings.agentUsageRetentionDays,
     agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
+    knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
+    knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
   };
 
   return (

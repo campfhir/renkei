@@ -4,6 +4,12 @@
  * base URL, model, and API key are org connector configuration in the
  * database (Decision #19) — connector key 'embeddings'. Unconfigured means
  * the knowledge layer is simply off for that org, never an error.
+ *
+ * The same connector row carries the per-model calibration retrieval
+ * needs: instruction prefixes for asymmetric models, and the distance past
+ * which a match is not worth showing. Those belong with the model because
+ * they are facts ABOUT the model — change the model, and every one of them
+ * changes with it.
  */
 
 import { parseEncryptionKey } from '@renkei/crypto';
@@ -26,8 +32,28 @@ export function vectorLiteral(vector: readonly number[]): string {
   return `[${vector.join(',')}]`;
 }
 
+/**
+ * Which side of retrieval a text is on. Asymmetric models (e5, bge, nomic,
+ * mxbai served through an OpenAI-compatible endpoint) embed a query and a
+ * passage differently and expect a prefix saying which is which; without
+ * it they still answer, just worse, and nothing reports why. Symmetric
+ * models ignore the distinction, so the default prefixes are empty.
+ */
+export type EmbeddingPurpose = 'query' | 'passage';
+
 export interface EmbeddingProvider {
-  embed(texts: readonly string[]): Promise<Result<number[][], 'EMBEDDING_FAILED'>>;
+  embed(
+    texts: readonly string[],
+    purpose?: EmbeddingPurpose
+  ): Promise<Result<number[][], 'EMBEDDING_FAILED'>>;
+}
+
+export interface EmbeddingOptions {
+  timeoutMs?: number;
+  /** Prepended verbatim to every query text — `query: ` for e5, `search_query: ` for nomic. */
+  queryPrefix?: string;
+  /** Prepended verbatim to every passage text — `passage: `, `search_document: `. */
+  passagePrefix?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -35,15 +61,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
+  private readonly timeoutMs: number;
+  private readonly queryPrefix: string;
+  private readonly passagePrefix: string;
+
   constructor(
     private readonly baseUrl: string,
     private readonly apiKey: string,
     private readonly model: string,
-    private readonly timeoutMs = REQUEST_TIMEOUT_MS
-  ) {}
+    options: EmbeddingOptions = {}
+  ) {
+    this.timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
+    this.queryPrefix = options.queryPrefix ?? '';
+    this.passagePrefix = options.passagePrefix ?? '';
+  }
 
-  async embed(texts: readonly string[]): Promise<Result<number[][], 'EMBEDDING_FAILED'>> {
+  async embed(
+    texts: readonly string[],
+    purpose: EmbeddingPurpose = 'passage'
+  ): Promise<Result<number[][], 'EMBEDDING_FAILED'>> {
     if (texts.length === 0) return ok([]);
+
+    const prefix = purpose === 'query' ? this.queryPrefix : this.passagePrefix;
+    const input = prefix ? texts.map((text) => `${prefix}${text}`) : [...texts];
 
     let response: Response;
     try {
@@ -53,7 +93,7 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.apiKey}`,
         },
-        body: JSON.stringify({ model: this.model, input: texts }),
+        body: JSON.stringify({ model: this.model, input }),
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
@@ -98,15 +138,46 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
 }
 
 /**
- * The org's embedding provider from connector configuration, or null when
- * the org has not provisioned one (or disabled it) — callers skip indexing
- * and enrichment in that case.
+ * The org's retrieval tuning, read from the same connector row as the
+ * model. `maxDistance` null means "no cutoff": every candidate the vector
+ * proposes is a result, however far — the pre-calibration behaviour, kept
+ * as the default because a wrong cutoff hides real answers while a missing
+ * one only adds weak ones.
  */
-export async function resolveEmbeddingProvider(tenantId: string): Promise<EmbeddingProvider | null> {
+export interface KnowledgeTuning {
+  /** Cosine distance past which a semantic-only candidate is dropped and counted as weak. */
+  maxDistance: number | null;
+}
+
+export interface KnowledgeProvider extends KnowledgeTuning {
+  embedder: EmbeddingProvider;
+}
+
+/** A finite positive number, or null — anything else is "not configured". */
+export function parseMaxDistance(value: unknown): number | null {
+  const numeric =
+    typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function prefixSetting(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * The org's embedding provider and retrieval tuning from connector
+ * configuration, or null when the org has not provisioned one (or disabled
+ * it) — callers skip indexing and enrichment in that case.
+ */
+export async function resolveKnowledge(tenantId: string): Promise<KnowledgeProvider | null> {
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) return null;
 
-  const configResult = await readConnectorConfigCached(tenantId, EMBEDDINGS_CONNECTOR, keyResult.val);
+  const configResult = await readConnectorConfigCached(
+    tenantId,
+    EMBEDDINGS_CONNECTOR,
+    keyResult.val
+  );
   if (!configResult.ok) return null;
   const config = configResult.val;
   if (!config || !config.enabled) return null;
@@ -118,5 +189,19 @@ export async function resolveEmbeddingProvider(tenantId: string): Promise<Embedd
     return null;
   }
 
-  return new OpenAiCompatibleEmbeddings(baseUrl, apiKey, model);
+  return {
+    embedder: new OpenAiCompatibleEmbeddings(baseUrl, apiKey, model, {
+      queryPrefix: prefixSetting(config.settings.queryPrefix),
+      passagePrefix: prefixSetting(config.settings.passagePrefix),
+    }),
+    maxDistance: parseMaxDistance(config.settings.maxDistance),
+  };
+}
+
+/** The embedder alone, for callers that only index. */
+export async function resolveEmbeddingProvider(
+  tenantId: string
+): Promise<EmbeddingProvider | null> {
+  const resolved = await resolveKnowledge(tenantId);
+  return resolved ? resolved.embedder : null;
 }

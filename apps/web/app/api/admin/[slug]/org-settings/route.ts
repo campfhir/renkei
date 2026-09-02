@@ -50,6 +50,10 @@ const NUMERIC_BOUNDS = {
   // The optimizer's evidence window. A year is the typo guard; below a
   // day there is nothing to analyze.
   agentOptimizerWindowDays: [1, 365],
+  // 0 sends every item for keyword extraction; the ceiling is well past
+  // the 12k chars the extractor shows the model, so a typo cannot turn
+  // enrichment into a no-op that looks switched on.
+  knowledgeKeywordMinChars: [0, 100_000],
 } as const;
 
 const NUMERIC_KEYS = [
@@ -70,9 +74,10 @@ const NUMERIC_KEYS = [
   'agentNotificationRetentionDays',
   'agentUsageRetentionDays',
   'agentOptimizerWindowDays',
+  'knowledgeKeywordMinChars',
 ] as const;
 
-const BOOLEAN_KEYS = ['readOnly', 'enableDcr'] as const;
+const BOOLEAN_KEYS = ['readOnly', 'enableDcr', 'knowledgeKeywordEnrichment'] as const;
 
 type EditableKey = keyof typeof NUMERIC_BOUNDS | (typeof BOOLEAN_KEYS)[number];
 
@@ -97,6 +102,8 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
     agentUsageRetentionDays: settings.agentUsageRetentionDays,
     agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
+    knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
+    knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
   };
 }
 

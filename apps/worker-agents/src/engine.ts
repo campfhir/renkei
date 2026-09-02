@@ -708,7 +708,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
   const resolveLlm = deps.resolveLlm ?? resolveAgentLlm;
 
   /**
-   * The token ledger (migration 081): one row per attempt that finalizes
+   * The token ledger (migration 085): one row per attempt that finalizes
    * with token spend, attributed to the owner, so usage can be read in
    * the viewer's own day. Skipped when both counts are zero (a pure-tool
    * attempt, or a step that never reached the model). Best effort — a
@@ -3851,7 +3851,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // lines that matter.
       logger.debug('agent "{agentName}" ({userName}) run {status}', common);
     }
-    // The durable run log (migration 079): the outcome for every status,
+    // The durable run log (migration 083): the outcome for every status,
     // and on failure which step, what kind, what it cost — what every
     // usage page counts and the optimizer reads. Best effort, like the
     // log row written at creation.
