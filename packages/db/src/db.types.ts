@@ -841,6 +841,14 @@ export interface UserPreferences {
   value: Json;
 }
 
+export interface WebexDirtyWindows {
+  day: string;
+  marked_at: Generated<Timestamp>;
+  room_id: string;
+  subject: string | null;
+  tenant_id: string;
+}
+
 export interface WebexSentMessages {
   account_id: string | null;
   created_at: Generated<Timestamp>;
@@ -930,6 +938,7 @@ export interface DB {
   tool_calls: ToolCalls;
   upload_slots: UploadSlots;
   user_preferences: UserPreferences;
+  webex_dirty_windows: WebexDirtyWindows;
   webex_sent_messages: WebexSentMessages;
   webhook_subscriptions: WebhookSubscriptions;
 }

@@ -2,22 +2,22 @@
 
 Every provider integration lives in its own `packages/connector-*` package and follows the data-contract shape `RENKEI.md`'s "Connectors" section describes: what's stored in the knowledge index, what's live-query-only, and (where indexing happens) a `verifyAccess(userId, refs[]) → allowed subset` implementation that the retrieval gate calls before disclosing anything (see [`knowledge-and-security.md`](./knowledge-and-security.md)). None of the packages below talk to a database directly for their provider calls — connector packages wrap the provider API and export a verifier; the MCP tool handlers in `apps/web/lib/mcp-tools/` are the layer that actually calls them per request.
 
-| Connector | Provider(s) | Auth model | Indexed? |
-| --- | --- | --- | --- |
-| `connector-atlassian` | Jira, Confluence, JSM | Per-user OAuth (Atlassian Cloud 3LO) | Live-verified via re-query |
-| `connector-microsoft` | Outlook mail/calendar/tasks, SharePoint, OneDrive | Per-user delegated OAuth (Graph) | Personal items: ownership-scoped; documents: live-verified |
-| `connector-fileshares` | Org-registered SMB/SFTP shares | Per-share, per-user credentials | Not indexed — no `verifyAccess`, retrieval-only |
-| `connector-onbase` | Hyland OnBase (on-prem) | Auth Code + PKCE against the tenant's own IdP | Not indexed (deferred) — retrieval-only |
-| `connector-sandbox` | Renkei's own agent scratch space (no external provider) | The caller's own signed-in Renkei session | Not indexed — transient staging data |
-| `connector-mistral-ocr` | Mistral Document AI (OCR 4) on Microsoft Foundry | One org-wide API key per tenant (`connector_configs`) | Not indexed — a document pipeline stage, not a source of truth |
-| `connector-webex` | WebEx messaging | Bot token for sending; per-user OAuth for ingestion | Live-verified (room membership) |
-| `connector-zoom` | Zoom meetings/recordings/transcripts | Per-user OAuth + webhook download tokens | Ownership-scoped (host-only, v1) |
+| Connector               | Provider(s)                                             | Auth model                                            | Indexed?                                                       |
+| ----------------------- | ------------------------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------------- |
+| `connector-atlassian`   | Jira, Confluence, JSM                                   | Per-user OAuth (Atlassian Cloud 3LO)                  | Live-verified via re-query                                     |
+| `connector-microsoft`   | Outlook mail/calendar/tasks, SharePoint, OneDrive       | Per-user delegated OAuth (Graph)                      | Personal items: ownership-scoped; documents: live-verified     |
+| `connector-fileshares`  | Org-registered SMB/SFTP shares                          | Per-share, per-user credentials                       | Not indexed — no `verifyAccess`, retrieval-only                |
+| `connector-onbase`      | Hyland OnBase (on-prem)                                 | Auth Code + PKCE against the tenant's own IdP         | Not indexed (deferred) — retrieval-only                        |
+| `connector-sandbox`     | Renkei's own agent scratch space (no external provider) | The caller's own signed-in Renkei session             | Not indexed — transient staging data                           |
+| `connector-mistral-ocr` | Mistral Document AI (OCR 4) on Microsoft Foundry        | One org-wide API key per tenant (`connector_configs`) | Not indexed — a document pipeline stage, not a source of truth |
+| `connector-webex`       | WebEx messaging                                         | Bot token for sending; per-user OAuth for ingestion   | Live-verified (room membership)                                |
+| `connector-zoom`        | Zoom meetings/recordings/transcripts                    | Per-user OAuth + webhook download tokens              | Ownership-scoped (host-only, v1)                               |
 
 ## connector-atlassian
 
 Wraps Jira, Confluence, and JSM via a shared `atlassianFetch` gateway (`client.ts`). Auth is per-user OAuth — no service account, so a read is always scoped to what the calling user's own Atlassian token allows. The package stores nothing itself; the MCP tool surface for Jira/JSM/Confluence lives in `apps/web/lib/mcp-tools/`.
 
-`verifier.ts` exports `createJiraAccessVerifier` and `createConfluenceAccessVerifier`. Both re-issue the candidate refs as a single batched query **using the requesting user's own token** — Jira via a `key IN (...)` JQL search, Confluence via a multi-id `GET /wiki/api/v2/pages` — so the provider's filtered response *is* the access answer; nothing is interpreted or cached locally. Default-deny on a missing credential, an API failure, or a malformed ref.
+`verifier.ts` exports `createJiraAccessVerifier` and `createConfluenceAccessVerifier`. Both re-issue the candidate refs as a single batched query **using the requesting user's own token** — Jira via a `key IN (...)` JQL search, Confluence via a multi-id `GET /wiki/api/v2/pages` — so the provider's filtered response _is_ the access answer; nothing is interpreted or cached locally. Default-deny on a missing credential, an API failure, or a malformed ref.
 
 Other exports: `jiraRefId`/`confluenceRefId` (ref-id format for the knowledge index), ADF/wiki-markup converters (`adfToMarkdown`, `wikiToMarkdown`), and `fieldScreenFor`/`createScreenFor` for resolving which fields are editable on a given issue/screen.
 
@@ -42,7 +42,7 @@ Exports: `openBackend` (protocol backend selection over `smb.ts`/`sftp.ts`), `se
 
 ## connector-onbase
 
-Wraps Hyland OnBase document management. Unusually, both the API server *and* the identity provider are tenant-supplied and typically on-prem — not a Renkei-registered SaaS app — so auth is Authorization Code + PKCE against whatever IdP the tenant configures.
+Wraps Hyland OnBase document management. Unusually, both the API server _and_ the identity provider are tenant-supplied and typically on-prem — not a Renkei-registered SaaS app — so auth is Authorization Code + PKCE against whatever IdP the tenant configures.
 
 The package itself (`packages/connector-onbase`) is deliberately dependency- and I/O-free: OIDC discovery parsing, keyword-type name resolution, the keyword-merge logic that guards the replace-everything `PUT`, query building, and a catalog cache. All actual HTTP happens in `apps/worker-onbase`, a dedicated egress process, because the tenant's private-network host can't go through `apps/web`'s SSRF guard.
 
@@ -76,7 +76,7 @@ See [`batch-jobs-design.md`](./batch-jobs-design.md) for how this connector fits
 
 Wraps WebEx messaging/rooms plus its bot framework (webhooks, Adaptive Cards). Auth is dual: sending messages/cards uses a **bot token** (`WebexClient`), but knowledge **ingestion is user-scoped** — each watcher registers their own all-spaces webhook and token; there's no bot-driven reading.
 
-For opted-in watchers, message text is indexed as `webex` chunks with ref `${roomId}/${messageId}`; metadata indexed is room id, message id, sender email, and timestamps. Everything else (room list, membership, history) is live-query only.
+For opted-in watchers, messages are indexed as **room-day windows**, not one chunk per message: a captured message marks its room's UTC day dirty (`webex_dirty_windows`, migration 081), the worker's window sweep (`health/webex-windows.ts`) coalesces marks into one rebuild per quiet window, and the embedding worker refetches the whole day from WebEx with the watcher's own token and indexes it as a transcript-shaped document with ref `${roomId}/day/${YYYY-MM-DD}` (`handlers/webex-windows.ts`). The room stays before the first `/`, so the membership verifier is unchanged. Metadata is room id and title, day, participants and message count. A newly opted-in watcher is backfilled once: their rooms' most recent page of messages decides which days get built. Everything else (room list, membership, history) is live-query only.
 
 `verifier.ts` exports `createWebexAccessVerifier` (bot-token room-membership check) and `createWebexUserAccessVerifier` (the per-requesting-user-token variant used at retrieval time) — both verify "is this user currently a member of this message's room," asked live, once per distinct room in the candidate set.
 

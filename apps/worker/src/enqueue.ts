@@ -18,6 +18,9 @@
  *   reconcile.drive{ provider, driveId, syncEpoch }
  *   enrich.item    { itemId, provider: 'webex', refId, query,
  *                    accessSubject }
+ *   ingest.webex-window { provider: 'webex', roomId, day, subject } — the
+ *                    room-day transcript rebuild (handlers/webex-windows.ts);
+ *                    carries identifiers only, the text is refetched.
  *
  * `ingest.document` deliberately carries IDENTIFIERS, not bytes. A 20MB file
  * base64'd into a jsonb payload would be TOASTed, WAL-replicated and kept in
@@ -46,7 +49,8 @@ export type KnowledgeEventType =
   | 'delete.object'
   | 'purge.prefix'
   | 'reconcile.drive'
-  | 'enrich.item';
+  | 'enrich.item'
+  | 'ingest.webex-window';
 
 /**
  * Enqueue one knowledge job. A failed enqueue is logged and swallowed:

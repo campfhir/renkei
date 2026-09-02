@@ -44,6 +44,7 @@ export {
   deleteStaleScopeChunks,
   ingestObjectChunks,
   embeddingInputs,
+  escapeLike,
   type ChunkTextOptions,
 } from './chunking';
 

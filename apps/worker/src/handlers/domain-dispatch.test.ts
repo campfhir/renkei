@@ -10,7 +10,10 @@ jest.mock('@renkei/queue', () => ({
   agentJobsQueue: jest.fn(() => ({ producer: { enqueue: jest.fn() } })),
 }));
 jest.mock('@renkei/agents/event-fanout', () => ({ fanOutAgentEvents: jest.fn() }));
-jest.mock('../enqueue', () => ({ enqueueKnowledgeEvent: jest.fn() }));
+jest.mock('./webex-windows', () => ({
+  markWebexWindowDirty: jest.fn(),
+  windowDayOf: (iso: string) => iso.slice(0, 10),
+}));
 jest.mock('../logger', () => ({
   logger: { info: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
@@ -26,9 +29,9 @@ const { logger: mockLogger } = jest.requireMock<{
 const { fanOutAgentEvents: mockFanOut } = jest.requireMock<{ fanOutAgentEvents: jest.Mock }>(
   '@renkei/agents/event-fanout'
 );
-const { enqueueKnowledgeEvent: mockEnqueueKnowledge } = jest.requireMock<{
-  enqueueKnowledgeEvent: jest.Mock;
-}>('../enqueue');
+const { markWebexWindowDirty: mockMarkDirty } = jest.requireMock<{
+  markWebexWindowDirty: jest.Mock;
+}>('./webex-windows');
 
 function webexEvent(): ClaimedEvent {
   return {
@@ -70,25 +73,15 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockGetDatabase.mockReturnValue(ok({ fake: 'db' }));
   mockFanOut.mockResolvedValue({ started: [], filtered: 0 });
-  mockEnqueueKnowledge.mockResolvedValue(undefined);
+  mockMarkDirty.mockResolvedValue(undefined);
 });
 
-test('webex message: knowledge ingest enqueued strictly, then agents fan out', async () => {
+test('webex message: its room-day is marked dirty first, then agents fan out', async () => {
   await createDomainDispatchHandler()(webexEvent());
 
-  expect(mockEnqueueKnowledge).toHaveBeenCalledWith(
-    'tenant-1',
-    'ingest.object',
-    expect.objectContaining({
-      provider: 'webex',
-      refId: 'room-1/msg-1',
-      content: 'the message',
-      metadata: expect.objectContaining({ kind: 'msg', roomId: 'room-1' }),
-      sourceAt: '2026-08-16T09:00:00Z',
-    }),
-    'room-1/msg-1',
-    { strict: true }
-  );
+  // Not an ingest of the message itself: the day is rebuilt as one
+  // transcript by the window sweep, for the WATCHER the event names.
+  expect(mockMarkDirty).toHaveBeenCalledWith('tenant-1', 'room-1', '2026-08-16', 'auth0|watcher');
   expect(mockFanOut).toHaveBeenCalledWith(
     { fake: 'db' },
     expect.anything(),
@@ -101,14 +94,14 @@ test('webex message: knowledge ingest enqueued strictly, then agents fan out', a
     })
   );
   // Ordering matters: a knowledge failure must throw BEFORE any run starts.
-  expect(mockEnqueueKnowledge.mock.invocationCallOrder[0]).toBeLessThan(
+  expect(mockMarkDirty.mock.invocationCallOrder[0]).toBeLessThan(
     mockFanOut.mock.invocationCallOrder[0]
   );
 });
 
 test('mail: no knowledge subscriber, agents still fan out', async () => {
   await createDomainDispatchHandler()(mailEvent());
-  expect(mockEnqueueKnowledge).not.toHaveBeenCalled();
+  expect(mockMarkDirty).not.toHaveBeenCalled();
   expect(mockFanOut).toHaveBeenCalledWith(
     expect.anything(),
     expect.anything(),
@@ -117,7 +110,7 @@ test('mail: no knowledge subscriber, agents still fan out', async () => {
 });
 
 test('a failed knowledge enqueue throws before agents are consulted', async () => {
-  mockEnqueueKnowledge.mockRejectedValue(new Error('queue down'));
+  mockMarkDirty.mockRejectedValue(new Error('queue down'));
   await expect(createDomainDispatchHandler()(webexEvent())).rejects.toThrow('queue down');
   expect(mockFanOut).not.toHaveBeenCalled();
 });
