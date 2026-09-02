@@ -98,14 +98,14 @@ export default async function ActionableCards({
               item.archived_at !== null ? 'opacity-70' : ''
             }`}
           >
-            <div className="flex justify-between gap-4">
-              <strong className="min-w-0">
+            <div className="flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-x-4">
+              <strong className="min-w-0 break-words">
                 {isPause && item.status === 'suggested' ? (
                   <PauseKindChip kind={item.kind === 'question' ? 'question' : 'approval'} />
                 ) : null}
                 {item.title}
               </strong>
-              <span className="whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+              <span className="text-sm text-gray-500 dark:text-gray-400 sm:whitespace-nowrap">
                 {item.agent_name ? `via ${item.agent_name}` : item.source} · {item.status}
                 {item.archived_at !== null && ' · archived'}
               </span>
