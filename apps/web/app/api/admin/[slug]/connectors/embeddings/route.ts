@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getDatabase } from '@renkei/db';
 import { parseEncryptionKey } from '@renkei/crypto';
+import { parseMaxDistance } from '@renkei/knowledge';
 import {
   getConnectorConfig,
   setConnectorConfig,
@@ -60,6 +61,11 @@ export async function GET(
     baseUrl: typeof config?.settings.baseUrl === 'string' ? config.settings.baseUrl : null,
     model: typeof config?.settings.model === 'string' ? config.settings.model : null,
     hasApiKey: Boolean(config?.secrets.apiKey),
+    queryPrefix:
+      typeof config?.settings.queryPrefix === 'string' ? config.settings.queryPrefix : '',
+    passagePrefix:
+      typeof config?.settings.passagePrefix === 'string' ? config.settings.passagePrefix : '',
+    maxDistance: parseMaxDistance(config?.settings.maxDistance),
   });
 }
 
@@ -94,6 +100,24 @@ export async function PUT(
   }
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
 
+  // Per-model retrieval calibration, stored beside the model it describes.
+  // Prefixes are kept verbatim (a trailing space is usually the point);
+  // the cutoff is a positive cosine distance or absent — blank clears it.
+  const queryPrefix = typeof body.queryPrefix === 'string' ? body.queryPrefix : '';
+  const passagePrefix = typeof body.passagePrefix === 'string' ? body.passagePrefix : '';
+  const rawMaxDistance = body.maxDistance;
+  const maxDistanceBlank =
+    rawMaxDistance === undefined ||
+    rawMaxDistance === null ||
+    (typeof rawMaxDistance === 'string' && !rawMaxDistance.trim());
+  const maxDistance = maxDistanceBlank ? null : parseMaxDistance(rawMaxDistance);
+  if (!maxDistanceBlank && (maxDistance === null || maxDistance > 2)) {
+    return NextResponse.json(
+      { error: 'maxDistance must be a cosine distance between 0 and 2, or blank' },
+      { status: 400 }
+    );
+  }
+
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
@@ -112,7 +136,11 @@ export async function PUT(
   const writeResult = await setConnectorConfig(
     tenantId,
     EMBEDDINGS_CONNECTOR,
-    { enabled, settings: { baseUrl, model }, secrets: { apiKey: mergedApiKey } },
+    {
+      enabled,
+      settings: { baseUrl, model, queryPrefix, passagePrefix, maxDistance },
+      secrets: { apiKey: mergedApiKey },
+    },
     keyResult.val
   );
   if (!writeResult.ok) {

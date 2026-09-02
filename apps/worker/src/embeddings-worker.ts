@@ -30,6 +30,8 @@ import {
   createKnowledgeReconcileDriveHandler,
   createKnowledgeEnrichItemHandler,
 } from './handlers/knowledge-ingest';
+import { createKnowledgeIngestWebexWindowHandler } from './handlers/webex-windows';
+import { createKnowledgeReindexBatchHandler } from './handlers/knowledge-reindex';
 import { logger, attachPersistentLogging } from './logger';
 
 function registerKnowledgeHandlers(): void {
@@ -40,6 +42,12 @@ function registerKnowledgeHandlers(): void {
   registerHandler(KNOWLEDGE_SOURCE, 'purge.prefix', createKnowledgePurgePrefixHandler());
   registerHandler(KNOWLEDGE_SOURCE, 'reconcile.drive', createKnowledgeReconcileDriveHandler());
   registerHandler(KNOWLEDGE_SOURCE, 'enrich.item', createKnowledgeEnrichItemHandler());
+  registerHandler(
+    KNOWLEDGE_SOURCE,
+    'ingest.webex-window',
+    createKnowledgeIngestWebexWindowHandler()
+  );
+  registerHandler(KNOWLEDGE_SOURCE, 'reindex.batch', createKnowledgeReindexBatchHandler());
   logger.info('knowledge handlers registered', { component: 'worker/embeddings-loop' });
 }
 

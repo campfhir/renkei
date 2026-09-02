@@ -126,6 +126,21 @@ export interface OrgSettings {
    * purges nothing while any tenant keeps the default.
    */
   logRetentionDays: number;
+  /**
+   * Whether the knowledge index asks the org's default LLM model for
+   * search keywords when it ingests an item (packages/knowledge/src/
+   * keywords.ts). Off by default: it is one model call per indexed item,
+   * which for a mailbox backfill is the dominant cost of ingestion, so an
+   * org opts in knowing that.
+   */
+  knowledgeKeywordEnrichment: boolean;
+  /**
+   * Items shorter than this many characters are not sent for keyword
+   * extraction. A one-line chat message or a two-sentence mail has nothing
+   * a model can add over its own words, and skipping it is the difference
+   * between paying per document and paying per message.
+   */
+  knowledgeKeywordMinChars: number;
 }
 
 /** The defaults formerly hardcoded in the environment schema. */
@@ -152,6 +167,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentApprovalMaxWaitDays: 14,
   contentPollMinutes: 15,
   logRetentionDays: 0,
+  knowledgeKeywordEnrichment: false,
+  knowledgeKeywordMinChars: 500,
 };
 
 const CACHE_TTL_MS = 60_000;
@@ -246,6 +263,12 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     ),
     contentPollMinutes: Number(coerce(stored.get('content_poll_minutes'), d.contentPollMinutes)),
     logRetentionDays: Number(coerce(stored.get('log_retention_days'), d.logRetentionDays)),
+    knowledgeKeywordEnrichment: Boolean(
+      coerce(stored.get('knowledge_keyword_enrichment'), d.knowledgeKeywordEnrichment)
+    ),
+    knowledgeKeywordMinChars: Number(
+      coerce(stored.get('knowledge_keyword_min_chars'), d.knowledgeKeywordMinChars)
+    ),
   };
 
   orgCache.set(tenantId, { value: settings, expiresAt: Date.now() + CACHE_TTL_MS });
@@ -284,6 +307,8 @@ export async function setOrgSettings(
     ['agent_approval_max_wait_days', updates.agentApprovalMaxWaitDays],
     ['content_poll_minutes', updates.contentPollMinutes],
     ['log_retention_days', updates.logRetentionDays],
+    ['knowledge_keyword_enrichment', updates.knowledgeKeywordEnrichment],
+    ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],
   ];
 
   for (const [key, value] of pairs) {

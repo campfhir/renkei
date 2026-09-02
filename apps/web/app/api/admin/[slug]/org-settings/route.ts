@@ -44,6 +44,10 @@ const NUMERIC_BOUNDS = {
   // switching notifications OFF is the per-user preference's job, not this
   // ceiling's. A year is the typo guard.
   agentNotificationRetentionDays: [1, 365],
+  // 0 sends every item for keyword extraction; the ceiling is well past
+  // the 12k chars the extractor shows the model, so a typo cannot turn
+  // enrichment into a no-op that looks switched on.
+  knowledgeKeywordMinChars: [0, 100_000],
 } as const;
 
 const NUMERIC_KEYS = [
@@ -62,9 +66,10 @@ const NUMERIC_KEYS = [
   'contentPollMinutes',
   'logRetentionDays',
   'agentNotificationRetentionDays',
+  'knowledgeKeywordMinChars',
 ] as const;
 
-const BOOLEAN_KEYS = ['readOnly', 'enableDcr'] as const;
+const BOOLEAN_KEYS = ['readOnly', 'enableDcr', 'knowledgeKeywordEnrichment'] as const;
 
 type EditableKey = keyof typeof NUMERIC_BOUNDS | (typeof BOOLEAN_KEYS)[number];
 
@@ -87,6 +92,8 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     contentPollMinutes: settings.contentPollMinutes,
     logRetentionDays: settings.logRetentionDays,
     agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
+    knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
+    knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
   };
 }
 

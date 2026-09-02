@@ -58,6 +58,7 @@ jest.mock('@renkei/connector-microsoft', () => ({
 jest.mock('@/lib/microsoft-app', () => ({ getMicrosoftApp: async () => null }));
 jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: async () => null,
+  resolveKnowledge: async () => null,
   searchKnowledge: async () => ({ ok: true, val: { hits: [], elided: 0 } }),
 }));
 jest.mock('../knowledge', () => ({ buildKnowledgeVerifiers: async () => new Map() }));

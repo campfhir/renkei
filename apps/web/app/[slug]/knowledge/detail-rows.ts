@@ -121,6 +121,8 @@ export function detailRows(hit: {
   refId: string;
   distance: number;
   metadata: Record<string, unknown>;
+  /** The LLM-extracted search terms, when enrichment ran for this item. */
+  keywords?: readonly string[];
 }): DetailRow[] {
   const rows: DetailRow[] = [
     { label: 'Source', value: hit.provider },
@@ -132,6 +134,12 @@ export function detailRows(hit: {
     const rendered = scalar(value);
     if (!rendered) continue;
     rows.push({ label: LABELS[key] ?? humanize(key), value: rendered });
+  }
+
+  // What the index thinks the item is about — the terms a keyword match
+  // may have landed on that the excerpt does not show.
+  if (hit.keywords && hit.keywords.length > 0) {
+    rows.push({ label: 'Keywords', value: hit.keywords.join(', ') });
   }
 
   // Last, and named for what it means rather than as a bare number: a

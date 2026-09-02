@@ -108,6 +108,10 @@ export const EXPECTED_MIGRATIONS = [
   '076-batch-jobs',
   '077-batch-job-messages-queue',
   '078-batch-job-scheduling',
+  '079-knowledge-search-text',
+  '080-knowledge-keywords',
+  '081-webex-dirty-windows',
+  '082-knowledge-reindex-runs',
 ];
 
 export interface MigrationStatus {

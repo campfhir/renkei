@@ -7,7 +7,7 @@
 // under jest); the client itself never touches the database.
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 
-import { OpenAiCompatibleEmbeddings, vectorLiteral } from './embeddings';
+import { OpenAiCompatibleEmbeddings, vectorLiteral, parseMaxDistance } from './embeddings';
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -88,7 +88,9 @@ describe('OpenAiCompatibleEmbeddings', () => {
         name: 'TimeoutError',
       })
     );
-    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm', 15_000);
+    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm', {
+      timeoutMs: 15_000,
+    });
     const result = await provider.embed(['a']);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.err.message).toBe('embeddings endpoint timed out after 15000ms');
@@ -109,7 +111,9 @@ describe('OpenAiCompatibleEmbeddings', () => {
           );
         })
     );
-    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm', 25);
+    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm', {
+      timeoutMs: 25,
+    });
     const started = Date.now();
     const result = await provider.embed(['a']);
     expect(result.ok).toBe(false);
@@ -121,5 +125,58 @@ describe('vectorLiteral', () => {
   it('formats the pgvector input form', () => {
     expect(vectorLiteral([0.1, -2, 3])).toBe('[0.1,-2,3]');
     expect(vectorLiteral([])).toBe('[]');
+  });
+});
+
+describe('instruction prefixes', () => {
+  function capturedInput(fetchMock: jest.SpyInstance): unknown {
+    const body = fetchMock.mock.calls[0]?.[1]?.body;
+    return typeof body === 'string' ? JSON.parse(body).input : undefined;
+  }
+
+  it('prefixes by purpose, verbatim, trailing space included', async () => {
+    const fetchMock = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse(200, { data: [{ embedding: [0.1] }] }));
+    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm', {
+      queryPrefix: 'query: ',
+      passagePrefix: 'passage: ',
+    });
+
+    await provider.embed(['printers'], 'query');
+    expect(capturedInput(fetchMock)).toEqual(['query: printers']);
+
+    fetchMock.mockClear();
+    await provider.embed(['the manual'], 'passage');
+    expect(capturedInput(fetchMock)).toEqual(['passage: the manual']);
+  });
+
+  it('defaults to the passage side, and to no prefix at all', async () => {
+    const fetchMock = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(jsonResponse(200, { data: [{ embedding: [0.1] }] }));
+    const bare = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm');
+    await bare.embed(['text']);
+    expect(capturedInput(fetchMock)).toEqual(['text']);
+
+    fetchMock.mockClear();
+    const prefixed = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm', {
+      passagePrefix: 'passage: ',
+    });
+    await prefixed.embed(['text']);
+    expect(capturedInput(fetchMock)).toEqual(['passage: text']);
+  });
+});
+
+describe('parseMaxDistance', () => {
+  it('accepts a finite positive number, as a number or a string', () => {
+    expect(parseMaxDistance(0.55)).toBe(0.55);
+    expect(parseMaxDistance('0.75')).toBe(0.75);
+  });
+
+  it('reads anything else as "no cutoff"', () => {
+    for (const value of [undefined, null, '', 'abc', 0, -1, Number.NaN, {}]) {
+      expect(parseMaxDistance(value)).toBeNull();
+    }
   });
 });

@@ -38,6 +38,7 @@ import { createWebexSentSweep, WEBEX_SENT_SWEEP_INTERVAL_MS } from './health/web
 import { withSweepLock } from './health/sweep-lock';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
+import { sweepWebexWindows, WEBEX_WINDOW_SWEEP_INTERVAL_MS } from './health/webex-windows';
 import {
   sweepMicrosoftSubscriptions,
   MICROSOFT_SUBSCRIPTION_INTERVAL_MS,
@@ -117,6 +118,14 @@ async function main(): Promise<void> {
       'content/watch-sweep',
       CONTENT_WATCH_INTERVAL_MS,
       withSweepLock('content-watches', sweepContentWatches)
+    ),
+    // One runner per pass: two replicas draining the same dirty windows
+    // would enqueue every rebuild twice.
+    schedulePeriodicSweep(
+      'webex windows',
+      'webex/window-sweep',
+      WEBEX_WINDOW_SWEEP_INTERVAL_MS,
+      withSweepLock('webex-windows', sweepWebexWindows)
     ),
     // Under the advisory lock like the provider sweeps: purge jobs are
     // resumable, but two replicas planning the same purge is still waste.

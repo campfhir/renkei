@@ -19,8 +19,19 @@ jest.mock('@renkei/provider-grants', () => ({
 }));
 jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
 jest.mock('@renkei/knowledge', () => ({
+  resolveKnowledge: jest.fn(),
   resolveEmbeddingProvider: jest.fn(),
   searchKnowledge: jest.fn(),
+  relevanceOf: (distance: number) => (distance < 0.4 ? 'good' : 'weak'),
+  RELEVANCE_LABELS: {
+    strong: 'Strong match',
+    good: 'Good match',
+    possible: 'Possible match',
+    weak: 'Weak match',
+  },
+  titleOf: (metadata: Record<string, unknown>) =>
+    ['subject', 'topic', 'title'].map((key) => metadata[key]).find((v) => typeof v === 'string') ??
+    '',
   NOTE_KNOWLEDGE_PROVIDER: 'note',
   createNoteAccessVerifier: () => ({ provider: 'note' }),
   noteRefId: (owner: string, id: string) => `${owner.toLowerCase()}/${id}`,
@@ -38,10 +49,10 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { registerKnowledgeTools } from './index';
 import type { MCPToolContext } from '../common';
 
-const { resolveEmbeddingProvider: mockResolveEmbedder, searchKnowledge: mockSearch } =
-  jest.requireMock<{ resolveEmbeddingProvider: jest.Mock; searchKnowledge: jest.Mock }>(
-    '@renkei/knowledge'
-  );
+const { resolveKnowledge: mockResolveEmbedder, searchKnowledge: mockSearch } = jest.requireMock<{
+  resolveKnowledge: jest.Mock;
+  searchKnowledge: jest.Mock;
+}>('@renkei/knowledge');
 
 interface Registered {
   config: { annotations?: { readOnlyHint?: boolean } };
@@ -103,7 +114,10 @@ describe('registerKnowledgeTools', () => {
   });
 
   it('returns hits and always reports the elided count', async () => {
-    mockResolveEmbedder.mockResolvedValue({ embed: async () => ({ ok: true, val: [[0.1]] }) });
+    mockResolveEmbedder.mockResolvedValue({
+      embedder: { embed: async () => ({ ok: true, val: [[0.1]] }) },
+      maxDistance: null,
+    });
     mockSearch.mockResolvedValue({
       ok: true,
       val: {
@@ -137,7 +151,10 @@ describe('registerKnowledgeTools', () => {
   });
 
   it('says "no accessible results" when the gate clears nothing', async () => {
-    mockResolveEmbedder.mockResolvedValue({ embed: async () => ({ ok: true, val: [[0.1]] }) });
+    mockResolveEmbedder.mockResolvedValue({
+      embedder: { embed: async () => ({ ok: true, val: [[0.1]] }) },
+      maxDistance: null,
+    });
     mockSearch.mockResolvedValue({ ok: true, val: { hits: [], elided: 3, unverified: 0 } });
     const { handler } = await register({ userEmail: 'outsider@example.com' });
 
@@ -152,7 +169,10 @@ describe('registerKnowledgeTools', () => {
     // The two read identically in a result list, and only one of them is a
     // statement about the user's access. Telling a model "you do not have
     // access" because a source was slow is a false statement it will repeat.
-    mockResolveEmbedder.mockResolvedValue({ embed: async () => ({ ok: true, val: [[0.1]] }) });
+    mockResolveEmbedder.mockResolvedValue({
+      embedder: { embed: async () => ({ ok: true, val: [[0.1]] }) },
+      maxDistance: null,
+    });
     mockSearch.mockResolvedValue({ ok: true, val: { hits: [], elided: 2, unverified: 2 } });
     const { handler } = await register({ userEmail: 'sam@example.com' });
 
@@ -163,7 +183,10 @@ describe('registerKnowledgeTools', () => {
   });
 
   it('surfaces a search failure as a tool error', async () => {
-    mockResolveEmbedder.mockResolvedValue({ embed: async () => ({ ok: true, val: [[0.1]] }) });
+    mockResolveEmbedder.mockResolvedValue({
+      embedder: { embed: async () => ({ ok: true, val: [[0.1]] }) },
+      maxDistance: null,
+    });
     mockSearch.mockResolvedValue({ ok: false, err: { type: 'EMBEDDING_FAILED' } });
     const { handler } = await register({ userEmail: 'sam@example.com' });
 

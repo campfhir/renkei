@@ -530,10 +530,28 @@ export interface KnowledgeChunks {
   created_at: Generated<Timestamp>;
   embedding: string;
   id: string;
+  keywords: string[] | null;
   metadata: Generated<Json>;
   provider: string;
   ref_id: string;
+  search_text: string | null;
   source_at: Timestamp | null;
+  tenant_id: string;
+}
+
+export interface KnowledgeReindexRuns {
+  created_at: Generated<Timestamp>;
+  cursor: string | null;
+  failed: Generated<number>;
+  finished_at: Timestamp | null;
+  id: string;
+  kind: string;
+  last_error: string | null;
+  processed: Generated<number>;
+  requested_by: string | null;
+  skipped: Generated<number>;
+  started_at: Timestamp | null;
+  status: Generated<string>;
   tenant_id: string;
 }
 
@@ -839,6 +857,14 @@ export interface UserPreferences {
   value: Json;
 }
 
+export interface WebexDirtyWindows {
+  day: string;
+  marked_at: Generated<Timestamp>;
+  room_id: string;
+  subject: string | null;
+  tenant_id: string;
+}
+
 export interface WebexSentMessages {
   account_id: string | null;
   created_at: Generated<Timestamp>;
@@ -900,6 +926,7 @@ export interface DB {
   identities: Identities;
   jira_sessions: JiraSessions;
   knowledge_chunks: KnowledgeChunks;
+  knowledge_reindex_runs: KnowledgeReindexRuns;
   llm_model_configs: LlmModelConfigs;
   log_attr: LogAttr;
   log_attr_blob: LogAttrBlob;
@@ -928,6 +955,7 @@ export interface DB {
   tool_calls: ToolCalls;
   upload_slots: UploadSlots;
   user_preferences: UserPreferences;
+  webex_dirty_windows: WebexDirtyWindows;
   webex_sent_messages: WebexSentMessages;
   webhook_subscriptions: WebhookSubscriptions;
 }
