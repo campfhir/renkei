@@ -44,6 +44,24 @@ function repoLine(repo: Record<string, unknown>): string {
   );
 }
 
+/**
+ * Code search doesn't paginate like everything else here: the response
+ * carries {size, page, pagelen}, never a `next` link (verified against
+ * docs/bitbucket-cloud-rest-api-open-api-spec.json — search_result_page has
+ * no `next` field), so the generic moreLine() above always saw an absent
+ * `next` and stayed silent even with hundreds of matches left unseen.
+ */
+function searchMoreLine(body: Record<string, unknown>, hint: string): string {
+  const size = Number(body.size);
+  const page = Number(body.page) || 1;
+  const pagelen = Number(body.pagelen);
+  if (!Number.isFinite(size) || !Number.isFinite(pagelen) || pagelen <= 0) return '';
+  const seen = page * pagelen;
+  if (seen >= size) return '';
+  const remaining = size - seen;
+  return `\n\n${remaining} more match${remaining === 1 ? '' : 'es'} across further pages — ${hint}`;
+}
+
 function commitLine(commit: Record<string, unknown>): string {
   const author = rec(commit.author);
   const who = str(rec(author.user).display_name) || str(author.raw);
@@ -396,25 +414,46 @@ export async function registerRepositoryTools(
       title: 'Bitbucket · Read — Browse a directory',
       description:
         'List the files and directories at a path in the repository, at a branch, tag, or ' +
-        'commit. Read a file’s content with bitbucket_read_file.',
+        'commit. Read a file’s content with bitbucket_read_file, or several at once with ' +
+        'bitbucket_read_files. Pass `maxDepth` > 1 to list an entire subtree in one call instead ' +
+        'of one call per directory — the fast way to inventory a codebase before reviewing it.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         workspace: workspaceArg,
         repoSlug: repoArg,
         ref: z.string().min(1).describe('Branch, tag, or commit hash'),
         path: z.string().describe('Directory path; default the repository root').optional(),
-        max: z.number().int().min(1).max(100).describe('How many entries (default 50)').optional(),
+        maxDepth: z
+          .number()
+          .int()
+          .min(1)
+          .max(25)
+          .describe(
+            'Recurse this many directory levels deep in one call (default 1, that directory ' +
+              'only). Use e.g. 25 to walk an entire subtree at once — entries below still come ' +
+              'back with their full path from the repository root.'
+          )
+          .optional(),
+        max: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .describe('How many entries per page (default 50; raise it for large/recursive trees)')
+          .optional(),
       }),
     },
     async (args: Record<string, any>) => {
       const max = typeof args.max === 'number' ? args.max : 50;
+      const maxDepth = typeof args.maxDepth === 'number' ? args.maxDepth : undefined;
       const path = str(args.path).replace(/^\/+/, '');
       const result = await bbJson(
         auth,
         bitbucketScopeFor('bitbucket_browse_source'),
         `${repoPath(str(args.workspace), str(args.repoSlug))}/src/${encodeURIComponent(str(args.ref))}/` +
           `${path.split('/').filter(Boolean).map(encodeURIComponent).join('/')}` +
-          `${path ? '/' : ''}?pagelen=${max}`
+          `${path ? '/' : ''}?pagelen=${max}` +
+          (maxDepth ? `&max_depth=${maxDepth}` : '')
       );
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map((entry) =>
@@ -423,7 +462,10 @@ export async function registerRepositoryTools(
           : `${str(entry.path)} (${num(entry.size) || '?'} bytes)`
       );
       if (lines.length === 0) return textResult('Empty directory.');
-      return textResult(lines.join('\n') + moreLine(result.body, 'raise max to see more.'));
+      return textResult(
+        lines.join('\n') +
+          moreLine(result.body, 'raise max to see more, or narrow path/maxDepth.')
+      );
     }
   );
 
@@ -458,26 +500,98 @@ export async function registerRepositoryTools(
   );
 
   server.registerTool(
+    'bitbucket_read_files',
+    {
+      title: 'Bitbucket · Read — Read multiple files',
+      description:
+        'The content of several files at once, at the same branch/tag/commit — fetched ' +
+        'concurrently server-side in a single round trip. This is the fast path for reviewing a ' +
+        'codebase: list a subtree with bitbucket_browse_source (maxDepth > 1), then pull the ' +
+        'files it names in batches here instead of one bitbucket_read_file call per file. A ' +
+        'file that fails to read is reported inline rather than failing the whole batch.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        workspace: workspaceArg,
+        repoSlug: repoArg,
+        ref: z.string().min(1).describe('Branch, tag, or commit hash'),
+        paths: z
+          .array(z.string().min(1))
+          .min(1)
+          .max(30)
+          .describe('File paths within the repository, up to 30 per call'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const workspace = str(args.workspace);
+      const repoSlug = str(args.repoSlug);
+      const ref = str(args.ref);
+      const paths = Array.isArray(args.paths)
+        ? [...new Set(args.paths.map((entry: unknown) => str(entry)).filter(Boolean))]
+        : [];
+      if (paths.length === 0) return errText('No paths given.');
+      const scopes = bitbucketScopeFor('bitbucket_read_files');
+      const base = repoPath(workspace, repoSlug);
+      const PER_FILE_CAP = 20_000;
+      const TOTAL_CAP = 180_000;
+      const fetched = await Promise.all(
+        paths.map(async (rawPath) => {
+          const path = rawPath.replace(/^\/+/, '');
+          const result = await bbRawText(
+            auth,
+            scopes,
+            `${base}/src/${encodeURIComponent(ref)}/` +
+              path.split('/').filter(Boolean).map(encodeURIComponent).join('/')
+          );
+          return result.ok
+            ? { path: rawPath, ok: true as const, text: result.text }
+            : { path: rawPath, ok: false as const, error: result.error };
+        })
+      );
+      let used = 0;
+      const sections = fetched.map((entry) => {
+        if (!entry.ok) return `=== ${entry.path} ===\nERROR: ${entry.error}`;
+        if (used >= TOTAL_CAP) {
+          return `=== ${entry.path} ===\n… (skipped — combined response cap reached; fetch this file on its own with bitbucket_read_file)`;
+        }
+        let text = entry.text;
+        if (text.length > PER_FILE_CAP) {
+          text = `${text.slice(0, PER_FILE_CAP)}\n… (file truncated at ${PER_FILE_CAP.toLocaleString()} characters)`;
+        }
+        if (used + text.length > TOTAL_CAP) {
+          text = `${text.slice(0, Math.max(0, TOTAL_CAP - used))}\n… (truncated — combined response cap reached)`;
+        }
+        used += text.length;
+        return `=== ${entry.path} ===\n${text || '(empty file)'}`;
+      });
+      return textResult(sections.join('\n\n'));
+    }
+  );
+
+  server.registerTool(
     'bitbucket_search_code',
     {
       title: 'Bitbucket · Read — Search code in a workspace',
       description:
         'Full-text code search across a workspace’s repositories. Supports the search ' +
-        'operators Bitbucket’s own search box does, e.g. `repo:api-server ext:ts fetchUser`.',
+        'operators Bitbucket’s own search box does, e.g. `repo:api-server ext:ts fetchUser`. ' +
+        'The response says how many matches remain when there are more than fit on one page — ' +
+        'raise `page` to keep going.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         workspace: workspaceArg,
         query: z.string().min(1).describe('Search terms'),
-        max: z.number().int().min(1).max(50).describe('How many matches (default 10)').optional(),
+        max: z.number().int().min(1).max(50).describe('How many matches per page (default 10)').optional(),
+        page: z.number().int().min(1).describe('Page of results, 1-based (default 1)').optional(),
       }),
     },
     async (args: Record<string, any>) => {
       const max = typeof args.max === 'number' ? args.max : 10;
+      const page = typeof args.page === 'number' ? args.page : 1;
       const result = await bbJson(
         auth,
         bitbucketScopeFor('bitbucket_search_code'),
         `/workspaces/${encodeURIComponent(str(args.workspace))}/search/code` +
-          `?search_query=${encodeURIComponent(str(args.query))}&pagelen=${max}`
+          `?search_query=${encodeURIComponent(str(args.query))}&pagelen=${max}&page=${page}`
       );
       if (!result.ok) return errText(result.error);
       const lines = values(result.body).map((match) => {
@@ -496,7 +610,9 @@ export async function registerRepositoryTools(
         return [`${repo} — ${str(file.path)}`, ...snippets].join('\n');
       });
       if (lines.length === 0) return textResult('No matches.');
-      return textResult(lines.join('\n\n') + moreLine(result.body, 'narrow the query.'));
+      return textResult(
+        lines.join('\n\n') + searchMoreLine(result.body, 'raise page or narrow the query.')
+      );
     }
   );
 
@@ -614,6 +730,89 @@ export async function registerRepositoryTools(
           },
         ],
         _meta: actMeta({ id: path, url }),
+      };
+    }
+  );
+
+  server.registerTool(
+    'bitbucket_commit_files',
+    {
+      title: 'Bitbucket · Act — Commit multiple file changes',
+      description:
+        'Write several files — add, overwrite, and/or delete — as a single commit on a branch. ' +
+        'The batch counterpart to bitbucket_commit_file: use this instead of one commit per file ' +
+        'when applying a multi-file change, so the branch never sits in a half-updated state ' +
+        'between pushes. For anything beyond a handful of text files, work through a clone instead.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        workspace: workspaceArg,
+        repoSlug: repoArg,
+        branch: z.string().min(1).describe('Branch to commit on (must exist)'),
+        files: z
+          .array(
+            z.object({
+              path: z.string().min(1).describe('File path within the repository'),
+              content: z.string().describe('The full new file content'),
+            })
+          )
+          .max(50)
+          .describe('Files to create or overwrite')
+          .optional(),
+        delete: z
+          .array(z.string().min(1))
+          .max(50)
+          .describe('File paths to delete')
+          .optional(),
+        message: z.string().min(1).describe('Commit message'),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const workspace = str(args.workspace);
+      const repoSlug = str(args.repoSlug);
+      const branch = str(args.branch);
+      const files: { path: string; content: string }[] = Array.isArray(args.files)
+        ? args.files
+            .map((entry: unknown) => ({
+              path: str(rec(entry).path).replace(/^\/+/, ''),
+              content: str(rec(entry).content),
+            }))
+            .filter((entry: { path: string }) => entry.path.length > 0)
+        : [];
+      const deletions: string[] = Array.isArray(args.delete)
+        ? args.delete.map((entry: unknown) => str(entry).replace(/^\/+/, '')).filter(Boolean)
+        : [];
+      if (files.length === 0 && deletions.length === 0) {
+        return errText('Nothing to commit — pass files to write and/or delete.');
+      }
+      // Same form-encoded /src endpoint as bitbucket_commit_file, one POST
+      // carrying every change: file fields keyed by path, `files` repeated
+      // once per deletion (Bitbucket's documented multi-file batching).
+      const form = new URLSearchParams();
+      for (const file of files) form.set(file.path, file.content);
+      for (const path of deletions) form.append('files', path);
+      form.set('message', str(args.message));
+      form.set('branch', branch);
+      const response = await auth.fetch(
+        bitbucketScopeFor('bitbucket_commit_files'),
+        `${repoPath(workspace, repoSlug)}/src`,
+        { method: 'POST', form }
+      );
+      if (!response.ok) return errText(await describeBitbucketFailure(response));
+      const url = `${repoUrl(workspace, repoSlug)}/src/${encodeURIComponent(branch)}`;
+      const summary = [
+        files.length > 0 ? `wrote ${files.length} file(s)` : '',
+        deletions.length > 0 ? `deleted ${deletions.length} file(s)` : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Committed to ${branch}: ${summary}.\n\n[Open in Bitbucket](${url})`,
+          },
+        ],
+        _meta: actMeta({ id: branch, url }),
       };
     }
   );

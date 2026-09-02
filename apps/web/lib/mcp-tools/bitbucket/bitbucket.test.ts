@@ -457,6 +457,134 @@ describe('repositories and source', () => {
     expect(result.content[0]?.text).toContain('#1 One [OPEN]');
     expect(result.content[0]?.text).toContain('More exist');
   });
+
+  it('lists a whole subtree in one call when maxDepth is set', async () => {
+    routes = [
+      {
+        match: '/src/main/',
+        body: {
+          values: [
+            { type: 'commit_file', path: 'src/index.ts', size: 120 },
+            { type: 'commit_file', path: 'src/lib/util.ts', size: 45 },
+            { type: 'commit_directory', path: 'src/lib' },
+          ],
+        },
+      },
+    ];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_browse_source')!({
+      workspace: 'acme',
+      repoSlug: 'api',
+      ref: 'main',
+      maxDepth: 25,
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('src/lib/util.ts');
+    const request = requests.find((entry) => entry.path.includes('/src/main/'));
+    expect(request?.path).toContain('max_depth=25');
+  });
+
+  it('does not pass max_depth when it is left unset', async () => {
+    routes = [{ match: '/src/main/', body: { values: [] } }];
+    const tools = await toolsOf();
+    await tools.get('bitbucket_browse_source')!({ workspace: 'acme', repoSlug: 'api', ref: 'main' });
+
+    const request = requests.find((entry) => entry.path.includes('/src/main/'));
+    expect(request?.path).not.toContain('max_depth');
+  });
+
+  it('reads multiple files concurrently, reporting a failed one inline', async () => {
+    routes = [
+      { match: '/src/main/src/index.ts', text: 'export const x = 1;' },
+      {
+        match: '/src/main/src/missing.ts',
+        status: 404,
+        body: { error: { message: 'Resource not found' } },
+      },
+    ];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_read_files')!({
+      workspace: 'acme',
+      repoSlug: 'api',
+      ref: 'main',
+      paths: ['src/index.ts', 'src/missing.ts'],
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content[0]?.text).toContain('=== src/index.ts ===\nexport const x = 1;');
+    expect(result.content[0]?.text).toContain('=== src/missing.ts ===\nERROR:');
+  });
+
+  it('commits multiple file writes and deletions in a single request', async () => {
+    routes = [{ match: '/src', method: 'POST', status: 201, text: '' }];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_commit_files')!({
+      workspace: 'acme',
+      repoSlug: 'api',
+      branch: 'main',
+      files: [
+        { path: 'docs/a.md', content: '# A' },
+        { path: 'docs/b.md', content: '# B' },
+      ],
+      delete: ['docs/old.md'],
+      message: 'Batch update docs',
+    });
+
+    expect(result.isError).not.toBe(true);
+    const post = requests.find((request) => request.method === 'POST');
+    const form = new URLSearchParams(post?.form ?? '');
+    expect(form.get('docs/a.md')).toBe('# A');
+    expect(form.get('docs/b.md')).toBe('# B');
+    expect(form.getAll('files')).toEqual(['docs/old.md']);
+    expect(form.get('message')).toBe('Batch update docs');
+    expect(form.get('branch')).toBe('main');
+  });
+
+  it('says how many more code search matches exist across further pages', async () => {
+    routes = [
+      {
+        match: '/search/code',
+        body: {
+          size: 45,
+          page: 1,
+          pagelen: 10,
+          values: [
+            {
+              file: { path: 'src/foo.py', commit: { repository: { full_name: 'acme/api' } } },
+              content_matches: [],
+            },
+          ],
+        },
+      },
+    ];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_search_code')!({ workspace: 'acme', query: 'foo' });
+
+    expect(result.content[0]?.text).toContain('35 more matches across further pages');
+  });
+
+  it('says nothing more once the last page of code search results is reached', async () => {
+    routes = [
+      {
+        match: '/search/code',
+        body: { size: 1, page: 1, pagelen: 10, values: [{ file: { path: 'a.py' } }] },
+      },
+    ];
+    const tools = await toolsOf();
+    const result = await tools.get('bitbucket_search_code')!({ workspace: 'acme', query: 'foo' });
+
+    expect(result.content[0]?.text).not.toContain('more match');
+  });
+
+  it('passes page through to the code search request', async () => {
+    routes = [{ match: '/search/code', body: { size: 1, page: 2, pagelen: 10, values: [] } }];
+    const tools = await toolsOf();
+    await tools.get('bitbucket_search_code')!({ workspace: 'acme', query: 'foo', page: 2 });
+
+    const request = requests.find((entry) => entry.path.includes('/search/code'));
+    expect(request?.path).toContain('page=2');
+  });
 });
 
 describe('projects and access', () => {
