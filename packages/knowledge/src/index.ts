@@ -58,6 +58,16 @@ export {
 export { titleOf, chunkContext, embeddingInput } from './context';
 
 export {
+  resolveKeywordExtractor,
+  createLlmKeywordExtractor,
+  parseKeywords,
+  keywordPrompt,
+  KEYWORD_INPUT_MAX_CHARS,
+  MAX_KEYWORDS,
+  type KeywordExtractor,
+} from './keywords';
+
+export {
   relevanceOf,
   RELEVANCE_LABELS,
   DEFAULT_RELEVANCE_BANDS,
@@ -95,6 +105,8 @@ export interface KnowledgeHit {
    */
   score: number;
   matched: MatchKind;
+  /** The object's LLM-extracted search terms (keywords.ts); empty when none were extracted. */
+  keywords: string[];
   /** The source document's own date, when the connector recorded one. */
   sourceAt: string | null;
 }
@@ -171,6 +183,7 @@ interface CandidateRow {
   metadata: unknown;
   distance: number;
   source_at: Date | string | null;
+  keywords?: unknown;
   /** Present on search rows; absent on browse rows. */
   score?: number | string | null;
   semantic_hit?: boolean | null;
@@ -285,6 +298,9 @@ function toHit(row: CandidateRow, contentKey: Buffer | null): KnowledgeHit {
     distance: Number(row.distance),
     score: Number.isFinite(score) ? score : 0,
     matched: matchKindOf(row),
+    keywords: Array.isArray(row.keywords)
+      ? row.keywords.filter((keyword): keyword is string => typeof keyword === 'string')
+      : [],
     sourceAt: sourceAtIso(row.source_at),
   };
 }
@@ -344,7 +360,7 @@ export async function listRecentKnowledge(
   // over the union would hand the whole budget to whichever source happens
   // to be most recent.
   const branch = (where: unknown) => sql`
-    (SELECT provider, ref_id, content, metadata, source_at, 0 AS distance
+    (SELECT provider, ref_id, content, metadata, keywords, source_at, 0 AS distance
      FROM knowledge_chunks
      WHERE tenant_id = ${options.tenantId}
        AND source_at IS NOT NULL
@@ -497,7 +513,7 @@ export async function searchKnowledge(
                  (lexical.id IS NOT NULL) AS lexical_hit
           FROM semantic FULL OUTER JOIN lexical ON semantic.id = lexical.id
         )
-        SELECT c.provider, c.ref_id, c.content, c.metadata, c.source_at,
+        SELECT c.provider, c.ref_id, c.content, c.metadata, c.keywords, c.source_at,
                COALESCE(fused.distance, c.embedding <=> ${vector}::vector) AS distance,
                fused.score, fused.semantic_hit, fused.lexical_hit
         FROM fused JOIN knowledge_chunks c ON c.id = fused.id

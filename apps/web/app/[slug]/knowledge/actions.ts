@@ -42,6 +42,8 @@ export interface KnowledgeSearchHit {
   score: number;
   /** Which retrieval arm(s) found it; `lexical` means the words matched, not the vector. */
   matched: MatchKind;
+  /** The item's LLM-extracted search terms; empty when enrichment did not run for it. */
+  keywords: string[];
   /**
    * The distance as a grade, computed HERE against the org's configured
    * cutoff so the client never needs the knowledge package (and the

@@ -66,6 +66,9 @@ export async function GET(
     passagePrefix:
       typeof config?.settings.passagePrefix === 'string' ? config.settings.passagePrefix : '',
     maxDistance: parseMaxDistance(config?.settings.maxDistance),
+    // Absent reads as on: enrichment is the default once an org has a
+    // default model, and the switch exists to turn it off.
+    keywordEnrichment: config?.settings.keywordEnrichment !== false,
   });
 }
 
@@ -118,6 +121,9 @@ export async function PUT(
     );
   }
 
+  const keywordEnrichment =
+    typeof body.keywordEnrichment === 'boolean' ? body.keywordEnrichment : true;
+
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
@@ -138,7 +144,7 @@ export async function PUT(
     EMBEDDINGS_CONNECTOR,
     {
       enabled,
-      settings: { baseUrl, model, queryPrefix, passagePrefix, maxDistance },
+      settings: { baseUrl, model, queryPrefix, passagePrefix, maxDistance, keywordEnrichment },
       secrets: { apiKey: mergedApiKey },
     },
     keyResult.val

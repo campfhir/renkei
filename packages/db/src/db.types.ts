@@ -530,6 +530,7 @@ export interface KnowledgeChunks {
   created_at: Generated<Timestamp>;
   embedding: string;
   id: string;
+  keywords: string[] | null;
   metadata: Generated<Json>;
   provider: string;
   ref_id: string;

@@ -1081,6 +1081,9 @@ importers:
       '@campfhir/safe-functions':
         specifier: ^0.1.3
         version: 0.1.3(eslint@10.8.0(jiti@2.7.0))(typescript@5.9.3)
+      '@renkei/agent-llm':
+        specifier: workspace:*
+        version: link:../agent-llm
       '@renkei/connector-config':
         specifier: workspace:*
         version: link:../connector-config

@@ -29,6 +29,13 @@ export interface KnowledgeChunkInput {
    * NULL reads as "undated" and a date filter excludes it.
    */
   sourceAt?: string | null;
+  /**
+   * The object's LLM-extracted search terms (keywords.ts), shared by every
+   * chunk of it. Omitted/null stores NULL ("not extracted"), which the
+   * reindex sweep later fills; an empty array stores as empty and is left
+   * alone ("extracted, nothing worth indexing").
+   */
+  keywords?: readonly string[] | null;
 }
 
 /**
@@ -48,16 +55,23 @@ function tsvector(text: string): RawBuilder<string> {
 }
 
 /**
- * The lexical index entry for one chunk: its document's title at weight A,
- * the chunk text at weight B, so a query naming a page ranks that page's
- * chunks above chunks that merely mention it. Built from PLAINTEXT — the
- * stored content is ciphertext, so this is the one place a chunk's words
- * reach Postgres in the clear, and the tsvector that results is a bag of
- * stemmed lexemes rather than the text itself. See migration 079 for the
- * at-rest trade-off that accepts.
+ * The lexical index entry for one chunk, three weights deep: the
+ * document's title at A, its extracted keywords at B, the chunk text at
+ * C. So a query naming a page ranks that page's chunks first, a query
+ * naming what a page is ABOUT ranks it next, and a chunk that merely
+ * mentions the words comes last. Built from PLAINTEXT — the stored content
+ * is ciphertext, so this is the one place a chunk's words reach Postgres
+ * in the clear, and the tsvector that results is a bag of stemmed lexemes
+ * rather than the text itself. See migration 079 for the at-rest
+ * trade-off that accepts.
  */
-export function searchTextFragment(title: string, content: string): RawBuilder<string> {
-  return sql<string>`setweight(${tsvector(title)}, 'A') || setweight(${tsvector(content)}, 'B')`;
+export function searchTextFragment(
+  title: string,
+  keywords: readonly string[] | null | undefined,
+  content: string
+): RawBuilder<string> {
+  const phrases = (keywords ?? []).join(', ');
+  return sql<string>`setweight(${tsvector(title)}, 'A') || setweight(${tsvector(phrases)}, 'B') || setweight(${tsvector(content)}, 'C')`;
 }
 
 /** An unparseable date is stored as NULL (undated) rather than throwing mid-ingest. */
@@ -97,7 +111,8 @@ export async function upsertChunkRow(
     return err('ENCRYPTION_FAILED' as const, { message: keyResult.err.message });
   }
   const storedContent = encryptContent(chunk.content, keyResult.val);
-  const searchText = searchTextFragment(titleOf(chunk.metadata), chunk.content);
+  const keywords = chunk.keywords ? [...chunk.keywords] : null;
+  const searchText = searchTextFragment(titleOf(chunk.metadata), keywords, chunk.content);
 
   const sourceAt = sourceAtValue(chunk.sourceAt);
   const result = await wrapAsync(
@@ -112,6 +127,7 @@ export async function upsertChunkRow(
           metadata: JSON.stringify(chunk.metadata),
           content: storedContent,
           embedding: sql`${vector}::vector`,
+          keywords,
           search_text: searchText,
           source_at: sourceAt,
         })
@@ -123,6 +139,7 @@ export async function upsertChunkRow(
             metadata: JSON.stringify(chunk.metadata),
             content: storedContent,
             embedding: sql`${vector}::vector`,
+            keywords,
             search_text: searchText,
             source_at: sourceAt,
           })

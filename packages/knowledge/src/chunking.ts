@@ -19,7 +19,9 @@ import type { Result } from '@campfhir/safe-functions/types';
 import { upsertChunkRow } from './ingest';
 import type { KnowledgeChunkInput } from './ingest';
 import type { EmbeddingProvider } from './embeddings';
-import { chunkContext, embeddingInput } from './context';
+import { chunkContext, embeddingInput, titleOf } from './context';
+import { resolveKeywordExtractor } from './keywords';
+import type { KeywordExtractor } from './keywords';
 
 export interface ChunkTextOptions {
   /** Hard per-chunk ceiling in characters. */
@@ -279,13 +281,39 @@ export async function ingestObjectChunks(
      * bare pieces.
      */
     context?: string;
+    /**
+     * Who extracts the object's search keywords (keywords.ts). Resolved
+     * from the org's configuration when omitted; pass null to index
+     * without them.
+     */
+    keywords?: KeywordExtractor | null;
   } = {}
-): Promise<Result<{ chunks: number }, 'EMBEDDING_FAILED' | 'DB_ERROR' | 'ENCRYPTION_FAILED'>> {
+): Promise<
+  Result<
+    { chunks: number; keywords: number },
+    'EMBEDDING_FAILED' | 'DB_ERROR' | 'ENCRYPTION_FAILED'
+  >
+> {
   const pieces = chunkText(object.content, options);
 
   const cleared = await deleteObjectChunks(tenantId, object.provider, object.refId);
   if (!cleared.ok) return cleared;
-  if (pieces.length === 0) return ok({ chunks: 0 });
+  if (pieces.length === 0) return ok({ chunks: 0, keywords: 0 });
+
+  // One extraction per object, before anything is written, so every chunk
+  // stores the same list. Enrichment only: a failed or absent extractor
+  // leaves `keywords` NULL for the reindex sweep and the object still
+  // indexes — an LLM outage must never stop the index from growing.
+  const extractor =
+    options.keywords === undefined ? await resolveKeywordExtractor(tenantId) : options.keywords;
+  let keywords: string[] | null = null;
+  if (extractor) {
+    const extracted = await extractor.extract({
+      title: titleOf(object.metadata),
+      content: object.content,
+    });
+    if (extracted.ok) keywords = extracted.val;
+  }
 
   const context = options.context ?? chunkContext(object.metadata);
   const inputs = embeddingInputs(pieces, context);
@@ -315,10 +343,11 @@ export async function ingestObjectChunks(
         // Every chunk of one document shares the document's date, so a date
         // filter can't return some chunks of an item and hide the rest.
         sourceAt: object.sourceAt,
+        keywords,
       },
       vectors[index] ?? []
     );
     if (!upserted.ok) return upserted;
   }
-  return ok({ chunks: pieces.length });
+  return ok({ chunks: pieces.length, keywords: keywords?.length ?? 0 });
 }

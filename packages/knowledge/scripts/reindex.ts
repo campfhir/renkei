@@ -1,11 +1,21 @@
 /**
- * Reindex sweep over knowledge_chunks, for the two retrieval changes that
+ * Reindex sweep over knowledge_chunks, for the retrieval changes that
  * altered what a stored row should carry:
  *
  *   --lexical   Backfill `search_text` (migration 079) for rows that have
  *               none. Needs only the content key: the tsvector is built
- *               from the decrypted chunk and its metadata title. Cheap, no
- *               provider calls, resumable — it only touches NULL rows.
+ *               from the decrypted chunk, its metadata title and whatever
+ *               keywords the row holds. Cheap, no provider calls,
+ *               resumable — it only touches NULL rows.
+ *
+ *   --keywords  Extract search keywords (migration 080, keywords.ts) for
+ *               every OBJECT whose rows have none, with the tenant's
+ *               default LLM model — one call per object, applied to all
+ *               its chunks — and rebuild each row's tsvector to carry them
+ *               at weight B. Costs one model call per object. Resumable:
+ *               only NULL rows are selected, and an object that yields
+ *               nothing is stamped with an empty list so it is not asked
+ *               again.
  *
  *   --embed     Recompute the vector of every MULTI-chunk row with the
  *               contextual header (context.ts) prepended, the way ingest
@@ -15,19 +25,21 @@
  *               ingest too, so they are already right and are skipped.
  *               Idempotent; re-running re-embeds, which is harmless.
  *
- * Neither is required for correctness: a row without `search_text` still
- * surfaces through the vector arm, and a chunk embedded without its
- * header still ranks — just worse. Re-syncing a source from its connector
- * achieves the same end for that source.
+ * None is required for correctness: a row without `search_text` still
+ * surfaces through the vector arm, a row without keywords still matches
+ * on its title and body, and a chunk embedded without its header still
+ * ranks — just worse. Re-syncing a source from its connector achieves
+ * the same end for that source.
  *
  * Run from packages/knowledge with DATABASE_URL, the content key
  * (CONTENT_ENCRYPTION_KEY or the TOKEN_ENCRYPTION_KEY fallback) and, for
- * --embed, TOKEN_ENCRYPTION_KEY (the connector config is encrypted with
- * it):
+ * --embed and --keywords, TOKEN_ENCRYPTION_KEY (the connector and model
+ * configs are encrypted with it):
  *
  *   DATABASE_URL=postgres://… pnpm reindex --lexical
+ *   DATABASE_URL=postgres://… pnpm reindex --keywords [--tenant <uuid>]
  *   DATABASE_URL=postgres://… pnpm reindex --embed [--tenant <uuid>]
- *   DATABASE_URL=postgres://… pnpm reindex --lexical --embed
+ *   DATABASE_URL=postgres://… pnpm reindex --lexical --keywords --embed
  */
 
 import { sql } from 'kysely';
@@ -35,29 +47,34 @@ import { getDatabase, closeDatabase } from '@renkei/db';
 import { contentEncryptionKey, decryptContent } from '@renkei/crypto';
 import {
   resolveEmbeddingProvider,
+  resolveKeywordExtractor,
   searchTextFragment,
   titleOf,
   chunkContext,
   embeddingInput,
   vectorLiteral,
 } from '../src/index';
-import type { EmbeddingProvider } from '../src/index';
+import type { EmbeddingProvider, KeywordExtractor } from '../src/index';
 
 const BATCH = 200;
+/** Objects per round of the keyword sweep. */
+const OBJECT_BATCH = 50;
 /** Pieces per embeddings request — the same bound ingest uses. */
 const EMBED_BATCH = 64;
 
 interface Args {
   lexical: boolean;
+  keywords: boolean;
   embed: boolean;
   tenant: string | null;
 }
 
 function parseArgs(argv: readonly string[]): Args {
-  const args: Args = { lexical: false, embed: false, tenant: null };
+  const args: Args = { lexical: false, keywords: false, embed: false, tenant: null };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--lexical') args.lexical = true;
+    else if (arg === '--keywords') args.keywords = true;
     else if (arg === '--embed') args.embed = true;
     else if (arg === '--tenant') {
       args.tenant = argv[index + 1] ?? null;
@@ -67,8 +84,8 @@ function parseArgs(argv: readonly string[]): Args {
       process.exit(2);
     }
   }
-  if (!args.lexical && !args.embed) {
-    console.error('nothing to do: pass --lexical, --embed, or both');
+  if (!args.lexical && !args.keywords && !args.embed) {
+    console.error('nothing to do: pass --lexical, --keywords, --embed, or a combination');
     process.exit(2);
   }
   return args;
@@ -82,17 +99,34 @@ function metadataOf(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
 }
 
-async function backfillLexical(key: Buffer, tenant: string | null): Promise<void> {
+function keywordsOf(value: unknown): string[] | null {
+  return Array.isArray(value)
+    ? value.filter((keyword): keyword is string => typeof keyword === 'string')
+    : null;
+}
+
+function requireDb() {
   const dbResult = getDatabase();
   if (!dbResult.ok) throw new Error('database unavailable');
-  const db = dbResult.val;
+  return dbResult.val;
+}
+
+async function tenantsWithChunks(tenant: string | null): Promise<string[]> {
+  const db = requireDb();
+  let query = db.selectFrom('knowledge_chunks').select('tenant_id').distinct();
+  if (tenant) query = query.where('tenant_id', '=', tenant);
+  return (await query.execute()).map((row) => row.tenant_id);
+}
+
+async function backfillLexical(key: Buffer, tenant: string | null): Promise<void> {
+  const db = requireDb();
 
   let total = 0;
   let skipped = 0;
   for (;;) {
     let query = db
       .selectFrom('knowledge_chunks')
-      .select(['id', 'content', 'metadata'])
+      .select(['id', 'content', 'metadata', 'keywords'])
       .where('search_text', 'is', null)
       .orderBy('id')
       .limit(BATCH);
@@ -115,7 +149,13 @@ async function backfillLexical(key: Buffer, tenant: string | null): Promise<void
       }
       await db
         .updateTable('knowledge_chunks')
-        .set({ search_text: searchTextFragment(titleOf(metadataOf(row.metadata)), opened.val) })
+        .set({
+          search_text: searchTextFragment(
+            titleOf(metadataOf(row.metadata)),
+            keywordsOf(row.keywords),
+            opened.val
+          ),
+        })
         .where('id', '=', row.id)
         .execute();
     }
@@ -128,14 +168,115 @@ async function backfillLexical(key: Buffer, tenant: string | null): Promise<void
   );
 }
 
+/** The logical object a chunk row belongs to: its ref before the `#0001` suffix. */
+const objectRef = sql<string>`regexp_replace(ref_id, '#[0-9]{4}$', '')`;
+
+async function extractKeywordsTenant(
+  tenantId: string,
+  extractor: KeywordExtractor,
+  key: Buffer
+): Promise<{ objects: number; failed: number }> {
+  const db = requireDb();
+
+  let objects = 0;
+  let failed = 0;
+  // Objects the model failed on are left NULL for a re-run, so they must
+  // be stepped over within this run or the sweep would spin on them.
+  const skip = new Set<string>();
+  for (;;) {
+    // Objects, not rows: one model call covers every chunk of an object.
+    const pending = await db
+      .selectFrom('knowledge_chunks')
+      .select(['provider', objectRef.as('object_ref')])
+      .where('tenant_id', '=', tenantId)
+      .where('keywords', 'is', null)
+      .groupBy(['provider', objectRef])
+      .orderBy('provider')
+      .orderBy(objectRef)
+      .limit(OBJECT_BATCH + skip.size)
+      .execute();
+    const todo = pending.filter((row) => !skip.has(`${row.provider} ${row.object_ref}`));
+    if (todo.length === 0) break;
+
+    for (const { provider, object_ref: ref } of todo) {
+      const rows = await db
+        .selectFrom('knowledge_chunks')
+        .select(['id', 'ref_id', 'content', 'metadata'])
+        .where('tenant_id', '=', tenantId)
+        .where('provider', '=', provider)
+        .where((eb) => eb.or([eb('ref_id', '=', ref), eb('ref_id', 'like', `${ref}#%`)]))
+        .orderBy('ref_id')
+        .execute();
+
+      const pieces: string[] = [];
+      let undecryptable = false;
+      for (const row of rows) {
+        const opened = decryptContent(row.content, key);
+        if (!opened.ok) {
+          undecryptable = true;
+          break;
+        }
+        pieces.push(opened.val);
+      }
+      const metadata = metadataOf(rows[0]?.metadata);
+      const title = titleOf(metadata);
+
+      // An object we cannot read gets an empty list so the sweep moves on;
+      // a model failure leaves NULL so a re-run retries it.
+      let keywords: string[] | null = undecryptable ? [] : null;
+      if (!undecryptable) {
+        const extracted = await extractor.extract({ title, content: pieces.join('\n\n') });
+        if (extracted.ok) keywords = extracted.val;
+        else {
+          failed += 1;
+          skip.add(`${provider} ${ref}`);
+          console.error(
+            `keywords [${tenantId}]: ${provider}/${ref}: ${extracted.err.message ?? 'failed'}`
+          );
+        }
+      }
+      if (keywords === null) continue;
+
+      for (const [index, row] of rows.entries()) {
+        await db
+          .updateTable('knowledge_chunks')
+          .set({
+            keywords,
+            search_text: searchTextFragment(title, keywords, pieces[index] ?? ''),
+          })
+          .where('id', '=', row.id)
+          .execute();
+      }
+      objects += 1;
+    }
+    console.log(`keywords [${tenantId}]: ${objects} object(s) enriched…`);
+  }
+  return { objects, failed };
+}
+
+async function extractKeywords(key: Buffer, tenant: string | null): Promise<void> {
+  for (const tenantId of await tenantsWithChunks(tenant)) {
+    const extractor = await resolveKeywordExtractor(tenantId);
+    if (!extractor) {
+      console.log(
+        `keywords [${tenantId}]: enrichment off (no default model, or switched off) — skipped`
+      );
+      continue;
+    }
+    const { objects, failed } = await extractKeywordsTenant(tenantId, extractor, key);
+    console.log(
+      `keywords [${tenantId}]: done — ${objects} object(s) enriched` +
+        (failed > 0 ? `, ${failed} failed (re-run to retry)` : '')
+    );
+  }
+}
+
 async function reembedTenant(
   tenantId: string,
   embedder: EmbeddingProvider,
   key: Buffer
 ): Promise<{ done: number; failed: number }> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-  const db = dbResult.val;
+  const db = requireDb();
 
   let done = 0;
   let failed = 0;
@@ -196,15 +337,7 @@ async function reembedTenant(
 }
 
 async function reembed(key: Buffer, tenant: string | null): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-  const db = dbResult.val;
-
-  let tenantQuery = db.selectFrom('knowledge_chunks').select('tenant_id').distinct();
-  if (tenant) tenantQuery = tenantQuery.where('tenant_id', '=', tenant);
-  const tenants = await tenantQuery.execute();
-
-  for (const { tenant_id: tenantId } of tenants) {
+  for (const tenantId of await tenantsWithChunks(tenant)) {
     const embedder = await resolveEmbeddingProvider(tenantId);
     if (!embedder) {
       console.log(`embed [${tenantId}]: no embedding provider configured — skipped`);
@@ -234,6 +367,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Keywords before lexical: a row the keyword sweep rebuilds already
+  // carries its tsvector, so the lexical pass then has less to do.
+  if (args.keywords) await extractKeywords(key, args.tenant);
   if (args.lexical) await backfillLexical(key, args.tenant);
   if (args.embed) await reembed(key, args.tenant);
 
