@@ -44,9 +44,11 @@ const LAYERS = [
 /**
  * Collapse repeats of the same tool in the same run into one card.
  *
- * A foreach loop transitioning forty issues is forty notifications, and
- * without this it is also forty toasts. The page still lists them
- * individually — this is only about what the corner shows.
+ * A foreach loop commenting on forty issues is forty notifications, and
+ * without this it is also forty toasts. The page still lists those
+ * individually — this is only about what the corner shows. (An act that is
+ * itself a batch — a bulk mail job — is already ONE tallied row per run by
+ * the time it gets here; see the worker's act-tally.ts.)
  */
 function coalesce(arrivals: AppNotification[]): { entry: AppNotification; extra: number }[] {
   const groups = new Map<string, { entry: AppNotification; extra: number }>();

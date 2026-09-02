@@ -76,6 +76,54 @@ describe('the curated catalog', () => {
   });
 });
 
+describe('the batch rule', () => {
+  it('marks the acts that are themselves batches, and only those', () => {
+    const coalesced = Object.entries(ACT_OUTCOMES)
+      .filter(([, d]) => d.coalesce === 'run')
+      .map(([tool]) => tool)
+      .sort();
+    // The test is the list on purpose: adding a batch act means saying so
+    // here, and flagging a per-item act (whose every call names a
+    // different thing worth its own link) fails loudly.
+    expect(coalesced).toEqual([
+      'jira_bulk_move_sprint_issues',
+      'jira_bulk_transition_issues',
+      'jira_bulk_update_issues',
+      'jsm_invite_customers_to_servicedesk',
+      'outlook_start_bulk_mail_job',
+    ]);
+  });
+
+  it('does not call a bulk mail job "sending" — it files, flags and marks; nothing goes out', () => {
+    // The wrong category is the wrong switch: someone who turned off
+    // "sent an email" alerts would silence archive sweeps, and someone who
+    // left it on read "Started sending a batch of email" over a mark-read.
+    const found = resolveAct('outlook_start_bulk_mail_job', 'act');
+    expect(found?.category).toBe('updated');
+    expect(found?.headline).not.toMatch(/send/i);
+    expect(ACT_OUTCOMES.outlook_start_bulk_mail_job?.short).not.toMatch(/send/i);
+  });
+
+  it('surfaces the rule on the resolved act, absent for a per-call act', () => {
+    expect(resolveAct('outlook_start_bulk_mail_job', 'act')?.coalesce).toBe('run');
+    expect(resolveAct('jira_bulk_transition_issues', 'act')?.coalesce).toBe('run');
+    expect(resolveAct('jira_create_issue', 'act')?.coalesce).toBeNull();
+    expect(resolveAct('some_new_tool', 'act')?.coalesce).toBeNull();
+  });
+
+  it('keeps the rule when the handler overrides the wording', () => {
+    // The receipt says WHICH batch was started; the descriptor still says
+    // it is one. Coalescing is keyed by headline downstream, so "marking
+    // read" and "archiving" become two tallied rows, not one.
+    const found = resolveAct('outlook_start_bulk_mail_job', 'act', {
+      [ACT_META_KEY]: { label: 'Started archiving a batch of email' },
+    });
+    expect(found?.headline).toBe('Started archiving a batch of email');
+    expect(found?.coalesce).toBe('run');
+    expect(found?.category).toBe('updated');
+  });
+});
+
 describe('actsByConnector', () => {
   it('groups every curated act under the catalog key for its tool', () => {
     const groups = actsByConnector();

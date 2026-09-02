@@ -20,6 +20,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import { BATCH_CHUNK_SIZE } from '@renkei/connector-microsoft';
+import { actMeta } from '@renkei/tool-outcomes';
 import type { MCPToolContext } from '../common';
 import type { GraphAuth } from '../graph/graph-auth';
 import { logger } from '@/lib/logger';
@@ -43,6 +44,37 @@ function strings(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === 'string' && !!entry)
     : [];
+}
+
+/**
+ * What the owner is told the job DID, by action — the receipt label that
+ * replaces the descriptor's generic "Started a bulk mail job".
+ *
+ * One tool, five acts, and the difference matters to the person reading
+ * the feed: "archiving" is the news, "started a job" is not. The selection
+ * (a sender, a folder) stays OUT of the sentence on purpose — a sweep over
+ * thirteen senders is thirteen identical sentences the feed folds into one
+ * tallied row, and a sender-per-headline would defeat that fold while
+ * putting a model-chosen argument in a headline. The run record keeps the
+ * arguments for anyone who wants them.
+ */
+export function bulkJobLabel(action: string, params: Record<string, unknown>): string {
+  switch (action) {
+    case 'markRead':
+      return params.isRead === false
+        ? 'Started marking a batch of email unread'
+        : 'Started marking a batch of email read';
+    case 'flag':
+      return 'Started flagging a batch of email';
+    case 'categorize':
+      return 'Started categorising a batch of email';
+    case 'move':
+      return 'Started filing a batch of email';
+    case 'archive':
+      return 'Started archiving a batch of email';
+    default:
+      return 'Started a bulk mail job';
+  }
 }
 
 /** A rough happy-path ETA; throttling can stretch it well past this. */
@@ -250,14 +282,19 @@ export function registerBulkJobTools(
           ? selection.maxMessages
           : DEFAULT_JOB_MESSAGES;
       const eta = etaSecondsFor(count, action === 'archive' || action === 'categorize');
-      return textResult(
-        `Accepted bulk ${action} job ${jobId}` +
-          (hasIds
-            ? ` over ${messageIds.length} messages.`
-            : ' (selection resolves when it runs).') +
-          ` Rough ETA ~${eta}s — longer if Outlook throttles.` +
-          ` Poll outlook_get_bulk_mail_job with this jobId for progress.`
-      );
+      return {
+        ...textResult(
+          `Accepted bulk ${action} job ${jobId}` +
+            (hasIds
+              ? ` over ${messageIds.length} messages.`
+              : ' (selection resolves when it runs).') +
+            ` Rough ETA ~${eta}s — longer if Outlook throttles.` +
+            ` Poll outlook_get_bulk_mail_job with this jobId for progress.`
+        ),
+        // No `id`: the job id is a uuid, and a headline reads "PROJ-1234",
+        // never "345bb9ca-…". The label is the whole receipt.
+        _meta: actMeta({ label: bulkJobLabel(action, params) }),
+      };
     }
   );
 

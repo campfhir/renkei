@@ -33,6 +33,17 @@
  * where a suspended tab simply cannot poll at all. Both come from this one
  * write, and the push is fired without being awaited — a slow or
  * unreachable push service must never add its latency to a run's step.
+ *
+ * ## Batches are one row per run, tallied
+ *
+ * An act whose descriptor says `coalesce: 'run'` (see `act-tally.ts`) is
+ * already a batch, and a loop over thirteen senders starting thirteen of
+ * them is one piece of news, not thirteen. The first call writes the row,
+ * sends the push and the email/WebEx copy; every later call with the same
+ * headline in the same run re-headlines that row with a count — "×13" —
+ * and sends nothing. The feed's `since` poll never re-fetches an updated
+ * row, which is the point: nothing new arrives, the existing card is
+ * simply right the next time it is read.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -49,6 +60,7 @@ import { parseEncryptionKey } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { logger } from './logger';
 import type { McpClient, McpToolInfo } from './mcp-client';
+import { createRunTally, talliedHeadline } from './act-tally';
 
 /**
  * Best-effort owner notifications through the run's own MCP tools — the
@@ -172,7 +184,11 @@ export interface Notifier {
   runFinished(status: 'succeeded' | 'failed', error: string | null): Promise<void>;
 }
 
-/** The whole reason this never throws — one place, one swallow. */
+/**
+ * The whole reason this never throws — one place, one swallow. Resolves
+ * whether the row exists, which only the tally cares about: a repeat must
+ * not try to re-headline a row that was never written.
+ */
 async function write(
   db: Kysely<DB>,
   context: NotifierContext,
@@ -186,9 +202,9 @@ async function write(
     refId?: string | null;
     refUrl?: string | null;
     stepId?: string | null;
-  }
-): Promise<void> {
-  const id = randomUUID();
+  },
+  id: string = randomUUID()
+): Promise<boolean> {
   try {
     await db
       .insertInto('agent_notifications')
@@ -217,7 +233,7 @@ async function write(
       runId: context.runId,
       error: error instanceof Error ? error.message : String(error),
     });
-    return;
+    return false;
   }
 
   // Fire-and-forget, deliberately not awaited: a push service's own latency
@@ -239,9 +255,39 @@ async function write(
       { log: (message, meta) => logger.warn(message, meta) }
     );
   }
+  return true;
+}
+
+/**
+ * The tally's second write: the same row, a bigger number. No push and no
+ * read_at reset — a person who already saw "×3" is not woken for "×4".
+ * Same swallow as `write`; the act happened either way.
+ */
+async function retally(
+  db: Kysely<DB>,
+  context: NotifierContext,
+  id: string,
+  headline: string
+): Promise<void> {
+  try {
+    await db
+      .updateTable('agent_notifications')
+      .set({ headline })
+      .where('id', '=', id)
+      .where('tenant_id', '=', context.tenantId)
+      .execute();
+  } catch (error) {
+    logger.warn('could not tally a notification for run {runId}', {
+      component: 'worker-agents/notifications',
+      tenantId: context.tenantId,
+      runId: context.runId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 export function createNotifier(db: Kysely<DB>, context: NotifierContext): Notifier {
+  const tally = createRunTally();
   return {
     async act(tool, kind, meta, stepId) {
       const resolved = resolveAct(tool, kind, meta);
@@ -253,22 +299,39 @@ export function createNotifier(db: Kysely<DB>, context: NotifierContext): Notifi
       const wantsWebex = wantsAct(context.prefs, resolved.connector, resolved.category, 'webex');
       if (!wantsApp && !wantsEmail && !wantsWebex) return;
 
-      if (wantsApp) {
-        await write(db, context, {
-          kind: 'act',
-          category: resolved.category,
-          connector: resolved.connector,
-          tool,
-          entity: resolved.entity,
-          headline: resolved.headline,
-          refId: resolved.id,
-          refUrl: resolved.url,
-          stepId,
+      const row = {
+        kind: 'act',
+        category: resolved.category,
+        connector: resolved.connector,
+        tool,
+        entity: resolved.entity,
+        headline: resolved.headline,
+        refId: resolved.id,
+        refUrl: resolved.url,
+        stepId,
+      };
+
+      if (resolved.coalesce === 'run') {
+        // Keyed by headline as well as tool: a sweep that marks read and
+        // then archives is two different sentences, and gets two rows.
+        // Claimed even when App is off, so the email/WebEx copy below is
+        // also once per run — the tally is the rule, the row is one of
+        // its outlets.
+        const outcome = await tally.record(`${tool}\n${resolved.headline}`, randomUUID(), {
+          insert: (id) => (wantsApp ? write(db, context, row, id) : Promise.resolve(false)),
+          update: (id, count) =>
+            retally(db, context, id, talliedHeadline(resolved.headline, count)),
         });
+        if (!outcome.first) return;
+      } else if (wantsApp) {
+        await write(db, context, row);
       }
 
       if ((wantsEmail || wantsWebex) && context.mcp && context.toolsByName) {
-        const { deliverOwnerNotifications } = notificationDeliverer(context.mcp, context.toolsByName);
+        const { deliverOwnerNotifications } = notificationDeliverer(
+          context.mcp,
+          context.toolsByName
+        );
         await deliverOwnerNotifications({
           email: wantsEmail,
           webex: wantsWebex,
