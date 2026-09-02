@@ -74,7 +74,11 @@ import {
   renderAgentMemory,
   renderAgentKnowledgeNotes,
 } from '@renkei/agents/memory';
-import { recordAgentRunFailure, recordAgentRunTokenUsage } from '@renkei/agents/runs';
+import {
+  captureAgentRunFailure,
+  recordAgentRunFailure,
+  recordAgentRunTokenUsage,
+} from '@renkei/agents/runs';
 import {
   ASK_PERSON_DEF,
   ASK_PERSON_TOOL,
@@ -3853,6 +3857,27 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const tally = await recordAgentRunFailure(db, run.tenant_id, run.agent_id);
       if (!tally.ok) {
         logger.warn('failure tally not recorded for run {runId}', {
+          component: 'worker-agents/engine',
+          runId: run.id,
+          tenantId: run.tenant_id,
+          agentId: run.agent_id,
+        });
+      }
+      // The per-failure record (migration 079): which step, what kind of
+      // error, what it cost — the evidence the optimizer reads and the
+      // usage page's attention list counts. Best effort, like the tally.
+      const captured = await captureAgentRunFailure(db, {
+        tenantId: run.tenant_id,
+        agentId: run.agent_id,
+        runId: run.id,
+        ownerSubject: run.owner_subject,
+        stepId: run.current_step_id,
+        stepName: failedStepNameOf(run),
+        errorKind,
+        error,
+      });
+      if (!captured.ok) {
+        logger.warn('failure record not captured for run {runId}', {
           component: 'worker-agents/engine',
           runId: run.id,
           tenantId: run.tenant_id,

@@ -27,6 +27,8 @@ import RunNowButton from './run-now-button';
 import RecentRuns from './recent-runs';
 import StepsOutline from './steps-outline';
 import SharedWithPanel from './shared-with-panel';
+import ImprovePanel from './improve-panel';
+import { latestOptimization } from '@/lib/agents/optimization-store';
 
 const TOOL_USAGE_WINDOW_DAYS = 30;
 
@@ -118,17 +120,29 @@ export default async function AgentOverviewPage({
   if (!access) notFound();
   const agent = access.agent;
 
-  const [recentRuns, invocations, settingsResult, ownerDisplay, tokenUsage, toolUsage] =
-    await Promise.all([
-      listRunsForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, { limit: 5 }),
-      invocationCountsOf(dbResult.val, tenant.id, agentId),
-      getOrgSettings(tenant.id),
-      access.viewerIsOwner
-        ? Promise.resolve(null)
-        : getIdentityDisplay(tenant.id, access.ownerSubject),
-      getAgentTokenUsage(dbResult.val, tenant.id, agentId),
-      getAgentToolUsage(dbResult.val, tenant.id, agentId, 'owner', TOOL_USAGE_WINDOW_DAYS),
-    ]);
+  const [
+    recentRuns,
+    invocations,
+    settingsResult,
+    ownerDisplay,
+    tokenUsage,
+    toolUsage,
+    optimization,
+  ] = await Promise.all([
+    listRunsForOwner(dbResult.val, tenant.id, access.ownerSubject, agentId, { limit: 5 }),
+    invocationCountsOf(dbResult.val, tenant.id, agentId),
+    getOrgSettings(tenant.id),
+    access.viewerIsOwner
+      ? Promise.resolve(null)
+      : getIdentityDisplay(tenant.id, access.ownerSubject),
+    getAgentTokenUsage(dbResult.val, tenant.id, agentId),
+    getAgentToolUsage(dbResult.val, tenant.id, agentId, 'owner', TOOL_USAGE_WINDOW_DAYS),
+    // The optimizer's latest report — the owner's only; a grantee gets
+    // null from the read itself and no panel below.
+    access.viewerIsOwner
+      ? latestOptimization(dbResult.val, tenant.id, access.ownerSubject, agentId)
+      : Promise.resolve(null),
+  ]);
   const reviewNotes = parseReviewNotes(agent.reviewNotes);
   // Same rule the agents list applies: a manual run of an event-only agent
   // starts with every trigger.* variable unbound, which is a confusing
@@ -297,6 +311,22 @@ export default async function AgentOverviewPage({
                   </li>
                 ))}
               </ul>
+            </div>
+          ) : null}
+
+          {access.viewerIsOwner ? (
+            /* Anchored so the usage page's "Improve" links land here. Open
+               by default when a report exists or a pass is running — the
+               owner followed a link to see it, not to find it. */
+            <div id="improve" className="scroll-mt-16">
+              <CollapsibleSection title="Improve" defaultOpen={optimization !== null}>
+                <ImprovePanel
+                  slug={slug}
+                  tenantId={tenant.id}
+                  agentId={agentId}
+                  initial={optimization}
+                />
+              </CollapsibleSection>
             </div>
           ) : null}
 

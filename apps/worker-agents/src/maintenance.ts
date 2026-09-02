@@ -226,3 +226,38 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
     }
   };
 }
+
+/**
+ * How long a captured failure (migration 079) is kept.
+ *
+ * Longer than the run it came from on purpose: the whole point of the
+ * table is to answer "has this agent been failing at the same step all
+ * quarter" after the runs themselves are gone. Not an org setting yet —
+ * one number, said here, is easier to reason about than a dial nobody has
+ * asked for. The rows hold a step name and a clipped error message, never
+ * arguments or results, so a quarter is a modest exposure.
+ */
+export const FAILURE_RETENTION_DAYS = 90;
+
+/**
+ * Prune captured failures past FAILURE_RETENTION_DAYS. Same bounded,
+ * idempotent DELETE shape as the run sweep — safe under N replicas.
+ */
+export function createFailureRetentionSweep(db: Kysely<DB>) {
+  return async function sweep(): Promise<void> {
+    const deleted = await sql<{ id: string }>`
+      DELETE FROM agent_run_failures WHERE id IN (
+        SELECT id FROM agent_run_failures
+        WHERE created_at < NOW() - make_interval(days => ${FAILURE_RETENTION_DAYS})
+        ORDER BY created_at
+        LIMIT ${RETENTION_BATCH}
+      ) RETURNING id
+    `.execute(db);
+    if (deleted.rows.length > 0) {
+      logger.info('retention pruned {count} captured failure(s)', {
+        component: 'worker-agents/failure-retention',
+        count: deleted.rows.length,
+      });
+    }
+  };
+}

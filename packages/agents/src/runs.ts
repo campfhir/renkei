@@ -236,3 +236,90 @@ export async function recordAgentRunTokenUsage(
   if (!result.ok) return err('DB_ERROR' as const, { cause: result.err });
   return ok(undefined);
 }
+
+export interface CaptureAgentRunFailureInput {
+  tenantId: string;
+  agentId: string;
+  runId: string;
+  ownerSubject: string;
+  /** Where execution was when it stopped, and that step's display name. */
+  stepId: string | null;
+  stepName: string | null;
+  errorKind: string | null;
+  error: string | null;
+}
+
+/**
+ * The per-failure record (migration 079) — what the counters' `failures`
+ * column cannot say: WHICH step, WHAT kind of error, and what the run had
+ * cost by then. Written once per run that finalizes as 'failed', beside
+ * recordAgentRunFailure and with the same best-effort posture.
+ *
+ * The cost figures and the attempt's outcome code are read back out of
+ * `agent_run_steps` here rather than threaded through the engine: the
+ * engine has already written every attempt row by the time it finalizes,
+ * and one aggregate query is cheaper to keep right than a running total
+ * carried across every code path that can end a run.
+ */
+export async function captureAgentRunFailure(
+  db: Kysely<DB>,
+  input: CaptureAgentRunFailureInput
+): Promise<Result<void, 'DB_ERROR'>> {
+  const result = await wrapAsync(async () => {
+    const [run, agent, spend, lastFailed] = await Promise.all([
+      db
+        .selectFrom('agent_runs')
+        .select('trigger_kind')
+        .where('id', '=', input.runId)
+        .executeTakeFirst(),
+      db
+        .selectFrom('agents')
+        .select('steps_version')
+        .where('tenant_id', '=', input.tenantId)
+        .where('id', '=', input.agentId)
+        .executeTakeFirst(),
+      db
+        .selectFrom('agent_run_steps')
+        .select(({ fn }) => [
+          fn.sum<string>('input_tokens').as('input_tokens'),
+          fn.sum<string>('output_tokens').as('output_tokens'),
+          fn.sum<string>('tool_call_count').as('tool_calls'),
+          fn.countAll<string>().as('attempts'),
+        ])
+        .where('run_id', '=', input.runId)
+        .executeTakeFirst(),
+      db
+        .selectFrom('agent_run_steps')
+        .select('outcome_code')
+        .where('run_id', '=', input.runId)
+        .where('status', '=', 'failed')
+        .orderBy('step_index', 'desc')
+        .orderBy('iteration', 'desc')
+        .orderBy('attempt', 'desc')
+        .executeTakeFirst(),
+    ]);
+
+    await db
+      .insertInto('agent_run_failures')
+      .values({
+        tenant_id: input.tenantId,
+        agent_id: input.agentId,
+        run_id: input.runId,
+        owner_subject: input.ownerSubject,
+        trigger_kind: run?.trigger_kind ?? 'manual',
+        step_id: input.stepId,
+        step_name: input.stepName ? input.stepName.slice(0, 200) : null,
+        error_kind: input.errorKind ? input.errorKind.slice(0, 32) : null,
+        outcome_code: lastFailed?.outcome_code ? lastFailed.outcome_code.slice(0, 64) : null,
+        error: input.error ? input.error.slice(0, 2000) : null,
+        input_tokens: Number(spend?.input_tokens ?? 0),
+        output_tokens: Number(spend?.output_tokens ?? 0),
+        tool_calls: Number(spend?.tool_calls ?? 0),
+        attempts: Number(spend?.attempts ?? 0),
+        steps_version: agent?.steps_version ?? null,
+      })
+      .execute();
+  }, 'DB_ERROR' as const);
+  if (!result.ok) return err('DB_ERROR' as const, { cause: result.err });
+  return ok(undefined);
+}

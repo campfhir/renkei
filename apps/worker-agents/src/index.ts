@@ -21,10 +21,13 @@ import { createEventLoop, schedulePeriodicSweep } from '@renkei/worker-loop';
 import { createAgentRunHandler } from './engine';
 import { createDraftHandler } from './draft';
 import { createDraftSweep, DRAFT_SWEEP_INTERVAL_MS } from './draft-sweep';
+import { createOptimizeHandler } from './optimize';
+import { createOptimizationSweep, OPTIMIZATION_SWEEP_INTERVAL_MS } from './optimization-sweep';
 import { createFinalizeHook } from './finalize';
 import { createScheduleSweep } from './schedule-sweep';
 import { createApprovalSweep, APPROVAL_SWEEP_MS } from './approval-sweep';
 import {
+  createFailureRetentionSweep,
   createNotificationRetentionSweep,
   createRetentionSweep,
   createStaleVersionSweep,
@@ -60,6 +63,7 @@ async function main(): Promise<void> {
 
   const db = dbResult.val;
   const handleDraft = createDraftHandler({ db, webBaseUrl: webBaseUrl() });
+  const handleOptimize = createOptimizeHandler({ db, webBaseUrl: webBaseUrl() });
   const handleRun = createAgentRunHandler({
     db,
     webBaseUrl: webBaseUrl(),
@@ -101,6 +105,15 @@ async function main(): Promise<void> {
       RETENTION_SWEEP_MS,
       createNotificationRetentionSweep(db)
     ),
+    // Captured failures outlive their runs by design (a quarter); this is
+    // the bound on that. Idempotent like the run sweep.
+    schedulePeriodicSweep(
+      logger,
+      'agent failure retention',
+      'worker-agents/failure-retention',
+      RETENTION_SWEEP_MS,
+      createFailureRetentionSweep(db)
+    ),
     schedulePeriodicSweep(
       logger,
       'stuck runs',
@@ -116,6 +129,14 @@ async function main(): Promise<void> {
       'worker-agents/draft-sweep',
       DRAFT_SWEEP_INTERVAL_MS,
       createDraftSweep(db)
+    ),
+    // The optimization twin of the draft sweep — same two halves.
+    schedulePeriodicSweep(
+      logger,
+      'agent optimizations',
+      'worker-agents/optimization-sweep',
+      OPTIMIZATION_SWEEP_INTERVAL_MS,
+      createOptimizationSweep(db)
     ),
     // Turns "saved in an older format" from silent never-firing into a
     // disabled agent plus a notification naming the fix. Idempotent by
@@ -151,6 +172,8 @@ async function main(): Promise<void> {
       if (event.type === 'run') return handleRun;
       // Drafting from prose: durable so the browser tab need not survive it.
       if (event.type === 'draft') return handleDraft;
+      // Failure analysis + revision brief: durable for the same reason.
+      if (event.type === 'optimize') return handleOptimize;
       return undefined;
     },
     logger,

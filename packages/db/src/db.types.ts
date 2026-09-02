@@ -139,6 +139,25 @@ export interface AgentNotifications {
   tool: string | null;
 }
 
+export interface AgentOptimizations {
+  agent_id: string;
+  applied_at: Timestamp | null;
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  error_detail: string | null;
+  finished_at: Timestamp | null;
+  id: Generated<string>;
+  input_tokens: Generated<number>;
+  output_tokens: Generated<number>;
+  owner_subject: string;
+  request: Json;
+  result: Json | null;
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface AgentRunCounters {
   agent_id: string;
   day: Timestamp;
@@ -147,6 +166,26 @@ export interface AgentRunCounters {
   output_tokens: Generated<number>;
   runs: Generated<number>;
   tenant_id: string;
+}
+
+export interface AgentRunFailures {
+  agent_id: string;
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  error_kind: string | null;
+  id: Generated<string>;
+  input_tokens: Generated<number>;
+  outcome_code: string | null;
+  output_tokens: Generated<number>;
+  owner_subject: string;
+  run_id: string | null;
+  step_id: string | null;
+  step_name: string | null;
+  steps_version: number | null;
+  tenant_id: string;
+  tool_calls: Generated<number>;
+  trigger_kind: string;
 }
 
 export interface AgentRuns {
@@ -873,7 +912,9 @@ export interface DB {
   agent_jobs_dead_letters: AgentJobsDeadLetters;
   agent_memories: AgentMemories;
   agent_notifications: AgentNotifications;
+  agent_optimizations: AgentOptimizations;
   agent_run_counters: AgentRunCounters;
+  agent_run_failures: AgentRunFailures;
   agent_run_steps: AgentRunSteps;
   agent_runs: AgentRuns;
   agent_trigger_firings: AgentTriggerFirings;

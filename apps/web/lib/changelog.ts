@@ -43,6 +43,30 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: null,
+    heading: 'Your usage, and agents that learn from their failures',
+    entries: [
+      {
+        kind: 'added',
+        title: 'A "My usage" page',
+        detail:
+          'One place for everything done as you: tokens your agents spend, how many runs they made and how many failed, and every tool call under your account. Pick a window from a week to a year and see the trend for tokens, runs, or tool calls, with a per-agent breakdown and tokens per run.',
+      },
+      {
+        kind: 'added',
+        title: 'Agent failures are captured, not just counted',
+        detail:
+          'When a run fails, Renkei now records which step it stopped at, what kind of failure it was, and what the run had cost. "My usage" lists the failures that keep recurring — the same agent stopping at the same step for the same reason — and links you to the fix.',
+      },
+      {
+        kind: 'added',
+        title: 'Improve an agent with your org’s model',
+        detail:
+          'On an agent you own, "Improve" asks the org’s model to read the agent’s recent failures and token spend and report what to change — for accuracy, reliability, and cost. "Draft these fixes" turns the report into a revision the builder offers you to review; nothing changes until you save it.',
+      },
+    ],
+  },
+  {
     date: '2026-09-02',
     heading: 'WebEx deep linking and desktop notifications',
     entries: [
