@@ -43,7 +43,25 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
-    date: null,
+    date: '2026-09-02',
+    heading: 'WebEx deep linking and desktop notifications',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Click notifications to open WebEx messages and receipts',
+        detail:
+          'Desktop notifications for WebEx actions now use webexteams:// deep links that open the message or receipt directly in WebEx when clicked.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Card headers wrap long titles on narrow screens',
+        detail:
+          'Agent and organization card headers no longer collapse when titles are long on mobile or narrow viewports.',
+      },
+    ],
+  },
+  {
+    date: '2026-09-02',
     heading: 'Smarter schedules: time windows and recurrence',
     entries: [
       {
@@ -61,7 +79,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Document processing with Mistral OCR',
     entries: [
       {
@@ -73,7 +91,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Run a scheduled agent without waiting',
     entries: [
       {
@@ -85,7 +103,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Agent knowledge you chose',
     entries: [
       {
@@ -109,7 +127,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Editing an agent from outside the builder',
     entries: [
       {
@@ -127,7 +145,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'OnBase stops spending licences it does not need',
     entries: [
       {
@@ -139,7 +157,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Connected tools show up when you connect them',
     entries: [
       {
@@ -151,7 +169,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Telling a step how hard to try',
     entries: [
       {
@@ -175,7 +193,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Fewer round trips looking things up',
     entries: [
       {
@@ -193,7 +211,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Bitbucket joins the Atlassian connectors',
     entries: [
       {
@@ -241,7 +259,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Bigger agents, threaded WebEx replies',
     entries: [
       {
@@ -259,7 +277,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Service Management requests agents raise',
     entries: [
       {
@@ -277,7 +295,7 @@ export const CHANGELOG: ChangelogRelease[] = [
     ],
   },
   {
-    date: null,
+    date: '2026-09-02',
     heading: 'Hyland OnBase joins the connectors',
     entries: [
       {
