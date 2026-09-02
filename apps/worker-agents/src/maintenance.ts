@@ -10,6 +10,7 @@ import { sql, type Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { CURRENT_STEPS_VERSION } from '@renkei/agents';
+import { recordAgentRunOutcome } from '@renkei/agents/runs';
 import { parseEncryptionKey } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { logger } from './logger';
@@ -111,7 +112,7 @@ export function createStuckRunJanitor(db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
     const stuck = await db
       .selectFrom('agent_runs')
-      .select(['id', 'tenant_id', 'started_at'])
+      .select(['id', 'tenant_id', 'agent_id', 'owner_subject', 'started_at'])
       .where('status', 'in', ['queued', 'running'])
       .where('created_at', '<', sql<Date>`NOW() - INTERVAL '2 hours'`)
       .limit(50)
@@ -138,6 +139,16 @@ export function createStuckRunJanitor(db: Kysely<DB>) {
         .where('id', '=', run.id)
         .where('status', 'in', ['queued', 'running'])
         .execute();
+      // The run log must agree: an abandoned run is a failed run there too.
+      await recordAgentRunOutcome(db, {
+        tenantId: run.tenant_id,
+        agentId: run.agent_id,
+        runId: run.id,
+        ownerSubject: run.owner_subject,
+        status: 'failed',
+        errorKind: 'timeout',
+        error: 'The run was abandoned — its job left the queue without finishing.',
+      });
       logger.warn('janitor closed abandoned run {runId}', {
         component: 'worker-agents/janitor',
         runId: run.id,
@@ -223,6 +234,59 @@ export function createStaleVersionSweep(db: Kysely<DB>) {
         agentId: agent.id,
         name: agent.name,
       });
+    }
+  };
+}
+
+/**
+ * Prune the usage ledgers — the run log (083) and the token ledger (085)
+ * — past each org's agentUsageRetentionDays. The run sweep's shape: one
+ * bounded, idempotent DELETE per table per tenant per pass. Longer than
+ * run retention by default (a year vs 30 days) because these are what
+ * make a year of usage readable after the runs are gone.
+ */
+export function createUsageRetentionSweep(db: Kysely<DB>) {
+  return async function sweep(): Promise<void> {
+    const tenants = await sql<{ tenant_id: string }>`
+      SELECT tenant_id FROM agent_run_log
+      UNION
+      SELECT tenant_id FROM llm_calls
+    `.execute(db);
+
+    for (const { tenant_id: tenantId } of tenants.rows) {
+      const settingsResult = await getOrgSettings(tenantId);
+      if (!settingsResult.ok) continue;
+      const days = settingsResult.val.agentUsageRetentionDays;
+
+      const runs = await sql<{ run_id: string }>`
+        DELETE FROM agent_run_log WHERE run_id IN (
+          SELECT run_id FROM agent_run_log
+          WHERE tenant_id = ${tenantId}
+            AND created_at < NOW() - make_interval(days => ${days})
+          ORDER BY created_at
+          LIMIT ${RETENTION_BATCH}
+        ) RETURNING run_id
+      `.execute(db);
+      const calls = await sql<{ id: string }>`
+        DELETE FROM llm_calls WHERE id IN (
+          SELECT id FROM llm_calls
+          WHERE tenant_id = ${tenantId}
+            AND created_at < NOW() - make_interval(days => ${days})
+          ORDER BY created_at
+          LIMIT ${RETENTION_BATCH}
+        ) RETURNING id
+      `.execute(db);
+      if (runs.rows.length > 0 || calls.rows.length > 0) {
+        logger.info(
+          'retention pruned {runs} run log row(s) and {calls} token ledger row(s) for tenant {tenantId}',
+          {
+            component: 'worker-agents/usage-retention',
+            tenantId,
+            runs: runs.rows.length,
+            calls: calls.rows.length,
+          }
+        );
+      }
     }
   };
 }

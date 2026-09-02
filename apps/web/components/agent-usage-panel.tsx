@@ -71,7 +71,9 @@ function formatMs(ms: number): string {
 
 function ToolsByConnector({ rows }: { rows: AgentToolUsageRow[] }) {
   if (rows.length === 0) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">No tool calls in this window.</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-gray-400">No tool calls in this window.</p>
+    );
   }
   const peak = Math.max(1, ...rows.map((row) => row.calls));
   const groups = new Map<string | null, AgentToolUsageRow[]>();
@@ -91,7 +93,11 @@ function ToolsByConnector({ rows }: { rows: AgentToolUsageRow[] }) {
         <div key={connector ?? 'other'}>
           <div className="mb-1.5 flex items-center gap-1.5">
             {connector ? (
-              <ConnectorIcon capabilityKey={connector} label={connectorLabel(connector)} size={16} />
+              <ConnectorIcon
+                capabilityKey={connector}
+                label={connectorLabel(connector)}
+                size={16}
+              />
             ) : null}
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               {connectorLabel(connector)}
@@ -137,13 +143,10 @@ export default function AgentUsagePanel({
   tokens,
   tools,
   toolWindowDays,
-  toolsPartial,
 }: {
   tokens: { input: UsageBuckets; output: UsageBuckets };
   tools: AgentToolUsageRow[];
   toolWindowDays: number;
-  /** True for an admin viewer: tool calls of a still-healthy attempt are redacted. */
-  toolsPartial: boolean;
 }): React.ReactNode {
   return (
     <div className="space-y-5">
@@ -153,12 +156,6 @@ export default function AgentUsagePanel({
           Tools used, last {toolWindowDays} days
         </p>
         <ToolsByConnector rows={tools} />
-        {toolsPartial ? (
-          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-            Counts only failed attempts — a working agent&apos;s tool calls are content, visible only
-            to its owner.
-          </p>
-        ) : null}
       </div>
     </div>
   );

@@ -1119,18 +1119,20 @@ export async function seed(client: Client): Promise<void> {
     [E2E_TENANT_ID, JSON.stringify({ accountId: 'e2e-jira-account' }), hoursAgo(3)]
   );
 
-  // Run tallies for the overview's Invocations panel: today, earlier this
+  // Run-log rows for the overview's Invocations panel: today, earlier this
   // week/month/year — enough spread that every bucket shows a distinct
-  // number. (Cleanup rides the tenant delete's cascade.)
+  // number. One row per run, as the engine writes them; the first
+  // `failures` of each day's runs are failed. (Cleanup rides the tenant
+  // delete's cascade.)
   await client.query(
-    `INSERT INTO agent_run_counters (tenant_id, agent_id, day, runs, failures) VALUES
-       ($1, $2, CURRENT_DATE, 3, 1),
-       ($1, $2, CURRENT_DATE - 2, 4, 0),
-       ($1, $2, CURRENT_DATE - 12, 6, 2),
-       ($1, $2, CURRENT_DATE - 70, 9, 0),
-       ($1, $2, CURRENT_DATE - 320, 20, 5)
-     ON CONFLICT (tenant_id, agent_id, day)
-     DO UPDATE SET runs = EXCLUDED.runs, failures = EXCLUDED.failures`,
+    `INSERT INTO agent_run_log (run_id, tenant_id, agent_id, owner_subject, trigger_kind, status, created_at, finished_at)
+     SELECT gen_random_uuid(), $1, $2, (SELECT owner_subject FROM agents WHERE id = $2), 'schedule',
+            CASE WHEN n <= spread.failures THEN 'failed' ELSE 'succeeded' END,
+            NOW() - make_interval(days => spread.days_ago, mins => n),
+            NOW() - make_interval(days => spread.days_ago, mins => n - 1)
+     FROM (VALUES (0, 3, 1), (2, 4, 0), (12, 6, 2), (70, 9, 0), (320, 20, 5))
+       AS spread(days_ago, runs, failures)
+     CROSS JOIN LATERAL generate_series(1, spread.runs) AS n`,
     [E2E_TENANT_ID, AGENT_RICH_ID]
   );
 

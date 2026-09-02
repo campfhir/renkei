@@ -139,6 +139,25 @@ export interface AgentNotifications {
   tool: string | null;
 }
 
+export interface AgentOptimizations {
+  agent_id: string;
+  applied_at: Timestamp | null;
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  error_detail: string | null;
+  finished_at: Timestamp | null;
+  id: Generated<string>;
+  input_tokens: Generated<number>;
+  output_tokens: Generated<number>;
+  owner_subject: string;
+  request: Json;
+  result: Json | null;
+  status: Generated<string>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
 export interface AgentRunCounters {
   agent_id: string;
   day: Timestamp;
@@ -147,6 +166,27 @@ export interface AgentRunCounters {
   output_tokens: Generated<number>;
   runs: Generated<number>;
   tenant_id: string;
+}
+
+export interface AgentRunLog {
+  agent_id: string;
+  attempts: Generated<number>;
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  error_kind: string | null;
+  finished_at: Timestamp | null;
+  input_tokens: Generated<number>;
+  outcome_code: string | null;
+  output_tokens: Generated<number>;
+  owner_subject: string;
+  run_id: string;
+  status: Generated<string>;
+  step_id: string | null;
+  step_name: string | null;
+  steps_version: number | null;
+  tenant_id: string;
+  tool_calls: Generated<number>;
+  trigger_kind: string;
 }
 
 export interface AgentRuns {
@@ -555,6 +595,19 @@ export interface KnowledgeReindexRuns {
   tenant_id: string;
 }
 
+export interface LlmCalls {
+  agent_id: string | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  input_tokens: Generated<number>;
+  output_tokens: Generated<number>;
+  purpose: string;
+  run_id: string | null;
+  step_id: string | null;
+  subject: string;
+  tenant_id: string;
+}
+
 export interface LlmModelConfigs {
   base_url: string | null;
   created_at: Generated<Timestamp>;
@@ -819,6 +872,7 @@ export interface TenantSettings {
 }
 
 export interface ToolCalls {
+  agent_id: string | null;
   connector: string | null;
   duration_ms: number;
   ended_at: Timestamp;
@@ -899,7 +953,9 @@ export interface DB {
   agent_jobs_dead_letters: AgentJobsDeadLetters;
   agent_memories: AgentMemories;
   agent_notifications: AgentNotifications;
+  agent_optimizations: AgentOptimizations;
   agent_run_counters: AgentRunCounters;
+  agent_run_log: AgentRunLog;
   agent_run_steps: AgentRunSteps;
   agent_runs: AgentRuns;
   agent_trigger_firings: AgentTriggerFirings;
@@ -927,6 +983,7 @@ export interface DB {
   jira_sessions: JiraSessions;
   knowledge_chunks: KnowledgeChunks;
   knowledge_reindex_runs: KnowledgeReindexRuns;
+  llm_calls: LlmCalls;
   llm_model_configs: LlmModelConfigs;
   log_attr: LogAttr;
   log_attr_blob: LogAttrBlob;

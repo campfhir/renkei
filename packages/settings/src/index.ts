@@ -77,6 +77,24 @@ export interface OrgSettings {
    */
   agentNotificationRetentionDays: number;
   /**
+   * How long the usage ledgers are kept: the per-run log (agent_run_log —
+   * status, timing, cost; on failure the step, the kind, a clipped
+   * message) and the per-call token ledger (llm_calls). Longer than run
+   * retention on purpose: they exist so a year of usage, and "which step
+   * has this agent been failing on all quarter", stay answerable after
+   * the runs themselves are pruned. Content-light (never arguments,
+   * results, or transcripts), but still an org policy.
+   */
+  agentUsageRetentionDays: number;
+  /**
+   * How far back the agent optimizer looks when it gathers evidence —
+   * captured failures, per-step token spend, recent failed runs. Wider
+   * sees more history; narrower reflects the agent as it is now after an
+   * edit. The failed-run samples it reads are bounded by run retention
+   * regardless.
+   */
+  agentOptimizerWindowDays: number;
+  /**
    * How deep an agent-triggers-agent chain may go. The queue's attempt
    * budget bounds retries, not fan-out; this is the fan-out bound.
    */
@@ -159,6 +177,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   redactionMrnFormats: [],
   agentRunRetentionDays: 30,
   agentNotificationRetentionDays: 14,
+  agentUsageRetentionDays: 365,
+  agentOptimizerWindowDays: 30,
   agentMaxChainDepth: 3,
   agentRunTimeoutMinutes: 15,
   agentMaxStepAttempts: 10,
@@ -249,6 +269,12 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
     agentRunRetentionDays: Number(
       coerce(stored.get('agent_run_retention_days'), d.agentRunRetentionDays)
     ),
+    agentUsageRetentionDays: Number(
+      coerce(stored.get('agent_usage_retention_days'), d.agentUsageRetentionDays)
+    ),
+    agentOptimizerWindowDays: Number(
+      coerce(stored.get('agent_optimizer_window_days'), d.agentOptimizerWindowDays)
+    ),
     agentMaxChainDepth: Number(coerce(stored.get('agent_max_chain_depth'), d.agentMaxChainDepth)),
     agentRunTimeoutMinutes: Number(
       coerce(stored.get('agent_run_timeout_minutes'), d.agentRunTimeoutMinutes)
@@ -299,6 +325,8 @@ export async function setOrgSettings(
     ['redaction_mrn_formats', updates.redactionMrnFormats],
     ['agent_run_retention_days', updates.agentRunRetentionDays],
     ['agent_notification_retention_days', updates.agentNotificationRetentionDays],
+    ['agent_usage_retention_days', updates.agentUsageRetentionDays],
+    ['agent_optimizer_window_days', updates.agentOptimizerWindowDays],
     ['agent_max_chain_depth', updates.agentMaxChainDepth],
     ['agent_run_timeout_minutes', updates.agentRunTimeoutMinutes],
     ['agent_max_step_attempts', updates.agentMaxStepAttempts],

@@ -104,6 +104,7 @@ export default function AppNav({
         { href: `/${slug}/agents`, label: 'Agents' },
         { href: `/${slug}/batch-jobs`, label: 'Batch Jobs' },
         { href: `/${slug}/usage`, label: 'Tools' },
+        { href: `/${slug}/utilization`, label: 'My usage' },
         // Mail review is deliberately unlinked, not removed: it is the only
         // place a person can correct how their own mail was classified, and
         // there is no admin equivalent by design. The route still works for

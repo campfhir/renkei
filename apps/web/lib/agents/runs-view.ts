@@ -412,8 +412,8 @@ export async function getAgentForAdmin(
 /**
  * Every agent in the org, or every agent owned by one person — the shared
  * query behind the oversight list and the people page's drill-down. Run and
- * failure tallies come from agent_run_counters on the page itself, not from
- * here: run ROWS are pruned by retention, counters are not.
+ * failure tallies come from the run log (agent_run_log) on the page itself,
+ * not from here: run ROWS are pruned by retention, the log is not.
  *
  * `ownerSubject: null` means every agent in the tenant; a subject narrows to
  * just theirs. Same "null is the only way to widen" shape `getAgentUsageSummaries`

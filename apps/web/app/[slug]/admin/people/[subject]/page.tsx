@@ -12,7 +12,11 @@ import LocalTime from '@/components/local-time';
 import AgentUsagePanel from '@/components/agent-usage-panel';
 import { friendlyToolName } from '@/lib/tool-name';
 import { listAgentsForOwner } from '@/lib/agents/runs-view';
-import { getAgentTokenUsage, getAgentToolUsage, getAgentTokenTrend } from '@/lib/agents/agent-usage';
+import {
+  getAgentTokenUsage,
+  getAgentToolUsage,
+  getAgentTokenTrend,
+} from '@/lib/agents/agent-usage';
 import { bucketTokenTrend, TREND_PERIODS } from './trend-window';
 import RevokeGrantButton from '../revoke-grant-button';
 import TokenTrendChart from './token-trend-chart';
@@ -110,8 +114,10 @@ export default async function PersonDetailPage({
   const agentIds = agents.map((agent) => agent.id);
   const [tokenBuckets, toolUsage, initialTrendDaily] = await Promise.all([
     getAgentTokenUsage(db, tenant.id, agentIds),
-    getAgentToolUsage(db, tenant.id, agentIds, 'admin', TOOL_USAGE_WINDOW_DAYS),
-    getAgentTokenTrend(db, tenant.id, agentIds, DEFAULT_PERIOD.days),
+    getAgentToolUsage(db, tenant.id, agentIds, TOOL_USAGE_WINDOW_DAYS),
+    // Server-rendered in UTC; the chart refetches in the browser's zone on
+    // its first interaction and says which zone it shows.
+    getAgentTokenTrend(db, tenant.id, agentIds, DEFAULT_PERIOD.days, 'UTC'),
   ]);
 
   const topTools = [...toolUsage].sort((a, b) => b.calls - a.calls).slice(0, 5);
@@ -120,8 +126,7 @@ export default async function PersonDetailPage({
   const fastest = [...timed].sort((a, b) => a.p95Ms - b.p95Ms)[0] ?? null;
   const totalCalls = toolUsage.reduce((sum, row) => sum + row.calls, 0);
   const totalErrors = toolUsage.reduce((sum, row) => sum + row.errors, 0);
-  const totalTokens =
-    tokenBuckets.input.allTime + tokenBuckets.output.allTime;
+  const totalTokens = tokenBuckets.input.allTime + tokenBuckets.output.allTime;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -191,15 +196,16 @@ export default async function PersonDetailPage({
       </section>
 
       <section className="mb-6">
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
-          Agents
-        </h2>
+        <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">Agents</h2>
         {agents.length === 0 ? (
           <p className="text-sm text-gray-400 dark:text-gray-600">No agents owned</p>
         ) : (
           <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 dark:divide-gray-900 dark:border-gray-800">
             {agents.map((agent) => (
-              <li key={agent.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+              <li
+                key={agent.id}
+                className="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+              >
                 <Link
                   href={`/${slug}/admin/agents/${agent.id}`}
                   className="min-w-0 truncate font-medium text-blue-600 hover:underline dark:text-blue-400"
@@ -266,7 +272,8 @@ export default async function PersonDetailPage({
               initial={{
                 periodKey: DEFAULT_PERIOD.key,
                 days: DEFAULT_PERIOD.days,
-                points: bucketTokenTrend(initialTrendDaily, DEFAULT_PERIOD.days, new Date()),
+                timeZone: 'UTC',
+                points: bucketTokenTrend(initialTrendDaily, DEFAULT_PERIOD.days, new Date(), 'UTC'),
               }}
             />
           </div>
@@ -308,7 +315,6 @@ export default async function PersonDetailPage({
               tokens={tokenBuckets}
               tools={toolUsage}
               toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
-              toolsPartial
             />
           </div>
         </section>

@@ -112,6 +112,11 @@ export const EXPECTED_MIGRATIONS = [
   '080-knowledge-keywords',
   '081-webex-dirty-windows',
   '082-knowledge-reindex-runs',
+  '083-agent-run-log',
+  '084-agent-optimizations',
+  '085-llm-calls',
+  '086-tool-calls-agent',
+  '087-usage-ledger-backfill',
 ];
 
 export interface MigrationStatus {

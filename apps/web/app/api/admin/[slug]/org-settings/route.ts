@@ -44,6 +44,12 @@ const NUMERIC_BOUNDS = {
   // switching notifications OFF is the per-user preference's job, not this
   // ceiling's. A year is the typo guard.
   agentNotificationRetentionDays: [1, 365],
+  // The usage ledgers hold ids, integers, and on failure a step name and a
+  // clipped error — no arguments or results; five years is the typo guard.
+  agentUsageRetentionDays: [1, 1_825],
+  // The optimizer's evidence window. A year is the typo guard; below a
+  // day there is nothing to analyze.
+  agentOptimizerWindowDays: [1, 365],
   // 0 sends every item for keyword extraction; the ceiling is well past
   // the 12k chars the extractor shows the model, so a typo cannot turn
   // enrichment into a no-op that looks switched on.
@@ -66,6 +72,8 @@ const NUMERIC_KEYS = [
   'contentPollMinutes',
   'logRetentionDays',
   'agentNotificationRetentionDays',
+  'agentUsageRetentionDays',
+  'agentOptimizerWindowDays',
   'knowledgeKeywordMinChars',
 ] as const;
 
@@ -92,6 +100,8 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     contentPollMinutes: settings.contentPollMinutes,
     logRetentionDays: settings.logRetentionDays,
     agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
+    agentUsageRetentionDays: settings.agentUsageRetentionDays,
+    agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
     knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,
   };

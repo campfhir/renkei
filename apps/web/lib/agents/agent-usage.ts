@@ -1,18 +1,20 @@
 /**
- * Per-agent usage: token spend and tool calls by connector.
+ * Per-agent usage: token spend, run tallies and tool calls, read from the
+ * timestamped ledgers — `llm_calls` (085) for tokens and `tool_calls`
+ * (032, agent-stamped by 086) for calls.
  *
- * Token totals come from the durable `agent_run_counters` rollup (migration
- * 072) — content-free, so both the owner and an admin get the exact same
- * numbers, and they survive the run-retention prune the way the oversight
- * page's run/failure buckets already do.
+ * Both are content-free by construction, so the owner and an admin get
+ * the SAME numbers: there is no per-audience redaction here any more,
+ * because nothing here can leak. (The earlier version read tool calls out
+ * of `agent_run_steps.detail`, which is content, and so had to show an
+ * admin only failed attempts' calls.) Both ledgers outlive run retention
+ * under the org's `agentUsageRetentionDays`, so a year-long window is
+ * safe to ask for.
  *
- * Tool-call counts are different: they are read straight out of
- * `agent_run_steps.detail.toolCalls`, which is CONTENT and obeys the same
- * visibility rule `runs-view.ts` applies everywhere else — an owner sees
- * every attempt's tool calls, an admin only a FAILED attempt's. That makes
- * this breakdown, unlike the token totals, bounded by retention and (for an
- * admin) partial by construction — the same tradeoff the run pages already
- * make, not a new one.
+ * Calendar buckets (today / this week / …) are cut on the database
+ * session's calendar (CURRENT_DATE), which is what these server-rendered
+ * panels have always shown; the trend series takes the viewer's zone,
+ * because its chart is refetched from the browser.
  */
 
 import { sql, type Kysely } from 'kysely';
@@ -52,8 +54,8 @@ const ZERO_BUCKETS: UsageBuckets = { today: 0, week: 0, month: 0, quarter: 0, ye
 
 /**
  * Token buckets for one agent (or a set of them, summed), calendar-shaped
- * like the run/failure buckets on the oversight page — the point of a
- * rollup like this is reading "this quarter" without caring where
+ * like the run buckets on the oversight page — the point of a ledger that
+ * outlives run retention is reading "this quarter" without caring where
  * retention's cutoff currently sits.
  */
 export async function getAgentTokenUsage(
@@ -65,19 +67,19 @@ export async function getAgentTokenUsage(
   if (ids.length === 0) return { input: ZERO_BUCKETS, output: ZERO_BUCKETS };
   const result = await sql<TokenBucketRow>`
     SELECT
-      COALESCE(SUM(input_tokens) FILTER (WHERE day = CURRENT_DATE), 0) AS in_today,
-      COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS in_week,
-      COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS in_month,
-      COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS in_quarter,
-      COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS in_year,
+      COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS in_today,
+      COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS in_week,
+      COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS in_month,
+      COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS in_quarter,
+      COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS in_year,
       COALESCE(SUM(input_tokens), 0) AS in_all_time,
-      COALESCE(SUM(output_tokens) FILTER (WHERE day = CURRENT_DATE), 0) AS out_today,
-      COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS out_week,
-      COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS out_month,
-      COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS out_quarter,
-      COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS out_year,
+      COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS out_today,
+      COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS out_week,
+      COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS out_month,
+      COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS out_quarter,
+      COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS out_year,
       COALESCE(SUM(output_tokens), 0) AS out_all_time
-    FROM agent_run_counters
+    FROM llm_calls
     WHERE tenant_id = ${tenantId} AND agent_id IN (${sql.join(ids)})
   `.execute(db);
   const row = result.rows[0];
@@ -112,52 +114,38 @@ export interface AgentToolUsageRow {
 }
 
 /**
- * Tool calls this agent (or a set of them, summed) made, grouped by tool —
- * over `days` (bounded by retention, since it reads live run rows). `free`
- * in-process calls (resolve_time, finish_step, ask_person) are excluded,
- * matching what `tool_call_count` already excludes.
- *
- * `audience: 'admin'` applies the SAME redaction runDetail does: only
- * FAILED attempts' tool calls are visible, so an admin's breakdown is
- * partial by construction, not a bug — the owner's is complete.
+ * Tool calls this agent (or a set of them, summed) made over `days`,
+ * grouped by tool — from `tool_calls`, where the MCP gateway records every
+ * call an agent run makes with the agent's id (086). Free in-process calls
+ * (resolve_time, finish_step, ask_person) never reach the gateway and so
+ * are never counted, matching what `tool_call_count` already excludes.
+ * Complete for every audience: the ledger holds names and timings only.
  */
 export async function getAgentToolUsage(
   db: Kysely<DB>,
   tenantId: string,
   agentId: string | readonly string[],
-  audience: 'owner' | 'admin',
   days = 30
 ): Promise<AgentToolUsageRow[]> {
   const ids = idsOf(agentId);
   if (ids.length === 0) return [];
-  const visibility = audience === 'admin' ? sql`AND s.status = 'failed'` : sql``;
-  const rows = await sql<{
-    tool: string;
-    calls: string;
-    errors: string;
-    median_ms: string | null;
-    p95_ms: string | null;
-  }>`
-    SELECT
-      elem->>'tool' AS tool,
-      COUNT(*) AS calls,
-      COUNT(*) FILTER (WHERE (elem->>'isError')::boolean) AS errors,
-      percentile_disc(0.5) WITHIN GROUP (ORDER BY (elem->>'durationMs')::numeric) AS median_ms,
-      percentile_disc(0.95) WITHIN GROUP (ORDER BY (elem->>'durationMs')::numeric) AS p95_ms
-    FROM agent_run_steps s
-    JOIN agent_runs r ON r.id = s.run_id
-    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.detail->'toolCalls', '[]'::jsonb)) AS elem
-    WHERE s.tenant_id = ${tenantId}
-      AND r.tenant_id = ${tenantId}
-      AND r.agent_id IN (${sql.join(ids)})
-      AND r.created_at >= NOW() - MAKE_INTERVAL(days => ${days})
-      AND COALESCE((elem->>'free')::boolean, false) = false
-      ${visibility}
-    GROUP BY tool
-    ORDER BY calls DESC
-  `.execute(db);
+  const rows = await db
+    .selectFrom('tool_calls')
+    .select([
+      'tool',
+      sql<string>`count(*)`.as('calls'),
+      sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
+      sql<string>`percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms)`.as('median_ms'),
+      sql<string>`percentile_disc(0.95) WITHIN GROUP (ORDER BY duration_ms)`.as('p95_ms'),
+    ])
+    .where('tenant_id', '=', tenantId)
+    .where('agent_id', 'in', ids)
+    .where('started_at', '>=', sql<Date>`NOW() - MAKE_INTERVAL(days => ${days})`)
+    .groupBy('tool')
+    .orderBy(sql`count(*)`, 'desc')
+    .execute();
 
-  return rows.rows.map((row) => ({
+  return rows.map((row) => ({
     tool: row.tool,
     connector: connectorKeyForTool(row.tool),
     calls: Number(row.calls),
@@ -181,11 +169,8 @@ export interface AgentUsageSummary {
  * section — the same window that page's period toggle already drives.
  *
  * `ownerSubject: null` means every agent in the tenant (an operator looking
- * tenant-wide); otherwise just that owner's own agents. It is the same
- * distinction `getAgentToolUsage`'s audience makes, applied across many
- * agents at once instead of one: tenant-wide, tool calls are counted only
- * on FAILED attempts (content an admin may see); an owner's own agents
- * count every attempt, because it is all their own content.
+ * tenant-wide); otherwise just that owner's own agents. Null is the only
+ * way to widen, so a forgotten argument narrows rather than leaks.
  */
 export async function getAgentUsageSummaries(
   db: Kysely<DB>,
@@ -198,39 +183,36 @@ export async function getAgentUsageSummaries(
   const agents = await agentQuery.orderBy('name').execute();
   if (agents.length === 0) return [];
   const agentIds = agents.map((agent) => agent.id);
+  const since = sql<Date>`NOW() - MAKE_INTERVAL(days => ${days})`;
 
-  const visibility = ownerSubject === null ? sql`AND s.status = 'failed'` : sql``;
-  const callRows = await sql<{ agent_id: string; calls: string; errors: string }>`
-    SELECT
-      r.agent_id,
-      COUNT(*) AS calls,
-      COUNT(*) FILTER (WHERE (elem->>'isError')::boolean) AS errors
-    FROM agent_run_steps s
-    JOIN agent_runs r ON r.id = s.run_id
-    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(s.detail->'toolCalls', '[]'::jsonb)) AS elem
-    WHERE s.tenant_id = ${tenantId}
-      AND r.tenant_id = ${tenantId}
-      AND r.agent_id IN (${sql.join(agentIds)})
-      AND r.created_at >= NOW() - MAKE_INTERVAL(days => ${days})
-      AND COALESCE((elem->>'free')::boolean, false) = false
-      ${visibility}
-    GROUP BY r.agent_id
-  `.execute(db);
+  const [callRows, tokenRows] = await Promise.all([
+    db
+      .selectFrom('tool_calls')
+      .select([
+        'agent_id',
+        sql<string>`count(*)`.as('calls'),
+        sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
+      ])
+      .where('tenant_id', '=', tenantId)
+      .where('agent_id', 'in', agentIds)
+      .where('started_at', '>=', since)
+      .groupBy('agent_id')
+      .execute(),
+    db
+      .selectFrom('llm_calls')
+      .select(({ fn }) => [
+        'agent_id',
+        fn.sum<string>('input_tokens').as('input_tokens'),
+        fn.sum<string>('output_tokens').as('output_tokens'),
+      ])
+      .where('tenant_id', '=', tenantId)
+      .where('agent_id', 'in', agentIds)
+      .where('created_at', '>=', since)
+      .groupBy('agent_id')
+      .execute(),
+  ]);
 
-  const tokenRows = await db
-    .selectFrom('agent_run_counters')
-    .select([
-      'agent_id',
-      (eb) => eb.fn.sum<string>('input_tokens').as('input_tokens'),
-      (eb) => eb.fn.sum<string>('output_tokens').as('output_tokens'),
-    ])
-    .where('tenant_id', '=', tenantId)
-    .where('agent_id', 'in', agentIds)
-    .where('day', '>=', sql<Date>`(NOW() - MAKE_INTERVAL(days => ${days}))::date`)
-    .groupBy('agent_id')
-    .execute();
-
-  const callsByAgent = new Map(callRows.rows.map((row) => [row.agent_id, row]));
+  const callsByAgent = new Map(callRows.map((row) => [row.agent_id, row]));
   const tokensByAgent = new Map(tokenRows.map((row) => [row.agent_id, row]));
 
   return agents
@@ -254,7 +236,7 @@ export async function getAgentUsageSummaries(
 }
 
 export interface DailyTokenPoint {
-  /** Calendar date, YYYY-MM-DD — the same shape agent_run_counters.day is stored in. */
+  /** Calendar date, YYYY-MM-DD, in the zone the series was asked for. */
   day: string;
   inputTokens: number;
   outputTokens: number;
@@ -265,31 +247,33 @@ export interface DailyTokenPoint {
  * person page's trend chart buckets into day/week/month, and the input the
  * chart's per-agent breakdown filters down to a single id.
  *
- * Reads `agent_run_counters` (durable, content-free), so a year-long window
- * is safe to ask for — unlike `getAgentToolUsage`, which reads live run rows
- * bounded by retention.
+ * Bucketed in `timeZone` — the viewer's, since the chart refetches from
+ * the browser. Grouped by the alias `day`, never a repeat of the
+ * expression: each `${timeZone}` is its own bound parameter, and a repeat
+ * is a different expression to Postgres.
  */
 export async function getAgentTokenTrend(
   db: Kysely<DB>,
   tenantId: string,
   agentId: string | readonly string[],
-  days: number
+  days: number,
+  timeZone: string
 ): Promise<DailyTokenPoint[]> {
   const ids = idsOf(agentId);
   if (ids.length === 0) return [];
   const rows = await db
-    .selectFrom('agent_run_counters')
-    .select([
-      sql<string>`to_char(day, 'YYYY-MM-DD')`.as('day'),
-      (eb) => eb.fn.sum<string>('input_tokens').as('input_tokens'),
-      (eb) => eb.fn.sum<string>('output_tokens').as('output_tokens'),
+    .selectFrom('llm_calls')
+    .select(({ fn }) => [
+      sql<string>`to_char(created_at AT TIME ZONE ${timeZone}, 'YYYY-MM-DD')`.as('day'),
+      fn.sum<string>('input_tokens').as('input_tokens'),
+      fn.sum<string>('output_tokens').as('output_tokens'),
     ])
     .where('tenant_id', '=', tenantId)
     .where('agent_id', 'in', ids)
     .where(
-      'day',
+      'created_at',
       '>=',
-      sql<Date>`(CURRENT_DATE - MAKE_INTERVAL(days => ${Math.max(0, days - 1)}))::date`
+      sql<Date>`((date_trunc('day', NOW() AT TIME ZONE ${timeZone}) - MAKE_INTERVAL(days => ${Math.max(0, days - 1)})) AT TIME ZONE ${timeZone})`
     )
     .groupBy(sql`day`)
     .orderBy(sql`day`, 'asc')

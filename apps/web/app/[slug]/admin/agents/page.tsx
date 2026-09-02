@@ -96,33 +96,39 @@ function toTokenOutBuckets(row: TokenBucketRow | undefined): RunBuckets {
   };
 }
 
+/**
+ * Run and failure buckets over the durable run log (migration 083), cut on
+ * the database session's calendar the way the per-day counters they
+ * replace were — the numbers exist to be read against the per-day cap.
+ */
 const BUCKET_COLUMNS = sql`
-  COALESCE(SUM(runs) FILTER (WHERE day = CURRENT_DATE), 0) AS today,
-  COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS week,
-  COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS month,
-  COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS quarter,
-  COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS year,
-  COALESCE(SUM(runs), 0) AS all_time,
-  COALESCE(SUM(failures) FILTER (WHERE day = CURRENT_DATE), 0) AS failed_today,
-  COALESCE(SUM(failures) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS failed_week,
-  COALESCE(SUM(failures) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS failed_month,
-  COALESCE(SUM(failures) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS failed_quarter,
-  COALESCE(SUM(failures) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS failed_year,
-  COALESCE(SUM(failures), 0) AS failed_all_time
+  COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) AS today,
+  COUNT(*) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)) AS week,
+  COUNT(*) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)) AS month,
+  COUNT(*) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)) AS quarter,
+  COUNT(*) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)) AS year,
+  COUNT(*) AS all_time,
+  COUNT(*) FILTER (WHERE status = 'failed' AND created_at::date = CURRENT_DATE) AS failed_today,
+  COUNT(*) FILTER (WHERE status = 'failed' AND created_at::date >= date_trunc('week', CURRENT_DATE)) AS failed_week,
+  COUNT(*) FILTER (WHERE status = 'failed' AND created_at::date >= date_trunc('month', CURRENT_DATE)) AS failed_month,
+  COUNT(*) FILTER (WHERE status = 'failed' AND created_at::date >= date_trunc('quarter', CURRENT_DATE)) AS failed_quarter,
+  COUNT(*) FILTER (WHERE status = 'failed' AND created_at::date >= date_trunc('year', CURRENT_DATE)) AS failed_year,
+  COUNT(*) FILTER (WHERE status = 'failed') AS failed_all_time
 `;
 
+/** The same buckets over the token ledger (migration 085). */
 const TOKEN_BUCKET_COLUMNS = sql`
-  COALESCE(SUM(input_tokens) FILTER (WHERE day = CURRENT_DATE), 0) AS in_today,
-  COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS in_week,
-  COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS in_month,
-  COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS in_quarter,
-  COALESCE(SUM(input_tokens) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS in_year,
+  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS in_today,
+  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS in_week,
+  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS in_month,
+  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS in_quarter,
+  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS in_year,
   COALESCE(SUM(input_tokens), 0) AS in_all_time,
-  COALESCE(SUM(output_tokens) FILTER (WHERE day = CURRENT_DATE), 0) AS out_today,
-  COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS out_week,
-  COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS out_month,
-  COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS out_quarter,
-  COALESCE(SUM(output_tokens) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS out_year,
+  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS out_today,
+  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS out_week,
+  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS out_month,
+  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS out_quarter,
+  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS out_year,
   COALESCE(SUM(output_tokens), 0) AS out_all_time
 `;
 
@@ -143,20 +149,27 @@ export default async function AdminAgentsPage({
   const agents = await listAgentsForAdmin(dbResult.val, tenant.id);
   const settingsResult = await getOrgSettings(tenant.id);
 
-  const totalsResult = await sql<BucketRow & TokenBucketRow>`
-    SELECT ${BUCKET_COLUMNS}, ${TOKEN_BUCKET_COLUMNS}
-    FROM agent_run_counters
-    WHERE tenant_id = ${tenant.id}
-  `.execute(dbResult.val);
+  const [totalsResult, tokenTotalsResult] = await Promise.all([
+    sql<BucketRow>`
+      SELECT ${BUCKET_COLUMNS}
+      FROM agent_run_log
+      WHERE tenant_id = ${tenant.id}
+    `.execute(dbResult.val),
+    sql<TokenBucketRow>`
+      SELECT ${TOKEN_BUCKET_COLUMNS}
+      FROM llm_calls
+      WHERE tenant_id = ${tenant.id}
+    `.execute(dbResult.val),
+  ]);
   const totals = toBuckets(totalsResult.rows[0]);
   const failureTotals = toFailureBuckets(totalsResult.rows[0]);
-  const tokenInTotals = toTokenInBuckets(totalsResult.rows[0]);
-  const tokenOutTotals = toTokenOutBuckets(totalsResult.rows[0]);
+  const tokenInTotals = toTokenInBuckets(tokenTotalsResult.rows[0]);
+  const tokenOutTotals = toTokenOutBuckets(tokenTotalsResult.rows[0]);
   const dailyCap = settingsResult.ok ? settingsResult.val.agentMaxRunsPerDay : null;
 
   const perAgentResult = await sql<BucketRow & { agent_id: string }>`
     SELECT agent_id, ${BUCKET_COLUMNS}
-    FROM agent_run_counters
+    FROM agent_run_log
     WHERE tenant_id = ${tenant.id}
     GROUP BY agent_id
   `.execute(dbResult.val);

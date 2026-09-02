@@ -78,6 +78,12 @@ export interface UsageContext {
   tenantId: string;
   /** OIDC subject; usage is attributed deliberately (see migration 032). */
   subject: string | null;
+  /**
+   * The acting agent when the caller is an agent-runner token (migration
+   * 086) — the subject stays the OWNER's; this says which of their agents
+   * made the call. Absent or null for a person's own calls.
+   */
+  agentId?: string | null;
 }
 
 function record(
@@ -97,6 +103,7 @@ function record(
       id: randomUUID(),
       tenant_id: context.tenantId,
       subject: context.subject,
+      agent_id: context.agentId ?? null,
       tool,
       connector: connectorKeyForTool(tool),
       status,

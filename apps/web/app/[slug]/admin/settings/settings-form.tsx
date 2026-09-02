@@ -21,6 +21,8 @@ export interface EditableSettings {
   contentPollMinutes: number;
   logRetentionDays: number;
   agentNotificationRetentionDays: number;
+  agentUsageRetentionDays: number;
+  agentOptimizerWindowDays: number;
   knowledgeKeywordEnrichment: boolean;
   knowledgeKeywordMinChars: number;
 }
@@ -194,6 +196,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
         >
           {numberInput('agentApprovalMaxWaitDays', '1–90')}
         </Row>
+        <Row
+          label="Optimizer window (days)"
+          hint="How far back 'Improve' looks when it reads an agent's failures and token spend (default 30). Wider sees more history; narrower judges the agent as it is now after an edit."
+        >
+          {numberInput('agentOptimizerWindowDays', '1–365')}
+        </Row>
       </Section>
 
       <Section title="Data & logs">
@@ -208,6 +216,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How long the record of what an agent did — filed this ticket, sent that email — is kept before it is pruned. This is the ceiling; each person chooses which of those they want to be told about at all."
         >
           {numberInput('agentNotificationRetentionDays', '1–365')}
+        </Row>
+        <Row
+          label="Usage ledger retention (days)"
+          hint="How long the record behind 'My usage' is kept: one row per agent run (status, timing, cost; on failure the step and a short message) and one per model call (token counts). Default a year — longer than run history on purpose, so usage stays readable after the runs are pruned."
+        >
+          {numberInput('agentUsageRetentionDays', '1–1,825')}
         </Row>
         <Row
           label="Log retention (days)"

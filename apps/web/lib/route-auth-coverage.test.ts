@@ -41,6 +41,9 @@ const NON_SESSION_AUTH: Record<string, string> = {
   'api/tenant/[tenantId]/agents/draft/[draftId]/run/route.ts':
     'agent-worker bearer (resolveAccessToken, application "agent"); the token names the ' +
     'subject the draft is built for, and the row is read under that subject',
+  'api/tenant/[tenantId]/agents/optimize/[optimizationId]/run/route.ts':
+    'agent-worker bearer (resolveAccessToken, application "agent"); the token names the ' +
+    'owner whose run history the analysis may read, and the row is read under that subject',
   'api/mcp/[tenantId]/oauth/token/route.ts':
     'OAuth token endpoint: client secret + PKCE code_verifier',
   'api/oauth/callback/route.ts': 'single-use OAuth state row bound to the pending authorization',
@@ -96,6 +99,8 @@ const REDIRECT_ONLY: Record<string, string> = {
 const GUARDED_BY_ACTION: Record<string, string> = {
   '[slug]/logs/page.tsx': 'searchLogs resolves the session and scope',
   '[slug]/usage/page.tsx': 'getUsageReport resolves the session and scope',
+  '[slug]/utilization/page.tsx':
+    "getUtilizationReport resolves the session; subject is the session's own",
 };
 
 function walk(dir: string, out: string[] = []): string[] {

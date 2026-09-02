@@ -136,17 +136,22 @@ export async function createAgentRun(
     return err('QUEUE_ERROR' as const);
   }
 
-  // The durable tally the overview's quarterly/yearly/all-time numbers read
-  // (migration 049): run ROWS are pruned by retention, counters are not.
-  // Best effort — a run that started must not fail over its bookkeeping.
+  // The durable run log (migration 083): one timestamped row per run, the
+  // ledger the usage page counts in the viewer's own day. Same best-effort
+  // posture; finalization upserts, so a missed insert still leaves a row.
   await wrapAsync(
     () =>
-      sql`
-        INSERT INTO agent_run_counters (tenant_id, agent_id, day, runs)
-        VALUES (${input.tenantId}, ${input.agentId}, CURRENT_DATE, 1)
-        ON CONFLICT (tenant_id, agent_id, day)
-        DO UPDATE SET runs = agent_run_counters.runs + 1
-      `.execute(db),
+      db
+        .insertInto('agent_run_log')
+        .values({
+          run_id: runId,
+          tenant_id: input.tenantId,
+          agent_id: input.agentId,
+          owner_subject: input.ownerSubject,
+          trigger_kind: input.triggerKind,
+          status: 'queued',
+        })
+        .execute(),
     'DB_ERROR' as const
   );
 
@@ -179,58 +184,162 @@ export async function findInProgressRun(
 }
 
 /**
- * The failure-side tally (migration 050), bumped when a run finalizes as
- * 'failed'. Lands on TODAY — the day the run became a failure — which may
- * be the day after its start was tallied; the columns are independent
- * counts, not a ratio of the same rows. Best effort like the run tally: a
- * finished run must not fail over its bookkeeping.
+ * Step ids are uuids in every current steps document, but the columns
+ * that carry them here are typed uuid and the source (`current_step_id`,
+ * `agent_run_steps.step_id`) is text — a malformed id must cost the
+ * step attribution, never the whole row.
  */
-export async function recordAgentRunFailure(
+function uuidOrNull(value: string | null | undefined): string | null {
+  return value && /^[0-9a-fA-F-]{36}$/.test(value) ? value : null;
+}
+
+export interface RecordAgentRunOutcomeInput {
+  tenantId: string;
+  agentId: string;
+  runId: string;
+  ownerSubject: string;
+  status: 'succeeded' | 'failed' | 'stopped' | 'canceled';
+  /** Where execution was when it stopped, and that step's display name. Failed runs only. */
+  stepId?: string | null;
+  stepName?: string | null;
+  errorKind?: string | null;
+  error?: string | null;
+}
+
+/**
+ * Finalize a run's row in the durable run log (migration 083): its
+ * outcome, and — when it failed — the step, the kind, the code and the
+ * clipped message; for every status, what the run cost. Written beside
+ * the counter tallies with the same best-effort posture.
+ *
+ * An upsert rather than an update: the log row is normally inserted at
+ * run creation, but that insert is itself best-effort, and a run that
+ * finished must still leave a record.
+ *
+ * The cost figures and the attempt's outcome code are read back out of
+ * `agent_run_steps` here rather than threaded through the engine: the
+ * engine has already written every attempt row by the time it finalizes,
+ * and one aggregate query is cheaper to keep right than a running total
+ * carried across every code path that can end a run.
+ */
+export async function recordAgentRunOutcome(
   db: Kysely<DB>,
-  tenantId: string,
-  agentId: string
+  input: RecordAgentRunOutcomeInput
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const result = await wrapAsync(
-    () =>
-      sql`
-        INSERT INTO agent_run_counters (tenant_id, agent_id, day, runs, failures)
-        VALUES (${tenantId}, ${agentId}, CURRENT_DATE, 0, 1)
-        ON CONFLICT (tenant_id, agent_id, day)
-        DO UPDATE SET failures = agent_run_counters.failures + 1
-      `.execute(db),
-    'DB_ERROR' as const
-  );
+  const failed = input.status === 'failed';
+  const result = await wrapAsync(async () => {
+    const [run, agent, spend, lastFailed] = await Promise.all([
+      db
+        .selectFrom('agent_runs')
+        .select(['trigger_kind', 'created_at'])
+        .where('id', '=', input.runId)
+        .executeTakeFirst(),
+      db
+        .selectFrom('agents')
+        .select('steps_version')
+        .where('tenant_id', '=', input.tenantId)
+        .where('id', '=', input.agentId)
+        .executeTakeFirst(),
+      db
+        .selectFrom('agent_run_steps')
+        .select(({ fn }) => [
+          fn.sum<string>('input_tokens').as('input_tokens'),
+          fn.sum<string>('output_tokens').as('output_tokens'),
+          fn.sum<string>('tool_call_count').as('tool_calls'),
+          fn.countAll<string>().as('attempts'),
+        ])
+        .where('run_id', '=', input.runId)
+        .executeTakeFirst(),
+      failed
+        ? db
+            .selectFrom('agent_run_steps')
+            .select('outcome_code')
+            .where('run_id', '=', input.runId)
+            .where('status', '=', 'failed')
+            .orderBy('step_index', 'desc')
+            .orderBy('iteration', 'desc')
+            .orderBy('attempt', 'desc')
+            .executeTakeFirst()
+        : Promise.resolve(undefined),
+    ]);
+
+    const stepId = failed ? uuidOrNull(input.stepId) : null;
+    const stepName = failed && input.stepName ? input.stepName.slice(0, 200) : null;
+    const errorKind = failed && input.errorKind ? input.errorKind.slice(0, 32) : null;
+    const outcomeCode = lastFailed?.outcome_code ? lastFailed.outcome_code.slice(0, 64) : null;
+    const error = failed && input.error ? input.error.slice(0, 2000) : null;
+    const inputTokens = Number(spend?.input_tokens ?? 0);
+    const outputTokens = Number(spend?.output_tokens ?? 0);
+    const toolCalls = Number(spend?.tool_calls ?? 0);
+    const attempts = Number(spend?.attempts ?? 0);
+    const stepsVersion = agent?.steps_version ?? null;
+
+    await sql`
+      INSERT INTO agent_run_log (
+        run_id, tenant_id, agent_id, owner_subject, trigger_kind, status, created_at, finished_at,
+        step_id, step_name, error_kind, outcome_code, error,
+        input_tokens, output_tokens, tool_calls, attempts, steps_version
+      ) VALUES (
+        ${input.runId}, ${input.tenantId}, ${input.agentId}, ${input.ownerSubject},
+        ${run?.trigger_kind ?? 'manual'}, ${input.status}, ${run?.created_at ?? sql`NOW()`}, NOW(),
+        ${stepId}, ${stepName}, ${errorKind}, ${outcomeCode}, ${error},
+        ${inputTokens}, ${outputTokens}, ${toolCalls}, ${attempts}, ${stepsVersion}
+      )
+      ON CONFLICT (run_id) DO UPDATE SET
+        status = excluded.status,
+        finished_at = excluded.finished_at,
+        step_id = excluded.step_id,
+        step_name = excluded.step_name,
+        error_kind = excluded.error_kind,
+        outcome_code = excluded.outcome_code,
+        error = excluded.error,
+        input_tokens = excluded.input_tokens,
+        output_tokens = excluded.output_tokens,
+        tool_calls = excluded.tool_calls,
+        attempts = excluded.attempts,
+        steps_version = excluded.steps_version
+    `.execute(db);
+  }, 'DB_ERROR' as const);
   if (!result.ok) return err('DB_ERROR' as const, { cause: result.err });
   return ok(undefined);
 }
 
+export interface RecordLlmCallInput {
+  tenantId: string;
+  /** Whose spend it is: the run's owner, or the person the call served. */
+  subject: string;
+  agentId: string | null;
+  runId?: string | null;
+  stepId?: string | null;
+  purpose: 'run' | 'optimize';
+  inputTokens: number;
+  outputTokens: number;
+}
+
 /**
- * The token-side tally (migration 072), bumped by the worker engine every
- * time an attempt's token spend is finalized — one call per
- * `agent_run_steps` row that records non-zero usage, same as that row's own
- * `input_tokens`/`output_tokens` columns (071). Lands on TODAY, not the
- * attempt's start day, matching recordAgentRunFailure. A no-op call (both
- * zero) still round-trips to the database; callers skip it themselves when
- * there is nothing to add. Best effort: a finished attempt must not fail
- * over its bookkeeping.
+ * One row in the token ledger (migration 085). Skipped when both counts
+ * are zero, like the counter tally; best effort, like everything here.
  */
-export async function recordAgentRunTokenUsage(
+export async function recordLlmCall(
   db: Kysely<DB>,
-  tenantId: string,
-  agentId: string,
-  inputTokens: number,
-  outputTokens: number
+  input: RecordLlmCallInput
 ): Promise<Result<void, 'DB_ERROR'>> {
+  if (input.inputTokens === 0 && input.outputTokens === 0) return ok(undefined);
   const result = await wrapAsync(
     () =>
-      sql`
-        INSERT INTO agent_run_counters (tenant_id, agent_id, day, runs, input_tokens, output_tokens)
-        VALUES (${tenantId}, ${agentId}, CURRENT_DATE, 0, ${inputTokens}, ${outputTokens})
-        ON CONFLICT (tenant_id, agent_id, day)
-        DO UPDATE SET
-          input_tokens = agent_run_counters.input_tokens + excluded.input_tokens,
-          output_tokens = agent_run_counters.output_tokens + excluded.output_tokens
-      `.execute(db),
+      db
+        .insertInto('llm_calls')
+        .values({
+          tenant_id: input.tenantId,
+          subject: input.subject,
+          agent_id: input.agentId,
+          run_id: input.runId ?? null,
+          step_id: uuidOrNull(input.stepId),
+          purpose: input.purpose,
+          input_tokens: input.inputTokens,
+          output_tokens: input.outputTokens,
+        })
+        .execute(),
     'DB_ERROR' as const
   );
   if (!result.ok) return err('DB_ERROR' as const, { cause: result.err });
