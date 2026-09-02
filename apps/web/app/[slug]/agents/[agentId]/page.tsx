@@ -26,6 +26,7 @@ import CopyMarkdownButton from './copy-markdown-button';
 import RunNowButton from './run-now-button';
 import RecentRuns from './recent-runs';
 import StepsOutline from './steps-outline';
+import SharedWithPanel from './shared-with-panel';
 
 const TOOL_USAGE_WINDOW_DAYS = 30;
 
@@ -322,6 +323,12 @@ export default async function AgentOverviewPage({
           <CollapsibleSection title="Memory">
             <MemoryPanel tenantId={tenant.id} agentId={agentId} />
           </CollapsibleSection>
+
+          {access.viewerIsOwner ? (
+            <CollapsibleSection title="Shared with">
+              <SharedWithPanel tenantId={tenant.id} agentId={agentId} />
+            </CollapsibleSection>
+          ) : null}
 
           <CollapsibleSection title="Invocations">
             <dl className="grid grid-cols-3 gap-2">

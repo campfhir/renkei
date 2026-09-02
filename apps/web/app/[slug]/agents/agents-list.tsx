@@ -22,6 +22,7 @@ import { Icon, ICONS } from '@/components/icons';
 import { triggerBadge, triggerSummary } from '@/lib/agents/trigger-summary';
 import AgentEnabledToggle from '@/components/agent-enabled-toggle';
 import ConfirmRunModal from './confirm-run-modal';
+import AccessCountBadge from './access-count-badge';
 
 function IconButton({
   label,
@@ -242,7 +243,9 @@ export function AgentsList({
               >
                 Shared by {sharedInfo.sharedBy}
               </span>
-            ) : null}
+            ) : (
+              <AccessCountBadge tenantId={tenantId} agentId={agent.id} />
+            )}
           </span>
           <AgentEnabledToggle tenantId={tenantId} agent={agent} onError={setError} />
         </div>
