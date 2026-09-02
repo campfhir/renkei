@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { getAgent } from '@/lib/agents/store';
 
