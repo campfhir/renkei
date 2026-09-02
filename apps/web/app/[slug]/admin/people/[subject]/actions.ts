@@ -18,11 +18,14 @@ import { getSessionFromCookies } from '@/lib/session';
 import { ROLE_OPERATOR } from '@/lib/access';
 import { getAgentTokenTrend } from '@/lib/agents/agent-usage';
 import { listAgentsForOwner } from '@/lib/agents/runs-view';
+import { safeTimeZone } from '../../../usage/window';
 import { resolveTrendDays, bucketTokenTrend, type TrendBucket } from './trend-window';
 
 export interface PersonTrendReport {
   periodKey: string;
   days: number;
+  /** The IANA zone the days are cut in. */
+  timeZone: string;
   points: TrendBucket[];
   error?: string;
   signedOut?: boolean;
@@ -32,10 +35,12 @@ export async function getPersonTokenTrend(
   tenantId: string,
   subject: string,
   periodKey: string,
-  agentId: string | null
+  agentId: string | null,
+  requestedTimeZone?: string
 ): Promise<PersonTrendReport> {
   const days = resolveTrendDays(periodKey);
-  const empty: PersonTrendReport = { periodKey, days, points: [] };
+  const timeZone = safeTimeZone(requestedTimeZone);
+  const empty: PersonTrendReport = { periodKey, days, timeZone, points: [] };
 
   const session = await getSessionFromCookies(tenantId);
   if (!session) return { ...empty, error: 'Sign in again', signedOut: true };
@@ -52,8 +57,13 @@ export async function getPersonTokenTrend(
     const ownedIds = agents.map((agent) => agent.id);
     const targetIds = agentId && ownedIds.includes(agentId) ? [agentId] : ownedIds;
 
-    const daily = await getAgentTokenTrend(db, tenantId, targetIds, days);
-    return { periodKey, days, points: bucketTokenTrend(daily, days, new Date()) };
+    const daily = await getAgentTokenTrend(db, tenantId, targetIds, days, timeZone);
+    return {
+      periodKey,
+      days,
+      timeZone,
+      points: bucketTokenTrend(daily, days, new Date(), timeZone),
+    };
   } catch (error) {
     return { ...empty, error: error instanceof Error ? error.message : 'Could not read usage' };
   }

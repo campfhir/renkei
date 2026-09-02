@@ -6,11 +6,10 @@
  * Unlike the usage page's day-only trend, this one spans up to a year, so a
  * year drawn as 365 daily bars would be unreadable. The bucket widens with
  * the period: still daily up to a month, weekly for a quarter, monthly for
- * a year. Dates are stepped as UTC calendar days throughout — the source
- * rows (`agent_run_counters.day`) carry no timezone of their own (they are
- * already CURRENT_DATE-bucketed in Postgres, same as the token bucket
- * totals elsewhere in this file's siblings), so there is no viewer zone to
- * convert against here.
+ * a year. The source rows (`llm_calls`, cut into days by the query in the
+ * viewer's zone) arrive as YYYY-MM-DD strings; today is read in that same
+ * zone and the window stepped as UTC midnights purely as calendar
+ * arithmetic, so a DST boundary cannot drop or duplicate a day.
  */
 
 export interface TrendPeriod {
@@ -59,15 +58,29 @@ export interface TrendBucket {
   outputTokens: number;
 }
 
-/** UTC calendar date, YYYY-MM-DD, `back` days before `now`. */
-function utcDay(now: Date, back: number): string {
-  const at = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+/** Calendar date in `timeZone`, YYYY-MM-DD, `back` days before `now`. */
+function localDay(now: Date, back: number, timeZone: string): string {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+  const at = new Date(`${today}T00:00:00Z`);
   at.setUTCDate(at.getUTCDate() - back);
   return at.toISOString().slice(0, 10);
 }
 
-const SHORT_DATE = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
-const SHORT_MONTH = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+const SHORT_DATE = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  timeZone: 'UTC',
+});
+const SHORT_MONTH = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
 
 /** The bucket key a given day falls into, for the chosen granularity. */
 function bucketKeyOf(day: string, granularity: Granularity): string {
@@ -95,13 +108,18 @@ function labelOf(bucket: string, granularity: Granularity): string {
  * came between them. Zero-filling every calendar day first, then grouping,
  * is what keeps a quiet week honestly flat instead of invisible.
  */
-export function bucketTokenTrend(rows: DailyTokenRow[], days: number, now: Date): TrendBucket[] {
+export function bucketTokenTrend(
+  rows: DailyTokenRow[],
+  days: number,
+  now: Date,
+  timeZone: string
+): TrendBucket[] {
   const found = new Map(rows.map((row) => [row.day, row]));
   const granularity = granularityFor(days);
   const buckets = new Map<string, TrendBucket>();
 
   for (let back = days - 1; back >= 0; back -= 1) {
-    const day = utcDay(now, back);
+    const day = localDay(now, back, timeZone);
     const row = found.get(day);
     const key = bucketKeyOf(day, granularity);
     const existing = buckets.get(key);

@@ -44,7 +44,7 @@ interface InvocationCounts {
 }
 
 /**
- * Run tallies from the durable counters (migration 049), which survive the
+ * Run tallies from the durable run log (migration 079), which survives the
  * run-retention prune — that survival is what makes the quarterly/yearly/
  * all-time numbers real rather than "since retention began". Calendar
  * buckets, not trailing windows, because the numbers exist to be read
@@ -64,20 +64,20 @@ async function invocationCountsOf(
     all_time: string;
   }>`
     SELECT
-      COALESCE(SUM(runs) FILTER (WHERE day = CURRENT_DATE), 0) AS today,
-      COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('week', CURRENT_DATE)), 0) AS week,
-      COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('month', CURRENT_DATE)), 0) AS month,
-      COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('quarter', CURRENT_DATE)), 0) AS quarter,
-      COALESCE(SUM(runs) FILTER (WHERE day >= date_trunc('year', CURRENT_DATE)), 0) AS year,
-      COALESCE(SUM(runs), 0) AS all_time
-    FROM agent_run_counters
+      COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) AS today,
+      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)) AS week,
+      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)) AS month,
+      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)) AS quarter,
+      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)) AS year,
+      COUNT(*) AS all_time
+    FROM agent_run_log
     WHERE tenant_id = ${tenantId} AND agent_id = ${agentId}
   `.execute(db);
   const row = result.rows[0];
   const orgResult = await sql<{ total: string }>`
-    SELECT COALESCE(SUM(runs), 0) AS total
-    FROM agent_run_counters
-    WHERE tenant_id = ${tenantId} AND day = CURRENT_DATE
+    SELECT COUNT(*) AS total
+    FROM agent_run_log
+    WHERE tenant_id = ${tenantId} AND created_at::date = CURRENT_DATE
   `.execute(db);
   return {
     today: Number(row?.today ?? 0),
@@ -136,7 +136,7 @@ export default async function AgentOverviewPage({
       ? Promise.resolve(null)
       : getIdentityDisplay(tenant.id, access.ownerSubject),
     getAgentTokenUsage(dbResult.val, tenant.id, agentId),
-    getAgentToolUsage(dbResult.val, tenant.id, agentId, 'owner', TOOL_USAGE_WINDOW_DAYS),
+    getAgentToolUsage(dbResult.val, tenant.id, agentId, TOOL_USAGE_WINDOW_DAYS),
     // The optimizer's latest report — the owner's only; a grantee gets
     // null from the read itself and no panel below.
     access.viewerIsOwner
@@ -387,7 +387,6 @@ export default async function AgentOverviewPage({
               tokens={tokenUsage}
               tools={toolUsage}
               toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
-              toolsPartial={false}
             />
           </CollapsibleSection>
 

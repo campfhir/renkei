@@ -74,12 +74,7 @@ import {
   renderAgentMemory,
   renderAgentKnowledgeNotes,
 } from '@renkei/agents/memory';
-import {
-  recordAgentRunFailure,
-  recordAgentRunOutcome,
-  recordAgentRunTokenUsage,
-  recordLlmCall,
-} from '@renkei/agents/runs';
+import { recordAgentRunOutcome, recordLlmCall } from '@renkei/agents/runs';
 import {
   ASK_PERSON_DEF,
   ASK_PERSON_TOOL,
@@ -713,11 +708,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
   const resolveLlm = deps.resolveLlm ?? resolveAgentLlm;
 
   /**
-   * The durable per-day token tally (migration 072) — mirrors
-   * recordAgentRunFailure's shape and best-effort posture. Called once per
-   * `agent_run_steps` row that finalizes with token spend; skipped entirely
-   * when both counts are zero (a pure-tool attempt, or a step that never
-   * reached the model) so a no-op upsert doesn't run for every attempt.
+   * The token ledger (migration 081): one row per attempt that finalizes
+   * with token spend, attributed to the owner, so usage can be read in
+   * the viewer's own day. Skipped when both counts are zero (a pure-tool
+   * attempt, or a step that never reached the model). Best effort — a
+   * finished attempt must not fail over its bookkeeping.
    */
   async function recordUsage(
     run: RunRow,
@@ -725,36 +720,22 @@ export function createAgentRunHandler(deps: EngineDeps) {
     stepId: string
   ): Promise<void> {
     if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
-    const [tally, ledger] = await Promise.all([
-      recordAgentRunTokenUsage(
-        db,
-        run.tenant_id,
-        run.agent_id,
-        usage.inputTokens,
-        usage.outputTokens
-      ),
-      // The timestamped ledger (migration 081) beside the per-day tally:
-      // one row per finalized attempt, attributed to the owner, so the
-      // usage page can read the spend in the viewer's own day.
-      recordLlmCall(db, {
-        tenantId: run.tenant_id,
-        subject: run.owner_subject,
-        agentId: run.agent_id,
-        runId: run.id,
-        stepId,
-        purpose: 'run',
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-      }),
-    ]);
-    if (!tally.ok || !ledger.ok) {
-      logger.warn('token usage not fully recorded for run {runId}', {
+    const ledger = await recordLlmCall(db, {
+      tenantId: run.tenant_id,
+      subject: run.owner_subject,
+      agentId: run.agent_id,
+      runId: run.id,
+      stepId,
+      purpose: 'run',
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+    });
+    if (!ledger.ok) {
+      logger.warn('token usage not recorded for run {runId}', {
         component: 'worker-agents/engine',
         runId: run.id,
         tenantId: run.tenant_id,
         agentId: run.agent_id,
-        tally: tally.ok,
-        ledger: ledger.ok,
       });
     }
   }
@@ -3870,23 +3851,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // lines that matter.
       logger.debug('agent "{agentName}" ({userName}) run {status}', common);
     }
-    if (status === 'failed') {
-      // The durable failure tally the oversight page buckets by period —
-      // best effort, same as the run tally at creation.
-      const tally = await recordAgentRunFailure(db, run.tenant_id, run.agent_id);
-      if (!tally.ok) {
-        logger.warn('failure tally not recorded for run {runId}', {
-          component: 'worker-agents/engine',
-          runId: run.id,
-          tenantId: run.tenant_id,
-          agentId: run.agent_id,
-        });
-      }
-    }
     // The durable run log (migration 079): the outcome for every status,
-    // and on failure which step, what kind, what it cost — the evidence
-    // the optimizer reads and the usage page counts. Best effort, like
-    // the tally.
+    // and on failure which step, what kind, what it cost — what every
+    // usage page counts and the optimizer reads. Best effort, like the
+    // log row written at creation.
     const logged = await recordAgentRunOutcome(db, {
       tenantId: run.tenant_id,
       agentId: run.agent_id,

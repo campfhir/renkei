@@ -875,7 +875,7 @@ maybe('agent run engine', () => {
   });
 
   it('stops immediately on a failure handled as exit', async () => {
-    const { runId, agentId } = await seedRun(
+    const { runId } = await seedRun(
       singleStep({
         maxAttempts: 5,
         failureHandling: [{ outcome: 'no-permission', action: 'exit' }],
@@ -912,13 +912,16 @@ maybe('agent run engine', () => {
       .execute();
     expect(attempts).toHaveLength(1);
 
-    // The failed finalize bumps the durable failure tally (migration 050).
-    const counter = await db
-      .selectFrom('agent_run_counters')
-      .select('failures')
-      .where('agent_id', '=', agentId)
+    // The failed finalize lands in the durable run log (migration 079) with
+    // the outcome and the taxonomy the usage pages and the optimizer read.
+    const logged = await db
+      .selectFrom('agent_run_log')
+      .select(['status', 'error_kind', 'attempts'])
+      .where('run_id', '=', runId)
       .executeTakeFirstOrThrow();
-    expect(counter.failures).toBe(1);
+    expect(logged.status).toBe('failed');
+    expect(logged.error_kind).toBe('step_failed');
+    expect(logged.attempts).toBe(1);
   });
 
   it('names the failed step in the warning it logs', async () => {

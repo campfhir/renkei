@@ -47,14 +47,19 @@ describe('bucketTokenTrend', () => {
   });
 
   it('returns one bucket per day when the window is daily-grained', () => {
-    const buckets = bucketTokenTrend([], 7, now);
+    const buckets = bucketTokenTrend([], 7, now, 'UTC');
     expect(buckets).toHaveLength(7);
     expect(buckets[0]!.bucket).toBe('2026-08-06');
     expect(buckets[6]!.bucket).toBe('2026-08-12');
   });
 
   it('fills a quiet day with zero instead of dropping it', () => {
-    const buckets = bucketTokenTrend([row('2026-08-10', 500, 100), row('2026-08-12', 300, 50)], 5, now);
+    const buckets = bucketTokenTrend(
+      [row('2026-08-10', 500, 100), row('2026-08-12', 300, 50)],
+      5,
+      now,
+      'UTC'
+    );
     expect(buckets.map((bucket) => bucket.inputTokens)).toEqual([0, 0, 500, 0, 300]);
     expect(buckets.map((bucket) => bucket.outputTokens)).toEqual([0, 0, 100, 0, 50]);
   });
@@ -63,7 +68,8 @@ describe('bucketTokenTrend', () => {
     const buckets = bucketTokenTrend(
       [row('2026-08-10', 100, 0), row('2026-08-11', 200, 0), row('2026-08-12', 50, 0)],
       90,
-      now
+      now,
+      'UTC'
     );
     expect(granularityFor(90)).toBe('week');
     // Fewer buckets than days: the whole point of widening the grain.
@@ -79,7 +85,12 @@ describe('bucketTokenTrend', () => {
 
   it('sums a year window into monthly buckets', () => {
     // Both within the trailing 365-day window ending 2026-08-12.
-    const buckets = bucketTokenTrend([row('2026-08-01', 10, 0), row('2026-08-10', 20, 0)], 365, now);
+    const buckets = bucketTokenTrend(
+      [row('2026-08-01', 10, 0), row('2026-08-10', 20, 0)],
+      365,
+      now,
+      'UTC'
+    );
     expect(granularityFor(365)).toBe('month');
     const august = buckets.find((bucket) => bucket.bucket === '2026-08-01');
     expect(august?.inputTokens).toBe(30);
@@ -88,13 +99,13 @@ describe('bucketTokenTrend', () => {
   it('never drops or duplicates a day across a bucket boundary', () => {
     // Every input token in `rows` must land in exactly one output bucket.
     const rows = [row('2026-06-01', 7, 0), row('2026-07-15', 7, 0), row('2026-08-12', 7, 0)];
-    const buckets = bucketTokenTrend(rows, 365, now);
+    const buckets = bucketTokenTrend(rows, 365, now, 'UTC');
     const total = buckets.reduce((sum, bucket) => sum + bucket.inputTokens, 0);
     expect(total).toBe(21);
   });
 
   it('labels a monthly bucket with month and year, not a bare date', () => {
-    const buckets = bucketTokenTrend([], 365, now);
+    const buckets = bucketTokenTrend([], 365, now, 'UTC');
     expect(buckets[buckets.length - 1]!.label).toBe('Aug 2026');
   });
 });

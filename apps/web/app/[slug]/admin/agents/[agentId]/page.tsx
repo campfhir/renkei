@@ -41,7 +41,7 @@ export default async function AdminAgentDetailPage({
 
   const [tokenUsage, toolUsage] = await Promise.all([
     getAgentTokenUsage(db, tenant.id, agentId),
-    getAgentToolUsage(db, tenant.id, agentId, 'admin', TOOL_USAGE_WINDOW_DAYS),
+    getAgentToolUsage(db, tenant.id, agentId, TOOL_USAGE_WINDOW_DAYS),
   ]);
 
   return (
@@ -60,8 +60,7 @@ export default async function AdminAgentDetailPage({
       <p className="mb-4 text-sm text-gray-600 dark:text-gray-400">
         Owner: {agent.ownerEmail ?? agent.ownerSubject}
         {' · '}
-        Last run:{' '}
-        {agent.lastRunAt ? <LocalTime at={agent.lastRunAt} /> : <span>never</span>}
+        Last run: {agent.lastRunAt ? <LocalTime at={agent.lastRunAt} /> : <span>never</span>}
       </p>
 
       {agent.description ? (
@@ -69,9 +68,7 @@ export default async function AdminAgentDetailPage({
           {agent.description}
         </p>
       ) : agent.descriptionStatus === 'stale' ? (
-        <p className="mb-6 text-sm italic text-gray-400 dark:text-gray-500">
-          Writing a summary…
-        </p>
+        <p className="mb-6 text-sm italic text-gray-400 dark:text-gray-500">Writing a summary…</p>
       ) : null}
 
       <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
@@ -80,7 +77,6 @@ export default async function AdminAgentDetailPage({
           tokens={tokenUsage}
           tools={toolUsage}
           toolWindowDays={TOOL_USAGE_WINDOW_DAYS}
-          toolsPartial
         />
       </div>
     </div>

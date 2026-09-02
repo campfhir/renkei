@@ -112,6 +112,7 @@ export const EXPECTED_MIGRATIONS = [
   '080-agent-optimizations',
   '081-llm-calls',
   '082-tool-calls-agent',
+  '083-usage-ledger-backfill',
 ];
 
 export interface MigrationStatus {

@@ -21,7 +21,9 @@ function formatTokens(n: number): string {
 function Chart({ points }: { points: TrendBucket[] }) {
   const peak = Math.max(1, ...points.map((point) => point.inputTokens + point.outputTokens));
   if (points.length === 0) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">No token usage in this period.</p>;
+    return (
+      <p className="text-sm text-gray-500 dark:text-gray-400">No token usage in this period.</p>
+    );
   }
   return (
     <div>
@@ -37,9 +39,18 @@ function Chart({ points }: { points: TrendBucket[] }) {
               style={{ height: '100%' }}
               title={`${point.label}: ${formatTokens(point.inputTokens)} in, ${formatTokens(point.outputTokens)} out`}
             >
-              <div className="absolute inset-x-0 bottom-0 flex flex-col justify-end" style={{ height: '100%' }}>
-                <div className="w-full rounded-t-sm bg-purple-400 group-hover:bg-purple-300" style={{ height: `${outShare}%` }} />
-                <div className="w-full bg-blue-500 group-hover:bg-blue-400" style={{ height: `${height - outShare}%` }} />
+              <div
+                className="absolute inset-x-0 bottom-0 flex flex-col justify-end"
+                style={{ height: '100%' }}
+              >
+                <div
+                  className="w-full rounded-t-sm bg-purple-400 group-hover:bg-purple-300"
+                  style={{ height: `${outShare}%` }}
+                />
+                <div
+                  className="w-full bg-blue-500 group-hover:bg-blue-400"
+                  style={{ height: `${height - outShare}%` }}
+                />
               </div>
             </div>
           );
@@ -79,7 +90,14 @@ export default function TokenTrendChart({
 
   function refresh(nextPeriod: string, nextAgentId: string) {
     startTransition(async () => {
-      const next = await getPersonTokenTrend(tenantId, subject, nextPeriod, nextAgentId || null);
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const next = await getPersonTokenTrend(
+        tenantId,
+        subject,
+        nextPeriod,
+        nextAgentId || null,
+        timeZone
+      );
       setReport(next);
     });
   }
@@ -132,7 +150,12 @@ export default function TokenTrendChart({
       {report.error ? (
         <p className="text-sm text-red-600 dark:text-red-400">{report.error}</p>
       ) : (
-        <Chart points={report.points} />
+        <>
+          <Chart points={report.points} />
+          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            Days in {report.timeZone}.
+          </p>
+        </>
       )}
     </div>
   );
