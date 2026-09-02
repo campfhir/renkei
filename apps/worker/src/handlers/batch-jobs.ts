@@ -98,8 +98,20 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     }
 
     const items = discovered.items ?? [];
+    const skippedItems = discovered.skipped ?? [];
+
+    // What discovery decided not to run is still written down — as items
+    // the batch page can list under "Skipped" with their reason — it is
+    // just never enqueued, and never counted as work to wait for.
+    for (const itemPayload of skippedItems) {
+      await store.insertItem(db, claimed.id, itemPayload, {
+        status: 'skipped',
+        result: { skipped: true, reason: str(itemPayload.skipReason) || 'already-processed' },
+      });
+    }
+
     if (items.length === 0) {
-      await finalize(db, store.completeEmptyBatch(db, claimed.id));
+      await finalize(db, store.completeEmptyBatch(db, claimed.id, skippedItems.length));
       return;
     }
 
@@ -113,12 +125,18 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
       await enqueueItem(producer, event.tenant_id, claimed.id, item.id);
       created += 1;
     }
-    await store.activateBatch(db, claimed.id, created);
-    logger.info('batch {batchJobId} discovered {count} item(s)', {
+    // Activation can itself be the terminal transition when every item
+    // already landed — see activateBatch — so it goes through finalize too.
+    await finalize(
+      db,
+      store.activateBatch(db, claimed.id, created + skippedItems.length, skippedItems.length)
+    );
+    logger.info('batch {batchJobId} discovered {count} item(s), skipped {skipped}', {
       component: COMPONENT,
       tenantId: event.tenant_id,
       batchJobId: claimed.id,
       count: created,
+      skipped: skippedItems.length,
     });
   };
 }

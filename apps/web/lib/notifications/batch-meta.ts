@@ -32,6 +32,7 @@ export interface BatchNotificationMeta {
   total: number | null;
   succeeded: number;
   failed: number;
+  skipped: number;
   error: string | null;
   scheduleId: string | null;
   startedAt: string | null;
@@ -67,6 +68,7 @@ export function parseBatchNotificationMeta(raw: unknown): BatchNotificationMeta 
       typeof raw.total === 'number' && Number.isFinite(raw.total) ? Math.trunc(raw.total) : null,
     succeeded: int(raw.succeeded),
     failed: int(raw.failed),
+    skipped: int(raw.skipped),
     error: strOrNull(raw.error),
     scheduleId: strOrNull(raw.scheduleId),
     startedAt: strOrNull(raw.startedAt),
@@ -86,7 +88,9 @@ export function batchNotificationHref(slug: string, meta: BatchNotificationMeta)
 export function batchNotificationProgress(meta: BatchNotificationMeta): string {
   if (meta.total === null) return '';
   if (meta.total === 0) return 'nothing to process';
-  return `${meta.succeeded + meta.failed}/${meta.total} (${meta.succeeded} ok, ${meta.failed} failed)`;
+  const done = meta.succeeded + meta.failed + meta.skipped;
+  const skipped = meta.skipped > 0 ? `, ${meta.skipped} skipped` : '';
+  return `${done}/${meta.total} (${meta.succeeded} ok, ${meta.failed} failed${skipped})`;
 }
 
 /**

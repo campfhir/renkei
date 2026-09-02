@@ -11,10 +11,27 @@ import { BatchStatusPill, batchStatusLabel, batchProgress } from '../batch-statu
 import LocalTime from '@/components/local-time';
 import AutoRefresh from '@/components/auto-refresh';
 
-const ITEM_STATUS_TABS = ['pending', 'processing', 'succeeded', 'failed'] as const;
+import { afterProcessingValueOf, skipProcessedOf } from '@/lib/batch-jobs/pipeline-form-value';
+
+const ITEM_STATUS_TABS = ['pending', 'processing', 'succeeded', 'failed', 'skipped'] as const;
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** "moved to /processed on this share" — what the batch was told to do afterwards. */
+function afterProcessingLine(config: Record<string, unknown>): string {
+  const value = afterProcessingValueOf(config);
+  if (value.action === 'delete') return 'Source files are deleted';
+  if (value.action === 'move') {
+    const where = value.shareId && value.shareId !== str(config.shareId) ? ' on another share' : '';
+    return `Source files are moved to ${value.path}${where}`;
+  }
+  return 'Source files are left where they are';
 }
 
 export default async function BatchJobDetailPage({
@@ -75,6 +92,13 @@ export default async function BatchJobDetailPage({
           <span className="font-medium">Progress:</span> {batchProgress(batch)}
         </p>
         <p>
+          <span className="font-medium">Already-processed files:</span>{' '}
+          {skipProcessedOf(batch.config) ? 'skipped (by content hash)' : 'processed again'}
+        </p>
+        <p>
+          <span className="font-medium">After processing:</span> {afterProcessingLine(batch.config)}
+        </p>
+        <p>
           <span className="font-medium">Started:</span>{' '}
           <LocalTime at={batch.created_at} />
         </p>
@@ -118,6 +142,17 @@ export default async function BatchJobDetailPage({
           {items.map((item) => {
             const documentKey = str(item.payload.documentKey) || item.id;
             const sandboxFileId = item.result ? str(item.result.sandboxFileId) : '';
+            const skipReason = item.status === 'skipped' && item.result ? str(item.result.reason) : '';
+            const after = item.result && isRecord(item.result.afterProcessing) ? item.result.afterProcessing : null;
+            const afterLine = after
+              ? str(after.error)
+                ? ''
+                : after.action === 'delete'
+                  ? 'Source files deleted.'
+                  : after.action === 'move'
+                    ? `Source files moved to ${(Array.isArray(after.movedTo) ? after.movedTo : []).map(String).join(', ')}.`
+                    : ''
+              : '';
             return (
               <li
                 key={item.id}
@@ -131,6 +166,14 @@ export default async function BatchJobDetailPage({
                   <p className="mt-1 break-all font-mono text-xs text-gray-500 dark:text-gray-400">
                     Staged as sandbox file {sandboxFileId} — readable with sandbox_read_file.
                   </p>
+                ) : null}
+                {skipReason === 'already-processed' ? (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Already processed by an earlier batch — not run again.
+                  </p>
+                ) : null}
+                {afterLine ? (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{afterLine}</p>
                 ) : null}
                 {item.error ? (
                   <p className="mt-1 text-xs text-red-700 dark:text-red-300">{item.error}</p>

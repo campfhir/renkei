@@ -14,11 +14,19 @@ export interface DiscoverOutcome {
   ok: boolean;
   /** Payload for each item to create, in the order they should run. */
   items?: Record<string, unknown>[];
+  /**
+   * Payloads discovery decided NOT to run — recorded as items with status
+   * 'skipped' (so the batch page lists them) but never enqueued. Each
+   * should say why in `skipReason`.
+   */
+  skipped?: Record<string, unknown>[];
   error?: string;
 }
 
 export interface RunItemOutcome {
   ok: boolean;
+  /** Deliberately not processed (already done by an earlier batch). */
+  skipped?: boolean;
   result?: Record<string, unknown>;
   error?: string;
 }

@@ -28,6 +28,7 @@ export type {
   BatchJobRow,
   BatchJobItemRow,
   CreateBatchInput,
+  InsertItemOptions,
   ListBatchesOptions,
   ItemOutcome,
   ListItemsOptions,
@@ -38,6 +39,14 @@ export { enqueueDiscover, enqueueItem, BATCH_JOB_SOURCE } from './enqueue';
 export { DOCUMENT_OCR_PIPELINE_KIND } from './kind-names';
 
 export { batchKindLabel, describeBatchOutcome } from './describe';
+
+export {
+  findProcessedByPath,
+  findProcessedHashes,
+  matchesProcessedStat,
+  recordProcessedFiles,
+} from './processed-files';
+export type { ProcessedFileInput, ProcessedFileRow } from './processed-files';
 
 export {
   createSchedule,

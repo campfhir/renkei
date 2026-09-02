@@ -59,6 +59,7 @@ function batch(over: Partial<BatchJobRow> = {}): BatchJobRow {
     total: 42,
     succeeded: 42,
     failed: 0,
+    skipped: 0,
     last_error: null,
     schedule_id: 'sched-1',
     started_at: new Date('2026-09-01T02:00:00Z'),

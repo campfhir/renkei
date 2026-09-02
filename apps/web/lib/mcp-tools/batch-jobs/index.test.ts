@@ -18,6 +18,7 @@ jest.mock('@renkei/batch-jobs-store', () => ({
   DOCUMENT_OCR_PIPELINE_KIND: 'document-ocr-pipeline',
 }));
 jest.mock('@renkei/queue', () => ({ batchJobsQueue: jest.fn() }));
+jest.mock('@renkei/connector-fileshares', () => ({ listConnectedShares: jest.fn() }));
 jest.mock('@renkei/connector-mistral-ocr', () => ({
   callMistralOcr: jest.fn(),
   resolveMistralOcrConfig: jest.fn(),
@@ -32,6 +33,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
 import { createBatch, getBatch, listBatches, listItems, enqueueDiscover } from '@renkei/batch-jobs-store';
 import { batchJobsQueue } from '@renkei/queue';
+import { listConnectedShares } from '@renkei/connector-fileshares';
 import { callMistralOcr, resolveMistralOcrConfig } from '@renkei/connector-mistral-ocr';
 import { sbReadFile } from '@renkei/sandbox-client';
 import { registerBatchJobTools } from './index';
@@ -49,11 +51,18 @@ const listBatchesMock = listBatches as jest.Mock;
 const listItemsMock = listItems as jest.Mock;
 const enqueueDiscoverMock = enqueueDiscover as jest.Mock;
 const batchJobsQueueMock = batchJobsQueue as jest.Mock;
+const listConnectedSharesMock = listConnectedShares as jest.Mock;
+
+/** One connected share, with the exposure its owner chose on the Connectors page. */
+function connected(id: string, toolAccess: 'read' | 'read_write', allowDelete: boolean) {
+  return { share: { id, name: `Share ${id}` }, connection: { username: 'alice', toolAccess, allowDelete } };
+}
 const callMistralOcrMock = callMistralOcr as jest.Mock;
 const resolveMistralOcrConfigMock = resolveMistralOcrConfig as jest.Mock;
 const sbReadFileMock = sbReadFile as jest.Mock;
 
 const FAKE_DB = {};
+const DEST_SHARE = '5d1f1a0e-6c7b-4e2a-9f3c-1b2d3e4f5a6b';
 
 function context(): MCPToolContext {
   return { tenantId: 'tenant-1', subject: 'auth0|alice' } as unknown as MCPToolContext;
@@ -74,6 +83,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   getDatabaseMock.mockReturnValue({ ok: true, val: FAKE_DB });
   batchJobsQueueMock.mockReturnValue({ producer: 'the-producer' });
+  listConnectedSharesMock.mockResolvedValue({ ok: true, val: [connected('share-1', 'read', false)] });
 });
 
 describe('batch_start_document_pipeline', () => {
@@ -93,11 +103,75 @@ describe('batch_start_document_pipeline', () => {
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       kind: 'document-ocr-pipeline',
-      config: { shareId: 'share-1', path: '/in', grouping: { strategy: 'whole-file' } },
+      config: {
+        shareId: 'share-1',
+        path: '/in',
+        grouping: { strategy: 'whole-file' },
+        skipProcessed: true,
+        afterProcessing: { action: 'keep' },
+      },
       scheduleId: undefined,
     });
     expect(enqueueDiscoverMock).toHaveBeenCalledWith('the-producer', 'tenant-1', 'batch-1');
     expect(result.content[0]?.text).toContain('batch-1');
+  });
+
+  it('refuses a share the caller has not connected', async () => {
+    listConnectedSharesMock.mockResolvedValue({ ok: true, val: [] });
+    const handlers = registerAll();
+
+    const result = await handlers.get('batch_start_document_pipeline')!({
+      name: 'Inbox OCR',
+      shareId: 'share-1',
+      grouping: { strategy: 'whole-file' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(createBatchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses to delete or move source files beyond what the connection allows the tools', async () => {
+    const handlers = registerAll();
+
+    const result = await handlers.get('batch_start_document_pipeline')!({
+      name: 'Inbox OCR',
+      shareId: 'share-1',
+      grouping: { strategy: 'whole-file' },
+      afterProcessing: { action: 'delete' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('write tools');
+    expect(createBatchMock).not.toHaveBeenCalled();
+  });
+
+  it('stores the opt-outs and opt-ins when the connection allows them', async () => {
+    listConnectedSharesMock.mockResolvedValue({
+      ok: true,
+      // A real uuid: the tool validates the destination the way the MCP
+      // schema would, and a placeholder id is refused before consent is.
+      val: [connected('share-1', 'read_write', true), connected(DEST_SHARE, 'read_write', false)],
+    });
+    createBatchMock.mockResolvedValue({ id: 'batch-1' });
+    const handlers = registerAll();
+
+    await handlers.get('batch_start_document_pipeline')!({
+      name: 'Inbox OCR',
+      shareId: 'share-1',
+      grouping: { strategy: 'whole-file' },
+      skipProcessed: false,
+      afterProcessing: { action: 'move', shareId: DEST_SHARE, path: 'archive/' },
+    });
+
+    expect(createBatchMock).toHaveBeenCalledWith(
+      FAKE_DB,
+      expect.objectContaining({
+        config: expect.objectContaining({
+          skipProcessed: false,
+          afterProcessing: { action: 'move', shareId: DEST_SHARE, path: '/archive' },
+        }),
+      })
+    );
   });
 });
 
@@ -111,6 +185,7 @@ describe('batch_get_job', () => {
       total: 10,
       succeeded: 3,
       failed: 1,
+      skipped: 0,
     });
     const handlers = registerAll();
 

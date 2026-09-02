@@ -118,7 +118,7 @@ describe('discover handler', () => {
 
     await handler(event('discover', { batchJobId: 'batch-1' }));
 
-    expect(store.completeEmptyBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1');
+    expect(store.completeEmptyBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 0);
     expect(store.insertItem).not.toHaveBeenCalled();
   });
 
@@ -141,7 +141,7 @@ describe('discover handler', () => {
     expect(store.insertItem).toHaveBeenNthCalledWith(2, FAKE_DB, 'batch-1', { sourcePaths: ['/b.tif'] });
     expect(enqueueItem).toHaveBeenNthCalledWith(1, expect.anything(), 'tenant-1', 'batch-1', 'item-1');
     expect(enqueueItem).toHaveBeenNthCalledWith(2, expect.anything(), 'tenant-1', 'batch-1', 'item-2');
-    expect(store.activateBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 2);
+    expect(store.activateBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 2, 0);
   });
 
   it('fails the batch when the kind handler throws', async () => {
@@ -152,6 +152,53 @@ describe('discover handler', () => {
     await handler(event('discover', { batchJobId: 'batch-1' }));
 
     expect(store.failBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 'share unreachable');
+  });
+
+  it('records what discovery skipped as skipped items, never enqueued, and counts them in total', async () => {
+    store.getBatch.mockResolvedValue(batch());
+    store.beginDiscovery.mockResolvedValue(batch({ status: 'discovering' }));
+    getBatchJobKind.mockReturnValue({
+      discover: jest.fn().mockResolvedValue({
+        ok: true,
+        items: [{ sourcePaths: ['/a.tif'] }],
+        skipped: [{ sourcePaths: ['/old.tif'], skipReason: 'already-processed' }],
+      }),
+    });
+    store.insertItem
+      .mockResolvedValueOnce({ id: 'item-skipped', batch_id: 'batch-1' })
+      .mockResolvedValueOnce({ id: 'item-1', batch_id: 'batch-1' });
+
+    await handler(event('discover', { batchJobId: 'batch-1' }));
+
+    expect(store.insertItem).toHaveBeenNthCalledWith(
+      1,
+      FAKE_DB,
+      'batch-1',
+      { sourcePaths: ['/old.tif'], skipReason: 'already-processed' },
+      { status: 'skipped', result: { skipped: true, reason: 'already-processed' } }
+    );
+    expect(enqueueItem).toHaveBeenCalledTimes(1);
+    expect(enqueueItem).toHaveBeenCalledWith(expect.anything(), 'tenant-1', 'batch-1', 'item-1');
+    expect(store.activateBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 2, 1);
+  });
+
+  it('completes a batch where every file was already processed without enqueueing anything', async () => {
+    store.getBatch.mockResolvedValue(batch());
+    store.beginDiscovery.mockResolvedValue(batch({ status: 'discovering' }));
+    getBatchJobKind.mockReturnValue({
+      discover: jest.fn().mockResolvedValue({
+        ok: true,
+        items: [],
+        skipped: [{ sourcePaths: ['/old.tif'], skipReason: 'already-processed' }],
+      }),
+    });
+    store.insertItem.mockResolvedValueOnce({ id: 'item-skipped', batch_id: 'batch-1' });
+
+    await handler(event('discover', { batchJobId: 'batch-1' }));
+
+    expect(enqueueItem).not.toHaveBeenCalled();
+    expect(store.completeEmptyBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 1);
+    expect(store.activateBatch).not.toHaveBeenCalled();
   });
 
   describe('announcements', () => {

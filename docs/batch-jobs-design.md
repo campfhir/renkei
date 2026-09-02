@@ -36,7 +36,26 @@ Items finish concurrently, potentially across many worker instances, so `recordI
 ## document-ocr-pipeline
 
 - **Discover** (`apps/worker/src/batch-jobs/document-ocr-pipeline.ts`): lists the configured fileshare folder and groups files by the batch's chosen strategy — `{strategy: "whole-file"}` (one file = one document) or `{strategy: "filename-pattern", pattern}` (a regex with named captures `documentKey`/`page`, for a scanner's per-page dump). A file the pattern can't parse becomes its own single-file group rather than being silently dropped.
-- **Run item**: OCRs each file in a group, in order, via Mistral (one call per FILE — OCR 4 paginates internally and bills per page regardless, so pre-splitting a multi-page PDF into page images would be pure waste), concatenates the pages into one assembled document, and stages it as `{documentKey}.md` in the sandbox, tagged with the batch's `batchId`.
+- **Run item**: reads every file in the group, hashes it against the ledger (below), then OCRs each file in order via Mistral (one call per FILE — OCR 4 paginates internally and bills per page regardless, so pre-splitting a multi-page PDF into page images would be pure waste), concatenates the pages into one assembled document, and stages it as `{documentKey}.md` in the sandbox, tagged with the batch's `batchId`.
+
+## Never the same file twice: the processed-files ledger
+
+A folder scanned nightly still holds last night's files, so `document-ocr-pipeline` keeps a ledger — `batch_processed_files` (migration 089, `packages/batch-jobs-store/src/processed-files.ts`) — keyed by the **SHA-256 of a file's bytes**, scoped to (tenant, share). Whether a file is "already done" is a hash comparison, never a judgement a model makes. On by default (`config.skipProcessed`, opt-out), checked twice, each time before anything billed:
+
+1. **At discovery, from the listing alone.** The ledger also records the path/size/modified-time triple the file had when it was hashed; a listed file whose triple matches is skipped without being read. Recorded as an item with status `skipped` (so the batch page lists it under a Skipped tab with its reason) and never enqueued. `matchesProcessedStat` is that comparison, pure and unit-tested; anything unsure — no modified time on either side — falls through rather than skipping on a guess.
+2. **At item time, after the read OCR needs anyway.** Every file in the group is read and hashed; if every hash is in the ledger the item ends as `skipped` before the Mistral call. This is what catches a re-copied or renamed file. One new page in a multi-file document means the whole document is assembled again.
+
+After a document is staged, its files are upserted into the ledger on the hash (rewriting the triple, so the fast path follows a file that moved). The write is best-effort: a lost ledger write costs one repeat later, not the document now. Opting out means the ledger is neither read nor written by that batch — "keep no record", so an opted-out batch can never make a later opted-in one skip files it never saw processed.
+
+`skipped` is a third counter on `batch_jobs` beside `succeeded`/`failed` and a third terminal item status. It counts against `total` for the completion flip (`activateBatch` can now itself be the terminal transition, when every enqueued item beat it) and appears everywhere the other two do — progress lines, `describeBatchOutcome` ("OCR'd 2 documents, 40 already processed"), the owner's notification, and `trigger.skipped` on `batch/job.completed` — but never decides the batch's status: skipped items neither help nor hurt.
+
+## What happens to the source afterwards
+
+Opt-in, per batch or schedule (`config.afterProcessing`, default `{action: "keep"}`): `{action: "delete"}` removes each source file once its document is staged; `{action: "move", shareId, path}` moves it to a folder — on the same share (a server-side rename via `fsMoveEntry`) or on another one (write the bytes already in hand to the destination with `fsWriteFile`, then remove the source; the destination is probed first and an existing file is refused, never overwritten). SMB versus SFTP never reaches this code: `@renkei/fileshares-client` is the whole surface, and the fileshare worker owns the protocols.
+
+A post-processing failure **fails the item**, with the staged sandbox file id still in its result and the ledger already holding the hash: the OCR is done and paid for and a rerun skips it, but the batch's contract — process AND move — was not met, and that belongs in the batch's `partial` status and the owner's notification rather than behind a clean finish.
+
+**Consent.** Moving or deleting on a share is exactly what a connection's "write tools" / "delete tools" choices on the Connectors page cover, so a batch may only do to a share what its owner already allowed the tools to do there — checked by `afterProcessingRefusal` (`apps/web/lib/batch-jobs/pipeline-options.ts`) on every start path (the REST route, both schedule routes, and the `batch_start_document_pipeline` MCP tool) when the batch or schedule is created. The file server still judges every operation with the owner's own credentials at run time; the worker's I/O path reads no exposure flag, same as every other fileshare operation. The forms grey the options out and say why before the click.
 
 ## Where a batch lives afterward
 

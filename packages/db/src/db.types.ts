@@ -343,6 +343,7 @@ export interface BatchJobs {
   last_error: string | null;
   name: Generated<string>;
   schedule_id: string | null;
+  skipped: Generated<number>;
   started_at: Timestamp | null;
   status: Generated<string>;
   subject: string;
@@ -350,6 +351,19 @@ export interface BatchJobs {
   tenant_id: string;
   total: number | null;
   updated_at: Generated<Timestamp>;
+}
+
+export interface BatchProcessedFiles {
+  batch_id: string | null;
+  content_hash: string;
+  document_key: string | null;
+  id: string;
+  modified_at: Timestamp | null;
+  path: string;
+  processed_at: Generated<Timestamp>;
+  share_id: string;
+  size: number;
+  tenant_id: string;
 }
 
 export interface BatchJobSchedules {
@@ -968,6 +982,7 @@ export interface DB {
   batch_job_messages_dead_letters: BatchJobMessagesDeadLetters;
   batch_job_schedules: BatchJobSchedules;
   batch_jobs: BatchJobs;
+  batch_processed_files: BatchProcessedFiles;
   connector_configs: ConnectorConfigs;
   content_watches: ContentWatches;
   email_classification_log: EmailClassificationLog;

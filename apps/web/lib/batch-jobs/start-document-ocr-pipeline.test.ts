@@ -46,7 +46,15 @@ describe('startDocumentOcrPipeline', () => {
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       kind: 'document-ocr-pipeline',
-      config: { shareId: 'share-1', path: '/inbox', grouping: { strategy: 'whole-file' } },
+      config: {
+        shareId: 'share-1',
+        path: '/inbox',
+        grouping: { strategy: 'whole-file' },
+        // The two optional behaviours are always stored explicitly, at their
+        // defaults: the ledger on, the source left alone.
+        skipProcessed: true,
+        afterProcessing: { action: 'keep' },
+      },
       scheduleId: undefined,
     });
     expect(enqueueDiscoverMock).toHaveBeenCalledWith('the-producer', 'tenant-1', 'batch-1');

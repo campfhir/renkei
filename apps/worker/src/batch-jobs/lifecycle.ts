@@ -70,6 +70,8 @@ export interface BatchNotificationMeta {
   total: number | null;
   succeeded: number;
   failed: number;
+  /** Already-processed items the batch deliberately did not run. */
+  skipped: number;
   error: string | null;
   scheduleId: string | null;
   startedAt: string | null;
@@ -86,6 +88,7 @@ export function batchNotificationMeta(batch: BatchJobRow): BatchNotificationMeta
     total: batch.total,
     succeeded: batch.succeeded,
     failed: batch.failed,
+    skipped: batch.skipped,
     error: batch.last_error,
     scheduleId: batch.schedule_id,
     startedAt: batch.started_at ? batch.started_at.toISOString() : null,
@@ -115,6 +118,7 @@ export function batchEventData(batch: BatchJobRow, phase: BatchPhase): Record<st
     total: batch.total ?? 0,
     succeeded: batch.succeeded,
     failed: batch.failed,
+    skipped: batch.skipped,
     summary: describeBatchOutcome(batch),
     error: batch.total === null ? (batch.last_error ?? '') : '',
   };

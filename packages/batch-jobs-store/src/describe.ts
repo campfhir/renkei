@@ -61,6 +61,7 @@ export function describeBatchOutcome(batch: {
   total: number | null;
   succeeded: number;
   failed: number;
+  skipped?: number;
   last_error: string | null;
 }): string {
   const wording = wordingOf(batch.kind);
@@ -69,8 +70,16 @@ export function describeBatchOutcome(batch: {
     return batch.last_error ?? 'stopped before any items were found';
   }
   if (batch.total === 0) return `found no ${wording.item[1]} to process`;
-  const noun = plural(batch.total, wording.item);
-  if (batch.failed === 0) return `${wording.verb} ${batch.total} ${noun}`;
-  if (batch.succeeded === 0) return `all ${batch.total} ${noun} failed`;
-  return `${wording.verb} ${batch.succeeded} of ${batch.total} ${noun}, ${batch.failed} failed`;
+  const skipped = batch.skipped ?? 0;
+  const attempted = batch.total - skipped;
+  // "40 already processed" reads the same after every outcome, so it is
+  // one suffix rather than a phrase per branch.
+  const alreadyDone = skipped > 0 ? `, ${skipped} already processed` : '';
+  if (attempted === 0) {
+    return `all ${batch.total} ${plural(batch.total, wording.item)} were already processed`;
+  }
+  const noun = plural(attempted, wording.item);
+  if (batch.failed === 0) return `${wording.verb} ${attempted} ${noun}${alreadyDone}`;
+  if (batch.succeeded === 0) return `all ${attempted} ${noun} failed${alreadyDone}`;
+  return `${wording.verb} ${batch.succeeded} of ${attempted} ${noun}, ${batch.failed} failed${alreadyDone}`;
 }

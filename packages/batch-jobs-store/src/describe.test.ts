@@ -70,3 +70,22 @@ describe('describeBatchOutcome', () => {
     ).toBe('processed 3 of 4 items, 1 failed');
   });
 });
+
+describe('describeBatchOutcome with skipped items', () => {
+  it('reports what was already processed beside what ran', () => {
+    expect(describeBatchOutcome(ocr({ total: 42, succeeded: 2, skipped: 40 }))).toBe(
+      'OCR’d 2 documents, 40 already processed'
+    );
+    expect(
+      describeBatchOutcome(
+        ocr({ status: 'partial', total: 42, succeeded: 1, failed: 1, skipped: 40 })
+      )
+    ).toBe('OCR’d 1 of 2 documents, 1 failed, 40 already processed');
+  });
+
+  it('says so when nothing needed doing', () => {
+    expect(describeBatchOutcome(ocr({ total: 40, succeeded: 0, skipped: 40 }))).toBe(
+      'all 40 documents were already processed'
+    );
+  });
+});

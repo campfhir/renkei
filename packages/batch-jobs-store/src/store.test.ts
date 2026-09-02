@@ -27,6 +27,7 @@ const FINALIZED_ROW = {
   kind: 'document-ocr-pipeline',
   config: {},
   total: 5,
+  skipped: 0,
   last_error: null,
   schedule_id: null,
   started_at: new Date('2026-09-01T00:00:00Z'),
@@ -43,7 +44,9 @@ const FINALIZED_ROW = {
  * the row first: the guarded UPDATE matches nothing and returns nothing.
  */
 function fakeDb(
-  counterResult: { succeeded: number; failed: number; total: number | null } | undefined,
+  counterResult:
+    | { succeeded: number; failed: number; total: number | null; skipped?: number }
+    | undefined,
   flipWins = true
 ) {
   const recorded: Recorded = { itemSet: null, batchSets: [], finalizeWhereRan: false };
@@ -77,7 +80,9 @@ function fakeDb(
         },
         returning: () => ({
           executeTakeFirst: async () => {
-            if (isCounterUpdate) return counterResult;
+            if (isCounterUpdate) {
+              return counterResult ? { ...FINALIZED_ROW, skipped: 0, ...counterResult } : undefined;
+            }
             const status = recorded.batchSets[recorded.batchSets.length - 1]?.status;
             return flipWins
               ? { ...FINALIZED_ROW, ...counterResult, status }
@@ -142,6 +147,26 @@ describe('recordItemOutcome', () => {
     const { db, recorded } = fakeDb({ succeeded: 0, failed: 5, total: 5 });
     await recordItemOutcome(db, 'batch-1', 'item-1', { ok: false, error: 'quota exceeded' });
     expect(recorded.batchSets[1]?.status).toBe('failed');
+  });
+
+  it('counts a skipped item under skipped, and it completes the batch like any other', async () => {
+    const { db, recorded } = fakeDb({ succeeded: 3, failed: 0, skipped: 2, total: 5 });
+    const finalized = await recordItemOutcome(db, 'batch-1', 'item-1', {
+      ok: true,
+      skipped: true,
+      result: { reason: 'already-processed' },
+    });
+
+    expect(recorded.itemSet?.status).toBe('skipped');
+    // Skipped items neither help nor hurt the outcome: nothing failed, so succeeded.
+    expect(recorded.batchSets[1]?.status).toBe('succeeded');
+    expect(finalized).toMatchObject({ status: 'succeeded', skipped: 2 });
+  });
+
+  it('does not finalize while skipped + succeeded + failed is still short of total', async () => {
+    const { db, recorded } = fakeDb({ succeeded: 1, failed: 0, skipped: 2, total: 5 });
+    await recordItemOutcome(db, 'batch-1', 'item-1', { ok: true, skipped: true });
+    expect(recorded.batchSets).toHaveLength(1);
   });
 
   it('does nothing further when the batch row is gone (defensive)', async () => {

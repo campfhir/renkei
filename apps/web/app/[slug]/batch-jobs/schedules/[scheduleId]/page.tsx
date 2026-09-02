@@ -9,6 +9,7 @@ import { getSchedule } from '@renkei/batch-jobs-store';
 import { parseScheduleConfig, type ScheduleConfig } from '@renkei/agents';
 import { loadCalendarOptions } from '@/lib/schedule-calendars';
 import EditScheduleForm, { type SourceValue } from './edit-schedule-form';
+import { afterProcessingValueOf, skipProcessedOf } from '@/lib/batch-jobs/pipeline-form-value';
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -22,10 +23,14 @@ function sourceValueOf(config: Record<string, unknown>): SourceValue {
   const shareId = str(config.shareId);
   const path = str(config.path) || '/';
   const grouping = isRecord(config.grouping) ? config.grouping : {};
+  const options = {
+    skipProcessed: skipProcessedOf(config),
+    afterProcessing: afterProcessingValueOf(config),
+  };
   if (str(grouping.strategy) === 'filename-pattern') {
-    return { shareId, path, strategy: 'filename-pattern', pattern: str(grouping.pattern) };
+    return { shareId, path, strategy: 'filename-pattern', pattern: str(grouping.pattern), ...options };
   }
-  return { shareId, path, strategy: 'whole-file', pattern: '' };
+  return { shareId, path, strategy: 'whole-file', pattern: '', ...options };
 }
 
 export default async function EditBatchJobSchedulePage({

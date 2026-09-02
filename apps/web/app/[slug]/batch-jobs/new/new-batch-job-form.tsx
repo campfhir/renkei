@@ -17,6 +17,11 @@ import SourceFields, {
   validateGroupingPattern,
   type GroupingStrategy,
 } from '../source-fields';
+import {
+  KEEP_AFTER_PROCESSING,
+  afterProcessingPayload,
+  type AfterProcessingValue,
+} from '@/lib/batch-jobs/pipeline-form-value';
 
 export default function NewBatchJobForm({
   slug,
@@ -31,6 +36,9 @@ export default function NewBatchJobForm({
   const [path, setPath] = useState('/');
   const [strategy, setStrategy] = useState<GroupingStrategy>('whole-file');
   const [pattern, setPattern] = useState(String.raw`^(?<documentKey>.+)-p(?<page>\d+)\.tif$`);
+  const [skipProcessed, setSkipProcessed] = useState(true);
+  const [afterProcessing, setAfterProcessing] =
+    useState<AfterProcessingValue>(KEEP_AFTER_PROCESSING);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +68,14 @@ export default function NewBatchJobForm({
     const { data, error: submitError } = await sendJsonFull<{ batchId: string }>(
       `/api/tenant/${tenantId}/batch-jobs`,
       'POST',
-      { name: name.trim(), shareId, path: path.trim() || '/', grouping }
+      {
+        name: name.trim(),
+        shareId,
+        path: path.trim() || '/',
+        grouping,
+        skipProcessed,
+        afterProcessing: afterProcessingPayload(afterProcessing, shareId),
+      }
     );
     setBusy(false);
     if (submitError || !data) {
@@ -93,10 +108,14 @@ export default function NewBatchJobForm({
         path={path}
         strategy={strategy}
         pattern={pattern}
+        skipProcessed={skipProcessed}
+        afterProcessing={afterProcessing}
         onShareIdChange={setShareId}
         onPathChange={setPath}
         onStrategyChange={setStrategy}
         onPatternChange={setPattern}
+        onSkipProcessedChange={setSkipProcessed}
+        onAfterProcessingChange={setAfterProcessing}
         onReadyChange={setReady}
       />
 

@@ -444,6 +444,11 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
       trigger('succeeded', 'Succeeded', 'How many items succeeded.'),
       trigger('failed', 'Failed', 'How many items failed.'),
       trigger(
+        'skipped',
+        'Skipped',
+        'How many items an earlier batch had already processed, so this one did not run them.'
+      ),
+      trigger(
         'summary',
         'Summary',
         'One line on what happened, e.g. "OCR’d 40 of 42 documents, 2 failed".'

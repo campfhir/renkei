@@ -18,6 +18,11 @@ import SourceFields, {
   validateGroupingPattern,
   type GroupingStrategy,
 } from '../../source-fields';
+import {
+  KEEP_AFTER_PROCESSING,
+  afterProcessingPayload,
+  type AfterProcessingValue,
+} from '@/lib/batch-jobs/pipeline-form-value';
 import { ScheduleEditor, type CalendarOption } from '../../../agents/builder/schedule-picker';
 
 function defaultTimezone(): string {
@@ -43,6 +48,9 @@ export default function NewScheduleForm({
   const [path, setPath] = useState('/');
   const [strategy, setStrategy] = useState<GroupingStrategy>('whole-file');
   const [pattern, setPattern] = useState(String.raw`^(?<documentKey>.+)-p(?<page>\d+)\.tif$`);
+  const [skipProcessed, setSkipProcessed] = useState(true);
+  const [afterProcessing, setAfterProcessing] =
+    useState<AfterProcessingValue>(KEEP_AFTER_PROCESSING);
   const [ready, setReady] = useState(false);
   const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfig>({
     recurrences: [{ every: 'day', at: '09:00' }],
@@ -76,7 +84,15 @@ export default function NewScheduleForm({
     const { data, error: submitError } = await sendJsonFull<{ id: string }>(
       `/api/tenant/${tenantId}/batch-job-schedules`,
       'POST',
-      { name: name.trim(), shareId, path: path.trim() || '/', grouping, scheduleConfig }
+      {
+        name: name.trim(),
+        shareId,
+        path: path.trim() || '/',
+        grouping,
+        skipProcessed,
+        afterProcessing: afterProcessingPayload(afterProcessing, shareId),
+        scheduleConfig,
+      }
     );
     setBusy(false);
     if (submitError || !data) {
@@ -109,10 +125,14 @@ export default function NewScheduleForm({
         path={path}
         strategy={strategy}
         pattern={pattern}
+        skipProcessed={skipProcessed}
+        afterProcessing={afterProcessing}
         onShareIdChange={setShareId}
         onPathChange={setPath}
         onStrategyChange={setStrategy}
         onPatternChange={setPattern}
+        onSkipProcessedChange={setSkipProcessed}
+        onAfterProcessingChange={setAfterProcessing}
         onReadyChange={setReady}
       />
 
