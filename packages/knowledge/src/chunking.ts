@@ -20,7 +20,7 @@ import { upsertChunkRow } from './ingest';
 import type { KnowledgeChunkInput } from './ingest';
 import type { EmbeddingProvider } from './embeddings';
 import { chunkContext, embeddingInput, titleOf } from './context';
-import { resolveKeywordExtractor } from './keywords';
+import { resolveKeywordExtractor, normalizeKeywords } from './keywords';
 import type { KeywordExtractor } from './keywords';
 
 export interface ChunkTextOptions {
@@ -257,6 +257,12 @@ export function embeddingInputs(pieces: readonly string[], context: string): str
   return pieces.map((piece) => embeddingInput(context, piece));
 }
 
+function isKeywordExtractor(
+  value: KeywordExtractor | readonly string[]
+): value is KeywordExtractor {
+  return !Array.isArray(value);
+}
+
 /**
  * Ingest one source object, chunking when it exceeds the chunk ceiling.
  * Stale rows are deleted first so re-ingest is an exact replacement. Each
@@ -282,11 +288,13 @@ export async function ingestObjectChunks(
      */
     context?: string;
     /**
-     * Who extracts the object's search keywords (keywords.ts). Resolved
-     * from the org's configuration when omitted; pass null to index
-     * without them.
+     * The object's search keywords (keywords.ts): an extractor to ask, a
+     * list the author already supplied (an agent writing its own note
+     * inlines them — it IS a model, and asking another would be paying
+     * twice), or null to index without any. Omitted resolves the org's
+     * extractor from its configuration.
      */
-    keywords?: KeywordExtractor | null;
+    keywords?: KeywordExtractor | readonly string[] | null;
   } = {}
 ): Promise<
   Result<
@@ -304,15 +312,19 @@ export async function ingestObjectChunks(
   // stores the same list. Enrichment only: a failed or absent extractor
   // leaves `keywords` NULL for the reindex sweep and the object still
   // indexes — an LLM outage must never stop the index from growing.
-  const extractor =
-    options.keywords === undefined ? await resolveKeywordExtractor(tenantId) : options.keywords;
   let keywords: string[] | null = null;
-  if (extractor) {
-    const extracted = await extractor.extract({
-      title: titleOf(object.metadata),
-      content: object.content,
-    });
-    if (extracted.ok) keywords = extracted.val;
+  const supplied = options.keywords;
+  if (supplied !== undefined && supplied !== null && !isKeywordExtractor(supplied)) {
+    keywords = normalizeKeywords(supplied);
+  } else {
+    const extractor = supplied === undefined ? await resolveKeywordExtractor(tenantId) : supplied;
+    if (extractor) {
+      const extracted = await extractor.extract({
+        title: titleOf(object.metadata),
+        content: object.content,
+      });
+      if (extracted.ok) keywords = extracted.val;
+    }
   }
 
   const context = options.context ?? chunkContext(object.metadata);

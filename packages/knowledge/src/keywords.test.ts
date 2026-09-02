@@ -13,6 +13,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { LlmProvider, LlmRequest } from '@renkei/agent-llm';
 import {
   parseKeywords,
+  normalizeKeywords,
   keywordPrompt,
   createLlmKeywordExtractor,
   resolveKeywordExtractor,
@@ -72,6 +73,15 @@ describe('parseKeywords', () => {
   it('yields nothing for a reply with no list in it', () => {
     expect(parseKeywords('')).toEqual([]);
     expect(parseKeywords('   ')).toEqual([]);
+  });
+});
+
+describe('normalizeKeywords', () => {
+  it('cleans a supplied list the same way as a parsed reply', () => {
+    expect(normalizeKeywords(['- Acme ', '"acme"', 'x'.repeat(61), '', 7, 'ENG-787'])).toEqual([
+      'Acme',
+      'ENG-787',
+    ]);
   });
 });
 

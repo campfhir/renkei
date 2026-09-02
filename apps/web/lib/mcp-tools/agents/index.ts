@@ -1607,12 +1607,18 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         lines.push(
           '',
           `## ${note.title} (noteId: ${note.noteId}, by ${note.authoredBy})`,
+          ...(note.keywords.length > 0 ? [`Keywords: ${note.keywords.join(', ')}`] : []),
           note.content
         );
       }
       return textResult(lines.join('\n'));
     }
   );
+
+  /** The caller's keyword list as strings; validation of shape is zod's, this only narrows. */
+  function keywordList(value: readonly unknown[]): string[] {
+    return value.filter((entry): entry is string => typeof entry === 'string');
+  }
 
   server.registerTool(
     'agent_knowledge_write',
@@ -1621,7 +1627,9 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       description:
         'Write one or MORE knowledge notes onto one of your agents (or one shared with you) ' +
         '— reference material its runs will carry (policies, formats, standing facts). Each ' +
-        'note is persisted independently: one bad entry does not void the rest.',
+        'note is persisted independently: one bad entry does not void the rest. Include ' +
+        '`keywords` on every note — the names, identifiers and topic phrases someone would ' +
+        'search to find it; you are the model, so no other model is asked.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
@@ -1630,6 +1638,15 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             z.object({
               title: z.string().min(1).max(MAX_AGENT_NOTE_TITLE_CHARS),
               content: z.string().min(1).max(MAX_AGENT_NOTE_CHARS),
+              keywords: z
+                .array(z.string().min(1).max(60))
+                .max(20)
+                .optional()
+                .describe(
+                  'Up to 20 search keywords/phrases for this note: proper nouns, identifiers ' +
+                    '(ticket keys, file names, versions), specific topic phrases of 1–4 words. ' +
+                    'Indexed above the body text for keyword matching.'
+                ),
             })
           )
           .min(1)
@@ -1657,10 +1674,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const lines: string[] = [];
       let failures = 0;
       for (const entry of notes) {
-        const note: { title?: unknown; content?: unknown } =
+        const note: { title?: unknown; content?: unknown; keywords?: unknown } =
           typeof entry === 'object' && entry !== null ? entry : {};
         const title = typeof note.title === 'string' ? note.title.trim() : '';
         const content = typeof note.content === 'string' ? note.content : '';
+        // The caller is a model: its own keywords or none, never a second
+        // model call. Omitted stores none, which a reindex may fill later.
+        const keywords = Array.isArray(note.keywords) ? keywordList(note.keywords) : null;
         if (
           !title ||
           title.length > MAX_AGENT_NOTE_TITLE_CHARS ||
@@ -1677,6 +1697,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
           ownerEmail,
           title,
           content,
+          keywords,
         });
         if (typeof result === 'string') {
           failures += 1;
@@ -1696,15 +1717,23 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
     {
       title: 'Agents · Act — Rewrite one knowledge note',
       description:
-        "Replace a note's title and/or content on one of your agents (or one shared with " +
-        'you). Omitted fields keep their current value; the stored note is fully rewritten ' +
-        'with the result.',
+        "Replace a note's title, content and/or keywords on one of your agents (or one " +
+        'shared with you). Omitted fields keep their current value; the stored note is ' +
+        'fully rewritten with the result. When you change the content, pass fresh `keywords` ' +
+        'for it.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
         noteId: z.string().min(1).describe('From agent_knowledge_list'),
         title: z.string().min(1).max(MAX_AGENT_NOTE_TITLE_CHARS).optional(),
         content: z.string().min(1).max(MAX_AGENT_NOTE_CHARS).optional(),
+        keywords: z
+          .array(z.string().min(1).max(60))
+          .max(20)
+          .optional()
+          .describe(
+            'Replacement search keywords/phrases (up to 20); omitted keeps the current ones'
+          ),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -1712,9 +1741,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const noteId = typeof args.noteId === 'string' ? args.noteId.trim() : '';
       const title = typeof args.title === 'string' ? args.title.trim() : undefined;
       const content = typeof args.content === 'string' ? args.content : undefined;
+      const keywords = Array.isArray(args.keywords) ? keywordList(args.keywords) : undefined;
       if (!noteId) return errText('noteId is required.');
-      if (title === undefined && content === undefined) {
-        return errText('Nothing to update — pass a new title and/or content.');
+      if (title === undefined && content === undefined && keywords === undefined) {
+        return errText('Nothing to update — pass a new title, content, and/or keywords.');
       }
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
@@ -1741,6 +1771,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         noteId,
         title: title ?? current.title,
         content: content ?? current.content,
+        // The caller's list, else the stored one — never the org's model.
+        keywords: keywords ?? current.keywords,
       });
       if (result !== 'OK') return errText(noteErrorText[result]);
       return textResult('Note updated.');

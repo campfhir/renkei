@@ -62,6 +62,7 @@ export {
   resolveKeywordExtractor,
   createLlmKeywordExtractor,
   parseKeywords,
+  normalizeKeywords,
   keywordPrompt,
   KEYWORD_INPUT_MAX_CHARS,
   MAX_KEYWORDS,

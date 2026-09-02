@@ -9,7 +9,13 @@ jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('kysely', () => ({ sql: jest.fn() }));
 // Keyword enrichment resolves the org's default LLM; these tests are about
 // chunking and embedding, so the org has none unless a test passes one.
-jest.mock('./keywords', () => ({ resolveKeywordExtractor: jest.fn(async () => null) }));
+jest.mock('./keywords', () => ({
+  resolveKeywordExtractor: jest.fn(async () => null),
+  // The normaliser is pure; the real one keeps this suite honest about
+  // what a supplied list is stored as.
+  normalizeKeywords:
+    jest.requireActual<typeof import('./keywords')>('./keywords').normalizeKeywords,
+}));
 
 import { ok } from '@campfhir/safe-functions/helpers';
 import { chunkText, chunkRefId, ingestObjectChunks } from './chunking';
@@ -222,6 +228,18 @@ describe('ingestObjectChunks — embedding batches', () => {
       // Enrichment only: the object still indexes.
       expect(result.ok).toBe(true);
       expect(inserted[0]?.keywords).toBeNull();
+    });
+
+    it('stores a list the author supplied, normalised, without asking any extractor', async () => {
+      const seen: string[][] = [];
+      // The org would resolve an extractor here; a supplied list must win
+      // without it ever being asked — the mock resolver records nothing,
+      // and an explicit extractor is not consulted either.
+      await ingestObjectChunks('tenant-1', embedderRecording([]), object('short'), {
+        keywords: [' "ENG-787" ', 'Printers', 'printers', ''],
+      });
+      expect(inserted[0]?.keywords).toEqual(['ENG-787', 'Printers']);
+      expect(seen).toEqual([]);
     });
 
     it('stores an empty list when extraction ran and found nothing', async () => {
