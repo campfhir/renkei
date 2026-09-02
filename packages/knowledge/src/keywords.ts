@@ -92,6 +92,35 @@ export function keywordPrompt(title: string, content: string): string {
  * that reads as a list is accepted; a reply with no list in it yields
  * nothing rather than one keyword made of the whole reply.
  */
+/**
+ * A keyword list as stored: strings only, bullets and quotes stripped,
+ * whitespace collapsed, deduplicated case-insensitively, sentences and
+ * blanks dropped, capped at MAX_KEYWORDS. The one normaliser for every
+ * source of keywords — the model's reply, and a list an agent inlined
+ * with its own note — so the two are indistinguishable in the index.
+ */
+export function normalizeKeywords(candidates: readonly unknown[]): string[] {
+  const seen = new Set<string>();
+  const keywords: string[] = [];
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    // Trim before stripping quotes, or a trailing `" ` keeps its quote.
+    const cleaned = candidate
+      .trim()
+      .replace(/^[-*•\d.)\s]+/, '') // list bullets and numbering
+      .replace(/^["'`]+|["'`]+$/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned || cleaned.length > MAX_KEYWORD_CHARS) continue;
+    const key = cleaned.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    keywords.push(cleaned);
+    if (keywords.length >= MAX_KEYWORDS) break;
+  }
+  return keywords;
+}
+
 export function parseKeywords(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
@@ -113,23 +142,7 @@ export function parseKeywords(text: string): string[] {
     candidates = lines.length > 1 ? lines : trimmed.split(',');
   }
 
-  const seen = new Set<string>();
-  const keywords: string[] = [];
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'string') continue;
-    const cleaned = candidate
-      .replace(/^[\s\-*•\d.)]+/, '') // list bullets and numbering
-      .replace(/^["'`]+|["'`]+$/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!cleaned || cleaned.length > MAX_KEYWORD_CHARS) continue;
-    const key = cleaned.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    keywords.push(cleaned);
-    if (keywords.length >= MAX_KEYWORDS) break;
-  }
-  return keywords;
+  return normalizeKeywords(candidates);
 }
 
 export interface KeywordExtractorOptions {

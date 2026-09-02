@@ -48,9 +48,20 @@ export interface AgentNote {
   noteId: string;
   title: string;
   content: string;
+  /** Search keywords stored with the note — inlined by its author, or extracted. */
+  keywords: string[];
   authoredBy: 'user' | 'agent';
   sourceAt: string | null;
 }
+
+/**
+ * Who supplies a note's keywords. `undefined` leaves it to the org's
+ * keyword-enrichment policy (the knowledge panel — a person typed the
+ * note); a list is the author's own (an agent over MCP is a model already,
+ * so it inlines them rather than have the org's model asked again); null
+ * stores none, which a later reindex may fill.
+ */
+export type NoteKeywords = readonly string[] | null | undefined;
 
 export type AgentNoteError = 'DB_ERROR' | 'NOT_FOUND' | 'EMBEDDINGS_OFF' | 'EMBEDDING_FAILED';
 
@@ -67,7 +78,7 @@ function baseRefOf(refId: string): string {
 async function agentNoteChunks(db: Kysely<DB>, tenantId: string, agentId: string) {
   return db
     .selectFrom('knowledge_chunks')
-    .select(['ref_id', 'metadata', 'content', 'source_at'])
+    .select(['ref_id', 'metadata', 'content', 'keywords', 'source_at'])
     .where('tenant_id', '=', tenantId)
     .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
     .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
@@ -107,6 +118,9 @@ export async function listAgentNotes(
       noteId,
       title: typeof metadata.title === 'string' ? metadata.title : '(untitled)',
       content,
+      keywords: Array.isArray(row.keywords)
+        ? row.keywords.filter((keyword): keyword is string => typeof keyword === 'string')
+        : [],
       authoredBy: metadata.authoredBy === 'agent' ? 'agent' : 'user',
       sourceAt: row.source_at ? new Date(row.source_at).toISOString() : null,
     });
@@ -121,7 +135,14 @@ export async function listAgentNotes(
  */
 export async function createAgentNote(
   db: Kysely<DB>,
-  input: { tenantId: string; agentId: string; ownerEmail: string; title: string; content: string }
+  input: {
+    tenantId: string;
+    agentId: string;
+    ownerEmail: string;
+    title: string;
+    content: string;
+    keywords?: NoteKeywords;
+  }
 ): Promise<{ noteId: string } | AgentNoteError> {
   const embedder = await resolveEmbeddingProvider(input.tenantId);
   if (!embedder) return 'EMBEDDINGS_OFF';
@@ -146,7 +167,7 @@ export async function createAgentNote(
       },
       sourceAt: new Date().toISOString(),
     },
-    NOTE_CHUNKING
+    { ...NOTE_CHUNKING, ...(input.keywords !== undefined ? { keywords: input.keywords } : {}) }
   );
   if (!ingested.ok) {
     return ingested.err.type === 'EMBEDDING_FAILED' ? 'EMBEDDING_FAILED' : 'DB_ERROR';
@@ -186,6 +207,7 @@ export async function updateAgentNote(
     noteId: string;
     title: string;
     content: string;
+    keywords?: NoteKeywords;
   }
 ): Promise<'OK' | AgentNoteError> {
   const refId = noteRefId(input.ownerEmail, input.noteId);
@@ -212,7 +234,7 @@ export async function updateAgentNote(
       },
       sourceAt: new Date().toISOString(),
     },
-    NOTE_CHUNKING
+    { ...NOTE_CHUNKING, ...(input.keywords !== undefined ? { keywords: input.keywords } : {}) }
   );
   if (!ingested.ok) {
     return ingested.err.type === 'EMBEDDING_FAILED' ? 'EMBEDDING_FAILED' : 'DB_ERROR';
@@ -224,8 +246,9 @@ export async function updateAgentNote(
  * Fork one agent's knowledge notes onto another (the share-copy flow):
  * every note is re-authored under the RECIPIENT's email with fresh
  * noteIds and the target agent's stamp. Content is byte-identical, so the
- * stored EMBEDDINGS are reused verbatim — no embedder, no model call, and
- * the copy works even in orgs that later switched knowledge off.
+ * stored EMBEDDINGS, lexical entries and keywords are reused verbatim — no
+ * embedder, no model call, and the copy works even in orgs that later
+ * switched knowledge off.
  *
  * Chunk suffixes survive via prefix replacement (the base ref embeds an
  * email + uuid, so the prefix cannot collide inside the ref). Memories are
@@ -253,13 +276,19 @@ export async function copyAgentNotes(
 
   for (const oldBase of baseRefs) {
     const newBase = noteRefId(input.targetOwnerEmail, randomUUID());
+    // Every derived column rides along — the vector, the lexical entry
+    // and the extracted keywords are all functions of content that is
+    // byte-identical here, so copying them is exact and spares the
+    // embedder and the model a second pass. Leaving any of them out would
+    // hand the recipient a note that search can only half-find.
     await sql`
       INSERT INTO knowledge_chunks
-        (id, tenant_id, provider, ref_id, metadata, content, embedding, source_at)
+        (id, tenant_id, provider, ref_id, metadata, content, embedding,
+         keywords, search_text, source_at)
       SELECT gen_random_uuid(), tenant_id, provider,
              replace(ref_id, ${oldBase}, ${newBase}),
              jsonb_set(metadata, '{agentId}', to_jsonb(${input.targetAgentId}::text)),
-             content, embedding, source_at
+             content, embedding, keywords, search_text, source_at
       FROM knowledge_chunks
       WHERE tenant_id = ${input.tenantId}
         AND provider = ${NOTE_KNOWLEDGE_PROVIDER}

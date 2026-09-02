@@ -22,13 +22,13 @@ As of the most recent rework, there is **no standalone "approval node."** Approv
 
 `ask_person` is a free tool — not something the agent author has to wire up per step — offered to the model mid-run whenever the agent has `canAskQuestions` enabled. Calling it pauses the run and asks a human a question, optionally as a structured form (`question-form.ts` defines the field types). Answers are validated by `question-answers.ts`, keyed by field name — the same validation logic backs the card UI, the answer API route, and the MCP answer tool, so there's exactly one place that decides whether an answer is well-formed.
 
-This is distinct from the card-level approve/dismiss flow described in [`mcp-gateway.md`](./mcp-gateway.md#cards--actionable-items): that operates on `actionable_items` created by the ambient event pipeline, while `needsApproval`/`ask_person` operate on individual steps *inside* a running agent.
+This is distinct from the card-level approve/dismiss flow described in [`mcp-gateway.md`](./mcp-gateway.md#cards--actionable-items): that operates on `actionable_items` created by the ambient event pipeline, while `needsApproval`/`ask_person` operate on individual steps _inside_ a running agent.
 
 ## Knowledge and memory
 
 Two separate things, easy to conflate:
 
-- **Agent knowledge notes** — owner-curated, always included in full in every run's context. Managed via the `agent_knowledge_*` MCP tools.
+- **Agent knowledge notes** — owner-curated, always included in full in every run's context. Managed via the `agent_knowledge_*` MCP tools. Notes are rows in the knowledge index (provider `note`), so they carry the same lexical entry, context header and keywords as everything else — except that an agent writing a note supplies its own `keywords` in the tool call rather than having the org's default model asked again (it is a model already); omitted keywords are stored as none, which a reindex may fill later.
 - **Agent memory** (`memory.ts`, table `agent_memories`) — append-only entries the agent itself writes during runs. Each entry is capped at `MEMORY_ENTRY_MAX_CHARS` (500); injected into prompts up to `MEMORY_INJECT_MAX_CHARS` (4000), summaries first, then newest-fit. Compaction (summarizing old memory to make room) happens in `apps/worker-agents` rather than in `packages/agents`, since it needs an LLM call. Selective deletion is available via the `agent_memory_forget` MCP tool.
 
 ## Triggers and runs

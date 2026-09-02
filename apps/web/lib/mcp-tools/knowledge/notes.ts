@@ -26,6 +26,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { sql } from 'kysely';
 import { getDatabase } from '@renkei/db';
+import { contentEncryptionKey, revealContent } from '@renkei/crypto';
 import {
   resolveEmbeddingProvider,
   ingestObjectChunks,
@@ -33,6 +34,8 @@ import {
   noteRefId,
   NOTE_KNOWLEDGE_PROVIDER,
   NOTE_CHUNKING,
+  searchTextFragment,
+  normalizeKeywords,
 } from '@renkei/knowledge';
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
@@ -68,12 +71,12 @@ function noteIdOfRefId(refId: string, ownerEmail: string): string {
 async function findNoteChunk(
   tenantId: string,
   refId: string
-): Promise<{ metadata: unknown } | null | 'DB_ERROR'> {
+): Promise<{ metadata: unknown; keywords: unknown } | null | 'DB_ERROR'> {
   const dbResult = getDatabase();
   if (!dbResult.ok) return 'DB_ERROR';
   const row = await dbResult.val
     .selectFrom('knowledge_chunks')
-    .select(['metadata'])
+    .select(['metadata', 'keywords'])
     .where('tenant_id', '=', tenantId)
     .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
     .where((eb) =>
@@ -82,6 +85,18 @@ async function findNoteChunk(
     .limit(1)
     .executeTakeFirst();
   return row ?? null;
+}
+
+/** The caller's keyword list as strings; validation of shape is zod's, this only narrows. */
+function keywordList(value: readonly unknown[]): string[] {
+  return value.filter((entry): entry is string => typeof entry === 'string');
+}
+
+/** A note's stored keywords, from the chunk row findNoteChunk returned. */
+function storedKeywords(chunk: { keywords?: unknown }): string[] | null {
+  return Array.isArray(chunk.keywords)
+    ? chunk.keywords.filter((entry): entry is string => typeof entry === 'string')
+    : null;
 }
 
 export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolContext): void {
@@ -99,6 +114,15 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       inputSchema: z.object({
         title: z.string().min(1).max(MAX_TITLE_CHARS).describe('Short human title for the note'),
         content: z.string().min(1).max(MAX_NOTE_CHARS).describe('The note body (plain text)'),
+        keywords: z
+          .array(z.string().min(1).max(60))
+          .max(20)
+          .optional()
+          .describe(
+            'Up to 20 search keywords/phrases: proper nouns, identifiers, specific topic ' +
+              'phrases of 1–4 words. Indexed above the body for keyword matching — supply ' +
+              'them; you are the model, so no other model is asked.'
+          ),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -107,6 +131,9 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       const title = typeof args.title === 'string' ? args.title.trim() : '';
       const content = typeof args.content === 'string' ? args.content : '';
       if (!title || !content) return errText('Both title and content are required.');
+      // An MCP caller is a model: its own keywords or none, never a second
+      // model call. Omitted stores none, which a reindex may fill later.
+      const keywords = Array.isArray(args.keywords) ? keywordList(args.keywords) : null;
 
       const embedder = await resolveEmbeddingProvider(context.tenantId);
       if (!embedder) {
@@ -138,7 +165,7 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
           // and date filters should sort it by.
           sourceAt: new Date().toISOString(),
         },
-        NOTE_CHUNKING
+        { ...NOTE_CHUNKING, keywords }
       );
       if (!ingested.ok) {
         return errText(
@@ -169,6 +196,13 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       inputSchema: z.object({
         noteId: z.string().min(1).describe('The noteId returned by knowledge_create_note'),
         title: z.string().min(1).max(MAX_TITLE_CHARS).optional().describe('New title'),
+        keywords: z
+          .array(z.string().min(1).max(60))
+          .max(20)
+          .optional()
+          .describe(
+            'Replacement search keywords/phrases (up to 20); omitted keeps the current ones'
+          ),
         content: z.string().min(1).max(MAX_NOTE_CHARS).optional().describe('New body'),
       }),
     },
@@ -179,8 +213,9 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       if (!noteId) return errText('noteId is required.');
       const title = typeof args.title === 'string' ? args.title.trim() : undefined;
       const content = typeof args.content === 'string' ? args.content : undefined;
-      if (title === undefined && content === undefined) {
-        return errText('Nothing to update — pass a new title, content, or both.');
+      const keywords = Array.isArray(args.keywords) ? keywordList(args.keywords) : undefined;
+      if (title === undefined && content === undefined && keywords === undefined) {
+        return errText('Nothing to update — pass a new title, content, keywords, or any of them.');
       }
 
       const refId = noteRefId(userEmail, noteId);
@@ -195,21 +230,45 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
           : {};
 
       if (content === undefined) {
-        // Title-only: rewrite metadata in place across the note's chunks.
-        // Re-chunking from stored chunks would be lossy (overlap regions),
-        // and the embedding keys off content, which is unchanged.
+        // Title and/or keywords only: rewrite in place across the note's
+        // chunks. Re-chunking from stored chunks would be lossy (overlap
+        // regions), and the embedding keys off content, which is unchanged.
+        // The lexical entry is rebuilt from the row's own decrypted text so
+        // the new title/keywords rank in keyword search immediately.
         const dbResult = getDatabase();
         if (!dbResult.ok) return errText('Database unavailable.');
-        await dbResult.val
-          .updateTable('knowledge_chunks')
-          .set({ metadata: sql`metadata || jsonb_build_object('title', ${title}::text)` })
+        const keyResult = contentEncryptionKey();
+        if (!keyResult.ok) return errText('The knowledge store could not be written.');
+        const chunks = await dbResult.val
+          .selectFrom('knowledge_chunks')
+          .select(['id', 'content', 'metadata', 'keywords'])
           .where('tenant_id', '=', context.tenantId)
           .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
           .where((eb) =>
             eb.or([eb('ref_id', '=', refId), eb('ref_id', 'like', `${escapeLike(refId)}#%`)])
           )
           .execute();
-        return textResult('Note title updated.');
+        const newTitle =
+          title ?? (typeof existingMeta.title === 'string' ? existingMeta.title : '');
+        for (const chunk of chunks) {
+          const stored = Array.isArray(chunk.keywords)
+            ? chunk.keywords.filter((k): k is string => typeof k === 'string')
+            : null;
+          const nextKeywords = keywords !== undefined ? normalizeKeywords(keywords) : stored;
+          const text = revealContent(chunk.content, keyResult.val);
+          await dbResult.val
+            .updateTable('knowledge_chunks')
+            .set({
+              ...(title !== undefined
+                ? { metadata: sql`metadata || jsonb_build_object('title', ${title}::text)` }
+                : {}),
+              keywords: nextKeywords,
+              search_text: searchTextFragment(newTitle, nextKeywords, text),
+            })
+            .where('id', '=', chunk.id)
+            .execute();
+        }
+        return textResult(title !== undefined ? 'Note title updated.' : 'Note keywords updated.');
       }
 
       const embedder = await resolveEmbeddingProvider(context.tenantId);
@@ -233,7 +292,8 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
           },
           sourceAt: new Date().toISOString(),
         },
-        NOTE_CHUNKING
+        // The caller's keywords, else the stored ones — never the org's model.
+        { ...NOTE_CHUNKING, keywords: keywords ?? storedKeywords(existing) }
       );
       if (!ingested.ok) {
         return errText(
