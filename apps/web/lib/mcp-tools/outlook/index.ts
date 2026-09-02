@@ -49,6 +49,8 @@ import {
   previewToolMeta,
   newPreviewId,
 } from '../widgets';
+import { prependComment } from './comment-body';
+import { markdownToHtml } from './markdown';
 import type { GraphAuth } from '../graph/graph-auth';
 import {
   DIRECTORY_SEARCH_HEADERS,
@@ -232,7 +234,7 @@ async function graphPost(
   };
 }
 
-/** PATCH to Graph; used to add recipients to a reply/forward draft before sending it. */
+/** PATCH to Graph; puts the comment and any added recipients on a reply/forward draft before it is sent. */
 async function graphPatch(
   context: MCPToolContext,
   accessToken: string,
@@ -547,7 +549,28 @@ function unionAddresses(base: readonly string[], extra: readonly string[]): stri
  * are unioned onto whatever Graph auto-populated (the original sender for
  * reply, sender + all recipients for reply-all, nothing for forward — so
  * "union with nothing" is exactly "use what was given").
+ *
+ * The comment rides on that same PATCH rather than on the create call.
+ * Graph drops a `comment` into the draft's body verbatim, and that body is
+ * HTML whenever the original was — so every newline in the caller's text
+ * collapsed into a run-on paragraph, and no formatting was possible at
+ * all. `prependComment` renders the caller's Markdown and puts it atop the
+ * quoted thread in the draft's own content type instead.
  */
+/**
+ * How every composed body explains itself. Markdown in, HTML out — the
+ * model writes Markdown reliably and Outlook renders HTML reliably, and
+ * `markdownToHtml` is the bridge. Spelled out because a model told merely
+ * "Markdown" tends to reach for headings and tables; an email wants
+ * paragraphs, emphasis and lists.
+ */
+const MARKDOWN_CONVENTIONS =
+  'Markdown: blank lines between paragraphs, **bold**, *italic*, "- " bullets, ' +
+  '"1. " numbered lists, [links](https://…). Rendered to HTML';
+const BODY_MARKDOWN_HINT = `Body, ${MARKDOWN_CONVENTIONS}`;
+const REPLY_MARKDOWN_HINT = `Reply body, ${MARKDOWN_CONVENTIONS} atop the quoted thread`;
+const FORWARD_NOTE_HINT = `Note prepended above the forwarded message, ${MARKDOWN_CONVENTIONS}`;
+
 /** What a created (not yet sent) draft looks like to a caller or a preview card. */
 interface DraftInfo {
   ok: true;
@@ -556,8 +579,13 @@ interface DraftInfo {
   cc: string[];
   bcc: string[];
   subject: string;
-  /** Graph's plain-text bodyPreview — the comment atop the quoted thread. */
-  bodyPreview: string;
+  /**
+   * The caller's own Markdown, as given: the whole body for a compose, the
+   * comment atop the quoted thread for a reply/forward. NOT Graph's
+   * bodyPreview — that is capped at 255 characters and flattened to one
+   * line, which is no way to review an email before sending it.
+   */
+  body: string;
   /**
    * Outlook-on-the-web link to the message, taken straight from Graph.
    *
@@ -586,7 +614,7 @@ async function createDraftAction(
     context,
     accessToken,
     `/me/messages/${encodeURIComponent(messageId)}/${action}`,
-    options.comment ? { comment: options.comment } : {}
+    {}
   );
   if (!created.ok) return created;
   const draft = created.body ?? {};
@@ -596,9 +624,9 @@ async function createDraftAction(
   const toRecipients = unionAddresses(addressesOf(draft.toRecipients), options.additionalTo);
   const ccRecipients = unionAddresses(addressesOf(draft.ccRecipients), options.cc);
   const bccRecipients = unionAddresses(addressesOf(draft.bccRecipients), options.bcc);
-  const needsPatch =
+  const needsRecipientPatch =
     options.additionalTo.length > 0 || options.cc.length > 0 || options.bcc.length > 0;
-  if (needsPatch) {
+  if (needsRecipientPatch || options.comment) {
     if (toRecipients.length === 0) {
       // Forward auto-populates nothing, so this only fires for a forward
       // whose caller-supplied "to" turned out empty — reply/reply-all always
@@ -611,9 +639,16 @@ async function createDraftAction(
       accessToken,
       `/me/messages/${encodeURIComponent(draftId)}`,
       {
-        toRecipients: toRecipients.map(recipientOf),
-        ...(ccRecipients.length > 0 ? { ccRecipients: ccRecipients.map(recipientOf) } : {}),
-        ...(bccRecipients.length > 0 ? { bccRecipients: bccRecipients.map(recipientOf) } : {}),
+        ...(options.comment ? { body: prependComment(rec(draft.body), options.comment) } : {}),
+        ...(needsRecipientPatch
+          ? {
+              toRecipients: toRecipients.map(recipientOf),
+              ...(ccRecipients.length > 0 ? { ccRecipients: ccRecipients.map(recipientOf) } : {}),
+              ...(bccRecipients.length > 0
+                ? { bccRecipients: bccRecipients.map(recipientOf) }
+                : {}),
+            }
+          : {}),
       }
     );
     if (!patched.ok) {
@@ -629,7 +664,7 @@ async function createDraftAction(
     cc: ccRecipients,
     bcc: bccRecipients,
     subject: str(draft.subject),
-    bodyPreview: str(draft.bodyPreview),
+    body: options.comment ?? '',
     webLink: str(draft.webLink),
   };
 }
@@ -2025,13 +2060,14 @@ export async function registerOutlookTools(
       title: 'Outlook · Act — Send an email',
       description:
         'Send an email as the connected user — e.g. a summary assembled with the other tools. ' +
-        'Plain text body. This speaks AS the user, so only send what they asked to send.',
+        'Markdown body, rendered to HTML. This speaks AS the user, so only send what they ' +
+        'asked to send.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         to: z.array(z.string().min(1)).min(1).describe('Recipient email addresses'),
         cc: z.array(z.string().min(1)).describe('CC email addresses').optional(),
         subject: z.string().min(1).describe('Subject line'),
-        body: z.string().min(1).describe('Body, plain text'),
+        body: z.string().min(1).describe(BODY_MARKDOWN_HINT),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2045,7 +2081,7 @@ export async function registerOutlookTools(
       const result = await graphPost(context, access.accessToken, '/me/sendMail', {
         message: {
           subject: str(args.subject),
-          body: { contentType: 'Text', content: str(args.body) },
+          body: { contentType: 'HTML', content: markdownToHtml(str(args.body)) },
           toRecipients: to.map(recipient),
           ...(cc.length > 0 ? { ccRecipients: cc.map(recipient) } : {}),
         },
@@ -2102,7 +2138,7 @@ export async function registerOutlookTools(
           .string()
           .min(1)
           .describe('Message id from outlook_list_messages/outlook_get_message'),
-        comment: z.string().min(1).describe('Reply body, plain text'),
+        comment: z.string().min(1).describe(REPLY_MARKDOWN_HINT),
         additionalTo: z
           .array(z.string().min(1))
           .describe('Extra "to" addresses beyond the original sender')
@@ -2163,7 +2199,7 @@ export async function registerOutlookTools(
           .string()
           .min(1)
           .describe('Message id from outlook_list_messages/outlook_get_message'),
-        comment: z.string().min(1).describe('Reply body, plain text'),
+        comment: z.string().min(1).describe(REPLY_MARKDOWN_HINT),
         additionalTo: z
           .array(z.string().min(1))
           .describe('Extra "to" addresses beyond the original sender/recipients')
@@ -2230,7 +2266,7 @@ export async function registerOutlookTools(
           .min(1)
           .describe('Message id from outlook_list_messages/outlook_get_message'),
         to: z.array(z.string().min(1)).min(1).describe('Recipient email addresses'),
-        comment: z.string().describe('Note prepended above the forwarded message').optional(),
+        comment: z.string().describe(FORWARD_NOTE_HINT).optional(),
         cc: z.array(z.string().min(1)).describe('CC addresses').optional(),
         bcc: z.array(z.string().min(1)).describe('BCC addresses').optional(),
       }),
@@ -2288,14 +2324,15 @@ export async function registerOutlookTools(
     `sends or discards from the card. If no card appeared in this client, tell the user the ` +
     `draft is in their Outlook Drafts folder.`;
 
-  const draftStructured = (kind: string, draft: DraftInfo, body: string) => ({
+  const draftStructured = (kind: string, draft: DraftInfo) => ({
     kind,
     draftId: draft.draftId,
     to: draft.to,
     cc: draft.cc,
     bcc: draft.bcc,
     subject: draft.subject,
-    body,
+    body: draft.body,
+    bodyHtml: draft.body ? markdownToHtml(draft.body) : '',
   });
 
   server.registerTool(
@@ -2305,7 +2342,8 @@ export async function registerOutlookTools(
       description:
         'Draft an email and show the user an interactive preview card to send or discard. ' +
         'Prefer this over outlook_send_mail whenever the user should review before it goes ' +
-        'out — the card does the sending. Plain text body. This speaks AS the user.',
+        'out — the card does the sending. Markdown body, rendered to HTML. This speaks AS ' +
+        'the user.',
       annotations: { readOnlyHint: false },
       _meta: previewToolMeta(EMAIL_COMPOSE_URI),
       inputSchema: z.object({
@@ -2313,7 +2351,7 @@ export async function registerOutlookTools(
         cc: z.array(z.string().min(1)).describe('CC email addresses').optional(),
         bcc: z.array(z.string().min(1)).describe('BCC email addresses').optional(),
         subject: z.string().min(1).describe('Subject line'),
-        body: z.string().min(1).describe('Body, plain text'),
+        body: z.string().min(1).describe(BODY_MARKDOWN_HINT),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2328,7 +2366,7 @@ export async function registerOutlookTools(
 
       const created = await graphPost(context, access.accessToken, '/me/messages', {
         subject,
-        body: { contentType: 'Text', content: body },
+        body: { contentType: 'HTML', content: markdownToHtml(body) },
         toRecipients: to.map(recipientOf),
         ...(cc.length > 0 ? { ccRecipients: cc.map(recipientOf) } : {}),
         ...(bcc.length > 0 ? { bccRecipients: bcc.map(recipientOf) } : {}),
@@ -2349,12 +2387,12 @@ export async function registerOutlookTools(
         cc,
         bcc,
         subject,
-        bodyPreview: body,
+        body,
         webLink: str((created.body ?? {}).webLink),
       };
       return {
         ...textResult(previewResultText(draft, 'The email')),
-        structuredContent: draftStructured('compose', draft, body),
+        structuredContent: draftStructured('compose', draft),
       };
     }
   );
@@ -2398,7 +2436,7 @@ export async function registerOutlookTools(
             .string()
             .min(1)
             .describe('Message id from outlook_list_messages/outlook_get_message'),
-          comment: z.string().min(1).describe('Reply body, plain text'),
+          comment: z.string().min(1).describe(REPLY_MARKDOWN_HINT),
           additionalTo: z
             .array(z.string().min(1))
             .describe('Extra "to" addresses beyond the auto-populated recipients')
@@ -2437,7 +2475,7 @@ export async function registerOutlookTools(
         });
         return {
           ...textResult(previewResultText(created, preview.what)),
-          structuredContent: draftStructured(preview.kind, created, created.bodyPreview),
+          structuredContent: draftStructured(preview.kind, created),
         };
       }
     );
@@ -2459,7 +2497,7 @@ export async function registerOutlookTools(
           .min(1)
           .describe('Message id from outlook_list_messages/outlook_get_message'),
         to: z.array(z.string().min(1)).min(1).describe('Recipient email addresses'),
-        comment: z.string().describe('Note prepended above the forwarded message').optional(),
+        comment: z.string().describe(FORWARD_NOTE_HINT).optional(),
         cc: z.array(z.string().min(1)).describe('CC addresses').optional(),
         bcc: z.array(z.string().min(1)).describe('BCC addresses').optional(),
       }),
@@ -2492,7 +2530,7 @@ export async function registerOutlookTools(
       });
       return {
         ...textResult(previewResultText(created, 'The forward')),
-        structuredContent: draftStructured('forward', created, created.bodyPreview),
+        structuredContent: draftStructured('forward', created),
       };
     }
   );
@@ -2513,7 +2551,7 @@ export async function registerOutlookTools(
             to: z.array(z.string().min(1)).optional(),
             cc: z.array(z.string().min(1)).optional(),
             subject: z.string().optional(),
-            body: z.string().describe('Body, plain text').optional(),
+            body: z.string().describe(BODY_MARKDOWN_HINT).optional(),
           })
           .describe('Edits the user made on the card, PATCHed onto the draft before sending')
           .optional(),
@@ -2534,7 +2572,7 @@ export async function registerOutlookTools(
         ...(cc !== null ? { ccRecipients: cc.map(recipientOf) } : {}),
         ...(str(overrides.subject) ? { subject: str(overrides.subject) } : {}),
         ...(str(overrides.body)
-          ? { body: { contentType: 'Text', content: str(overrides.body) } }
+          ? { body: { contentType: 'HTML', content: markdownToHtml(str(overrides.body)) } }
           : {}),
       };
       if (Object.keys(patch).length > 0) {

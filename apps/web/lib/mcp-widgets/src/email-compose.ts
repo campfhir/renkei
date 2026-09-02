@@ -9,12 +9,17 @@
  * and are PATCHed onto the draft before it goes out. Reply/reply-all/forward
  * drafts are shown read-only: Graph's draft body carries the quoted thread,
  * and a body edit would replace the whole thing, quotes included.
+ *
+ * Bodies are Markdown. The editable textarea holds the Markdown source
+ * (what the confirm tool renders on send); a read-only body shows the
+ * server's rendering of it, so the user sees the email as it will arrive.
  */
 
 import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import {
   cardActions,
   el,
+  htmlField,
   injectStyle,
   inputField,
   readonlyField,
@@ -81,6 +86,7 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   const bcc = strings(draft.bcc).join(', ');
   const subject = str(draft.subject);
   const body = str(draft.body);
+  const bodyHtml = str(draft.bodyHtml);
 
   const toInput = editable ? inputField('To', to) : null;
   const ccInput = editable && cc ? inputField('Cc', cc) : null;
@@ -94,9 +100,13 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   if (bcc) card.append(readonlyField('Bcc', bcc));
   if (subjectInput) card.append(subjectInput.field);
   else card.append(readonlyField('Subject', subject));
-  if (bodyInput) card.append(bodyInput.field);
-  else {
-    card.append(readonlyField('Body', body));
+  if (bodyInput) {
+    card.append(bodyInput.field);
+    card.append(
+      el('div', 'card-subtitle', 'Markdown: **bold**, *italic*, "- " bullets, "1. " numbered.')
+    );
+  } else {
+    card.append(bodyHtml ? htmlField('Body', bodyHtml) : readonlyField('Body', body));
     if (kind !== 'compose') {
       card.append(
         el('div', 'card-subtitle', 'The quoted thread below your text is included on send.')
