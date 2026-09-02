@@ -73,6 +73,11 @@ body {
   padding: 6px 9px;
 }
 .field-value { white-space: pre-wrap; overflow-wrap: anywhere; }
+.field-html { white-space: normal; }
+.field-html p, .field-html ul, .field-html ol, .field-html blockquote { margin: 0 0 8px; }
+.field-html ul, .field-html ol { padding-left: 22px; }
+.field-html > div > :last-child { margin-bottom: 0; }
+.field-html a { color: var(--card-accent); }
 .field textarea { resize: vertical; min-height: 72px; }
 .field input:focus, .field textarea:focus {
   outline: 2px solid var(--card-accent); outline-offset: -1px;
@@ -191,6 +196,23 @@ export function inputField(
   input.value = value;
   field.append(el('div', 'field-label', label), input);
   return { field, input };
+}
+
+/**
+ * Label + HTML the server rendered from the caller's Markdown. The markup
+ * is ours (markdown.ts escapes raw HTML and drops unsafe link targets), so
+ * innerHTML is the point, not a hazard; links open outside the iframe.
+ */
+export function htmlField(label: string, html: string): HTMLElement {
+  const field = el('div', 'field');
+  const value = el('div', 'field-value field-html');
+  value.innerHTML = html;
+  for (const anchor of value.querySelectorAll('a')) {
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+  }
+  field.append(el('div', 'field-label', label), value);
+  return field;
 }
 
 /** Label + textarea; returns both so callers can read the value back. */

@@ -1,18 +1,19 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
- * Line breaks in a reply survive all the way to the draft and the card.
+ * A reply's paragraphs, lists and emphasis survive all the way to the draft
+ * and the card.
  *
  * Graph's `createReply` comment lands in an HTML body verbatim, where "\n"
  * is just whitespace — so a reply written as paragraphs and a numbered list
  * went out as one run-on line, and the preview card (fed by Graph's flat,
  * 255-char bodyPreview) showed the same. The draft is now created with no
- * comment and the text PATCHed on top in the draft's own content type, and
- * the card shows the caller's text as given.
+ * comment and the Markdown rendered and PATCHed on top in the draft's own
+ * content type; the card gets both the source and the rendering.
  */
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { commentToHtml, prependComment } from './comment-body';
+import { prependComment } from './comment-body';
 
 jest.mock('@renkei/provider-grants', () => ({
   getGrant: async () => ({
@@ -88,6 +89,9 @@ type ToolResult = {
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
 
 const COMMENT = 'Hi Sravya,\n\nTwo points to reconcile:\n1. Zero data retention\n2. Audit logging';
+const COMMENT_HTML =
+  '<div><p>Hi Sravya,</p>\n<p>Two points to reconcile:</p>\n' +
+  '<ol>\n<li>Zero data retention</li>\n<li>Audit logging</li>\n</ol></div>';
 const QUOTED_HTML =
   '<html><head><meta charset="utf-8"></head><body><div id="divRplyFwdMsg">From: Sravya</div>' +
   '<div>original text</div></body></html>';
@@ -110,8 +114,11 @@ beforeEach(() => {
       url: String(url),
       body: init?.body ? JSON.parse(String(init.body)) : null,
     });
+    // A draft comes back from a compose (POST /me/messages) and from the
+    // reply/forward create actions alike; everything else is bodiless.
     const body =
-      method === 'POST' && /\/(createReply|createReplyAll|createForward)$/.test(String(url))
+      method === 'POST' &&
+      /\/me\/messages(\/[^/]+\/(createReply|createReplyAll|createForward))?$/.test(String(url))
         ? {
             id: 'draft-1',
             subject: 'RE: Sign-off',
@@ -155,40 +162,37 @@ async function outlookTool(name: string, args: Record<string, unknown>): Promise
   return handler(args);
 }
 
-describe('commentToHtml', () => {
-  it('turns each newline into a <br> and escapes markup', () => {
-    expect(commentToHtml('a\nb\r\nc & <d>')).toBe('<div>a<br>b<br>c &amp; &lt;d&gt;</div><br>');
-  });
-});
-
 describe('prependComment', () => {
-  it('inserts the HTML comment inside <body>, ahead of the quoted thread', () => {
+  it('inserts the rendered comment inside <body>, ahead of the quoted thread', () => {
     const result = prependComment({ contentType: 'html', content: QUOTED_HTML }, 'Hi,\n\nThanks');
     expect(result.contentType).toBe('HTML');
     expect(result.content).toBe(
       '<html><head><meta charset="utf-8"></head><body>' +
-        '<div>Hi,<br><br>Thanks</div><br>' +
+        '<div><p>Hi,</p>\n<p>Thanks</p></div><br>' +
         '<div id="divRplyFwdMsg">From: Sravya</div><div>original text</div></body></html>'
     );
   });
 
   it('prepends when the HTML has no <body> tag', () => {
     const result = prependComment({ contentType: 'HTML', content: '<p>quoted</p>' }, 'Hi');
-    expect(result.content).toBe('<div>Hi</div><br><p>quoted</p>');
+    expect(result.content).toBe('<div><p>Hi</p></div><br><p>quoted</p>');
   });
 
-  it('keeps a plain-text draft plain, with the comment on top', () => {
-    const result = prependComment({ contentType: 'text', content: 'quoted' }, 'Hi,\n\nThanks');
-    expect(result).toEqual({ contentType: 'Text', content: 'Hi,\n\nThanks\n\nquoted' });
+  it('keeps a plain-text draft plain, with the Markdown source on top', () => {
+    const result = prependComment({ contentType: 'text', content: 'quoted' }, 'Hi,\n\n- a\n- b');
+    expect(result).toEqual({ contentType: 'Text', content: 'Hi,\n\n- a\n- b\n\nquoted' });
   });
 
   it('treats a missing body as HTML with nothing quoted', () => {
-    expect(prependComment({}, 'Hi')).toEqual({ contentType: 'HTML', content: '<div>Hi</div><br>' });
+    expect(prependComment({}, 'Hi')).toEqual({
+      contentType: 'HTML',
+      content: '<div><p>Hi</p></div><br>',
+    });
   });
 });
 
 describe('outlook_reply_preview', () => {
-  it('creates the draft without a comment and PATCHes the text on with <br> breaks', async () => {
+  it('creates the draft without a comment and PATCHes the rendered Markdown on', async () => {
     const result = await outlookTool('outlook_reply_preview', {
       messageId: 'msg-1',
       comment: COMMENT,
@@ -201,11 +205,7 @@ describe('outlook_reply_preview', () => {
     expect(requests[1].body).toEqual({
       body: {
         contentType: 'HTML',
-        content: QUOTED_HTML.replace(
-          '<body>',
-          '<body><div>Hi Sravya,<br><br>Two points to reconcile:<br>1. Zero data retention' +
-            '<br>2. Audit logging</div><br>'
-        ),
+        content: QUOTED_HTML.replace('<body>', `<body>${COMMENT_HTML}<br>`),
       },
     });
     // Recipients Graph auto-populated are left alone when nothing was added.
@@ -213,12 +213,13 @@ describe('outlook_reply_preview', () => {
     expect(result.isError).toBeFalsy();
   });
 
-  it('shows the card the caller’s text as written, not Graph’s flattened preview', async () => {
+  it('gives the card the source and the rendering, not Graph’s flattened preview', async () => {
     const result = await outlookTool('outlook_reply_preview', {
       messageId: 'msg-1',
       comment: COMMENT,
     });
     expect(result.structuredContent?.body).toBe(COMMENT);
+    expect(result.structuredContent?.bodyHtml).toBe(COMMENT_HTML);
     expect(result.structuredContent?.kind).toBe('reply');
     expect(result.structuredContent?.to).toEqual(['sravya@example.com']);
   });
@@ -256,6 +257,54 @@ describe('outlook_forward_preview', () => {
     expect(requests[0].url).toContain('/createForward');
     expect(requests[1].body).not.toHaveProperty('body');
     expect(result.structuredContent?.body).toBe('');
+    expect(result.structuredContent?.bodyHtml).toBe('');
+  });
+});
+
+describe('outlook_send_mail_preview', () => {
+  it('drafts an HTML body rendered from the Markdown and hands the card both', async () => {
+    const result = await outlookTool('outlook_send_mail_preview', {
+      to: ['pat@example.com'],
+      subject: 'Plan',
+      body: '**Bold** point\n\n- one\n- two',
+    });
+    expect(requests[0].url).toContain('/me/messages');
+    expect(requests[0].body).toMatchObject({
+      body: {
+        contentType: 'HTML',
+        content:
+          '<div><p><strong>Bold</strong> point</p>\n<ul>\n<li>one</li>\n<li>two</li>\n</ul></div>',
+      },
+    });
+    expect(result.structuredContent?.body).toBe('**Bold** point\n\n- one\n- two');
+    expect(result.structuredContent?.bodyHtml).toContain('<strong>Bold</strong>');
+  });
+});
+
+describe('outlook_send_draft_confirm', () => {
+  it('renders an edited body from Markdown before sending', async () => {
+    await outlookTool('outlook_send_draft_confirm', {
+      draftId: 'draft-1',
+      overrides: { body: 'Edited *now*' },
+    });
+    expect(requests.map((request) => request.method)).toEqual(['PATCH', 'POST']);
+    expect(requests[0].body).toEqual({
+      body: { contentType: 'HTML', content: '<div><p>Edited <em>now</em></p></div>' },
+    });
+  });
+});
+
+describe('outlook_send_mail', () => {
+  it('sends an HTML body rendered from the Markdown', async () => {
+    await outlookTool('outlook_send_mail', {
+      to: ['pat@example.com'],
+      subject: 'Plan',
+      body: 'Line one\nline two',
+    });
+    expect(requests[0].url).toContain('/me/sendMail');
+    expect(requests[0].body).toMatchObject({
+      message: { body: { contentType: 'HTML', content: '<div><p>Line one<br>line two</p></div>' } },
+    });
   });
 });
 
@@ -266,7 +315,7 @@ describe('outlook_reply_message', () => {
     expect(requests[1].body).toEqual({
       body: {
         contentType: 'HTML',
-        content: QUOTED_HTML.replace('<body>', '<body><div>Hi,<br>There</div><br>'),
+        content: QUOTED_HTML.replace('<body>', '<body><div><p>Hi,<br>There</p></div><br>'),
       },
     });
     expect(requests[2].url).toContain('/me/messages/draft-1/send');

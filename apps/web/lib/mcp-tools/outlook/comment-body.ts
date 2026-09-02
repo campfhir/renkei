@@ -1,33 +1,22 @@
 /**
- * Puts the caller's plain-text comment atop a reply/reply-all/forward draft.
+ * Puts the caller's Markdown comment atop a reply/reply-all/forward draft.
  *
  * Graph's `createReply` / `createForward` accept a `comment`, but they drop
  * it into the draft's body verbatim — and that body is HTML whenever the
  * original message was, which is nearly always. Whitespace collapses in
- * HTML, so "Hi,\n\n1. First\n2. Second" arrives as one run-on line, and the
- * bodyPreview Graph derives from it is just as flat. The fix is to create
- * the draft with NO comment and prepend the text ourselves in the draft's
- * own content type: escaped with `<br>` line breaks for HTML, as-is for a
- * plain-text draft. The quoted thread Graph built stays below, untouched.
+ * HTML, so "Hi,\n\n1. First\n2. Second" arrived as one run-on line, and the
+ * bodyPreview Graph derives from it was just as flat. So the draft is
+ * created with NO comment and the text is prepended here in the draft's
+ * own content type: rendered from Markdown for an HTML thread, as written
+ * for a plain-text one (where Markdown reads fine as text anyway). The
+ * quoted thread Graph built stays below, untouched.
  */
+
+import { markdownToHtml } from './markdown';
 
 export interface MessageBody {
   contentType: 'HTML' | 'Text';
   content: string;
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-/** Plain text → an HTML block that renders the same line structure. */
-export function commentToHtml(comment: string): string {
-  const lines = comment.replace(/\r\n?/g, '\n').split('\n').map(escapeHtml);
-  return `<div>${lines.join('<br>')}</div><br>`;
 }
 
 /**
@@ -49,7 +38,7 @@ export function prependComment(
     };
   }
 
-  const html = commentToHtml(comment);
+  const html = markdownToHtml(comment) + '<br>';
   const bodyOpen = /<body[^>]*>/i.exec(existing);
   if (!bodyOpen) return { contentType: 'HTML', content: html + existing };
   const at = bodyOpen.index + bodyOpen[0].length;
