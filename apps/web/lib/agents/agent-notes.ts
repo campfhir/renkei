@@ -224,8 +224,9 @@ export async function updateAgentNote(
  * Fork one agent's knowledge notes onto another (the share-copy flow):
  * every note is re-authored under the RECIPIENT's email with fresh
  * noteIds and the target agent's stamp. Content is byte-identical, so the
- * stored EMBEDDINGS are reused verbatim — no embedder, no model call, and
- * the copy works even in orgs that later switched knowledge off.
+ * stored EMBEDDINGS, lexical entries and keywords are reused verbatim — no
+ * embedder, no model call, and the copy works even in orgs that later
+ * switched knowledge off.
  *
  * Chunk suffixes survive via prefix replacement (the base ref embeds an
  * email + uuid, so the prefix cannot collide inside the ref). Memories are
@@ -253,13 +254,19 @@ export async function copyAgentNotes(
 
   for (const oldBase of baseRefs) {
     const newBase = noteRefId(input.targetOwnerEmail, randomUUID());
+    // Every derived column rides along — the vector, the lexical entry
+    // and the extracted keywords are all functions of content that is
+    // byte-identical here, so copying them is exact and spares the
+    // embedder and the model a second pass. Leaving any of them out would
+    // hand the recipient a note that search can only half-find.
     await sql`
       INSERT INTO knowledge_chunks
-        (id, tenant_id, provider, ref_id, metadata, content, embedding, source_at)
+        (id, tenant_id, provider, ref_id, metadata, content, embedding,
+         keywords, search_text, source_at)
       SELECT gen_random_uuid(), tenant_id, provider,
              replace(ref_id, ${oldBase}, ${newBase}),
              jsonb_set(metadata, '{agentId}', to_jsonb(${input.targetAgentId}::text)),
-             content, embedding, source_at
+             content, embedding, keywords, search_text, source_at
       FROM knowledge_chunks
       WHERE tenant_id = ${input.tenantId}
         AND provider = ${NOTE_KNOWLEDGE_PROVIDER}
