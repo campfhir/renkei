@@ -149,6 +149,24 @@ export async function createAgentRun(
       `.execute(db),
     'DB_ERROR' as const
   );
+  // The durable run log (migration 079): one timestamped row per run, the
+  // ledger the usage page counts in the viewer's own day. Same best-effort
+  // posture; finalization upserts, so a missed insert still leaves a row.
+  await wrapAsync(
+    () =>
+      db
+        .insertInto('agent_run_log')
+        .values({
+          run_id: runId,
+          tenant_id: input.tenantId,
+          agent_id: input.agentId,
+          owner_subject: input.ownerSubject,
+          trigger_kind: input.triggerKind,
+          status: 'queued',
+        })
+        .execute(),
+    'DB_ERROR' as const
+  );
 
   return ok({ runId });
 }
@@ -237,23 +255,28 @@ export async function recordAgentRunTokenUsage(
   return ok(undefined);
 }
 
-export interface CaptureAgentRunFailureInput {
+export interface RecordAgentRunOutcomeInput {
   tenantId: string;
   agentId: string;
   runId: string;
   ownerSubject: string;
-  /** Where execution was when it stopped, and that step's display name. */
-  stepId: string | null;
-  stepName: string | null;
-  errorKind: string | null;
-  error: string | null;
+  status: 'succeeded' | 'failed' | 'stopped' | 'canceled';
+  /** Where execution was when it stopped, and that step's display name. Failed runs only. */
+  stepId?: string | null;
+  stepName?: string | null;
+  errorKind?: string | null;
+  error?: string | null;
 }
 
 /**
- * The per-failure record (migration 079) — what the counters' `failures`
- * column cannot say: WHICH step, WHAT kind of error, and what the run had
- * cost by then. Written once per run that finalizes as 'failed', beside
- * recordAgentRunFailure and with the same best-effort posture.
+ * Finalize a run's row in the durable run log (migration 079): its
+ * outcome, and — when it failed — the step, the kind, the code and the
+ * clipped message; for every status, what the run cost. Written beside
+ * the counter tallies with the same best-effort posture.
+ *
+ * An upsert rather than an update: the log row is normally inserted at
+ * run creation, but that insert is itself best-effort, and a run that
+ * finished must still leave a record.
  *
  * The cost figures and the attempt's outcome code are read back out of
  * `agent_run_steps` here rather than threaded through the engine: the
@@ -261,15 +284,16 @@ export interface CaptureAgentRunFailureInput {
  * and one aggregate query is cheaper to keep right than a running total
  * carried across every code path that can end a run.
  */
-export async function captureAgentRunFailure(
+export async function recordAgentRunOutcome(
   db: Kysely<DB>,
-  input: CaptureAgentRunFailureInput
+  input: RecordAgentRunOutcomeInput
 ): Promise<Result<void, 'DB_ERROR'>> {
+  const failed = input.status === 'failed';
   const result = await wrapAsync(async () => {
     const [run, agent, spend, lastFailed] = await Promise.all([
       db
         .selectFrom('agent_runs')
-        .select('trigger_kind')
+        .select(['trigger_kind', 'created_at'])
         .where('id', '=', input.runId)
         .executeTakeFirst(),
       db
@@ -288,38 +312,98 @@ export async function captureAgentRunFailure(
         ])
         .where('run_id', '=', input.runId)
         .executeTakeFirst(),
-      db
-        .selectFrom('agent_run_steps')
-        .select('outcome_code')
-        .where('run_id', '=', input.runId)
-        .where('status', '=', 'failed')
-        .orderBy('step_index', 'desc')
-        .orderBy('iteration', 'desc')
-        .orderBy('attempt', 'desc')
-        .executeTakeFirst(),
+      failed
+        ? db
+            .selectFrom('agent_run_steps')
+            .select('outcome_code')
+            .where('run_id', '=', input.runId)
+            .where('status', '=', 'failed')
+            .orderBy('step_index', 'desc')
+            .orderBy('iteration', 'desc')
+            .orderBy('attempt', 'desc')
+            .executeTakeFirst()
+        : Promise.resolve(undefined),
     ]);
 
-    await db
-      .insertInto('agent_run_failures')
-      .values({
-        tenant_id: input.tenantId,
-        agent_id: input.agentId,
-        run_id: input.runId,
-        owner_subject: input.ownerSubject,
-        trigger_kind: run?.trigger_kind ?? 'manual',
-        step_id: input.stepId,
-        step_name: input.stepName ? input.stepName.slice(0, 200) : null,
-        error_kind: input.errorKind ? input.errorKind.slice(0, 32) : null,
-        outcome_code: lastFailed?.outcome_code ? lastFailed.outcome_code.slice(0, 64) : null,
-        error: input.error ? input.error.slice(0, 2000) : null,
-        input_tokens: Number(spend?.input_tokens ?? 0),
-        output_tokens: Number(spend?.output_tokens ?? 0),
-        tool_calls: Number(spend?.tool_calls ?? 0),
-        attempts: Number(spend?.attempts ?? 0),
-        steps_version: agent?.steps_version ?? null,
-      })
-      .execute();
+    const stepId = failed ? (input.stepId ?? null) : null;
+    const stepName = failed && input.stepName ? input.stepName.slice(0, 200) : null;
+    const errorKind = failed && input.errorKind ? input.errorKind.slice(0, 32) : null;
+    const outcomeCode = lastFailed?.outcome_code ? lastFailed.outcome_code.slice(0, 64) : null;
+    const error = failed && input.error ? input.error.slice(0, 2000) : null;
+    const inputTokens = Number(spend?.input_tokens ?? 0);
+    const outputTokens = Number(spend?.output_tokens ?? 0);
+    const toolCalls = Number(spend?.tool_calls ?? 0);
+    const attempts = Number(spend?.attempts ?? 0);
+    const stepsVersion = agent?.steps_version ?? null;
+
+    await sql`
+      INSERT INTO agent_run_log (
+        run_id, tenant_id, agent_id, owner_subject, trigger_kind, status, created_at, finished_at,
+        step_id, step_name, error_kind, outcome_code, error,
+        input_tokens, output_tokens, tool_calls, attempts, steps_version
+      ) VALUES (
+        ${input.runId}, ${input.tenantId}, ${input.agentId}, ${input.ownerSubject},
+        ${run?.trigger_kind ?? 'manual'}, ${input.status}, ${run?.created_at ?? sql`NOW()`}, NOW(),
+        ${stepId}, ${stepName}, ${errorKind}, ${outcomeCode}, ${error},
+        ${inputTokens}, ${outputTokens}, ${toolCalls}, ${attempts}, ${stepsVersion}
+      )
+      ON CONFLICT (run_id) DO UPDATE SET
+        status = excluded.status,
+        finished_at = excluded.finished_at,
+        step_id = excluded.step_id,
+        step_name = excluded.step_name,
+        error_kind = excluded.error_kind,
+        outcome_code = excluded.outcome_code,
+        error = excluded.error,
+        input_tokens = excluded.input_tokens,
+        output_tokens = excluded.output_tokens,
+        tool_calls = excluded.tool_calls,
+        attempts = excluded.attempts,
+        steps_version = excluded.steps_version
+    `.execute(db);
   }, 'DB_ERROR' as const);
+  if (!result.ok) return err('DB_ERROR' as const, { cause: result.err });
+  return ok(undefined);
+}
+
+export interface RecordLlmCallInput {
+  tenantId: string;
+  /** Whose spend it is: the run's owner, or the person the call served. */
+  subject: string;
+  agentId: string | null;
+  runId?: string | null;
+  stepId?: string | null;
+  purpose: 'run' | 'optimize';
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * One row in the token ledger (migration 081). Skipped when both counts
+ * are zero, like the counter tally; best effort, like everything here.
+ */
+export async function recordLlmCall(
+  db: Kysely<DB>,
+  input: RecordLlmCallInput
+): Promise<Result<void, 'DB_ERROR'>> {
+  if (input.inputTokens === 0 && input.outputTokens === 0) return ok(undefined);
+  const result = await wrapAsync(
+    () =>
+      db
+        .insertInto('llm_calls')
+        .values({
+          tenant_id: input.tenantId,
+          subject: input.subject,
+          agent_id: input.agentId,
+          run_id: input.runId ?? null,
+          step_id: input.stepId ?? null,
+          purpose: input.purpose,
+          input_tokens: input.inputTokens,
+          output_tokens: input.outputTokens,
+        })
+        .execute(),
+    'DB_ERROR' as const
+  );
   if (!result.ok) return err('DB_ERROR' as const, { cause: result.err });
   return ok(undefined);
 }

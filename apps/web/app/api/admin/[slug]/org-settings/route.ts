@@ -44,9 +44,9 @@ const NUMERIC_BOUNDS = {
   // switching notifications OFF is the per-user preference's job, not this
   // ceiling's. A year is the typo guard.
   agentNotificationRetentionDays: [1, 365],
-  // Captured failures hold a step name and a clipped error, no arguments
-  // or results; two years is the typo guard, 1 the floor.
-  agentFailureRetentionDays: [1, 730],
+  // The usage ledgers hold ids, integers, and on failure a step name and a
+  // clipped error — no arguments or results; five years is the typo guard.
+  agentUsageRetentionDays: [1, 1_825],
   // The optimizer's evidence window. A year is the typo guard; below a
   // day there is nothing to analyze.
   agentOptimizerWindowDays: [1, 365],
@@ -68,7 +68,7 @@ const NUMERIC_KEYS = [
   'contentPollMinutes',
   'logRetentionDays',
   'agentNotificationRetentionDays',
-  'agentFailureRetentionDays',
+  'agentUsageRetentionDays',
   'agentOptimizerWindowDays',
 ] as const;
 
@@ -95,7 +95,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     contentPollMinutes: settings.contentPollMinutes,
     logRetentionDays: settings.logRetentionDays,
     agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
-    agentFailureRetentionDays: settings.agentFailureRetentionDays,
+    agentUsageRetentionDays: settings.agentUsageRetentionDays,
     agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
   };
 }

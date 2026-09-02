@@ -73,7 +73,7 @@ export default async function SettingsPage({
     contentPollMinutes: settings.contentPollMinutes,
     logRetentionDays: settings.logRetentionDays,
     agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
-    agentFailureRetentionDays: settings.agentFailureRetentionDays,
+    agentUsageRetentionDays: settings.agentUsageRetentionDays,
     agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
   };
 

@@ -21,7 +21,7 @@ export interface EditableSettings {
   contentPollMinutes: number;
   logRetentionDays: number;
   agentNotificationRetentionDays: number;
-  agentFailureRetentionDays: number;
+  agentUsageRetentionDays: number;
   agentOptimizerWindowDays: number;
 }
 
@@ -216,10 +216,10 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           {numberInput('agentNotificationRetentionDays', '1–365')}
         </Row>
         <Row
-          label="Agent failure retention (days)"
-          hint="How long the record of each failed run — which step, what kind of error, a short message, what it cost — is kept (default 90). Longer than run history on purpose, so recurring failures stay visible after the runs are pruned."
+          label="Usage ledger retention (days)"
+          hint="How long the record behind 'My usage' is kept: one row per agent run (status, timing, cost; on failure the step and a short message) and one per model call (token counts). Default a year — longer than run history on purpose, so usage stays readable after the runs are pruned."
         >
-          {numberInput('agentFailureRetentionDays', '1–730')}
+          {numberInput('agentUsageRetentionDays', '1–1,825')}
         </Row>
         <Row
           label="Log retention (days)"

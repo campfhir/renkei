@@ -363,7 +363,7 @@ const handler = async (
             // actually register: the gates inside it drop the ones this user
             // may not have, and a tool that was never registered cannot be
             // called and so should never appear in usage.
-            const tracked = withUsageTracking(rawServer, { tenantId, subject });
+            const tracked = withUsageTracking(rawServer, { tenantId, subject, agentId });
 
             // Outside usage tracking, so the timing it records includes the
             // filtering — that cost is real and belongs in the latency the

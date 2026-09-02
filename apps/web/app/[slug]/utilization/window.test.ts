@@ -42,7 +42,8 @@ describe('bucketUtilization', () => {
         },
       ],
       7,
-      NOW
+      NOW,
+      'UTC'
     );
     expect(buckets).toHaveLength(7);
     expect(buckets[0]!.bucket).toBe('2026-08-27');
@@ -75,7 +76,8 @@ describe('bucketUtilization', () => {
         },
       ],
       90,
-      NOW
+      NOW,
+      'UTC'
     );
     const last = buckets[buckets.length - 1]!;
     // 2026-08-31 is a Monday, so both days land in the same week.
@@ -86,8 +88,14 @@ describe('bucketUtilization', () => {
     expect(last.label).toBe('Aug 31');
   });
 
+  it("ends on the viewer's today, not the server's", () => {
+    // 15:00Z on Sep 2 is still Sep 2 in Honolulu but already Sep 3 in Auckland.
+    expect(bucketUtilization([], 7, NOW, 'Pacific/Honolulu').at(-1)!.bucket).toBe('2026-09-02');
+    expect(bucketUtilization([], 7, NOW, 'Pacific/Auckland').at(-1)!.bucket).toBe('2026-09-03');
+  });
+
   it('buckets a year by month with month labels', () => {
-    const buckets = bucketUtilization([], 365, NOW);
+    const buckets = bucketUtilization([], 365, NOW, 'UTC');
     expect(buckets[buckets.length - 1]).toMatchObject({ bucket: '2026-09-01', label: 'Sep 2026' });
     expect(buckets.length).toBeGreaterThanOrEqual(12);
   });

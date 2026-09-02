@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDatabase } from '@renkei/db';
 import { getBearerToken, resolveAccessToken } from '@/lib/mcp-token';
+import { recordLlmCall } from '@renkei/agents/runs';
 import { getAgent } from '@/lib/agents/store';
 import {
   claimOptimization,
@@ -69,6 +70,16 @@ export async function POST(
       status: 'succeeded',
       result: outcome.report,
       usage: outcome.usage,
+    });
+    // The pass's own spend, in the same ledger the page it serves reads —
+    // attributed to the owner who asked, against the agent it was about.
+    await recordLlmCall(db, {
+      tenantId,
+      subject: record.subject,
+      agentId: optimization.agentId,
+      purpose: 'optimize',
+      inputTokens: outcome.usage.inputTokens,
+      outputTokens: outcome.usage.outputTokens,
     });
     return NextResponse.json({ status: 'succeeded' });
   } catch (error) {

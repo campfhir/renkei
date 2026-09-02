@@ -75,9 +75,10 @@ import {
   renderAgentKnowledgeNotes,
 } from '@renkei/agents/memory';
 import {
-  captureAgentRunFailure,
   recordAgentRunFailure,
+  recordAgentRunOutcome,
   recordAgentRunTokenUsage,
+  recordLlmCall,
 } from '@renkei/agents/runs';
 import {
   ASK_PERSON_DEF,
@@ -720,22 +721,40 @@ export function createAgentRunHandler(deps: EngineDeps) {
    */
   async function recordUsage(
     run: RunRow,
-    usage: { inputTokens: number; outputTokens: number }
+    usage: { inputTokens: number; outputTokens: number },
+    stepId: string
   ): Promise<void> {
     if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
-    const tally = await recordAgentRunTokenUsage(
-      db,
-      run.tenant_id,
-      run.agent_id,
-      usage.inputTokens,
-      usage.outputTokens
-    );
-    if (!tally.ok) {
-      logger.warn('token tally not recorded for run {runId}', {
+    const [tally, ledger] = await Promise.all([
+      recordAgentRunTokenUsage(
+        db,
+        run.tenant_id,
+        run.agent_id,
+        usage.inputTokens,
+        usage.outputTokens
+      ),
+      // The timestamped ledger (migration 081) beside the per-day tally:
+      // one row per finalized attempt, attributed to the owner, so the
+      // usage page can read the spend in the viewer's own day.
+      recordLlmCall(db, {
+        tenantId: run.tenant_id,
+        subject: run.owner_subject,
+        agentId: run.agent_id,
+        runId: run.id,
+        stepId,
+        purpose: 'run',
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+      }),
+    ]);
+    if (!tally.ok || !ledger.ok) {
+      logger.warn('token usage not fully recorded for run {runId}', {
         component: 'worker-agents/engine',
         runId: run.id,
         tenantId: run.tenant_id,
         agentId: run.agent_id,
+        tally: tally.ok,
+        ledger: ledger.ok,
       });
     }
   }
@@ -1563,7 +1582,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         })
         .where('id', '=', rowId)
         .execute();
-      await recordUsage(run, outcome.usage);
+      await recordUsage(run, outcome.usage, step.id);
 
       if (outcome.remember) {
         // The step asked future runs to know something. Best-effort: a
@@ -2494,7 +2513,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, outcome.usage);
+        await recordUsage(run, outcome.usage, step.id);
         await raiseApprovalCard(
           step,
           iteration,
@@ -2534,7 +2553,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, outcome.usage);
+        await recordUsage(run, outcome.usage, step.id);
         await raiseQuestionCard(
           step,
           iteration,
@@ -2950,7 +2969,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, usage);
+        await recordUsage(run, usage, branch.id);
         return { kind: 'path', path: decidedPath };
       }
 
@@ -2979,7 +2998,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         })
         .where('id', '=', rowId)
         .execute();
-      await recordUsage(run, usage);
+      await recordUsage(run, usage, branch.id);
     }
   }
 
@@ -3208,7 +3227,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           })
           .where('id', '=', rowId)
           .execute();
-        await recordUsage(run, usage);
+        await recordUsage(run, usage, loop.id);
         return { kind: 'decided', choice: decided };
       }
 
@@ -3235,7 +3254,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         })
         .where('id', '=', rowId)
         .execute();
-      await recordUsage(run, usage);
+      await recordUsage(run, usage, loop.id);
     }
   }
 
@@ -3863,27 +3882,29 @@ export function createAgentRunHandler(deps: EngineDeps) {
           agentId: run.agent_id,
         });
       }
-      // The per-failure record (migration 079): which step, what kind of
-      // error, what it cost — the evidence the optimizer reads and the
-      // usage page's attention list counts. Best effort, like the tally.
-      const captured = await captureAgentRunFailure(db, {
+    }
+    // The durable run log (migration 079): the outcome for every status,
+    // and on failure which step, what kind, what it cost — the evidence
+    // the optimizer reads and the usage page counts. Best effort, like
+    // the tally.
+    const logged = await recordAgentRunOutcome(db, {
+      tenantId: run.tenant_id,
+      agentId: run.agent_id,
+      runId: run.id,
+      ownerSubject: run.owner_subject,
+      status,
+      stepId: run.current_step_id,
+      stepName: failedStepNameOf(run),
+      errorKind,
+      error,
+    });
+    if (!logged.ok) {
+      logger.warn('run outcome not logged for run {runId}', {
+        component: 'worker-agents/engine',
+        runId: run.id,
         tenantId: run.tenant_id,
         agentId: run.agent_id,
-        runId: run.id,
-        ownerSubject: run.owner_subject,
-        stepId: run.current_step_id,
-        stepName: failedStepNameOf(run),
-        errorKind,
-        error,
       });
-      if (!captured.ok) {
-        logger.warn('failure record not captured for run {runId}', {
-          component: 'worker-agents/engine',
-          runId: run.id,
-          tenantId: run.tenant_id,
-          agentId: run.agent_id,
-        });
-      }
     }
     // The automatic breadcrumb — what makes "did I already handle this?"
     // answerable even when no step remembered anything explicitly. Carries

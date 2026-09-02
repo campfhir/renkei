@@ -6,7 +6,8 @@
  *
  *   - The definition itself, rendered the way "Copy as Markdown" renders
  *     it — the same text a person would paste to ask a colleague for help.
- *   - Captured failures (migration 079): which step, what kind, how often.
+ *   - The run log (migration 079): every run's outcome, and for the failed
+ *     ones which step, what kind, how often.
  *   - The per-step cost profile from `agent_run_steps`: attempts, failed
  *     attempts, and average tokens per attempt for every step that ran in
  *     the window — the numbers that say where the spend actually goes.
@@ -130,7 +131,7 @@ export async function gatherOptimizationEvidence(
 
   const [failureRows, statRow, stepRows, failedRuns] = await Promise.all([
     db
-      .selectFrom('agent_run_failures')
+      .selectFrom('agent_run_log')
       .select([
         'created_at',
         'trigger_kind',
@@ -145,10 +146,14 @@ export async function gatherOptimizationEvidence(
       .where('tenant_id', '=', tenantId)
       .where('owner_subject', '=', ownerSubject)
       .where('agent_id', '=', agent.id)
+      .where('status', '=', 'failed')
       .where('created_at', '>=', since)
       .orderBy('created_at', 'desc')
       .limit(MAX_FAILURE_ROWS)
       .execute(),
+    // Run-level numbers from the durable log, so the window is honoured
+    // even past run retention; the step profile below reads live attempt
+    // rows and is bounded by it.
     sql<{
       runs: string;
       succeeded: string;
@@ -157,26 +162,18 @@ export async function gatherOptimizationEvidence(
       max_tokens: string | null;
       avg_attempts: string | null;
     }>`
-      WITH per_run AS (
-        SELECT r.id, r.status,
-               COALESCE(SUM(s.input_tokens + s.output_tokens), 0) AS tokens,
-               COUNT(s.id) AS attempts
-        FROM agent_runs r
-        LEFT JOIN agent_run_steps s ON s.run_id = r.id
-        WHERE r.tenant_id = ${tenantId}
-          AND r.owner_subject = ${ownerSubject}
-          AND r.agent_id = ${agent.id}
-          AND r.created_at >= ${since}
-          AND r.status IN ('succeeded', 'failed', 'stopped')
-        GROUP BY r.id, r.status
-      )
       SELECT COUNT(*) AS runs,
              COUNT(*) FILTER (WHERE status = 'succeeded') AS succeeded,
              COUNT(*) FILTER (WHERE status = 'failed') AS failed,
-             AVG(tokens) AS avg_tokens,
-             MAX(tokens) AS max_tokens,
+             AVG(input_tokens + output_tokens) AS avg_tokens,
+             MAX(input_tokens + output_tokens) AS max_tokens,
              AVG(attempts) AS avg_attempts
-      FROM per_run
+      FROM agent_run_log
+      WHERE tenant_id = ${tenantId}
+        AND owner_subject = ${ownerSubject}
+        AND agent_id = ${agent.id}
+        AND created_at >= ${since}
+        AND status IN ('succeeded', 'failed', 'stopped')
     `.execute(db),
     sql<{
       step_id: string;

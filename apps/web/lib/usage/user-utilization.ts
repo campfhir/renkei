@@ -1,33 +1,32 @@
 /**
  * One person's overall utilization: tokens, agent runs, tool calls — and
- * where their agents are failing.
+ * where their agents are failing — read from three timestamped ledgers
+ * and bucketed in the VIEWER's own calendar day.
  *
  * Every read here is keyed on a SUBJECT, and the subject is the caller's
  * own (the action pins it from the session before calling in). Sources:
  *
- *   - `agent_run_counters` (durable, content-free): runs, failures and
- *     token spend per agent per day, for the agents this person OWNS.
- *   - `tool_calls` (durable, content-free): every MCP tool call made under
- *     this subject — their own calls from a chat client AND their agents'
- *     calls, which execute under a run token bound to the owner (RENKEI.md
- *     Decision #21). So "tool calls" here means everything done as them.
- *   - `agent_run_failures` (migration 079): which step, what kind, when.
+ *   - `llm_calls` (migration 081): one row per model call, attributed to
+ *     the person whose spend it was — a run's owner, or whoever asked for
+ *     an optimization pass.
+ *   - `agent_run_log` (migration 079): one row per run of an agent this
+ *     person OWNS, with its outcome and, on failure, the step and kind.
+ *   - `tool_calls` (migration 032, agent stamped by 082): every MCP tool
+ *     call made under this subject — their own calls from a chat client
+ *     AND their agents' calls, which execute under a run token bound to
+ *     the owner (RENKEI.md Decision #21). So "tool calls" means everything
+ *     done as them.
  *
- * ## One calendar for every series
- *
- * `agent_run_counters.day` is written as Postgres CURRENT_DATE at the
- * moment of the tally — the database session's calendar day, not any
- * viewer's — and a durable rollup keyed that way cannot be re-cut per
- * viewer after the fact. So every series on this page, tool calls
- * included, is bucketed on that same calendar (`to_char(started_at, ...)`
- * renders in the session zone, exactly as CURRENT_DATE does) and every
- * window starts at the same midnight. A bar therefore always shows the
- * runs and the tool calls of ONE day; the tools page, which has no rollup
- * to agree with, keeps bucketing in the viewer's zone. The page says
- * whose midnight it is.
+ * All three carry a real timestamp, which is what lets a day mean the
+ * viewer's day: rows are bucketed with `AT TIME ZONE` and the window
+ * starts at the viewer's midnight, so a bar shows one local day's runs
+ * with that day's tool calls and tokens. Nothing here reads the per-day
+ * counters (049/072) — those are keyed on the database's calendar and
+ * cannot be re-cut per viewer, which is the whole reason the ledgers
+ * exist. All three tables are content-free by construction.
  */
 
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type RawBuilder } from 'kysely';
 import type { DB } from '@renkei/db';
 
 export interface UtilizationTotals {
@@ -40,7 +39,7 @@ export interface UtilizationTotals {
 }
 
 export interface UtilizationDay {
-  /** YYYY-MM-DD */
+  /** YYYY-MM-DD, in the viewer's zone. */
   day: string;
   inputTokens: number;
   outputTokens: number;
@@ -58,7 +57,8 @@ export interface AgentUtilizationRow {
   failures: number;
   inputTokens: number;
   outputTokens: number;
-  /** The most recent captured failure in the window, if any. */
+  toolCalls: number;
+  /** The most recent failure in the window, if any. */
   lastFailureAt: string | null;
   lastFailureStep: string | null;
   lastFailureKind: string | null;
@@ -83,35 +83,53 @@ export interface FailureSignature {
 }
 
 /**
- * The window's first day, as a date — `days` calendar days ending today,
- * on the session calendar. Comparing a timestamptz column against it
- * means "on or after that day's midnight in the session zone", the same
- * boundary the counters were tallied on.
+ * The window's start: the viewer's local midnight, `days` calendar days
+ * ending today, as an instant. `NOW() AT TIME ZONE tz` is the viewer's
+ * wall clock; truncated to the day and stepped back, then read as an
+ * instant in that same zone again.
  */
-const sinceDate = (days: number) =>
-  sql<Date>`(CURRENT_DATE - MAKE_INTERVAL(days => ${Math.max(0, days - 1)}))::date`;
+function sinceLocal(days: number, timeZone: string): RawBuilder<Date> {
+  return sql<Date>`((date_trunc('day', NOW() AT TIME ZONE ${timeZone}) - MAKE_INTERVAL(days => ${Math.max(0, days - 1)})) AT TIME ZONE ${timeZone})`;
+}
+
+/**
+ * A timestamp's calendar day in the viewer's zone. Every query that groups
+ * by this MUST group by the alias `day`, never by a repeat of the
+ * expression: each `${timeZone}` is its own bound parameter, so a repeat
+ * is a different expression to Postgres and the query is rejected.
+ */
+function localDayOf(column: string, timeZone: string): RawBuilder<string> {
+  return sql<string>`to_char(${sql.ref(column)} AT TIME ZONE ${timeZone}, 'YYYY-MM-DD')`;
+}
 
 export async function getUtilizationTotals(
   db: Kysely<DB>,
   tenantId: string,
   subject: string,
-  days: number
+  days: number,
+  timeZone: string
 ): Promise<UtilizationTotals> {
-  const [counters, calls] = await Promise.all([
+  const since = sinceLocal(days, timeZone);
+  const [tokens, runs, calls] = await Promise.all([
     db
-      .selectFrom('agent_run_counters as c')
-      .innerJoin('agents as a', (join) =>
-        join.onRef('a.id', '=', 'c.agent_id').onRef('a.tenant_id', '=', 'c.tenant_id')
-      )
+      .selectFrom('llm_calls')
       .select(({ fn }) => [
-        fn.sum<string>('c.input_tokens').as('input_tokens'),
-        fn.sum<string>('c.output_tokens').as('output_tokens'),
-        fn.sum<string>('c.runs').as('runs'),
-        fn.sum<string>('c.failures').as('failures'),
+        fn.sum<string>('input_tokens').as('input_tokens'),
+        fn.sum<string>('output_tokens').as('output_tokens'),
       ])
-      .where('c.tenant_id', '=', tenantId)
-      .where('a.owner_subject', '=', subject)
-      .where('c.day', '>=', sinceDate(days))
+      .where('tenant_id', '=', tenantId)
+      .where('subject', '=', subject)
+      .where('created_at', '>=', since)
+      .executeTakeFirst(),
+    db
+      .selectFrom('agent_run_log')
+      .select([
+        sql<string>`count(*)`.as('runs'),
+        sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
+      ])
+      .where('tenant_id', '=', tenantId)
+      .where('owner_subject', '=', subject)
+      .where('created_at', '>=', since)
       .executeTakeFirst(),
     db
       .selectFrom('tool_calls')
@@ -121,59 +139,67 @@ export async function getUtilizationTotals(
       ])
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
-      .where('started_at', '>=', sinceDate(days))
+      .where('started_at', '>=', since)
       .executeTakeFirst(),
   ]);
   return {
-    inputTokens: Number(counters?.input_tokens ?? 0),
-    outputTokens: Number(counters?.output_tokens ?? 0),
-    runs: Number(counters?.runs ?? 0),
-    failures: Number(counters?.failures ?? 0),
+    inputTokens: Number(tokens?.input_tokens ?? 0),
+    outputTokens: Number(tokens?.output_tokens ?? 0),
+    runs: Number(runs?.runs ?? 0),
+    failures: Number(runs?.failures ?? 0),
     toolCalls: Number(calls?.calls ?? 0),
     toolErrors: Number(calls?.errors ?? 0),
   };
 }
 
 /**
- * The daily series, merged from the two sources by calendar day. Only days
- * with activity come back; the window helper zero-fills and buckets.
+ * The daily series, merged from the three ledgers by the viewer's calendar
+ * day. Only days with activity come back; the window helper zero-fills
+ * and buckets.
  */
 export async function getUtilizationSeries(
   db: Kysely<DB>,
   tenantId: string,
   subject: string,
-  days: number
+  days: number,
+  timeZone: string
 ): Promise<UtilizationDay[]> {
-  const [counterRows, callRows] = await Promise.all([
+  const since = sinceLocal(days, timeZone);
+  const [tokenRows, runRows, callRows] = await Promise.all([
     db
-      .selectFrom('agent_run_counters as c')
-      .innerJoin('agents as a', (join) =>
-        join.onRef('a.id', '=', 'c.agent_id').onRef('a.tenant_id', '=', 'c.tenant_id')
-      )
+      .selectFrom('llm_calls')
       .select(({ fn }) => [
-        sql<string>`to_char(c.day, 'YYYY-MM-DD')`.as('day'),
-        fn.sum<string>('c.input_tokens').as('input_tokens'),
-        fn.sum<string>('c.output_tokens').as('output_tokens'),
-        fn.sum<string>('c.runs').as('runs'),
-        fn.sum<string>('c.failures').as('failures'),
+        localDayOf('created_at', timeZone).as('day'),
+        fn.sum<string>('input_tokens').as('input_tokens'),
+        fn.sum<string>('output_tokens').as('output_tokens'),
       ])
-      .where('c.tenant_id', '=', tenantId)
-      .where('a.owner_subject', '=', subject)
-      .where('c.day', '>=', sinceDate(days))
+      .where('tenant_id', '=', tenantId)
+      .where('subject', '=', subject)
+      .where('created_at', '>=', since)
+      .groupBy(sql`day`)
+      .execute(),
+    db
+      .selectFrom('agent_run_log')
+      .select([
+        localDayOf('created_at', timeZone).as('day'),
+        sql<string>`count(*)`.as('runs'),
+        sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
+      ])
+      .where('tenant_id', '=', tenantId)
+      .where('owner_subject', '=', subject)
+      .where('created_at', '>=', since)
       .groupBy(sql`day`)
       .execute(),
     db
       .selectFrom('tool_calls')
       .select([
-        // The session calendar's day — the one the counters were tallied
-        // on (see the header). Grouped by the alias, as usage/actions.ts.
-        sql<string>`to_char(started_at, 'YYYY-MM-DD')`.as('day'),
+        localDayOf('started_at', timeZone).as('day'),
         sql<string>`count(*)`.as('calls'),
         sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
       ])
       .where('tenant_id', '=', tenantId)
       .where('subject', '=', subject)
-      .where('started_at', '>=', sinceDate(days))
+      .where('started_at', '>=', since)
       .groupBy(sql`day`)
       .execute(),
   ]);
@@ -194,10 +220,13 @@ export async function getUtilizationSeries(
     byDay.set(day, fresh);
     return fresh;
   };
-  for (const row of counterRows) {
+  for (const row of tokenRows) {
     const point = dayOf(row.day);
     point.inputTokens += Number(row.input_tokens ?? 0);
     point.outputTokens += Number(row.output_tokens ?? 0);
+  }
+  for (const row of runRows) {
+    const point = dayOf(row.day);
     point.runs += Number(row.runs ?? 0);
     point.failures += Number(row.failures ?? 0);
   }
@@ -214,7 +243,8 @@ export async function getAgentUtilization(
   db: Kysely<DB>,
   tenantId: string,
   subject: string,
-  days: number
+  days: number,
+  timeZone: string
 ): Promise<AgentUtilizationRow[]> {
   const agents = await db
     .selectFrom('agents')
@@ -225,24 +255,46 @@ export async function getAgentUtilization(
     .execute();
   if (agents.length === 0) return [];
   const ids = agents.map((agent) => agent.id);
+  const since = sinceLocal(days, timeZone);
 
-  const [counterRows, failureRows] = await Promise.all([
+  const [runRows, tokenRows, callRows, failureRows] = await Promise.all([
     db
-      .selectFrom('agent_run_counters')
+      .selectFrom('agent_run_log')
+      .select([
+        'agent_id',
+        sql<string>`count(*)`.as('runs'),
+        sql<string>`count(*) FILTER (WHERE status = 'failed')`.as('failures'),
+      ])
+      .where('tenant_id', '=', tenantId)
+      .where('owner_subject', '=', subject)
+      .where('agent_id', 'in', ids)
+      .where('created_at', '>=', since)
+      .groupBy('agent_id')
+      .execute(),
+    db
+      .selectFrom('llm_calls')
       .select(({ fn }) => [
         'agent_id',
-        fn.sum<string>('runs').as('runs'),
-        fn.sum<string>('failures').as('failures'),
         fn.sum<string>('input_tokens').as('input_tokens'),
         fn.sum<string>('output_tokens').as('output_tokens'),
       ])
       .where('tenant_id', '=', tenantId)
+      .where('subject', '=', subject)
       .where('agent_id', 'in', ids)
-      .where('day', '>=', sinceDate(days))
+      .where('created_at', '>=', since)
       .groupBy('agent_id')
       .execute(),
-    // The newest captured failure per agent — DISTINCT ON walks the
-    // (agent, created_at) index once.
+    db
+      .selectFrom('tool_calls')
+      .select(['agent_id', sql<string>`count(*)`.as('calls')])
+      .where('tenant_id', '=', tenantId)
+      .where('subject', '=', subject)
+      .where('agent_id', 'in', ids)
+      .where('started_at', '>=', since)
+      .groupBy('agent_id')
+      .execute(),
+    // The newest failure per agent — DISTINCT ON walks the (agent,
+    // created_at) index once.
     sql<{
       agent_id: string;
       created_at: Date;
@@ -250,29 +302,35 @@ export async function getAgentUtilization(
       error_kind: string | null;
     }>`
       SELECT DISTINCT ON (agent_id) agent_id, created_at, step_name, error_kind
-      FROM agent_run_failures
+      FROM agent_run_log
       WHERE tenant_id = ${tenantId}
         AND owner_subject = ${subject}
         AND agent_id IN (${sql.join(ids)})
-        AND created_at >= ${sinceDate(days)}
+        AND status = 'failed'
+        AND created_at >= ${since}
       ORDER BY agent_id, created_at DESC
     `.execute(db),
   ]);
-  const counters = new Map(counterRows.map((row) => [row.agent_id, row]));
+  const runs = new Map(runRows.map((row) => [row.agent_id, row]));
+  const tokens = new Map(tokenRows.map((row) => [row.agent_id, row]));
+  const calls = new Map(callRows.map((row) => [row.agent_id, row]));
   const failures = new Map(failureRows.rows.map((row) => [row.agent_id, row]));
 
   return agents
     .map((agent) => {
-      const counter = counters.get(agent.id);
+      const run = runs.get(agent.id);
+      const token = tokens.get(agent.id);
+      const call = calls.get(agent.id);
       const failure = failures.get(agent.id);
       return {
         agentId: agent.id,
         name: agent.name,
         enabled: agent.enabled,
-        runs: Number(counter?.runs ?? 0),
-        failures: Number(counter?.failures ?? 0),
-        inputTokens: Number(counter?.input_tokens ?? 0),
-        outputTokens: Number(counter?.output_tokens ?? 0),
+        runs: Number(run?.runs ?? 0),
+        failures: Number(run?.failures ?? 0),
+        inputTokens: Number(token?.input_tokens ?? 0),
+        outputTokens: Number(token?.output_tokens ?? 0),
+        toolCalls: Number(call?.calls ?? 0),
         lastFailureAt: failure ? failure.created_at.toISOString() : null,
         lastFailureStep: failure?.step_name ?? null,
         lastFailureKind: failure?.error_kind ?? null,
@@ -295,6 +353,7 @@ export async function getFailureSignatures(
   tenantId: string,
   subject: string,
   days: number,
+  timeZone: string,
   limit = 5
 ): Promise<FailureSignature[]> {
   const rows = await sql<{
@@ -316,11 +375,12 @@ export async function getFailureSignatures(
       COUNT(*) AS count,
       MAX(f.created_at) AS last_at,
       (ARRAY_AGG(f.error ORDER BY f.created_at DESC))[1] AS last_error
-    FROM agent_run_failures f
+    FROM agent_run_log f
     JOIN agents a ON a.id = f.agent_id AND a.tenant_id = f.tenant_id
     WHERE f.tenant_id = ${tenantId}
       AND f.owner_subject = ${subject}
-      AND f.created_at >= ${sinceDate(days)}
+      AND f.status = 'failed'
+      AND f.created_at >= ${sinceLocal(days, timeZone)}
     GROUP BY f.agent_id, a.name, f.step_name, f.error_kind, f.outcome_code
     ORDER BY count DESC, last_at DESC
     LIMIT ${limit}

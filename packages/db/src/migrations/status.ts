@@ -108,8 +108,10 @@ export const EXPECTED_MIGRATIONS = [
   '076-batch-jobs',
   '077-batch-job-messages-queue',
   '078-batch-job-scheduling',
-  '079-agent-run-failures',
+  '079-agent-run-log',
   '080-agent-optimizations',
+  '081-llm-calls',
+  '082-tool-calls-agent',
 ];
 
 export interface MigrationStatus {

@@ -27,7 +27,7 @@ import { createFinalizeHook } from './finalize';
 import { createScheduleSweep } from './schedule-sweep';
 import { createApprovalSweep, APPROVAL_SWEEP_MS } from './approval-sweep';
 import {
-  createFailureRetentionSweep,
+  createUsageRetentionSweep,
   createNotificationRetentionSweep,
   createRetentionSweep,
   createStaleVersionSweep,
@@ -105,14 +105,14 @@ async function main(): Promise<void> {
       RETENTION_SWEEP_MS,
       createNotificationRetentionSweep(db)
     ),
-    // Captured failures outlive their runs by design (a quarter); this is
-    // the bound on that. Idempotent like the run sweep.
+    // The run log and token ledger outlive their runs by design (a year);
+    // this is the bound on that. Idempotent like the run sweep.
     schedulePeriodicSweep(
       logger,
-      'agent failure retention',
-      'worker-agents/failure-retention',
+      'agent usage retention',
+      'worker-agents/usage-retention',
       RETENTION_SWEEP_MS,
-      createFailureRetentionSweep(db)
+      createUsageRetentionSweep(db)
     ),
     schedulePeriodicSweep(
       logger,

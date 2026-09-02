@@ -53,8 +53,20 @@ export interface UtilizationBucket {
   toolErrors: number;
 }
 
-function utcDay(now: Date, back: number): string {
-  const at = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+/**
+ * The calendar day `back` days before `now` in the viewer's zone. Today is
+ * read in that zone (en-CA renders ISO order), then stepped as UTC
+ * midnights purely as calendar arithmetic — so a DST boundary in the
+ * viewer's zone cannot drop or duplicate a day.
+ */
+function localDay(now: Date, back: number, timeZone: string): string {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+  const at = new Date(`${today}T00:00:00Z`);
   at.setUTCDate(at.getUTCDate() - back);
   return at.toISOString().slice(0, 10);
 }
@@ -85,20 +97,22 @@ function labelOf(bucket: string, granularity: Granularity): string {
 }
 
 /**
- * Every calendar day in the window — quiet ones included — grouped into
- * buckets sized for the period, oldest first. Zero-filling first and
- * grouping second is what keeps a quiet week honestly flat.
+ * Every calendar day in the window — quiet ones included, in the viewer's
+ * zone — grouped into buckets sized for the period, oldest first.
+ * Zero-filling first and grouping second is what keeps a quiet week
+ * honestly flat.
  */
 export function bucketUtilization(
   rows: UtilizationDay[],
   days: number,
-  now: Date
+  now: Date,
+  timeZone: string
 ): UtilizationBucket[] {
   const found = new Map(rows.map((row) => [row.day, row]));
   const granularity = granularityFor(days);
   const buckets = new Map<string, UtilizationBucket>();
   for (let back = days - 1; back >= 0; back -= 1) {
-    const day = utcDay(now, back);
+    const day = localDay(now, back, timeZone);
     const row = found.get(day);
     const key = bucketKeyOf(day, granularity);
     let bucket = buckets.get(key);

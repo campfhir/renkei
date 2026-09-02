@@ -50,13 +50,13 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'added',
         title: 'A "My usage" page',
         detail:
-          'One place for everything done as you: tokens your agents spend, how many runs they made and how many failed, and every tool call under your account. Pick a window from a week to a year and see the trend for tokens, runs, or tool calls, with a per-agent breakdown and tokens per run.',
+          'One place for everything done as you: tokens your agents spend, how many runs they made and how many failed, and every tool call under your account. Pick a window from a week to a year and see the trend for tokens, runs, or tool calls in your own timezone, with a per-agent breakdown and tokens per run.',
       },
       {
         kind: 'added',
-        title: 'Agent failures are captured, not just counted',
+        title: 'Every run and every model call is recorded, not just counted',
         detail:
-          'When a run fails, Renkei now records which step it stopped at, what kind of failure it was, and what the run had cost. "My usage" lists the failures that keep recurring — the same agent stopping at the same step for the same reason — and links you to the fix.',
+          'Renkei now keeps a timestamped record of each agent run (its outcome, what it cost, and on failure which step it stopped at and why) and of each model call\'s token use, kept for a year by default. "My usage" lists the failures that keep recurring — the same agent stopping at the same step for the same reason — and links you to the fix.',
       },
       {
         kind: 'added',

@@ -40,14 +40,18 @@ type Handler = (args: Record<string, unknown>) => Promise<unknown>;
 /** The loose shape the tests drive, since the SDK's own overloads are a union. */
 type LooseServer = { registerTool: (name: string, config: unknown, handler?: Handler) => void };
 
-function harness() {
+function harness(agentId?: string) {
   const registered = new Map<string, Handler | undefined>();
   const raw = {
     registerTool: (name: string, _config: unknown, handler?: Handler) => {
       registered.set(name, handler);
     },
   } as unknown as McpServer;
-  const wrapped = withUsageTracking(raw, { tenantId: 'tenant-1', subject: 'subject-1' });
+  const wrapped = withUsageTracking(raw, {
+    tenantId: 'tenant-1',
+    subject: 'subject-1',
+    ...(agentId ? { agentId } : {}),
+  });
   const server = wrapped as unknown as LooseServer;
   return { server, registered };
 }
@@ -74,11 +78,24 @@ describe('withUsageTracking', () => {
     expect(inserted[0]).toMatchObject({
       tenant_id: 'tenant-1',
       subject: 'subject-1',
+      agent_id: null,
       tool: 'jira_search_issues',
       connector: 'jira',
       status: 'ok',
     });
     expect(typeof inserted[0]!.duration_ms).toBe('number');
+  });
+
+  it("stamps the acting agent on an agent run's calls, under the owner's subject", async () => {
+    const { server, registered } = harness('agent-9');
+    server.registerTool('jira_search_issues', {}, async () => ({
+      content: [{ type: 'text', text: 'ok' }],
+    }));
+
+    await registered.get('jira_search_issues')!({ jql: 'project = ENG' });
+    await flush();
+
+    expect(inserted[0]).toMatchObject({ subject: 'subject-1', agent_id: 'agent-9' });
   });
 
   it('never records arguments or results', async () => {

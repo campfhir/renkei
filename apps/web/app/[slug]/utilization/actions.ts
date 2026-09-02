@@ -12,6 +12,7 @@
 import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { ROLE_OPERATOR, ROLE_USER } from '@/lib/access';
+import { safeTimeZone } from '../usage/window';
 import {
   getAgentUtilization,
   getFailureSignatures,
@@ -26,6 +27,8 @@ import { bucketUtilization, resolvePeriod, type UtilizationBucket } from './wind
 export interface UtilizationReport {
   periodKey: string;
   days: number;
+  /** The IANA zone every day in the report is bucketed in. */
+  timeZone: string;
   totals: UtilizationTotals;
   series: UtilizationBucket[];
   agents: AgentUtilizationRow[];
@@ -45,12 +48,17 @@ const ZERO: UtilizationTotals = {
 
 export async function getUtilizationReport(
   tenantId: string,
-  requestedPeriod?: string
+  requestedPeriod?: string,
+  requestedTimeZone?: string
 ): Promise<UtilizationReport> {
   const period = resolvePeriod(requestedPeriod);
+  // The viewer's zone, validated (an unknown name would fail the query):
+  // every ledger is bucketed in it, so "today" means their today.
+  const timeZone = safeTimeZone(requestedTimeZone);
   const empty: UtilizationReport = {
     periodKey: period.key,
     days: period.days,
+    timeZone,
     totals: ZERO,
     series: [],
     agents: [],
@@ -70,16 +78,17 @@ export async function getUtilizationReport(
 
   try {
     const [totals, daily, agents, attention] = await Promise.all([
-      getUtilizationTotals(db, tenantId, subject, period.days),
-      getUtilizationSeries(db, tenantId, subject, period.days),
-      getAgentUtilization(db, tenantId, subject, period.days),
-      getFailureSignatures(db, tenantId, subject, period.days),
+      getUtilizationTotals(db, tenantId, subject, period.days, timeZone),
+      getUtilizationSeries(db, tenantId, subject, period.days, timeZone),
+      getAgentUtilization(db, tenantId, subject, period.days, timeZone),
+      getFailureSignatures(db, tenantId, subject, period.days, timeZone),
     ]);
     return {
       periodKey: period.key,
       days: period.days,
+      timeZone,
       totals,
-      series: bucketUtilization(daily, period.days, new Date()),
+      series: bucketUtilization(daily, period.days, new Date(), timeZone),
       agents,
       attention,
     };
