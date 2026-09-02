@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { closeDatabase, getDatabase, type DB } from '@renkei/db';
 import { InMemoryQueue } from '@renkei/queue';
-import type { AgentStepsDoc } from '@renkei/agents';
+import { CURRENT_STEPS_VERSION, type AgentStepsDoc } from '@renkei/agents';
 import { fanOutAgentEvents } from '@renkei/agents/event-fanout';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
@@ -29,8 +29,10 @@ maybe('agent event fan-out', () => {
   const owner = `owner-${tenantId.slice(0, 8)}`;
   const stranger = `stranger-${tenantId.slice(0, 8)}`;
 
+  // The run-creation gate (isCurrentStepsDoc) refuses any other version,
+  // so a hard-coded number here silently seeds an agent nothing will fire.
   const steps: AgentStepsDoc = {
-    version: 1,
+    version: CURRENT_STEPS_VERSION,
     steps: [
       {
         id: randomUUID(),
