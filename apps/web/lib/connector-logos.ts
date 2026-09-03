@@ -37,7 +37,7 @@ export const EXTRA_LOGOS = ['outlook', 'microsoft', 'jira-jsm', 'atlassian', 'di
 /**
  * Marks we deliberately do not ship, which render the built-in glyph.
  *
- * `knowledge`, `cards` and `agents` are our own surfaces rather than
+ * `knowledge`, `cards`, `agents` and `logs` are our own surfaces rather than
  * products — the built-in glyph says that better than any vendor-style
  * file would.
  *
@@ -47,7 +47,7 @@ export const EXTRA_LOGOS = ['outlook', 'microsoft', 'jira-jsm', 'atlassian', 'di
  * artwork instead. The glyph case for it stays in connector-icon.tsx as the
  * degradation path, same as every other mark.
  */
-export const GLYPH_ONLY = new Set(['knowledge', 'cards', 'agents', 'fileshares']);
+export const GLYPH_ONLY = new Set(['knowledge', 'cards', 'agents', 'fileshares', 'logs']);
 
 /** Explicit prop, then the known-mismatch table, then the key itself. */
 export function resolveLogoFile(capabilityKey: string, logo?: string): string {

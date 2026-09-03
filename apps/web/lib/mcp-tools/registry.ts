@@ -35,6 +35,7 @@ import { withKindStamp } from '@/lib/mcp-tools/kind-stamp';
 import { registerKnowledgeTools, KNOWLEDGE_CONNECTOR } from '@/lib/mcp-tools/knowledge';
 import { registerCardTools, CARDS_CONNECTOR } from '@/lib/mcp-tools/cards';
 import { registerAgentTools, AGENTS_CONNECTOR } from '@/lib/mcp-tools/agents';
+import { registerLogTools, LOGS_CONNECTOR } from '@/lib/mcp-tools/logs';
 import { registerUploadStatusTool } from '@/lib/mcp-tools/upload-slots';
 import { registerWebexUserTools, WEBEX_USER_MCP_CONNECTOR } from '@/lib/mcp-tools/webex';
 import { oauthWebexAuth } from '@/lib/mcp-tools/webex/webex-auth';
@@ -242,6 +243,9 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     // Same for batch jobs: batch_jobs is a plain Renkei table, no external
     // grant or worker probe to wait for either.
     BATCH_JOBS_MCP_CONNECTOR,
+    // Same for logs: it reads Renkei's own log store, self-scoped from the
+    // caller's subject/accountId — no external grant to wait for either.
+    LOGS_CONNECTOR,
     ...(availability.knowledgeAvailable ? [KNOWLEDGE_CONNECTOR] : []),
     ...(availability.webexAvailable ? [WEBEX_USER_MCP_CONNECTOR] : []),
     ...(availability.microsoftAvailable ? [OUTLOOK_MCP_CONNECTOR] : []),
@@ -305,6 +309,10 @@ export async function registerRenkeiTools(
   // (an unconfigured Mistral connector, an unreachable share) surface as a
   // failed batch, not a missing tool.
   registerBatchJobTools(withCapabilityGate(server, projection, BATCH_JOBS_MCP_CONNECTOR), context);
+  // log_search reads Renkei's own log store, self-scoped to the caller's
+  // own Jira-linked account — no role signal exists on an MCP token to
+  // offer the tenant-wide operator view the web Logs page has.
+  registerLogTools(withCapabilityGate(server, projection, LOGS_CONNECTOR), context);
   // check_file_upload is cross-connector — any *_request_*_upload tool can
   // mint the slot it reads — so it registers on the raw server, ungated,
   // the way whoami does.
