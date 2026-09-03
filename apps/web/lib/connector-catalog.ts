@@ -130,6 +130,16 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     toolPrefix: 'agent_*',
   },
   {
+    capabilityKey: 'logs',
+    // No connector_configs row: this reads Renkei's own log store — the key
+    // exists so the identifier stays consistent.
+    configKey: 'logs',
+    label: 'Renkei logs',
+    summary:
+      "Your own activity in Renkei's log, self-scoped the same way the web Logs page scopes a non-admin.",
+    toolPrefix: 'log_*',
+  },
+  {
     capabilityKey: 'knowledge',
     configKey: 'embeddings',
     label: 'Knowledge',

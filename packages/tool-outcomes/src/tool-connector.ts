@@ -46,6 +46,7 @@ const PREFIXES: [string, string][] = [
   ['fileshare_', 'fileshares'],
   ['card_', 'cards'],
   ['agent_', 'agents'],
+  ['log_', 'logs'],
 ];
 
 /**
