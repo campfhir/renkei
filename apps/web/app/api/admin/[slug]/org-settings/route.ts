@@ -38,6 +38,10 @@ const NUMERIC_BOUNDS = {
   // Floor 5: the worker's sweep wakes every 5 minutes, so smaller values
   // would promise a freshness the sweep cannot deliver.
   contentPollMinutes: [5, 1_440],
+  // Floor 15: the worker's sweep wakes every 15 minutes. Unlike content
+  // polling, a shorter interval here buys nothing but rate-limit risk —
+  // this is a repair check, not a sync, and WebEx pushes the real events.
+  webexWebhookHealthMinutes: [15, 1_440],
   // 0 = keep forever; a year of logs is the typo guard on the other end.
   logRetentionDays: [0, 3_650],
   // Floor 1, not 0: "delete instantly" is a footgun with no use case, and
@@ -70,6 +74,7 @@ const NUMERIC_KEYS = [
   'agentMaxRunsPerDay',
   'agentApprovalMaxWaitDays',
   'contentPollMinutes',
+  'webexWebhookHealthMinutes',
   'logRetentionDays',
   'agentNotificationRetentionDays',
   'agentUsageRetentionDays',
@@ -98,6 +103,7 @@ function editable(settings: OrgSettings): Record<EditableKey, boolean | number> 
     agentMaxRunsPerDay: settings.agentMaxRunsPerDay,
     agentApprovalMaxWaitDays: settings.agentApprovalMaxWaitDays,
     contentPollMinutes: settings.contentPollMinutes,
+    webexWebhookHealthMinutes: settings.webexWebhookHealthMinutes,
     logRetentionDays: settings.logRetentionDays,
     agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
     agentUsageRetentionDays: settings.agentUsageRetentionDays,
