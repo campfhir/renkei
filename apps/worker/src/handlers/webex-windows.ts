@@ -305,7 +305,9 @@ export function createKnowledgeIngestWebexWindowHandler(
       WINDOW_CHUNKING
     );
     if (!ingested.ok) {
-      throw new Error(`could not index window ${refId}: ${ingested.err.type}`);
+      throw new Error(
+        `could not index window ${refId}: ${ingested.err.type}${ingested.err.message ? ` (${ingested.err.message})` : ''}`
+      );
     }
     await deleteLegacy(tenantId, roomId, day);
 

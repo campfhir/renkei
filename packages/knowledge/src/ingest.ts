@@ -49,9 +49,23 @@ export interface KnowledgeChunkInput {
  */
 export const LEXICAL_CONFIG = 'english';
 
+/**
+ * Text as Postgres will accept it in a `text` parameter: NUL bytes out.
+ *
+ * Extracted document text (PDF, docx) and the odd mail body carry U+0000,
+ * and Postgres refuses it in any text value ("invalid byte sequence for
+ * encoding UTF8: 0x00"). The stored content never met that rule because
+ * it is ciphertext; the lexical index is the first place the plaintext
+ * reaches the database, and a single such chunk failed its whole ingest
+ * — and every reindex batch that included it — with that error.
+ */
+export function postgresText(value: string): string {
+  return value.includes('\u0000') ? value.split('\u0000').join('') : value;
+}
+
 /** `to_tsvector(config, text)` — the config rides as a bound parameter cast to regconfig. */
 function tsvector(text: string): RawBuilder<string> {
-  return sql<string>`to_tsvector(${LEXICAL_CONFIG}::regconfig, ${text})`;
+  return sql<string>`to_tsvector(${LEXICAL_CONFIG}::regconfig, ${postgresText(text)})`;
 }
 
 /**
@@ -111,7 +125,7 @@ export async function upsertChunkRow(
     return err('ENCRYPTION_FAILED' as const, { message: keyResult.err.message });
   }
   const storedContent = encryptContent(chunk.content, keyResult.val);
-  const keywords = chunk.keywords ? [...chunk.keywords] : null;
+  const keywords = chunk.keywords ? chunk.keywords.map(postgresText) : null;
   const searchText = searchTextFragment(titleOf(chunk.metadata), keywords, chunk.content);
 
   const sourceAt = sourceAtValue(chunk.sourceAt);

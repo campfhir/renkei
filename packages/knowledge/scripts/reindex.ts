@@ -82,7 +82,11 @@ async function lexical(key: Buffer, tenant: string | null): Promise<void> {
   let skipped = 0;
   for (;;) {
     const batch = await reindexLexicalBatch(tenant, key, LEXICAL_BATCH);
-    if (!batch.ok) throw new Error('lexical: the knowledge store could not be updated');
+    if (!batch.ok) {
+      throw new Error(
+        `lexical: the knowledge store could not be updated: ${batch.err.message ?? ''}`
+      );
+    }
     processed += batch.val.processed;
     skipped += batch.val.skipped;
     console.log(`lexical: ${processed} row(s) indexed…`);
@@ -105,8 +109,11 @@ async function keywords(key: Buffer, tenant: string | null): Promise<void> {
     let processed = 0;
     for (;;) {
       const batch = await extractKeywordsBatch(tenantId, extractor, key, KEYWORD_BATCH, skip);
-      if (!batch.ok)
-        throw new Error(`keywords [${tenantId}]: the knowledge store could not be updated`);
+      if (!batch.ok) {
+        throw new Error(
+          `keywords [${tenantId}]: the knowledge store could not be updated: ${batch.err.message ?? ''}`
+        );
+      }
       for (const entry of batch.val.skip) skip.add(entry);
       processed += batch.val.processed;
       console.log(`keywords [${tenantId}]: ${processed} object(s) enriched…`);
@@ -133,7 +140,7 @@ async function embed(key: Buffer, tenant: string | null): Promise<void> {
       const batch = await reembedBatch(tenantId, embedder, key, cursor, EMBED_BATCH);
       if (!batch.ok) {
         throw new Error(
-          `embed [${tenantId}]: ${batch.err.type === 'EMBEDDING_FAILED' ? (batch.err.message ?? 'embedding failed') : 'the knowledge store could not be updated'}`
+          `embed [${tenantId}]: ${batch.err.type === 'EMBEDDING_FAILED' ? 'embedding failed' : 'the knowledge store could not be updated'}: ${batch.err.message ?? ''}`
         );
       }
       processed += batch.val.processed;
