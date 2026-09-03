@@ -120,6 +120,7 @@ export const EXPECTED_MIGRATIONS = [
   '088-agent-notifications-meta',
   '089-batch-processed-files',
   '090-sandbox-secrets',
+  '091-mcp-token-roles',
 ];
 
 export interface MigrationStatus {
