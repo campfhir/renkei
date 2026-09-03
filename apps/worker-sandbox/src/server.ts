@@ -47,13 +47,26 @@ import {
   type SandboxFileSummary,
 } from '@renkei/connector-sandbox';
 import {
+  generatePassphrase,
+  sealSecretFields,
+  secretTtlMs,
   snapshotCharsOf,
+  unlockWindowMs,
+  validatePassphrase,
+  validateSecretFields,
+  validateSecretHosts,
+  validateSecretName,
+  SECRET_MAX_PER_SUBJECT,
   type BrowserPageState,
   type BrowserRunResult,
+  type SandboxSecretSummary,
 } from '@renkei/connector-sandbox';
 import * as disk from './disk';
 import * as store from './store';
+import * as secretsStore from './secrets-store';
 import { BrowserOpError, type BrowserErrorType, type BrowserTarget } from './browser';
+import { SecretVault } from './secret-vault';
+import { secretSummary } from './secrets';
 import { logger } from './logger';
 
 /**
@@ -71,7 +84,8 @@ export interface BrowserVerbs {
     ref: unknown,
     text: unknown,
     submit: boolean,
-    maxChars: number
+    maxChars: number,
+    secret?: unknown
   ): Promise<BrowserPageState>;
   select(target: BrowserTarget, ref: unknown, values: unknown, maxChars: number): Promise<BrowserPageState>;
   press(target: BrowserTarget, key: unknown, maxChars: number): Promise<BrowserPageState>;
@@ -90,6 +104,8 @@ export interface SandboxServerDeps {
   maxFileBytes?: (tenantId: string) => Promise<number>;
   /** The browser, when SANDBOX_BROWSER_ENABLED; null/absent answers every browser verb 503. */
   browser?: BrowserVerbs | null;
+  /** The in-memory secret vault; the server makes its own when not given (tests share one with the browser). */
+  vault?: SecretVault;
 }
 
 const MAX_JSON_BYTES = 1_048_576;
@@ -189,7 +205,21 @@ const BROWSER_ERROR_STATUS: Record<BrowserErrorType, number> = {
   bad_request: 400,
   navigation_failed: 502,
   action_failed: 400,
+  secret_unavailable: 403,
 };
+
+function secretWire(summary: SandboxSecretSummary) {
+  return {
+    id: summary.id,
+    name: summary.name,
+    fields: summary.fields,
+    hosts: summary.hosts,
+    createdAt: summary.createdAt.toISOString(),
+    expiresAt: summary.expiresAt.toISOString(),
+    lastUsedAt: summary.lastUsedAt ? summary.lastUsedAt.toISOString() : null,
+    unlockedUntil: summary.unlockedUntil ? summary.unlockedUntil.toISOString() : null,
+  };
+}
 
 function pageWire(state: BrowserPageState) {
   return { url: state.url, title: state.title, snapshot: state.snapshot, truncated: state.truncated };
@@ -228,6 +258,7 @@ function expiryFromNow(batchId: string | null): Date {
 
 export function createSandboxServer(deps: SandboxServerDeps): Server {
   const maxFileBytes = deps.maxFileBytes ?? orgMaxFileBytes;
+  const vault = deps.vault ?? new SecretVault();
 
   async function handleFetch(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
     const target = targetOf(body);
@@ -487,7 +518,16 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
           return sendJson(
             response,
             200,
-            pageWire(await browser.type(target, body.ref, body.text, body.submit === true, maxChars))
+            pageWire(
+              await browser.type(
+                target,
+                body.ref,
+                body.text,
+                body.submit === true,
+                maxChars,
+                body.secret
+              )
+            )
           );
         case 'select':
           return sendJson(response, 200, pageWire(await browser.select(target, body.ref, body.values, maxChars)));
@@ -551,6 +591,108 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     }
   }
 
+  /**
+   * Browser secrets: sealed here, under a passphrase this process sees
+   * only for the length of the request; the derived key lives in the
+   * vault until its window closes. Every operation is scoped to the
+   * caller's own (tenantId, subject), and no response ever carries a
+   * value — the one exception is the generated passphrase, returned from
+   * `create` exactly once, when the caller asked this worker to make one.
+   */
+  async function handleSecrets(
+    op: string,
+    body: Record<string, unknown>,
+    response: ServerResponse
+  ): Promise<void> {
+    const target = targetOf(body);
+    if (!target) return sendError(response, 400, 'bad_request');
+    switch (op) {
+      case 'create': {
+        const name = validateSecretName(body.name);
+        if (!name.ok) return sendError(response, 400, 'bad_request', name.message);
+        const fields = validateSecretFields(body.fields);
+        if (!fields.ok) return sendError(response, 400, 'bad_request', fields.message);
+        const hosts = validateSecretHosts(body.hosts);
+        if (!hosts.ok) return sendError(response, 400, 'bad_request', hosts.message);
+        let passphrase: string;
+        let generated = false;
+        if (body.passphrase === undefined || body.passphrase === null || body.passphrase === '') {
+          passphrase = generatePassphrase();
+          generated = true;
+        } else {
+          const given = validatePassphrase(body.passphrase);
+          if (!given.ok) return sendError(response, 400, 'bad_request', given.message);
+          passphrase = given.passphrase;
+        }
+        if ((await secretsStore.countSecrets(deps.db, target)) >= SECRET_MAX_PER_SUBJECT) {
+          return sendError(
+            response,
+            429,
+            'secret_limit',
+            `At most ${SECRET_MAX_PER_SUBJECT} secrets — revoke one first.`
+          );
+        }
+        if (await secretsStore.getSecretByName(deps.db, target, name.name)) {
+          return sendError(
+            response,
+            409,
+            'secret_exists',
+            `A secret named "${name.name}" already exists — revoke it first.`
+          );
+        }
+        const sealed = sealSecretFields(fields.fields, passphrase);
+        const stored = await secretsStore.insertSecret(deps.db, {
+          ...target,
+          name: name.name,
+          fields: Object.keys(fields.fields),
+          hosts: hosts.hosts,
+          sealed,
+          expiresAt: new Date(Date.now() + secretTtlMs(body.ttlMs)),
+        });
+        const until = Date.now() + unlockWindowMs(body.unlockMs);
+        vault.unlock(stored.id, sealed, passphrase, until);
+        return sendJson(response, 200, {
+          secret: secretWire(secretSummary(stored, vault)),
+          passphrase: generated ? passphrase : null,
+        });
+      }
+      case 'list': {
+        const rows = await secretsStore.listSecrets(deps.db, target);
+        return sendJson(response, 200, {
+          secrets: rows.map((row) => secretWire(secretSummary(row, vault))),
+        });
+      }
+      case 'unlock': {
+        const id = str(body.id);
+        const secret = id ? await secretsStore.getSecret(deps.db, target, id) : undefined;
+        if (!secret) return sendError(response, 404, 'not_found');
+        const given = validatePassphrase(body.passphrase);
+        if (!given.ok) return sendError(response, 400, 'bad_request', given.message);
+        const until = Date.now() + unlockWindowMs(body.unlockMs);
+        if (!vault.unlock(secret.id, secret.sealed, given.passphrase, until)) {
+          return sendError(response, 403, 'bad_passphrase', 'That passphrase does not open this secret.');
+        }
+        return sendJson(response, 200, { secret: secretWire(secretSummary(secret, vault)) });
+      }
+      case 'lock': {
+        const id = str(body.id);
+        const secret = id ? await secretsStore.getSecret(deps.db, target, id) : undefined;
+        if (!secret) return sendError(response, 404, 'not_found');
+        vault.lock(secret.id);
+        return sendJson(response, 200, { secret: secretWire(secretSummary(secret, vault)) });
+      }
+      case 'revoke': {
+        const id = str(body.id);
+        const deleted = id ? await secretsStore.deleteSecret(deps.db, target, id) : undefined;
+        if (!deleted) return sendError(response, 404, 'not_found');
+        vault.lock(deleted.id);
+        return sendJson(response, 200, { revoked: true, id: deleted.id, name: deleted.name });
+      }
+      default:
+        return sendError(response, 404, 'unknown_operation');
+    }
+  }
+
   const jsonHandlers: Record<
     string,
     (body: Record<string, unknown>, response: ServerResponse) => Promise<void>
@@ -583,8 +725,9 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
 
     const op = url.pathname.startsWith('/v1/') ? url.pathname.slice('/v1/'.length) : '';
     const browserOp = op.startsWith('browser/') ? op.slice('browser/'.length) : null;
-    const jsonHandler = browserOp !== null ? null : jsonHandlers[op];
-    if (browserOp === null && !jsonHandler) {
+    const secretsOp = op.startsWith('secrets/') ? op.slice('secrets/'.length) : null;
+    const jsonHandler = browserOp !== null || secretsOp !== null ? null : jsonHandlers[op];
+    if (browserOp === null && secretsOp === null && !jsonHandler) {
       return sendError(response, 404, 'unknown_operation');
     }
     const raw = await readBody(request, MAX_JSON_BYTES);
@@ -597,6 +740,7 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     }
     if (!isRecord(parsedBody)) return sendError(response, 400, 'bad_request');
     if (browserOp !== null) return handleBrowser(browserOp, parsedBody, response);
+    if (secretsOp !== null) return handleSecrets(secretsOp, parsedBody, response);
     await jsonHandler!(parsedBody, response);
   }
 
@@ -632,10 +776,27 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
           });
         }
       }
+      // Secrets past their lifetime: the key first, then the row.
+      const expiredSecrets = await secretsStore.listExpiredSecrets(deps.db, SWEEP_BATCH);
+      for (const secret of expiredSecrets) {
+        try {
+          vault.lock(secret.id);
+          await secretsStore.deleteSecretById(deps.db, secret.id);
+        } catch (error) {
+          logger.warn('sweep could not remove secret {id}: {error}', {
+            component: 'worker-sandbox/sweep',
+            id: secret.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     })();
   }, SWEEP_INTERVAL_MS);
   sweep.unref();
-  server.on('close', () => clearInterval(sweep));
+  server.on('close', () => {
+    clearInterval(sweep);
+    if (!deps.vault) vault.close();
+  });
 
   return server;
 }

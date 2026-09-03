@@ -25,6 +25,7 @@ jest.mock('@/lib/sandbox/service-client', () => ({
   sbBrowserRun: jest.fn(),
   sbBrowserScreenshot: jest.fn(),
   sbBrowserClose: jest.fn(),
+  sbSecretsList: jest.fn(),
   sbFetchUrl: jest.fn(),
   sbListFiles: jest.fn(),
   sbStatFile: jest.fn(),
@@ -86,6 +87,7 @@ describe('registration', () => {
       'sandbox_browser_back',
       'sandbox_browser_click',
       'sandbox_browser_close',
+      'sandbox_browser_list_secrets',
       'sandbox_browser_navigate',
       'sandbox_browser_press_key',
       'sandbox_browser_run',
@@ -156,6 +158,50 @@ describe('verbs', () => {
     expect(client.sbBrowserPress).toHaveBeenCalledWith(TARGET, { key: 'Escape', maxChars: 1000 });
     await tools.get('sandbox_browser_back')!.handler({});
     expect(client.sbBrowserBack).toHaveBeenCalledWith(TARGET, { maxChars: undefined });
+  });
+
+  it('type forwards a secret reference instead of text', async () => {
+    client.sbBrowserType.mockResolvedValue({ ok: true, val: PAGE });
+    const tools = collect(context());
+    await tools.get('sandbox_browser_type')!.handler({
+      ref: 'e2',
+      secret: { name: 'vendor-portal', field: 'password' },
+      submit: true,
+    });
+    expect(client.sbBrowserType).toHaveBeenLastCalledWith(TARGET, {
+      ref: 'e2',
+      secret: { name: 'vendor-portal', field: 'password' },
+      submit: true,
+      maxChars: undefined,
+    });
+  });
+
+  it('lists secrets by name, fields, hosts and lock state — never values', async () => {
+    client.sbSecretsList.mockResolvedValueOnce({ ok: true, val: [] });
+    const tools = collect(context());
+    const empty = await tools.get('sandbox_browser_list_secrets')!.handler({});
+    expect(empty.content[0].text).toContain('No browser secrets are stored');
+
+    client.sbSecretsList.mockResolvedValueOnce({
+      ok: true,
+      val: [
+        {
+          id: 's1',
+          name: 'vendor-portal',
+          fields: ['username', 'password'],
+          hosts: ['portal.vendor.com'],
+          createdAt: '2026-01-01T00:00:00.000Z',
+          expiresAt: '2026-02-01T00:00:00.000Z',
+          lastUsedAt: null,
+          unlockedUntil: null,
+        },
+      ],
+    });
+    const listed = await tools.get('sandbox_browser_list_secrets')!.handler({});
+    expect(listed.content[0].text).toContain(
+      'vendor-portal — fields: username, password — usable on: portal.vendor.com — locked'
+    );
+    expect(client.sbSecretsList).toHaveBeenCalledWith(TARGET);
   });
 
   it('scroll passes only the fields given', async () => {

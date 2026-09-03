@@ -120,6 +120,8 @@ export interface BrowserPageState {
   truncated: boolean;
 }
 
+import { parseSecretRef, type SecretRef } from './secrets';
+
 const REF_PATTERN = /^e\d{1,5}$/;
 
 /** A ref the in-page walk could have minted — `e1`..`e99999`. */
@@ -137,7 +139,7 @@ export function isBrowserRef(value: unknown): value is string {
 export type BrowserStep =
   | { kind: 'navigate'; url: string }
   | { kind: 'click'; ref: string }
-  | { kind: 'type'; ref: string; text: string; submit?: boolean }
+  | { kind: 'type'; ref: string; text?: string; secret?: SecretRef; submit?: boolean }
   | { kind: 'select'; ref: string; values: string[] }
   | { kind: 'press'; key: string }
   | { kind: 'scroll'; ref?: string; direction?: 'up' | 'down'; amount?: number }
@@ -204,16 +206,24 @@ export function parseBrowserStep(
     case 'type': {
       const ref = refOf(value.ref, where);
       if (!ref.ok) return ref;
-      if (typeof value.text !== 'string' || value.text.length > BROWSER_TYPE_MAX_CHARS) {
-        return refuse(`text must be a string of at most ${BROWSER_TYPE_MAX_CHARS} characters.`);
-      }
       if (value.submit !== undefined && typeof value.submit !== 'boolean') {
         return refuse('submit must be true or false.');
       }
-      return {
-        ok: true,
-        step: { kind, ref: ref.ref, text: value.text, ...(value.submit ? { submit: true } : {}) },
-      };
+      const submit = value.submit ? { submit: true } : {};
+      // Exactly one of text (typed as given) or secret (typed by the worker
+      // from a stored secret the model never sees).
+      if (value.secret !== undefined) {
+        if (value.text !== undefined) return refuse('give text OR secret, not both.');
+        const secret = parseSecretRef(value.secret);
+        if (!secret) {
+          return refuse('secret is { name, field } — see sandbox_browser_list_secrets.');
+        }
+        return { ok: true, step: { kind, ref: ref.ref, secret, ...submit } };
+      }
+      if (typeof value.text !== 'string' || value.text.length > BROWSER_TYPE_MAX_CHARS) {
+        return refuse(`text must be a string of at most ${BROWSER_TYPE_MAX_CHARS} characters.`);
+      }
+      return { ok: true, step: { kind, ref: ref.ref, text: value.text, ...submit } };
     }
     case 'select': {
       const ref = refOf(value.ref, where);

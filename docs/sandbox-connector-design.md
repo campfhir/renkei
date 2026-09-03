@@ -189,11 +189,61 @@ session are serialized so two tool calls racing for the same page cannot
 interleave. Downloads are refused, service workers blocked, and a popup a
 click opens becomes the page the next snapshot reads.
 
+**Secrets — logins the browser may type but the model may never see.**
+The one thing a real portal needs that nothing above provides is a
+credential, and a credential handed to a model as tool text is a
+credential in a transcript, a log, and every prompt after. So secrets go
+around the model entirely:
+
+- *Supplied in the Renkei UI, never over MCP.* The "Browser secrets" card
+  on the connectors page (`apps/web/app/[slug]/connectors/sandbox-secrets.tsx`,
+  routes under `/api/tenant/[tenantId]/sandbox/secrets`) is where a person
+  adds, unlocks, locks and revokes them, with their own session. The MCP
+  surface can list secrets (`sandbox_browser_list_secrets`: name, field
+  names, hosts, lock state — never a value) and type one
+  (`sandbox_browser_type` with `secret: {name, field}` instead of `text`,
+  as a single verb or a run step). It cannot create, unlock or read one.
+- *Sealed under their own key, not the deployment's.* Every other
+  credential Renkei holds is under `TOKEN_ENCRYPTION_KEY`. A browser
+  secret is sealed (AES-256-GCM, `sbx1.` envelope) under a key derived by
+  scrypt from a passphrase — one Renkei **generates** (five groups of five
+  unambiguous characters, ~124 bits; a person may choose their own, 12+
+  characters) and shows exactly once, and does not store. The row in
+  `sandbox_secrets` (migration 090) carries the sealed blob plus the
+  non-secret half (name, field names, hosts, expiry); the table plus every
+  Renkei key yields nothing.
+- *Unlocked for a window, in memory, in the worker.* Unlocking sends the
+  passphrase to `apps/worker-sandbox` for the length of one request; the
+  worker derives the key, proves it opens the blob (GCM's tag refuses a
+  wrong passphrase before anything is held), and keeps the key in
+  `SecretVault` (`src/secret-vault.ts`) until the window closes — 8 hours
+  by default, 24 at most — or the person locks it, or the process restarts.
+  Nothing about the unlock is written anywhere, which is why the UI asks
+  the worker for lock state rather than a column. The secret itself
+  expires (30 days by default, 90 at most) and is swept like a staged file.
+- *Scoped to hosts.* A secret names 1–8 hostnames (`portal.vendor.com`,
+  `*.vendor.com`) it may be typed on, required at creation. The worker
+  resolves a type step's reference against the page's **current** host
+  (`src/secrets.ts`) and refuses otherwise — so a task that wandered, or
+  was steered, onto another site cannot spend the credential there.
+- *Never readable back.* The control the worker filled is stamped
+  `data-renkei-secret`, and the walk masks its value like a password
+  field's. Every typed value is also remembered for the session and
+  scrubbed (`scrubSecretValues`, URL-encoded form included) from every
+  snapshot, URL, title and error message the model receives — so a site
+  that echoes a username, or a form that put the value in the query
+  string, does not become the channel that reveals it. What the site
+  itself does with a credential it was given is, of course, the site's.
+- *Auditable.* Creating, unlocking, locking and revoking each record an
+  audit event (`sandbox.secret.*`); `last_used_at` records the last time
+  the browser typed it.
+
 **What it deliberately is not.** Not a headed or remote-controlled
 browser, not a way to run JavaScript, not a file-download path (that is
-`sandbox_download_url`, byte-capped and quota'd), and not an
-authentication vault — the tool descriptions tell the model never to type
-credentials it was not explicitly given for the task.
+`sandbox_download_url`, byte-capped and quota'd), and not a vault the
+model can open — the tool descriptions tell the model never to type a
+credential as text, to use a stored secret, and to ask the person when
+none exists or it is locked.
 
 ## Tool inventory
 
@@ -209,7 +259,8 @@ credentials it was not explicitly given for the task.
 | `sandbox_browser_navigate` | Act | Open an `https://` URL in the caller's browser session; answers a snapshot. |
 | `sandbox_browser_snapshot` | Read | Re-read the open page (title, URL, text, `[eN]`-ref'd controls). |
 | `sandbox_browser_click` | Act | Click an element by ref; answers the snapshot of wherever that led. |
-| `sandbox_browser_type` | Act | Replace a field's text by ref, optionally pressing Enter. |
+| `sandbox_browser_type` | Act | Replace a field's text by ref — or fill it from a stored secret the model never sees — optionally pressing Enter. |
+| `sandbox_browser_list_secrets` | Read | The stored secrets' names, fields, hosts and lock state; never values. |
 | `sandbox_browser_select` | Act | Choose option(s) of a `<select>` by ref. |
 | `sandbox_browser_press_key` | Act | Press one key (Escape, Tab, PageDown, ...) in the page. |
 | `sandbox_browser_scroll` | Act | Scroll the page up/down by pixels, or bring one ref into view. |

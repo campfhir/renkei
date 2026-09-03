@@ -45,6 +45,7 @@ import {
   sbBrowserSelect,
   sbBrowserSnapshot,
   sbBrowserType,
+  sbSecretsList,
   clientFailure,
   type WireBrowserPage,
   type WireBrowserStep,
@@ -83,16 +84,35 @@ const scrollFields = {
     .describe('Pixels to scroll the page (default 720, most of a screen).'),
 };
 
+const secretRefField = z
+  .object({
+    name: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]{0,63}$/)
+      .describe('The secret name.'),
+    field: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9_-]{0,31}$/)
+      .describe('Which field of it, e.g. password.'),
+  })
+  .describe(
+    'Type a stored secret instead of text: the worker fills the field from the secret; you ' +
+      'never see the value. Use sandbox_browser_list_secrets for names, fields and the hosts ' +
+      'each may be typed on.'
+  );
+
+const typeFields = {
+  ref: refField,
+  text: z.string().max(10_000).optional().describe('The text the field should contain afterwards.'),
+  secret: secretRefField.optional(),
+  submit: z.boolean().optional().describe('Press Enter after typing (default false).'),
+};
+
 /** One sandbox_browser_run step; mirrors the single verbs one for one. */
 const stepSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('navigate'), url: z.string().url() }),
   z.object({ kind: z.literal('click'), ref: refField }),
-  z.object({
-    kind: z.literal('type'),
-    ref: refField,
-    text: z.string().max(10_000),
-    submit: z.boolean().optional(),
-  }),
+  z.object({ kind: z.literal('type'), ...typeFields }),
   z.object({
     kind: z.literal('select'),
     ref: refField,
@@ -115,6 +135,27 @@ const stepSchema = z.discriminatedUnion('kind', [
 
 function maxCharsOf(args: Record<string, unknown>): number | undefined {
   return typeof args.maxChars === 'number' ? args.maxChars : undefined;
+}
+
+function secretRefOf(value: unknown): { name: string; field: string } | undefined {
+  if (typeof value !== 'object' || value === null || !('name' in value) || !('field' in value)) {
+    return undefined;
+  }
+  const { name, field } = value;
+  return typeof name === 'string' && typeof field === 'string' ? { name, field } : undefined;
+}
+
+function secretLine(secret: {
+  name: string;
+  fields: string[];
+  hosts: string[];
+  unlockedUntil: string | null;
+  expiresAt: string;
+}): string {
+  const state = secret.unlockedUntil
+    ? `unlocked until ${new Date(secret.unlockedUntil).toLocaleString()}`
+    : 'locked (its owner must unlock it in Renkei before it can be typed)';
+  return `${secret.name} — fields: ${secret.fields.join(', ')} — usable on: ${secret.hosts.join(', ')} — ${state} — expires ${new Date(secret.expiresAt).toLocaleString()}`;
 }
 
 function pageResult(page: WireBrowserPage) {
@@ -202,23 +243,25 @@ export function registerSandboxBrowserTools(server: McpServer, context: MCPToolC
       title: 'Sandbox · Act — Type into a field on the open page',
       description:
         'Replace the contents of a text field, search box, textarea or editable region (by its ' +
-        '[eN] ref) with the given text; set submit to also press Enter, which submits most ' +
-        'forms. Returns the new snapshot. Never type credentials or secrets you were not ' +
-        'explicitly given for this task.',
+        '[eN] ref) with the given text, OR with a stored secret (give secret: {name, field} ' +
+        'instead of text — the worker types the value, which you never see and which is masked ' +
+        'in every snapshot). Set submit to also press Enter, which submits most forms. Returns ' +
+        'the new snapshot. Never type credentials as plain text; use a stored secret, and if ' +
+        'none exists for the site, ask the person to add one on the Renkei connectors page.',
       annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        ref: refField,
-        text: z.string().max(10_000).describe('The text the field should contain afterwards.'),
-        submit: z.boolean().optional().describe('Press Enter after typing (default false).'),
-        maxChars: maxCharsField,
-      }),
+      inputSchema: z
+        .object({ ...typeFields, maxChars: maxCharsField })
+        .refine((value) => (value.text === undefined) !== (value.secret === undefined), {
+          message: 'Give text or secret, not both.',
+        }),
     },
     async (args: Record<string, unknown>) => {
       const target = targetOf(context);
       if (typeof target === 'string') return errText(target);
+      const secret = secretRefOf(args.secret);
       const typed = await sbBrowserType(target, {
         ref: str(args.ref),
-        text: str(args.text),
+        ...(secret ? { secret } : { text: str(args.text) }),
         submit: args.submit === true,
         maxChars: maxCharsOf(args),
       });
@@ -278,6 +321,33 @@ export function registerSandboxBrowserTools(server: McpServer, context: MCPToolC
       });
       if (!pressed.ok) return errText(clientFailure(pressed.err).message);
       return pageResult(pressed.val);
+    }
+  );
+
+  server.registerTool(
+    'sandbox_browser_list_secrets',
+    {
+      title: 'Sandbox · Read — List the stored secrets your browser may type',
+      description:
+        'The secrets the signed-in person has stored for the sandbox browser: each name, its ' +
+        'field names (username, password, ...), the hosts it may be typed on, and whether it is ' +
+        'currently unlocked. Values are never shown. Type one with sandbox_browser_type ' +
+        '(secret: {name, field}) while the page is on one of its hosts. A locked secret must be ' +
+        'unlocked by its owner on the Renkei connectors page — ask them; you cannot unlock it.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const target = targetOf(context);
+      if (typeof target === 'string') return errText(target);
+      const listed = await sbSecretsList(target);
+      if (!listed.ok) return errText(clientFailure(listed.err).message);
+      if (listed.val.length === 0) {
+        return textResult(
+          'No browser secrets are stored. The person can add one on the Renkei connectors page.'
+        );
+      }
+      return textResult(listed.val.map(secretLine).join('\n'));
     }
   );
 

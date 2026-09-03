@@ -22,6 +22,7 @@ interface FakeLocator {
   selectOption: jest.Mock;
   scrollIntoViewIfNeeded: jest.Mock;
   waitFor: jest.Mock;
+  evaluate: jest.Mock;
 }
 
 interface FakePage {
@@ -76,6 +77,7 @@ function fakeLocator(count = 1): FakeLocator {
     waitFor: jest.fn(async () => {
       if (count === 0) throw new Error('locator.waitFor: Timeout 10000ms exceeded.');
     }),
+    evaluate: jest.fn(async () => undefined),
   };
 }
 
@@ -637,6 +639,98 @@ describe('run', () => {
     expect(result.completed).toBe(2);
     expect(popup.keyboard.press).toHaveBeenCalledWith('End');
     expect(result.page?.url).toBe('https://example.com/popup');
+    await sessions.shutdown();
+  });
+});
+
+describe('secrets', () => {
+  it('types a secret resolved for the current host, marks the control, and scrubs the value from what the model reads', async () => {
+    const secrets = jest.fn(async () => 'hunter2!');
+    const { sessions, browsers } = build({ secrets });
+    await sessions.navigate(ALICE, 'https://portal.vendor.com/login', 5000);
+    const page = browsers[0].contexts[0].openPages[0];
+    const field = fakeLocator(1);
+    page.locators.set('[data-renkei-ref="e2"]', field);
+    page.walk = {
+      nodes: [
+        { role: 'text', name: 'Welcome back, hunter2! is not your name' },
+        { role: 'textbox', ref: 'e2', name: 'Password', value: '••••••' },
+      ],
+      truncated: false,
+    };
+    page.goto.mockImplementation(async () => {
+      page.currentUrl = 'https://portal.vendor.com/?q=hunter2%21';
+    });
+
+    const state = await sessions.type(ALICE, 'e2', undefined, true, 5000, {
+      name: 'vendor-portal',
+      field: 'password',
+    });
+    expect(secrets).toHaveBeenCalledWith(
+      ALICE,
+      { name: 'vendor-portal', field: 'password' },
+      'portal.vendor.com'
+    );
+    expect(field.fill).toHaveBeenCalledWith('hunter2!');
+    expect(field.evaluate).toHaveBeenCalledWith(expect.any(Function), 'data-renkei-secret');
+    expect(field.press).toHaveBeenCalledWith('Enter');
+    expect(state.snapshot).not.toContain('hunter2');
+    expect(state.snapshot).toContain('Welcome back, •••••• is not your name');
+
+    // The value stays scrubbed for the rest of the session, URL included.
+    const later = await sessions.navigate(ALICE, 'https://portal.vendor.com/', 5000);
+    expect(later.url).toBe('https://portal.vendor.com/?q=••••••');
+    await sessions.shutdown();
+  });
+
+  it('refuses a secret step when the deployment has no secrets, or the resolver refuses', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://portal.vendor.com/', 5000);
+    browsers[0].contexts[0].openPages[0].locators.set('[data-renkei-ref="e1"]', fakeLocator(1));
+    const error = await expectBrowserError(
+      sessions.type(ALICE, 'e1', undefined, false, 5000, {
+        name: 'vendor-portal',
+        field: 'password',
+      }),
+      'secret_unavailable'
+    );
+    expect(error.message).toContain('not available on this deployment');
+
+    const refusing = build({
+      secrets: async () => {
+        throw new BrowserOpError('secret_unavailable', 'Secret "vendor-portal" is locked');
+      },
+    });
+    await refusing.sessions.navigate(ALICE, 'https://portal.vendor.com/', 5000);
+    const page = refusing.browsers[0].contexts[0].openPages[0];
+    const field = fakeLocator(1);
+    page.locators.set('[data-renkei-ref="e1"]', field);
+    const run = await refusing.sessions.run(
+      ALICE,
+      [{ kind: 'type', ref: 'e1', secret: { name: 'vendor-portal', field: 'password' } }],
+      5000
+    );
+    expect(run.failed).toMatchObject({ index: 0, type: 'secret_unavailable' });
+    expect(field.fill).not.toHaveBeenCalled();
+    await sessions.shutdown();
+    await refusing.sessions.shutdown();
+  });
+
+  it('rejects a type step that gives both text and a secret, or a malformed secret ref', async () => {
+    const { sessions } = build({ secrets: async () => 'x' });
+    await sessions.navigate(ALICE, 'https://portal.vendor.com/', 5000);
+    await expectBrowserError(
+      sessions.run(
+        ALICE,
+        [{ kind: 'type', ref: 'e1', text: 'a', secret: { name: 'v', field: 'p' } }],
+        5000
+      ),
+      'bad_request'
+    );
+    await expectBrowserError(
+      sessions.type(ALICE, 'e1', undefined, false, 5000, 'vendor-portal.password'),
+      'bad_request'
+    );
     await sessions.shutdown();
   });
 });

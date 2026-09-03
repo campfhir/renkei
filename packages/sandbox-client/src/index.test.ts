@@ -404,6 +404,85 @@ describe('sbBrowserRun / sbBrowserScroll', () => {
   });
 });
 
+describe('secrets', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+  const SECRET = {
+    id: 'secret-1',
+    name: 'vendor-portal',
+    fields: ['username', 'password'],
+    hosts: ['portal.vendor.com'],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    expiresAt: '2026-02-01T00:00:00.000Z',
+    lastUsedAt: null,
+    unlockedUntil: '2026-01-01T08:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('creates, lists, unlocks, locks and revokes through /v1/secrets/*', async () => {
+    const { sbSecretCreate, sbSecretsList, sbSecretUnlock, sbSecretLock, sbSecretRevoke } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secret: SECRET, passphrase: 'abcde-fghjk-mnpqr-stuvw-xyz23' }), { status: 200 }));
+    expect(await sbSecretCreate(TARGET, { name: 'vendor-portal', fields: { password: 'x' }, hosts: ['portal.vendor.com'], unlockMs: 1000 })).toEqual({
+      ok: true,
+      val: { secret: SECRET, passphrase: 'abcde-fghjk-mnpqr-stuvw-xyz23' },
+    });
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('http://sandbox.internal:8092/v1/secrets/create');
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      ...TARGET,
+      name: 'vendor-portal',
+      fields: { password: 'x' },
+      hosts: ['portal.vendor.com'],
+      unlockMs: 1000,
+    });
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secrets: [SECRET] }), { status: 200 }));
+    expect(await sbSecretsList(TARGET)).toEqual({ ok: true, val: [SECRET] });
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secret: SECRET }), { status: 200 }));
+    expect(await sbSecretUnlock(TARGET, { id: 'secret-1', passphrase: 'p'.repeat(12) })).toEqual({ ok: true, val: SECRET });
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secret: { ...SECRET, unlockedUntil: null } }), { status: 200 }));
+    const locked = await sbSecretLock(TARGET, 'secret-1');
+    expect(locked.ok && locked.val.unlockedUntil).toBeNull();
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ revoked: true, id: 'secret-1', name: 'vendor-portal' }), { status: 200 }));
+    expect(await sbSecretRevoke(TARGET, 'secret-1')).toEqual({ ok: true, val: { id: 'secret-1', name: 'vendor-portal' } });
+  });
+
+  it('phrases the secret error tags', () => {
+    expect(clientFailure({ kind: 'op', type: 'bad_passphrase', message: undefined, status: 403 })).toEqual({
+      status: 403,
+      message: 'That passphrase does not open this secret.',
+    });
+    expect(clientFailure({ kind: 'op', type: 'secret_unavailable', message: 'locked', status: 403 })).toEqual({
+      status: 403,
+      message: 'locked',
+    });
+    expect(clientFailure({ kind: 'op', type: 'secret_exists', message: undefined, status: 409 }).status).toBe(409);
+    expect(clientFailure({ kind: 'op', type: 'secret_limit', message: undefined, status: 429 }).status).toBe(429);
+  });
+
+  it('posts a secret reference on a type call, never a value', async () => {
+    const { sbBrowserType } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ url: 'https://x', title: '', snapshot: 'Page', truncated: false }), { status: 200 })
+    );
+    await sbBrowserType(TARGET, { ref: 'e1', secret: { name: 'vendor-portal', field: 'password' }, submit: true });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      ...TARGET,
+      ref: 'e1',
+      secret: { name: 'vendor-portal', field: 'password' },
+      submit: true,
+    });
+  });
+});
+
 describe('sandboxBrowserEnabled', () => {
   it('needs both the worker config and the flag', async () => {
     const { sandboxBrowserEnabled } = await import('./index');

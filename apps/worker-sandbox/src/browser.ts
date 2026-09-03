@@ -63,11 +63,18 @@ import {
   parseBrowserStep,
   parseBrowserSteps,
   renderBrowserSnapshot,
+  scrubSecretValues,
   type BrowserPageState,
   type BrowserRunResult,
   type BrowserStep,
+  type SecretRef,
 } from '@renkei/connector-sandbox';
-import { pageScriptSource, REF_ATTRIBUTE, type PageWalkResult } from './browser-page-script';
+import {
+  pageScriptSource,
+  REF_ATTRIBUTE,
+  SECRET_ATTRIBUTE,
+  type PageWalkResult,
+} from './browser-page-script';
 import { startEgressProxy, type EgressProxy } from './browser-proxy';
 import { logger } from './logger';
 
@@ -78,7 +85,8 @@ export type BrowserErrorType =
   | 'bad_ref'
   | 'bad_request'
   | 'navigation_failed'
-  | 'action_failed';
+  | 'action_failed'
+  | 'secret_unavailable';
 
 export class BrowserOpError extends Error {
   constructor(
@@ -98,6 +106,18 @@ export interface BrowserTarget {
 /** The subset of a launched browser the session manager relies on — the test seam. */
 export type LaunchBrowser = (proxyServer: string) => Promise<Browser>;
 
+/**
+ * Resolves a type step's `secret` reference into the value to type — or
+ * throws a `secret_unavailable` BrowserOpError saying why not (unknown,
+ * locked, wrong host, no such field). Wired in from secrets.ts; absent in
+ * a deployment with no secrets subsystem.
+ */
+export type ResolveSecret = (
+  target: BrowserTarget,
+  ref: SecretRef,
+  pageHost: string
+) => Promise<string>;
+
 export interface BrowserSessionsDeps {
   /** Default: playwright-core's chromium, headless, behind the egress proxy. */
   launch?: LaunchBrowser;
@@ -108,6 +128,8 @@ export interface BrowserSessionsDeps {
   maxSessions?: number;
   /** How often idle sessions are swept; default one minute. */
   sweepIntervalMs?: number;
+  /** The secrets subsystem, when this deployment has one. */
+  secrets?: ResolveSecret;
 }
 
 interface Session {
@@ -118,6 +140,12 @@ interface Session {
   lastUsedAt: number;
   /** The tail of this session's serialized work queue. */
   queue: Promise<unknown>;
+  /**
+   * Every secret value typed in this session, so it can be blanked out of
+   * anything the model reads — a page that echoes it, a URL that carries
+   * it. In memory only, gone with the session.
+   */
+  secretValues: Set<string>;
 }
 
 /** How long after a click/submit/key press a popup is still waited for. */
@@ -164,6 +192,7 @@ export class BrowserSessions {
   private readonly now: () => number;
   private readonly idleMs: number;
   private readonly maxSessions: number;
+  private readonly secrets: ResolveSecret | null;
   private readonly sessions = new Map<string, Session>();
   private browser: Browser | null = null;
   private launching: Promise<Browser> | null = null;
@@ -177,6 +206,7 @@ export class BrowserSessions {
     this.now = deps.now ?? (() => Date.now());
     this.idleMs = deps.idleMs ?? BROWSER_SESSION_IDLE_MS;
     this.maxSessions = deps.maxSessions ?? BROWSER_MAX_SESSIONS;
+    this.secrets = deps.secrets ?? null;
     this.sweep = setInterval(() => void this.sweepIdle(), deps.sweepIntervalMs ?? 60_000);
     this.sweep.unref();
   }
@@ -255,6 +285,7 @@ export class BrowserSessions {
       page,
       lastUsedAt: this.now(),
       queue: Promise.resolve(),
+      secretValues: new Set(),
     };
     // A popup becomes the active page: that is where the flow went.
     context.on('page', (opened) => {
@@ -266,6 +297,7 @@ export class BrowserSessions {
 
   private async closeSession(session: Session): Promise<void> {
     this.sessions.delete(session.key);
+    session.secretValues.clear();
     try {
       await session.context.close();
     } catch (error) {
@@ -362,10 +394,10 @@ export class BrowserSessions {
     if (opened && !opened.isClosed()) session.page = opened;
     const page = await this.activePage(session);
     await this.settle(page);
-    return this.state(page, maxChars);
+    return this.state(session, page, maxChars);
   }
 
-  private async state(page: Page, maxChars: number): Promise<BrowserPageState> {
+  private async state(session: Session, page: Page, maxChars: number): Promise<BrowserPageState> {
     const url = page.url();
     if (url.startsWith('chrome-error://')) {
       // Chromium's own error page: the egress proxy refused the host, or it
@@ -407,7 +439,15 @@ export class BrowserSessions {
       maxChars,
       walked.truncated
     );
-    return { url: page.url(), title, snapshot: rendered.snapshot, truncated: rendered.truncated };
+    // Everything the model reads passes through the scrub — snapshot, URL
+    // and title alike — so a typed secret cannot come back as page text.
+    const scrub = (text: string) => scrubSecretValues(text, session.secretValues);
+    return {
+      url: scrub(page.url()),
+      title: scrub(title),
+      snapshot: scrub(rendered.snapshot),
+      truncated: rendered.truncated,
+    };
   }
 
   private locatorFor(page: Page, ref: unknown): Locator {
@@ -467,12 +507,26 @@ export class BrowserSessions {
       }
       case 'type': {
         const locator = await this.requireRef(page, step.ref);
+        let text = step.text ?? '';
+        if (step.secret) {
+          // Resolved here, on the worker, against the page's CURRENT host:
+          // the value never appears in a tool argument or a tool result.
+          text = await this.secretValue(session, step.secret, page);
+        }
         const popup = step.submit ? this.popupWindow(session) : undefined;
         try {
-          await locator.fill(step.text);
+          await locator.fill(text);
+          if (step.secret) {
+            // The walk masks any control carrying this attribute, so the
+            // next snapshot shows the field as filled, not what with.
+            await locator.evaluate((el, attr) => el.setAttribute(attr, '1'), SECRET_ATTRIBUTE);
+          }
           if (step.submit) await locator.press('Enter');
         } catch (error) {
-          throw new BrowserOpError('action_failed', `Typing failed: ${firstLine(error)}`);
+          throw new BrowserOpError(
+            'action_failed',
+            `Typing failed: ${scrubSecretValues(firstLine(error), session.secretValues)}`
+          );
         }
         return { moves: step.submit === true, popup };
       }
@@ -540,6 +594,25 @@ export class BrowserSessions {
     }
   }
 
+  /** A secret's value for this page, remembered for scrubbing; refuses when the deployment has no secrets. */
+  private async secretValue(session: Session, ref: SecretRef, page: Page): Promise<string> {
+    if (!this.secrets) {
+      throw new BrowserOpError(
+        'secret_unavailable',
+        'Browser secrets are not available on this deployment.'
+      );
+    }
+    let host: string;
+    try {
+      host = new URL(page.url()).hostname;
+    } catch {
+      host = '';
+    }
+    const value = await this.secrets(session.target, ref, host);
+    session.secretValues.add(value);
+    return value;
+  }
+
   /** The https-only, public-address check every top-level navigation passes first. */
   private async publicUrl(raw: string): Promise<URL> {
     try {
@@ -578,7 +651,7 @@ export class BrowserSessions {
   }
 
   async snapshot(target: BrowserTarget, maxChars: number): Promise<BrowserPageState> {
-    return this.withSession(target, false, (_session, page) => this.state(page, maxChars));
+    return this.withSession(target, false, (session, page) => this.state(session, page, maxChars));
   }
 
   async click(target: BrowserTarget, ref: unknown, maxChars: number): Promise<BrowserPageState> {
@@ -590,9 +663,14 @@ export class BrowserSessions {
     ref: unknown,
     text: unknown,
     submit: boolean,
-    maxChars: number
+    maxChars: number,
+    secret?: unknown
   ): Promise<BrowserPageState> {
-    return this.single(target, { kind: 'type', ref, text, submit }, maxChars);
+    return this.single(
+      target,
+      { kind: 'type', ref, submit, ...(secret !== undefined ? { secret } : { text }) },
+      maxChars
+    );
   }
 
   async select(
@@ -656,7 +734,7 @@ export class BrowserSessions {
       }
       let page: BrowserPageState | null = null;
       try {
-        page = await this.state(await this.activePage(session), maxChars);
+        page = await this.state(session, await this.activePage(session), maxChars);
       } catch (error) {
         // The page after a failed navigation may be unreadable; the failure
         // already says why, so the run answers without a snapshot rather

@@ -328,9 +328,15 @@ export function sbBrowserClick(
   return browserPageCall('click', target, input);
 }
 
+/** A type step's secret reference: which stored secret, which field — never a value. */
+export interface WireSecretRef {
+  name: string;
+  field: string;
+}
+
 export function sbBrowserType(
   target: SandboxTarget,
-  input: { ref: string; text: string; submit?: boolean; maxChars?: number }
+  input: { ref: string; text?: string; secret?: WireSecretRef; submit?: boolean; maxChars?: number }
 ): Promise<ClientResult<WireBrowserPage>> {
   return browserPageCall('type', target, input);
 }
@@ -371,7 +377,7 @@ export function sbBrowserBack(
 export type WireBrowserStep =
   | { kind: 'navigate'; url: string }
   | { kind: 'click'; ref: string }
-  | { kind: 'type'; ref: string; text: string; submit?: boolean }
+  | { kind: 'type'; ref: string; text?: string; secret?: WireSecretRef; submit?: boolean }
   | { kind: 'select'; ref: string; values: string[] }
   | { kind: 'press'; key: string }
   | { kind: 'scroll'; ref?: string; direction?: 'up' | 'down'; amount?: number }
@@ -429,6 +435,118 @@ export async function sbBrowserClose(target: SandboxTarget): Promise<ClientResul
   return { ok: true, val: { closed: value.closed } };
 }
 
+// ─── Browser secrets ────────────────────────────────────────────────────────
+
+/** One secret as the worker describes it: never a value, never the passphrase. */
+export interface WireSandboxSecret {
+  id: string;
+  name: string;
+  fields: string[];
+  hosts: string[];
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string | null;
+  /** ISO time the worker's in-memory key lapses; null when locked. */
+  unlockedUntil: string | null;
+}
+
+function secretOf(value: unknown): WireSandboxSecret | null {
+  if (!isRecord(value)) return null;
+  const id = str(value.id);
+  const name = str(value.name);
+  const createdAt = str(value.createdAt);
+  const expiresAt = str(value.expiresAt);
+  if (!id || !name || !createdAt || !expiresAt) return null;
+  const list = (raw: unknown) =>
+    Array.isArray(raw) ? raw.filter((entry): entry is string => typeof entry === 'string') : [];
+  return {
+    id,
+    name,
+    fields: list(value.fields),
+    hosts: list(value.hosts),
+    createdAt,
+    expiresAt,
+    lastUsedAt: optStr(value.lastUsedAt) ?? null,
+    unlockedUntil: optStr(value.unlockedUntil) ?? null,
+  };
+}
+
+async function secretCall(
+  op: string,
+  target: SandboxTarget,
+  input: Record<string, unknown>
+): Promise<ClientResult<WireSandboxSecret>> {
+  const result = await callJson(`secrets/${op}`, { ...target, ...input });
+  if (!result.ok) return result;
+  const value = result.val;
+  const secret = isRecord(value) ? secretOf(value.secret) : null;
+  return secret ? { ok: true, val: secret } : malformed();
+}
+
+/**
+ * Seal a new secret on the worker. The passphrase is optional: absent, the
+ * worker generates one and returns it HERE, once — the only time any
+ * Renkei response ever carries it. The values travel to the worker over
+ * the internal seam and nowhere else.
+ */
+export async function sbSecretCreate(
+  target: SandboxTarget,
+  input: {
+    name: string;
+    fields: Record<string, string>;
+    hosts: string[];
+    passphrase?: string;
+    unlockMs?: number;
+    ttlMs?: number;
+  }
+): Promise<ClientResult<{ secret: WireSandboxSecret; passphrase: string | null }>> {
+  const result = await callJson('secrets/create', { ...target, ...input });
+  if (!result.ok) return result;
+  const value = result.val;
+  const secret = isRecord(value) ? secretOf(value.secret) : null;
+  if (!secret || !isRecord(value)) return malformed();
+  return { ok: true, val: { secret, passphrase: optStr(value.passphrase) ?? null } };
+}
+
+export async function sbSecretsList(target: SandboxTarget): Promise<ClientResult<WireSandboxSecret[]>> {
+  const result = await callJson('secrets/list', { ...target });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || !Array.isArray(value.secrets)) return malformed();
+  const secrets: WireSandboxSecret[] = [];
+  for (const raw of value.secrets) {
+    const secret = secretOf(raw);
+    if (!secret) return malformed();
+    secrets.push(secret);
+  }
+  return { ok: true, val: secrets };
+}
+
+export function sbSecretUnlock(
+  target: SandboxTarget,
+  input: { id: string; passphrase: string; unlockMs?: number }
+): Promise<ClientResult<WireSandboxSecret>> {
+  return secretCall('unlock', target, input);
+}
+
+export function sbSecretLock(
+  target: SandboxTarget,
+  id: string
+): Promise<ClientResult<WireSandboxSecret>> {
+  return secretCall('lock', target, { id });
+}
+
+export async function sbSecretRevoke(
+  target: SandboxTarget,
+  id: string
+): Promise<ClientResult<{ id: string; name: string }>> {
+  const result = await callJson('secrets/revoke', { ...target, id });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || !value.revoked) return malformed();
+  return { ok: true, val: { id: str(value.id), name: str(value.name) } };
+}
+
 /**
  * One shared mapping from a client error to a model-facing refusal, so
  * every sandbox_* tool and every batch-pipeline caller phrases the same
@@ -473,6 +591,14 @@ export function clientFailure(error: SandboxClientError): { status: number; mess
       return { status: 502, message: error.message ?? 'The browser could not load that page.' };
     case 'action_failed':
       return { status: 400, message: error.message ?? 'The browser could not perform that action.' };
+    case 'secret_unavailable':
+      return { status: 403, message: error.message ?? 'That secret cannot be used here.' };
+    case 'bad_passphrase':
+      return { status: 403, message: error.message ?? 'That passphrase does not open this secret.' };
+    case 'secret_exists':
+      return { status: 409, message: error.message ?? 'A secret with that name already exists.' };
+    case 'secret_limit':
+      return { status: 429, message: error.message ?? 'Too many secrets — revoke one first.' };
     default:
       return { status: error.status, message: error.message ?? error.type };
   }

@@ -180,7 +180,11 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   addresses, so the browser cannot reach the other compose services.
   `SANDBOX_BROWSER_EXECUTABLE` optionally names a different Chromium
   binary; budget roughly 300–500MB of extra memory per busy browser
-  session (at most eight at once). Entrypoint:
+  session (at most eight at once). Browser secrets (migration 090, the
+  `sandbox_secrets` table) need no key of their own in `.env`: each is
+  sealed under a passphrase the person holds, and unlocked keys live only
+  in this worker's memory — restarting it locks every secret until its
+  owner unlocks it again. Entrypoint:
   `pnpm --filter @renkei/worker-sandbox start`.
 
 **Horizontal scale:** either process may run as N instances. Claims take

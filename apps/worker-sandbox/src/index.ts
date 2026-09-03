@@ -26,6 +26,8 @@ import { closeDatabase, getDatabase } from '@renkei/db';
 import { ensureDataRoot } from './disk';
 import { createSandboxServer } from './server';
 import { BrowserSessions } from './browser';
+import { SecretVault } from './secret-vault';
+import { createSecretResolver } from './secrets';
 import { logger, attachPersistentLogging } from './logger';
 
 function envFlag(name: string): boolean {
@@ -59,10 +61,15 @@ async function main(): Promise<void> {
   }
 
   // The browser launches lazily on the first navigate, so enabling it costs
-  // nothing until an agent actually opens a page.
-  const browser = envFlag('SANDBOX_BROWSER_ENABLED') ? new BrowserSessions() : null;
+  // nothing until an agent actually opens a page. The secret vault is the
+  // one place a browser secret's key exists — in memory, until its unlock
+  // window closes or this process exits.
+  const vault = new SecretVault();
+  const browser = envFlag('SANDBOX_BROWSER_ENABLED')
+    ? new BrowserSessions({ secrets: createSecretResolver(dbResult.val, vault) })
+    : null;
 
-  const server = createSandboxServer({ db: dbResult.val, apiKeys, browser });
+  const server = createSandboxServer({ db: dbResult.val, apiKeys, browser, vault });
   server.listen(port, '0.0.0.0', () => {
     logger.info('started {application} {version} on port {port} (browser {browser})', {
       component: 'worker-sandbox/server',
@@ -76,6 +83,7 @@ async function main(): Promise<void> {
     server.close(() => {
       void (async () => {
         await browser?.shutdown();
+        vault.close();
         await logger.flush();
         await closeDatabase();
         process.exit(0);

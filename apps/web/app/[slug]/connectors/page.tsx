@@ -11,7 +11,9 @@ import ZoomConnector from './zoom-connector';
 import OnBaseConnector from './onbase-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
+import SandboxSecrets from './sandbox-secrets';
 import { listSharesWithConnection } from '@renkei/connector-fileshares';
+import { sandboxBrowserEnabled, sbSecretsList } from '@/lib/sandbox/service-client';
 import {
   WEBEX_USER,
   ATLASSIAN,
@@ -113,6 +115,13 @@ export default async function ConnectorsPage({
       : [];
   const settingsOf = (connector: string) =>
     configs.find((c) => c.connector === connector)?.settings;
+
+  // Browser secrets live on the sandbox worker, never in this app's tables:
+  // the card exists only where the deployment runs the sandbox browser, and
+  // the listing is names, fields and hosts — no values.
+  const browserSecrets = sandboxBrowserEnabled()
+    ? await sbSecretsList({ tenantId: tenant.id, subject: session.subject })
+    : null;
 
   // Filtered to catalog-known scopes: a ceiling saved before the granular
   // migration is all classic and degrades to the defaults until re-saved.
@@ -381,6 +390,15 @@ export default async function ConnectorsPage({
           {connectableShares.length > 0 && (
             <div className="mb-6 break-inside-avoid">
               <FilesharesConnector tenantId={tenant.id} shares={connectableShares} />
+            </div>
+          )}
+
+          {browserSecrets && (
+            <div className="mb-6 break-inside-avoid">
+              <SandboxSecrets
+                tenantId={tenant.id}
+                secrets={browserSecrets.ok ? browserSecrets.val : []}
+              />
             </div>
           )}
         </div>

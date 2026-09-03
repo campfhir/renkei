@@ -826,6 +826,19 @@ export interface SandboxFiles {
   tenant_id: string;
 }
 
+export interface SandboxSecrets {
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp;
+  field_names: Json;
+  hosts: Json;
+  id: string;
+  last_used_at: Timestamp | null;
+  name: string;
+  sealed: string;
+  subject: string;
+  tenant_id: string;
+}
+
 export interface ScheduleCalendars {
   created_at: Generated<Timestamp>;
   dates: Generated<Json>;
@@ -1018,6 +1031,7 @@ export interface DB {
   provider_refresh_locks: ProviderRefreshLocks;
   push_subscriptions: PushSubscriptions;
   sandbox_files: SandboxFiles;
+  sandbox_secrets: SandboxSecrets;
   schedule_calendars: ScheduleCalendars;
   sessions: Sessions;
   tenant_domains: TenantDomains;

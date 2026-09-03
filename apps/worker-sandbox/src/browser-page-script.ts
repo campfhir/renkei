@@ -31,6 +31,9 @@ export interface PageWalkResult {
 
 export const REF_ATTRIBUTE = 'data-renkei-ref';
 
+/** Stamped by the worker on a control it filled from a secret; the walk masks its value. */
+export const SECRET_ATTRIBUTE = 'data-renkei-secret';
+
 /**
  * The walk as a self-contained expression for `page.evaluate(string)`.
  *
@@ -49,6 +52,8 @@ export function pageScriptSource(maxNodes: number): string {
 
 export function collectSnapshotInPage(maxNodes: number): PageWalkResult {
   const REF_ATTR = 'data-renkei-ref';
+  const SECRET_ATTR = 'data-renkei-secret';
+  const MASK = '••••••';
   const NAME_MAX = 200;
   const TEXT_MAX = 1000;
   const OPTIONS_MAX = 50;
@@ -221,6 +226,7 @@ export function collectSnapshotInPage(maxNodes: number): PageWalkResult {
     const ref = `e${nextRef++}`;
     el.setAttribute(REF_ATTR, ref);
     const node: BrowserSnapshotNode = { role, ref, name: nameOf(el) };
+    const secret = el.hasAttribute(SECRET_ATTR);
     if (role === 'link' && el instanceof HTMLAnchorElement) {
       node.href = collapse(el.href, HREF_MAX);
     }
@@ -229,11 +235,11 @@ export function collectSnapshotInPage(maxNodes: number): PageWalkResult {
         node.checked = el.checked;
       } else if (role !== 'button' && role !== 'file') {
         node.value =
-          el.type === 'password' ? (el.value ? '••••••' : '') : collapse(el.value, NAME_MAX);
+          el.type === 'password' || secret ? (el.value ? MASK : '') : collapse(el.value, NAME_MAX);
       }
       if (el.disabled) node.disabled = true;
     } else if (el instanceof HTMLTextAreaElement) {
-      node.value = collapse(el.value, NAME_MAX);
+      node.value = secret ? (el.value ? MASK : '') : collapse(el.value, NAME_MAX);
       if (el.disabled) node.disabled = true;
     } else if (el instanceof HTMLSelectElement) {
       const options = Array.from(el.options);
@@ -259,7 +265,7 @@ export function collectSnapshotInPage(maxNodes: number): PageWalkResult {
         node.disabled = true;
       }
       if (role === 'editable' && el instanceof HTMLElement) {
-        node.value = collapse(el.innerText, NAME_MAX);
+        node.value = secret ? (el.innerText.trim() ? MASK : '') : collapse(el.innerText, NAME_MAX);
       }
     }
     nodes.push(node);

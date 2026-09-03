@@ -2,8 +2,9 @@
  * @renkei/connector-sandbox — the pure logic behind the agent scratch space:
  * filename hygiene, quota/TTL constants, the SSRF egress guard
  * `sandbox_download_url` and every browser navigation run their target
- * through, and the browser snapshot vocabulary the sandbox_browser_* tools
- * read (browser.ts).
+ * through, the browser snapshot vocabulary the sandbox_browser_* tools
+ * read (browser.ts), and how a browser secret is sealed and scoped
+ * (secrets.ts).
  *
  * Deliberately dependency- and I/O-free, the connector-onbase shape: the
  * worker that owns the scratch disk and the Postgres metadata is
@@ -63,6 +64,39 @@ export {
 } from './limits';
 
 export { validateFilename } from './naming';
+
+export {
+  SECRET_NAME_PATTERN,
+  SECRET_FIELD_PATTERN,
+  SECRET_MAX_FIELDS,
+  SECRET_VALUE_MAX_CHARS,
+  SECRET_MAX_HOSTS,
+  SECRET_MAX_PER_SUBJECT,
+  SECRET_PASSPHRASE_MIN_CHARS,
+  SECRET_PASSPHRASE_MAX_CHARS,
+  SECRET_UNLOCK_DEFAULT_MS,
+  SECRET_UNLOCK_MAX_MS,
+  SECRET_TTL_DEFAULT_MS,
+  SECRET_TTL_MAX_MS,
+  SECRET_MASK,
+  generatePassphrase,
+  deriveSecretKey,
+  sealSecretFields,
+  sealedSalt,
+  openSecretFields,
+  openSecretFieldsWithKey,
+  validateSecretName,
+  validateSecretFields,
+  validateSecretHosts,
+  secretHostAllowed,
+  validatePassphrase,
+  parseSecretRef,
+  unlockWindowMs,
+  secretTtlMs,
+  scrubSecretValues,
+  type SandboxSecretSummary,
+  type SecretRef,
+} from './secrets';
 
 export {
   assertPublicHttpsUrl,

@@ -15,6 +15,18 @@ jest.mock('./disk', () => ({
   ensureDataRoot: jest.fn(),
 }));
 
+jest.mock('./secrets-store', () => ({
+  insertSecret: jest.fn(),
+  listSecrets: jest.fn(),
+  countSecrets: jest.fn(),
+  getSecret: jest.fn(),
+  getSecretByName: jest.fn(),
+  touchSecretUsed: jest.fn(),
+  deleteSecret: jest.fn(),
+  listExpiredSecrets: jest.fn(async () => []),
+  deleteSecretById: jest.fn(),
+}));
+
 jest.mock('./store', () => ({
   insertFile: jest.fn(),
   listFiles: jest.fn(),
@@ -32,7 +44,9 @@ import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { openSecretFields } from '@renkei/connector-sandbox';
 import { BrowserOpError } from './browser';
+import { SecretVault } from './secret-vault';
 import { createSandboxServer, type BrowserVerbs } from './server';
 
 const disk = jest.requireMock<{ writeStream: jest.Mock }>('./disk');
@@ -41,6 +55,15 @@ const store = jest.requireMock<{
   totalStagedBytes: jest.Mock;
   countFiles: jest.Mock;
 }>('./store');
+const secretsStore = jest.requireMock<{
+  insertSecret: jest.Mock;
+  listSecrets: jest.Mock;
+  countSecrets: jest.Mock;
+  getSecret: jest.Mock;
+  getSecretByName: jest.Mock;
+  deleteSecret: jest.Mock;
+}>('./secrets-store');
+const vault = new SecretVault({ sweepIntervalMs: 60 * 60_000 });
 
 const API_KEY = 'test-worker-key';
 const TARGET = { tenantId: 'tenant-1', subject: 'auth0|alice' };
@@ -86,6 +109,7 @@ async function listen(deps: {
     apiKeys: [API_KEY],
     maxFileBytes: async () => 1_048_576,
     browser: deps.browser as unknown as BrowserVerbs | null,
+    vault,
   });
   await new Promise<void>((resolve) => created.listen(0, '127.0.0.1', resolve));
   const address = created.address() as AddressInfo;
@@ -99,6 +123,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  vault.close();
 });
 
 beforeEach(() => {
@@ -138,10 +163,20 @@ describe('dispatch', () => {
     expect(browser.click).toHaveBeenCalledWith(TARGET, 'e3', 20_000);
 
     await post('/v1/browser/type', { ...TARGET, ref: 'e3', text: 'hi', submit: true });
-    expect(browser.type).toHaveBeenCalledWith(TARGET, 'e3', 'hi', true, 20_000);
+    expect(browser.type).toHaveBeenCalledWith(TARGET, 'e3', 'hi', true, 20_000, undefined);
 
     await post('/v1/browser/type', { ...TARGET, ref: 'e3', text: 'hi', submit: 'yes' });
-    expect(browser.type).toHaveBeenLastCalledWith(TARGET, 'e3', 'hi', false, 20_000);
+    expect(browser.type).toHaveBeenLastCalledWith(TARGET, 'e3', 'hi', false, 20_000, undefined);
+
+    await post('/v1/browser/type', {
+      ...TARGET,
+      ref: 'e3',
+      secret: { name: 'v', field: 'password' },
+    });
+    expect(browser.type).toHaveBeenLastCalledWith(TARGET, 'e3', undefined, false, 20_000, {
+      name: 'v',
+      field: 'password',
+    });
 
     await post('/v1/browser/select', { ...TARGET, ref: 'e4', values: ['Blue'] });
     expect(browser.select).toHaveBeenCalledWith(TARGET, 'e4', ['Blue'], 20_000);
@@ -292,6 +327,176 @@ describe('screenshot staging', () => {
     expect(response.status).toBe(429);
     expect(browser.screenshot).not.toHaveBeenCalled();
     expect(disk.writeStream).not.toHaveBeenCalled();
+  });
+});
+
+describe('secrets', () => {
+  const ROW = {
+    id: 'secret-1',
+    ...TARGET,
+    name: 'vendor-portal',
+    fields: ['username', 'password'],
+    hosts: ['portal.vendor.com'],
+    sealed: '',
+    createdAt: new Date('2026-01-01T00:00:00Z'),
+    expiresAt: new Date('2026-02-01T00:00:00Z'),
+    lastUsedAt: null,
+  };
+
+  beforeEach(() => {
+    secretsStore.countSecrets.mockResolvedValue(0);
+    secretsStore.getSecretByName.mockResolvedValue(undefined);
+    secretsStore.insertSecret.mockImplementation(
+      async (_db: unknown, input: { sealed: string }) => ({
+        ...ROW,
+        sealed: input.sealed,
+      })
+    );
+  });
+
+  it('creates a secret sealed under a generated passphrase, returned once, and unlocks it', async () => {
+    const response = await post('/v1/secrets/create', {
+      ...TARGET,
+      name: 'Vendor-Portal',
+      fields: { username: 'alice', password: 'hunter2!' },
+      hosts: 'https://portal.vendor.com/login',
+      unlockMs: 60_000,
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      secret: {
+        id: string;
+        name: string;
+        fields: string[];
+        hosts: string[];
+        unlockedUntil: string | null;
+      };
+      passphrase: string | null;
+    };
+    expect(body.secret).toMatchObject({
+      id: 'secret-1',
+      name: 'vendor-portal',
+      fields: ['username', 'password'],
+      hosts: ['portal.vendor.com'],
+    });
+    expect(body.secret.unlockedUntil).not.toBeNull();
+    expect(body.passphrase).toMatch(/^[a-z2-9]{5}(-[a-z2-9]{5}){4}$/);
+    const inserted = secretsStore.insertSecret.mock.calls[0]?.[1] as {
+      sealed: string;
+      fields: string[];
+    };
+    expect(inserted.sealed).not.toContain('hunter2');
+    expect(openSecretFields(inserted.sealed, body.passphrase!)).toEqual({
+      username: 'alice',
+      password: 'hunter2!',
+    });
+    expect(vault.open('secret-1', inserted.sealed)).toEqual({
+      username: 'alice',
+      password: 'hunter2!',
+    });
+    vault.lock('secret-1');
+  });
+
+  it('keeps a caller-chosen passphrase out of the response, and refuses a weak one', async () => {
+    const chosen = await post('/v1/secrets/create', {
+      ...TARGET,
+      name: 'own',
+      fields: { password: 'x' },
+      hosts: ['a.example.com'],
+      passphrase: 'my own long passphrase',
+    });
+    expect(chosen.status).toBe(200);
+    expect(((await chosen.json()) as { passphrase: string | null }).passphrase).toBeNull();
+    vault.lock('secret-1');
+
+    const weak = await post('/v1/secrets/create', {
+      ...TARGET,
+      name: 'own',
+      fields: { password: 'x' },
+      hosts: ['a.example.com'],
+      passphrase: 'short',
+    });
+    expect(weak.status).toBe(400);
+    expect(secretsStore.insertSecret).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a bad name, missing hosts, a duplicate name, and the per-caller limit', async () => {
+    const good = { ...TARGET, fields: { password: 'x' }, hosts: ['a.example.com'] };
+    expect((await post('/v1/secrets/create', { ...good, name: '-bad' })).status).toBe(400);
+    expect((await post('/v1/secrets/create', { ...good, name: 'ok', hosts: [] })).status).toBe(400);
+    secretsStore.getSecretByName.mockResolvedValueOnce(ROW);
+    const dup = await post('/v1/secrets/create', { ...good, name: 'vendor-portal' });
+    expect(dup.status).toBe(409);
+    secretsStore.countSecrets.mockResolvedValueOnce(50);
+    expect((await post('/v1/secrets/create', { ...good, name: 'fifty-first' })).status).toBe(429);
+    expect(secretsStore.insertSecret).not.toHaveBeenCalled();
+  });
+
+  it('unlocks with the right passphrase only, locks, lists with lock state, and revokes', async () => {
+    const { sealSecretFields } = await import('@renkei/connector-sandbox');
+    const sealed = sealSecretFields({ password: 'x' }, 'correct horse battery');
+    secretsStore.getSecret.mockResolvedValue({ ...ROW, sealed });
+    secretsStore.listSecrets.mockResolvedValue([{ ...ROW, sealed }]);
+
+    const wrong = await post('/v1/secrets/unlock', {
+      ...TARGET,
+      id: 'secret-1',
+      passphrase: 'wrong horse battery',
+    });
+    expect(wrong.status).toBe(403);
+    expect(((await wrong.json()) as { error: { type: string } }).error.type).toBe('bad_passphrase');
+    expect(vault.unlockedUntil('secret-1')).toBeNull();
+
+    const right = await post('/v1/secrets/unlock', {
+      ...TARGET,
+      id: 'secret-1',
+      passphrase: 'correct horse battery',
+      unlockMs: 60_000,
+    });
+    expect(right.status).toBe(200);
+    const listed = await post('/v1/secrets/list', TARGET);
+    const body = (await listed.json()) as {
+      secrets: { name: string; unlockedUntil: string | null }[];
+    };
+    expect(body.secrets[0].name).toBe('vendor-portal');
+    expect(body.secrets[0].unlockedUntil).not.toBeNull();
+    expect(JSON.stringify(body)).not.toContain('sealed');
+
+    const locked = await post('/v1/secrets/lock', { ...TARGET, id: 'secret-1' });
+    expect(
+      ((await locked.json()) as { secret: { unlockedUntil: string | null } }).secret.unlockedUntil
+    ).toBeNull();
+
+    await post('/v1/secrets/unlock', {
+      ...TARGET,
+      id: 'secret-1',
+      passphrase: 'correct horse battery',
+    });
+    secretsStore.deleteSecret.mockResolvedValueOnce({ id: 'secret-1', name: 'vendor-portal' });
+    const revoked = await post('/v1/secrets/revoke', { ...TARGET, id: 'secret-1' });
+    expect(await revoked.json()).toEqual({ revoked: true, id: 'secret-1', name: 'vendor-portal' });
+    expect(vault.unlockedUntil('secret-1')).toBeNull();
+
+    secretsStore.getSecret.mockResolvedValueOnce(undefined);
+    expect(
+      (
+        await post('/v1/secrets/unlock', {
+          ...TARGET,
+          id: 'missing',
+          passphrase: 'correct horse battery',
+        })
+      ).status
+    ).toBe(404);
+  });
+
+  it('maps a secret refusal from the browser to 403', async () => {
+    browser.type.mockRejectedValueOnce(new BrowserOpError('secret_unavailable', 'locked'));
+    const response = await post('/v1/browser/type', {
+      ...TARGET,
+      ref: 'e1',
+      secret: { name: 'v', field: 'p' },
+    });
+    expect(response.status).toBe(403);
   });
 });
 
