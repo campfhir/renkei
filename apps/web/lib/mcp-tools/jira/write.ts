@@ -581,7 +581,8 @@ export async function registerWriteTools(
     {
       title: 'Jira · Act — Update a Jira issue',
       description:
-        'Update ONE existing Jira issue (same change across many: use jira_bulk_update_issues). ' +
+        'Update ONE existing Jira issue (same change across many: use jira_bulk_update_issues; ' +
+        'a different project or work type: use jira_move_issues). ' +
         'Story points, the original estimate, and any custom ' +
         "field can be set: field names are resolved against this site's own schema, so no " +
         'customfield id needs to be known in advance. A field this project will not accept is ' +

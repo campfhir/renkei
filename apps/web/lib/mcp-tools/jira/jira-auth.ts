@@ -85,6 +85,13 @@ const DELETE_TOOL_SCOPES: Record<string, string> = {
   jira_delete_issue_link: 'delete:issue-link:jira',
 };
 
+/** The cross-project move and its card pair — see the branch below. */
+const MOVE_TOOLS = new Set([
+  'jira_move_issues',
+  'jira_move_issues_preview',
+  'jira_move_issues_confirm',
+]);
+
 /**
  * Watches change Renkei's own indexing config, never Jira — so they gate on
  * read access alone. Requiring write:issue:jira would deny them to a
@@ -144,6 +151,22 @@ export function granularJiraScopes(toolName: string, readOnly: boolean): string[
   // read:project.property:jira covers here too.
   if (toolName === 'jira_list_work_types') {
     return [
+      'read:issue-type:jira',
+      'read:avatar:jira',
+      'read:project-category:jira',
+      'read:project:jira',
+      'read:project.property:jira',
+    ];
+  }
+  // Moving issues between projects reads the target's work types through
+  // /issuetype/project (jira_list_work_types' set, above) and resolves the
+  // project through /project/search, on top of the issue read and write
+  // the move itself and its follow-up edits need. The preview/confirm pair
+  // stands on the same scopes as the move it gates.
+  if (MOVE_TOOLS.has(toolName)) {
+    return [
+      'read:issue:jira',
+      'write:issue:jira',
       'read:issue-type:jira',
       'read:avatar:jira',
       'read:project-category:jira',

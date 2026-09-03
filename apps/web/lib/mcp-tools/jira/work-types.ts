@@ -29,38 +29,79 @@ function hierarchyLabel(level: unknown): string {
   return `Level ${level}`;
 }
 
-type ResolvedProject = { ok: true; id: string; label: string } | { ok: false; reason: string };
+/** A project as `/project/search` describes it, in the parts callers need. */
+export interface ResolvedProjectRecord {
+  id: string;
+  key: string;
+  name: string;
+  /** `software`, `business`, or `service_desk` — a JSM desk is the last. */
+  projectTypeKey: string;
+}
+
+export type ResolvedProject =
+  { ok: true; project: ResolvedProjectRecord } | { ok: false; reason: string };
 
 /**
- * projectId is the only thing GET /issuetype/project accepts — a numeric
- * Jira project ID, never a key. Resolved via project search (2 granular
- * scopes) rather than GET /project/{key} (11), which the watches.ts
- * projectName() comment documents as the wrong tool for this: a much
- * bigger documented scope set than the read bundle needs elsewhere.
+ * A project key or numeric id, resolved to the project record.
+ *
+ * Via project search (2 granular scopes) rather than GET /project/{key}
+ * (11), which the watches.ts projectName() comment documents as the wrong
+ * tool for this: a much bigger documented scope set than the read bundle
+ * needs elsewhere. A numeric id goes through the endpoint's own `id`
+ * filter, since `query` matches keys and names, not ids.
+ *
+ * Shared with jira_move_issues, which needs the same answer plus the
+ * project type — that is why the type key rides along.
  */
-async function resolveProjectId(auth: JiraAuth, projectKey: string): Promise<ResolvedProject> {
+export async function resolveProject(auth: JiraAuth, keyOrId: string): Promise<ResolvedProject> {
+  const wanted = keyOrId.trim();
   try {
+    const query = /^\d+$/.test(wanted)
+      ? `id=${encodeURIComponent(wanted)}`
+      : `query=${encodeURIComponent(wanted)}`;
     const response = await auth.fetch(
       granularJiraScopes('jira_list_work_types', true),
-      `/rest/api/3/project/search?query=${encodeURIComponent(projectKey)}&maxResults=50`
+      `/rest/api/3/project/search?${query}&maxResults=50`
     );
     if (!response.ok) return { ok: false, reason: await describeJiraAuthFailure(response) };
     const data = (await response.json()) as any;
     const projects = Array.isArray(data?.values) ? data.values : [];
-    const wanted = projectKey.toLowerCase();
+    const lower = wanted.toLowerCase();
     const match =
-      projects.find((p: any) => typeof p.key === 'string' && p.key.toLowerCase() === wanted) ??
-      projects.find((p: any) => typeof p.id === 'string' && p.id === projectKey);
+      projects.find((p: any) => typeof p.key === 'string' && p.key.toLowerCase() === lower) ??
+      projects.find((p: any) => String(p.id) === wanted);
     if (!match) {
       return {
         ok: false,
-        reason: `No project matches "${projectKey}". Use jira_list_projects to find the right key.`,
+        reason: `No project matches "${wanted}". Use jira_list_projects to find the right key.`,
       };
     }
-    return { ok: true, id: String(match.id), label: `${match.name} (${match.key})` };
+    return {
+      ok: true,
+      project: {
+        id: String(match.id),
+        key: typeof match.key === 'string' ? match.key : wanted,
+        name: typeof match.name === 'string' ? match.name : String(match.key ?? wanted),
+        projectTypeKey: typeof match.projectTypeKey === 'string' ? match.projectTypeKey : '',
+      },
+    };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/**
+ * projectId is the only thing GET /issuetype/project accepts — a numeric
+ * Jira project ID, never a key.
+ */
+async function resolveProjectId(
+  auth: JiraAuth,
+  projectKey: string
+): Promise<{ ok: true; id: string; label: string } | { ok: false; reason: string }> {
+  const resolved = await resolveProject(auth, projectKey);
+  if (!resolved.ok) return resolved;
+  const { id, name, key } = resolved.project;
+  return { ok: true, id, label: `${name} (${key})` };
 }
 
 export async function registerWorkTypeTools(
@@ -77,7 +118,7 @@ export async function registerWorkTypeTools(
         'List the work types (issue types) available in Jira — Task, Bug, Story, Epic, Subtask, ' +
         'and any JSM request-backing types like Incident or [System] Service request. Pass ' +
         'projectIdOrKey to scope to one project; a JSM service desk is a Jira project, so this ' +
-        'covers a service desk\'s work types too — no separate JSM tool needed. Omit it to list ' +
+        "covers a service desk's work types too — no separate JSM tool needed. Omit it to list " +
         'every work type visible across the site.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({

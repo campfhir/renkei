@@ -89,6 +89,7 @@ describe('the batch rule', () => {
       'jira_bulk_move_sprint_issues',
       'jira_bulk_transition_issues',
       'jira_bulk_update_issues',
+      'jira_move_issues',
       'jsm_invite_customers_to_servicedesk',
       'outlook_start_bulk_mail_job',
     ]);
