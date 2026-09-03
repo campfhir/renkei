@@ -22,6 +22,15 @@ jest.mock('@/lib/log-query', () => ({
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
+import type { FilterExpr } from '@campfhir/bored-logs';
+
+/** Narrows one recorded call's first argument, for the assertions that need to walk the tree. */
+function firstCallFilter(): FilterExpr | null {
+  const [combined] = mockBuildLogQueryOptions.mock.calls[0]!;
+  const isFilterExpr = (value: unknown): value is FilterExpr =>
+    typeof value === 'object' && value !== null && 'type' in value;
+  return isFilterExpr(combined) ? combined : null;
+}
 import { registerLogTools } from './index';
 import type { MCPToolContext } from '../common';
 
@@ -150,4 +159,88 @@ test('an explicit limit is clamped into range and passed through', async () => {
     'account-1',
     expect.objectContaining({ limit: 100 })
   );
+});
+
+test('a structured filter compiles to the FilterExpr tree the query engine reads', async () => {
+  mockQuery.mockResolvedValue({ ok: true, val: [] });
+  const handlers = registerAll({});
+
+  await handlers.get('log_search')!({
+    filter: {
+      and: [
+        { key: 'status', op: 'gte', value: 500 },
+        { key: 'component', op: 'eq', value: 'jira/fetch' },
+      ],
+    },
+  });
+
+  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
+    {
+      type: 'and',
+      nodes: [
+        { type: 'filter', filter: { key: 'status', operator: '>=', value: '500' } },
+        { type: 'filter', filter: { key: 'component', operator: '=', value: 'jira/fetch' } },
+      ],
+    },
+    'tenant-1',
+    'account-1',
+    expect.anything()
+  );
+});
+
+test('isNull/isNotNull leaves carry no value', async () => {
+  mockQuery.mockResolvedValue({ ok: true, val: [] });
+  const handlers = registerAll({});
+
+  await handlers.get('log_search')!({ filter: { key: 'errorCode', op: 'isNotNull' } });
+
+  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
+    {
+      type: 'filter',
+      filter: { key: 'errorCode', operator: '=', value: 'null', nullValue: true, negated: true },
+    },
+    'tenant-1',
+    'account-1',
+    expect.anything()
+  );
+});
+
+test('filter and query combine with AND when both are given', async () => {
+  mockQuery.mockResolvedValue({ ok: true, val: [] });
+  const handlers = registerAll({});
+
+  await handlers.get('log_search')!({
+    filter: { key: 'component', op: 'eq', value: 'jira/fetch' },
+    query: 'level:error',
+  });
+
+  const combined = firstCallFilter();
+  if (!combined || combined.type !== 'and') {
+    throw new Error('expected an "and" node combining filter and query');
+  }
+  expect(combined.nodes).toHaveLength(2);
+  expect(combined.nodes[0]).toEqual({
+    type: 'filter',
+    filter: { key: 'component', operator: '=', value: 'jira/fetch' },
+  });
+});
+
+test('rejects a filter leaf missing its value with a clear message, never silently matching everything', async () => {
+  const handlers = registerAll({});
+
+  const result = await handlers.get('log_search')!({ filter: { key: 'status', op: 'eq' } });
+
+  expect(result.isError).toBe(true);
+  expect(result.content[0]?.text).toContain('value is required');
+  expect(mockQuery).not.toHaveBeenCalled();
+});
+
+test('rejects malformed query syntax with a clear message, never silently matching everything', async () => {
+  const handlers = registerAll({});
+
+  const result = await handlers.get('log_search')!({ query: '&& foo' });
+
+  expect(result.isError).toBe(true);
+  expect(result.content[0]?.text).toContain('Could not parse "query"');
+  expect(mockQuery).not.toHaveBeenCalled();
 });

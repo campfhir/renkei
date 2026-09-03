@@ -13,11 +13,37 @@
  * secure()-marked request/response bodies (failed-call payloads), and this
  * tool never renders those back, even when LOG_ENCRYPTION_KEY would let it
  * decrypt them — see ALLOWED_META below.
+ *
+ * Two ways in for filtering, both optional and ANDed together when both are
+ * given:
+ *  - `filter` — a structured condition tree (FILTER_OPS below), converted
+ *    to bored-logs' own `FilterExpr`/`LogQueryToken` shape by `toFilterExpr`.
+ *    This is the one to reach for whenever there is real AND/OR structure —
+ *    it is validated by its own Zod schema (recursively, via z.lazy — the
+ *    resulting JSON Schema round-trips through the SDK's tools/list
+ *    conversion fine, unlike the raw string grammar a model has to get
+ *    exactly right on the first try).
+ *  - `query` — the bored-logs string grammar itself (`key:'value'`, `&&`,
+ *    `||`, `()`), parsed with the PACKAGE's own `parseLogQueryExpr` (not the
+ *    lossy wrapper in `@/lib/log-query`, which silently drops a malformed
+ *    query rather than reporting it — fine for a human editing a search box
+ *    live, wrong for a model that needs to know *why* zero rows came back).
+ *
+ * Both compile down to the same `FilterExpr` tree `buildLogQueryOptions`
+ * already accepts, and `buildEnforcedLogQuery`'s restricted-key scrubbing
+ * (tenantId/accountId/userId) applies to it exactly the same way regardless
+ * of which surface produced it — a structured `filter: {key: "accountId", ...}`
+ * is stripped exactly like a string `accountId:'x'` would be.
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import type { LogRow } from '@campfhir/bored-logs';
+import {
+  parseLogQueryExpr,
+  type FilterExpr,
+  type LogQueryToken,
+  type LogRow,
+} from '@campfhir/bored-logs';
 import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { getDatabase } from '@renkei/db';
 import { buildLogQueryOptions } from '@/lib/log-query';
@@ -45,6 +71,79 @@ const DEFAULT_LIMIT = 20;
  */
 const ALLOWED_META = ['component', 'tool', 'url', 'method', 'status', 'reason', 'action'];
 
+/** The operators `filter` leaves accept — see FILTER_OP_HELP for what each does. */
+const FILTER_OPS = [
+  'contains',
+  'notContains',
+  'eq',
+  'notEq',
+  'gt',
+  'gte',
+  'lt',
+  'lte',
+  'isNull',
+  'isNotNull',
+] as const;
+type FilterOp = (typeof FILTER_OPS)[number];
+
+const FILTER_OP_HELP =
+  'contains/notContains: substring match. eq/notEq: exact match. gt/gte/lt/lte: numeric or ' +
+  "chronological comparison (by the value's shape). isNull/isNotNull: the attribute is, or " +
+  'is not, the null literal.';
+
+interface FilterLeaf {
+  key: string;
+  op: FilterOp;
+  value?: string | number | boolean;
+}
+/** A structured condition tree — a leaf, or an all-of/any-of group of nodes. */
+type FilterNode = FilterLeaf | { and: FilterNode[] } | { or: FilterNode[] };
+
+const filterLeafSchema = z
+  .object({
+    key: z
+      .string()
+      .min(1)
+      .describe(
+        'Attribute name: a plain key like "status" or "component", or a dotted/bracketed ' +
+          'path like "session.id" or "items[*].sku".'
+      ),
+    op: z.enum(FILTER_OPS).describe(FILTER_OP_HELP),
+    value: z
+      .union([z.string(), z.number(), z.boolean()])
+      .optional()
+      .describe('Required for every op except isNull/isNotNull, which must omit it.'),
+  })
+  .refine(
+    (leaf) =>
+      leaf.op === 'isNull' || leaf.op === 'isNotNull'
+        ? leaf.value === undefined
+        : leaf.value !== undefined,
+    { message: 'value is required for every op except isNull/isNotNull, which must omit it.' }
+  );
+
+const filterNodeSchema: z.ZodType<FilterNode> = z.lazy(() =>
+  z.union([
+    filterLeafSchema,
+    z.object({ and: z.array(filterNodeSchema).min(1) }).describe('Every one of these must match.'),
+    z
+      .object({ or: z.array(filterNodeSchema).min(1) })
+      .describe('At least one of these must match.'),
+  ])
+);
+
+const QUERY_SYNTAX_HELP =
+  'Filter-string grammar (for one or two quick conditions — prefer "filter" once there is real ' +
+  'AND/OR structure to get right):\n' +
+  '  key:\'value\'    substring match (key:"value" also works)\n' +
+  "  key:='value'   exact match          key:!='value'   not equal\n" +
+  "  key:>'value'   greater than         key:>='value'   greater or equal\n" +
+  "  key:<'value'   less than            key:<='value'   less or equal\n" +
+  "  key:!'value'   does NOT contain\n" +
+  "  bare text      matches the message, same as message:'text'\n" +
+  '  combine with a space or && (AND), || (OR — binds tighter than AND), and ( ) grouping\n' +
+  '  e.g. "status:>=\'500\' && component:\'jira/fetch\'" or "level:error || level:critical"';
+
 function textResult(text: string) {
   return { content: [{ type: 'text' as const, text }] };
 }
@@ -70,6 +169,48 @@ function formatRow(row: LogRow): string {
   return `[${row.level}] ${at} — ${row.message}${extras ? `\n  ${extras}` : ''}`;
 }
 
+/** One structured leaf → the LogQueryToken bored-logs' query engine reads. */
+function tokenForLeaf(leaf: FilterLeaf): LogQueryToken {
+  const value = leaf.value === undefined ? '' : String(leaf.value);
+  switch (leaf.op) {
+    case 'contains':
+      return { key: leaf.key, operator: 'contains', value };
+    case 'notContains':
+      return { key: leaf.key, operator: 'contains', value, negated: true };
+    case 'eq':
+      return { key: leaf.key, operator: '=', value };
+    case 'notEq':
+      return { key: leaf.key, operator: '=', value, negated: true };
+    case 'gt':
+      return { key: leaf.key, operator: '>', value };
+    case 'gte':
+      return { key: leaf.key, operator: '>=', value };
+    case 'lt':
+      return { key: leaf.key, operator: '<', value };
+    case 'lte':
+      return { key: leaf.key, operator: '<=', value };
+    case 'isNull':
+      return { key: leaf.key, operator: '=', value: 'null', nullValue: true };
+    case 'isNotNull':
+      return { key: leaf.key, operator: '=', value: 'null', nullValue: true, negated: true };
+  }
+}
+
+/** A structured `filter` tree → bored-logs' own FilterExpr shape. */
+function toFilterExpr(node: FilterNode): FilterExpr {
+  if ('and' in node) return { type: 'and', nodes: node.and.map(toFilterExpr) };
+  if ('or' in node) return { type: 'or', nodes: node.or.map(toFilterExpr) };
+  return { type: 'filter', filter: tokenForLeaf(node) };
+}
+
+/** AND every given tree together, dropping the ones that are absent. */
+function combineExprs(...exprs: Array<FilterExpr | null>): FilterExpr | null {
+  const present = exprs.filter((expr): expr is FilterExpr => expr !== null);
+  if (present.length === 0) return null;
+  if (present.length === 1) return present[0];
+  return { type: 'and', nodes: present };
+}
+
 export function registerLogTools(server: McpServer, context: MCPToolContext): void {
   server.registerTool(
     'log_search',
@@ -79,15 +220,22 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
         "Search Renkei's own activity log for entries about YOUR activity in this tenant — " +
         'API calls made on your behalf, request failures, and the like. Self-scoped to your ' +
         'own Jira-linked account, the same view a non-admin gets on the web Logs page — ' +
-        'tenant-wide log access is an org-admin capability available only there. Supports ' +
-        'the bored-logs filter syntax, e.g. "status:500" or "component:jira/fetch && ' +
-        'level:error".',
+        'tenant-wide log access is an org-admin capability available only there.\n\n' +
+        'Filter with "filter" (structured, recommended for AND/OR), "query" (a short string ' +
+        'grammar), or both — they combine with AND. ' +
+        QUERY_SYNTAX_HELP,
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
+        filter: filterNodeSchema
+          .optional()
+          .describe(
+            'A structured condition tree. Example: {"and":[{"key":"status","op":"gte",' +
+              '"value":500},{"key":"component","op":"eq","value":"jira/fetch"}]}'
+          ),
         query: z
           .string()
           .optional()
-          .describe('Filter expression, e.g. "level:error && component:jira/fetch"'),
+          .describe('A filter-string expression — see the tool description for the grammar.'),
         levels: z
           .array(z.enum(LOG_LEVEL_VALUES))
           .optional()
@@ -119,6 +267,32 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
         );
       }
 
+      // Re-validated with the same schema the SDK already ran, rather than
+      // asserted: gives back a properly-typed FilterNode with no `as` cast,
+      // and stays correct if a future caller of registerLogTools skips SDK
+      // validation (the test suite does exactly that).
+      let filterExpr: FilterExpr | null = null;
+      if (args.filter !== undefined) {
+        const parsedFilter = filterNodeSchema.safeParse(args.filter);
+        if (!parsedFilter.success) {
+          return errText(
+            `Invalid "filter": ${parsedFilter.error.issues[0]?.message ?? 'malformed filter tree'}`
+          );
+        }
+        filterExpr = toFilterExpr(parsedFilter.data);
+      }
+
+      let queryExpr: FilterExpr | null = null;
+      if (typeof args.query === 'string' && args.query.trim()) {
+        const parsedQuery = parseLogQueryExpr(args.query);
+        if (!parsedQuery.ok) {
+          return errText(
+            `Could not parse "query": ${parsedQuery.err.toString()}\n\n${QUERY_SYNTAX_HELP}`
+          );
+        }
+        queryExpr = parsedQuery.val;
+      }
+
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable.');
 
@@ -134,7 +308,6 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
           ? Math.min(Math.max(Math.trunc(args.limit), 1), MAX_LIMIT)
           : DEFAULT_LIMIT;
       const sort = args.sort === 'asc' ? 'asc' : 'desc';
-      const query = typeof args.query === 'string' ? args.query : null;
       const start = typeof args.start === 'string' ? args.start : defaultStart();
       const end = typeof args.end === 'string' ? args.end : undefined;
 
@@ -143,7 +316,7 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
         ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
       });
       const result = await adapter.query(
-        buildLogQueryOptions(query, context.tenantId, accountId, {
+        buildLogQueryOptions(combineExprs(filterExpr, queryExpr), context.tenantId, accountId, {
           levels,
           start,
           end,
