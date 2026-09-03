@@ -217,8 +217,16 @@ services:
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
       SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
       NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=1024
     volumes:
       - sandbox_data:/data
+    # Same sizing as the deploy stack (docker-compose.yaml): the browser
+    # needs headroom and a real /dev/shm, and should be the last thing the
+    # kernel kills. Export SANDBOX_WORKER_MEMORY to raise the cap.
+    mem_reservation: 1g
+    mem_limit: ${SANDBOX_WORKER_MEMORY:-4g}
+    shm_size: 1g
+    oom_score_adj: -500
     depends_on:
       postgres:
         condition: service_healthy

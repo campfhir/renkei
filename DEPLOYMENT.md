@@ -179,8 +179,17 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   the worker's own egress proxy, which refuses private and internal
   addresses, so the browser cannot reach the other compose services.
   `SANDBOX_BROWSER_EXECUTABLE` optionally names a different Chromium
-  binary; budget roughly 300–500MB of extra memory per busy browser
-  session (at most eight at once). Browser secrets (migration 090, the
+  binary. Memory: a busy browser session runs 300–500MB (at most eight at
+  once), so both compose files give this service a 1GB reservation, a
+  `SANDBOX_WORKER_MEMORY` limit (default `4g` — raise it in `.env` for a
+  deployment that drives many sessions), a 1GB `/dev/shm` (Docker's 64MB
+  default is the usual cause of a "page crashed" on a heavy site), a
+  negative OOM score so the kernel kills something else first, and a fixed
+  1GB Node heap so the worker process itself never pushes the container
+  over its limit. If sessions still vanish, the worker log says why:
+  "browser process disconnected" is the browser dying, "unhandled
+  rejection" / "uncaught exception" is the worker itself. Browser secrets
+  (migration 090, the
   `sandbox_secrets` table) need no key of their own in `.env`: each is
   sealed under a passphrase the person holds, and unlocked keys live only
   in this worker's memory — restarting it locks every secret until its
