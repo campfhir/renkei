@@ -52,6 +52,7 @@ export {
   ingestChunk,
   upsertChunkRow,
   searchTextFragment,
+  postgresText,
   LEXICAL_CONFIG,
   type KnowledgeChunkInput,
 } from './ingest';

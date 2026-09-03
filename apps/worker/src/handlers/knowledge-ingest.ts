@@ -80,6 +80,11 @@ function decryptedField(value: unknown, label: string): string {
   return opened.val;
 }
 
+/** The failure kind and, when the layer below said more, its words — a dead-letter row is read cold. */
+function ingestFailure(error: { type: string; message?: string }): string {
+  return error.message ? `${error.type} (${error.message})` : error.type;
+}
+
 function chunkingOf(payload: Record<string, unknown>): { maxChars?: number; overlap?: number } {
   const chunking = isRecord(payload.chunking) ? payload.chunking : {};
   return {
@@ -168,7 +173,7 @@ export function createKnowledgeIngestObjectHandler(): EventHandler {
       chunkingOf(payload)
     );
     if (!ingested.ok) {
-      throw new Error(`could not ingest ${provider}/${refId}: ${ingested.err.type}`);
+      throw new Error(`could not ingest ${provider}/${refId}: ${ingestFailure(ingested.err)}`);
     }
     logger.debug('ingested {refId} in {chunks} chunk(s)', {
       component: COMPONENT,
@@ -247,7 +252,7 @@ export function createKnowledgeIngestEmailHandler(): EventHandler {
         : {}
     );
     if (!ingested.ok) {
-      throw new Error(`could not ingest ${provider}/${refId}: ${ingested.err.type}`);
+      throw new Error(`could not ingest ${provider}/${refId}: ${ingestFailure(ingested.err)}`);
     }
   };
 }
@@ -395,7 +400,7 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
       },
       sourceAt: str(payload.sourceAt) || null,
     });
-    if (!ingested.ok) throw new Error(`could not index ${refId}: ${ingested.err.type}`);
+    if (!ingested.ok) throw new Error(`could not index ${refId}: ${ingestFailure(ingested.err)}`);
   };
 }
 
