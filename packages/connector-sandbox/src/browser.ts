@@ -45,6 +45,29 @@ export const BROWSER_TYPE_MAX_CHARS = 10_000;
 /** The viewport every session opens with. */
 export const BROWSER_VIEWPORT = { width: 1280, height: 900 } as const;
 
+/** Steps one sandbox_browser_run call may carry. */
+export const BROWSER_RUN_MAX_STEPS = 20;
+
+/** Longest single explicit wait, and the longest a wait-for-text will hold. */
+export const BROWSER_WAIT_MAX_MS = 10_000;
+
+/** Total explicit waiting one run may ask for — a run must fit inside one tool call's timeout. */
+export const BROWSER_RUN_WAIT_BUDGET_MS = 20_000;
+
+/** Longest text a wait step may look for. */
+export const BROWSER_WAIT_TEXT_MAX_CHARS = 200;
+
+/** Farthest one scroll step moves, in CSS pixels; the default is most of a viewport. */
+export const BROWSER_SCROLL_MAX_PX = 10_000;
+export const BROWSER_SCROLL_DEFAULT_PX = 720;
+
+/** Options one select may choose at once. */
+export const BROWSER_SELECT_MAX_VALUES = 50;
+
+/** A key name for a press: `Enter`, `PageDown`, `Control+a`, at most three modifiers. */
+export const BROWSER_KEY_PATTERN = /^[A-Za-z0-9]+(\+[A-Za-z0-9]+){0,3}$/;
+export const BROWSER_KEY_MAX_LENGTH = 40;
+
 /** Interactive roles the in-page walk assigns refs to. */
 export type BrowserInteractiveRole =
   | 'link'
@@ -102,6 +125,227 @@ const REF_PATTERN = /^e\d{1,5}$/;
 /** A ref the in-page walk could have minted — `e1`..`e99999`. */
 export function isBrowserRef(value: unknown): value is string {
   return typeof value === 'string' && REF_PATTERN.test(value);
+}
+
+/**
+ * One thing the browser does, as both the single-verb tools and
+ * sandbox_browser_run express it. A run is an ordered list of these,
+ * executed in one round trip; refs in later steps must come from the
+ * snapshot the caller already has, so a run is for working one page
+ * (fill, select, scroll, wait, submit) rather than for following links.
+ */
+export type BrowserStep =
+  | { kind: 'navigate'; url: string }
+  | { kind: 'click'; ref: string }
+  | { kind: 'type'; ref: string; text: string; submit?: boolean }
+  | { kind: 'select'; ref: string; values: string[] }
+  | { kind: 'press'; key: string }
+  | { kind: 'scroll'; ref?: string; direction?: 'up' | 'down'; amount?: number }
+  | { kind: 'wait'; ms?: number; text?: string }
+  | { kind: 'back' };
+
+export type BrowserStepKind = BrowserStep['kind'];
+
+export const BROWSER_STEP_KINDS: readonly BrowserStepKind[] = [
+  'navigate',
+  'click',
+  'type',
+  'select',
+  'press',
+  'scroll',
+  'wait',
+  'back',
+];
+
+/** Why a step was refused before anything ran: a malformed ref, or anything else. */
+export type BrowserStepRefusal = { ok: false; type: 'bad_ref' | 'bad_request'; message: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function refOf(value: unknown, where: string): { ok: true; ref: string } | BrowserStepRefusal {
+  if (!isBrowserRef(value)) {
+    return {
+      ok: false,
+      type: 'bad_ref',
+      message: `${where}: a ref looks like e12 — take it from the latest snapshot.`,
+    };
+  }
+  return { ok: true, ref: value };
+}
+
+/**
+ * Validate one step from the wire into a `BrowserStep`, or say exactly
+ * what is wrong with it. Bounds every free-text field so a step can never
+ * carry more than the corresponding single verb accepts.
+ */
+export function parseBrowserStep(
+  value: unknown,
+  where = 'step'
+): { ok: true; step: BrowserStep } | BrowserStepRefusal {
+  const refuse = (message: string): BrowserStepRefusal => ({
+    ok: false,
+    type: 'bad_request',
+    message: `${where}: ${message}`,
+  });
+  if (!isRecord(value)) return refuse('a step is an object with a kind.');
+  const kind = value.kind;
+  switch (kind) {
+    case 'navigate': {
+      if (typeof value.url !== 'string' || !value.url) return refuse('navigate needs a url.');
+      return { ok: true, step: { kind, url: value.url } };
+    }
+    case 'click': {
+      const ref = refOf(value.ref, where);
+      if (!ref.ok) return ref;
+      return { ok: true, step: { kind, ref: ref.ref } };
+    }
+    case 'type': {
+      const ref = refOf(value.ref, where);
+      if (!ref.ok) return ref;
+      if (typeof value.text !== 'string' || value.text.length > BROWSER_TYPE_MAX_CHARS) {
+        return refuse(`text must be a string of at most ${BROWSER_TYPE_MAX_CHARS} characters.`);
+      }
+      if (value.submit !== undefined && typeof value.submit !== 'boolean') {
+        return refuse('submit must be true or false.');
+      }
+      return {
+        ok: true,
+        step: { kind, ref: ref.ref, text: value.text, ...(value.submit ? { submit: true } : {}) },
+      };
+    }
+    case 'select': {
+      const ref = refOf(value.ref, where);
+      if (!ref.ok) return ref;
+      const values = value.values;
+      if (
+        !Array.isArray(values) ||
+        values.length === 0 ||
+        values.length > BROWSER_SELECT_MAX_VALUES ||
+        !values.every((option) => typeof option === 'string' && option.length <= 200)
+      ) {
+        return refuse(`values must be 1-${BROWSER_SELECT_MAX_VALUES} option labels or values.`);
+      }
+      // Cast: the every() above proved each entry is a string.
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      return { ok: true, step: { kind, ref: ref.ref, values: values as string[] } };
+    }
+    case 'press': {
+      const key = value.key;
+      if (
+        typeof key !== 'string' ||
+        key.length > BROWSER_KEY_MAX_LENGTH ||
+        !BROWSER_KEY_PATTERN.test(key)
+      ) {
+        return refuse('key must be a key name like Enter, Escape, Tab, PageDown or Control+a.');
+      }
+      return { ok: true, step: { kind, key } };
+    }
+    case 'scroll': {
+      const step: BrowserStep = { kind };
+      if (value.ref !== undefined) {
+        const ref = refOf(value.ref, where);
+        if (!ref.ok) return ref;
+        step.ref = ref.ref;
+      }
+      if (value.direction !== undefined) {
+        if (value.direction !== 'up' && value.direction !== 'down') {
+          return refuse('direction is "up" or "down".');
+        }
+        step.direction = value.direction;
+      }
+      if (value.amount !== undefined) {
+        if (
+          typeof value.amount !== 'number' ||
+          !Number.isFinite(value.amount) ||
+          value.amount <= 0 ||
+          value.amount > BROWSER_SCROLL_MAX_PX
+        ) {
+          return refuse(`amount is a number of pixels between 1 and ${BROWSER_SCROLL_MAX_PX}.`);
+        }
+        step.amount = Math.floor(value.amount);
+      }
+      return { ok: true, step };
+    }
+    case 'wait': {
+      const step: BrowserStep = { kind };
+      if (value.ms !== undefined) {
+        if (
+          typeof value.ms !== 'number' ||
+          !Number.isFinite(value.ms) ||
+          value.ms <= 0 ||
+          value.ms > BROWSER_WAIT_MAX_MS
+        ) {
+          return refuse(`ms is a number of milliseconds between 1 and ${BROWSER_WAIT_MAX_MS}.`);
+        }
+        step.ms = Math.floor(value.ms);
+      }
+      if (value.text !== undefined) {
+        if (
+          typeof value.text !== 'string' ||
+          !value.text.trim() ||
+          value.text.length > BROWSER_WAIT_TEXT_MAX_CHARS
+        ) {
+          return refuse(`text is 1-${BROWSER_WAIT_TEXT_MAX_CHARS} characters to wait for.`);
+        }
+        step.text = value.text;
+      }
+      if (step.ms === undefined && step.text === undefined) {
+        return refuse('wait needs ms, text, or both.');
+      }
+      return { ok: true, step };
+    }
+    case 'back':
+      return { ok: true, step: { kind } };
+    default:
+      return refuse(`unknown kind — one of ${BROWSER_STEP_KINDS.join(', ')}.`);
+  }
+}
+
+/**
+ * Validate a whole run: 1..BROWSER_RUN_MAX_STEPS steps, each well-formed,
+ * with the explicit waits adding up to no more than the run's wait budget
+ * (a run has to finish inside one tool call).
+ */
+export function parseBrowserSteps(
+  value: unknown
+): { ok: true; steps: BrowserStep[] } | BrowserStepRefusal {
+  if (!Array.isArray(value) || value.length === 0) {
+    return { ok: false, type: 'bad_request', message: 'steps must be a non-empty list.' };
+  }
+  if (value.length > BROWSER_RUN_MAX_STEPS) {
+    return {
+      ok: false,
+      type: 'bad_request',
+      message: `at most ${BROWSER_RUN_MAX_STEPS} steps per run — split the rest into another call.`,
+    };
+  }
+  const steps: BrowserStep[] = [];
+  let waiting = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const parsed = parseBrowserStep(value[index], `step ${index + 1}`);
+    if (!parsed.ok) return parsed;
+    if (parsed.step.kind === 'wait' && parsed.step.ms) waiting += parsed.step.ms;
+    steps.push(parsed.step);
+  }
+  if (waiting > BROWSER_RUN_WAIT_BUDGET_MS) {
+    return {
+      ok: false,
+      type: 'bad_request',
+      message: `explicit waits add up to more than ${BROWSER_RUN_WAIT_BUDGET_MS}ms for one run.`,
+    };
+  }
+  return { ok: true, steps };
+}
+
+/** What sandbox_browser_run answers: how far it got, where the page is, and what stopped it. */
+export interface BrowserRunResult {
+  /** Steps that finished, in order — equals steps.length on success. */
+  completed: number;
+  /** The page after the last step that ran; null only when it could not be read at all. */
+  page: BrowserPageState | null;
+  failed: { index: number; kind: BrowserStepKind; type: string; message: string } | null;
 }
 
 /**

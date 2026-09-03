@@ -349,11 +349,63 @@ export function sbBrowserPress(
   return browserPageCall('press', target, input);
 }
 
+export function sbBrowserScroll(
+  target: SandboxTarget,
+  input: { ref?: string; direction?: 'up' | 'down'; amount?: number; maxChars?: number } = {}
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('scroll', target, input);
+}
+
 export function sbBrowserBack(
   target: SandboxTarget,
   input: { maxChars?: number } = {}
 ): Promise<ClientResult<WireBrowserPage>> {
   return browserPageCall('back', target, input);
+}
+
+/**
+ * One step of a sandbox_browser_run, as the wire carries it — the same
+ * shape @renkei/connector-sandbox's `BrowserStep` validates on the worker,
+ * spelled out here so this dependency-free package needs no import for it.
+ */
+export type WireBrowserStep =
+  | { kind: 'navigate'; url: string }
+  | { kind: 'click'; ref: string }
+  | { kind: 'type'; ref: string; text: string; submit?: boolean }
+  | { kind: 'select'; ref: string; values: string[] }
+  | { kind: 'press'; key: string }
+  | { kind: 'scroll'; ref?: string; direction?: 'up' | 'down'; amount?: number }
+  | { kind: 'wait'; ms?: number; text?: string }
+  | { kind: 'back' };
+
+/** How far a run got, the page it ended on, and what stopped it. */
+export interface WireBrowserRun {
+  completed: number;
+  page: WireBrowserPage | null;
+  failed: { index: number; kind: string; type: string; message: string } | null;
+}
+
+export async function sbBrowserRun(
+  target: SandboxTarget,
+  input: { steps: WireBrowserStep[]; maxChars?: number }
+): Promise<ClientResult<WireBrowserRun>> {
+  const result = await callJson('browser/run', { ...target, ...input });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || typeof value.completed !== 'number') return malformed();
+  const page = value.page === null || value.page === undefined ? null : browserPageOf(value.page);
+  if (value.page && !page) return malformed();
+  let failed: WireBrowserRun['failed'] = null;
+  if (isRecord(value.failed)) {
+    if (typeof value.failed.index !== 'number') return malformed();
+    failed = {
+      index: value.failed.index,
+      kind: str(value.failed.kind),
+      type: str(value.failed.type) || 'action_failed',
+      message: str(value.failed.message),
+    };
+  }
+  return { ok: true, val: { completed: value.completed, page, failed } };
 }
 
 export async function sbBrowserScreenshot(

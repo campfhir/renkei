@@ -33,6 +33,11 @@
  *    service workers blocked, and non-http(s) URLs are never navigable.
  *  - Calls on one session are serialized, so two tool calls racing for the
  *    same page cannot interleave a click with a snapshot.
+ *
+ * Every verb is one `BrowserStep` (@renkei/connector-sandbox) executed by
+ * `perform`; `run` executes a whole list of them in one round trip and
+ * reports how far it got. The single-verb methods exist so the common
+ * case stays one call with one snapshot back.
  */
 
 import {
@@ -50,12 +55,17 @@ import {
   BROWSER_NAVIGATION_TIMEOUT_MS,
   BROWSER_SESSION_IDLE_MS,
   BROWSER_SETTLE_TIMEOUT_MS,
+  BROWSER_SCROLL_DEFAULT_PX,
   BROWSER_SNAPSHOT_MAX_NODES,
-  BROWSER_TYPE_MAX_CHARS,
   BROWSER_VIEWPORT,
+  BROWSER_WAIT_MAX_MS,
   isBrowserRef,
+  parseBrowserStep,
+  parseBrowserSteps,
   renderBrowserSnapshot,
   type BrowserPageState,
+  type BrowserRunResult,
+  type BrowserStep,
 } from '@renkei/connector-sandbox';
 import { pageScriptSource, REF_ATTRIBUTE, type PageWalkResult } from './browser-page-script';
 import { startEgressProxy, type EgressProxy } from './browser-proxy';
@@ -110,10 +120,10 @@ interface Session {
   queue: Promise<unknown>;
 }
 
-const KEY_PATTERN = /^[A-Za-z0-9]+(\+[A-Za-z0-9]+){0,3}$/;
-const KEY_MAX_LENGTH = 40;
 /** How long after a click/submit/key press a popup is still waited for. */
 const POPUP_WAIT_MS = 300;
+/** A beat after a scroll, for smooth scrolling and lazy content to catch up. */
+const SCROLL_SETTLE_MS = 150;
 
 /** Playwright's messages carry a call log; the first line is the part a model can act on. */
 function firstLine(error: unknown): string {
@@ -421,29 +431,150 @@ export class BrowserSessions {
     return locator;
   }
 
+  /**
+   * Execute one step on the session's active page. The core every public
+   * verb and `run` share: it does the action and nothing else — no settle,
+   * no snapshot — and reports whether the step may have moved the page
+   * (so the caller waits for it to load) and any popup window it armed.
+   */
+  private async perform(
+    session: Session,
+    page: Page,
+    step: BrowserStep
+  ): Promise<{ moves: boolean; popup?: Promise<Page | null> }> {
+    switch (step.kind) {
+      case 'navigate': {
+        const url = await this.publicUrl(step.url);
+        try {
+          await page.goto(url.toString(), { waitUntil: 'domcontentloaded' });
+        } catch (error) {
+          throw new BrowserOpError(
+            'navigation_failed',
+            `Could not open ${url.hostname}: ${firstLine(error)}`
+          );
+        }
+        return { moves: true };
+      }
+      case 'click': {
+        const locator = await this.requireRef(page, step.ref);
+        const popup = this.popupWindow(session);
+        try {
+          await locator.click();
+        } catch (error) {
+          throw new BrowserOpError('action_failed', `Click failed: ${firstLine(error)}`);
+        }
+        return { moves: true, popup };
+      }
+      case 'type': {
+        const locator = await this.requireRef(page, step.ref);
+        const popup = step.submit ? this.popupWindow(session) : undefined;
+        try {
+          await locator.fill(step.text);
+          if (step.submit) await locator.press('Enter');
+        } catch (error) {
+          throw new BrowserOpError('action_failed', `Typing failed: ${firstLine(error)}`);
+        }
+        return { moves: step.submit === true, popup };
+      }
+      case 'select': {
+        const locator = await this.requireRef(page, step.ref);
+        try {
+          await locator.selectOption(step.values);
+        } catch (error) {
+          throw new BrowserOpError('action_failed', `Select failed: ${firstLine(error)}`);
+        }
+        return { moves: false };
+      }
+      case 'press': {
+        const popup = this.popupWindow(session);
+        try {
+          await page.keyboard.press(step.key);
+        } catch (error) {
+          throw new BrowserOpError('action_failed', `Key press failed: ${firstLine(error)}`);
+        }
+        return { moves: true, popup };
+      }
+      case 'scroll': {
+        try {
+          if (step.ref !== undefined) {
+            const locator = await this.requireRef(page, step.ref);
+            await locator.scrollIntoViewIfNeeded();
+          } else {
+            const amount = step.amount ?? BROWSER_SCROLL_DEFAULT_PX;
+            await page.mouse.wheel(0, step.direction === 'up' ? -amount : amount);
+          }
+          // Smooth scrolling and lazy-loaded content need a beat before a
+          // snapshot reflects the new viewport.
+          await page.waitForTimeout(SCROLL_SETTLE_MS);
+        } catch (error) {
+          if (error instanceof BrowserOpError) throw error;
+          throw new BrowserOpError('action_failed', `Scroll failed: ${firstLine(error)}`);
+        }
+        return { moves: false };
+      }
+      case 'wait': {
+        if (step.ms) await page.waitForTimeout(step.ms);
+        if (step.text !== undefined) {
+          try {
+            await page
+              .getByText(step.text)
+              .first()
+              .waitFor({ state: 'visible', timeout: BROWSER_WAIT_MAX_MS });
+          } catch {
+            throw new BrowserOpError(
+              'action_failed',
+              `"${step.text}" did not appear on the page within ${BROWSER_WAIT_MAX_MS / 1000}s.`
+            );
+          }
+        }
+        return { moves: false };
+      }
+      case 'back': {
+        try {
+          await page.goBack({ waitUntil: 'domcontentloaded' });
+        } catch (error) {
+          throw new BrowserOpError('navigation_failed', `Could not go back: ${firstLine(error)}`);
+        }
+        return { moves: true };
+      }
+    }
+  }
+
+  /** The https-only, public-address check every top-level navigation passes first. */
+  private async publicUrl(raw: string): Promise<URL> {
+    try {
+      return await assertPublicHttpsUrl(raw);
+    } catch (error) {
+      if (error instanceof BlockedUrlError) throw new BrowserOpError('blocked_url', error.message);
+      throw new BrowserOpError('bad_request', 'That URL is not usable.');
+    }
+  }
+
+  /** One validated step, then the page it left behind. */
+  private single(
+    target: BrowserTarget,
+    raw: unknown,
+    maxChars: number,
+    create = false
+  ): Promise<BrowserPageState> {
+    const parsed = parseBrowserStep(raw);
+    if (!parsed.ok) throw new BrowserOpError(parsed.type, parsed.message);
+    const step = parsed.step;
+    return this.withSession(target, create, async (session, page) => {
+      const outcome = await this.perform(session, page, step);
+      return this.finish(session, maxChars, outcome.popup);
+    });
+  }
+
   async navigate(
     target: BrowserTarget,
     rawUrl: string,
     maxChars: number
   ): Promise<BrowserPageState> {
-    let url: URL;
-    try {
-      url = await assertPublicHttpsUrl(rawUrl);
-    } catch (error) {
-      if (error instanceof BlockedUrlError) throw new BrowserOpError('blocked_url', error.message);
-      throw new BrowserOpError('bad_request', 'That URL is not usable.');
-    }
-    return this.withSession(target, true, async (session, page) => {
-      try {
-        await page.goto(url.toString(), { waitUntil: 'domcontentloaded' });
-      } catch (error) {
-        throw new BrowserOpError(
-          'navigation_failed',
-          `Could not open ${url.hostname}: ${firstLine(error)}`
-        );
-      }
-      return this.finish(session, maxChars);
-    });
+    // Checked before a session is opened, so a blocked URL never costs a
+    // browser launch or an empty context.
+    await this.publicUrl(rawUrl);
+    return this.single(target, { kind: 'navigate', url: rawUrl }, maxChars, true);
   }
 
   async snapshot(target: BrowserTarget, maxChars: number): Promise<BrowserPageState> {
@@ -451,16 +582,7 @@ export class BrowserSessions {
   }
 
   async click(target: BrowserTarget, ref: unknown, maxChars: number): Promise<BrowserPageState> {
-    return this.withSession(target, false, async (session, page) => {
-      const locator = await this.requireRef(page, ref);
-      const popup = this.popupWindow(session);
-      try {
-        await locator.click();
-      } catch (error) {
-        throw new BrowserOpError('action_failed', `Click failed: ${firstLine(error)}`);
-      }
-      return this.finish(session, maxChars, popup);
-    });
+    return this.single(target, { kind: 'click', ref }, maxChars);
   }
 
   async type(
@@ -470,23 +592,7 @@ export class BrowserSessions {
     submit: boolean,
     maxChars: number
   ): Promise<BrowserPageState> {
-    if (typeof text !== 'string' || text.length > BROWSER_TYPE_MAX_CHARS) {
-      throw new BrowserOpError(
-        'bad_request',
-        `text must be a string of at most ${BROWSER_TYPE_MAX_CHARS} characters.`
-      );
-    }
-    return this.withSession(target, false, async (session, page) => {
-      const locator = await this.requireRef(page, ref);
-      const popup = submit ? this.popupWindow(session) : undefined;
-      try {
-        await locator.fill(text);
-        if (submit) await locator.press('Enter');
-      } catch (error) {
-        throw new BrowserOpError('action_failed', `Typing failed: ${firstLine(error)}`);
-      }
-      return this.finish(session, maxChars, popup);
-    });
+    return this.single(target, { kind: 'type', ref, text, submit }, maxChars);
   }
 
   async select(
@@ -495,51 +601,69 @@ export class BrowserSessions {
     values: unknown,
     maxChars: number
   ): Promise<BrowserPageState> {
-    if (
-      !Array.isArray(values) ||
-      values.length === 0 ||
-      values.length > 50 ||
-      !values.every((value) => typeof value === 'string' && value.length <= 200)
-    ) {
-      throw new BrowserOpError('bad_request', 'values must be 1-50 option labels or values.');
-    }
-    return this.withSession(target, false, async (session, page) => {
-      const locator = await this.requireRef(page, ref);
-      try {
-        await locator.selectOption(values);
-      } catch (error) {
-        throw new BrowserOpError('action_failed', `Select failed: ${firstLine(error)}`);
-      }
-      return this.finish(session, maxChars);
-    });
+    return this.single(target, { kind: 'select', ref, values }, maxChars);
   }
 
   async press(target: BrowserTarget, key: unknown, maxChars: number): Promise<BrowserPageState> {
-    if (typeof key !== 'string' || key.length > KEY_MAX_LENGTH || !KEY_PATTERN.test(key)) {
-      throw new BrowserOpError(
-        'bad_request',
-        'key must be a key name like Enter, Escape, Tab, PageDown or Control+a.'
-      );
-    }
-    return this.withSession(target, false, async (session, page) => {
-      const popup = this.popupWindow(session);
-      try {
-        await page.keyboard.press(key);
-      } catch (error) {
-        throw new BrowserOpError('action_failed', `Key press failed: ${firstLine(error)}`);
-      }
-      return this.finish(session, maxChars, popup);
-    });
+    return this.single(target, { kind: 'press', key }, maxChars);
+  }
+
+  /** Scroll the page (or bring one ref into view); `input` is the scroll step's fields. */
+  async scroll(target: BrowserTarget, input: unknown, maxChars: number): Promise<BrowserPageState> {
+    const fields = typeof input === 'object' && input !== null ? input : {};
+    return this.single(target, { ...fields, kind: 'scroll' }, maxChars);
   }
 
   async back(target: BrowserTarget, maxChars: number): Promise<BrowserPageState> {
-    return this.withSession(target, false, async (session, page) => {
-      try {
-        await page.goBack({ waitUntil: 'domcontentloaded' });
-      } catch (error) {
-        throw new BrowserOpError('navigation_failed', `Could not go back: ${firstLine(error)}`);
+    return this.single(target, { kind: 'back' }, maxChars);
+  }
+
+  /**
+   * Several steps in one round trip, stopping at the first that fails.
+   * Every step waits for the page to load when it may have moved it, so a
+   * type-then-submit-then-wait-for-text sequence behaves as it reads. The
+   * answer carries how far it got and the page it ended on, so a partial
+   * run is still something the model can continue from.
+   */
+  async run(target: BrowserTarget, rawSteps: unknown, maxChars: number): Promise<BrowserRunResult> {
+    const parsed = parseBrowserSteps(rawSteps);
+    if (!parsed.ok) throw new BrowserOpError(parsed.type, parsed.message);
+    const steps = parsed.steps;
+    const first = steps[0];
+    // Only a navigate may open a session; and its URL is checked before
+    // the launch, as the single verb does.
+    const create = first.kind === 'navigate';
+    if (create) await this.publicUrl(first.url);
+    return this.withSession(target, create, async (session) => {
+      let completed = 0;
+      let failed: BrowserRunResult['failed'] = null;
+      for (const [index, step] of steps.entries()) {
+        const page = await this.activePage(session);
+        try {
+          const outcome = await this.perform(session, page, step);
+          const opened = outcome.popup ? await outcome.popup : null;
+          if (opened && !opened.isClosed()) session.page = opened;
+          if (outcome.moves || opened) await this.settle(await this.activePage(session));
+          completed += 1;
+        } catch (error) {
+          const known =
+            error instanceof BrowserOpError
+              ? error
+              : new BrowserOpError('action_failed', firstLine(error));
+          failed = { index, kind: step.kind, type: known.type, message: known.message };
+          break;
+        }
       }
-      return this.finish(session, maxChars);
+      let page: BrowserPageState | null = null;
+      try {
+        page = await this.state(await this.activePage(session), maxChars);
+      } catch (error) {
+        // The page after a failed navigation may be unreadable; the failure
+        // already says why, so the run answers without a snapshot rather
+        // than hiding how far it got.
+        if (!failed) throw error;
+      }
+      return { completed, page, failed };
     });
   }
 

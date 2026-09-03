@@ -21,6 +21,8 @@ jest.mock('@/lib/sandbox/service-client', () => ({
   sbBrowserSelect: jest.fn(),
   sbBrowserPress: jest.fn(),
   sbBrowserBack: jest.fn(),
+  sbBrowserScroll: jest.fn(),
+  sbBrowserRun: jest.fn(),
   sbBrowserScreenshot: jest.fn(),
   sbBrowserClose: jest.fn(),
   sbFetchUrl: jest.fn(),
@@ -86,7 +88,9 @@ describe('registration', () => {
       'sandbox_browser_close',
       'sandbox_browser_navigate',
       'sandbox_browser_press_key',
+      'sandbox_browser_run',
       'sandbox_browser_screenshot',
+      'sandbox_browser_scroll',
       'sandbox_browser_select',
       'sandbox_browser_snapshot',
       'sandbox_browser_type',
@@ -152,6 +156,54 @@ describe('verbs', () => {
     expect(client.sbBrowserPress).toHaveBeenCalledWith(TARGET, { key: 'Escape', maxChars: 1000 });
     await tools.get('sandbox_browser_back')!.handler({});
     expect(client.sbBrowserBack).toHaveBeenCalledWith(TARGET, { maxChars: undefined });
+  });
+
+  it('scroll passes only the fields given', async () => {
+    client.sbBrowserScroll.mockResolvedValue({ ok: true, val: PAGE });
+    const tools = collect(context());
+    await tools.get('sandbox_browser_scroll')!.handler({});
+    expect(client.sbBrowserScroll).toHaveBeenLastCalledWith(TARGET, { maxChars: undefined });
+    await tools.get('sandbox_browser_scroll')!.handler({ ref: 'e2', direction: 'up', amount: 100 });
+    expect(client.sbBrowserScroll).toHaveBeenLastCalledWith(TARGET, {
+      ref: 'e2',
+      direction: 'up',
+      amount: 100,
+      maxChars: undefined,
+    });
+  });
+
+  it('run hands the steps through and reports a complete run with the snapshot', async () => {
+    client.sbBrowserRun.mockResolvedValue({
+      ok: true,
+      val: { completed: 3, page: PAGE, failed: null },
+    });
+    const tools = collect(context());
+    const steps = [
+      { kind: 'type', ref: 'e1', text: 'a' },
+      { kind: 'select', ref: 'e2', values: ['b'] },
+      { kind: 'click', ref: 'e3' },
+    ];
+    const result = await tools.get('sandbox_browser_run')!.handler({ steps, maxChars: 400 });
+    expect(client.sbBrowserRun).toHaveBeenCalledWith(TARGET, { steps, maxChars: 400 });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe(`Completed 3 step(s).\n\n${PAGE.snapshot}`);
+  });
+
+  it('run reports a partial run as an error that still carries the page', async () => {
+    client.sbBrowserRun.mockResolvedValue({
+      ok: true,
+      val: {
+        completed: 1,
+        page: PAGE,
+        failed: { index: 1, kind: 'click', type: 'bad_ref', message: 'No element carries ref e9.' },
+      },
+    });
+    const tools = collect(context());
+    const result = await tools.get('sandbox_browser_run')!.handler({ steps: [{ kind: 'back' }] });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe(
+      `Step 2 (click) failed: No element carries ref e9. 1 step(s) before it completed.\n\n${PAGE.snapshot}`
+    );
   });
 
   it('screenshot names the staged file and where it was taken', async () => {

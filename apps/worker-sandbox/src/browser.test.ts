@@ -20,6 +20,8 @@ interface FakeLocator {
   fill: jest.Mock;
   press: jest.Mock;
   selectOption: jest.Mock;
+  scrollIntoViewIfNeeded: jest.Mock;
+  waitFor: jest.Mock;
 }
 
 interface FakePage {
@@ -36,6 +38,11 @@ interface FakePage {
   evaluate: jest.Mock;
   locator: (selector: string) => { first: () => FakeLocator };
   keyboard: { press: jest.Mock };
+  mouse: { wheel: jest.Mock };
+  waitForTimeout: jest.Mock;
+  /** Text → locator returned by getByText; unknown text answers a locator whose waitFor rejects. */
+  texts: Map<string, FakeLocator>;
+  getByText: (text: string) => { first: () => FakeLocator };
   screenshot: jest.Mock;
 }
 
@@ -65,6 +72,10 @@ function fakeLocator(count = 1): FakeLocator {
     fill: jest.fn(async () => undefined),
     press: jest.fn(async () => undefined),
     selectOption: jest.fn(async () => undefined),
+    scrollIntoViewIfNeeded: jest.fn(async () => undefined),
+    waitFor: jest.fn(async () => {
+      if (count === 0) throw new Error('locator.waitFor: Timeout 10000ms exceeded.');
+    }),
   };
 }
 
@@ -92,6 +103,13 @@ function fakePage(url = 'about:blank'): FakePage {
       return { first: () => locator };
     },
     keyboard: { press: jest.fn(async () => undefined) },
+    mouse: { wheel: jest.fn(async () => undefined) },
+    waitForTimeout: jest.fn(async () => undefined),
+    texts: new Map(),
+    getByText: (text: string) => {
+      const existing = page.texts.get(text);
+      return { first: () => existing ?? fakeLocator(0) };
+    },
     screenshot: jest.fn(async () => Buffer.from('PNG-bytes')),
   };
   return page;
@@ -446,6 +464,179 @@ describe('refs and actions', () => {
     expect(state.truncated).toBe(true);
     expect(state.snapshot.length).toBeLessThan(400);
     expect(state.snapshot).toContain('[snapshot truncated');
+    await sessions.shutdown();
+  });
+});
+
+describe('scroll and wait', () => {
+  it('scrolls the page by wheel, or one ref into view', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    const page = browsers[0].contexts[0].openPages[0];
+    await sessions.scroll(ALICE, {}, 5000);
+    expect(page.mouse.wheel).toHaveBeenLastCalledWith(0, 720);
+    await sessions.scroll(ALICE, { direction: 'up', amount: 300 }, 5000);
+    expect(page.mouse.wheel).toHaveBeenLastCalledWith(0, -300);
+    const locator = fakeLocator(1);
+    page.locators.set('[data-renkei-ref="e4"]', locator);
+    await sessions.scroll(ALICE, { ref: 'e4' }, 5000);
+    expect(locator.scrollIntoViewIfNeeded).toHaveBeenCalled();
+    expect(page.mouse.wheel).toHaveBeenCalledTimes(2);
+    await expectBrowserError(sessions.scroll(ALICE, { amount: -1 }, 5000), 'bad_request');
+    await expectBrowserError(sessions.scroll(ALICE, { ref: 'nope' }, 5000), 'bad_ref');
+    await sessions.shutdown();
+  });
+});
+
+describe('run', () => {
+  it('executes steps in order on one page and answers the final state', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://example.com/form', 5000);
+    const page = browsers[0].contexts[0].openPages[0];
+    const order: string[] = [];
+    const name = fakeLocator(1);
+    name.fill.mockImplementation(async (text: string) => {
+      order.push(`fill:${text}`);
+    });
+    const color = fakeLocator(1);
+    color.selectOption.mockImplementation(async (values: string[]) => {
+      order.push(`select:${values.join(',')}`);
+    });
+    const submit = fakeLocator(1);
+    submit.click.mockImplementation(async () => {
+      order.push('click');
+      page.currentUrl = 'https://example.com/done';
+    });
+    const saved = fakeLocator(1);
+    saved.waitFor.mockImplementation(async () => {
+      order.push('wait:Saved');
+    });
+    page.locators.set('[data-renkei-ref="e1"]', name);
+    page.locators.set('[data-renkei-ref="e2"]', color);
+    page.locators.set('[data-renkei-ref="e3"]', submit);
+    page.texts.set('Saved', saved);
+    page.mouse.wheel.mockImplementation(async () => {
+      order.push('scroll');
+    });
+
+    const result = await sessions.run(
+      ALICE,
+      [
+        { kind: 'type', ref: 'e1', text: 'Renkei' },
+        { kind: 'select', ref: 'e2', values: ['Blue'] },
+        { kind: 'scroll' },
+        { kind: 'click', ref: 'e3' },
+        { kind: 'wait', ms: 200, text: 'Saved' },
+      ],
+      5000
+    );
+
+    expect(order).toEqual(['fill:Renkei', 'select:Blue', 'scroll', 'click', 'wait:Saved']);
+    expect(page.waitForTimeout).toHaveBeenCalledWith(200);
+    expect(result.failed).toBeNull();
+    expect(result.completed).toBe(5);
+    expect(result.page?.url).toBe('https://example.com/done');
+    // One snapshot at the end, not one per step.
+    expect(page.evaluate).toHaveBeenCalledTimes(2);
+    await sessions.shutdown();
+  });
+
+  it('stops at the first failing step and says which, keeping the page it is on', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://example.com/form', 5000);
+    const page = browsers[0].contexts[0].openPages[0];
+    const field = fakeLocator(1);
+    page.locators.set('[data-renkei-ref="e1"]', field);
+    const later = fakeLocator(1);
+    page.locators.set('[data-renkei-ref="e3"]', later);
+
+    const result = await sessions.run(
+      ALICE,
+      [
+        { kind: 'type', ref: 'e1', text: 'a' },
+        { kind: 'click', ref: 'e2' }, // no such element
+        { kind: 'click', ref: 'e3' },
+      ],
+      5000
+    );
+
+    expect(result.completed).toBe(1);
+    expect(result.failed).toMatchObject({ index: 1, kind: 'click', type: 'bad_ref' });
+    expect(result.failed?.message).toContain('take a new snapshot');
+    expect(later.click).not.toHaveBeenCalled();
+    expect(result.page?.url).toBe('https://example.com/form');
+    await sessions.shutdown();
+  });
+
+  it('reports a wait-for-text that never appears', async () => {
+    const { sessions } = build();
+    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    const result = await sessions.run(ALICE, [{ kind: 'wait', text: 'Never' }], 5000);
+    expect(result.completed).toBe(0);
+    expect(result.failed).toMatchObject({ index: 0, kind: 'wait', type: 'action_failed' });
+    expect(result.failed?.message).toContain('"Never" did not appear');
+    await sessions.shutdown();
+  });
+
+  it('refuses a malformed list before anything runs', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    const page = browsers[0].contexts[0].openPages[0];
+    await expectBrowserError(sessions.run(ALICE, [], 5000), 'bad_request');
+    await expectBrowserError(sessions.run(ALICE, [{ kind: 'evaluate' }], 5000), 'bad_request');
+    await expectBrowserError(sessions.run(ALICE, [{ kind: 'click', ref: 'x' }], 5000), 'bad_ref');
+    expect(page.locators.size).toBe(0);
+    await sessions.shutdown();
+  });
+
+  it('opens a session only when the first step is a navigate', async () => {
+    const { sessions, launch } = build();
+    await expectBrowserError(
+      sessions.run(ALICE, [{ kind: 'click', ref: 'e1' }], 5000),
+      'no_session'
+    );
+    await expectBrowserError(
+      sessions.run(ALICE, [{ kind: 'navigate', url: 'https://10.0.0.1/' }], 5000),
+      'blocked_url'
+    );
+    expect(launch).not.toHaveBeenCalled();
+    const result = await sessions.run(
+      ALICE,
+      [
+        { kind: 'navigate', url: 'https://example.com/a' },
+        { kind: 'press', key: 'PageDown' },
+      ],
+      5000
+    );
+    expect(result.completed).toBe(2);
+    expect(result.page?.url).toBe('https://example.com/a');
+    expect(sessions.sessionCount()).toBe(1);
+    await sessions.shutdown();
+  });
+
+  it('adopts a popup a step opens and continues on it', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    const context = browsers[0].contexts[0];
+    const page = context.openPages[0];
+    const opener = fakeLocator(1);
+    const popup = fakePage('https://example.com/popup');
+    opener.click.mockImplementation(async () => {
+      context.openPages.push(popup);
+      setTimeout(() => context.emit('page', popup), 20);
+    });
+    page.locators.set('[data-renkei-ref="e1"]', opener);
+    const result = await sessions.run(
+      ALICE,
+      [
+        { kind: 'click', ref: 'e1' },
+        { kind: 'press', key: 'End' },
+      ],
+      5000
+    );
+    expect(result.completed).toBe(2);
+    expect(popup.keyboard.press).toHaveBeenCalledWith('End');
+    expect(result.page?.url).toBe('https://example.com/popup');
     await sessions.shutdown();
   });
 });

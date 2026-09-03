@@ -10,6 +10,10 @@
  *   navigate → read the snapshot → act on an element by its [eN] ref →
  *   read the snapshot the action answers with → ...
  *
+ * sandbox_browser_run folds several of those actions into one call (fill,
+ * select, scroll, wait, submit) when the model already has every ref it
+ * needs, so a form is one round trip instead of five.
+ *
  * A snapshot is not HTML: it is the headings, text and interactive
  * elements a person would see, each control carrying a short ref the
  * worker stamped on the live page. Every action takes a ref, never a CSS
@@ -35,12 +39,15 @@ import {
   sbBrowserClose,
   sbBrowserNavigate,
   sbBrowserPress,
+  sbBrowserRun,
   sbBrowserScreenshot,
+  sbBrowserScroll,
   sbBrowserSelect,
   sbBrowserSnapshot,
   sbBrowserType,
   clientFailure,
   type WireBrowserPage,
+  type WireBrowserStep,
 } from '@/lib/sandbox/service-client';
 
 const maxCharsField = z
@@ -57,6 +64,54 @@ const refField = z
   .describe(
     'An element ref from the latest snapshot, e.g. "e12". Refs change whenever the page does.'
   );
+
+const keyField = z
+  .string()
+  .max(40)
+  .regex(/^[A-Za-z0-9]+(\+[A-Za-z0-9]+){0,3}$/)
+  .describe('A key name, optionally with modifiers joined by "+".');
+
+const scrollFields = {
+  ref: refField.optional().describe('Scroll this element into view instead of scrolling the page.'),
+  direction: z.enum(['up', 'down']).optional().describe('Page scroll direction (default down).'),
+  amount: z
+    .number()
+    .int()
+    .positive()
+    .max(10_000)
+    .optional()
+    .describe('Pixels to scroll the page (default 720, most of a screen).'),
+};
+
+/** One sandbox_browser_run step; mirrors the single verbs one for one. */
+const stepSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('navigate'), url: z.string().url() }),
+  z.object({ kind: z.literal('click'), ref: refField }),
+  z.object({
+    kind: z.literal('type'),
+    ref: refField,
+    text: z.string().max(10_000),
+    submit: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal('select'),
+    ref: refField,
+    values: z.array(z.string().max(200)).min(1).max(50),
+  }),
+  z.object({ kind: z.literal('press'), key: keyField }),
+  z.object({ kind: z.literal('scroll'), ...scrollFields }),
+  z.object({
+    kind: z.literal('wait'),
+    ms: z.number().int().positive().max(10_000).optional().describe('Pause this long.'),
+    text: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe('Wait (up to 10s) until this text is visible on the page.'),
+  }),
+  z.object({ kind: z.literal('back') }),
+]);
 
 function maxCharsOf(args: Record<string, unknown>): number | undefined {
   return typeof args.maxChars === 'number' ? args.maxChars : undefined;
@@ -212,14 +267,7 @@ export function registerSandboxBrowserTools(server: McpServer, context: MCPToolC
         'Press one key (Enter, Escape, Tab, ArrowDown, PageDown, Control+a, ...) in the page, ' +
         'for dismissing dialogs, moving through menus, or scrolling. Returns the new snapshot.',
       annotations: { readOnlyHint: false },
-      inputSchema: z.object({
-        key: z
-          .string()
-          .max(40)
-          .regex(/^[A-Za-z0-9]+(\+[A-Za-z0-9]+){0,3}$/)
-          .describe('A key name, optionally with modifiers joined by "+".'),
-        maxChars: maxCharsField,
-      }),
+      inputSchema: z.object({ key: keyField, maxChars: maxCharsField }),
     },
     async (args: Record<string, unknown>) => {
       const target = targetOf(context);
@@ -230,6 +278,75 @@ export function registerSandboxBrowserTools(server: McpServer, context: MCPToolC
       });
       if (!pressed.ok) return errText(clientFailure(pressed.err).message);
       return pageResult(pressed.val);
+    }
+  );
+
+  server.registerTool(
+    'sandbox_browser_scroll',
+    {
+      title: 'Sandbox · Act — Scroll the open page',
+      description:
+        'Scroll the page down (default) or up by a number of pixels, or bring one element (by ' +
+        'its [eN] ref) into view — for long pages, lazy-loaded lists, and elements that must ' +
+        'be on screen before they can be clicked. Returns the new snapshot.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({ ...scrollFields, maxChars: maxCharsField }),
+    },
+    async (args: Record<string, unknown>) => {
+      const target = targetOf(context);
+      if (typeof target === 'string') return errText(target);
+      const scrolled = await sbBrowserScroll(target, {
+        ...(typeof args.ref === 'string' ? { ref: args.ref } : {}),
+        ...(args.direction === 'up' || args.direction === 'down'
+          ? { direction: args.direction }
+          : {}),
+        ...(typeof args.amount === 'number' ? { amount: args.amount } : {}),
+        maxChars: maxCharsOf(args),
+      });
+      if (!scrolled.ok) return errText(clientFailure(scrolled.err).message);
+      return pageResult(scrolled.val);
+    }
+  );
+
+  server.registerTool(
+    'sandbox_browser_run',
+    {
+      title: 'Sandbox · Act — Run several browser steps in one call',
+      description:
+        'Execute an ordered list of steps on the open page without a round trip between ' +
+        'them — e.g. type into three fields, select an option, scroll, click submit, then wait ' +
+        'for a confirmation text — and return one snapshot of where the page ended up. Step ' +
+        'kinds: navigate (url), click (ref), type (ref, text, submit?), select (ref, values), ' +
+        'press (key), scroll (ref? | direction?, amount?), wait (ms? and/or text?), back. Steps ' +
+        'that load a page wait for it before the next step runs. Refs must come from the ' +
+        'snapshot you already have, so put actions on a NEW page (after a link or submit) ' +
+        'in the next call. The run stops at the first failing step and tells you which one, ' +
+        'how many completed, and what the page shows now. At most 20 steps and 20s of ' +
+        'explicit waiting per run.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        steps: z.array(stepSchema).min(1).max(20).describe('Steps to run, in order.'),
+        maxChars: maxCharsField,
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const target = targetOf(context);
+      if (typeof target === 'string') return errText(target);
+      // Cast: the zod schema above already validated the shape.
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      const steps = (Array.isArray(args.steps) ? args.steps : []) as WireBrowserStep[];
+      const ran = await sbBrowserRun(target, { steps, maxChars: maxCharsOf(args) });
+      if (!ran.ok) return errText(clientFailure(ran.err).message);
+      const { completed, page, failed } = ran.val;
+      const snapshot = page ? `\n\n${page.snapshot}` : '';
+      if (failed) {
+        const before =
+          completed === 0 ? 'Nothing ran before it.' : `${completed} step(s) before it completed.`;
+        return errText(
+          `Step ${failed.index + 1} (${failed.kind}) failed: ${failed.message} ${before}${snapshot}`
+        );
+      }
+      return textResult(`Completed ${completed} step(s).${snapshot}`);
     }
   );
 

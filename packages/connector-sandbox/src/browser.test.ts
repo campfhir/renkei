@@ -8,6 +8,8 @@ import {
   BROWSER_SNAPSHOT_DEFAULT_CHARS,
   BROWSER_SNAPSHOT_MAX_CHARS,
   isBrowserRef,
+  parseBrowserStep,
+  parseBrowserSteps,
   renderBrowserSnapshot,
   renderSnapshotNode,
   snapshotCharsOf,
@@ -112,5 +114,106 @@ describe('renderBrowserSnapshot', () => {
   it('never drops the header, whatever the budget', () => {
     const rendered = renderBrowserSnapshot(page, nodes, 1);
     expect(rendered.snapshot.startsWith('Page: Example\nURL: https://example.com/')).toBe(true);
+  });
+});
+
+describe('parseBrowserStep', () => {
+  it('accepts each kind with its fields, normalising numbers', () => {
+    expect(parseBrowserStep({ kind: 'navigate', url: 'https://x' })).toEqual({
+      ok: true,
+      step: { kind: 'navigate', url: 'https://x' },
+    });
+    expect(parseBrowserStep({ kind: 'click', ref: 'e1' })).toEqual({
+      ok: true,
+      step: { kind: 'click', ref: 'e1' },
+    });
+    expect(parseBrowserStep({ kind: 'type', ref: 'e1', text: 'hi', submit: true })).toEqual({
+      ok: true,
+      step: { kind: 'type', ref: 'e1', text: 'hi', submit: true },
+    });
+    expect(parseBrowserStep({ kind: 'type', ref: 'e1', text: 'hi', submit: false })).toEqual({
+      ok: true,
+      step: { kind: 'type', ref: 'e1', text: 'hi' },
+    });
+    expect(parseBrowserStep({ kind: 'select', ref: 'e2', values: ['a'] })).toEqual({
+      ok: true,
+      step: { kind: 'select', ref: 'e2', values: ['a'] },
+    });
+    expect(parseBrowserStep({ kind: 'press', key: 'Control+a' })).toEqual({
+      ok: true,
+      step: { kind: 'press', key: 'Control+a' },
+    });
+    expect(parseBrowserStep({ kind: 'scroll' })).toEqual({ ok: true, step: { kind: 'scroll' } });
+    expect(parseBrowserStep({ kind: 'scroll', direction: 'up', amount: 300.7 })).toEqual({
+      ok: true,
+      step: { kind: 'scroll', direction: 'up', amount: 300 },
+    });
+    expect(parseBrowserStep({ kind: 'scroll', ref: 'e9' })).toEqual({
+      ok: true,
+      step: { kind: 'scroll', ref: 'e9' },
+    });
+    expect(parseBrowserStep({ kind: 'wait', ms: 250.9, text: 'Saved' })).toEqual({
+      ok: true,
+      step: { kind: 'wait', ms: 250, text: 'Saved' },
+    });
+    expect(parseBrowserStep({ kind: 'back' })).toEqual({ ok: true, step: { kind: 'back' } });
+  });
+
+  it('refuses a malformed ref as bad_ref and everything else as bad_request, naming the step', () => {
+    const badRef = parseBrowserStep({ kind: 'click', ref: '#login' }, 'step 3');
+    expect(badRef).toMatchObject({ ok: false, type: 'bad_ref' });
+    if (!badRef.ok) expect(badRef.message.startsWith('step 3:')).toBe(true);
+    for (const raw of [
+      null,
+      'click',
+      { kind: 'evaluate', script: 'x' },
+      { kind: 'navigate' },
+      { kind: 'type', ref: 'e1', text: 'x'.repeat(10_001) },
+      { kind: 'type', ref: 'e1', text: 'x', submit: 'yes' },
+      { kind: 'select', ref: 'e1', values: [] },
+      { kind: 'select', ref: 'e1', values: 'a' },
+      { kind: 'press', key: 'Enter; rm' },
+      { kind: 'scroll', direction: 'left' },
+      { kind: 'scroll', amount: 0 },
+      { kind: 'scroll', amount: 10_001 },
+      { kind: 'wait' },
+      { kind: 'wait', ms: 10_001 },
+      { kind: 'wait', text: '   ' },
+    ]) {
+      expect(parseBrowserStep(raw)).toMatchObject({ ok: false, type: 'bad_request' });
+    }
+  });
+});
+
+describe('parseBrowserSteps', () => {
+  it('validates the list, the step count, and the total explicit wait', () => {
+    expect(parseBrowserSteps([])).toMatchObject({ ok: false, type: 'bad_request' });
+    expect(parseBrowserSteps('click')).toMatchObject({ ok: false, type: 'bad_request' });
+    expect(parseBrowserSteps(Array.from({ length: 21 }, () => ({ kind: 'back' })))).toMatchObject({
+      ok: false,
+      type: 'bad_request',
+    });
+    const overBudget = parseBrowserSteps([
+      { kind: 'wait', ms: 10_000 },
+      { kind: 'wait', ms: 10_000 },
+      { kind: 'wait', ms: 1 },
+    ]);
+    expect(overBudget).toMatchObject({ ok: false, type: 'bad_request' });
+    if (!overBudget.ok) expect(overBudget.message).toContain('20000ms');
+    const bad = parseBrowserSteps([{ kind: 'back' }, { kind: 'click', ref: 'nope' }]);
+    expect(bad).toMatchObject({ ok: false, type: 'bad_ref' });
+    if (!bad.ok) expect(bad.message.startsWith('step 2:')).toBe(true);
+    expect(
+      parseBrowserSteps([
+        { kind: 'type', ref: 'e1', text: 'a' },
+        { kind: 'wait', ms: 500 },
+      ])
+    ).toEqual({
+      ok: true,
+      steps: [
+        { kind: 'type', ref: 'e1', text: 'a' },
+        { kind: 'wait', ms: 500 },
+      ],
+    });
   });
 });

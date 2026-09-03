@@ -350,6 +350,60 @@ describe('browser verbs', () => {
   });
 });
 
+describe('sbBrowserRun / sbBrowserScroll', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+  const PAGE = { url: 'https://example.com/', title: 'Example', snapshot: 'Page: Example', truncated: false };
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('posts the steps and parses a full or partial run', async () => {
+    const { sbBrowserRun } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ completed: 2, page: PAGE, failed: null }), { status: 200 })
+    );
+    const steps = [{ kind: 'type' as const, ref: 'e1', text: 'a' }, { kind: 'back' as const }];
+    expect(await sbBrowserRun(TARGET, { steps, maxChars: 500 })).toEqual({
+      ok: true,
+      val: { completed: 2, page: PAGE, failed: null },
+    });
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('http://sandbox.internal:8092/v1/browser/run');
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({ ...TARGET, steps, maxChars: 500 });
+
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          completed: 1,
+          page: null,
+          failed: { index: 1, kind: 'click', type: 'bad_ref', message: 'stale' },
+        }),
+        { status: 200 }
+      )
+    );
+    expect(await sbBrowserRun(TARGET, { steps })).toEqual({
+      ok: true,
+      val: { completed: 1, page: null, failed: { index: 1, kind: 'click', type: 'bad_ref', message: 'stale' } },
+    });
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ page: PAGE }), { status: 200 }));
+    const malformed = await sbBrowserRun(TARGET, { steps });
+    expect(malformed.ok).toBe(false);
+  });
+
+  it('posts scroll fields', async () => {
+    const { sbBrowserScroll } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(PAGE), { status: 200 }));
+    expect(await sbBrowserScroll(TARGET, { direction: 'up', amount: 200 })).toEqual({ ok: true, val: PAGE });
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('http://sandbox.internal:8092/v1/browser/scroll');
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({ ...TARGET, direction: 'up', amount: 200 });
+  });
+});
+
 describe('sandboxBrowserEnabled', () => {
   it('needs both the worker config and the flag', async () => {
     const { sandboxBrowserEnabled } = await import('./index');

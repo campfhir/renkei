@@ -49,6 +49,7 @@ import {
 import {
   snapshotCharsOf,
   type BrowserPageState,
+  type BrowserRunResult,
 } from '@renkei/connector-sandbox';
 import * as disk from './disk';
 import * as store from './store';
@@ -74,7 +75,9 @@ export interface BrowserVerbs {
   ): Promise<BrowserPageState>;
   select(target: BrowserTarget, ref: unknown, values: unknown, maxChars: number): Promise<BrowserPageState>;
   press(target: BrowserTarget, key: unknown, maxChars: number): Promise<BrowserPageState>;
+  scroll(target: BrowserTarget, input: unknown, maxChars: number): Promise<BrowserPageState>;
   back(target: BrowserTarget, maxChars: number): Promise<BrowserPageState>;
+  run(target: BrowserTarget, steps: unknown, maxChars: number): Promise<BrowserRunResult>;
   screenshot(target: BrowserTarget, fullPage: boolean): Promise<{ bytes: Buffer; url: string; title: string }>;
   close(target: BrowserTarget): Promise<boolean>;
 }
@@ -446,7 +449,8 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
   /**
    * The browser verbs: one JSON POST each, the caller's (tenantId, subject)
    * naming the session exactly as it names their staged files. Every verb
-   * answers the page's new state; screenshot additionally stages a PNG.
+   * answers the page's new state; screenshot additionally stages a PNG,
+   * and run answers how far a list of steps got plus the page it ended on.
    */
   async function handleBrowser(
     op: string,
@@ -489,8 +493,28 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
           return sendJson(response, 200, pageWire(await browser.select(target, body.ref, body.values, maxChars)));
         case 'press':
           return sendJson(response, 200, pageWire(await browser.press(target, body.key, maxChars)));
+        case 'scroll':
+          return sendJson(
+            response,
+            200,
+            pageWire(
+              await browser.scroll(
+                target,
+                { ref: body.ref, direction: body.direction, amount: body.amount },
+                maxChars
+              )
+            )
+          );
         case 'back':
           return sendJson(response, 200, pageWire(await browser.back(target, maxChars)));
+        case 'run': {
+          const outcome = await browser.run(target, body.steps, maxChars);
+          return sendJson(response, 200, {
+            completed: outcome.completed,
+            page: outcome.page ? pageWire(outcome.page) : null,
+            failed: outcome.failed,
+          });
+        }
         case 'close':
           return sendJson(response, 200, { closed: await browser.close(target) });
         case 'screenshot': {

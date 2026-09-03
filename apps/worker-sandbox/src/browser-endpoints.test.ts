@@ -62,7 +62,9 @@ function scriptedBrowser(): Scripted {
     type: jest.fn(async () => PAGE),
     select: jest.fn(async () => PAGE),
     press: jest.fn(async () => PAGE),
+    scroll: jest.fn(async () => PAGE),
     back: jest.fn(async () => PAGE),
+    run: jest.fn(async () => ({ completed: 2, page: PAGE, failed: null })),
     screenshot: jest.fn(async () => ({
       bytes: Buffer.from('png'),
       url: 'https://example.com/x',
@@ -147,11 +149,41 @@ describe('dispatch', () => {
     await post('/v1/browser/press', { ...TARGET, key: 'Escape' });
     expect(browser.press).toHaveBeenCalledWith(TARGET, 'Escape', 20_000);
 
+    await post('/v1/browser/scroll', { ...TARGET, direction: 'up', amount: 300 });
+    expect(browser.scroll).toHaveBeenCalledWith(
+      TARGET,
+      { ref: undefined, direction: 'up', amount: 300 },
+      20_000
+    );
+
     await post('/v1/browser/back', TARGET);
     expect(browser.back).toHaveBeenCalledWith(TARGET, 20_000);
 
+    const steps = [
+      { kind: 'type', ref: 'e1', text: 'a' },
+      { kind: 'click', ref: 'e2' },
+    ];
+    const ran = await post('/v1/browser/run', { ...TARGET, steps, maxChars: 900 });
+    expect(browser.run).toHaveBeenCalledWith(TARGET, steps, 900);
+    expect(await ran.json()).toEqual({ completed: 2, page: PAGE, failed: null });
+
     const closed = await post('/v1/browser/close', TARGET);
     expect(await closed.json()).toEqual({ closed: true });
+  });
+
+  it('serializes a partial run with its failure and no page', async () => {
+    browser.run.mockResolvedValueOnce({
+      completed: 1,
+      page: null,
+      failed: { index: 1, kind: 'click', type: 'bad_ref', message: 'stale' },
+    });
+    const response = await post('/v1/browser/run', { ...TARGET, steps: [{ kind: 'back' }] });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      completed: 1,
+      page: null,
+      failed: { index: 1, kind: 'click', type: 'bad_ref', message: 'stale' },
+    });
   });
 
   it('serializes the page state', async () => {

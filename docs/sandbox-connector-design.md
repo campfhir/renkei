@@ -141,6 +141,25 @@ page they were minted on. Typed text is bounded (10k), select values are
 labels or values, key names are a strict token. Nothing the model writes
 is ever evaluated in the page.
 
+**Several steps in one call.** Every verb is one `BrowserStep`
+(`packages/connector-sandbox/src/browser.ts` — navigate, click, type,
+select, press, scroll, wait, back), parsed and bounded there and executed
+by one `perform` in the worker. `sandbox_browser_run` takes an ordered
+list of them (at most 20, with at most 20s of explicit waiting so a run
+fits inside one tool call) and executes them in one round trip: fill
+three fields, select an option, scroll, click submit, wait for the
+confirmation text. A step that may move the page waits for it to load
+before the next step; a popup a step opens becomes the page the rest of
+the run works on. The run stops at the first failing step and answers
+with how many completed, which step failed and why, and the page it ended
+on — a partial run is something the model can continue from, not a
+mystery. Since refs come from the snapshot the model already holds, a run
+is for working *one* page; actions on the page a link or submit leads to
+belong in the next call, whose snapshot has that page's refs. `wait` is
+either a bounded pause (≤10s) or "until this text is visible" (≤10s),
+which is how a run survives a slow form submission without a round trip
+to poll.
+
 **Egress — the part that matters most.** Chromium is launched with **no
 direct network access**: every connection it makes goes through a
 loopback egress proxy inside the worker (`src/browser-proxy.ts`) that
@@ -193,6 +212,8 @@ credentials it was not explicitly given for the task.
 | `sandbox_browser_type` | Act | Replace a field's text by ref, optionally pressing Enter. |
 | `sandbox_browser_select` | Act | Choose option(s) of a `<select>` by ref. |
 | `sandbox_browser_press_key` | Act | Press one key (Escape, Tab, PageDown, ...) in the page. |
+| `sandbox_browser_scroll` | Act | Scroll the page up/down by pixels, or bring one ref into view. |
+| `sandbox_browser_run` | Act | Execute up to 20 steps (type, select, scroll, wait, click, ...) in one round trip. |
 | `sandbox_browser_back` | Act | Browser history back. |
 | `sandbox_browser_screenshot` | Act | PNG of the open page, staged as a scratch-space file. |
 | `sandbox_browser_close` | Act | Close the caller's session (pages, cookies, history). |
