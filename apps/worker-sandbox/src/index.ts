@@ -15,12 +15,22 @@
  *   SANDBOX_WORKER_PORT    — listen port, default 8092.
  *   SANDBOX_DATA_DIR       — where staged files live on disk, default /data.
  *   DATABASE_URL           — the shared Postgres, for file metadata.
+ *   SANDBOX_BROWSER_ENABLED — `true` to run the headless browser behind the
+ *     sandbox_browser_* tools (see browser.ts); anything else, or unset,
+ *     answers every browser verb "not enabled" — closed, never open.
+ *   SANDBOX_BROWSER_EXECUTABLE — optional Chromium binary; by default
+ *     playwright-core resolves its own installed headless shell.
  */
 
 import { closeDatabase, getDatabase } from '@renkei/db';
 import { ensureDataRoot } from './disk';
 import { createSandboxServer } from './server';
+import { BrowserSessions } from './browser';
 import { logger, attachPersistentLogging } from './logger';
+
+function envFlag(name: string): boolean {
+  return /^(1|true|yes|on)$/i.test((process.env[name] ?? '').trim());
+}
 
 function fatal(message: string): never {
   console.error(`FATAL [worker-sandbox]: ${message}`);
@@ -48,11 +58,16 @@ async function main(): Promise<void> {
     fatal(`SANDBOX_WORKER_PORT is not a usable port: ${process.env.SANDBOX_WORKER_PORT}`);
   }
 
-  const server = createSandboxServer({ db: dbResult.val, apiKeys });
+  // The browser launches lazily on the first navigate, so enabling it costs
+  // nothing until an agent actually opens a page.
+  const browser = envFlag('SANDBOX_BROWSER_ENABLED') ? new BrowserSessions() : null;
+
+  const server = createSandboxServer({ db: dbResult.val, apiKeys, browser });
   server.listen(port, '0.0.0.0', () => {
-    logger.info('started {application} {version} on port {port}', {
+    logger.info('started {application} {version} on port {port} (browser {browser})', {
       component: 'worker-sandbox/server',
       port,
+      browser: browser ? 'enabled' : 'disabled',
     });
   });
 
@@ -60,6 +75,7 @@ async function main(): Promise<void> {
     logger.info('{signal} received, closing', { component: 'worker-sandbox/server', signal });
     server.close(() => {
       void (async () => {
+        await browser?.shutdown();
         await logger.flush();
         await closeDatabase();
         process.exit(0);

@@ -264,3 +264,102 @@ describe('clientFailure', () => {
     expect(result).toEqual({ status: 418, message: 'huh' });
   });
 });
+
+describe('browser verbs', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+  const PAGE = { url: 'https://example.com/', title: 'Example', snapshot: 'Page: Example', truncated: false };
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('posts each verb to /v1/browser/<op> with the target and arguments', async () => {
+    const {
+      sbBrowserNavigate, sbBrowserSnapshot, sbBrowserClick, sbBrowserType, sbBrowserSelect,
+      sbBrowserPress, sbBrowserBack, sbBrowserClose,
+    } = await import('./index');
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify(PAGE), { status: 200 }));
+
+    expect(await sbBrowserNavigate(TARGET, { url: 'https://example.com/', maxChars: 500 })).toEqual({ ok: true, val: PAGE });
+    await sbBrowserSnapshot(TARGET);
+    await sbBrowserClick(TARGET, { ref: 'e1' });
+    await sbBrowserType(TARGET, { ref: 'e2', text: 'hi', submit: true });
+    await sbBrowserSelect(TARGET, { ref: 'e3', values: ['Blue'] });
+    await sbBrowserPress(TARGET, { key: 'Escape' });
+    await sbBrowserBack(TARGET);
+
+    const calls = fetchSpy.mock.calls.map(([url, init]) => [String(url), JSON.parse(String(init?.body))]);
+    expect(calls).toEqual([
+      ['http://sandbox.internal:8092/v1/browser/navigate', { ...TARGET, url: 'https://example.com/', maxChars: 500 }],
+      ['http://sandbox.internal:8092/v1/browser/snapshot', TARGET],
+      ['http://sandbox.internal:8092/v1/browser/click', { ...TARGET, ref: 'e1' }],
+      ['http://sandbox.internal:8092/v1/browser/type', { ...TARGET, ref: 'e2', text: 'hi', submit: true }],
+      ['http://sandbox.internal:8092/v1/browser/select', { ...TARGET, ref: 'e3', values: ['Blue'] }],
+      ['http://sandbox.internal:8092/v1/browser/press', { ...TARGET, key: 'Escape' }],
+      ['http://sandbox.internal:8092/v1/browser/back', TARGET],
+    ]);
+    expect(fetchSpy.mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: 'Bearer test-key' });
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ closed: true }), { status: 200 }));
+    expect(await sbBrowserClose(TARGET)).toEqual({ ok: true, val: { closed: true } });
+  });
+
+  it('parses a screenshot as a staged file plus where the page was', async () => {
+    const { sbBrowserScreenshot } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ file: WIRE_FILE, url: 'https://example.com/', title: 'Example' }), { status: 200 })
+    );
+    const result = await sbBrowserScreenshot(TARGET, { fullPage: true, filename: 'home.png' });
+    expect(result).toEqual({ ok: true, val: { file: WIRE_FILE, url: 'https://example.com/', title: 'Example' } });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      ...TARGET,
+      fullPage: true,
+      filename: 'home.png',
+    });
+  });
+
+  it('reads status, and treats a page without a snapshot as malformed', async () => {
+    const { sbBrowserStatus, sbBrowserSnapshot } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ enabled: true, sessions: 3 }), { status: 200 }));
+    expect(await sbBrowserStatus()).toEqual({ ok: true, val: { enabled: true, sessions: 3 } });
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ url: 'https://x' }), { status: 200 }));
+    const result = await sbBrowserSnapshot(TARGET);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.err.kind).toBe('unreachable');
+  });
+
+  it('carries the worker error tag and message through clientFailure', async () => {
+    const { sbBrowserClick } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { type: 'bad_ref', message: 'No element carries ref e9' } }), { status: 400 })
+    );
+    const result = await sbBrowserClick(TARGET, { ref: 'e9' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(clientFailure(result.err)).toEqual({ status: 400, message: 'No element carries ref e9' });
+    }
+    expect(clientFailure({ kind: 'op', type: 'no_session', message: undefined, status: 409 })).toEqual({
+      status: 409,
+      message: 'No page is open — open one with sandbox_browser_navigate first.',
+    });
+    expect(clientFailure({ kind: 'op', type: 'browser_unavailable', message: undefined, status: 503 }).status).toBe(503);
+  });
+});
+
+describe('sandboxBrowserEnabled', () => {
+  it('needs both the worker config and the flag', async () => {
+    const { sandboxBrowserEnabled } = await import('./index');
+    expect(sandboxBrowserEnabled()).toBe(false);
+    process.env.SANDBOX_BROWSER_ENABLED = 'true';
+    expect(sandboxBrowserEnabled()).toBe(true);
+    process.env.SANDBOX_BROWSER_ENABLED = 'no';
+    expect(sandboxBrowserEnabled()).toBe(false);
+    process.env.SANDBOX_BROWSER_ENABLED = '1';
+    delete process.env.SANDBOX_WORKER_URL;
+    expect(sandboxBrowserEnabled()).toBe(false);
+  });
+});

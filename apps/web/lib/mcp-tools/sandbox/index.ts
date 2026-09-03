@@ -16,12 +16,18 @@
  * Staged files are short-lived on purpose (see
  * docs/sandbox-connector-design.md): a fixed TTL and a per-caller quota,
  * enforced by the worker's own sweep, not left to the caller to clean up.
+ *
+ * The sandbox_browser_* tools (./browser.ts) are the same shape applied to
+ * a headless browser the worker owns: named verbs by element ref, never a
+ * selector or a script, with screenshots landing in this same scratch space.
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { extractText, DEFAULT_MAX_INPUT_BYTES } from '@renkei/document-text';
 import type { MCPToolContext } from '../common';
+import { errText, fileLine, str, targetOf, textResult } from './shared';
+import { registerSandboxBrowserTools } from './browser';
 import { claimPendingUploadSlotByOwner } from '../upload-slots';
 import { completeUploadSlot, finalizeUploadSlot } from '@/lib/upload-executors';
 import { getDatabase } from '@renkei/db';
@@ -35,7 +41,7 @@ import {
   sbDeleteFile,
   clientFailure,
   sandboxConfig,
-  type WireSandboxFile,
+  sandboxBrowserEnabled,
 } from '@/lib/sandbox/service-client';
 
 /** The connector key the sandbox capabilities register under. */
@@ -46,29 +52,11 @@ export function sandboxWorkerConfigured(): boolean {
   return sandboxConfig() !== null;
 }
 
-function textResult(text: string) {
-  return { content: [{ type: 'text' as const, text }] };
-}
-
-function errText(text: string) {
-  return { content: [{ type: 'text' as const, text }], isError: true as const };
-}
-
-function str(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
-function targetOf(context: MCPToolContext): { tenantId: string; subject: string } | string {
-  if (!context.subject) return 'No signed-in identity on this request.';
-  return { tenantId: context.tenantId, subject: context.subject };
-}
-
-function fileLine(file: WireSandboxFile): string {
-  const age = new Date(file.createdAt).toLocaleString();
-  return `${file.id} — "${file.filename}" — ${file.sizeBytes} bytes — staged ${age} — expires ${new Date(file.expiresAt).toLocaleString()}`;
-}
-
 export function registerSandboxTools(server: McpServer, context: MCPToolContext): void {
+  // The browser verbs register only where the worker actually runs one
+  // (SANDBOX_BROWSER_ENABLED on both sides) — see ./browser.ts.
+  if (sandboxBrowserEnabled()) registerSandboxBrowserTools(server, context);
+
   server.registerTool(
     'sandbox_download_url',
     {

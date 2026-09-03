@@ -183,6 +183,13 @@ services:
   # SANDBOX_WORKER_API_KEY from .env — generate one with
   # `openssl rand -base64 32`. No published ports on purpose: nothing
   # outside the compose network may speak to it.
+  #
+  # It also carries the headless browser behind the sandbox_browser_* tools
+  # (a headless Chromium baked into the image), which only runs when
+  # SANDBOX_BROWSER_ENABLED=true is set in .env — the same flag the web app
+  # reads to register those tools. The browser's every connection goes
+  # through an in-process egress proxy that refuses private and internal
+  # addresses, so it cannot reach the other compose services either.
   worker-sandbox:
     image: scotteremiaroden/renkei-sandbox:latest
     container_name: renkei-worker-sandbox
@@ -213,7 +220,9 @@ services:
       # Where the web app reaches the sandbox worker; the bearer key
       # (SANDBOX_WORKER_API_KEY) comes from the shared .env. Omit both to
       # run without an agent scratch space — the sandbox_* tools simply
-      # don't register.
+      # don't register. SANDBOX_BROWSER_ENABLED=true in .env (read by this
+      # service AND worker-sandbox) additionally registers the
+      # sandbox_browser_* tools; unset, they don't exist.
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       # PUBLIC_BASE_URL in .env is the authoritative origin when set — it is
       # the address registered with every OAuth provider. Without it, the app

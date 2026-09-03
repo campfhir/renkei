@@ -11,7 +11,10 @@
  *
  * Configuration: SANDBOX_WORKER_URL + SANDBOX_WORKER_API_KEY. Both
  * absent-or-set-together; a missing pair means every operation answers
- * 'unconfigured' — the sandbox is down, never open.
+ * 'unconfigured' — the sandbox is down, never open. The browser verbs
+ * (`sbBrowser*`) additionally need SANDBOX_BROWSER_ENABLED on the web side
+ * so the sandbox_browser_* tools register only where the worker actually
+ * runs a browser — `sandboxBrowserEnabled()` is that check.
  *
  * Errors keep the worker's tag + message so each surface phrases its own
  * refusals; `clientFailure` gives callers one shared status+string mapping
@@ -63,6 +66,16 @@ export function sandboxConfig(): { url: string; key: string } | null {
   const key = process.env.SANDBOX_WORKER_API_KEY?.trim();
   if (!url || !key) return null;
   return { url, key };
+}
+
+/**
+ * Whether this deployment offers the sandbox browser: the worker must be
+ * configured AND SANDBOX_BROWSER_ENABLED set (the same flag the worker
+ * reads to launch one). Off unless said otherwise — closed, never open.
+ */
+export function sandboxBrowserEnabled(): boolean {
+  if (!sandboxConfig()) return false;
+  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_BROWSER_ENABLED ?? '').trim());
 }
 
 function unreachable(message: string): { ok: false; err: SandboxClientError } {
@@ -253,6 +266,117 @@ export async function sbDeleteFile(
   return { ok: true, val: { id: str(value.id) } };
 }
 
+// ─── The browser ────────────────────────────────────────────────────────────
+
+/** Where a browser session's page is after a verb, and what is on it. */
+export interface WireBrowserPage {
+  url: string;
+  title: string;
+  /** The rendered snapshot — headings, text, and [eN]-ref'd interactive elements. */
+  snapshot: string;
+  truncated: boolean;
+}
+
+function browserPageOf(value: unknown): WireBrowserPage | null {
+  if (!isRecord(value)) return null;
+  const url = str(value.url);
+  const snapshot = str(value.snapshot);
+  if (!url || typeof value.snapshot !== 'string') return null;
+  return { url, title: str(value.title), snapshot, truncated: value.truncated === true };
+}
+
+async function browserPageCall(
+  op: string,
+  target: SandboxTarget,
+  input: Record<string, unknown>
+): Promise<ClientResult<WireBrowserPage>> {
+  const result = await callJson(`browser/${op}`, { ...target, ...input });
+  if (!result.ok) return result;
+  const page = browserPageOf(result.val);
+  return page ? { ok: true, val: page } : malformed();
+}
+
+export async function sbBrowserStatus(): Promise<ClientResult<{ enabled: boolean; sessions: number }>> {
+  const result = await callJson('browser/status', {});
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || typeof value.enabled !== 'boolean') return malformed();
+  return {
+    ok: true,
+    val: { enabled: value.enabled, sessions: typeof value.sessions === 'number' ? value.sessions : 0 },
+  };
+}
+
+export function sbBrowserNavigate(
+  target: SandboxTarget,
+  input: { url: string; maxChars?: number }
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('navigate', target, input);
+}
+
+export function sbBrowserSnapshot(
+  target: SandboxTarget,
+  input: { maxChars?: number } = {}
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('snapshot', target, input);
+}
+
+export function sbBrowserClick(
+  target: SandboxTarget,
+  input: { ref: string; maxChars?: number }
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('click', target, input);
+}
+
+export function sbBrowserType(
+  target: SandboxTarget,
+  input: { ref: string; text: string; submit?: boolean; maxChars?: number }
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('type', target, input);
+}
+
+export function sbBrowserSelect(
+  target: SandboxTarget,
+  input: { ref: string; values: string[]; maxChars?: number }
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('select', target, input);
+}
+
+export function sbBrowserPress(
+  target: SandboxTarget,
+  input: { key: string; maxChars?: number }
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('press', target, input);
+}
+
+export function sbBrowserBack(
+  target: SandboxTarget,
+  input: { maxChars?: number } = {}
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('back', target, input);
+}
+
+export async function sbBrowserScreenshot(
+  target: SandboxTarget,
+  input: { fullPage?: boolean; filename?: string } = {}
+): Promise<ClientResult<{ file: WireSandboxFile; url: string; title: string }>> {
+  const result = await callJson('browser/screenshot', { ...target, ...input });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  const file = fileOf(value.file);
+  if (!file) return malformed();
+  return { ok: true, val: { file, url: str(value.url), title: str(value.title) } };
+}
+
+export async function sbBrowserClose(target: SandboxTarget): Promise<ClientResult<{ closed: boolean }>> {
+  const result = await callJson('browser/close', { ...target });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || typeof value.closed !== 'boolean') return malformed();
+  return { ok: true, val: { closed: value.closed } };
+}
+
 /**
  * One shared mapping from a client error to a model-facing refusal, so
  * every sandbox_* tool and every batch-pipeline caller phrases the same
@@ -281,6 +405,22 @@ export function clientFailure(error: SandboxClientError): { status: number; mess
       return { status: 502, message: error.message ?? 'Could not fetch that URL.' };
     case 'bad_filename':
       return { status: 400, message: 'That filename is not usable — no path separators.' };
+    case 'browser_unavailable':
+      return {
+        status: 503,
+        message: error.message ?? 'The sandbox browser is not enabled on this deployment.',
+      };
+    case 'no_session':
+      return {
+        status: 409,
+        message: error.message ?? 'No page is open — open one with sandbox_browser_navigate first.',
+      };
+    case 'bad_ref':
+      return { status: 400, message: error.message ?? 'That ref is not on the current page — take a new snapshot.' };
+    case 'navigation_failed':
+      return { status: 502, message: error.message ?? 'The browser could not load that page.' };
+    case 'action_failed':
+      return { status: 400, message: error.message ?? 'The browser could not perform that action.' };
     default:
       return { status: error.status, message: error.message ?? error.type };
   }

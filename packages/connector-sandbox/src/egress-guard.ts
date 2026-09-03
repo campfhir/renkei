@@ -2,15 +2,17 @@ import { lookup } from 'node:dns/promises';
 import net from 'node:net';
 
 /**
- * SSRF guard for `sandbox_download_url`, which is the one sandbox operation
- * that fetches a caller-supplied URL. This is the same logic as
- * apps/web/lib/safe-fetch.ts (used there for tenant-configured OIDC
- * discovery URLs) — duplicated rather than imported because a worker
+ * SSRF guard for `sandbox_download_url` and the sandbox browser — every
+ * sandbox operation that reaches a caller-supplied URL. This is the same
+ * logic as apps/web/lib/safe-fetch.ts (used there for tenant-configured
+ * OIDC discovery URLs) — duplicated rather than imported because a worker
  * process cannot depend on the Next.js app's `lib/`, and this package is
  * exactly the shared home connector-fileshares/connector-onbase use for
  * logic both the web app and a worker need. Keep the two in sync by hand;
  * see the comment there for the same caveats (DNS rebinding is not fully
- * closed by a resolve-then-connect check).
+ * closed by a resolve-then-connect check — the browser's egress proxy in
+ * apps/worker-sandbox/src/browser-proxy.ts closes it by connecting to the
+ * very address it verified).
  */
 export class BlockedUrlError extends Error {
   constructor(message: string) {
@@ -57,6 +59,23 @@ export function isBlockedIP(ip: string): boolean {
 }
 
 /**
+ * The hostname half of the structural check, shared with the browser's
+ * egress proxy (which sees bare `host:port` CONNECT targets, never a URL).
+ * Throws BlockedUrlError for the localhost family and for IP literals in
+ * private/reserved ranges; a bracketed IPv6 literal is unwrapped first.
+ */
+export function assertSafeHostname(hostname: string): void {
+  const host = hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+  if (!host) throw new BlockedUrlError('host is not allowed');
+  if (BLOCKED_HOSTNAMES.has(host) || host.endsWith('.localhost')) {
+    throw new BlockedUrlError('host is not allowed');
+  }
+  if (net.isIP(host) && isBlockedIP(host)) {
+    throw new BlockedUrlError('host resolves to a private or reserved address');
+  }
+}
+
+/**
  * Structural, DNS-free checks. Throws BlockedUrlError on violation, otherwise
  * returns the parsed URL. Rejects non-https schemes, the localhost family, and
  * IP-literal hosts in private/reserved ranges.
@@ -71,13 +90,7 @@ export function assertSafeHttpsUrl(raw: string): URL {
   if (url.protocol !== 'https:') {
     throw new BlockedUrlError('only https URLs are allowed');
   }
-  const host = url.hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
-  if (BLOCKED_HOSTNAMES.has(host) || host.endsWith('.localhost')) {
-    throw new BlockedUrlError('host is not allowed');
-  }
-  if (net.isIP(host) && isBlockedIP(host)) {
-    throw new BlockedUrlError('host resolves to a private or reserved address');
-  }
+  assertSafeHostname(url.hostname);
   return url;
 }
 

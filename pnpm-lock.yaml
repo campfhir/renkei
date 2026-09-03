@@ -510,6 +510,9 @@ importers:
       kysely:
         specifier: ^0.29.4
         version: 0.29.4
+      playwright-core:
+        specifier: 1.62.1
+        version: 1.62.1
       tsx:
         specifier: ^4.23.5
         version: 4.23.5

@@ -57,10 +57,12 @@ lower one:
   a source of truth — same as `connector-fileshares`/`connector-onbase`.
 - **Curated verbs, not a shell.** Every sandbox_* tool is one named,
   bounded thing the worker does itself (download this URL, read back what's
-  staged, forward these bytes into that upload slot) — never an arbitrary
-  command. Filenames are display labels only; storage paths are always
-  built from a UUID tenant id, a hashed subject, and a UUID file id, never
-  from caller-supplied text (`apps/worker-sandbox/src/disk.ts`).
+  staged, forward these bytes into that upload slot, click the element
+  with this ref) — never an arbitrary command, and never a script or a
+  selector the model wrote. Filenames are display labels only; storage
+  paths are always built from a UUID tenant id, a hashed subject, and a
+  UUID file id, never from caller-supplied text
+  (`apps/worker-sandbox/src/disk.ts`).
 
 ## `sandbox_download_url` and the egress guard
 
@@ -96,6 +98,84 @@ subject to match. `claimPendingUploadSlotByOwner`
 `/api/upload/[slotId]`'s POST route now share, so there is one finish path
 instead of two copies of the same status update.
 
+## The browser (`sandbox_browser_*`)
+
+The second thing the sandbox holds for an agent, after staged bytes: a
+headless browser, for the pages no Renkei connector reaches — a vendor
+portal, a public status page, a form that only exists on the web. It is
+the same shape as the file tools applied to a page: every verb is one
+named, bounded thing the worker does itself, and the model never hands
+over a selector, a script, or a byte.
+
+**Where it runs.** Inside `apps/worker-sandbox`, alongside the scratch
+disk (`src/browser.ts`). A browser is a large, network-reaching process;
+the sandbox worker is already the container that holds nothing but an
+agent's own transient working state, reachable only over the internal
+network with a bearer key, on its own image — so it gets that container
+too, and its screenshots land in the same scratch space under the same
+TTL and quota. The image (the `sandbox` target in `docker/Dockerfile`, now
+Debian-based for glibc) bakes in the exact Chromium headless shell the
+pinned `playwright-core` was tested with (`playwright-core install
+--with-deps --only-shell chromium`), so nothing is downloaded at container
+start. `SANDBOX_BROWSER_ENABLED=true` on the worker launches it (lazily, on
+the first navigate); the same flag on the web app registers the tools.
+Unset on either side means no browser — closed, never open.
+
+**How a page reaches the model.** A *snapshot*, not HTML: the worker walks
+the live DOM (`src/browser-page-script.ts`, run inside the page) and
+reports the headings, text, images and landmarks a person would see, plus
+every interactive element — links, buttons, form controls, ARIA widgets,
+editable regions — with a short ref (`e12`) stamped onto the element as
+`data-renkei-ref`. Rendering into text is pure and shared
+(`packages/connector-sandbox/src/browser.ts`), bounded by a caller-chosen
+`maxChars` (default 20k, ceiling 80k) and a node ceiling, and says when
+it was cut. Password values are masked. Every action answers with a
+fresh snapshot of wherever the page ended up (a navigation, a popup, a
+menu), so the usual loop is navigate → act by ref → act by ref, with
+`sandbox_browser_snapshot` only for re-reading.
+
+**Acting by ref, never by selector.** A ref is validated to the
+`e<digits>` shape before it goes anywhere near a locator, and a ref no
+element carries is refused with "take a new snapshot" — refs die with the
+page they were minted on. Typed text is bounded (10k), select values are
+labels or values, key names are a strict token. Nothing the model writes
+is ever evaluated in the page.
+
+**Egress — the part that matters most.** Chromium is launched with **no
+direct network access**: every connection it makes goes through a
+loopback egress proxy inside the worker (`src/browser-proxy.ts`) that
+resolves the host itself, refuses the localhost family and every
+private/reserved range with the same `isBlockedIP` the download guard
+uses, and then dials *the very address it verified*. That covers what a
+tool-argument check never could — sub-resources, redirects, websockets,
+`<img src="http://169.254.169.254/...">` — and it closes the DNS-rebinding
+window the resolve-then-fetch pattern documents as residual, because there
+is no second lookup for a rebinding answer to land on. Chromium's implicit
+proxy bypass for loopback is switched off (`<-loopback>`), so
+`http://127.0.0.1` from inside a page reaches the proxy and is refused
+there; ports other than 80/443 below 1024 are refused outright. On top of
+that, top-level navigation is https-only and pre-checked with
+`assertPublicHttpsUrl`, so a blocked URL is refused with a clear message
+before the browser is involved; a refused in-page navigation lands on
+Chromium's error page, which the worker reports as "refused or
+unreachable" rather than reading. Non-http(s) URLs are never navigable.
+
+**Sessions.** One browser context per `(tenantId, subject)` — cookies,
+storage and tabs never cross callers, the same scoping as their staged
+files — created on the first navigate and closed after ten idle minutes
+(`BROWSER_SESSION_IDLE_MS`) or on `sandbox_browser_close`; at most eight
+at once (`BROWSER_MAX_SESSIONS`), least-recently-used evicted beyond that;
+the browser process itself exits once no session remains. Calls on one
+session are serialized so two tool calls racing for the same page cannot
+interleave. Downloads are refused, service workers blocked, and a popup a
+click opens becomes the page the next snapshot reads.
+
+**What it deliberately is not.** Not a headed or remote-controlled
+browser, not a way to run JavaScript, not a file-download path (that is
+`sandbox_download_url`, byte-capped and quota'd), and not an
+authentication vault — the tool descriptions tell the model never to type
+credentials it was not explicitly given for the task.
+
 ## Tool inventory
 
 | Tool | Kind | What it does |
@@ -107,6 +187,18 @@ instead of two copies of the same status update.
 | `sandbox_read_file` | Read | Extracted text of a staged file (same extractor as `fileshare_read_file`). |
 | `sandbox_delete_file` | Act | Remove a staged file ahead of its TTL. |
 | `sandbox_send_to_upload` | Act | Forward a staged file's bytes into a pending `*_request_*_upload` slot. |
+| `sandbox_browser_navigate` | Act | Open an `https://` URL in the caller's browser session; answers a snapshot. |
+| `sandbox_browser_snapshot` | Read | Re-read the open page (title, URL, text, `[eN]`-ref'd controls). |
+| `sandbox_browser_click` | Act | Click an element by ref; answers the snapshot of wherever that led. |
+| `sandbox_browser_type` | Act | Replace a field's text by ref, optionally pressing Enter. |
+| `sandbox_browser_select` | Act | Choose option(s) of a `<select>` by ref. |
+| `sandbox_browser_press_key` | Act | Press one key (Escape, Tab, PageDown, ...) in the page. |
+| `sandbox_browser_back` | Act | Browser history back. |
+| `sandbox_browser_screenshot` | Act | PNG of the open page, staged as a scratch-space file. |
+| `sandbox_browser_close` | Act | Close the caller's session (pages, cookies, history). |
+
+The browser tools exist only when `SANDBOX_BROWSER_ENABLED=true` on both
+the web app and the worker.
 
 ## Deployment
 
@@ -116,4 +208,7 @@ default `/data`). The web app reaches it at `SANDBOX_WORKER_URL` with the
 shared bearer key `SANDBOX_WORKER_API_KEY` (`apps/web/lib/sandbox/service-client.ts`).
 Both unset means the `sandbox_*` tools simply don't register — closed,
 never open, the same convention every other worker-backed connector
-follows. See `DEPLOYMENT.md` for the full env contract.
+follows. `SANDBOX_BROWSER_ENABLED=true`, set on both the web app and the
+worker, adds the `sandbox_browser_*` tools; `SANDBOX_BROWSER_EXECUTABLE`
+optionally points the worker at a specific Chromium binary instead of the
+one baked into the image. See `DEPLOYMENT.md` for the full env contract.
