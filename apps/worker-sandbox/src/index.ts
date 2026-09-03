@@ -42,6 +42,24 @@ function fatal(message: string): never {
 async function main(): Promise<void> {
   await attachPersistentLogging();
 
+  // A rejection nobody awaited must not take the whole worker — and every
+  // browser session and unlocked secret — down with it; log it and carry
+  // on. A genuinely uncaught exception still exits (the process may be in
+  // no state to continue), but says so first, so a restart is explained.
+  process.on('unhandledRejection', (reason) => {
+    logger.error('unhandled rejection: {error}', {
+      component: 'worker-sandbox/process',
+      error: reason instanceof Error ? (reason.stack ?? reason.message) : String(reason),
+    });
+  });
+  process.on('uncaughtException', (error) => {
+    logger.error('uncaught exception, exiting: {error}', {
+      component: 'worker-sandbox/process',
+      error: error.stack ?? error.message,
+    });
+    void logger.flush().finally(() => process.exit(1));
+  });
+
   const apiKeys = (process.env.SANDBOX_WORKER_API_KEY ?? '')
     .split(',')
     .map((key) => key.trim())

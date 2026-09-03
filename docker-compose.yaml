@@ -196,9 +196,27 @@ services:
     command: ['pnpm', '--filter', '@renkei/worker-sandbox', 'start']
     env_file:
       - .env
-    environment: *database-urls
+    environment:
+      <<: *database-urls
+      # A fixed Node heap, well inside the container limit, so the worker's
+      # own process can never be what pushes the container over it — the
+      # browser gets the rest.
+      NODE_OPTIONS: --max-old-space-size=1024
     volumes:
       - renkei-sandbox-data:/data
+    # The browser is the memory hog in this stack: a busy session runs
+    # 300-500MB, up to eight at once. The reservation asks the host to keep
+    # that much for it; the limit stops a runaway page from taking the box
+    # down instead; the negative OOM score means the kernel kills something
+    # else first when memory does run short (a killed browser drops every
+    # agent's session). /dev/shm is where Chromium shares frames between
+    # its processes; Docker's 64MB default is what "page crashed" on a
+    # heavy site usually means. Raise SANDBOX_WORKER_MEMORY in .env for a
+    # deployment that drives many browser sessions at once.
+    mem_reservation: 1g
+    mem_limit: ${SANDBOX_WORKER_MEMORY:-4g}
+    shm_size: 1g
+    oom_score_adj: -500
     depends_on:
       postgres:
         condition: service_healthy

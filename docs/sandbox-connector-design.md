@@ -187,7 +187,40 @@ at once (`BROWSER_MAX_SESSIONS`), least-recently-used evicted beyond that;
 the browser process itself exits once no session remains. Calls on one
 session are serialized so two tool calls racing for the same page cannot
 interleave. Downloads are refused, service workers blocked, and a popup a
-click opens becomes the page the next snapshot reads.
+click opens becomes the page the next snapshot reads. When a session is
+gone, the refusal says *why* — idle, evicted, closed, or "the browser
+process exited unexpectedly (it may have run out of memory on the last
+page)" — and points at a `sandbox_browser_run` whose first step is
+navigate, so the actions follow in the same call. A crashed page is
+reported as such rather than read as blank. The worker logs unhandled
+rejections instead of dying of them, and logs an uncaught exception
+before exiting, so a restart is never silent.
+
+**Pages that keep rendering.** Real sites are single-page apps: the
+network goes quiet before the app has painted, analytics beacons keep it
+from ever going quiet, and a framework re-creates DOM nodes on every
+render. Three things keep a snapshot honest and a ref usable against
+that:
+
+- after every load, the worker waits for `load` and `networkidle`
+  (bounded), then samples the element count until four samples a quarter
+  second apart agree — a one-second quiet window that outlasts an app
+  bootstrapping a beat after `load` — within a five-second budget;
+- a walk that comes back thin (fewer than eight items on a real URL) is
+  taken as "not painted yet": one more beat, one more walk, and the thin
+  result stands only if it holds;
+- a ref whose attribute vanished with a re-created node is *recovered*:
+  every snapshot the model receives records each ref's signature (role,
+  accessible name, link target, and which of its look-alikes it was);
+  when a ref's attribute is gone, the worker walks again under a probe
+  attribute, finds the element with the same signature, re-stamps it with
+  the model's ref, and proceeds. The model's numbering stays valid for
+  everything it can still find; only a truly gone element is refused
+  with "take a new snapshot".
+
+A link marked for a new tab (`target="_blank"`) is followed in the same
+tab: the flow has one page, and a popup that is blocked or slow to appear
+would otherwise leave the model looking at an unchanged snapshot.
 
 **Secrets — logins the browser may type but the model may never see.**
 The one thing a real portal needs that nothing above provides is a

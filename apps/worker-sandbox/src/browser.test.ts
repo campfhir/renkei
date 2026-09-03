@@ -37,6 +37,9 @@ interface FakePage {
   isClosed: () => boolean;
   waitForLoadState: jest.Mock;
   evaluate: jest.Mock;
+  on: jest.Mock;
+  /** Calls to evaluate that walked the page (not the DOM-quiet probe). */
+  walks: () => number;
   locator: (selector: string) => { first: () => FakeLocator };
   keyboard: { press: jest.Mock };
   mouse: { wheel: jest.Mock };
@@ -85,7 +88,14 @@ function fakePage(url = 'about:blank'): FakePage {
   const page: FakePage = {
     currentUrl: url,
     closed: false,
-    walk: { nodes: [{ role: 'heading', level: 1, name: 'Fake' }], truncated: false },
+    // Enough nodes that the "thin page, wait and re-walk" heuristic stays out of the way.
+    walk: {
+      nodes: [
+        { role: 'heading', level: 1, name: 'Fake' },
+        ...Array.from({ length: 8 }, (_, i) => ({ role: 'text' as const, name: `filler ${i}` })),
+      ],
+      truncated: false,
+    },
     locators: new Map(),
     goto: jest.fn(async (target: string) => {
       page.currentUrl = target;
@@ -97,7 +107,15 @@ function fakePage(url = 'about:blank'): FakePage {
     title: async () => 'Fake title',
     isClosed: () => page.closed,
     waitForLoadState: jest.fn(async () => undefined),
-    evaluate: jest.fn(async () => page.walk),
+    // The DOM-quiet probe asks for an element count; anything else is a walk.
+    evaluate: jest.fn(async (source: string) =>
+      String(source).includes('getElementsByTagName') ? 10 : page.walk
+    ),
+    on: jest.fn(),
+    walks: () =>
+      page.evaluate.mock.calls.filter(
+        ([source]) => !String(source).includes('getElementsByTagName')
+      ).length,
     locator: (selector: string) => {
       const existing = page.locators.get(selector);
       const locator = existing ?? fakeLocator(0);
@@ -221,7 +239,9 @@ describe('sessions and isolation', () => {
     const state = await sessions.navigate(ALICE, 'https://example.com/', 5000);
     expect(state.url).toBe('https://example.com/');
     expect(state.title).toBe('Fake title');
-    expect(state.snapshot).toBe('Page: Fake title\nURL: https://example.com/\n---\n# Fake');
+    expect(
+      state.snapshot.startsWith('Page: Fake title\nURL: https://example.com/\n---\n# Fake')
+    ).toBe(true);
     expect(state.truncated).toBe(false);
     await sessions.shutdown();
   });
@@ -354,7 +374,7 @@ describe('refs and actions', () => {
     expect(page.goBack).toHaveBeenCalled();
     expect(back.url).toBe('https://example.com/previous');
     // Every verb re-walks the page it ends on.
-    expect(page.evaluate).toHaveBeenCalledTimes(6);
+    expect(page.walks()).toBe(6);
     await sessions.shutdown();
   });
 
@@ -431,7 +451,8 @@ describe('refs and actions', () => {
       order.push('click-end');
     });
     page.locators.set('[data-renkei-ref="e1"]', locator);
-    page.evaluate.mockImplementation(async () => {
+    page.evaluate.mockImplementation(async (source: string) => {
+      if (String(source).includes('getElementsByTagName')) return 10;
       order.push('walk');
       return page.walk;
     });
@@ -539,7 +560,7 @@ describe('run', () => {
     expect(result.completed).toBe(5);
     expect(result.page?.url).toBe('https://example.com/done');
     // One snapshot at the end, not one per step.
-    expect(page.evaluate).toHaveBeenCalledTimes(2);
+    expect(page.walks()).toBe(2);
     await sessions.shutdown();
   });
 
@@ -639,6 +660,133 @@ describe('run', () => {
     expect(result.completed).toBe(2);
     expect(popup.keyboard.press).toHaveBeenCalledWith('End');
     expect(result.page?.url).toBe('https://example.com/popup');
+    await sessions.shutdown();
+  });
+});
+
+describe('re-rendering pages', () => {
+  it('recovers a ref whose element was re-created, by its signature and ordinal', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    const page = browsers[0].contexts[0].openPages[0];
+    // The snapshot the model received: two "Apply" buttons and a search box.
+    page.walk = {
+      nodes: [
+        { role: 'textbox', ref: 'e1', name: 'Search jobs' },
+        { role: 'button', ref: 'e2', name: 'Apply' },
+        { role: 'button', ref: 'e3', name: 'Apply' },
+        { role: 'text', name: 'a' },
+        { role: 'text', name: 'b' },
+        { role: 'text', name: 'c' },
+        { role: 'text', name: 'd' },
+        { role: 'text', name: 'e' },
+      ],
+      truncated: false,
+    };
+    await sessions.snapshot(ALICE, 5000);
+    // The framework re-rendered: attributes gone, a cookie banner inserted
+    // ahead, so document order shifted by one.
+    page.walk = {
+      nodes: [
+        { role: 'button', ref: 'e1', name: 'Accept cookies' },
+        { role: 'textbox', ref: 'e2', name: 'Search jobs' },
+        { role: 'button', ref: 'e3', name: 'Apply' },
+        { role: 'button', ref: 'e4', name: 'Apply' },
+        { role: 'text', name: 'a' },
+        { role: 'text', name: 'b' },
+        { role: 'text', name: 'c' },
+        { role: 'text', name: 'd' },
+      ],
+      truncated: false,
+    };
+    const probed = fakeLocator(1);
+    page.locators.set('[data-renkei-probe="e4"]', probed);
+    const restamped = fakeLocator(1);
+    probed.evaluate.mockImplementation(async () => {
+      // The recovery re-stamps the model's ref on the found element.
+      page.locators.set('[data-renkei-ref="e3"]', restamped);
+    });
+    await sessions.click(ALICE, 'e3', 5000);
+    expect(probed.evaluate).toHaveBeenCalledWith(expect.any(Function), {
+      probe: 'data-renkei-probe',
+      ref: 'data-renkei-ref',
+      value: 'e3',
+    });
+    expect(restamped.click).toHaveBeenCalled();
+    // The recovery walk used the probe attribute, never the real one.
+    const recoveryWalk = page.evaluate.mock.calls.find(([source]) =>
+      String(source).includes('"data-renkei-probe"')
+    );
+    expect(recoveryWalk).toBeDefined();
+    await sessions.shutdown();
+  });
+
+  it('still refuses a ref whose element is genuinely gone', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    const page = browsers[0].contexts[0].openPages[0];
+    page.walk = { nodes: [{ role: 'button', ref: 'e1', name: 'Apply' }], truncated: false };
+    await sessions.snapshot(ALICE, 5000);
+    page.walk = {
+      nodes: [{ role: 'button', ref: 'e1', name: 'Something else' }],
+      truncated: false,
+    };
+    await expectBrowserError(sessions.click(ALICE, 'e1', 5000), 'bad_ref');
+    await sessions.shutdown();
+  });
+
+  it('follows a link meant for a new tab in the same tab', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    const page = browsers[0].contexts[0].openPages[0];
+    const link = fakeLocator(1);
+    link.evaluate.mockResolvedValue('https://careers.example.com/jobs');
+    page.locators.set('[data-renkei-ref="e5"]', link);
+    const state = await sessions.click(ALICE, 'e5', 5000);
+    expect(link.click).not.toHaveBeenCalled();
+    expect(page.goto).toHaveBeenLastCalledWith('https://careers.example.com/jobs', {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(state.url).toBe('https://careers.example.com/jobs');
+    await sessions.shutdown();
+  });
+
+  it('reports a crashed page instead of reading it', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    const page = browsers[0].contexts[0].openPages[0];
+    const onCrash = page.on.mock.calls.find(([event]) => event === 'crash')?.[1] as () => void;
+    expect(onCrash).toBeDefined();
+    onCrash();
+    const error = await expectBrowserError(sessions.snapshot(ALICE, 5000), 'navigation_failed');
+    expect(error.message).toContain('crashed');
+    expect(page.goto).toHaveBeenLastCalledWith('about:blank');
+    // Recovered: the next read works again.
+    await expect(sessions.snapshot(ALICE, 5000)).resolves.toBeTruthy();
+    await sessions.shutdown();
+  });
+
+  it('waits for the DOM to stop changing before reading, and re-walks a thin page once', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    const page = browsers[0].contexts[0].openPages[0];
+    const counts = [10, 20, 30, 30, 30, 30];
+    const walks = [
+      { nodes: [{ role: 'text', name: 'loading' }], truncated: false },
+      {
+        nodes: Array.from({ length: 12 }, (_, i) => ({ role: 'text', name: `row ${i}` })),
+        truncated: false,
+      },
+    ];
+    page.evaluate.mockImplementation(async (source: string) =>
+      String(source).includes('getElementsByTagName')
+        ? (counts.shift() ?? 30)
+        : (walks.shift() ?? walks[0])
+    );
+    const state = await sessions.navigate(ALICE, 'https://example.com/list', 5000);
+    expect(counts).toEqual([]);
+    expect(state.snapshot).toContain('row 11');
+    expect(page.waitForTimeout).toHaveBeenCalledWith(1500);
     await sessions.shutdown();
   });
 });
@@ -770,14 +918,30 @@ describe('lifetime', () => {
     await sessions.shutdown();
   });
 
-  it('forgets every session when the browser process disconnects', async () => {
+  it('forgets every session when the browser process disconnects, and says so next time', async () => {
     const { sessions, browsers } = build();
     await sessions.navigate(ALICE, 'https://example.com/', 5000);
     browsers[0].connected = false;
     browsers[0].emit('disconnected');
     expect(sessions.sessionCount()).toBe(0);
+    const error = await expectBrowserError(sessions.snapshot(ALICE, 5000), 'no_session');
+    expect(error.message).toContain('browser process exited unexpectedly');
+    expect(error.message).toContain('sandbox_browser_run');
     await sessions.navigate(ALICE, 'https://example.com/', 5000);
     expect(browsers).toHaveLength(2);
+    await sessions.shutdown();
+  });
+
+  it('explains an idle close and an eviction the same way', async () => {
+    const { sessions, clock } = build({ idleMs: 1000, sweepIntervalMs: 15, maxSessions: 1 });
+    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    await sessions.navigate(BOB, 'https://example.com/', 5000);
+    const evicted = await expectBrowserError(sessions.snapshot(ALICE, 5000), 'no_session');
+    expect(evicted.message).toContain('to make room');
+    clock.now += 5000;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const idle = await expectBrowserError(sessions.snapshot(BOB, 5000), 'no_session');
+    expect(idle.message).toContain('idle');
     await sessions.shutdown();
   });
 
