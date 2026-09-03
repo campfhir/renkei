@@ -52,13 +52,21 @@ export const ICONS = {
   fileImage: 'M6 21V3h8l4 4v14zM14 3v4h4M9.5 11h.01M8 17.5l3-3.5 2 2 1.5-1.5 1.5 2',
 };
 
-export function Icon({ path, className }: { path: string; className?: string }) {
+export function Icon({
+  path,
+  className,
+  strokeWidth = 1.8,
+}: {
+  path: string;
+  className?: string;
+  strokeWidth?: number;
+}) {
   return (
     <svg
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth={1.8}
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className ?? 'h-4 w-4'}
