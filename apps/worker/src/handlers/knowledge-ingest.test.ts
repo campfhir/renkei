@@ -252,6 +252,27 @@ describe('ingest.email', () => {
       })
     );
   });
+
+  it("dead-letters (throws) with a distinct message when 'raw' is missing entirely", async () => {
+    const { raw: _raw, ...withoutRaw } = payload;
+    await expect(
+      createKnowledgeIngestEmailHandler()(event('ingest.email', withoutRaw))
+    ).rejects.toThrow("missing 'raw'");
+  });
+
+  it("dead-letters (throws) with a distinct message when 'raw' rides as a plain object (a stale, pre-encryption producer)", async () => {
+    await expect(
+      createKnowledgeIngestEmailHandler()(event('ingest.email', { ...payload, raw: rawEmail }))
+    ).rejects.toThrow(/'raw' must be an encrypted string, got object/);
+  });
+
+  it("dead-letters (throws) when 'raw' decrypts to something other than an object", async () => {
+    await expect(
+      createKnowledgeIngestEmailHandler()(
+        event('ingest.email', { ...payload, raw: enc(JSON.stringify('not an object')) })
+      )
+    ).rejects.toThrow("'raw' did not decode to an object");
+  });
 });
 
 describe('delete.object / purge.prefix', () => {

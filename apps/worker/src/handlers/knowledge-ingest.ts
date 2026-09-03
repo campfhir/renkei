@@ -116,13 +116,34 @@ function rawEmailOfPayload(raw: Record<string, unknown>): RawEmail {
   };
 }
 
-/** `payload.raw`: an encrypted JSON string, and nothing else — see decryptedField. */
+/**
+ * `payload.raw`: an encrypted JSON string, and nothing else — see
+ * decryptedField.
+ *
+ * The three failure modes get distinct messages on purpose. A truly absent
+ * key and a present-but-wrong-shape one used to both surface as "missing
+ * 'raw'", which reads as an enqueue bug — but the wrong-shape case is
+ * usually a stale producer (a worker instance still on the pre-encryption
+ * build during a rolling deploy) enqueueing the RawEmail as a plain object
+ * instead of the encrypted envelope this reader requires. Naming that case
+ * explicitly points an operator at the right half of the fleet instead of
+ * the queue row.
+ */
 function rawRecordOfPayload(value: unknown): Record<string, unknown> {
-  if (typeof value === 'string' && value) {
-    const parsed: unknown = JSON.parse(decryptedField(value, 'raw'));
-    if (isRecord(parsed)) return parsed;
+  if (value === undefined || value === '') {
+    throw new Error("knowledge event payload is missing 'raw'");
   }
-  throw new Error("knowledge event payload is missing 'raw'");
+  if (typeof value !== 'string') {
+    throw new Error(
+      `knowledge event payload 'raw' must be an encrypted string, got ${typeof value} — ` +
+        'likely enqueued by a producer build that predates raw-content encryption'
+    );
+  }
+  const parsed: unknown = JSON.parse(decryptedField(value, 'raw'));
+  if (!isRecord(parsed)) {
+    throw new Error("knowledge event payload 'raw' did not decode to an object");
+  }
+  return parsed;
 }
 
 function overrideOfPayload(value: unknown): MessageOverride | undefined {
