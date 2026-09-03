@@ -25,12 +25,48 @@
  */
 
 import { getDatabase } from '@renkei/db';
-import { WebexClient } from '@renkei/connector-webex';
+import { WebexClient, type WebexMessage } from '@renkei/connector-webex';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { resolveWebexUserAccessByAccount } from './webex-linked-user';
 import { publishDomainEvent, BODY_PREVIEW_CHARS } from '../domain-events';
 import { logger } from '../logger';
+
+/** How many messages of surrounding history ride along with the trigger. */
+const NEARBY_MESSAGE_COUNT = 25;
+
+/**
+ * One line of `[trigger.nearbyMessages]`, formatted the same way
+ * webex_list_messages renders a message for the model — same bracketed
+ * timestamp, sender, id, and "in thread" marker — so a step reading the
+ * pre-fetched context sees the identical shape it would have gotten by
+ * calling the tool itself.
+ */
+function messageLine(message: WebexMessage): string {
+  const text = message.text ?? '(no text — possibly a card or attachment)';
+  const thread = message.parentId ? ` — in thread ${message.parentId}` : '';
+  return `[${message.created ?? ''}] ${message.personEmail ?? ''} (${message.id})${thread}:\n  ${text.replace(/\n/g, '\n  ')}`;
+}
+
+/**
+ * A deterministic pre-fetch of the room's recent history, so a step whose
+ * job is "understand what's being discussed" does not have to spend a tool
+ * call and a model turn on webex_list_messages just to get there — see
+ * docs/trigger-filters-design.md for the same cost argument applied to
+ * filtering instead of enrichment.
+ *
+ * Best-effort: a failed fetch here must not cost the triggering message its
+ * whole ingestion, so it degrades to '' (the step's own webex_list_messages
+ * tool call remains available as a fallback) rather than throwing.
+ */
+async function nearbyMessagesOf(
+  client: Pick<WebexClient, 'listMessages'>,
+  roomId: string
+): Promise<string> {
+  const result = await client.listMessages(roomId, NEARBY_MESSAGE_COUNT);
+  if (!result.ok) return '';
+  return result.val.map(messageLine).join('\n\n');
+}
 
 /**
  * Did Renkei post this message itself?
@@ -65,7 +101,7 @@ function payloadOf(event: ClaimedEvent): { messageId: string; accountId: string 
 export function createWebexUserMessageHandler(
   deps: {
     resolveAccess?: typeof resolveWebexUserAccessByAccount;
-    makeClient?: (accessToken: string) => Pick<WebexClient, 'getMessage'>;
+    makeClient?: (accessToken: string) => Pick<WebexClient, 'getMessage' | 'listMessages'>;
     publish?: typeof publishDomainEvent;
     /** Injectable so a test can drive the loop guard without a database. */
     wasSentByRenkei?: (tenantId: string, messageId: string) => Promise<boolean>;
@@ -91,7 +127,8 @@ export function createWebexUserMessageHandler(
       return 'skipped';
     }
 
-    const messageResult = await makeClient(access.accessToken).getMessage(payload.messageId);
+    const client = makeClient(access.accessToken);
+    const messageResult = await client.getMessage(payload.messageId);
     if (!messageResult.ok) {
       throw new Error(`could not fetch WebEx message ${payload.messageId}`);
     }
@@ -123,6 +160,10 @@ export function createWebexUserMessageHandler(
         text: message.text.slice(0, BODY_PREVIEW_CHARS),
         sender: message.personEmail ?? '',
         roomId: message.roomId,
+        // A step whose job is understanding the conversation can read this
+        // instead of spending a tool call on webex_list_messages — see
+        // nearbyMessagesOf's doc comment.
+        nearbyMessages: await nearbyMessagesOf(client, message.roomId),
         // 'direct' or 'group' per WebEx; '' when the API omits it, which a
         // space-type filter then fails closed on (see trigger-filters.ts).
         roomType: message.roomType ?? '',

@@ -301,6 +301,7 @@ function webexClientStub() {
         parentId: null,
         created: '2026-08-13T12:00:00Z',
       }),
+    listMessages: async () => ok<WebexMessage[]>([]),
   };
 }
 

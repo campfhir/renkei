@@ -326,6 +326,15 @@ class RunAbort extends Error {
 /** Thrown to nack the queue job — transient, resume later, no attempt burned. */
 class TransientFailure extends Error {}
 
+/**
+ * Thrown mid-attempt when an owner's cancel click lands while a step is
+ * still inside runAttempt's turn loop. Distinct from RunAbort so the run
+ * finalizes as 'canceled' (quiet, no failure notification) rather than
+ * 'failed' — the same terminal status the pre-step checkpoint already
+ * produces for a cancel requested between steps.
+ */
+class RunCanceled extends Error {}
+
 function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
 }
@@ -1216,6 +1225,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
           await finalizeRun(run, 'stopped', null, null, vars, true);
           return;
         }
+        if (result.kind === 'canceled') {
+          // A cancel click landed mid-attempt — same terminal status and
+          // quiet handling as the pre-step checkpoint above, just caught
+          // from inside runAttempt's turn loop instead of before it.
+          await finalizeRun(run, 'canceled', null, null, vars, true);
+          return;
+        }
         await finalizeRun(run, 'failed', result.errorKind, result.error, vars);
         return;
       }
@@ -1455,6 +1471,23 @@ export function createAgentRunHandler(deps: EngineDeps) {
     return Number(counted?.count ?? 0) >= MAX_RUN_ATTEMPT_ROWS;
   }
 
+  /**
+   * A fresh read of cancel_requested_at, for runAttempt's turn loop — the
+   * only place a cancel click needs to interrupt something already
+   * in-flight rather than just gate the next thing from starting. The
+   * in-memory `run` row is loaded once at run start and never reflects a
+   * cancel that arrives afterward, so this is a real (cheap) query, not a
+   * field read.
+   */
+  async function isCanceled(runId: string): Promise<boolean> {
+    const row = await db
+      .selectFrom('agent_runs')
+      .select('cancel_requested_at')
+      .where('id', '=', runId)
+      .executeTakeFirst();
+    return row?.cancel_requested_at != null;
+  }
+
   async function executeStep(
     run: RunRow,
     step: ActionStep,
@@ -1479,6 +1512,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     | { kind: 'fail'; errorKind: string; error: string }
     | { kind: 'route'; path: BranchPath }
     | { kind: 'waiting' }
+    | { kind: 'canceled' }
   > {
     // Pre-flight: the step's tool must exist in the OWNER's live projection.
     // No LLM spend on a run that cannot work.
@@ -1513,7 +1547,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
       | { kind: 'finish'; quiet: boolean }
       | { kind: 'stop'; reason: string }
       | { kind: 'fail'; errorKind: string; error: string }
-      | { kind: 'route'; path: BranchPath };
+      | { kind: 'route'; path: BranchPath }
+      | { kind: 'canceled' };
 
     /**
      * The post-processing every closed attempt shares, gated or not:
@@ -2452,7 +2487,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
           blockedTools,
           iteration,
           Boolean(step.saveAs && loopSourceVars.has(step.saveAs)),
-          canAskQuestions
+          canAskQuestions,
+          deadline
         );
       } catch (error) {
         if (error instanceof TransientFailure) {
@@ -2460,6 +2496,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
           // untouched, and let the queue back off.
           await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
           throw error;
+        }
+        if (error instanceof RunCanceled) {
+          // Same treatment as the pre-step checkpoint: void the in-progress
+          // attempt row (nothing to show for it) and let the caller
+          // finalize the run as 'canceled', not 'failed'.
+          await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
+          return { kind: 'canceled' };
         }
         if (error instanceof RunAbort) {
           await db.deleteFrom('agent_run_steps').where('id', '=', rowId).execute();
@@ -3252,7 +3295,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     blockedTools: ReadonlySet<string>,
     iteration: number,
     savesItemsForLoop: boolean,
-    canAskQuestions: boolean
+    canAskQuestions: boolean,
+    deadline: number
   ): Promise<AttemptOutcome> {
     // Corrective guidance is the likeliest place for "try [attempt] of
     // [attempt.max]" to be written, so it renders against the same bindings
@@ -3340,6 +3384,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
     };
 
     for (let turn = 0; turn < MAX_LLM_TURNS; turn += 1) {
+      // The step-boundary deadline/cancel checkpoints (before this attempt
+      // was ever started) only bound the time BETWEEN attempts — nothing
+      // previously re-checked either one across an attempt's own up-to-10
+      // LLM turns, each with its own tool-call budget. A single attempt
+      // could quietly run well past the run's timeout, alive the whole
+      // time, immune to both the timeout and a cancel click. Re-checking
+      // here, once per turn, closes that gap at the same granularity the
+      // rest of the engine already uses.
+      if (Date.now() > deadline) {
+        throw new RunAbort('timeout', 'The run exceeded its time budget.');
+      }
+      if (await isCanceled(run.id)) {
+        throw new RunCanceled();
+      }
       const completion = await llm.provider.complete({
         system: systemPromptWith(context.guardrailsText || undefined),
         messages,
@@ -3539,6 +3597,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
           continue;
         }
 
+        // A single turn can carry several tool_use blocks (toolCap is
+        // spent across the whole attempt, not per turn), each with its own
+        // up-to-60s network timeout — re-check here too, so a chatty turn
+        // can't burn many minutes between the once-per-turn check above.
+        if (Date.now() > deadline) {
+          throw new RunAbort('timeout', 'The run exceeded its time budget.');
+        }
         const args =
           typeof use.input === 'object' && use.input !== null && !Array.isArray(use.input)
             ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowed to a plain object above

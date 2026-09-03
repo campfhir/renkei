@@ -268,6 +268,14 @@ export const TRIGGER_EVENT_CATALOG: TriggerEventDescriptor[] = [
           'top-level message. Pass it (or, for a top-level message, the message id itself) as ' +
           'parentId to webex_send_message to answer in the same thread.'
       ),
+      trigger(
+        'nearbyMessages',
+        'Recent messages',
+        'Up to the last 25 messages in the space, newest first, pre-fetched the same way ' +
+          'webex_list_messages would return them — read this for thread/room context instead ' +
+          'of spending a tool call on it. Empty when the space has no other recent history or ' +
+          'the pre-fetch failed; webex_list_messages is still available as a fallback.'
+      ),
     ],
     filters: [
       {
