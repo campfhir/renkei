@@ -112,7 +112,14 @@ export async function GET(
     const settings = settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS;
     const expiresAt = new Date(Date.now() + settings.authorizationCodeTtlSeconds * 1000);
 
-    // Store authorization code
+    // Store authorization code. Roles ride along from the browser session
+    // that authorized this code — captured once, here, rather than
+    // re-queried from the IdP on every MCP call: the browser session
+    // already holds what the IdP asserted at sign-in (see lib/session.ts),
+    // and this is the one point where that session and the MCP token this
+    // code becomes are both in hand. A stale role (the IdP's claim changed
+    // since sign-in) clears the same way the browser session's does — the
+    // caller re-authenticates through this same flow to pick it up.
     await db
       .insertInto('oauth_authorization_codes')
       .values({
@@ -124,6 +131,7 @@ export async function GET(
         redirect_uri: redirectUri,
         code_challenge: codeChallenge || null,
         code_challenge_method: codeChallengeMethod || null,
+        roles: session.roles,
         expires_at: expiresAt,
       })
       .execute();

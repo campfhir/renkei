@@ -310,8 +310,11 @@ export async function registerRenkeiTools(
   // failed batch, not a missing tool.
   registerBatchJobTools(withCapabilityGate(server, projection, BATCH_JOBS_MCP_CONNECTOR), context);
   // log_search reads Renkei's own log store, self-scoped to the caller's
-  // own Jira-linked account — no role signal exists on an MCP token to
-  // offer the tenant-wide operator view the web Logs page has.
+  // own Jira-linked account. An MCP token does now carry the caller's roles
+  // (migration 091, context.roles) — an operator-only tenant-wide search
+  // could gate on ROLE_OPERATOR the same way withCapabilityGate's
+  // requiredRole gates a whole tool module — but log_search itself stays
+  // self-scoped here; nothing has asked for the tenant-wide view yet.
   registerLogTools(withCapabilityGate(server, projection, LOGS_CONNECTOR), context);
   // check_file_upload is cross-connector — any *_request_*_upload tool can
   // mint the slot it reads — so it registers on the raw server, ungated,

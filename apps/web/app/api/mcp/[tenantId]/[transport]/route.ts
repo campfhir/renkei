@@ -188,7 +188,14 @@ const handler = async (
     // version, exactly the "reuse whatever is cached, next request corrects
     // it" fallback this cache is designed around.
     const surfaceVersion = await toolSurfaceVersion(db, tenantId, subject);
-    const cacheKey = `${tenantId}:${subject}:${agentId ?? 'none'}:${surfaceVersion}`;
+    // Roles ride in the cache key, not just surfaceVersion: they come from
+    // the token, not a row surfaceVersion watches, and two tokens for the
+    // same subject can carry different roles (a re-authorize after the IdP
+    // role changed) — without this, whichever request built the cached
+    // handler first would pin its role-gated tool set for every later
+    // caller of this subject until the TTL/version otherwise busts it.
+    const roles = tokenRecord.roles;
+    const cacheKey = `${tenantId}:${subject}:${agentId ?? 'none'}:${roles.join(',')}:${surfaceVersion}`;
 
     // This caller's own Jira grant. A grant with a NULL subject predates per-user
     // ownership and is deliberately not matched: we cannot prove it belongs to
@@ -415,6 +422,7 @@ const handler = async (
               bitbucketScopes: bitbucketAvailable ? bitbucketScopes : undefined,
               jsmGrant: jsmGrant ?? undefined,
               agent: agentId ? { agentId } : undefined,
+              roles,
               db,
             };
 
@@ -438,6 +446,7 @@ const handler = async (
               {
                 provisionedConnectors: provisionedConnectorsFor(availability),
                 hiddenCapabilities: [],
+                roles,
               }
             );
             await registerRenkeiTools(server, context, availability, projection);

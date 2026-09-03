@@ -247,6 +247,9 @@ async function handleAuthorizationCodeGrant(
         client_id,
         subject: authCode.subject,
         scope: authCode.scope,
+        // Carried forward so a later refresh (below) can reissue an access
+        // token with the same roles, without re-touching the browser session.
+        roles: authCode.roles,
         // Only the digest is kept; the token itself exists solely in the
         // response below and in the client that receives it.
         token_hash: hashToken(refreshToken),
@@ -262,6 +265,7 @@ async function handleAuthorizationCodeGrant(
       clientId: client_id,
       subject: authCode.subject,
       scope: authCode.scope,
+      roles: authCode.roles,
       ttlSeconds: tokenExpiresIn,
     });
 
@@ -390,14 +394,17 @@ async function handleRefreshTokenGrant(
     const accessToken = generateSecret(32);
     const tokenExpiresIn = settings.accessTokenTtlMinutes * 60;
 
-    // Carry the original grant's subject forward — the refreshed token must act
-    // as the same person, not as whoever holds the refresh token.
+    // Carry the original grant's subject and roles forward — the refreshed
+    // token must act as the same person with the same roles, not as
+    // whoever holds the refresh token. Roles do not get re-checked against
+    // the IdP here; see the authorize route for where they were captured.
     await storeAccessToken({
       token: accessToken,
       tenantId,
       clientId: client_id,
       subject: token.subject,
       scope: token.scope,
+      roles: token.roles,
       ttlSeconds: tokenExpiresIn,
     });
 

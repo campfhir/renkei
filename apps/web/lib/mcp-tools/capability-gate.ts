@@ -21,10 +21,19 @@ type RegisterToolArgs = Parameters<McpServer['registerTool']>;
 /** The connector the Jira/JSM tool modules register under. */
 export const JIRA_CONNECTOR = 'jira';
 
+/**
+ * Gate an entire tool module behind a role, in addition to the usual
+ * connector/read-write gate — e.g. `withCapabilityGate(server, projection,
+ * ADMIN_CONNECTOR, ROLE_OPERATOR)` for a tool file that should never
+ * register for a non-operator caller. Undefined (the default) means no
+ * restriction beyond org policy and provisioning, same as before this
+ * parameter existed.
+ */
 export function withCapabilityGate(
   server: McpServer,
   projection: CapabilityProjection,
-  connector: string = JIRA_CONNECTOR
+  connector: string = JIRA_CONNECTOR,
+  requiredRole?: string
 ): McpServer {
   return new Proxy(server, {
     get(target, property, receiver) {
@@ -36,6 +45,7 @@ export function withCapabilityGate(
             id: name,
             connector,
             kind: readOnly ? 'read' : 'act',
+            requiredRole,
           });
           if (!allowed) return undefined;
           return target.registerTool(...args);

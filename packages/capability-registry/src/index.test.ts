@@ -79,4 +79,51 @@ describe('projectCapabilities', () => {
       false
     );
   });
+
+  it('a capability with a requiredRole is hidden from a caller without it', () => {
+    const projection = createProjection(OPEN_ORG_POLICY, {
+      provisionedConnectors: ['jira'],
+      hiddenCapabilities: [],
+      roles: ['renkei-user'],
+    });
+    expect(
+      projection.allows({
+        id: 'jira_admin_tool',
+        connector: 'jira',
+        kind: 'act',
+        requiredRole: 'renkei-operator',
+      })
+    ).toBe(false);
+  });
+
+  it('a capability with a requiredRole is visible to a caller holding it', () => {
+    const projection = createProjection(OPEN_ORG_POLICY, {
+      provisionedConnectors: ['jira'],
+      hiddenCapabilities: [],
+      roles: ['renkei-user', 'renkei-operator'],
+    });
+    expect(
+      projection.allows({
+        id: 'jira_admin_tool',
+        connector: 'jira',
+        kind: 'act',
+        requiredRole: 'renkei-operator',
+      })
+    ).toBe(true);
+  });
+
+  it('omitting roles altogether hides any role-gated capability', () => {
+    const projection = createProjection(OPEN_ORG_POLICY, {
+      provisionedConnectors: ['jira'],
+      hiddenCapabilities: [],
+    });
+    expect(
+      projection.allows({
+        id: 'jira_admin_tool',
+        connector: 'jira',
+        kind: 'act',
+        requiredRole: 'renkei-operator',
+      })
+    ).toBe(false);
+  });
 });

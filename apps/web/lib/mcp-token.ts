@@ -94,6 +94,14 @@ export interface AccessTokenRecord {
   application: string;
   /** The acting agent for 'agent' tokens (migration 040); null otherwise. */
   agentId: string | null;
+  /**
+   * The caller's renkei roles (migration 091), captured from their browser
+   * session when the authorization code was minted and carried forward
+   * through every refresh. Empty for tokens issued before this migration,
+   * or for an 'agent' token — those never went through the browser
+   * authorize step. Gates must treat empty as "no role", not "unknown".
+   */
+  roles: string[];
 }
 
 export async function storeAccessToken(params: {
@@ -104,6 +112,7 @@ export async function storeAccessToken(params: {
   scope: string | null;
   ttlSeconds: number;
   application?: Application;
+  roles?: string[];
 }): Promise<void> {
   const dbResult = getDatabase();
   if (!dbResult.ok) throw new Error('Database unavailable');
@@ -117,6 +126,7 @@ export async function storeAccessToken(params: {
       subject: params.subject,
       application: params.application ?? 'jira',
       scope: params.scope,
+      roles: params.roles ?? [],
       expires_at: new Date(Date.now() + params.ttlSeconds * 1000),
     })
     .execute();
@@ -148,6 +158,7 @@ export async function resolveAccessToken(
       'tenant_id',
       'application',
       'agent_id',
+      'roles',
     ])
     .where('token_hash', '=', tokenHash)
     .where('tenant_id', '=', tenantId)
@@ -172,6 +183,7 @@ export async function resolveAccessToken(
     scope: row.scope,
     application: row.application,
     agentId: row.agent_id,
+    roles: row.roles ?? [],
   };
 }
 
