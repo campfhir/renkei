@@ -4,7 +4,7 @@ This guide covers deploying the Jira MCP Gateway to production.
 
 ## Prerequisites
 
-- Node.js 18+ (recommended: 20.x)
+- Node.js 24+ (recommended: 24.x)
 - PostgreSQL 12+
 - Atlassian OAuth app (for authentication)
 - OIDC provider (Atlassian, Auth0, Okta, etc.)
@@ -269,7 +269,7 @@ vercel env add PUBLIC_BASE_URL
 
 ```dockerfile
 # Dockerfile
-FROM node:20-alpine
+FROM node:24-alpine
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml ./
@@ -648,8 +648,7 @@ npm start
 
 ### Node.js LTS Updates
 
-- Current LTS: Node 20.x
-- Next LTS: Node 22.x (April 2024)
+- Current LTS: Node 24.x
 
 Test thoroughly before upgrading production.
 
