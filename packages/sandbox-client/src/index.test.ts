@@ -264,3 +264,235 @@ describe('clientFailure', () => {
     expect(result).toEqual({ status: 418, message: 'huh' });
   });
 });
+
+describe('browser verbs', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+  const PAGE = { url: 'https://example.com/', title: 'Example', snapshot: 'Page: Example', truncated: false };
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('posts each verb to /v1/browser/<op> with the target and arguments', async () => {
+    const {
+      sbBrowserNavigate, sbBrowserSnapshot, sbBrowserClick, sbBrowserType, sbBrowserSelect,
+      sbBrowserPress, sbBrowserBack, sbBrowserClose,
+    } = await import('./index');
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify(PAGE), { status: 200 }));
+
+    expect(await sbBrowserNavigate(TARGET, { url: 'https://example.com/', maxChars: 500 })).toEqual({ ok: true, val: PAGE });
+    await sbBrowserSnapshot(TARGET);
+    await sbBrowserClick(TARGET, { ref: 'e1' });
+    await sbBrowserType(TARGET, { ref: 'e2', text: 'hi', submit: true });
+    await sbBrowserSelect(TARGET, { ref: 'e3', values: ['Blue'] });
+    await sbBrowserPress(TARGET, { key: 'Escape' });
+    await sbBrowserBack(TARGET);
+
+    const calls = fetchSpy.mock.calls.map(([url, init]) => [String(url), JSON.parse(String(init?.body))]);
+    expect(calls).toEqual([
+      ['http://sandbox.internal:8092/v1/browser/navigate', { ...TARGET, url: 'https://example.com/', maxChars: 500 }],
+      ['http://sandbox.internal:8092/v1/browser/snapshot', TARGET],
+      ['http://sandbox.internal:8092/v1/browser/click', { ...TARGET, ref: 'e1' }],
+      ['http://sandbox.internal:8092/v1/browser/type', { ...TARGET, ref: 'e2', text: 'hi', submit: true }],
+      ['http://sandbox.internal:8092/v1/browser/select', { ...TARGET, ref: 'e3', values: ['Blue'] }],
+      ['http://sandbox.internal:8092/v1/browser/press', { ...TARGET, key: 'Escape' }],
+      ['http://sandbox.internal:8092/v1/browser/back', TARGET],
+    ]);
+    expect(fetchSpy.mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: 'Bearer test-key' });
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ closed: true }), { status: 200 }));
+    expect(await sbBrowserClose(TARGET)).toEqual({ ok: true, val: { closed: true } });
+  });
+
+  it('parses a screenshot as a staged file plus where the page was', async () => {
+    const { sbBrowserScreenshot } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ file: WIRE_FILE, url: 'https://example.com/', title: 'Example' }), { status: 200 })
+    );
+    const result = await sbBrowserScreenshot(TARGET, { fullPage: true, filename: 'home.png' });
+    expect(result).toEqual({ ok: true, val: { file: WIRE_FILE, url: 'https://example.com/', title: 'Example' } });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      ...TARGET,
+      fullPage: true,
+      filename: 'home.png',
+    });
+  });
+
+  it('reads status, and treats a page without a snapshot as malformed', async () => {
+    const { sbBrowserStatus, sbBrowserSnapshot } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ enabled: true, sessions: 3 }), { status: 200 }));
+    expect(await sbBrowserStatus()).toEqual({ ok: true, val: { enabled: true, sessions: 3 } });
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ url: 'https://x' }), { status: 200 }));
+    const result = await sbBrowserSnapshot(TARGET);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.err.kind).toBe('unreachable');
+  });
+
+  it('carries the worker error tag and message through clientFailure', async () => {
+    const { sbBrowserClick } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { type: 'bad_ref', message: 'No element carries ref e9' } }), { status: 400 })
+    );
+    const result = await sbBrowserClick(TARGET, { ref: 'e9' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(clientFailure(result.err)).toEqual({ status: 400, message: 'No element carries ref e9' });
+    }
+    expect(clientFailure({ kind: 'op', type: 'no_session', message: undefined, status: 409 })).toEqual({
+      status: 409,
+      message: 'No page is open — open one with sandbox_browser_navigate first.',
+    });
+    expect(clientFailure({ kind: 'op', type: 'browser_unavailable', message: undefined, status: 503 }).status).toBe(503);
+  });
+});
+
+describe('sbBrowserRun / sbBrowserScroll', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+  const PAGE = { url: 'https://example.com/', title: 'Example', snapshot: 'Page: Example', truncated: false };
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('posts the steps and parses a full or partial run', async () => {
+    const { sbBrowserRun } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ completed: 2, page: PAGE, failed: null }), { status: 200 })
+    );
+    const steps = [{ kind: 'type' as const, ref: 'e1', text: 'a' }, { kind: 'back' as const }];
+    expect(await sbBrowserRun(TARGET, { steps, maxChars: 500 })).toEqual({
+      ok: true,
+      val: { completed: 2, page: PAGE, failed: null },
+    });
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('http://sandbox.internal:8092/v1/browser/run');
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({ ...TARGET, steps, maxChars: 500 });
+
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          completed: 1,
+          page: null,
+          failed: { index: 1, kind: 'click', type: 'bad_ref', message: 'stale' },
+        }),
+        { status: 200 }
+      )
+    );
+    expect(await sbBrowserRun(TARGET, { steps })).toEqual({
+      ok: true,
+      val: { completed: 1, page: null, failed: { index: 1, kind: 'click', type: 'bad_ref', message: 'stale' } },
+    });
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ page: PAGE }), { status: 200 }));
+    const malformed = await sbBrowserRun(TARGET, { steps });
+    expect(malformed.ok).toBe(false);
+  });
+
+  it('posts scroll fields', async () => {
+    const { sbBrowserScroll } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify(PAGE), { status: 200 }));
+    expect(await sbBrowserScroll(TARGET, { direction: 'up', amount: 200 })).toEqual({ ok: true, val: PAGE });
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('http://sandbox.internal:8092/v1/browser/scroll');
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({ ...TARGET, direction: 'up', amount: 200 });
+  });
+});
+
+describe('secrets', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+  const SECRET = {
+    id: 'secret-1',
+    name: 'vendor-portal',
+    fields: ['username', 'password'],
+    hosts: ['portal.vendor.com'],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    expiresAt: '2026-02-01T00:00:00.000Z',
+    lastUsedAt: null,
+    unlockedUntil: '2026-01-01T08:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch');
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('creates, lists, unlocks, locks and revokes through /v1/secrets/*', async () => {
+    const { sbSecretCreate, sbSecretsList, sbSecretUnlock, sbSecretLock, sbSecretRevoke } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secret: SECRET, passphrase: 'abcde-fghjk-mnpqr-stuvw-xyz23' }), { status: 200 }));
+    expect(await sbSecretCreate(TARGET, { name: 'vendor-portal', fields: { password: 'x' }, hosts: ['portal.vendor.com'], unlockMs: 1000 })).toEqual({
+      ok: true,
+      val: { secret: SECRET, passphrase: 'abcde-fghjk-mnpqr-stuvw-xyz23' },
+    });
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('http://sandbox.internal:8092/v1/secrets/create');
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      ...TARGET,
+      name: 'vendor-portal',
+      fields: { password: 'x' },
+      hosts: ['portal.vendor.com'],
+      unlockMs: 1000,
+    });
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secrets: [SECRET] }), { status: 200 }));
+    expect(await sbSecretsList(TARGET)).toEqual({ ok: true, val: [SECRET] });
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secret: SECRET }), { status: 200 }));
+    expect(await sbSecretUnlock(TARGET, { id: 'secret-1', passphrase: 'p'.repeat(12) })).toEqual({ ok: true, val: SECRET });
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ secret: { ...SECRET, unlockedUntil: null } }), { status: 200 }));
+    const locked = await sbSecretLock(TARGET, 'secret-1');
+    expect(locked.ok && locked.val.unlockedUntil).toBeNull();
+
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ revoked: true, id: 'secret-1', name: 'vendor-portal' }), { status: 200 }));
+    expect(await sbSecretRevoke(TARGET, 'secret-1')).toEqual({ ok: true, val: { id: 'secret-1', name: 'vendor-portal' } });
+  });
+
+  it('phrases the secret error tags', () => {
+    expect(clientFailure({ kind: 'op', type: 'bad_passphrase', message: undefined, status: 403 })).toEqual({
+      status: 403,
+      message: 'That passphrase does not open this secret.',
+    });
+    expect(clientFailure({ kind: 'op', type: 'secret_unavailable', message: 'locked', status: 403 })).toEqual({
+      status: 403,
+      message: 'locked',
+    });
+    expect(clientFailure({ kind: 'op', type: 'secret_exists', message: undefined, status: 409 }).status).toBe(409);
+    expect(clientFailure({ kind: 'op', type: 'secret_limit', message: undefined, status: 429 }).status).toBe(429);
+  });
+
+  it('posts a secret reference on a type call, never a value', async () => {
+    const { sbBrowserType } = await import('./index');
+    fetchSpy.mockResolvedValueOnce(
+      new Response(JSON.stringify({ url: 'https://x', title: '', snapshot: 'Page', truncated: false }), { status: 200 })
+    );
+    await sbBrowserType(TARGET, { ref: 'e1', secret: { name: 'vendor-portal', field: 'password' }, submit: true });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      ...TARGET,
+      ref: 'e1',
+      secret: { name: 'vendor-portal', field: 'password' },
+      submit: true,
+    });
+  });
+});
+
+describe('sandboxBrowserEnabled', () => {
+  it('needs both the worker config and the flag', async () => {
+    const { sandboxBrowserEnabled } = await import('./index');
+    expect(sandboxBrowserEnabled()).toBe(false);
+    process.env.SANDBOX_BROWSER_ENABLED = 'true';
+    expect(sandboxBrowserEnabled()).toBe(true);
+    process.env.SANDBOX_BROWSER_ENABLED = 'no';
+    expect(sandboxBrowserEnabled()).toBe(false);
+    process.env.SANDBOX_BROWSER_ENABLED = '1';
+    delete process.env.SANDBOX_WORKER_URL;
+    expect(sandboxBrowserEnabled()).toBe(false);
+  });
+});

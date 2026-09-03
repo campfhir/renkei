@@ -17,6 +17,7 @@
     "@renkei/db": "workspace:*",
     "@renkei/settings": "workspace:*",
     "kysely": "^0.29.4",
+    "playwright-core": "1.62.1",
     "tsx": "^4.23.5"
   },
   "devDependencies": {

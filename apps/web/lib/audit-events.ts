@@ -41,7 +41,11 @@ export type AuditAction =
   | 'fileshare.updated'
   | 'fileshare.deleted'
   | 'fileshare.connected'
-  | 'fileshare.disconnected';
+  | 'fileshare.disconnected'
+  | 'sandbox.secret.created'
+  | 'sandbox.secret.unlocked'
+  | 'sandbox.secret.locked'
+  | 'sandbox.secret.revoked';
 
 export interface AuditEventInput {
   tenantId: string;

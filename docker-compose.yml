@@ -39,6 +39,9 @@ services:
       ONBASE_WORKER_API_KEY: ${ONBASE_WORKER_API_KEY:-renkei-dev-onbase-key}
       SANDBOX_WORKER_URL: http://renkei-worker-sandbox:8092
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
+      # On in dev so the sandbox_browser_* tools are there to try; must
+      # match worker-sandbox's setting below.
+      SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
     ports:
       - "3000:3000"
     depends_on:
@@ -199,7 +202,9 @@ services:
   # docs/sandbox-connector-design.md). The app reaches it via
   # SANDBOX_WORKER_URL with the shared bearer key; the dev default below
   # keeps the stack turnkey — export SANDBOX_WORKER_API_KEY to override
-  # both sides at once.
+  # both sides at once. The image also carries the headless Chromium behind
+  # the sandbox_browser_* tools; SANDBOX_BROWSER_ENABLED turns it on here
+  # and registers the tools in the app (same variable on both).
   worker-sandbox:
     build:
       context: .
@@ -210,6 +215,7 @@ services:
     environment:
       DATABASE_URL: postgres://renkei:renkei@postgres:5432/renkei
       SANDBOX_WORKER_API_KEY: ${SANDBOX_WORKER_API_KEY:-renkei-dev-sandbox-key}
+      SANDBOX_BROWSER_ENABLED: ${SANDBOX_BROWSER_ENABLED:-true}
       NODE_ENV: production
     volumes:
       - sandbox_data:/data

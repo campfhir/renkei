@@ -56,7 +56,9 @@ A per-caller scratch space for staging a file mid-task — the piece that lets a
 
 This is deliberately the first place Renkei holds file bytes at rest outside a provider or a browser, so it is held to a tighter bar than the rest of this table: a fixed TTL, a hard per-caller quota, no knowledge indexing, and isolation matching the credential-holding workers (`apps/worker-sandbox` is its own image, its own volume, no published ports). See [`sandbox-connector-design.md`](./sandbox-connector-design.md) for the full reasoning, including the SSRF guard on `sandbox_download_url` and how `sandbox_send_to_upload` authorizes without a bearer token.
 
-The package itself (`packages/connector-sandbox`) is dependency- and I/O-free, the `connector-onbase` shape: filename validation, quota/TTL constants, and the egress guard — all the HTTP and disk I/O lives in `apps/worker-sandbox`.
+The same worker also owns a headless browser behind the `sandbox_browser_*` tools (opt-in with `SANDBOX_BROWSER_ENABLED`): one isolated context per caller, driven by element refs from a text snapshot rather than by selectors or scripts, with every connection Chromium makes routed through an in-process egress proxy that refuses private and internal addresses. Screenshots are staged as ordinary scratch-space files. Logins the browser needs are supplied on the connectors page as _browser secrets_ — sealed under a passphrase-derived key rather than `TOKEN_ENCRYPTION_KEY`, unlocked into the worker's memory for a bounded window, scoped to named hosts, and typed by the worker without the model ever seeing a value. See the browser and secrets sections of [`sandbox-connector-design.md`](./sandbox-connector-design.md).
+
+The package itself (`packages/connector-sandbox`) is dependency- and I/O-free, the `connector-onbase` shape: filename validation, quota/TTL constants, the egress guard, and the browser snapshot vocabulary — all the HTTP, disk and browser I/O lives in `apps/worker-sandbox`.
 
 ## connector-mistral-ocr
 

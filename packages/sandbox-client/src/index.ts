@@ -11,7 +11,10 @@
  *
  * Configuration: SANDBOX_WORKER_URL + SANDBOX_WORKER_API_KEY. Both
  * absent-or-set-together; a missing pair means every operation answers
- * 'unconfigured' — the sandbox is down, never open.
+ * 'unconfigured' — the sandbox is down, never open. The browser verbs
+ * (`sbBrowser*`) additionally need SANDBOX_BROWSER_ENABLED on the web side
+ * so the sandbox_browser_* tools register only where the worker actually
+ * runs a browser — `sandboxBrowserEnabled()` is that check.
  *
  * Errors keep the worker's tag + message so each surface phrases its own
  * refusals; `clientFailure` gives callers one shared status+string mapping
@@ -63,6 +66,16 @@ export function sandboxConfig(): { url: string; key: string } | null {
   const key = process.env.SANDBOX_WORKER_API_KEY?.trim();
   if (!url || !key) return null;
   return { url, key };
+}
+
+/**
+ * Whether this deployment offers the sandbox browser: the worker must be
+ * configured AND SANDBOX_BROWSER_ENABLED set (the same flag the worker
+ * reads to launch one). Off unless said otherwise — closed, never open.
+ */
+export function sandboxBrowserEnabled(): boolean {
+  if (!sandboxConfig()) return false;
+  return /^(1|true|yes|on)$/i.test((process.env.SANDBOX_BROWSER_ENABLED ?? '').trim());
 }
 
 function unreachable(message: string): { ok: false; err: SandboxClientError } {
@@ -253,6 +266,287 @@ export async function sbDeleteFile(
   return { ok: true, val: { id: str(value.id) } };
 }
 
+// ─── The browser ────────────────────────────────────────────────────────────
+
+/** Where a browser session's page is after a verb, and what is on it. */
+export interface WireBrowserPage {
+  url: string;
+  title: string;
+  /** The rendered snapshot — headings, text, and [eN]-ref'd interactive elements. */
+  snapshot: string;
+  truncated: boolean;
+}
+
+function browserPageOf(value: unknown): WireBrowserPage | null {
+  if (!isRecord(value)) return null;
+  const url = str(value.url);
+  const snapshot = str(value.snapshot);
+  if (!url || typeof value.snapshot !== 'string') return null;
+  return { url, title: str(value.title), snapshot, truncated: value.truncated === true };
+}
+
+async function browserPageCall(
+  op: string,
+  target: SandboxTarget,
+  input: Record<string, unknown>
+): Promise<ClientResult<WireBrowserPage>> {
+  const result = await callJson(`browser/${op}`, { ...target, ...input });
+  if (!result.ok) return result;
+  const page = browserPageOf(result.val);
+  return page ? { ok: true, val: page } : malformed();
+}
+
+export async function sbBrowserStatus(): Promise<ClientResult<{ enabled: boolean; sessions: number }>> {
+  const result = await callJson('browser/status', {});
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || typeof value.enabled !== 'boolean') return malformed();
+  return {
+    ok: true,
+    val: { enabled: value.enabled, sessions: typeof value.sessions === 'number' ? value.sessions : 0 },
+  };
+}
+
+export function sbBrowserNavigate(
+  target: SandboxTarget,
+  input: { url: string; maxChars?: number }
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('navigate', target, input);
+}
+
+export function sbBrowserSnapshot(
+  target: SandboxTarget,
+  input: { maxChars?: number } = {}
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('snapshot', target, input);
+}
+
+export function sbBrowserClick(
+  target: SandboxTarget,
+  input: { ref: string; maxChars?: number }
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('click', target, input);
+}
+
+/** A type step's secret reference: which stored secret, which field — never a value. */
+export interface WireSecretRef {
+  name: string;
+  field: string;
+}
+
+export function sbBrowserType(
+  target: SandboxTarget,
+  input: { ref: string; text?: string; secret?: WireSecretRef; submit?: boolean; maxChars?: number }
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('type', target, input);
+}
+
+export function sbBrowserSelect(
+  target: SandboxTarget,
+  input: { ref: string; values: string[]; maxChars?: number }
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('select', target, input);
+}
+
+export function sbBrowserPress(
+  target: SandboxTarget,
+  input: { key: string; maxChars?: number }
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('press', target, input);
+}
+
+export function sbBrowserScroll(
+  target: SandboxTarget,
+  input: { ref?: string; direction?: 'up' | 'down'; amount?: number; maxChars?: number } = {}
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('scroll', target, input);
+}
+
+export function sbBrowserBack(
+  target: SandboxTarget,
+  input: { maxChars?: number } = {}
+): Promise<ClientResult<WireBrowserPage>> {
+  return browserPageCall('back', target, input);
+}
+
+/**
+ * One step of a sandbox_browser_run, as the wire carries it — the same
+ * shape @renkei/connector-sandbox's `BrowserStep` validates on the worker,
+ * spelled out here so this dependency-free package needs no import for it.
+ */
+export type WireBrowserStep =
+  | { kind: 'navigate'; url: string }
+  | { kind: 'click'; ref: string }
+  | { kind: 'type'; ref: string; text?: string; secret?: WireSecretRef; submit?: boolean }
+  | { kind: 'select'; ref: string; values: string[] }
+  | { kind: 'press'; key: string }
+  | { kind: 'scroll'; ref?: string; direction?: 'up' | 'down'; amount?: number }
+  | { kind: 'wait'; ms?: number; text?: string }
+  | { kind: 'back' };
+
+/** How far a run got, the page it ended on, and what stopped it. */
+export interface WireBrowserRun {
+  completed: number;
+  page: WireBrowserPage | null;
+  failed: { index: number; kind: string; type: string; message: string } | null;
+}
+
+export async function sbBrowserRun(
+  target: SandboxTarget,
+  input: { steps: WireBrowserStep[]; maxChars?: number }
+): Promise<ClientResult<WireBrowserRun>> {
+  const result = await callJson('browser/run', { ...target, ...input });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || typeof value.completed !== 'number') return malformed();
+  const page = value.page === null || value.page === undefined ? null : browserPageOf(value.page);
+  if (value.page && !page) return malformed();
+  let failed: WireBrowserRun['failed'] = null;
+  if (isRecord(value.failed)) {
+    if (typeof value.failed.index !== 'number') return malformed();
+    failed = {
+      index: value.failed.index,
+      kind: str(value.failed.kind),
+      type: str(value.failed.type) || 'action_failed',
+      message: str(value.failed.message),
+    };
+  }
+  return { ok: true, val: { completed: value.completed, page, failed } };
+}
+
+export async function sbBrowserScreenshot(
+  target: SandboxTarget,
+  input: { fullPage?: boolean; filename?: string } = {}
+): Promise<ClientResult<{ file: WireSandboxFile; url: string; title: string }>> {
+  const result = await callJson('browser/screenshot', { ...target, ...input });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  const file = fileOf(value.file);
+  if (!file) return malformed();
+  return { ok: true, val: { file, url: str(value.url), title: str(value.title) } };
+}
+
+export async function sbBrowserClose(target: SandboxTarget): Promise<ClientResult<{ closed: boolean }>> {
+  const result = await callJson('browser/close', { ...target });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || typeof value.closed !== 'boolean') return malformed();
+  return { ok: true, val: { closed: value.closed } };
+}
+
+// ─── Browser secrets ────────────────────────────────────────────────────────
+
+/** One secret as the worker describes it: never a value, never the passphrase. */
+export interface WireSandboxSecret {
+  id: string;
+  name: string;
+  fields: string[];
+  hosts: string[];
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string | null;
+  /** ISO time the worker's in-memory key lapses; null when locked. */
+  unlockedUntil: string | null;
+}
+
+function secretOf(value: unknown): WireSandboxSecret | null {
+  if (!isRecord(value)) return null;
+  const id = str(value.id);
+  const name = str(value.name);
+  const createdAt = str(value.createdAt);
+  const expiresAt = str(value.expiresAt);
+  if (!id || !name || !createdAt || !expiresAt) return null;
+  const list = (raw: unknown) =>
+    Array.isArray(raw) ? raw.filter((entry): entry is string => typeof entry === 'string') : [];
+  return {
+    id,
+    name,
+    fields: list(value.fields),
+    hosts: list(value.hosts),
+    createdAt,
+    expiresAt,
+    lastUsedAt: optStr(value.lastUsedAt) ?? null,
+    unlockedUntil: optStr(value.unlockedUntil) ?? null,
+  };
+}
+
+async function secretCall(
+  op: string,
+  target: SandboxTarget,
+  input: Record<string, unknown>
+): Promise<ClientResult<WireSandboxSecret>> {
+  const result = await callJson(`secrets/${op}`, { ...target, ...input });
+  if (!result.ok) return result;
+  const value = result.val;
+  const secret = isRecord(value) ? secretOf(value.secret) : null;
+  return secret ? { ok: true, val: secret } : malformed();
+}
+
+/**
+ * Seal a new secret on the worker. The passphrase is optional: absent, the
+ * worker generates one and returns it HERE, once — the only time any
+ * Renkei response ever carries it. The values travel to the worker over
+ * the internal seam and nowhere else.
+ */
+export async function sbSecretCreate(
+  target: SandboxTarget,
+  input: {
+    name: string;
+    fields: Record<string, string>;
+    hosts: string[];
+    passphrase?: string;
+    unlockMs?: number;
+    ttlMs?: number;
+  }
+): Promise<ClientResult<{ secret: WireSandboxSecret; passphrase: string | null }>> {
+  const result = await callJson('secrets/create', { ...target, ...input });
+  if (!result.ok) return result;
+  const value = result.val;
+  const secret = isRecord(value) ? secretOf(value.secret) : null;
+  if (!secret || !isRecord(value)) return malformed();
+  return { ok: true, val: { secret, passphrase: optStr(value.passphrase) ?? null } };
+}
+
+export async function sbSecretsList(target: SandboxTarget): Promise<ClientResult<WireSandboxSecret[]>> {
+  const result = await callJson('secrets/list', { ...target });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || !Array.isArray(value.secrets)) return malformed();
+  const secrets: WireSandboxSecret[] = [];
+  for (const raw of value.secrets) {
+    const secret = secretOf(raw);
+    if (!secret) return malformed();
+    secrets.push(secret);
+  }
+  return { ok: true, val: secrets };
+}
+
+export function sbSecretUnlock(
+  target: SandboxTarget,
+  input: { id: string; passphrase: string; unlockMs?: number }
+): Promise<ClientResult<WireSandboxSecret>> {
+  return secretCall('unlock', target, input);
+}
+
+export function sbSecretLock(
+  target: SandboxTarget,
+  id: string
+): Promise<ClientResult<WireSandboxSecret>> {
+  return secretCall('lock', target, { id });
+}
+
+export async function sbSecretRevoke(
+  target: SandboxTarget,
+  id: string
+): Promise<ClientResult<{ id: string; name: string }>> {
+  const result = await callJson('secrets/revoke', { ...target, id });
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || !value.revoked) return malformed();
+  return { ok: true, val: { id: str(value.id), name: str(value.name) } };
+}
+
 /**
  * One shared mapping from a client error to a model-facing refusal, so
  * every sandbox_* tool and every batch-pipeline caller phrases the same
@@ -281,6 +575,30 @@ export function clientFailure(error: SandboxClientError): { status: number; mess
       return { status: 502, message: error.message ?? 'Could not fetch that URL.' };
     case 'bad_filename':
       return { status: 400, message: 'That filename is not usable — no path separators.' };
+    case 'browser_unavailable':
+      return {
+        status: 503,
+        message: error.message ?? 'The sandbox browser is not enabled on this deployment.',
+      };
+    case 'no_session':
+      return {
+        status: 409,
+        message: error.message ?? 'No page is open — open one with sandbox_browser_navigate first.',
+      };
+    case 'bad_ref':
+      return { status: 400, message: error.message ?? 'That ref is not on the current page — take a new snapshot.' };
+    case 'navigation_failed':
+      return { status: 502, message: error.message ?? 'The browser could not load that page.' };
+    case 'action_failed':
+      return { status: 400, message: error.message ?? 'The browser could not perform that action.' };
+    case 'secret_unavailable':
+      return { status: 403, message: error.message ?? 'That secret cannot be used here.' };
+    case 'bad_passphrase':
+      return { status: 403, message: error.message ?? 'That passphrase does not open this secret.' };
+    case 'secret_exists':
+      return { status: 409, message: error.message ?? 'A secret with that name already exists.' };
+    case 'secret_limit':
+      return { status: 429, message: error.message ?? 'Too many secrets — revoke one first.' };
     default:
       return { status: error.status, message: error.message ?? error.type };
   }

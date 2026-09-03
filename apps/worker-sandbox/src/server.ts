@@ -15,12 +15,15 @@
  *    octet-stream, write and fetch accept/produce it), never as
  *    JSON-wrapped base64.
  *
- * `/v1/fetch` is the one endpoint that reaches outside this process: it
- * fetches a caller-supplied URL itself (through @renkei/connector-sandbox's
- * SSRF guard) so the model never has to see or generate the bytes. Every
- * write path — fetch and write alike — enforces the per-file cap AND the
- * per-caller quota, and aborts mid-stream rather than buffering an
- * oversized source in full.
+ * `/v1/fetch` and the `/v1/browser/*` verbs are the endpoints that reach
+ * outside this process: fetch pulls a caller-supplied URL itself (through
+ * @renkei/connector-sandbox's SSRF guard) so the model never has to see or
+ * generate the bytes, and the browser verbs drive this worker's own
+ * headless Chromium (browser.ts — behind an egress proxy that applies the
+ * same guard to every connection). Every write path — fetch, write, and a
+ * browser screenshot alike — enforces the per-file cap AND the per-caller
+ * quota, and aborts mid-stream rather than buffering an oversized source in
+ * full.
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -43,9 +46,55 @@ import {
   validateFilename,
   type SandboxFileSummary,
 } from '@renkei/connector-sandbox';
+import {
+  generatePassphrase,
+  sealSecretFields,
+  secretTtlMs,
+  snapshotCharsOf,
+  unlockWindowMs,
+  validatePassphrase,
+  validateSecretFields,
+  validateSecretHosts,
+  validateSecretName,
+  SECRET_MAX_PER_SUBJECT,
+  type BrowserPageState,
+  type BrowserRunResult,
+  type SandboxSecretSummary,
+} from '@renkei/connector-sandbox';
 import * as disk from './disk';
 import * as store from './store';
+import * as secretsStore from './secrets-store';
+import { BrowserOpError, type BrowserErrorType, type BrowserTarget } from './browser';
+import { SecretVault } from './secret-vault';
+import { secretSummary } from './secrets';
 import { logger } from './logger';
+
+/**
+ * The browser verbs the HTTP surface dispatches to — structurally the
+ * BrowserSessions class, named as an interface so the server can be
+ * exercised against a scripted double without launching anything.
+ */
+export interface BrowserVerbs {
+  sessionCount(): number;
+  navigate(target: BrowserTarget, url: string, maxChars: number): Promise<BrowserPageState>;
+  snapshot(target: BrowserTarget, maxChars: number): Promise<BrowserPageState>;
+  click(target: BrowserTarget, ref: unknown, maxChars: number): Promise<BrowserPageState>;
+  type(
+    target: BrowserTarget,
+    ref: unknown,
+    text: unknown,
+    submit: boolean,
+    maxChars: number,
+    secret?: unknown
+  ): Promise<BrowserPageState>;
+  select(target: BrowserTarget, ref: unknown, values: unknown, maxChars: number): Promise<BrowserPageState>;
+  press(target: BrowserTarget, key: unknown, maxChars: number): Promise<BrowserPageState>;
+  scroll(target: BrowserTarget, input: unknown, maxChars: number): Promise<BrowserPageState>;
+  back(target: BrowserTarget, maxChars: number): Promise<BrowserPageState>;
+  run(target: BrowserTarget, steps: unknown, maxChars: number): Promise<BrowserRunResult>;
+  screenshot(target: BrowserTarget, fullPage: boolean): Promise<{ bytes: Buffer; url: string; title: string }>;
+  close(target: BrowserTarget): Promise<boolean>;
+}
 
 export interface SandboxServerDeps {
   db: Kysely<DB>;
@@ -53,6 +102,10 @@ export interface SandboxServerDeps {
   apiKeys: string[];
   /** The per-tenant per-file ceiling (the org's attachment limit). */
   maxFileBytes?: (tenantId: string) => Promise<number>;
+  /** The browser, when SANDBOX_BROWSER_ENABLED; null/absent answers every browser verb 503. */
+  browser?: BrowserVerbs | null;
+  /** The in-memory secret vault; the server makes its own when not given (tests share one with the browser). */
+  vault?: SecretVault;
 }
 
 const MAX_JSON_BYTES = 1_048_576;
@@ -144,6 +197,34 @@ function targetOf(body: Record<string, unknown>): store.SandboxTarget | null {
   return { tenantId, subject };
 }
 
+const BROWSER_ERROR_STATUS: Record<BrowserErrorType, number> = {
+  browser_unavailable: 503,
+  blocked_url: 400,
+  no_session: 409,
+  bad_ref: 400,
+  bad_request: 400,
+  navigation_failed: 502,
+  action_failed: 400,
+  secret_unavailable: 403,
+};
+
+function secretWire(summary: SandboxSecretSummary) {
+  return {
+    id: summary.id,
+    name: summary.name,
+    fields: summary.fields,
+    hosts: summary.hosts,
+    createdAt: summary.createdAt.toISOString(),
+    expiresAt: summary.expiresAt.toISOString(),
+    lastUsedAt: summary.lastUsedAt ? summary.lastUsedAt.toISOString() : null,
+    unlockedUntil: summary.unlockedUntil ? summary.unlockedUntil.toISOString() : null,
+  };
+}
+
+function pageWire(state: BrowserPageState) {
+  return { url: state.url, title: state.title, snapshot: state.snapshot, truncated: state.truncated };
+}
+
 /**
  * How much more this caller may stage right now, after their file-count
  * ceiling — 0 (or less) means "refuse outright," which the caller checks
@@ -177,6 +258,7 @@ function expiryFromNow(batchId: string | null): Date {
 
 export function createSandboxServer(deps: SandboxServerDeps): Server {
   const maxFileBytes = deps.maxFileBytes ?? orgMaxFileBytes;
+  const vault = deps.vault ?? new SecretVault();
 
   async function handleFetch(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
     const target = targetOf(body);
@@ -349,6 +431,268 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     sendJson(response, 200, { deleted: true, id: file.id });
   }
 
+  /**
+   * Stage bytes this process is about to produce (a browser screenshot)
+   * under the same quota, cap, and TTL as any fetched or written file. The
+   * quota is checked BEFORE `produce` runs, so a full scratch space never
+   * costs a screenshot nobody can keep. Answers the response itself on
+   * refusal and returns null.
+   */
+  async function stageProduced(
+    target: store.SandboxTarget,
+    input: { filename: string; contentType: string | null },
+    produce: () => Promise<{ bytes: Buffer; source: string }>,
+    response: ServerResponse
+  ): Promise<SandboxFileSummary | null> {
+    const headroom = await quotaHeadroom(deps.db, target, null);
+    if (!headroom.ok) {
+      sendError(response, 429, 'quota_exceeded', 'Too many files staged — delete some first.');
+      return null;
+    }
+    if (headroom.remaining <= 0) {
+      sendError(response, 413, 'quota_exceeded', 'The scratch space quota is full.');
+      return null;
+    }
+    const cap = Math.min(await maxFileBytes(target.tenantId), DEFAULT_MAX_FILE_BYTES, headroom.remaining);
+    const produced = await produce();
+    if (produced.bytes.byteLength > cap) {
+      sendError(response, 413, 'too_large', `The file exceeds the ${cap}-byte limit.`);
+      return null;
+    }
+    const storageKey = disk.newStorageKey(target.tenantId, target.subject);
+    const written = await disk.writeStream(storageKey, Readable.from([produced.bytes]), cap);
+    if (!written.ok) {
+      sendError(response, 413, 'too_large', `The file exceeds the ${cap}-byte limit.`);
+      return null;
+    }
+    return store.insertFile(deps.db, {
+      ...target,
+      filename: input.filename,
+      contentType: input.contentType,
+      sizeBytes: written.sizeBytes,
+      storageKey,
+      source: produced.source,
+      batchId: null,
+      expiresAt: expiryFromNow(null),
+    });
+  }
+
+  /**
+   * The browser verbs: one JSON POST each, the caller's (tenantId, subject)
+   * naming the session exactly as it names their staged files. Every verb
+   * answers the page's new state; screenshot additionally stages a PNG,
+   * and run answers how far a list of steps got plus the page it ended on.
+   */
+  async function handleBrowser(
+    op: string,
+    body: Record<string, unknown>,
+    response: ServerResponse
+  ): Promise<void> {
+    const browser = deps.browser;
+    if (op === 'status') {
+      return sendJson(response, 200, {
+        enabled: browser !== null && browser !== undefined,
+        sessions: browser ? browser.sessionCount() : 0,
+      });
+    }
+    if (!browser) {
+      return sendError(
+        response,
+        503,
+        'browser_unavailable',
+        'The sandbox browser is not enabled on this deployment.'
+      );
+    }
+    const target = targetOf(body);
+    if (!target) return sendError(response, 400, 'bad_request');
+    const maxChars = snapshotCharsOf(body.maxChars);
+    try {
+      switch (op) {
+        case 'navigate':
+          return sendJson(response, 200, pageWire(await browser.navigate(target, str(body.url), maxChars)));
+        case 'snapshot':
+          return sendJson(response, 200, pageWire(await browser.snapshot(target, maxChars)));
+        case 'click':
+          return sendJson(response, 200, pageWire(await browser.click(target, body.ref, maxChars)));
+        case 'type':
+          return sendJson(
+            response,
+            200,
+            pageWire(
+              await browser.type(
+                target,
+                body.ref,
+                body.text,
+                body.submit === true,
+                maxChars,
+                body.secret
+              )
+            )
+          );
+        case 'select':
+          return sendJson(response, 200, pageWire(await browser.select(target, body.ref, body.values, maxChars)));
+        case 'press':
+          return sendJson(response, 200, pageWire(await browser.press(target, body.key, maxChars)));
+        case 'scroll':
+          return sendJson(
+            response,
+            200,
+            pageWire(
+              await browser.scroll(
+                target,
+                { ref: body.ref, direction: body.direction, amount: body.amount },
+                maxChars
+              )
+            )
+          );
+        case 'back':
+          return sendJson(response, 200, pageWire(await browser.back(target, maxChars)));
+        case 'run': {
+          const outcome = await browser.run(target, body.steps, maxChars);
+          return sendJson(response, 200, {
+            completed: outcome.completed,
+            page: outcome.page ? pageWire(outcome.page) : null,
+            failed: outcome.failed,
+          });
+        }
+        case 'close':
+          return sendJson(response, 200, { closed: await browser.close(target) });
+        case 'screenshot': {
+          const named = validateFilename(str(body.filename) || `screenshot-${Date.now()}.png`);
+          if (!named.ok) return sendError(response, 400, 'bad_filename');
+          let shot: { bytes: Buffer; url: string; title: string } | null = null;
+          const staged = await stageProduced(
+            target,
+            { filename: named.filename, contentType: 'image/png' },
+            async () => {
+              shot = await browser.screenshot(target, body.fullPage === true);
+              let host = 'page';
+              try {
+                host = new URL(shot.url).hostname || host;
+              } catch {
+                // about:blank and friends have no host worth naming.
+              }
+              return { bytes: shot.bytes, source: `browser:${host}` };
+            },
+            response
+          );
+          if (!staged || !shot) return;
+          const taken: { url: string; title: string } = shot;
+          return sendJson(response, 200, { file: summaryWire(staged), url: taken.url, title: taken.title });
+        }
+        default:
+          return sendError(response, 404, 'unknown_operation');
+      }
+    } catch (error) {
+      if (error instanceof BrowserOpError) {
+        return sendError(response, BROWSER_ERROR_STATUS[error.type], error.type, error.message);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Browser secrets: sealed here, under a passphrase this process sees
+   * only for the length of the request; the derived key lives in the
+   * vault until its window closes. Every operation is scoped to the
+   * caller's own (tenantId, subject), and no response ever carries a
+   * value — the one exception is the generated passphrase, returned from
+   * `create` exactly once, when the caller asked this worker to make one.
+   */
+  async function handleSecrets(
+    op: string,
+    body: Record<string, unknown>,
+    response: ServerResponse
+  ): Promise<void> {
+    const target = targetOf(body);
+    if (!target) return sendError(response, 400, 'bad_request');
+    switch (op) {
+      case 'create': {
+        const name = validateSecretName(body.name);
+        if (!name.ok) return sendError(response, 400, 'bad_request', name.message);
+        const fields = validateSecretFields(body.fields);
+        if (!fields.ok) return sendError(response, 400, 'bad_request', fields.message);
+        const hosts = validateSecretHosts(body.hosts);
+        if (!hosts.ok) return sendError(response, 400, 'bad_request', hosts.message);
+        let passphrase: string;
+        let generated = false;
+        if (body.passphrase === undefined || body.passphrase === null || body.passphrase === '') {
+          passphrase = generatePassphrase();
+          generated = true;
+        } else {
+          const given = validatePassphrase(body.passphrase);
+          if (!given.ok) return sendError(response, 400, 'bad_request', given.message);
+          passphrase = given.passphrase;
+        }
+        if ((await secretsStore.countSecrets(deps.db, target)) >= SECRET_MAX_PER_SUBJECT) {
+          return sendError(
+            response,
+            429,
+            'secret_limit',
+            `At most ${SECRET_MAX_PER_SUBJECT} secrets — revoke one first.`
+          );
+        }
+        if (await secretsStore.getSecretByName(deps.db, target, name.name)) {
+          return sendError(
+            response,
+            409,
+            'secret_exists',
+            `A secret named "${name.name}" already exists — revoke it first.`
+          );
+        }
+        const sealed = sealSecretFields(fields.fields, passphrase);
+        const stored = await secretsStore.insertSecret(deps.db, {
+          ...target,
+          name: name.name,
+          fields: Object.keys(fields.fields),
+          hosts: hosts.hosts,
+          sealed,
+          expiresAt: new Date(Date.now() + secretTtlMs(body.ttlMs)),
+        });
+        const until = Date.now() + unlockWindowMs(body.unlockMs);
+        vault.unlock(stored.id, sealed, passphrase, until);
+        return sendJson(response, 200, {
+          secret: secretWire(secretSummary(stored, vault)),
+          passphrase: generated ? passphrase : null,
+        });
+      }
+      case 'list': {
+        const rows = await secretsStore.listSecrets(deps.db, target);
+        return sendJson(response, 200, {
+          secrets: rows.map((row) => secretWire(secretSummary(row, vault))),
+        });
+      }
+      case 'unlock': {
+        const id = str(body.id);
+        const secret = id ? await secretsStore.getSecret(deps.db, target, id) : undefined;
+        if (!secret) return sendError(response, 404, 'not_found');
+        const given = validatePassphrase(body.passphrase);
+        if (!given.ok) return sendError(response, 400, 'bad_request', given.message);
+        const until = Date.now() + unlockWindowMs(body.unlockMs);
+        if (!vault.unlock(secret.id, secret.sealed, given.passphrase, until)) {
+          return sendError(response, 403, 'bad_passphrase', 'That passphrase does not open this secret.');
+        }
+        return sendJson(response, 200, { secret: secretWire(secretSummary(secret, vault)) });
+      }
+      case 'lock': {
+        const id = str(body.id);
+        const secret = id ? await secretsStore.getSecret(deps.db, target, id) : undefined;
+        if (!secret) return sendError(response, 404, 'not_found');
+        vault.lock(secret.id);
+        return sendJson(response, 200, { secret: secretWire(secretSummary(secret, vault)) });
+      }
+      case 'revoke': {
+        const id = str(body.id);
+        const deleted = id ? await secretsStore.deleteSecret(deps.db, target, id) : undefined;
+        if (!deleted) return sendError(response, 404, 'not_found');
+        vault.lock(deleted.id);
+        return sendJson(response, 200, { revoked: true, id: deleted.id, name: deleted.name });
+      }
+      default:
+        return sendError(response, 404, 'unknown_operation');
+    }
+  }
+
   const jsonHandlers: Record<
     string,
     (body: Record<string, unknown>, response: ServerResponse) => Promise<void>
@@ -380,8 +724,10 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
     }
 
     const op = url.pathname.startsWith('/v1/') ? url.pathname.slice('/v1/'.length) : '';
-    const jsonHandler = jsonHandlers[op];
-    if (!jsonHandler) {
+    const browserOp = op.startsWith('browser/') ? op.slice('browser/'.length) : null;
+    const secretsOp = op.startsWith('secrets/') ? op.slice('secrets/'.length) : null;
+    const jsonHandler = browserOp !== null || secretsOp !== null ? null : jsonHandlers[op];
+    if (browserOp === null && secretsOp === null && !jsonHandler) {
       return sendError(response, 404, 'unknown_operation');
     }
     const raw = await readBody(request, MAX_JSON_BYTES);
@@ -393,7 +739,9 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
       return sendError(response, 400, 'bad_request');
     }
     if (!isRecord(parsedBody)) return sendError(response, 400, 'bad_request');
-    await jsonHandler(parsedBody, response);
+    if (browserOp !== null) return handleBrowser(browserOp, parsedBody, response);
+    if (secretsOp !== null) return handleSecrets(secretsOp, parsedBody, response);
+    await jsonHandler!(parsedBody, response);
   }
 
   const server = createServer((request, response) => {
@@ -428,10 +776,27 @@ export function createSandboxServer(deps: SandboxServerDeps): Server {
           });
         }
       }
+      // Secrets past their lifetime: the key first, then the row.
+      const expiredSecrets = await secretsStore.listExpiredSecrets(deps.db, SWEEP_BATCH);
+      for (const secret of expiredSecrets) {
+        try {
+          vault.lock(secret.id);
+          await secretsStore.deleteSecretById(deps.db, secret.id);
+        } catch (error) {
+          logger.warn('sweep could not remove secret {id}: {error}', {
+            component: 'worker-sandbox/sweep',
+            id: secret.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     })();
   }, SWEEP_INTERVAL_MS);
   sweep.unref();
-  server.on('close', () => clearInterval(sweep));
+  server.on('close', () => {
+    clearInterval(sweep);
+    if (!deps.vault) vault.close();
+  });
 
   return server;
 }

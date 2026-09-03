@@ -295,17 +295,29 @@ CMD ["pnpm", "--filter", "@renkei/worker-onbase", "start"]
 # it is the first process that holds staged file bytes at rest, so it gets
 # the same isolation as the fileshares/onbase workers — its own container,
 # no published ports, and it rolls out independently of the queue workers.
-FROM node:24-alpine AS sandbox
+#
+# Debian rather than Alpine, unlike the other stages: this image also
+# carries the headless Chromium behind the sandbox_browser_* tools
+# (apps/worker-sandbox/src/browser.ts), and Playwright's browser builds only
+# ship against glibc. `playwright-core install --with-deps` below pulls
+# exactly the Chromium headless shell the pinned playwright-core version was
+# tested with, plus its system libraries and fonts, into /ms-playwright
+# where the unprivileged worker can read it — no distro Chromium of a
+# different version, no download at container start.
+FROM node:24-bookworm-slim AS sandbox
 ARG PNPM_VERSION
 
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init && npm install -g pnpm@${PNPM_VERSION}
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends dumb-init ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    npm install -g pnpm@${PNPM_VERSION}
 
 # Created before anything it owns — see the runtime stage for why a trailing
 # chown -R would double the image.
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S worker -u 1001
+RUN groupadd -g 1001 nodejs && \
+    useradd -r -u 1001 -g nodejs -d /app -s /usr/sbin/nologin worker
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches ./patches
@@ -313,6 +325,15 @@ COPY --parents apps/*/package.json packages/*/package.json ./
 RUN pnpm install --frozen-lockfile --prod --no-optional \
       --filter @renkei/worker-sandbox... && \
     rm -rf /root/.pnpm-store /root/.npm
+
+# The browser. PLAYWRIGHT_BROWSERS_PATH is set for the runtime too (below),
+# so playwright-core resolves the very binary installed here. Headless
+# shell only: the full Chromium build is twice the size and headless
+# launches never use it.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN pnpm --filter @renkei/worker-sandbox exec playwright-core install --with-deps --only-shell chromium && \
+    rm -rf /var/lib/apt/lists/* /root/.cache && \
+    chmod -R a+rX /ms-playwright
 
 # tsx runs TypeScript source directly; workspace links need the package
 # sources present (only the filtered deps' node_modules were installed).
@@ -329,7 +350,8 @@ USER worker
 ARG GIT_COMMIT
 ENV NODE_ENV=production \
     GIT_COMMIT=${GIT_COMMIT} \
-    SANDBOX_DATA_DIR=/data
+    SANDBOX_DATA_DIR=/data \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 EXPOSE 8092
 

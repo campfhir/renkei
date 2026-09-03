@@ -119,6 +119,7 @@ export const EXPECTED_MIGRATIONS = [
   '087-usage-ledger-backfill',
   '088-agent-notifications-meta',
   '089-batch-processed-files',
+  '090-sandbox-secrets',
 ];
 
 export interface MigrationStatus {

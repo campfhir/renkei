@@ -57,10 +57,12 @@ lower one:
   a source of truth — same as `connector-fileshares`/`connector-onbase`.
 - **Curated verbs, not a shell.** Every sandbox_* tool is one named,
   bounded thing the worker does itself (download this URL, read back what's
-  staged, forward these bytes into that upload slot) — never an arbitrary
-  command. Filenames are display labels only; storage paths are always
-  built from a UUID tenant id, a hashed subject, and a UUID file id, never
-  from caller-supplied text (`apps/worker-sandbox/src/disk.ts`).
+  staged, forward these bytes into that upload slot, click the element
+  with this ref) — never an arbitrary command, and never a script or a
+  selector the model wrote. Filenames are display labels only; storage
+  paths are always built from a UUID tenant id, a hashed subject, and a
+  UUID file id, never from caller-supplied text
+  (`apps/worker-sandbox/src/disk.ts`).
 
 ## `sandbox_download_url` and the egress guard
 
@@ -96,6 +98,153 @@ subject to match. `claimPendingUploadSlotByOwner`
 `/api/upload/[slotId]`'s POST route now share, so there is one finish path
 instead of two copies of the same status update.
 
+## The browser (`sandbox_browser_*`)
+
+The second thing the sandbox holds for an agent, after staged bytes: a
+headless browser, for the pages no Renkei connector reaches — a vendor
+portal, a public status page, a form that only exists on the web. It is
+the same shape as the file tools applied to a page: every verb is one
+named, bounded thing the worker does itself, and the model never hands
+over a selector, a script, or a byte.
+
+**Where it runs.** Inside `apps/worker-sandbox`, alongside the scratch
+disk (`src/browser.ts`). A browser is a large, network-reaching process;
+the sandbox worker is already the container that holds nothing but an
+agent's own transient working state, reachable only over the internal
+network with a bearer key, on its own image — so it gets that container
+too, and its screenshots land in the same scratch space under the same
+TTL and quota. The image (the `sandbox` target in `docker/Dockerfile`, now
+Debian-based for glibc) bakes in the exact Chromium headless shell the
+pinned `playwright-core` was tested with (`playwright-core install
+--with-deps --only-shell chromium`), so nothing is downloaded at container
+start. `SANDBOX_BROWSER_ENABLED=true` on the worker launches it (lazily, on
+the first navigate); the same flag on the web app registers the tools.
+Unset on either side means no browser — closed, never open.
+
+**How a page reaches the model.** A *snapshot*, not HTML: the worker walks
+the live DOM (`src/browser-page-script.ts`, run inside the page) and
+reports the headings, text, images and landmarks a person would see, plus
+every interactive element — links, buttons, form controls, ARIA widgets,
+editable regions — with a short ref (`e12`) stamped onto the element as
+`data-renkei-ref`. Rendering into text is pure and shared
+(`packages/connector-sandbox/src/browser.ts`), bounded by a caller-chosen
+`maxChars` (default 20k, ceiling 80k) and a node ceiling, and says when
+it was cut. Password values are masked. Every action answers with a
+fresh snapshot of wherever the page ended up (a navigation, a popup, a
+menu), so the usual loop is navigate → act by ref → act by ref, with
+`sandbox_browser_snapshot` only for re-reading.
+
+**Acting by ref, never by selector.** A ref is validated to the
+`e<digits>` shape before it goes anywhere near a locator, and a ref no
+element carries is refused with "take a new snapshot" — refs die with the
+page they were minted on. Typed text is bounded (10k), select values are
+labels or values, key names are a strict token. Nothing the model writes
+is ever evaluated in the page.
+
+**Several steps in one call.** Every verb is one `BrowserStep`
+(`packages/connector-sandbox/src/browser.ts` — navigate, click, type,
+select, press, scroll, wait, back), parsed and bounded there and executed
+by one `perform` in the worker. `sandbox_browser_run` takes an ordered
+list of them (at most 20, with at most 20s of explicit waiting so a run
+fits inside one tool call) and executes them in one round trip: fill
+three fields, select an option, scroll, click submit, wait for the
+confirmation text. A step that may move the page waits for it to load
+before the next step; a popup a step opens becomes the page the rest of
+the run works on. The run stops at the first failing step and answers
+with how many completed, which step failed and why, and the page it ended
+on — a partial run is something the model can continue from, not a
+mystery. Since refs come from the snapshot the model already holds, a run
+is for working *one* page; actions on the page a link or submit leads to
+belong in the next call, whose snapshot has that page's refs. `wait` is
+either a bounded pause (≤10s) or "until this text is visible" (≤10s),
+which is how a run survives a slow form submission without a round trip
+to poll.
+
+**Egress — the part that matters most.** Chromium is launched with **no
+direct network access**: every connection it makes goes through a
+loopback egress proxy inside the worker (`src/browser-proxy.ts`) that
+resolves the host itself, refuses the localhost family and every
+private/reserved range with the same `isBlockedIP` the download guard
+uses, and then dials *the very address it verified*. That covers what a
+tool-argument check never could — sub-resources, redirects, websockets,
+`<img src="http://169.254.169.254/...">` — and it closes the DNS-rebinding
+window the resolve-then-fetch pattern documents as residual, because there
+is no second lookup for a rebinding answer to land on. Chromium's implicit
+proxy bypass for loopback is switched off (`<-loopback>`), so
+`http://127.0.0.1` from inside a page reaches the proxy and is refused
+there; ports other than 80/443 below 1024 are refused outright. On top of
+that, top-level navigation is https-only and pre-checked with
+`assertPublicHttpsUrl`, so a blocked URL is refused with a clear message
+before the browser is involved; a refused in-page navigation lands on
+Chromium's error page, which the worker reports as "refused or
+unreachable" rather than reading. Non-http(s) URLs are never navigable.
+
+**Sessions.** One browser context per `(tenantId, subject)` — cookies,
+storage and tabs never cross callers, the same scoping as their staged
+files — created on the first navigate and closed after ten idle minutes
+(`BROWSER_SESSION_IDLE_MS`) or on `sandbox_browser_close`; at most eight
+at once (`BROWSER_MAX_SESSIONS`), least-recently-used evicted beyond that;
+the browser process itself exits once no session remains. Calls on one
+session are serialized so two tool calls racing for the same page cannot
+interleave. Downloads are refused, service workers blocked, and a popup a
+click opens becomes the page the next snapshot reads.
+
+**Secrets — logins the browser may type but the model may never see.**
+The one thing a real portal needs that nothing above provides is a
+credential, and a credential handed to a model as tool text is a
+credential in a transcript, a log, and every prompt after. So secrets go
+around the model entirely:
+
+- *Supplied in the Renkei UI, never over MCP.* The "Browser secrets" card
+  on the connectors page (`apps/web/app/[slug]/connectors/sandbox-secrets.tsx`,
+  routes under `/api/tenant/[tenantId]/sandbox/secrets`) is where a person
+  adds, unlocks, locks and revokes them, with their own session. The MCP
+  surface can list secrets (`sandbox_browser_list_secrets`: name, field
+  names, hosts, lock state — never a value) and type one
+  (`sandbox_browser_type` with `secret: {name, field}` instead of `text`,
+  as a single verb or a run step). It cannot create, unlock or read one.
+- *Sealed under their own key, not the deployment's.* Every other
+  credential Renkei holds is under `TOKEN_ENCRYPTION_KEY`. A browser
+  secret is sealed (AES-256-GCM, `sbx1.` envelope) under a key derived by
+  scrypt from a passphrase — one Renkei **generates** (five groups of five
+  unambiguous characters, ~124 bits; a person may choose their own, 12+
+  characters) and shows exactly once, and does not store. The row in
+  `sandbox_secrets` (migration 090) carries the sealed blob plus the
+  non-secret half (name, field names, hosts, expiry); the table plus every
+  Renkei key yields nothing.
+- *Unlocked for a window, in memory, in the worker.* Unlocking sends the
+  passphrase to `apps/worker-sandbox` for the length of one request; the
+  worker derives the key, proves it opens the blob (GCM's tag refuses a
+  wrong passphrase before anything is held), and keeps the key in
+  `SecretVault` (`src/secret-vault.ts`) until the window closes — 8 hours
+  by default, 24 at most — or the person locks it, or the process restarts.
+  Nothing about the unlock is written anywhere, which is why the UI asks
+  the worker for lock state rather than a column. The secret itself
+  expires (30 days by default, 90 at most) and is swept like a staged file.
+- *Scoped to hosts.* A secret names 1–8 hostnames (`portal.vendor.com`,
+  `*.vendor.com`) it may be typed on, required at creation. The worker
+  resolves a type step's reference against the page's **current** host
+  (`src/secrets.ts`) and refuses otherwise — so a task that wandered, or
+  was steered, onto another site cannot spend the credential there.
+- *Never readable back.* The control the worker filled is stamped
+  `data-renkei-secret`, and the walk masks its value like a password
+  field's. Every typed value is also remembered for the session and
+  scrubbed (`scrubSecretValues`, URL-encoded form included) from every
+  snapshot, URL, title and error message the model receives — so a site
+  that echoes a username, or a form that put the value in the query
+  string, does not become the channel that reveals it. What the site
+  itself does with a credential it was given is, of course, the site's.
+- *Auditable.* Creating, unlocking, locking and revoking each record an
+  audit event (`sandbox.secret.*`); `last_used_at` records the last time
+  the browser typed it.
+
+**What it deliberately is not.** Not a headed or remote-controlled
+browser, not a way to run JavaScript, not a file-download path (that is
+`sandbox_download_url`, byte-capped and quota'd), and not a vault the
+model can open — the tool descriptions tell the model never to type a
+credential as text, to use a stored secret, and to ask the person when
+none exists or it is locked.
+
 ## Tool inventory
 
 | Tool | Kind | What it does |
@@ -107,6 +256,21 @@ instead of two copies of the same status update.
 | `sandbox_read_file` | Read | Extracted text of a staged file (same extractor as `fileshare_read_file`). |
 | `sandbox_delete_file` | Act | Remove a staged file ahead of its TTL. |
 | `sandbox_send_to_upload` | Act | Forward a staged file's bytes into a pending `*_request_*_upload` slot. |
+| `sandbox_browser_navigate` | Act | Open an `https://` URL in the caller's browser session; answers a snapshot. |
+| `sandbox_browser_snapshot` | Read | Re-read the open page (title, URL, text, `[eN]`-ref'd controls). |
+| `sandbox_browser_click` | Act | Click an element by ref; answers the snapshot of wherever that led. |
+| `sandbox_browser_type` | Act | Replace a field's text by ref — or fill it from a stored secret the model never sees — optionally pressing Enter. |
+| `sandbox_browser_list_secrets` | Read | The stored secrets' names, fields, hosts and lock state; never values. |
+| `sandbox_browser_select` | Act | Choose option(s) of a `<select>` by ref. |
+| `sandbox_browser_press_key` | Act | Press one key (Escape, Tab, PageDown, ...) in the page. |
+| `sandbox_browser_scroll` | Act | Scroll the page up/down by pixels, or bring one ref into view. |
+| `sandbox_browser_run` | Act | Execute up to 20 steps (type, select, scroll, wait, click, ...) in one round trip. |
+| `sandbox_browser_back` | Act | Browser history back. |
+| `sandbox_browser_screenshot` | Act | PNG of the open page, staged as a scratch-space file. |
+| `sandbox_browser_close` | Act | Close the caller's session (pages, cookies, history). |
+
+The browser tools exist only when `SANDBOX_BROWSER_ENABLED=true` on both
+the web app and the worker.
 
 ## Deployment
 
@@ -116,4 +280,7 @@ default `/data`). The web app reaches it at `SANDBOX_WORKER_URL` with the
 shared bearer key `SANDBOX_WORKER_API_KEY` (`apps/web/lib/sandbox/service-client.ts`).
 Both unset means the `sandbox_*` tools simply don't register — closed,
 never open, the same convention every other worker-backed connector
-follows. See `DEPLOYMENT.md` for the full env contract.
+follows. `SANDBOX_BROWSER_ENABLED=true`, set on both the web app and the
+worker, adds the `sandbox_browser_*` tools; `SANDBOX_BROWSER_EXECUTABLE`
+optionally points the worker at a specific Chromium binary instead of the
+one baked into the image. See `DEPLOYMENT.md` for the full env contract.
