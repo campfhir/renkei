@@ -690,6 +690,7 @@ export interface OauthAccessTokens {
   client_id: string;
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
+  roles: Generated<string[]>;
   scope: string | null;
   subject: string;
   tenant_id: string;
@@ -704,6 +705,7 @@ export interface OauthAuthorizationCodes {
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
   redirect_uri: string;
+  roles: Generated<string[]>;
   scope: string | null;
   subject: string;
   tenant_id: string;
@@ -725,6 +727,7 @@ export interface OauthRefreshTokens {
   client_id: string;
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
+  roles: Generated<string[]>;
   scope: string | null;
   subject: string;
   tenant_id: string;

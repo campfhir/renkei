@@ -1,8 +1,10 @@
 /**
  * log_search's contract: self-scoped to the caller's own Jira-linked
- * account (never tenant-wide — there is no role signal on an MCP token),
- * fails closed without a subject or a Jira grant, and never renders the
- * secure()-marked request/response body attributes back to the model.
+ * account by default, fails closed without a subject or a Jira grant,
+ * widens to a tenant-wide search only for a caller whose context.roles
+ * includes renkei-operator (undefined/empty roles stay self-scoped), and
+ * never renders the secure()-marked request/response body attributes back
+ * to the model in either branch.
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
@@ -100,6 +102,74 @@ test('scopes the query to the caller’s own tenant and account, never a client-
     'account-1',
     expect.objectContaining({ levels: ['warn', 'error', 'critical'], sort: 'desc' })
   );
+});
+
+test('a renkei-user role (no operator) stays self-scoped, same as no roles at all', async () => {
+  mockQuery.mockResolvedValue({ ok: true, val: [] });
+  const handlers = registerAll({ roles: ['renkei-user'] });
+
+  await handlers.get('log_search')!({});
+
+  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
+    null,
+    'tenant-1',
+    'account-1',
+    expect.anything()
+  );
+});
+
+test('renkei-operator searches the whole tenant, with no Jira account required', async () => {
+  mockQuery.mockResolvedValue({ ok: true, val: [] });
+  const handlers = registerAll({ accountId: '', roles: ['renkei-operator'] });
+
+  const result = await handlers.get('log_search')!({});
+
+  expect(result.isError).toBeUndefined();
+  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
+    null,
+    'tenant-1',
+    undefined,
+    expect.anything()
+  );
+  expect(result.content[0]?.text).toContain('tenant-wide');
+});
+
+test('an operator with their own Jira account still searches tenant-wide, not just their own', async () => {
+  mockQuery.mockResolvedValue({ ok: true, val: [] });
+  const handlers = registerAll({ accountId: 'account-1', roles: ['renkei-operator'] });
+
+  await handlers.get('log_search')!({});
+
+  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
+    null,
+    'tenant-1',
+    undefined,
+    expect.anything()
+  );
+});
+
+test('operator rows are labeled with whose activity they are; self-scoped rows are not', async () => {
+  const rowFor = (subject: string) => ({
+    id: `log-${subject}`,
+    timestamp: '2026-08-28T09:00:00.000Z',
+    level: 'error' as const,
+    message: 'Non-OK response',
+    meta: { component: 'jira/fetch', subject, accountId: 'acct-x', displayName: 'Alice' },
+  });
+
+  mockQuery.mockResolvedValue({ ok: true, val: [rowFor('auth0|alice')] });
+  const operatorHandlers = registerAll({ roles: ['renkei-operator'] });
+  const operatorText = (await operatorHandlers.get('log_search')!({})).content[0]?.text ?? '';
+  expect(operatorText).toContain('subject=auth0|alice');
+  expect(operatorText).toContain('accountId=acct-x');
+  expect(operatorText).toContain('displayName=Alice');
+
+  mockQuery.mockResolvedValue({ ok: true, val: [rowFor('auth0|alice')] });
+  const selfHandlers = registerAll({});
+  const selfText = (await selfHandlers.get('log_search')!({})).content[0]?.text ?? '';
+  expect(selfText).not.toContain('subject=');
+  expect(selfText).not.toContain('accountId=');
+  expect(selfText).not.toContain('displayName=');
 });
 
 test('renders rows but never the secure()-marked body/claim attributes', async () => {

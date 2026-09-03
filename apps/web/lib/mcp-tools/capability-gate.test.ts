@@ -94,4 +94,35 @@ describe('withCapabilityGate', () => {
 
     expect(typeof gated.registerTool).toBe('function');
   });
+
+  it('a requiredRole gates the whole module for a caller without that role', () => {
+    const { server, registered } = fakeServer();
+    const gated = withCapabilityGate(
+      server,
+      createProjection(OPEN_ORG_POLICY, { ...PROVISIONED, roles: ['renkei-user'] }),
+      JIRA_CONNECTOR,
+      'renkei-operator'
+    );
+
+    registerSampleTools(gated);
+
+    expect(registered).toEqual([]);
+  });
+
+  it('a requiredRole registers normally for a caller holding that role', () => {
+    const { server, registered } = fakeServer();
+    const gated = withCapabilityGate(
+      server,
+      createProjection(OPEN_ORG_POLICY, {
+        ...PROVISIONED,
+        roles: ['renkei-user', 'renkei-operator'],
+      }),
+      JIRA_CONNECTOR,
+      'renkei-operator'
+    );
+
+    registerSampleTools(gated);
+
+    expect(registered).toEqual(['jira_search_issues', 'jira_create_issue', 'jira_delete_issue']);
+  });
 });

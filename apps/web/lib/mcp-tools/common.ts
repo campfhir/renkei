@@ -109,6 +109,16 @@ export interface MCPToolContext {
    * without loosening any owner-scoped check.
    */
   agent?: { agentId: string };
+  /**
+   * The caller's renkei roles (migration 091), carried onto their MCP
+   * token from the browser session that authorized it — see
+   * lib/mcp-token.ts's AccessTokenRecord. Registration-time role gating
+   * (which tools even appear) goes through withCapabilityGate's
+   * requiredRole instead; this is for a handler that needs to branch on
+   * role within an already-registered tool's own logic. Empty for tokens
+   * issued before this migration or for an 'agent' token.
+   */
+  roles?: string[];
   db?: Kysely<DB>;
 }
 
