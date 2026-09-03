@@ -106,6 +106,8 @@ export function normalizeKeywords(candidates: readonly unknown[]): string[] {
     if (typeof candidate !== 'string') continue;
     // Trim before stripping quotes, or a trailing `" ` keeps its quote.
     const cleaned = candidate
+      .split('\u0000')
+      .join('')
       .trim()
       .replace(/^[-*•\d.)\s]+/, '') // list bullets and numbering
       .replace(/^["'`]+|["'`]+$/g, '')

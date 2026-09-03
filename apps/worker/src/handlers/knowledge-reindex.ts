@@ -44,6 +44,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/**
+ * A database failure, with the database's own words. The run row is what
+ * the admin reads, so the reason has to reach it — "could not be updated"
+ * alone sent an operator to the container logs, where nothing more was
+ * said either.
+ */
+function storeFailure(message: string | undefined): string {
+  return `the knowledge store could not be updated${message ? `: ${message}` : ''}`;
+}
+
 export function reindexOrderingKey(tenantId: string, runId: string): string {
   return `reindex/${tenantId}/${runId}`;
 }
@@ -117,7 +127,7 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
     if (kind === 'lexical') {
       const batch = await reindexLexicalBatch(tenantId, key, BATCH_LIMIT.lexical);
       if (!batch.ok) {
-        await fail('the knowledge store could not be updated');
+        await fail(storeFailure(batch.err.message));
         return;
       }
       outcome = batch.val;
@@ -132,7 +142,7 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
         await fail(
           batch.err.type === 'EMBEDDING_FAILED'
             ? `the embeddings endpoint failed: ${batch.err.message ?? 'unknown'}`
-            : 'the knowledge store could not be updated'
+            : storeFailure(batch.err.message)
         );
         return;
       }
@@ -151,7 +161,7 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
         skip
       );
       if (!batch.ok) {
-        await fail('the knowledge store could not be updated');
+        await fail(storeFailure(batch.err.message));
         return;
       }
       outcome = batch.val;
