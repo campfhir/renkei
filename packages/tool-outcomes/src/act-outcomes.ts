@@ -286,6 +286,13 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
     short: 'Moved several issues at once',
     coalesce: 'run',
   },
+  jira_move_issues: {
+    category: 'updated',
+    entity: 'issues',
+    label: 'Moved Jira issues to another project',
+    short: 'Moved issues to another project',
+    coalesce: 'run',
+  },
   jira_add_comment: {
     category: 'created',
     entity: 'comment',

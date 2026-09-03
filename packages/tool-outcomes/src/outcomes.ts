@@ -143,6 +143,25 @@ export const CURATED_OUTCOMES: Record<string, ToolOutcomes> = {
       retriable: true,
     },
   ]),
+  // Codes are site-wide labels (apps/web/lib/agents/run-labels.ts keys one
+  // label per code across every tool), so a move's own failures get their
+  // own codes rather than reusing the create/update ones with new wording.
+  jira_move_issues: curated('The issues were moved to the target project', [
+    {
+      code: 'target-project-not-found',
+      label: "The target project couldn't be found",
+      description: 'No project matches the key this step moves into.',
+      retriable: true,
+    },
+    {
+      code: 'move-blocked',
+      label: 'The move was refused before anything changed',
+      description:
+        'The target work type requires a field the source issues leave empty, or a request type ' +
+        'had to be chosen.',
+      retriable: true,
+    },
+  ]),
   jira_search_issues: curated('The search returned results', [
     {
       code: 'bad-query',

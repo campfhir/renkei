@@ -11,6 +11,7 @@ import type { JiraAuth } from './jira-auth';
 import { registerReadTools } from './read';
 import { registerWriteTools } from './write';
 import { registerBulkTools } from './bulk';
+import { registerMoveTools } from './move';
 import { registerSprintTools } from './sprints';
 import { registerProjectTools } from './project';
 import { registerAttachmentTools } from './attachments';
@@ -46,6 +47,7 @@ export async function registerJiraTools(
   // Mutating Operations
   await registerWriteTools(server, context, auth);
   await registerBulkTools(server, context, auth);
+  await registerMoveTools(server, context, auth);
   await registerAttachmentTools(server, context, auth);
   // No auth param: analyze_transcript makes no Jira API calls at all.
   await registerUtilityTools(server, context);
