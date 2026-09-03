@@ -21,7 +21,15 @@
  *
  * It also clears the run's agent_jobs row, live or dead-lettered, so a
  * stale-claim reclaim or a later dead-letter requeue can never resume or
- * double-process a run this already closed out from under it.
+ * double-process a run this already closed out from under it. And it voids
+ * any 'running' agent_run_steps row exactly like the engine's own
+ * RunCanceled handling does (engine.ts, the catch beside runAttempt's
+ * insert) — otherwise the timeline would show the run as Canceled while its
+ * last attempt sits forever as "Running", since nothing else ever closes
+ * that row out. A 'waiting' row (parked behind an approval or a question)
+ * is left alone on purpose: it already carries a complete summary, and the
+ * engine's own graceful-cancel path for a waiting run leaves it untouched
+ * too.
  */
 
 import { sql, type Kysely } from 'kysely';
@@ -78,6 +86,16 @@ export async function forceHaltRun(
     // Reached a terminal status in the gap above — nothing left to force.
     return { outcome: 'already-final', status: run.status };
   }
+
+  // Void the in-progress attempt row — same treatment, same reasoning, as
+  // engine.ts's own RunCanceled catch: nothing to show for an attempt that
+  // never finished, so it does not linger as "Running" under a run that is
+  // already Canceled.
+  await db
+    .deleteFrom('agent_run_steps')
+    .where('run_id', '=', input.runId)
+    .where('status', '=', 'running')
+    .execute();
 
   // Bypass the janitor's live-job check on purpose — that safety check is
   // exactly what makes this override necessary in the first place. A row

@@ -3,8 +3,9 @@
  * What must hold: a run that already finished refuses; the status flip is a
  * one-way claim guarded the same way requestRunCancellation's is (a race in
  * the gap between the read and the write is "already-final", not a crash);
- * and a successful halt also clears the run's agent_jobs row so nothing can
- * reclaim or resume it afterward.
+ * and a successful halt also clears the run's agent_jobs row AND voids its
+ * in-progress attempt row, so nothing can reclaim or resume it afterward
+ * and the timeline does not show a "Running" attempt under a Canceled run.
  */
 
 import type { Kysely } from 'kysely';
@@ -113,5 +114,6 @@ describe('forceHaltRun', () => {
     expect(jobUpdate).toMatchObject({ status: 'skipped' });
 
     expect(calls).toContainEqual({ table: 'agent_jobs_dead_letters', op: 'delete' });
+    expect(calls).toContainEqual({ table: 'agent_run_steps', op: 'delete' });
   });
 });

@@ -3854,6 +3854,23 @@ export function createAgentRunHandler(deps: EngineDeps) {
       })
       .where('id', '=', run.id)
       .execute();
+    // Every path that finishes a step's own attempt row (runAttempt's
+    // RunCanceled/RunAbort catches, a normal success/failure write) has
+    // already resolved it by the time finalizeRun runs. The one path that
+    // has NOT: the per-step checkpoint above bails into finalizeRun before
+    // ever dispatching the current node, which is also exactly what a
+    // RESUMED run does when it re-enters at the same current_step_id a
+    // crashed or stale-reclaimed executor never finished — that earlier
+    // attempt's row is still 'running', and nothing on this path would
+    // otherwise touch it. Voiding it here, unconditionally, closes that gap
+    // without having to duplicate the check at every bail-out site: no
+    // attempt is ever "still running" once its run is done, the same
+    // guarantee runAttempt's own RunCanceled catch gives a live attempt.
+    await db
+      .deleteFrom('agent_run_steps')
+      .where('run_id', '=', run.id)
+      .where('status', '=', 'running')
+      .execute();
     // A run's log line has to answer "whose agent, which one, and where did
     // it stop" without a second query. The ids stay in the metadata; the
     // sentence carries the names.
