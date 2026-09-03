@@ -11,9 +11,10 @@
  * agent replies to itself in a loop.
  */
 
-import { ok } from '@campfhir/safe-functions/helpers';
+import { ok, err } from '@campfhir/safe-functions/helpers';
 import { createWebexUserMessageHandler } from './webex-user-message';
 import type { ClaimedEvent } from '../queue';
+import type { WebexMessage } from '@renkei/connector-webex';
 
 const WATCHER_ACCOUNT = 'watcher-account-id';
 const TENANT = 'tenant-1';
@@ -38,6 +39,8 @@ function handlerWith(options: {
   roomType?: string | null;
   parentId?: string | null;
   published: unknown[];
+  nearbyMessages?: WebexMessage[];
+  listMessagesFails?: boolean;
 }) {
   return createWebexUserMessageHandler({
     resolveAccess: async () => ({
@@ -57,6 +60,10 @@ function handlerWith(options: {
           text: options.text === undefined ? 'hello there' : options.text,
           created: '2026-08-25T10:00:00.000Z',
         }),
+      listMessages: async () =>
+        options.listMessagesFails
+          ? err('WEBEX_API_ERROR' as const, { message: 'boom' })
+          : ok(options.nearbyMessages ?? []),
     }),
     wasSentByRenkei: async () => options.sentByRenkei ?? false,
     publish: async (payload: unknown) => {
@@ -162,5 +169,60 @@ describe('webex all-spaces ingest', () => {
 
     expect(published).toHaveLength(1);
     expect(published[0]).toMatchObject({ data: { roomType: '' } });
+  });
+
+  it('carries pre-fetched room history, so a step can skip webex_list_messages', async () => {
+    const published: unknown[] = [];
+    const nearbyMessages: WebexMessage[] = [
+      {
+        id: 'msg-earlier',
+        roomId: 'room-1',
+        roomType: 'group',
+        personId: 'person-2',
+        personEmail: 'alice@example.com',
+        parentId: null,
+        text: 'anyone seen the deploy fail?',
+        created: '2026-08-25T09:58:00.000Z',
+      },
+      {
+        id: 'msg-reply',
+        roomId: 'room-1',
+        roomType: 'group',
+        personId: 'person-3',
+        personEmail: 'bob@example.com',
+        parentId: 'msg-earlier',
+        text: 'yeah, looking now',
+        created: '2026-08-25T09:59:00.000Z',
+      },
+    ];
+    const handler = handlerWith({ personId: 'somebody-else', nearbyMessages, published });
+
+    await handler(event('msg-1'));
+
+    // The reply's thread marker rides along too — the same "in thread"
+    // shape webex_list_messages itself renders.
+    for (const expected of [
+      'alice@example.com',
+      'anyone seen the deploy fail?',
+      'bob@example.com',
+      'in thread msg-earlier',
+    ]) {
+      expect(published[0]).toMatchObject({
+        data: { nearbyMessages: expect.stringContaining(expected) },
+      });
+    }
+  });
+
+  it('degrades to empty history rather than dropping the message when the pre-fetch fails', async () => {
+    const published: unknown[] = [];
+    const handler = handlerWith({ personId: 'somebody-else', listMessagesFails: true, published });
+
+    await handler(event('msg-1'));
+
+    // The triggering message still gets published — a context-fetch miss
+    // costs a step its shortcut, not the whole message its ingestion. The
+    // step's own webex_list_messages tool call remains a fallback.
+    expect(published).toHaveLength(1);
+    expect(published[0]).toMatchObject({ data: { nearbyMessages: '' } });
   });
 });

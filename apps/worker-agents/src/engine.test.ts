@@ -19,6 +19,7 @@ import {
   type AgentStepsDoc,
 } from '@renkei/agents';
 import { setNotificationPrefs, DEFAULT_NOTIFICATION_PREFS } from '@renkei/user-prefs';
+import { setOrgSettings } from '@renkei/settings';
 import { createAgentRunHandler } from './engine';
 import { createApprovalSweep } from './approval-sweep';
 import type { QueueMessageInput } from '@renkei/queue';
@@ -133,6 +134,7 @@ maybe('agent run engine', () => {
     await sql`DELETE FROM agent_triggers WHERE tenant_id = ${tenantId}`.execute(db);
     await sql`DELETE FROM agents WHERE tenant_id = ${tenantId}`.execute(db);
     await sql`DELETE FROM identities WHERE tenant_id = ${tenantId}`.execute(db);
+    await sql`DELETE FROM tenant_settings WHERE tenant_id = ${tenantId}`.execute(db);
     await sql`DELETE FROM tenants WHERE id = ${tenantId}`.execute(db);
     await closeDatabase();
   });
@@ -578,8 +580,9 @@ maybe('agent run engine', () => {
       call === 0 ? useTool('jira_get_issue', { issueKey: 'PROJ-42' }) : finish('success')
     );
     // Stands in for "the owner clicked cancel while this step was in
-    // flight": by the time the engine reaches its next per-step
-    // checkpoint, cancel_requested_at is already set on the row.
+    // flight": cancel_requested_at is set mid-tool-call, inside the first
+    // step's only attempt — before that attempt ever reaches a second
+    // turn to declare finish_step.
     const mcp: McpClient = {
       initialize: async () => undefined,
       listTools: async () => [
@@ -615,19 +618,76 @@ maybe('agent run engine', () => {
       .executeTakeFirstOrThrow();
     expect(run.status).toBe('canceled');
 
-    // Only the first step ran — the checkpoint caught the flag before the
-    // second step's node ever dispatched.
+    // Neither step left an attempt row: the cancel took effect inside
+    // runAttempt's turn loop, before the first step's in-flight attempt
+    // ever got to declare finish_step — so that attempt is voided (same
+    // treatment as any other run-level abort) rather than recorded as a
+    // success, and the second step's node never dispatches at all.
     const attempts = await db
       .selectFrom('agent_run_steps')
       .select(['step_id', 'status'])
       .where('run_id', '=', runId)
       .execute();
-    expect(attempts).toHaveLength(1);
-    expect(attempts[0].step_id).toBe(firstStepId);
-    expect(attempts[0].status).toBe('succeeded');
+    expect(attempts).toHaveLength(0);
 
     // Quiet, same as 'stopped': whoever canceled it already knows.
     expect(finalized[0]).toMatchObject({ status: 'canceled', quiet: true });
+  });
+
+  it('interrupts a stuck attempt as a timeout instead of running past the deadline', async () => {
+    const { runId } = await seedRun(singleStep());
+    // A very tight budget: the run's deadline sits ~100ms after it starts.
+    // The attempt itself still starts comfortably inside that window (the
+    // pre-existing between-attempts checkpoint sees no expiry yet) — what's
+    // new is catching the deadline INSIDE that one attempt, once real time
+    // (simulated here by the tool call's delay) carries the clock past it
+    // before the attempt's next turn.
+    await setOrgSettings(tenantId, { agentRunTimeoutMinutes: 100 / 60_000 });
+    let completions = 0;
+    const llm = stubLlm(() => {
+      completions += 1;
+      return useTool('jira_get_issue', { issueKey: 'PROJ-42' });
+    });
+    const mcp = stubMcp(['jira_get_issue'], () => okToolResult);
+    const slowMcp: McpClient = {
+      ...mcp,
+      callTool: async (name) => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        return mcp.callTool(name, {});
+      },
+    };
+    try {
+      const handler = handlerWith(llm, slowMcp);
+      await handler({ payload: { runId } });
+
+      // Only the turn that made the (slow) tool call ever happened — the
+      // deadline check ahead of the NEXT turn caught it before the model
+      // got a chance to declare finish_step and paper over the overrun.
+      expect(completions).toBe(1);
+
+      const run = await db
+        .selectFrom('agent_runs')
+        .select(['status', 'error_kind', 'error'])
+        .where('id', '=', runId)
+        .executeTakeFirstOrThrow();
+      expect(run.status).toBe('failed');
+      expect(run.error_kind).toBe('timeout');
+      expect(run.error).toBe('The run exceeded its time budget.');
+
+      // The in-flight attempt is voided, same as any other run-level abort
+      // — nothing about it is worth keeping once it's been thrown away for
+      // running past budget.
+      const attempts = await db
+        .selectFrom('agent_run_steps')
+        .select(['step_id'])
+        .where('run_id', '=', runId)
+        .execute();
+      expect(attempts).toHaveLength(0);
+    } finally {
+      // Restore the default so later tests in this file (sharing tenantId)
+      // don't inherit a hair-trigger deadline.
+      await setOrgSettings(tenantId, { agentRunTimeoutMinutes: 15 });
+    }
   });
 
   it('takes the exhausted choice when every retry fails', async () => {
