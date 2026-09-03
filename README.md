@@ -73,7 +73,7 @@ packages/queue/    @renkei/queue — the broker-agnostic queue contract
 packages/db/       @renkei/db — Kysely client, generated schema types, and
                    migrations; shared by web, worker, and the migrate CLI
 docker/            multi-stage Dockerfile (builder / runtime / worker / migrate)
-scripts/           docker build/push and ngrok helpers
+scripts/           docker build/push and ngrok helpers (CI publishes images to Docker Hub on main)
 ```
 
 ## Deployment
