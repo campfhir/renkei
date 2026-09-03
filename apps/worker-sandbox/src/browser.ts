@@ -75,6 +75,7 @@ import {
   SECRET_ATTRIBUTE,
   type PageWalkResult,
 } from './browser-page-script';
+import type { BrowserSnapshotNode } from '@renkei/connector-sandbox';
 import { startEgressProxy, type EgressProxy } from './browser-proxy';
 import { logger } from './logger';
 
@@ -146,10 +147,65 @@ interface Session {
    * it. In memory only, gone with the session.
    */
   secretValues: Set<string>;
+  /** What each ref in the last snapshot the model received pointed at — see requireRef. */
+  refSignatures: Map<string, { sig: string; ordinal: number }>;
+  /** Set by the page's 'crash' event; the next read reports it instead of a blank page. */
+  crashed: boolean;
 }
 
 /** How long after a click/submit/key press a popup is still waited for. */
-const POPUP_WAIT_MS = 300;
+const POPUP_WAIT_MS = 500;
+/** The attribute a ref-recovery walk stamps, so it never disturbs the model's numbering. */
+const PROBE_ATTRIBUTE = 'data-renkei-probe';
+/**
+ * DOM-quiet wait after a load: this many consecutive samples, this far
+ * apart, must agree (a one-second window — long enough to catch a
+ * single-page app that bootstraps a beat after `load`), within this budget.
+ */
+const DOM_QUIET_SAMPLE_MS = 250;
+const DOM_QUIET_MIN_SAMPLES = 4;
+const DOM_QUIET_TIMEOUT_MS = 5_000;
+/** A walk this thin on a real page is usually a page still rendering: wait once more and re-walk. */
+const SPARSE_WALK_NODES = 8;
+const SPARSE_WALK_RETRY_MS = 1_500;
+
+/** Why a caller's session went away — what the next `no_session` refusal explains. */
+type SessionLoss = 'idle' | 'evicted' | 'closed' | 'browser_exited';
+
+const LOSS_EXPLANATION: Record<SessionLoss, string> = {
+  idle: 'Your browser session closed after being idle.',
+  evicted: 'Your browser session was closed to make room for other sessions.',
+  closed: 'Your browser session was closed.',
+  browser_exited:
+    'The browser process exited unexpectedly (it may have run out of memory on the last page) ' +
+    'and your session was lost.',
+};
+
+/**
+ * What identifies an interactive element across a re-render: its role,
+ * accessible name and link target, plus which of its look-alikes it was.
+ * A framework that re-creates DOM nodes drops the ref attribute; the
+ * element the model meant is still the one with this signature.
+ */
+function signatureOf(node: BrowserSnapshotNode): string {
+  return `${node.role}|${node.name}|${node.href ?? ''}`;
+}
+
+/** ref → (signature, ordinal among that signature) for one walk. */
+function refSignatures(
+  nodes: readonly BrowserSnapshotNode[]
+): Map<string, { sig: string; ordinal: number }> {
+  const seen = new Map<string, number>();
+  const map = new Map<string, { sig: string; ordinal: number }>();
+  for (const node of nodes) {
+    if (!node.ref) continue;
+    const sig = signatureOf(node);
+    const ordinal = seen.get(sig) ?? 0;
+    seen.set(sig, ordinal + 1);
+    map.set(node.ref, { sig, ordinal });
+  }
+  return map;
+}
 /** A beat after a scroll, for smooth scrolling and lazy content to catch up. */
 const SCROLL_SETTLE_MS = 150;
 
@@ -194,6 +250,8 @@ export class BrowserSessions {
   private readonly maxSessions: number;
   private readonly secrets: ResolveSecret | null;
   private readonly sessions = new Map<string, Session>();
+  /** Why each caller's most recent session ended, so the next refusal can say. */
+  private readonly lastLoss = new Map<string, SessionLoss>();
   private browser: Browser | null = null;
   private launching: Promise<Browser> | null = null;
   private proxy: EgressProxy | null = null;
@@ -231,9 +289,15 @@ export class BrowserSessions {
           // (and silent) when this worker closed the browser itself.
           const expected = this.closed || this.browser !== browser;
           if (this.browser === browser) this.browser = null;
+          for (const session of this.sessions.values()) {
+            this.lastLoss.set(session.key, expected ? 'closed' : 'browser_exited');
+            session.secretValues.clear();
+          }
           this.sessions.clear();
           if (!expected) {
-            logger.warn('browser process disconnected', { component: 'worker-sandbox/browser' });
+            logger.warn('browser process disconnected — every session lost', {
+              component: 'worker-sandbox/browser',
+            });
           }
         });
         this.browser = browser;
@@ -265,7 +329,7 @@ export class BrowserSessions {
         if (!oldest || session.lastUsedAt < oldest.lastUsedAt) oldest = session;
       }
       if (!oldest) break;
-      await this.closeSession(oldest);
+      await this.closeSession(oldest, 'evicted');
     }
 
     const browser = await this.browserInstance();
@@ -286,17 +350,28 @@ export class BrowserSessions {
       lastUsedAt: this.now(),
       queue: Promise.resolve(),
       secretValues: new Set(),
+      refSignatures: new Map(),
+      crashed: false,
     };
+    const watchCrash = (watched: Page) =>
+      watched.on('crash', () => {
+        session.crashed = true;
+        logger.warn('a page crashed in a browser session', { component: 'worker-sandbox/browser' });
+      });
+    watchCrash(page);
     // A popup becomes the active page: that is where the flow went.
     context.on('page', (opened) => {
       session.page = opened;
+      watchCrash(opened);
     });
     this.sessions.set(key, session);
+    this.lastLoss.delete(key);
     return session;
   }
 
-  private async closeSession(session: Session): Promise<void> {
+  private async closeSession(session: Session, reason: SessionLoss): Promise<void> {
     this.sessions.delete(session.key);
+    this.lastLoss.set(session.key, reason);
     session.secretValues.clear();
     try {
       await session.context.close();
@@ -311,7 +386,7 @@ export class BrowserSessions {
   private async sweepIdle(): Promise<void> {
     const cutoff = this.now() - this.idleMs;
     for (const session of Array.from(this.sessions.values())) {
-      if (session.lastUsedAt < cutoff) await this.closeSession(session);
+      if (session.lastUsedAt < cutoff) await this.closeSession(session, 'idle');
     }
     if (this.sessions.size === 0 && this.browser && !this.launching) {
       const browser = this.browser;
@@ -334,9 +409,12 @@ export class BrowserSessions {
     let session = this.sessions.get(sessionKey(target));
     if (!session) {
       if (!create) {
+        const loss = this.lastLoss.get(sessionKey(target));
         throw new BrowserOpError(
           'no_session',
-          'No page is open — open one with sandbox_browser_navigate first.'
+          `${loss ? LOSS_EXPLANATION[loss] : 'No page is open.'} Open the page again with ` +
+            'sandbox_browser_navigate, or with a sandbox_browser_run whose first step is navigate ' +
+            'so the actions follow in the same call.'
         );
       }
       session = await this.openSession(target);
@@ -366,9 +444,36 @@ export class BrowserSessions {
     await page
       .waitForLoadState('domcontentloaded', { timeout: BROWSER_NAVIGATION_TIMEOUT_MS })
       .catch(() => {});
+    await page.waitForLoadState('load', { timeout: BROWSER_SETTLE_TIMEOUT_MS }).catch(() => {});
     await page
       .waitForLoadState('networkidle', { timeout: BROWSER_SETTLE_TIMEOUT_MS })
       .catch(() => {});
+    await this.waitForDomQuiet(page);
+  }
+
+  /**
+   * A single-page app keeps rendering after the network goes quiet (and
+   * analytics beacons can keep it from ever going quiet). Sampling the
+   * element count until two samples agree is what turns "the page loaded"
+   * into "the page is showing what it is going to show", so a snapshot
+   * is not taken of a half-built list. Bounded, and never fatal.
+   */
+  private async waitForDomQuiet(page: Page): Promise<void> {
+    const deadline = Date.now() + DOM_QUIET_TIMEOUT_MS;
+    let previous = -1;
+    let agreed = 0;
+    while (Date.now() < deadline) {
+      let count: number;
+      try {
+        count = await page.evaluate<number>('document.getElementsByTagName("*").length');
+      } catch {
+        return;
+      }
+      agreed = count === previous ? agreed + 1 : 1;
+      if (agreed >= DOM_QUIET_MIN_SAMPLES) return;
+      previous = count;
+      await page.waitForTimeout(DOM_QUIET_SAMPLE_MS).catch(() => {});
+    }
   }
 
   /**
@@ -398,6 +503,16 @@ export class BrowserSessions {
   }
 
   private async state(session: Session, page: Page, maxChars: number): Promise<BrowserPageState> {
+    if (session.crashed) {
+      session.crashed = false;
+      session.refSignatures.clear();
+      await page.goto('about:blank').catch(() => {});
+      throw new BrowserOpError(
+        'navigation_failed',
+        'The page crashed — the site may be too heavy for the sandbox browser. Open it again ' +
+          'with sandbox_browser_navigate.'
+      );
+    }
     const url = page.url();
     if (url.startsWith('chrome-error://')) {
       // Chromium's own error page: the egress proxy refused the host, or it
@@ -432,6 +547,19 @@ export class BrowserSessions {
         );
       }
     }
+    if (walked.nodes.length < SPARSE_WALK_NODES && /^https?:/i.test(page.url())) {
+      // Seven elements on a careers site is a shell whose app has not
+      // painted yet, far more often than a page with seven things on it.
+      // One more beat, one more walk; the thin result stands if it holds.
+      await page.waitForTimeout(SPARSE_WALK_RETRY_MS).catch(() => {});
+      await this.waitForDomQuiet(page);
+      try {
+        walked = await page.evaluate<PageWalkResult>(pageScriptSource(BROWSER_SNAPSHOT_MAX_NODES));
+      } catch {
+        // Keep the walk we have.
+      }
+    }
+    session.refSignatures = refSignatures(walked.nodes);
     const title = await page.title().catch(() => '');
     const rendered = renderBrowserSnapshot(
       { url: page.url(), title },
@@ -460,15 +588,64 @@ export class BrowserSessions {
     return page.locator(`[${REF_ATTRIBUTE}="${ref}"]`).first();
   }
 
-  private async requireRef(page: Page, ref: unknown): Promise<Locator> {
+  /**
+   * The element a ref names. Fast path: the attribute the snapshot stamped
+   * is still on it. Otherwise the page re-rendered since (a framework
+   * re-created its nodes, a list finished loading) and the attribute went
+   * with the old node — so walk again under a probe attribute, find the
+   * element with the same signature (role, name, link, and which of its
+   * look-alikes it was) as the model's ref pointed at, and re-stamp THAT
+   * element with the model's ref. The model's numbering stays valid for
+   * everything it can still find; only a truly gone element is refused.
+   */
+  private async requireRef(session: Session, page: Page, ref: unknown): Promise<Locator> {
     const locator = this.locatorFor(page, ref);
-    if ((await locator.count()) === 0) {
-      throw new BrowserOpError(
-        'bad_ref',
-        `No element carries ref ${String(ref)} on the current page — take a new snapshot.`
-      );
+    if ((await locator.count()) > 0) return locator;
+    if (isBrowserRef(ref)) {
+      const remembered = session.refSignatures.get(ref);
+      if (remembered) {
+        const recovered = await this.recoverRef(page, ref, remembered);
+        if (recovered) return recovered;
+      }
     }
-    return locator;
+    throw new BrowserOpError(
+      'bad_ref',
+      `No element carries ref ${String(ref)} on the current page — take a new snapshot.`
+    );
+  }
+
+  private async recoverRef(
+    page: Page,
+    ref: string,
+    remembered: { sig: string; ordinal: number }
+  ): Promise<Locator | null> {
+    let walked: PageWalkResult;
+    try {
+      walked = await page.evaluate<PageWalkResult>(
+        pageScriptSource(BROWSER_SNAPSHOT_MAX_NODES, PROBE_ATTRIBUTE)
+      );
+    } catch {
+      return null;
+    }
+    const matches = walked.nodes.filter((node) => node.ref && signatureOf(node) === remembered.sig);
+    const match = matches[remembered.ordinal] ?? matches[0];
+    if (!match?.ref) return null;
+    const probe = page.locator(`[${PROBE_ATTRIBUTE}="${match.ref}"]`).first();
+    try {
+      await probe.evaluate(
+        (el, attrs) => {
+          for (const stale of Array.from(document.querySelectorAll(`[${attrs.probe}]`))) {
+            stale.removeAttribute(attrs.probe);
+          }
+          el.setAttribute(attrs.ref, attrs.value);
+        },
+        { probe: PROBE_ATTRIBUTE, ref: REF_ATTRIBUTE, value: ref }
+      );
+    } catch {
+      return null;
+    }
+    const locator = this.locatorFor(page, ref);
+    return (await locator.count()) > 0 ? locator : null;
   }
 
   /**
@@ -496,7 +673,28 @@ export class BrowserSessions {
         return { moves: true };
       }
       case 'click': {
-        const locator = await this.requireRef(page, step.ref);
+        const locator = await this.requireRef(session, page, step.ref);
+        // A link meant for a new tab is followed in THIS tab instead: the
+        // flow has one page, and a popup that is blocked or slow to appear
+        // would otherwise leave the model looking at an unchanged snapshot.
+        const newTabHref = await locator
+          .evaluate((el) =>
+            el instanceof HTMLAnchorElement && el.target === '_blank' && /^https?:/i.test(el.href)
+              ? el.href
+              : null
+          )
+          .catch(() => null);
+        if (newTabHref) {
+          try {
+            await page.goto(newTabHref, { waitUntil: 'domcontentloaded' });
+          } catch (error) {
+            throw new BrowserOpError(
+              'navigation_failed',
+              `Could not open the link: ${firstLine(error)}`
+            );
+          }
+          return { moves: true };
+        }
         const popup = this.popupWindow(session);
         try {
           await locator.click();
@@ -506,7 +704,7 @@ export class BrowserSessions {
         return { moves: true, popup };
       }
       case 'type': {
-        const locator = await this.requireRef(page, step.ref);
+        const locator = await this.requireRef(session, page, step.ref);
         let text = step.text ?? '';
         if (step.secret) {
           // Resolved here, on the worker, against the page's CURRENT host:
@@ -531,7 +729,7 @@ export class BrowserSessions {
         return { moves: step.submit === true, popup };
       }
       case 'select': {
-        const locator = await this.requireRef(page, step.ref);
+        const locator = await this.requireRef(session, page, step.ref);
         try {
           await locator.selectOption(step.values);
         } catch (error) {
@@ -551,7 +749,7 @@ export class BrowserSessions {
       case 'scroll': {
         try {
           if (step.ref !== undefined) {
-            const locator = await this.requireRef(page, step.ref);
+            const locator = await this.requireRef(session, page, step.ref);
             await locator.scrollIntoViewIfNeeded();
           } else {
             const amount = step.amount ?? BROWSER_SCROLL_DEFAULT_PX;
@@ -766,7 +964,7 @@ export class BrowserSessions {
     const session = this.sessions.get(sessionKey(target));
     if (!session) return false;
     await session.queue;
-    await this.closeSession(session);
+    await this.closeSession(session, 'closed');
     return true;
   }
 
@@ -774,7 +972,9 @@ export class BrowserSessions {
   async shutdown(): Promise<void> {
     this.closed = true;
     clearInterval(this.sweep);
-    for (const session of Array.from(this.sessions.values())) await this.closeSession(session);
+    for (const session of Array.from(this.sessions.values())) {
+      await this.closeSession(session, 'closed');
+    }
     const browser = this.browser;
     this.browser = null;
     if (browser) await browser.close().catch(() => {});

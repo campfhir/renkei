@@ -45,13 +45,19 @@ export const SECRET_ATTRIBUTE = 'data-renkei-secret';
  * function's source text in a scope that defines a no-op `__name` makes it
  * run the same under tsx, ts-jest, or plain node.
  */
-export function pageScriptSource(maxNodes: number): string {
+export function pageScriptSource(maxNodes: number, attribute = REF_ATTRIBUTE): string {
   const bound = Math.max(1, Math.floor(maxNodes));
-  return `(() => { const __name = (fn) => fn; return (${collectSnapshotInPage.toString()})(${bound}); })()`;
+  return `(() => { const __name = (fn) => fn; return (${collectSnapshotInPage.toString()})(${bound}, ${JSON.stringify(attribute)}); })()`;
 }
 
-export function collectSnapshotInPage(maxNodes: number): PageWalkResult {
-  const REF_ATTR = 'data-renkei-ref';
+export function collectSnapshotInPage(
+  maxNodes: number,
+  refAttribute = 'data-renkei-ref'
+): PageWalkResult {
+  // The attribute refs are stamped on. A snapshot bound for the model uses
+  // the real one; a recovery walk (browser.ts, requireRef) uses a probe
+  // attribute so it never disturbs the numbering the model already holds.
+  const REF_ATTR = refAttribute;
   const SECRET_ATTR = 'data-renkei-secret';
   const MASK = '••••••';
   const NAME_MAX = 200;

@@ -142,10 +142,13 @@ export function startEgressProxy(deps: EgressProxyDeps = {}): Promise<EgressProx
         upstream.pipe(clientSocket);
         clientSocket.pipe(upstream);
       });
-      upstream.once('error', () => {
+      // `on`, not `once`: a socket can error more than once while being
+      // torn down, and a second error with no listener would throw out of
+      // the event loop and take the worker with it.
+      upstream.on('error', () => {
         refuse(clientSocket, 502, 'Bad Gateway');
       });
-      clientSocket.once('error', () => upstream.destroy());
+      clientSocket.on('error', () => upstream.destroy());
       clientSocket.once('close', () => upstream.destroy());
       upstream.once('close', () => clientSocket.destroy());
     });
@@ -195,16 +198,28 @@ export function startEgressProxy(deps: EgressProxyDeps = {}): Promise<EgressProx
           timeout: CONNECT_TIMEOUT_MS,
         },
         (upstreamResponse) => {
-          response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+          try {
+            response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.headers);
+          } catch {
+            // A header Node refuses to re-emit: answer 502 rather than throw
+            // inside a callback, which would be an uncaught exception.
+            upstreamResponse.destroy();
+            if (!response.headersSent) response.writeHead(502, { connection: 'close' });
+            response.end();
+            return;
+          }
+          upstreamResponse.on('error', () => response.destroy());
           upstreamResponse.pipe(response);
         }
       );
       upstream.once('timeout', () => upstream.destroy(new Error('upstream timeout')));
-      upstream.once('error', () => {
+      upstream.on('error', () => {
         if (!response.headersSent) response.writeHead(502, { connection: 'close' });
         response.end();
       });
+      response.on('error', () => upstream.destroy());
       response.once('close', () => upstream.destroy());
+      request.on('error', () => upstream.destroy());
       request.pipe(upstream);
     });
   }
