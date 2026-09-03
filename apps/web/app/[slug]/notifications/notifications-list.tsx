@@ -376,7 +376,7 @@ export default function NotificationsList({
                           event.stopPropagation();
                           setMenuFor((current) => (current === row.id ? null : row.id));
                         }}
-                        className="rounded-md border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-white"
+                        className="rounded-md border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 dark:hover:text-white"
                       >
                         <Icon path={ICONS.moreHorizontal} className="h-4 w-4" strokeWidth={3} />
                       </button>
