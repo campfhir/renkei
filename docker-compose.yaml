@@ -1,8 +1,11 @@
 # docker-compose.yaml — for a target/production machine.
 #
-# Pulls the pre-built images pushed via scripts/docker-push.sh instead of
-# building from source: this file and a `.env` next to it are all a target
-# machine needs, no repository checkout required.
+# Pulls the pre-built images instead of building from source: this file and
+# a `.env` next to it are all a target machine needs, no repository checkout
+# required. CI publishes every image below to Docker Hub on each push to
+# main that passes its checks (the `docker` job in .github/workflows/ci.yml,
+# tags `latest` and the apps/web/package.json version); scripts/docker-push.sh
+# pushes the same images from a checkout.
 #
 #   docker compose -f docker-compose.yaml up -d postgres
 #   docker compose -f docker-compose.yaml run --rm migrate

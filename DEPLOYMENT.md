@@ -106,6 +106,32 @@ npm run build
 ls -la .next/
 ```
 
+## Published Images
+
+Every push to `main` that passes CI (lint, typecheck, tests) also builds
+and publishes the six images `docker-compose.yaml` pulls — `renkei`,
+`renkei-migrate`, `renkei-worker`, `renkei-fileshares`, `renkei-onbase`,
+`renkei-sandbox` — to Docker Hub from the `docker` job in
+`.github/workflows/ci.yml`. Each image is pushed under two tags: `latest`
+and the version in `apps/web/package.json` (the version every app in the
+workspace shares, and the same one `scripts/docker-build.sh` stamps). Bump
+that version when a release should keep its own tag; until then a new push
+to `main` overwrites both tags. Images are built for `linux/amd64`, with
+the short commit baked in as `GIT_COMMIT` so log rows name the exact build.
+Pull requests never publish.
+
+The job needs two repository secrets (Settings → Secrets and variables →
+Actions): `DOCKERHUB_USERNAME`, the Docker Hub account to log in as, and
+`DOCKERHUB_TOKEN`, an access token for it with read/write scope. Images go
+under that username unless the repository variable `DOCKERHUB_NAMESPACE`
+names a different namespace (an organization's, say). Without the secrets
+the job fails at its first step and nothing is pushed; the checks job is
+unaffected.
+
+`scripts/docker-build.sh` / `docker-push.sh` remain the way to build from a
+checkout — for another registry, another platform, or a version the
+workflow has not published.
+
 ## Worker Processes and Queues
 
 The queue consumer ships as **three processes off the same `renkei-worker`
