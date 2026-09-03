@@ -137,6 +137,17 @@ export interface OrgSettings {
    */
   contentPollMinutes: number;
   /**
+   * How often the worker re-checks each opted-in WebEx grant's webhook
+   * registration (repair, not sync — WebEx pushes events; this only notices
+   * when WebEx has quietly dropped or deactivated the registration). Unlike
+   * content polling this is pure overhead when nothing has rotted: every
+   * check is one `/webhooks` call per opted-in grant, so a tenant with many
+   * opted-in users can trip WebEx's per-app rate limit at a short interval.
+   * The worker's sweep wakes every 15 minutes, so values below 15 cannot
+   * check any faster.
+   */
+  webexWebhookHealthMinutes: number;
+  /**
    * How long bored-logs rows are kept before the retention sweep purges
    * them. 0 = keep forever (the default — deleting observability data is an
    * explicit choice). The logs table is deployment-wide, so with several
@@ -186,6 +197,10 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   agentMaxRunsPerDay: 200,
   agentApprovalMaxWaitDays: 14,
   contentPollMinutes: 15,
+  // Above the worker's 15-minute sweep floor: the previous fixed 15-minute
+  // cadence was tripping WebEx's rate limit on orgs with many opted-in
+  // users, one `/webhooks` call per grant every pass.
+  webexWebhookHealthMinutes: 60,
   logRetentionDays: 0,
   knowledgeKeywordEnrichment: false,
   knowledgeKeywordMinChars: 500,
@@ -288,6 +303,9 @@ export async function getOrgSettings(tenantId: string): Promise<Result<OrgSettin
       coerce(stored.get('agent_approval_max_wait_days'), d.agentApprovalMaxWaitDays)
     ),
     contentPollMinutes: Number(coerce(stored.get('content_poll_minutes'), d.contentPollMinutes)),
+    webexWebhookHealthMinutes: Number(
+      coerce(stored.get('webex_webhook_health_minutes'), d.webexWebhookHealthMinutes)
+    ),
     logRetentionDays: Number(coerce(stored.get('log_retention_days'), d.logRetentionDays)),
     knowledgeKeywordEnrichment: Boolean(
       coerce(stored.get('knowledge_keyword_enrichment'), d.knowledgeKeywordEnrichment)
@@ -334,6 +352,7 @@ export async function setOrgSettings(
     ['agent_max_runs_per_day', updates.agentMaxRunsPerDay],
     ['agent_approval_max_wait_days', updates.agentApprovalMaxWaitDays],
     ['content_poll_minutes', updates.contentPollMinutes],
+    ['webex_webhook_health_minutes', updates.webexWebhookHealthMinutes],
     ['log_retention_days', updates.logRetentionDays],
     ['knowledge_keyword_enrichment', updates.knowledgeKeywordEnrichment],
     ['knowledge_keyword_min_chars', updates.knowledgeKeywordMinChars],

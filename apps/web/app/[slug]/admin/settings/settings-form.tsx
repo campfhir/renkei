@@ -19,6 +19,7 @@ export interface EditableSettings {
   agentMaxRunsPerDay: number;
   agentApprovalMaxWaitDays: number;
   contentPollMinutes: number;
+  webexWebhookHealthMinutes: number;
   logRetentionDays: number;
   agentNotificationRetentionDays: number;
   agentUsageRetentionDays: number;
@@ -210,6 +211,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How stale watched Jira projects, Confluence spaces and document libraries may get before they are polled again. Lower = fresher search results and more provider API calls."
         >
           {numberInput('contentPollMinutes', '5–1,440')}
+        </Row>
+        <Row
+          label="WebEx webhook health interval (minutes)"
+          hint="How often each opted-in WebEx user's webhook registration is re-checked and repaired if WebEx dropped it. This is a repair check, not a sync — WebEx pushes messages in real time — so lower only buys faster detection of a dropped webhook at the cost of more WebEx API calls; too low can trip WebEx's rate limit on orgs with many opted-in users."
+        >
+          {numberInput('webexWebhookHealthMinutes', '15–1,440')}
         </Row>
         <Row
           label="Agent notification retention (days)"

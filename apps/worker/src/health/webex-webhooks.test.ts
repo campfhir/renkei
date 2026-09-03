@@ -8,11 +8,11 @@
  */
 
 jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-// The sweep only uses kysely's sql tag inside a .where(); the stub chain
-// ignores its argument, so a fragment marker suffices (kysely itself is
-// ESM this jest config does not transform).
+// The sweep only uses kysely's sql tag inside a .where()/.set(); the stub
+// chain ignores its argument, so a fragment marker suffices (kysely itself
+// is ESM this jest config does not transform).
 jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
-jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: jest.fn() }));
+jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: jest.fn(), getOrgSettings: jest.fn() }));
 jest.mock('../logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
@@ -23,9 +23,11 @@ import { sweepWebexWebhooks } from './webex-webhooks';
 import { logger } from '../logger';
 
 const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
-const { getPublicBaseUrl: mockGetPublicBaseUrl } = jest.requireMock<{
-  getPublicBaseUrl: jest.Mock;
-}>('@renkei/settings');
+const { getPublicBaseUrl: mockGetPublicBaseUrl, getOrgSettings: mockGetOrgSettings } =
+  jest.requireMock<{
+    getPublicBaseUrl: jest.Mock;
+    getOrgSettings: jest.Mock;
+  }>('@renkei/settings');
 
 interface GrantRow {
   tenant_id: string;
@@ -34,6 +36,7 @@ interface GrantRow {
 }
 
 function dbWithGrants(rows: GrantRow[]) {
+  const updates: Array<{ tenant_id: string; provider_account_id: string }> = [];
   mockGetDatabase.mockReturnValue({
     ok: true,
     val: {
@@ -44,8 +47,22 @@ function dbWithGrants(rows: GrantRow[]) {
           }),
         }),
       }),
+      updateTable: () => ({
+        set: () => ({
+          where: (_column: string, _op: string, tenantId: string) => ({
+            where: () => ({
+              where: (_c: string, _o: string, accountId: string) => ({
+                execute: async () => {
+                  updates.push({ tenant_id: tenantId, provider_account_id: accountId });
+                },
+              }),
+            }),
+          }),
+        }),
+      }),
     },
   });
+  return updates;
 }
 
 function healthyHook(targetUrl: string, secret: string): WebexWebhook {
@@ -76,6 +93,7 @@ function stubClient(hooks: WebexWebhook[]) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockGetOrgSettings.mockResolvedValue({ ok: true, val: { webexWebhookHealthMinutes: 60 } });
 });
 
 describe('sweepWebexWebhooks', () => {
@@ -137,5 +155,75 @@ describe('sweepWebexWebhooks', () => {
     // The dead grant registered nothing; the live one still got repaired.
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({ targetUrl: TARGET });
+  });
+
+  it('skips a grant checked more recently than the org due-time — no API call, no rewrite', async () => {
+    mockGetPublicBaseUrl.mockReturnValue('https://renkei.example.com');
+    mockGetOrgSettings.mockResolvedValue({ ok: true, val: { webexWebhookHealthMinutes: 60 } });
+    const now = new Date('2026-01-01T01:00:00.000Z');
+    const checkedRecently: GrantRow = {
+      ...grant,
+      metadata: {
+        ...(grant.metadata as object),
+        webhookHealthCheckedAt: '2026-01-01T00:30:00.000Z',
+      },
+    };
+    const updates = dbWithGrants([checkedRecently]);
+    const { client, created } = stubClient([]);
+    const resolveAccess = jest.fn();
+
+    await sweepWebexWebhooks({ makeClient: () => client, resolveAccess, now: () => now });
+
+    expect(resolveAccess).not.toHaveBeenCalled();
+    expect(created).toHaveLength(0);
+    expect(updates).toHaveLength(0);
+  });
+
+  it('rechecks a grant once the org due-time has passed, then records the check', async () => {
+    mockGetPublicBaseUrl.mockReturnValue('https://renkei.example.com');
+    mockGetOrgSettings.mockResolvedValue({ ok: true, val: { webexWebhookHealthMinutes: 15 } });
+    const now = new Date('2026-01-01T01:00:00.000Z');
+    const staleCheck: GrantRow = {
+      ...grant,
+      metadata: {
+        ...(grant.metadata as object),
+        webhookHealthCheckedAt: '2026-01-01T00:30:00.000Z',
+      },
+    };
+    const updates = dbWithGrants([staleCheck]);
+    const { client, created } = stubClient([]);
+
+    await sweepWebexWebhooks({
+      makeClient: () => client,
+      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1' }),
+      now: () => now,
+    });
+
+    expect(created).toHaveLength(1);
+    expect(updates).toEqual([{ tenant_id: 'tenant-1', provider_account_id: 'acct-1' }]);
+  });
+
+  it('records the check time even when the API call fails, so a 429 backs off instead of retrying every wake', async () => {
+    mockGetPublicBaseUrl.mockReturnValue('https://renkei.example.com');
+    mockGetOrgSettings.mockResolvedValue({ ok: true, val: { webexWebhookHealthMinutes: 60 } });
+    const updates = dbWithGrants([grant]);
+    const client: WebexWebhooksClient = {
+      listWebhooks: async () => ({
+        ok: false,
+        err: { type: 'WEBEX_API_ERROR', message: 'WebEx API 429' },
+      }),
+      createWebhook: async () => {
+        throw new Error('should not be called');
+      },
+      deleteWebhook: async () => ok(),
+    };
+
+    await sweepWebexWebhooks({
+      makeClient: () => client,
+      resolveAccess: async () => ({ accessToken: 'user-token', subject: 'subj-1' }),
+    });
+
+    expect(updates).toEqual([{ tenant_id: 'tenant-1', provider_account_id: 'acct-1' }]);
+    expect(logger.error).toHaveBeenCalled();
   });
 });
