@@ -198,7 +198,7 @@ function ProposedCall({ suggestedAction }: { suggestedAction: unknown }): React.
       {entries.length > 0 && (
         <ul className="mt-1 space-y-0.5 text-gray-600 dark:text-gray-400">
           {entries.map(([key, value]) => (
-            <li key={key}>
+            <li key={key} className="break-words">
               <span className="font-mono">{key}</span>: {String(value)}
             </li>
           ))}
@@ -287,7 +287,11 @@ function RelatedEvidence({ evidence }: { evidence: unknown }): React.ReactNode {
         {related.map((entry, index) => {
           if (typeof entry !== 'object' || entry === null) return null;
           const hit: Record<string, unknown> = { ...entry };
-          return <li key={index}>{String(hit.excerpt ?? '')}</li>;
+          return (
+            <li key={index} className="break-words">
+              {String(hit.excerpt ?? '')}
+            </li>
+          );
         })}
       </ul>
     </div>

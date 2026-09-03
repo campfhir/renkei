@@ -358,11 +358,13 @@ function HitCard({ group, terms }: { group: DocumentGroup; terms: string[] }) {
             keys nobody outside this codebase can read, and quoted every value.
             The same facts, labelled, minus the ones the card already states.
           */}
-          <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+          <dl className="grid grid-cols-[auto,minmax(0,1fr)] gap-x-3 gap-y-1">
             {detailRows(hit).map((row) => (
               <React.Fragment key={row.label}>
                 <dt className="text-gray-500 dark:text-gray-400">{row.label}</dt>
-                <dd className="break-words text-gray-700 dark:text-gray-300">{row.value}</dd>
+                <dd className="min-w-0 break-words text-gray-700 dark:text-gray-300">
+                  {row.value}
+                </dd>
               </React.Fragment>
             ))}
           </dl>
