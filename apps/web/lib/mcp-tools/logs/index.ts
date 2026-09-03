@@ -1,18 +1,26 @@
 /**
- * The `log_search` tool — self-scoped access to Renkei's own activity log,
- * the same store `apps/web/app/[slug]/logs` reads for the web Logs page.
+ * The `log_search` tool — access to Renkei's own activity log, the same
+ * store `apps/web/app/[slug]/logs` reads for the web Logs page.
  *
- * MCP callers authenticate with a bearer token, not a browser session, and
- * `renkei-operator`/`renkei-user` roles live only on the session cookie
- * (`apps/web/lib/session.ts`) — minted once at OIDC sign-in and never
- * carried onto an MCP token. So there is no role to check here, and every
- * caller gets exactly the web page's non-operator branch: their own
- * Jira-linked account's activity (`apps/web/app/[slug]/logs/actions.ts`),
- * never the tenant-wide view. That is also the safer default for a surface
- * whose output can reach a third-party model: log rows can carry
- * secure()-marked request/response bodies (failed-call payloads), and this
- * tool never renders those back, even when LOG_ENCRYPTION_KEY would let it
- * decrypt them — see ALLOWED_META below.
+ * An MCP bearer token now carries the caller's renkei roles (migration 091,
+ * `context.roles`), captured from their browser session when the token was
+ * issued — same source `apps/web/app/api/tenant/[tenantId]/logs/route.ts`
+ * reads for the web page's own role branch. A caller with no roles on the
+ * token (undefined/empty — a token issued before migration 091, or one that
+ * never went through the browser authorize step, e.g. an 'agent' token) is
+ * treated as holding none, the same fail-closed default `hasRole`
+ * (`lib/session.ts`) uses: no ROLE_OPERATOR means the self-scoped branch,
+ * never tenant-wide.
+ *
+ * `renkei-operator` gets the same tenant-wide search the web page's operator
+ * branch does — every account's activity, not just their own, and no Jira
+ * grant of their own is required to ask for it. Everyone else gets exactly
+ * the web page's non-operator branch: their own Jira-linked account's
+ * activity (`apps/web/app/[slug]/logs/actions.ts`). That remains the safer
+ * default for a surface whose output can reach a third-party model: log
+ * rows can carry secure()-marked request/response bodies (failed-call
+ * payloads), and this tool never renders those back for either branch, even
+ * when LOG_ENCRYPTION_KEY would let it decrypt them — see ALLOWED_META below.
  *
  * Two ways in for filtering, both optional and ANDed together when both are
  * given:
@@ -48,6 +56,7 @@ import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
 import { getDatabase } from '@renkei/db';
 import { buildLogQueryOptions } from '@/lib/log-query';
 import { resolveLogCipher } from '@/lib/log-encryption';
+import { ROLE_OPERATOR } from '@/lib/access';
 import type { MCPToolContext } from '../common';
 
 /** The connector key the logs capability registers under. */
@@ -70,6 +79,14 @@ const DEFAULT_LIMIT = 20;
  * already implied by "this is your own activity."
  */
 const ALLOWED_META = ['component', 'tool', 'url', 'method', 'status', 'reason', 'action'];
+
+/**
+ * Added on top of ALLOWED_META for the operator (tenant-wide) branch only.
+ * The exclusion reasoning above stops applying once a result can span every
+ * account in the tenant — without these, an operator could not tell whose
+ * activity a given row was.
+ */
+const OPERATOR_EXTRA_META = ['subject', 'accountId', 'displayName'];
 
 /** The operators `filter` leaves accept — see FILTER_OP_HELP for what each does. */
 const FILTER_OPS = [
@@ -158,12 +175,14 @@ function defaultStart(): string {
   return d.toISOString();
 }
 
-function formatRow(row: LogRow): string {
+function formatRow(row: LogRow, isOperator: boolean): string {
   const at = row.timestamp ? new Date(row.timestamp).toISOString() : 'unknown time';
-  const extras = ALLOWED_META.map((key) => {
-    const value = row.meta ? row.meta[key] : undefined;
-    return value === undefined ? null : `${key}=${String(value)}`;
-  })
+  const allowedKeys = isOperator ? [...ALLOWED_META, ...OPERATOR_EXTRA_META] : ALLOWED_META;
+  const extras = allowedKeys
+    .map((key) => {
+      const value = row.meta ? row.meta[key] : undefined;
+      return value === undefined ? null : `${key}=${String(value)}`;
+    })
     .filter((entry): entry is string => entry !== null)
     .join(' ');
   return `[${row.level}] ${at} — ${row.message}${extras ? `\n  ${extras}` : ''}`;
@@ -217,10 +236,11 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
     {
       title: 'Logs · Read — Search your activity log',
       description:
-        "Search Renkei's own activity log for entries about YOUR activity in this tenant — " +
-        'API calls made on your behalf, request failures, and the like. Self-scoped to your ' +
-        'own Jira-linked account, the same view a non-admin gets on the web Logs page — ' +
-        'tenant-wide log access is an org-admin capability available only there.\n\n' +
+        "Search Renkei's own activity log for entries about API calls, request failures, and " +
+        'the like. Self-scoped to YOUR OWN Jira-linked account by default, the same view a ' +
+        'non-admin gets on the web Logs page. Callers holding the renkei-operator role get ' +
+        "the web page's operator view instead — every account's activity across the tenant, " +
+        'no Jira grant of your own required.\n\n' +
         'Filter with "filter" (structured, recommended for AND/OR), "query" (a short string ' +
         'grammar), or both — they combine with AND. ' +
         QUERY_SYNTAX_HELP,
@@ -259,12 +279,23 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
       if (!context.subject) {
         return errText('This caller has no recorded identity, so it has no activity to look up.');
       }
-      const accountId = context.accountId;
-      if (!accountId) {
-        return errText(
-          'No Jira account linked yet — MCP log access is scoped to your own Jira-linked ' +
-            'activity, the same as a non-admin sees on the Logs page. Connect Jira first.'
-        );
+
+      // Undefined/empty roles fail closed to the non-operator branch — see
+      // the module comment above for what can leave roles unset.
+      const isOperator = (context.roles ?? []).includes(ROLE_OPERATOR);
+
+      // Operators search the whole tenant, so they need no Jira account of
+      // their own; everyone else stays scoped to the account backing their
+      // own Jira grant, same as the web page's non-admin branch.
+      let accountId: string | undefined;
+      if (!isOperator) {
+        accountId = context.accountId;
+        if (!accountId) {
+          return errText(
+            'No Jira account linked yet — MCP log access is scoped to your own Jira-linked ' +
+              'activity, the same as a non-admin sees on the Logs page. Connect Jira first.'
+          );
+        }
       }
 
       // Re-validated with the same schema the SDK already ran, rather than
@@ -329,14 +360,15 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
       }
 
       const rows = result.val;
+      const scopeLabel = isOperator ? 'tenant-wide' : 'your own activity only';
       if (rows.length === 0) {
-        return textResult('No log entries match (searched your own activity only).');
+        return textResult(`No log entries match (${scopeLabel}).`);
       }
 
       const lines = [
-        `${rows.length} log entr${rows.length === 1 ? 'y' : 'ies'} (your own activity only), newest first:`,
+        `${rows.length} log entr${rows.length === 1 ? 'y' : 'ies'} (${scopeLabel}), newest first:`,
       ];
-      for (const row of rows) lines.push('', formatRow(row));
+      for (const row of rows) lines.push('', formatRow(row, isOperator));
       return textResult(lines.join('\n'));
     }
   );
