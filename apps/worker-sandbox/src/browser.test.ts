@@ -84,6 +84,13 @@ function fakeLocator(count = 1): FakeLocator {
   };
 }
 
+/**
+ * Set by a test to shape pages the manager creates on its own (a reopen
+ * after a lost session launches a fresh browser and page before the test
+ * can reach them); consumed by every fakePage() call while set.
+ */
+let onPageCreated: ((page: FakePage) => void) | null = null;
+
 function fakePage(url = 'about:blank'): FakePage {
   const page: FakePage = {
     currentUrl: url,
@@ -132,6 +139,7 @@ function fakePage(url = 'about:blank'): FakePage {
     },
     screenshot: jest.fn(async () => Buffer.from('PNG-bytes')),
   };
+  onPageCreated?.(page);
   return page;
 }
 
@@ -900,7 +908,10 @@ describe('lifetime', () => {
     expect(sessions.sessionCount()).toBe(2);
     expect(browsers[0].contexts[1].close).toHaveBeenCalled(); // bob
     expect(browsers[0].contexts[0].close).not.toHaveBeenCalled(); // alice
-    await expectBrowserError(sessions.snapshot(BOB, 5000), 'no_session');
+    // Bob's next verb reopens where he was rather than refusing.
+    const reopened = await sessions.snapshot(BOB, 5000);
+    expect(reopened.url).toBe('https://example.com/');
+    expect(sessions.sessionCount()).toBe(2);
     await sessions.shutdown();
   });
 
@@ -918,30 +929,100 @@ describe('lifetime', () => {
     await sessions.shutdown();
   });
 
-  it('forgets every session when the browser process disconnects, and says so next time', async () => {
+  it('reopens a lost session where it left off, with the refs the model holds', async () => {
     const { sessions, browsers } = build();
-    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    await sessions.navigate(ALICE, 'https://example.com/jobs', 5000);
+    const before = browsers[0].contexts[0].openPages[0];
+    before.walk = {
+      nodes: [
+        { role: 'textbox', ref: 'e1', name: 'Search jobs' },
+        ...Array.from({ length: 8 }, (_, i) => ({ role: 'text' as const, name: `row ${i}` })),
+      ],
+      truncated: false,
+    };
+    await sessions.snapshot(ALICE, 5000);
+    // The browser dies between two calls.
     browsers[0].connected = false;
     browsers[0].emit('disconnected');
     expect(sessions.sessionCount()).toBe(0);
-    const error = await expectBrowserError(sessions.snapshot(ALICE, 5000), 'no_session');
-    expect(error.message).toContain('browser process exited unexpectedly');
-    expect(error.message).toContain('sandbox_browser_run');
-    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+
+    // The next verb reopens the page in a fresh browser and resolves the
+    // old ref on it by signature (the fresh page numbers it e2).
+    const field = fakeLocator(1);
+    onPageCreated = (fresh) => {
+      fresh.walk = {
+        nodes: [
+          { role: 'button', ref: 'e1', name: 'Accept cookies' },
+          { role: 'textbox', ref: 'e2', name: 'Search jobs' },
+          ...Array.from({ length: 8 }, (_, i) => ({ role: 'text' as const, name: `row ${i}` })),
+        ],
+        truncated: false,
+      };
+      const probed = fakeLocator(1);
+      probed.evaluate.mockImplementation(async () => {
+        fresh.locators.set('[data-renkei-ref="e1"]', field);
+      });
+      fresh.locators.set('[data-renkei-probe="e2"]', probed);
+    };
+    const state = await sessions.type(ALICE, 'e1', 'nurse', false, 5000);
+    onPageCreated = null;
+    const after = browsers[1].contexts[0].openPages[0];
+    expect(after.goto).toHaveBeenCalledWith('https://example.com/jobs', {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(field.fill).toHaveBeenCalledWith('nurse');
+    expect(state.url).toBe('https://example.com/jobs');
     expect(browsers).toHaveLength(2);
     await sessions.shutdown();
   });
 
-  it('explains an idle close and an eviction the same way', async () => {
-    const { sessions, clock } = build({ idleMs: 1000, sweepIntervalMs: 15, maxSessions: 1 });
+  it('refuses with the reason and uptime when there is nothing to reopen', async () => {
+    const { sessions, browsers } = build();
     await sessions.navigate(ALICE, 'https://example.com/', 5000);
-    await sessions.navigate(BOB, 'https://example.com/', 5000);
-    const evicted = await expectBrowserError(sessions.snapshot(ALICE, 5000), 'no_session');
-    expect(evicted.message).toContain('to make room');
+    // A close on request means "done with the site": nothing is remembered.
+    await sessions.close(ALICE);
+    const closed = await expectBrowserError(sessions.snapshot(ALICE, 5000), 'no_session');
+    expect(closed.message).toContain('was closed');
+    expect(closed.message).toMatch(/worker up \d+m, browser up \d+m, 0 session\(s\) open/);
+    expect(closed.message).toContain('sandbox_browser_run');
+    // Never opened at all: plain refusal, still with uptime.
+    const never = await expectBrowserError(sessions.snapshot(BOB, 5000), 'no_session');
+    expect(never.message).toContain('No page is open.');
+    expect(browsers).toHaveLength(1);
+    await sessions.shutdown();
+  });
+
+  it('refuses when reopening fails, naming both the loss and the failure', async () => {
+    const { sessions, browsers } = build();
+    await sessions.navigate(ALICE, 'https://example.com/', 5000);
+    browsers[0].connected = false;
+    browsers[0].emit('disconnected');
+    onPageCreated = (fresh) => fresh.goto.mockRejectedValueOnce(new Error('net::ERR_FAILED'));
+    const error = await expectBrowserError(sessions.snapshot(ALICE, 5000), 'no_session');
+    onPageCreated = null;
+    expect(error.message).toContain('browser process exited unexpectedly');
+    expect(error.message).toContain('Reopening example.com failed');
+    expect(sessions.sessionCount()).toBe(0);
+    await sessions.shutdown();
+  });
+
+  it('reopens after an idle close or an eviction too', async () => {
+    const { sessions, browsers, clock } = build({
+      idleMs: 1000,
+      sweepIntervalMs: 15,
+      maxSessions: 1,
+    });
+    await sessions.navigate(ALICE, 'https://example.com/a', 5000);
+    await sessions.navigate(BOB, 'https://example.com/b', 5000);
+    expect(sessions.sessionCount()).toBe(1);
+    const evicted = await sessions.snapshot(ALICE, 5000);
+    expect(evicted.url).toBe('https://example.com/a');
+    expect(browsers[0].contexts).toHaveLength(3);
     clock.now += 5000;
     await new Promise((resolve) => setTimeout(resolve, 60));
-    const idle = await expectBrowserError(sessions.snapshot(BOB, 5000), 'no_session');
-    expect(idle.message).toContain('idle');
+    expect(sessions.sessionCount()).toBe(0);
+    const idle = await sessions.snapshot(BOB, 5000);
+    expect(idle.url).toBe('https://example.com/b');
     await sessions.shutdown();
   });
 

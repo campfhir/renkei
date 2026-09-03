@@ -187,14 +187,23 @@ at once (`BROWSER_MAX_SESSIONS`), least-recently-used evicted beyond that;
 the browser process itself exits once no session remains. Calls on one
 session are serialized so two tool calls racing for the same page cannot
 interleave. Downloads are refused, service workers blocked, and a popup a
-click opens becomes the page the next snapshot reads. When a session is
-gone, the refusal says *why* — idle, evicted, closed, or "the browser
-process exited unexpectedly (it may have run out of memory on the last
-page)" — and points at a `sandbox_browser_run` whose first step is
-navigate, so the actions follow in the same call. A crashed page is
-reported as such rather than read as blank. The worker logs unhandled
-rejections instead of dying of them, and logs an uncaught exception
-before exiting, so a restart is never silent.
+click opens becomes the page the next snapshot reads.
+
+When a session is gone but the worker remembers where the caller's page
+was (the last URL, and what each ref in the last snapshot pointed at),
+the next verb **reopens** it there and resolves the model's refs on the
+fresh page by signature — so a browser that died between two calls costs
+one page load, not a round trip back to navigate. Only an explicit
+`sandbox_browser_close` forgets a page. When there is nothing to reopen,
+the refusal says *why* the session is gone — idle, evicted, closed, or
+"the browser process exited unexpectedly (it may have run out of memory
+on the last page)" — with the worker's and the browser's uptime and the
+open-session count in parentheses: a "lost session" beside "worker up
+1m" is a worker restart, which the worker log explains. A crashed page is
+reported as such rather than read as blank. The worker logs every session
+open, close (with reason) and reopen, logs unhandled rejections instead
+of dying of them, and logs an uncaught exception before exiting, so a
+restart is never silent.
 
 **Pages that keep rendering.** Real sites are single-page apps: the
 network goes quiet before the app has painted, analytics beacons keep it

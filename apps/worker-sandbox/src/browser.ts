@@ -252,6 +252,18 @@ export class BrowserSessions {
   private readonly sessions = new Map<string, Session>();
   /** Why each caller's most recent session ended, so the next refusal can say. */
   private readonly lastLoss = new Map<string, SessionLoss>();
+  /**
+   * Where each caller's page last was and what its refs meant, kept past
+   * the session itself so a lost session can be reopened on the very next
+   * verb — same URL, same refs (recovered by signature) — instead of
+   * bouncing the model back to navigate.
+   */
+  private readonly remembered = new Map<
+    string,
+    { url: string; refSignatures: Map<string, { sig: string; ordinal: number }>; at: number }
+  >();
+  private readonly startedAt = Date.now();
+  private browserStartedAt: number | null = null;
   private browser: Browser | null = null;
   private launching: Promise<Browser> | null = null;
   private proxy: EgressProxy | null = null;
@@ -301,6 +313,8 @@ export class BrowserSessions {
           }
         });
         this.browser = browser;
+        this.browserStartedAt = Date.now();
+        logger.info('browser launched', { component: 'worker-sandbox/browser' });
         return browser;
       } catch (error) {
         logger.error('browser launch failed: {error}', {
@@ -366,6 +380,10 @@ export class BrowserSessions {
     });
     this.sessions.set(key, session);
     this.lastLoss.delete(key);
+    logger.info('browser session opened ({count} open)', {
+      component: 'worker-sandbox/browser',
+      count: this.sessions.size,
+    });
     return session;
   }
 
@@ -373,6 +391,11 @@ export class BrowserSessions {
     this.sessions.delete(session.key);
     this.lastLoss.set(session.key, reason);
     session.secretValues.clear();
+    logger.info('browser session closed: {reason} ({count} open)', {
+      component: 'worker-sandbox/browser',
+      reason,
+      count: this.sessions.size,
+    });
     try {
       await session.context.close();
     } catch (error) {
@@ -406,18 +429,30 @@ export class BrowserSessions {
     create: boolean,
     work: (session: Session, page: Page) => Promise<T>
   ): Promise<T> {
-    let session = this.sessions.get(sessionKey(target));
+    const key = sessionKey(target);
+    let session = this.sessions.get(key);
     if (!session) {
       if (!create) {
-        const loss = this.lastLoss.get(sessionKey(target));
-        throw new BrowserOpError(
-          'no_session',
-          `${loss ? LOSS_EXPLANATION[loss] : 'No page is open.'} Open the page again with ` +
-            'sandbox_browser_navigate, or with a sandbox_browser_run whose first step is navigate ' +
-            'so the actions follow in the same call.'
-        );
+        const loss = this.lastLoss.get(key);
+        const remembered = this.remembered.get(key);
+        if (remembered) {
+          session = await this.reopen(target, remembered, loss);
+        } else {
+          logger.info('no session for caller: {loss} ({uptime})', {
+            component: 'worker-sandbox/browser',
+            loss: loss ?? 'never opened',
+            uptime: this.uptimeText(),
+          });
+          throw new BrowserOpError(
+            'no_session',
+            `${loss ? LOSS_EXPLANATION[loss] : 'No page is open.'} ${this.uptimeText()}. Open the ` +
+              'page with sandbox_browser_navigate, or with a sandbox_browser_run whose first step ' +
+              'is navigate so the actions follow in the same call.'
+          );
+        }
+      } else {
+        session = await this.openSession(target);
       }
-      session = await this.openSession(target);
     }
     const current = session;
     const run = current.queue.then(async () => {
@@ -431,6 +466,51 @@ export class BrowserSessions {
     });
     current.queue = run.catch(() => undefined);
     return run;
+  }
+
+  /**
+   * A lost session, reopened where it left off: the last URL, and the ref
+   * signatures of the last snapshot the model received, so the refs it is
+   * about to use resolve on the fresh page by signature. Whatever ended
+   * the session is logged; the model sees a page, not a refusal.
+   */
+  private async reopen(
+    target: BrowserTarget,
+    remembered: { url: string; refSignatures: Map<string, { sig: string; ordinal: number }> },
+    loss: SessionLoss | undefined
+  ): Promise<Session> {
+    logger.info('reopening a lost session at {host}: {loss} ({uptime})', {
+      component: 'worker-sandbox/browser',
+      host: new URL(remembered.url).hostname,
+      loss: loss ?? 'unknown (not this process — a restart?)',
+      uptime: this.uptimeText(),
+    });
+    const session = await this.openSession(target);
+    try {
+      await session.page.goto(remembered.url, { waitUntil: 'domcontentloaded' });
+    } catch (error) {
+      await this.closeSession(session, 'closed');
+      throw new BrowserOpError(
+        'no_session',
+        `${loss ? LOSS_EXPLANATION[loss] : 'Your browser session was lost.'} Reopening ` +
+          `${new URL(remembered.url).hostname} failed (${firstLine(error)}); open it again with ` +
+          'sandbox_browser_navigate.'
+      );
+    }
+    await this.settle(session.page);
+    session.refSignatures = new Map(remembered.refSignatures);
+    return session;
+  }
+
+  /** How long this worker and its browser have been up — a short uptime after a "lost session" means a restart. */
+  private uptimeText(): string {
+    const minutes = (since: number) => Math.round((Date.now() - since) / 60_000);
+    const worker = `worker up ${minutes(this.startedAt)}m`;
+    const browser =
+      this.browserStartedAt === null
+        ? 'browser not running'
+        : `browser up ${minutes(this.browserStartedAt)}m`;
+    return `(${worker}, ${browser}, ${this.sessions.size} session(s) open)`;
   }
 
   private async activePage(session: Session): Promise<Page> {
@@ -560,6 +640,13 @@ export class BrowserSessions {
       }
     }
     session.refSignatures = refSignatures(walked.nodes);
+    if (/^https?:/i.test(page.url())) {
+      this.remembered.set(session.key, {
+        url: page.url(),
+        refSignatures: session.refSignatures,
+        at: Date.now(),
+      });
+    }
     const title = await page.title().catch(() => '');
     const rendered = renderBrowserSnapshot(
       { url: page.url(), title },
@@ -965,6 +1052,7 @@ export class BrowserSessions {
     if (!session) return false;
     await session.queue;
     await this.closeSession(session, 'closed');
+    this.remembered.delete(session.key);
     return true;
   }
 
