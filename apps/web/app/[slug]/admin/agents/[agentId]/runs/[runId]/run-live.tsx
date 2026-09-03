@@ -4,8 +4,10 @@
  * Admin run detail, kept current the same way the owner page is (see the
  * sibling RunLive at app/[slug]/agents/[agentId]/runs/[runId]/run-live.tsx):
  * one EventSource onto the admin stream route, no polling. There is no
- * pause card and no Cancel/Rerun swap here — oversight is read-only — so
- * this is the smaller half of that component.
+ * pause card and no Cancel/Rerun swap here — oversight is read-only, with
+ * one deliberate exception: Force halt, for a run the owner's own Cancel
+ * button and the stuck-run janitor both fail to reach (see
+ * lib/agents/force-halt.ts).
  */
 
 import { useEffect, useState } from 'react';
@@ -17,6 +19,7 @@ import RunActivitySection from '../../../../../agents/run-activity';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 import { isRunSettled } from '@/lib/agents/run-labels';
 import type { RunDetail } from '@/lib/agents/runs-view';
+import ForceHaltButton from './force-halt-button';
 
 export default function AdminRunLive({
   slug,
@@ -63,6 +66,9 @@ export default function AdminRunLive({
             trigger input are withheld — so the button being present is not
             the same as its contents being readable. */}
         <CopyDebugButton text={renderRunDebugMarkdown(agentName, run)} />
+        {!isRunSettled(run.status) ? (
+          <ForceHaltButton slug={slug} agentId={agentId} runId={runId} />
+        ) : null}
       </div>
       {run.error ? (
         <p className="mb-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300">

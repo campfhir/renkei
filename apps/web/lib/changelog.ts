@@ -43,6 +43,24 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-09-03',
+    heading: 'Getting unstuck',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Force-halt a run that will not respond to Cancel',
+        detail:
+          "Admin oversight of a run is normally read-only, but a run whose worker has genuinely wedged — not even a container restart frees it — can now be force-halted from the run's admin page. It ends the run immediately and clears its queued work, even while that work still looks like it is being processed.",
+      },
+      {
+        kind: 'fixed',
+        title: 'A canceled run no longer shows a step stuck on "Running"',
+        detail:
+          "If a run's worker crashed mid-step and the run was then canceled before anything ever resumed it, that step could stay marked Running forever even though the run itself had ended. It is now closed out and marked canceled along with the run, so its record shows what actually happened instead of a step frozen in place.",
+      },
+    ],
+  },
+  {
     date: null,
     heading: 'Your usage, and agents that learn from their failures',
     entries: [
