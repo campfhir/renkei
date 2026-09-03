@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * Moving issues between projects — jira_move_issues and its preview pair.
  *
@@ -384,8 +383,9 @@ function rawValues(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(rawValues);
   if (isRecord(value)) {
     for (const key of ['id', 'accountId', 'value', 'name', 'key']) {
-      if (typeof value[key] === 'string') return [value[key] as string];
-      if (typeof value[key] === 'number') return [String(value[key])];
+      const candidate = value[key];
+      if (typeof candidate === 'string') return [candidate];
+      if (typeof candidate === 'number') return [String(candidate)];
     }
     return [JSON.stringify(value)];
   }

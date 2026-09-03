@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * jira_move_issues: the preflight (required fields, work type, request
  * type follows work type), the bulk-move submission and its polling, the
@@ -55,6 +54,38 @@ class FakeJiraApiError extends Error {
 let calls: Call[] = [];
 let responder: (call: Call) => unknown;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+/**
+ * A server double carrying only registerTool, the one method the register
+ * function calls. Object.create(null) is typed `any`, which is what lets a
+ * partial stand in for the whole class without a type assertion.
+ */
+function fakeServer(registered: Map<string, ToolHandler>): McpServer {
+  return Object.assign(Object.create(null), {
+    registerTool: (name: string, _config: unknown, handler: ToolHandler) => {
+      registered.set(name, handler);
+    },
+  });
+}
+
+function testContext(): MCPToolContext {
+  return {
+    tenantId: 'tenant-1',
+    accountId: 'acct-1',
+    siteUrl: 'https://example.atlassian.net',
+    apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
+    accessToken: 'token',
+    maxJqlResults: 50,
+  };
+}
+
 function stubAuth(): JiraAuth {
   return {
     kind: 'oauth',
@@ -72,24 +103,12 @@ function stubAuth(): JiraAuth {
   };
 }
 
-async function tools(): Promise<Map<string, ToolHandler>> {
+async function tools(options = { pollBudgetMs: 10_000 }): Promise<Map<string, ToolHandler>> {
   const registered = new Map<string, ToolHandler>();
-  const server = {
-    registerTool: (name: string, _config: unknown, handler: ToolHandler) => {
-      registered.set(name, handler);
-    },
-  } as unknown as McpServer;
-  await registerMoveTools(
-    server,
-    {
-      tenantId: 'tenant-1',
-      accountId: 'acct-1',
-      siteUrl: 'https://example.atlassian.net',
-      apiBaseUrl: 'https://api.atlassian.com/ex/jira/cloud-1',
-    } as unknown as MCPToolContext,
-    stubAuth(),
-    { sleep: async () => {}, pollBudgetMs: 10_000 }
-  );
+  await registerMoveTools(fakeServer(registered), testContext(), stubAuth(), {
+    sleep: async () => {},
+    ...options,
+  });
   return registered;
 }
 
@@ -188,7 +207,7 @@ let createMeta: Record<string, unknown[]> = {};
 let taskProgress: unknown[] = [];
 /** The keys issues have after the move, by id. */
 let movedKeys: Record<string, string> = {};
-let sourceIssues: unknown[] = [];
+let sourceIssues: ReturnType<typeof issue>[] = [];
 
 function serve(): void {
   responder = (call) => {
@@ -242,8 +261,8 @@ function serve(): void {
       };
     }
     if (path === '/rest/api/3/issue/bulkfetch' && method === 'POST') {
-      const wanted = ((body?.issueIdsOrKeys as string[]) ?? []).map(String);
-      const fields = (body?.fields as string[]) ?? [];
+      const wanted = strings(body?.issueIdsOrKeys);
+      const fields = strings(body?.fields);
       if (fields[0] === 'summary') {
         // The post-move read-back, by id.
         return {
@@ -252,9 +271,7 @@ function serve(): void {
             .map((id) => ({ id, key: movedKeys[id], fields: { summary: `moved ${id}` } })),
         };
       }
-      const found = (sourceIssues as { key: string }[]).filter((entry) =>
-        wanted.includes(entry.key)
-      );
+      const found = sourceIssues.filter((entry) => wanted.includes(entry.key));
       return {
         issues: found,
         issueErrors: wanted
@@ -302,6 +319,26 @@ function text(result: ToolResult): string {
 function movePayload(): Record<string, unknown> {
   const call = calls.find((entry) => entry.path === '/rest/api/3/bulk/issues/move');
   return call?.body ?? {};
+}
+
+/** The submitted targetToSourcesMapping, keyed as Jira reads it. */
+function mappings(): Record<string, Record<string, unknown>> {
+  const raw = movePayload().targetToSourcesMapping;
+  const out: Record<string, Record<string, unknown>> = {};
+  if (!isRecord(raw)) return out;
+  for (const [key, value] of Object.entries(raw)) {
+    if (isRecord(value)) out[key] = value;
+  }
+  return out;
+}
+
+function rowsOf(value: unknown): { label: string; value: string; oldValue?: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord).map((row) => ({
+    label: String(row.label),
+    value: String(row.value),
+    ...(typeof row.oldValue === 'string' ? { oldValue: row.oldValue } : {}),
+  }));
 }
 
 function puts(): Call[] {
@@ -422,9 +459,7 @@ describe('jira_move_issues — a plain project move', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    const mapping = (
-      movePayload().targetToSourcesMapping as Record<string, Record<string, unknown>>
-    )['10100,3'];
+    const mapping = mappings()['10100,3'];
     expect(mapping?.inferFieldDefaults).toBe(false);
     expect(mapping?.targetMandatoryFields).toEqual([
       { fields: { customfield_10020: { retain: false, type: 'raw', value: ['902'] } } },
@@ -503,7 +538,7 @@ describe('jira_move_issues — a plain project move', () => {
       targetParentKey: 'OPS-3',
     });
 
-    expect(Object.keys(movePayload().targetToSourcesMapping as object)).toEqual(['10100,5,OPS-3']);
+    expect(Object.keys(mappings())).toEqual(['10100,5,OPS-3']);
   });
 
   it('reports the issues Jira failed, with its reasons, and the ones that moved', async () => {
@@ -523,22 +558,7 @@ describe('jira_move_issues — a plain project move', () => {
     sourceIssues = [issue('101', 'ENG-1', 'Slow')];
     taskProgress = [{ taskId: '777', status: 'RUNNING', progressPercent: 10 }];
 
-    const registered = new Map<string, ToolHandler>();
-    await registerMoveTools(
-      {
-        registerTool: (name: string, _config: unknown, handler: ToolHandler) => {
-          registered.set(name, handler);
-        },
-      } as unknown as McpServer,
-      {
-        tenantId: 't',
-        accountId: 'a',
-        siteUrl: 'https://example.atlassian.net',
-      } as unknown as MCPToolContext,
-      stubAuth(),
-      { sleep: async () => {}, pollBudgetMs: 0 }
-    );
-    const result = await registered.get('jira_move_issues')!({
+    const result = await (await tools({ pollBudgetMs: 0 })).get('jira_move_issues')!({
       issueKeys: ['ENG-1'],
       targetProjectKey: 'OPS',
     });
@@ -736,7 +756,7 @@ describe('jira_move_issues_preview', () => {
     expect(card.confirmTool).toBe('jira_move_issues_confirm');
     expect(card.confirmLabel).toBe('Move');
     expect(typeof card.previewId).toBe('string');
-    const rows = card.fields as { label: string; value: string; oldValue?: string }[];
+    const rows = rowsOf(card.fields);
     expect(rows).toEqual(
       expect.arrayContaining([
         { label: 'Issue', value: 'ENG-1 — Laptop broken' },
