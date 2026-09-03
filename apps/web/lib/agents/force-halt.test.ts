@@ -3,9 +3,10 @@
  * What must hold: a run that already finished refuses; the status flip is a
  * one-way claim guarded the same way requestRunCancellation's is (a race in
  * the gap between the read and the write is "already-final", not a crash);
- * and a successful halt also clears the run's agent_jobs row AND voids its
- * in-progress attempt row, so nothing can reclaim or resume it afterward
- * and the timeline does not show a "Running" attempt under a Canceled run.
+ * and a successful halt also clears the run's agent_jobs row AND closes out
+ * its in-progress attempt row (marked canceled, not deleted — see
+ * force-halt.ts for why), so nothing can reclaim or resume it afterward and
+ * the timeline does not show a "Running" attempt under a Canceled run.
  */
 
 import type { Kysely } from 'kysely';
@@ -113,7 +114,9 @@ describe('forceHaltRun', () => {
     const jobUpdate = sets.find((s) => s.__table === 'agent_jobs');
     expect(jobUpdate).toMatchObject({ status: 'skipped' });
 
+    const stepUpdate = sets.find((s) => s.__table === 'agent_run_steps');
+    expect(stepUpdate).toMatchObject({ status: 'canceled' });
+
     expect(calls).toContainEqual({ table: 'agent_jobs_dead_letters', op: 'delete' });
-    expect(calls).toContainEqual({ table: 'agent_run_steps', op: 'delete' });
   });
 });

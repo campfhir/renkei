@@ -21,15 +21,16 @@
  *
  * It also clears the run's agent_jobs row, live or dead-lettered, so a
  * stale-claim reclaim or a later dead-letter requeue can never resume or
- * double-process a run this already closed out from under it. And it voids
- * any 'running' agent_run_steps row exactly like the engine's own
- * RunCanceled handling does (engine.ts, the catch beside runAttempt's
- * insert) — otherwise the timeline would show the run as Canceled while its
- * last attempt sits forever as "Running", since nothing else ever closes
- * that row out. A 'waiting' row (parked behind an approval or a question)
- * is left alone on purpose: it already carries a complete summary, and the
- * engine's own graceful-cancel path for a waiting run leaves it untouched
- * too.
+ * double-process a run this already closed out from under it. And it closes
+ * out any 'running' agent_run_steps row exactly like finalizeRun's own
+ * cleanup does (engine.ts) — otherwise the timeline would show the run as
+ * Canceled while its last attempt sits forever as "Running". It marks the
+ * row canceled rather than deleting it: force-halt exists BECAUSE that
+ * attempt looked stuck, so its started_at and which step it was on are the
+ * evidence worth keeping, not erasing. A 'waiting' row (parked behind an
+ * approval or a question) is left alone on purpose: it already carries a
+ * complete summary, and the engine's own graceful-cancel path for a
+ * waiting run leaves it untouched too.
  */
 
 import { sql, type Kysely } from 'kysely';
@@ -87,12 +88,12 @@ export async function forceHaltRun(
     return { outcome: 'already-final', status: run.status };
   }
 
-  // Void the in-progress attempt row — same treatment, same reasoning, as
-  // engine.ts's own RunCanceled catch: nothing to show for an attempt that
-  // never finished, so it does not linger as "Running" under a run that is
-  // already Canceled.
+  // Close out the in-progress attempt row so it does not linger as
+  // "Running" under a run that is already Canceled — see the header for why
+  // this updates rather than deletes it.
   await db
-    .deleteFrom('agent_run_steps')
+    .updateTable('agent_run_steps')
+    .set({ status: 'canceled', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
     .where('run_id', '=', input.runId)
     .where('status', '=', 'running')
     .execute();

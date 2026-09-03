@@ -634,7 +634,7 @@ maybe('agent run engine', () => {
     expect(finalized[0]).toMatchObject({ status: 'canceled', quiet: true });
   });
 
-  it('voids an orphaned "running" attempt row from a crashed executor when the resumed run cancels', async () => {
+  it('closes out an orphaned "running" attempt row from a crashed executor when the resumed run cancels', async () => {
     // Models a crash-then-cancel race, not a live one: an earlier executor
     // inserted this step's attempt row and then died mid-attempt (crash,
     // stale reclaim) without ever reaching runAttempt's own RunCanceled/
@@ -643,7 +643,7 @@ maybe('agent run engine', () => {
     // against hand-seeded state) — it resumes at the same current_step_id,
     // and the per-step checkpoint bails into finalizeRun('canceled') before
     // this node is ever dispatched again. The orphaned row must not survive
-    // that: nothing else on this path would otherwise touch it.
+    // that as 'running': nothing else on this path would otherwise touch it.
     const stepId = randomUUID();
     const steps: AgentStepsDoc = {
       version: CURRENT_STEPS_VERSION,
@@ -701,15 +701,16 @@ maybe('agent run engine', () => {
       .executeTakeFirstOrThrow();
     expect(run.status).toBe('canceled');
 
-    // Not left at 'running' under a run that is already Canceled — voided,
-    // the same treatment runAttempt's own RunCanceled catch gives a live
-    // attempt.
+    // Not left at 'running' under a run that is already Canceled — closed
+    // out as 'canceled' (not deleted: unlike a live attempt voided by
+    // runAttempt's own RunCanceled catch, this one may have sat stuck for a
+    // real amount of time, so its started_at is evidence worth keeping).
     const attempts = await db
       .selectFrom('agent_run_steps')
       .select(['step_id', 'status'])
       .where('run_id', '=', runId)
       .execute();
-    expect(attempts).toHaveLength(0);
+    expect(attempts).toEqual([{ step_id: stepId, status: 'canceled' }]);
   });
 
   it('interrupts a stuck attempt as a timeout instead of running past the deadline', async () => {

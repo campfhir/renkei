@@ -3862,12 +3862,17 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // RESUMED run does when it re-enters at the same current_step_id a
     // crashed or stale-reclaimed executor never finished — that earlier
     // attempt's row is still 'running', and nothing on this path would
-    // otherwise touch it. Voiding it here, unconditionally, closes that gap
-    // without having to duplicate the check at every bail-out site: no
-    // attempt is ever "still running" once its run is done, the same
-    // guarantee runAttempt's own RunCanceled catch gives a live attempt.
+    // otherwise touch it. Closing it out here, unconditionally, guarantees
+    // no attempt is ever left "Running" under a run that is done — but
+    // UPDATE rather than the delete runAttempt's own RunCanceled catch uses
+    // for a live attempt: THAT attempt just started this very turn, nothing
+    // is lost by voiding it, but an orphaned one may have sat stuck for a
+    // long time before anyone canceled it — started_at and which step it
+    // was on are exactly the evidence a stuck run leaves behind, and are
+    // worth keeping rather than erasing.
     await db
-      .deleteFrom('agent_run_steps')
+      .updateTable('agent_run_steps')
+      .set({ status: 'canceled', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
       .where('run_id', '=', run.id)
       .where('status', '=', 'running')
       .execute();
