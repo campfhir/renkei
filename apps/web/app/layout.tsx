@@ -1,4 +1,4 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 
@@ -30,6 +30,19 @@ export const metadata: Metadata = {
   // Every route behind this shell requires a session, and the sign-in
   // landing is nothing anyone should reach from a search result.
   robots: { index: false, follow: false },
+};
+
+/**
+ * `interactiveWidget: 'resizes-content'` asks the browser to shrink the
+ * layout viewport when the on-screen keyboard opens (Chrome on Android
+ * honours it; iOS Safari does not, and the chat handles that itself from
+ * the visual viewport). Without it the keyboard covers whatever sits on
+ * the bottom edge — the chat's message box, above all.
+ */
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  interactiveWidget: 'resizes-content',
 };
 
 export default function RootLayout({
