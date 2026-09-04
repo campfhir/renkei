@@ -31,6 +31,7 @@ export default {
     '^@renkei/connector-mistral-ocr$':
       '<rootDir>/../../packages/connector-mistral-ocr/src/index.ts',
     '^@renkei/connector-onbase$': '<rootDir>/../../packages/connector-onbase/src/index.ts',
+    '^@renkei/connector-sandbox$': '<rootDir>/../../packages/connector-sandbox/src/index.ts',
     '^@renkei/connector-fileshares/pure$':
       '<rootDir>/../../packages/connector-fileshares/src/pure.ts',
     '^@renkei/connector-config$': '<rootDir>/../../packages/connector-config/src/index.ts',

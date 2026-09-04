@@ -69,7 +69,7 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   if (input.hasTools) {
     sections.push(
       input.hasSandbox
-        ? "Tools act with this person's own permissions in the organization's systems. The sandbox_* tools give you a scratch space and a browser for files and pages no other tool reaches."
+        ? "Tools act with this person's own permissions in the organization's systems. The sandbox_* tools give you a scratch space and a browser for files and pages no other tool reaches; to read a public web page or a document at a URL, sandbox_fetch_page is one call and needs no browser."
         : "Tools act with this person's own permissions in the organization's systems."
     );
   }

@@ -94,6 +94,9 @@ importers:
       '@renkei/connector-onbase':
         specifier: workspace:*
         version: link:../../packages/connector-onbase
+      '@renkei/connector-sandbox':
+        specifier: workspace:*
+        version: link:../../packages/connector-sandbox
       '@renkei/connector-webex':
         specifier: workspace:*
         version: link:../../packages/connector-webex
