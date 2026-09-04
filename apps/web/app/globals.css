@@ -654,3 +654,283 @@ input[type='number']::-webkit-inner-spin-button {
   appearance: none;
   margin: 0;
 }
+
+/* ------------------------------------------------------------------------- */
+/* The chat: the model's Markdown, folded blocks, and the streaming cursor.   */
+/* Token colors follow the system scheme like every dark: utility elsewhere.  */
+/* ------------------------------------------------------------------------- */
+.chat-markdown {
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.chat-markdown > * + * {
+  margin-top: 0.6em;
+}
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3,
+.chat-markdown h4 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 1em;
+}
+.chat-markdown h1 {
+  font-size: 1.25em;
+}
+.chat-markdown h2 {
+  font-size: 1.15em;
+}
+.chat-markdown h3 {
+  font-size: 1.05em;
+}
+.chat-markdown ul,
+.chat-markdown ol {
+  padding-left: 1.4em;
+}
+.chat-markdown ul {
+  list-style: disc;
+}
+.chat-markdown ol {
+  list-style: decimal;
+}
+.chat-markdown li + li {
+  margin-top: 0.2em;
+}
+.chat-markdown a {
+  color: var(--color-blue-600);
+  text-decoration: underline;
+}
+.chat-markdown blockquote {
+  border-left: 3px solid var(--color-gray-300);
+  color: var(--color-gray-600);
+  padding-left: 0.8em;
+}
+.chat-markdown code {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+  background: var(--color-gray-100);
+  border-radius: 0.25rem;
+  padding: 0.1em 0.3em;
+}
+.chat-markdown pre {
+  background: var(--color-gray-100);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  overflow-x: auto;
+}
+.chat-markdown pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 0.85em;
+}
+.chat-markdown table {
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid var(--color-gray-300);
+  padding: 0.3em 0.6em;
+  text-align: left;
+}
+.chat-markdown th {
+  background: var(--color-gray-100);
+}
+.chat-markdown hr {
+  border-color: var(--color-gray-200);
+}
+.chat-markdown img {
+  max-width: 100%;
+}
+.chat-markdown .hljs-comment,
+.chat-markdown .hljs-quote {
+  color: var(--color-gray-500);
+  font-style: italic;
+}
+.chat-markdown .hljs-keyword,
+.chat-markdown .hljs-selector-tag,
+.chat-markdown .hljs-built_in,
+.chat-markdown .hljs-type {
+  color: var(--color-purple-700);
+}
+.chat-markdown .hljs-string,
+.chat-markdown .hljs-attr,
+.chat-markdown .hljs-template-variable,
+.chat-markdown .hljs-regexp {
+  color: var(--color-emerald-700);
+}
+.chat-markdown .hljs-number,
+.chat-markdown .hljs-literal {
+  color: var(--color-amber-700);
+}
+.chat-markdown .hljs-title,
+.chat-markdown .hljs-function,
+.chat-markdown .hljs-section,
+.chat-markdown .hljs-name {
+  color: var(--color-blue-700);
+}
+.chat-markdown .hljs-variable,
+.chat-markdown .hljs-property,
+.chat-markdown .hljs-symbol {
+  color: var(--color-rose-700);
+}
+.chat-markdown .hljs-meta,
+.chat-markdown .hljs-tag {
+  color: var(--color-sky-700);
+}
+.chat-markdown .hljs-deletion {
+  background: color-mix(in oklab, var(--color-red-500) 15%, transparent);
+}
+.chat-markdown .hljs-addition {
+  background: color-mix(in oklab, var(--color-emerald-500) 15%, transparent);
+}
+.chat-markdown .hljs-emphasis {
+  font-style: italic;
+}
+.chat-markdown .hljs-strong {
+  font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  .chat-markdown a {
+    color: var(--color-blue-400);
+  }
+  .chat-markdown blockquote {
+    border-color: var(--color-gray-700);
+    color: var(--color-gray-400);
+  }
+  .chat-markdown code,
+  .chat-markdown pre,
+  .chat-markdown th {
+    background: var(--color-gray-900);
+  }
+  .chat-markdown th,
+  .chat-markdown td {
+    border-color: var(--color-gray-700);
+  }
+  .chat-markdown hr {
+    border-color: var(--color-gray-800);
+  }
+  .chat-markdown .hljs-comment,
+  .chat-markdown .hljs-quote {
+    color: var(--color-gray-500);
+  }
+  .chat-markdown .hljs-keyword,
+  .chat-markdown .hljs-selector-tag,
+  .chat-markdown .hljs-built_in,
+  .chat-markdown .hljs-type {
+    color: var(--color-purple-300);
+  }
+  .chat-markdown .hljs-string,
+  .chat-markdown .hljs-attr,
+  .chat-markdown .hljs-template-variable,
+  .chat-markdown .hljs-regexp {
+    color: var(--color-emerald-300);
+  }
+  .chat-markdown .hljs-number,
+  .chat-markdown .hljs-literal {
+    color: var(--color-amber-300);
+  }
+  .chat-markdown .hljs-title,
+  .chat-markdown .hljs-function,
+  .chat-markdown .hljs-section,
+  .chat-markdown .hljs-name {
+    color: var(--color-blue-300);
+  }
+  .chat-markdown .hljs-variable,
+  .chat-markdown .hljs-property,
+  .chat-markdown .hljs-symbol {
+    color: var(--color-rose-300);
+  }
+  .chat-markdown .hljs-meta,
+  .chat-markdown .hljs-tag {
+    color: var(--color-sky-300);
+  }
+}
+
+/* A folded block — thinking, a tool call — with its result inside. */
+.chat-fold {
+  margin: 0.4rem 0;
+  border: 1px solid var(--color-gray-200);
+  border-radius: 0.5rem;
+  font-size: 0.8125rem;
+}
+.chat-fold > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  padding: 0.35rem 0.6rem;
+  color: var(--color-gray-600);
+  list-style: none;
+}
+.chat-fold > summary::-webkit-details-marker {
+  display: none;
+}
+.chat-fold[open] > summary {
+  border-bottom: 1px solid var(--color-gray-200);
+}
+.chat-fold > :not(summary) {
+  padding: 0.5rem 0.6rem;
+}
+.chat-fold-error {
+  border-color: color-mix(in oklab, var(--color-red-500) 40%, transparent);
+}
+.chat-fold-error > summary {
+  color: var(--color-red-700);
+}
+.chat-pre {
+  max-height: 20rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+  background: var(--color-gray-50);
+  border-radius: 0.375rem;
+  padding: 0.5rem;
+}
+@media (prefers-color-scheme: dark) {
+  .chat-fold {
+    border-color: var(--color-gray-800);
+  }
+  .chat-fold > summary {
+    color: var(--color-gray-400);
+  }
+  .chat-fold[open] > summary {
+    border-color: var(--color-gray-800);
+  }
+  .chat-fold-error > summary {
+    color: var(--color-red-300);
+  }
+  .chat-pre {
+    background: var(--color-gray-900);
+  }
+}
+
+/* The streaming cursor and the "calling…" dots. */
+.chat-cursor {
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 0.1em;
+  vertical-align: text-bottom;
+  background: currentColor;
+  border-radius: 1px;
+  animation: chat-blink 1s steps(2, start) infinite;
+}
+.chat-dots::after {
+  content: '…';
+  animation: chat-blink 1.2s steps(2, start) infinite;
+}
+@keyframes chat-blink {
+  to {
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-cursor,
+  .chat-dots::after {
+    animation: none;
+  }
+}

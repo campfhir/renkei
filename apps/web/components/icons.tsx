@@ -45,6 +45,17 @@ export const ICONS = {
   folder: 'M3 19V5h6l2 3h10v11z',
   folderPlus: 'M3 19V5h6l2 3h10v11zM12 10.5v5M9.5 13h5',
   upload: 'M12 16V4M8 8l4-4 4 4M5 16v4h14v-4',
+  /** The chat: a plus for "new", a hamburger for the drawer, and the composer's verbs. */
+  plus: 'M12 5v14M5 12h14',
+  menu: 'M4 7h16M4 12h16M4 17h16',
+  send: 'M4 12l16-8-6 16-2.5-6.5z',
+  stop: 'M7 7h10v10H7z',
+  paperclip: 'M20 11.5l-8 8a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8',
+  /** A four-point spark — thinking, and the prompt libraries. */
+  sparkle:
+    'M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8zM19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z',
+  /** A wrench — the tools a chat may use. */
+  tool: 'M14.5 4.5a4 4 0 0 0-4.6 5.4L4 15.8V20h4.2l5.9-5.9a4 4 0 0 0 5.4-4.6l-2.6 2.6-2.4-2.4z',
   /** Plain sheet with a folded corner — the fallback file glyph. */
   file: 'M6 21V3h8l4 4v14zM14 3v4h4',
   fileText: 'M6 21V3h8l4 4v14zM14 3v4h4M9 12h6M9 16h6',

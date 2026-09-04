@@ -98,6 +98,7 @@ export default function AppNav({
       label: 'Workspace',
       items: [
         { href: `/${slug}`, label: 'Home' },
+        { href: `/${slug}/chat`, label: 'Chat' },
         { href: `/${slug}/connectors`, label: 'Connectors' },
         { href: `/${slug}/files`, label: 'Files' },
         { href: `/${slug}/knowledge`, label: 'Knowledge' },
