@@ -1,38 +1,41 @@
 /**
- * The onbase_admin_* tools — OnBase's *Administration* API (Foundation
- * 26.1, docs/onbase-administration-openapi-spec.json), a different product
- * from the Document API `index.ts` wraps: it configures OnBase rather than
- * filing documents into it — document types, keyword types, the keyword
+ * The onbase_admin_* tools — a SEPARATE connector from the onbase_* tools
+ * in index.ts, wrapping OnBase's *Administration* API (Foundation 26.1,
+ * docs/onbase-administration-openapi-spec.json) rather than its Document
+ * API: it configures OnBase — document types, keyword types, the keyword
  * types assigned to a document type, document/keyword type groups, file
- * types, and the change-control audit log.
+ * types, and the change-control audit log — instead of filing documents
+ * into it.
  *
- * Three things carry over from the Document API tools, because the shape
- * of the problem is the same:
+ * `onbase-admin` is its own Hyland OAuth client with its own
+ * `connector_configs` row and its own `provider_grants` rows (see
+ * onbase-auth.ts's ADMIN_SPEC and provider-grants' ONBASE_ADMIN), mirroring
+ * how connector-atlassian treats Jira/JSM/Confluence/Bitbucket as four
+ * separate connectors rather than one. A caller may have onbase_* without
+ * onbase_admin_*, or the reverse — they are connected, enabled and
+ * capability-gated independently. Because of that independence, this file
+ * is fully self-contained: it never assumes the onbase_* Document
+ * connector is also available, so every name→id resolution below (document
+ * types, keyword types, groups, file types, disk groups) goes through the
+ * Administration API's OWN listing endpoints (`GET /api/{kind}`), not
+ * index.ts's Document-API-backed resolveRef/loadCatalog.
  *
- *   - Names resolve to ids INSIDE the tools. Where a reference is something
- *     the Document API already lists (document types, keyword types,
- *     document/keyword type groups, file types), resolution reuses
- *     index.ts's existing resolveRef/loadCatalog — same ids, same cache,
- *     one implementation — so the admin tools do not require the
- *     Administration API base URL just to resolve a name.
+ * Two things carry over from the Document API tools, because the shape of
+ * the problem is the same:
+ *
+ *   - Names resolve to ids INSIDE the tools, with the same
+ *     CatalogCache/resolveKeywordTypeRef machinery index.ts uses — just a
+ *     second cache, scoped to this connector's own `/api/*` listings.
  *   - `PUT /api/document-types/{id}/keyword-types` REPLACES every keyword
  *     assignment on the document type, and reports success either way.
  *     onbase_admin_assign_keyword_types therefore reads the current
  *     assignments, merges the caller's changes in by keyword type id, and
  *     writes the whole collection back — the same trap, the same fix, as
  *     onbase_update_keywords in index.ts.
- *   - A create or rename invalidates the shared name→id cache for that
- *     catalog kind, so a document type created this turn resolves by name
- *     on the very next tool call instead of waiting out five minutes of
- *     staleness.
  *
- * Reachability is separate from the Document API: the Administration API
- * lives at a tenant-configured `adminApiBaseUrl` (sibling to `apiBaseUrl`,
- * `{server}/onbase/administration` vs `{server}/onbase/core`), optional
- * because a tenant that connects OnBase for document retrieval need not
- * also grant configuration access. `auth.adminApi` answers a plain refusal
- * string when it is unset — every tool here surfaces that the same way it
- * surfaces any other refusal.
+ * A create or rename invalidates this file's own cache for that catalog
+ * kind, so a document type created this turn resolves by name on the very
+ * next tool call instead of waiting out five minutes of staleness.
  *
  * Deliberately not in this cut, matching the Document API tools' own
  * "nothing destructive, nothing identity/security-adjacent in v1" scope:
@@ -62,57 +65,73 @@ import {
   apiJson,
   displayName,
   errText,
-  invalidateCatalog,
   isRecord,
-  loadCatalog,
   namedList,
-  resolveRef,
   str,
   textResult,
   type NamedThing,
 } from './index';
 
-/** One Administration API call, reusing index.ts's envelope/error handling. */
-function adminApiJson(
-  auth: OnBaseAuth,
-  request: Parameters<OnBaseAuth['api']>[0],
-  what: string
-): ReturnType<typeof apiJson> {
-  return apiJson({ api: auth.adminApi }, request, what);
-}
+type AdminCatalogKind =
+  | 'document-types'
+  | 'keyword-types'
+  | 'document-type-groups'
+  | 'keyword-type-groups'
+  | 'file-types'
+  | 'disk-groups';
 
-/** Disk groups and display types: Administration-only reference vocabulary. */
+/**
+ * This connector's own vocabulary cache — a second instance from index.ts's,
+ * because this connector's `auth` reaches a different host (the
+ * Administration API) and may exist without the Document connector at all.
+ * Five minutes of staleness on admin-curated configuration, same tradeoff
+ * as index.ts.
+ */
 const adminCatalogCache = new CatalogCache<NamedThing[]>();
 
-async function loadDiskGroups(
+async function loadAdminCatalog(
   context: MCPToolContext,
-  auth: OnBaseAuth
+  auth: OnBaseAuth,
+  kind: AdminCatalogKind
 ): Promise<NamedThing[] | string> {
-  const cacheKey = `${context.tenantId}:admin-disk-groups`;
+  const cacheKey = `${context.tenantId}:${kind}`;
   const cached = adminCatalogCache.get(cacheKey);
   if (cached) return cached;
-  const result = await adminApiJson(auth, { method: 'GET', path: '/api/disk-groups' }, 'list disk groups');
+  const result = await apiJson(auth, { method: 'GET', path: `/api/${kind}` }, `list ${kind}`);
   if (typeof result === 'string') return result;
   const items = namedList(result.json);
   adminCatalogCache.set(cacheKey, items);
   return items;
 }
 
-async function resolveDiskGroupRef(
+/** Drop a cached page so the next resolveAdminRef re-fetches it after a write. */
+function invalidateAdminCatalog(context: MCPToolContext, kind: AdminCatalogKind): void {
+  adminCatalogCache.invalidate(`${context.tenantId}:${kind}`);
+}
+
+async function resolveAdminRef(
   context: MCPToolContext,
   auth: OnBaseAuth,
-  ref: string
+  kind: AdminCatalogKind,
+  ref: string,
+  noun: string
 ): Promise<string | { refusal: string }> {
-  const catalog = await loadDiskGroups(context, auth);
+  const catalog = await loadAdminCatalog(context, auth, kind);
   if (typeof catalog === 'string') return { refusal: catalog };
-  const resolved = resolveKeywordTypeRef(catalog, ref, 'disk group');
-  if (!resolved.ok) return { refusal: resolved.err.message ?? `Unknown disk group: ${ref}` };
+  const resolved = resolveKeywordTypeRef(catalog, ref, noun);
+  if (!resolved.ok) return { refusal: resolved.err.message ?? `Unknown ${noun}: ${ref}` };
   return resolved.val;
 }
 
 /** JSON Patch from a flat field-name → new-value object; every op is "replace". */
-function replacePatch(fields: Record<string, unknown>): { op: 'replace'; path: string; value: unknown }[] {
-  return Object.entries(fields).map(([key, value]) => ({ op: 'replace' as const, path: `/${key}`, value }));
+function replacePatch(
+  fields: Record<string, unknown>
+): { op: 'replace'; path: string; value: unknown }[] {
+  return Object.entries(fields).map(([key, value]) => ({
+    op: 'replace' as const,
+    path: `/${key}`,
+    value,
+  }));
 }
 
 const optionsSchema = z
@@ -124,6 +143,8 @@ const optionsSchema = z
       'a same-named entry here.'
   );
 
+export const ONBASE_ADMIN_MCP_CONNECTOR = 'onbase-admin';
+
 export function registerOnbaseAdminTools(
   server: McpServer,
   context: MCPToolContext,
@@ -132,23 +153,71 @@ export function registerOnbaseAdminTools(
   /* ------------------------------- Read ------------------------------- */
 
   server.registerTool(
+    'onbase_admin_list_document_types',
+    {
+      title: 'OnBase Admin · Read — List document types',
+      description:
+        'The document types configured in this OnBase, by name and id — the vocabulary every ' +
+        'other onbase_admin_* tool resolves names against.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const types = await loadAdminCatalog(context, auth, 'document-types');
+      if (typeof types === 'string') return errText(types);
+      if (types.length === 0) return textResult('No document types are visible to your account.');
+      return textResult(
+        'Document types (name — id):\n' +
+          types.map((t) => `  ${displayName(t)} — id ${t.id}`).join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
+    'onbase_admin_list_keyword_types',
+    {
+      title: 'OnBase Admin · Read — List keyword types',
+      description:
+        'The keyword types configured in this OnBase, by name and id — the vocabulary every ' +
+        'other onbase_admin_* tool resolves names against.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const types = await loadAdminCatalog(context, auth, 'keyword-types');
+      if (typeof types === 'string') return errText(types);
+      if (types.length === 0) return textResult('No keyword types are visible to your account.');
+      return textResult(
+        'Keyword types (name — id):\n' +
+          types.map((t) => `  ${displayName(t)} — id ${t.id}`).join('\n')
+      );
+    }
+  );
+
+  server.registerTool(
     'onbase_admin_get_document_type',
     {
       title: 'OnBase Admin · Read — Document type configuration',
       description:
         'The full configuration of one document type — every field the Administration API ' +
         'exposes (disk group, default file format, retrieval/display behavior), not just the ' +
-        'name and id onbase_list_document_types shows. Use before onbase_admin_update_document_type ' +
-        'to see current values.',
+        'name and id onbase_admin_list_document_types shows. Use before ' +
+        'onbase_admin_update_document_type to see current values.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         documentType: z.string().min(1).describe('Document type name or id.'),
       }),
     },
     async (args: { documentType: string }) => {
-      const id = await resolveRef(context, auth, 'document-types', args.documentType, 'document type');
+      const id = await resolveAdminRef(
+        context,
+        auth,
+        'document-types',
+        args.documentType,
+        'document type'
+      );
       if (typeof id !== 'string') return errText(id.refusal);
-      const result = await adminApiJson(
+      const result = await apiJson(
         auth,
         { method: 'GET', path: `/api/document-types/${encodeURIComponent(id)}` },
         'read the document type'
@@ -164,7 +233,7 @@ export function registerOnbaseAdminTools(
       title: 'OnBase Admin · Read — Keyword type configuration',
       description:
         'The full configuration of one keyword type — data type, casing, storage, dataset ' +
-        'settings — not just the name and id onbase_list_keyword_types shows. Use before ' +
+        'settings — not just the name and id onbase_admin_list_keyword_types shows. Use before ' +
         'onbase_admin_update_keyword_type to see current values.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
@@ -172,9 +241,15 @@ export function registerOnbaseAdminTools(
       }),
     },
     async (args: { keywordType: string }) => {
-      const id = await resolveRef(context, auth, 'keyword-types', args.keywordType, 'keyword type');
+      const id = await resolveAdminRef(
+        context,
+        auth,
+        'keyword-types',
+        args.keywordType,
+        'keyword type'
+      );
       if (typeof id !== 'string') return errText(id.refusal);
-      const result = await adminApiJson(
+      const result = await apiJson(
         auth,
         { method: 'GET', path: `/api/keyword-types/${encodeURIComponent(id)}` },
         'read the keyword type'
@@ -195,7 +270,7 @@ export function registerOnbaseAdminTools(
       }),
     },
     async (args: { documentTypeGroup: string }) => {
-      const id = await resolveRef(
+      const id = await resolveAdminRef(
         context,
         auth,
         'document-type-groups',
@@ -203,7 +278,7 @@ export function registerOnbaseAdminTools(
         'document type group'
       );
       if (typeof id !== 'string') return errText(id.refusal);
-      const result = await adminApiJson(
+      const result = await apiJson(
         auth,
         { method: 'GET', path: `/api/document-type-groups/${encodeURIComponent(id)}` },
         'read the document type group'
@@ -224,7 +299,7 @@ export function registerOnbaseAdminTools(
       }),
     },
     async (args: { keywordTypeGroup: string }) => {
-      const id = await resolveRef(
+      const id = await resolveAdminRef(
         context,
         auth,
         'keyword-type-groups',
@@ -232,7 +307,7 @@ export function registerOnbaseAdminTools(
         'keyword type group'
       );
       if (typeof id !== 'string') return errText(id.refusal);
-      const result = await adminApiJson(
+      const result = await apiJson(
         auth,
         { method: 'GET', path: `/api/keyword-type-groups/${encodeURIComponent(id)}` },
         'read the keyword type group'
@@ -246,16 +321,17 @@ export function registerOnbaseAdminTools(
     'onbase_admin_get_file_type',
     {
       title: 'OnBase Admin · Read — File type configuration',
-      description: 'The full configuration of one file type (display type, extension, viewer options).',
+      description:
+        'The full configuration of one file type (display type, extension, viewer options).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         fileType: z.string().min(1).describe('File type name or id.'),
       }),
     },
     async (args: { fileType: string }) => {
-      const id = await resolveRef(context, auth, 'file-types', args.fileType, 'file type');
+      const id = await resolveAdminRef(context, auth, 'file-types', args.fileType, 'file type');
       if (typeof id !== 'string') return errText(id.refusal);
-      const result = await adminApiJson(
+      const result = await apiJson(
         auth,
         { method: 'GET', path: `/api/file-types/${encodeURIComponent(id)}` },
         'read the file type'
@@ -271,13 +347,12 @@ export function registerOnbaseAdminTools(
       title: 'OnBase Admin · Read — List file types',
       description:
         'The file types configured in this OnBase, by name and id — the vocabulary ' +
-        'onbase_admin_create_document_type\'s defaultFileFormat and onbase_admin_create_file_type ' +
-        'resolve names against.',
+        "onbase_admin_create_document_type's defaultFileFormat resolves names against.",
       annotations: { readOnlyHint: true },
       inputSchema: z.object({}),
     },
     async () => {
-      const types = await loadCatalog(context, auth, 'file-types');
+      const types = await loadAdminCatalog(context, auth, 'file-types');
       if (typeof types === 'string') return errText(types);
       if (types.length === 0) return textResult('No file types are visible to your account.');
       return textResult(
@@ -299,7 +374,7 @@ export function registerOnbaseAdminTools(
       inputSchema: z.object({}),
     },
     async () => {
-      const groups = await loadDiskGroups(context, auth);
+      const groups = await loadAdminCatalog(context, auth, 'disk-groups');
       if (typeof groups === 'string') return errText(groups);
       if (groups.length === 0) return textResult('No disk groups are visible to your account.');
       return textResult(
@@ -320,7 +395,7 @@ export function registerOnbaseAdminTools(
       inputSchema: z.object({}),
     },
     async () => {
-      const result = await adminApiJson(
+      const result = await apiJson(
         auth,
         { method: 'GET', path: '/api/file-types/display-types' },
         'list display types'
@@ -346,7 +421,13 @@ export function registerOnbaseAdminTools(
       }),
     },
     async (args: { documentType: string }) => {
-      const id = await resolveRef(context, auth, 'document-types', args.documentType, 'document type');
+      const id = await resolveAdminRef(
+        context,
+        auth,
+        'document-types',
+        args.documentType,
+        'document type'
+      );
       if (typeof id !== 'string') return errText(id.refusal);
       const rendered = await renderAssignments(context, auth, id);
       return rendered.ok ? textResult(rendered.text) : errText(rendered.text);
@@ -382,7 +463,7 @@ export function registerOnbaseAdminTools(
       if (args.changeType) query.changeType = args.changeType;
       if (args.after) query.afterDateChanged = args.after;
       if (args.before) query.beforeDateChanged = args.before;
-      const result = await adminApiJson(
+      const result = await apiJson(
         auth,
         { method: 'GET', path: '/api/change-events', query },
         'list change events'
@@ -410,7 +491,7 @@ export function registerOnbaseAdminTools(
       title: 'OnBase Admin · Act — Create a document type',
       description:
         'Create a new document type. documentTypeGroup, defaultFileFormat and defaultDiskGroup ' +
-        'are required by OnBase and are resolved from names (onbase_list_document_types, ' +
+        'are required by OnBase and are resolved from names (onbase_admin_list_document_types, ' +
         'onbase_admin_list_file_types, onbase_admin_list_disk_groups show the vocabulary). ' +
         'Keyword types are NOT assigned at creation — call onbase_admin_assign_keyword_types ' +
         'afterward.',
@@ -446,7 +527,7 @@ export function registerOnbaseAdminTools(
       userGroupIds?: string[];
       options?: Record<string, unknown>;
     }) => {
-      const groupId = await resolveRef(
+      const groupId = await resolveAdminRef(
         context,
         auth,
         'document-type-groups',
@@ -454,7 +535,7 @@ export function registerOnbaseAdminTools(
         'document type group'
       );
       if (typeof groupId !== 'string') return errText(groupId.refusal);
-      const fileFormatId = await resolveRef(
+      const fileFormatId = await resolveAdminRef(
         context,
         auth,
         'file-types',
@@ -462,7 +543,13 @@ export function registerOnbaseAdminTools(
         'file type'
       );
       if (typeof fileFormatId !== 'string') return errText(fileFormatId.refusal);
-      const diskGroupId = await resolveDiskGroupRef(context, auth, args.defaultDiskGroup);
+      const diskGroupId = await resolveAdminRef(
+        context,
+        auth,
+        'disk-groups',
+        args.defaultDiskGroup,
+        'disk group'
+      );
       if (typeof diskGroupId !== 'string') return errText(diskGroupId.refusal);
 
       const body: Record<string, unknown> = {
@@ -479,13 +566,13 @@ export function registerOnbaseAdminTools(
         ...(args.userGroupIds ? { userGroupIds: args.userGroupIds.map((id) => Number(id)) } : {}),
       };
 
-      const created = await adminApiJson(
+      const created = await apiJson(
         auth,
         { method: 'POST', path: '/api/document-types', body },
         'create the document type'
       );
       if (typeof created === 'string') return errText(created);
-      invalidateCatalog(context, 'document-types');
+      invalidateAdminCatalog(context, 'document-types');
       const newId = isRecord(created.json) ? str(created.json.id) : '';
       return textResult(
         `Created document type "${args.name}"${newId ? ` (id ${newId})` : ''}. Use ` +
@@ -510,9 +597,15 @@ export function registerOnbaseAdminTools(
       }),
     },
     async (args: { documentType: string; fields: Record<string, unknown> }) => {
-      const id = await resolveRef(context, auth, 'document-types', args.documentType, 'document type');
+      const id = await resolveAdminRef(
+        context,
+        auth,
+        'document-types',
+        args.documentType,
+        'document type'
+      );
       if (typeof id !== 'string') return errText(id.refusal);
-      const updated = await adminApiJson(
+      const updated = await apiJson(
         auth,
         {
           method: 'PATCH',
@@ -522,7 +615,7 @@ export function registerOnbaseAdminTools(
         'update the document type'
       );
       if (typeof updated === 'string') return errText(updated);
-      if (args.fields.name !== undefined) invalidateCatalog(context, 'document-types');
+      if (args.fields.name !== undefined) invalidateAdminCatalog(context, 'document-types');
       return textResult(
         `Updated document type ${args.documentType}: ${Object.keys(args.fields).join(', ')}.`
       );
@@ -533,7 +626,8 @@ export function registerOnbaseAdminTools(
     'onbase_admin_create_keyword_type',
     {
       title: 'OnBase Admin · Act — Create a keyword type',
-      description: 'Create a new keyword type. dataType is required by OnBase and cannot change later.',
+      description:
+        'Create a new keyword type. dataType is required by OnBase and cannot change later.',
       inputSchema: z.object({
         name: z.string().min(1),
         dataType: z.enum([
@@ -576,13 +670,13 @@ export function registerOnbaseAdminTools(
         ...(args.storage ? { storage: args.storage } : {}),
         ...(args.usageRestrictions ? { usageRestrictions: args.usageRestrictions } : {}),
       };
-      const created = await adminApiJson(
+      const created = await apiJson(
         auth,
         { method: 'POST', path: '/api/keyword-types', body },
         'create the keyword type'
       );
       if (typeof created === 'string') return errText(created);
-      invalidateCatalog(context, 'keyword-types');
+      invalidateAdminCatalog(context, 'keyword-types');
       const newId = isRecord(created.json) ? str(created.json.id) : '';
       return textResult(`Created keyword type "${args.name}"${newId ? ` (id ${newId})` : ''}.`);
     }
@@ -604,9 +698,15 @@ export function registerOnbaseAdminTools(
       }),
     },
     async (args: { keywordType: string; fields: Record<string, unknown> }) => {
-      const id = await resolveRef(context, auth, 'keyword-types', args.keywordType, 'keyword type');
+      const id = await resolveAdminRef(
+        context,
+        auth,
+        'keyword-types',
+        args.keywordType,
+        'keyword type'
+      );
       if (typeof id !== 'string') return errText(id.refusal);
-      const updated = await adminApiJson(
+      const updated = await apiJson(
         auth,
         {
           method: 'PATCH',
@@ -616,7 +716,7 @@ export function registerOnbaseAdminTools(
         'update the keyword type'
       );
       if (typeof updated === 'string') return errText(updated);
-      if (args.fields.name !== undefined) invalidateCatalog(context, 'keyword-types');
+      if (args.fields.name !== undefined) invalidateAdminCatalog(context, 'keyword-types');
       return textResult(
         `Updated keyword type ${args.keywordType}: ${Object.keys(args.fields).join(', ')}.`
       );
@@ -650,13 +750,13 @@ export function registerOnbaseAdminTools(
         ...(args.documentSource ? { documentSource: args.documentSource } : {}),
         ...(args.userGroupIds ? { userGroupIds: args.userGroupIds.map((id) => Number(id)) } : {}),
       };
-      const created = await adminApiJson(
+      const created = await apiJson(
         auth,
         { method: 'POST', path: '/api/document-type-groups', body },
         'create the document type group'
       );
       if (typeof created === 'string') return errText(created);
-      invalidateCatalog(context, 'document-type-groups');
+      invalidateAdminCatalog(context, 'document-type-groups');
       const newId = isRecord(created.json) ? str(created.json.id) : '';
       return textResult(`Created document type group "${args.name}"${newId ? ` (id ${newId})` : ''}.`);
     }
@@ -695,7 +795,13 @@ export function registerOnbaseAdminTools(
     }) => {
       const members: { keywordTypeId: string; sequenceNum: number }[] = [];
       for (const entry of args.keywordTypes) {
-        const id = await resolveRef(context, auth, 'keyword-types', entry.keywordType, 'keyword type');
+        const id = await resolveAdminRef(
+          context,
+          auth,
+          'keyword-types',
+          entry.keywordType,
+          'keyword type'
+        );
         if (typeof id !== 'string') return errText(id.refusal);
         members.push({ keywordTypeId: id, sequenceNum: entry.sequenceNum });
       }
@@ -712,13 +818,13 @@ export function registerOnbaseAdminTools(
         // convention elsewhere and is expected to be filled in by the server.
         keywordTypes: members.map((m) => ({ ...m, keywordTypeGroupId: '0' })),
       };
-      const created = await adminApiJson(
+      const created = await apiJson(
         auth,
         { method: 'POST', path: '/api/keyword-type-groups', body },
         'create the keyword type group'
       );
       if (typeof created === 'string') return errText(created);
-      invalidateCatalog(context, 'keyword-type-groups');
+      invalidateAdminCatalog(context, 'keyword-type-groups');
       const newId = isRecord(created.json) ? str(created.json.id) : '';
       return textResult(
         `Created keyword type group "${args.name}"${newId ? ` (id ${newId})` : ''} with ` +
@@ -741,20 +847,25 @@ export function registerOnbaseAdminTools(
         options: optionsSchema,
       }),
     },
-    async (args: { name: string; displayType: string; extension?: string; options?: Record<string, unknown> }) => {
+    async (args: {
+      name: string;
+      displayType: string;
+      extension?: string;
+      options?: Record<string, unknown>;
+    }) => {
       const body: Record<string, unknown> = {
         ...args.options,
         name: args.name,
         displayType: args.displayType,
         ...(args.extension !== undefined ? { extension: args.extension } : {}),
       };
-      const created = await adminApiJson(
+      const created = await apiJson(
         auth,
         { method: 'POST', path: '/api/file-types', body },
         'create the file type'
       );
       if (typeof created === 'string') return errText(created);
-      invalidateCatalog(context, 'file-types');
+      invalidateAdminCatalog(context, 'file-types');
       const newId = isRecord(created.json) ? str(created.json.id) : '';
       return textResult(`Created file type "${args.name}"${newId ? ` (id ${newId})` : ''}.`);
     }
@@ -781,7 +892,10 @@ export function registerOnbaseAdminTools(
               required: z.boolean().optional(),
               sequenceNum: z.number().int().min(0).optional(),
               defaultKeywordValue: z.string().optional(),
-              keywordTypeGroup: z.string().optional().describe('Keyword type group name or id, if grouped.'),
+              keywordTypeGroup: z
+                .string()
+                .optional()
+                .describe('Keyword type group name or id, if grouped.'),
               hidden: z.boolean().optional(),
               readOnly: z.boolean().optional(),
               makesDocUnique: z.boolean().optional(),
@@ -806,7 +920,7 @@ export function registerOnbaseAdminTools(
         requiredForRetrieval?: boolean;
       }[];
     }) => {
-      const documentTypeId = await resolveRef(
+      const documentTypeId = await resolveAdminRef(
         context,
         auth,
         'document-types',
@@ -815,7 +929,7 @@ export function registerOnbaseAdminTools(
       );
       if (typeof documentTypeId !== 'string') return errText(documentTypeId.refusal);
 
-      const current = await adminApiJson(
+      const current = await apiJson(
         auth,
         { method: 'GET', path: '/api/document-types/keyword-types', query: { documentTypeId } },
         'read the current keyword assignments'
@@ -834,7 +948,7 @@ export function registerOnbaseAdminTools(
       let changed = 0;
       let removed = 0;
       for (const assignment of args.assignments) {
-        const keywordTypeId = await resolveRef(
+        const keywordTypeId = await resolveAdminRef(
           context,
           auth,
           'keyword-types',
@@ -850,7 +964,7 @@ export function registerOnbaseAdminTools(
 
         let keywordTypeGroupId: string | undefined;
         if (assignment.keywordTypeGroup) {
-          const resolved = await resolveRef(
+          const resolved = await resolveAdminRef(
             context,
             auth,
             'keyword-type-groups',
@@ -883,7 +997,7 @@ export function registerOnbaseAdminTools(
         });
       }
 
-      const written = await adminApiJson(
+      const written = await apiJson(
         auth,
         {
           method: 'PUT',
@@ -907,7 +1021,7 @@ async function renderAssignments(
   auth: OnBaseAuth,
   documentTypeId: string
 ): Promise<{ ok: true; text: string } | { ok: false; text: string }> {
-  const result = await adminApiJson(
+  const result = await apiJson(
     auth,
     { method: 'GET', path: '/api/document-types/keyword-types', query: { documentTypeId } },
     'read the keyword assignments'
@@ -918,7 +1032,7 @@ async function renderAssignments(
     return { ok: true, text: 'No keyword types are assigned to this document type.' };
   }
 
-  const catalog = await loadCatalog(context, auth, 'keyword-types');
+  const catalog = await loadAdminCatalog(context, auth, 'keyword-types');
   const names = new Map(typeof catalog === 'string' ? [] : catalog.map((t) => [t.id, displayName(t)]));
 
   const lines = items.filter(isRecord).map((item) => {

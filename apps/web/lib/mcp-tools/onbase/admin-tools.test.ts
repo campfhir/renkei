@@ -1,16 +1,18 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
- * The onbase_admin_* tools against a scripted Document API + Administration
- * API. What these pin down:
+ * The onbase_admin_* tools against a scripted Administration API. This
+ * connector is fully self-contained — a separate Hyland OAuth client from
+ * the onbase_* Document connector (see admin-tools.ts's header) — so every
+ * request, including name→id resolution, rides the SAME `auth.api`, never
+ * a second auth object. What these pin down:
  *
- *   - names resolve to ids INSIDE the tools, and Document-API-listed
- *     vocabulary (document types, keyword types, groups, file types)
- *     resolves without ever calling the Administration API;
+ *   - names resolve to ids INSIDE the tools, against the Administration
+ *     API's OWN /api/{kind} listings;
  *   - onbase_admin_assign_keyword_types READ-MERGE-WRITEs: the PUT replaces
  *     every assignment, so untouched assignments must survive, changed ones
  *     must update, and `remove: true` must drop exactly the named one;
- *   - a missing Administration API configuration surfaces as a plain
- *     refusal, not a crash.
+ *   - a missing onbase-admin configuration surfaces as a plain refusal
+ *     (from the worker's `not_configured` on every call), not a crash.
  */
 
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -43,55 +45,45 @@ const KEYWORD_TYPE_GROUPS = { items: [{ id: '60', name: 'Invoice Fields' }] };
 const FILE_TYPES = { items: [{ id: '80', name: 'PDF Document' }] };
 const DISK_GROUPS = { items: [{ id: '10', name: 'System' }] };
 
-interface Scripted {
-  apiRequests: OnBaseApiRequest[];
-  adminRequests: OnBaseApiRequest[];
-  auth: OnBaseAuth;
-}
-
-function documentApiDefault(request: OnBaseApiRequest): { status: number; body: unknown } | undefined {
+function adminCatalogDefault(
+  request: OnBaseApiRequest
+): { status: number; body: unknown } | undefined {
   switch (request.path) {
-    case '/document-types':
+    case '/api/document-types':
       return { status: 200, body: DOCUMENT_TYPES };
-    case '/document-type-groups':
+    case '/api/document-type-groups':
       return { status: 200, body: DOCUMENT_TYPE_GROUPS };
-    case '/keyword-types':
+    case '/api/keyword-types':
       return { status: 200, body: KEYWORD_TYPES };
-    case '/keyword-type-groups':
+    case '/api/keyword-type-groups':
       return { status: 200, body: KEYWORD_TYPE_GROUPS };
-    case '/file-types':
+    case '/api/file-types':
       return { status: 200, body: FILE_TYPES };
+    case '/api/disk-groups':
+      return { status: 200, body: DISK_GROUPS };
     default:
       return undefined;
   }
 }
 
-/** An OnBaseAuth whose api()/adminApi() play scripted routes and record requests. */
+interface Scripted {
+  requests: OnBaseApiRequest[];
+  auth: OnBaseAuth;
+}
+
+/** An OnBaseAuth whose api() plays scripted routes (falling back to the catalog fixtures above) and records requests. */
 function scriptedAuth(
-  adminRoutes: (request: OnBaseApiRequest) => { status: number; body: unknown } | undefined,
-  apiRoutes: (request: OnBaseApiRequest) => { status: number; body: unknown } | undefined = () => undefined
+  routes: (request: OnBaseApiRequest) => { status: number; body: unknown } | undefined
 ): Scripted {
-  const apiRequests: OnBaseApiRequest[] = [];
-  const adminRequests: OnBaseApiRequest[] = [];
+  const requests: OnBaseApiRequest[] = [];
   return {
-    apiRequests,
-    adminRequests,
+    requests,
     auth: {
       kind: 'oauth',
       api: (request) => {
-        apiRequests.push(request);
-        const routed = apiRoutes(request) ?? documentApiDefault(request);
-        if (!routed) return Promise.resolve(`Unscripted Document API route ${request.method} ${request.path}`);
-        return Promise.resolve({
-          status: routed.status,
-          contentType: 'application/json',
-          body: JSON.stringify(routed.body),
-        });
-      },
-      adminApi: (request) => {
-        adminRequests.push(request);
-        const routed = adminRoutes(request);
-        if (!routed) return Promise.resolve(`Unscripted admin route ${request.method} ${request.path}`);
+        requests.push(request);
+        const routed = routes(request) ?? adminCatalogDefault(request);
+        if (!routed) return Promise.resolve(`Unscripted route ${request.method} ${request.path}`);
         return Promise.resolve({
           status: routed.status,
           contentType: 'application/json',
@@ -104,18 +96,13 @@ function scriptedAuth(
   };
 }
 
+/** As if onbase-admin were never configured: every call, catalog reads included, refuses. */
 function deniedAdminAuth(): OnBaseAuth {
+  const refusal = 'The OnBase Administration API is not configured for this organization.';
   return {
     kind: 'oauth',
-    api: (request) =>
-      Promise.resolve(
-        documentApiDefault(request)
-          ? { status: 200, contentType: 'application/json', body: JSON.stringify(documentApiDefault(request)) }
-          : `Unscripted Document API route ${request.method} ${request.path}`
-      ),
-    adminApi: () =>
-      Promise.resolve('The OnBase Administration API is not configured for this organization.'),
-    content: () => Promise.resolve('no content in this suite'),
+    api: () => Promise.resolve(refusal),
+    content: () => Promise.resolve(refusal),
     access: () => Promise.resolve({ accessToken: 'at', accountId: 'acct' }),
   };
 }
@@ -134,9 +121,6 @@ function tools(auth: OnBaseAuth): Map<string, Handler> {
 describe('onbase_admin_create_document_type', () => {
   it('resolves group, file format and disk group by name and posts the create', async () => {
     const scripted = scriptedAuth((request) => {
-      if (request.method === 'GET' && request.path === '/api/disk-groups') {
-        return { status: 200, body: DISK_GROUPS };
-      }
       if (request.method === 'POST' && request.path === '/api/document-types') {
         return { status: 200, body: { id: '901', name: 'Employee Profile' } };
       }
@@ -153,7 +137,7 @@ describe('onbase_admin_create_document_type', () => {
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toContain('id 901');
 
-    const created = scripted.adminRequests.find(
+    const created = scripted.requests.find(
       (r) => r.method === 'POST' && r.path === '/api/document-types'
     );
     expect(created?.body).toMatchObject({
@@ -176,7 +160,7 @@ describe('onbase_admin_create_document_type', () => {
     expect(result.content[0].text).toContain('No document type group is named "Nope"');
   });
 
-  it('surfaces a missing Administration API configuration as a refusal, not a crash', async () => {
+  it('surfaces a missing onbase-admin configuration as a refusal, not a crash', async () => {
     const result = await tools(deniedAdminAuth()).get('onbase_admin_create_document_type')!({
       name: 'X',
       documentTypeGroup: 'Finance',
@@ -201,7 +185,7 @@ describe('onbase_admin_update_document_type', () => {
       fields: { cachingAllowed: true, autoNameString: '%N - %D2' },
     });
     expect(result.isError).toBeUndefined();
-    const patched = scripted.adminRequests.find((r) => r.method === 'PATCH');
+    const patched = scripted.requests.find((r) => r.method === 'PATCH');
     expect(patched?.body).toEqual([
       { op: 'replace', path: '/cachingAllowed', value: true },
       { op: 'replace', path: '/autoNameString', value: '%N - %D2' },

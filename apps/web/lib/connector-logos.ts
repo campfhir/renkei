@@ -22,6 +22,9 @@ export const LOGO_FILE: Record<string, string> = {
   'atlassian-confluence': 'confluence',
   // Bitbucket: same suite-prefix key, same product-named mark.
   'atlassian-bitbucket': 'bitbucket',
+  // OnBase Administration is a separate connector/capability key from
+  // 'onbase', but the same Hyland product and the same mark.
+  'onbase-admin': 'onbase',
 };
 
 /**

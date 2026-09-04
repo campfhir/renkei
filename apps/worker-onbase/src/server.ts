@@ -19,16 +19,22 @@
  *                     issuer, for test-connection), cached ~10 minutes.
  *   token           — authorization-code (PKCE) exchange or refresh.
  *   revoke          — best-effort token revocation on disconnect.
- *   api             — one Document API request; JSON envelope back.
- *   admin           — one Administration API request; same envelope as
- *                     `api`, against the tenant's separately-configured
- *                     adminApiBaseUrl. No document session cookie: the
- *                     Administration API is a different product with no
- *                     such session/licence concept, so this never calls
- *                     rememberSession/forgetSession.
+ *   api             — one API request; JSON envelope back.
  *   content         — rendition bytes, streamed within the org's cap.
  *   put-bytes       — one file part into an OnBase upload staging slot.
  *   test-connection — reachability of IdP and API server, saved or unsaved.
+ *
+ * This worker serves TWO connectors, not one: `onbase` (the Document
+ * Management API) and `onbase-admin` (the Administration API) are separate
+ * Hyland OAuth clients, resolved from separate `connector_configs` rows —
+ * see config.ts. Every op above takes an optional `connector` field
+ * (default `onbase`) naming which row to resolve; there is no third op for
+ * the second connector, because every op's SHAPE (discover an issuer,
+ * exchange a code, proxy a request) is identical between them. The one
+ * behavioral difference is the OnBase document-session cookie: it belongs
+ * to the Document API's session/licence model, which the Administration
+ * API has no equivalent of, so `api`/`content` only read or write it when
+ * `connector` is `onbase`.
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -40,6 +46,8 @@ import {
   type OnBaseIdpEndpoints,
 } from '@renkei/connector-onbase';
 import {
+  ONBASE_ADMIN_CONNECTOR,
+  ONBASE_CONNECTOR,
   parseHttpUrl,
   resolveOnBaseConfig,
   type ConfigError,
@@ -72,7 +80,10 @@ export interface OnBaseServerDeps {
   /** Injected in tests; production uses orgTransferLimit. */
   maxTransferBytes?: (tenantId: string) => Promise<number>;
   /** Injected in tests; production reads connector_configs. */
-  resolveConfig?: (tenantId: string) => Promise<Result<OnBaseTenantConfig, ConfigError>>;
+  resolveConfig?: (
+    tenantId: string,
+    connector: string
+  ) => Promise<Result<OnBaseTenantConfig, ConfigError>>;
   /** Injected clock for discovery-cache tests. */
   now?: () => number;
 }
@@ -214,7 +225,9 @@ interface DiscoveryCacheEntry {
 export function createOnBaseServer(deps: OnBaseServerDeps): Server {
   const transferLimit = deps.maxTransferBytes ?? orgTransferLimit;
   const resolveConfig =
-    deps.resolveConfig ?? ((tenantId: string) => resolveOnBaseConfig(tenantId, deps.encryptionKey));
+    deps.resolveConfig ??
+    ((tenantId: string, connector: string) =>
+      resolveOnBaseConfig(tenantId, deps.encryptionKey, connector));
   const now = deps.now ?? Date.now;
   // Only successes are cached: an error remembered as endpoints would not
   // heal on its own.
@@ -265,13 +278,16 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       sendError(response, 'bad_request', 'tenantId is required');
       return null;
     }
-    const config = await resolveConfig(tenantId);
+    // Which connector_configs row: 'onbase' (default, Document API) or
+    // 'onbase-admin' (Administration API) — see the top-of-file note.
+    const connector = str(body.connector) || ONBASE_CONNECTOR;
+    const config = await resolveConfig(tenantId, connector);
     if (!config.ok) {
       sendError(
         response,
         config.err.type,
         config.err.type === 'not_configured'
-          ? 'OnBase is not configured for this organization.'
+          ? `OnBase (${connector}) is not configured for this organization.`
           : undefined
       );
       return null;
@@ -288,13 +304,14 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
   }
 
   /**
-   * The shared body of `api` and `admin`: validate method/path, forward to
-   * `baseUrl + path` with the caller's bearer token, and envelope the
-   * upstream status back (never passthrough — the web side's 401
-   * refresh-and-retry depends on seeing the real upstream status rather
-   * than this worker's own). `withSession` is false for `admin`: the
-   * Administration API has no document-session/licence concept, so no
-   * cookie is read, sent, or remembered for it.
+   * The shared body of the `api` and `content` handlers: validate
+   * method/path, forward to `baseUrl + path` with the caller's bearer
+   * token, and envelope the upstream status back (never passthrough — the
+   * web side's 401 refresh-and-retry depends on seeing the real upstream
+   * status rather than this worker's own). `withSession` is false for the
+   * `onbase-admin` connector: the Administration API has no
+   * document-session/licence concept, so no cookie is read, sent, or
+   * remembered for it.
    */
   async function callUpstreamApi(
     baseUrl: string,
@@ -555,20 +572,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     async api(body, response) {
       const config = await configFor(body, response);
       if (!config) return;
-      await callUpstreamApi(config.apiBaseUrl, body, response, true);
-    },
-
-    async admin(body, response) {
-      const config = await configFor(body, response);
-      if (!config) return;
-      if (!config.adminApiBaseUrl) {
-        return sendError(
-          response,
-          'not_configured',
-          'The OnBase Administration API is not configured for this organization.'
-        );
-      }
-      await callUpstreamApi(config.adminApiBaseUrl, body, response, false);
+      const connector = str(body.connector) || ONBASE_CONNECTOR;
+      await callUpstreamApi(config.apiBaseUrl, body, response, connector === ONBASE_CONNECTOR);
     },
 
     async content(body, response) {
@@ -580,7 +585,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       if (!validApiPath(path))
         return sendError(response, 'bad_request', 'path is not a usable API path');
 
-      const contentSubject = str(body.subject);
+      const connector = str(body.connector) || ONBASE_CONNECTOR;
+      const contentSubject = connector === ONBASE_CONNECTOR ? str(body.subject) : '';
       const contentCookie = contentSubject
         ? sessionCookie(str(body.tenantId), contentSubject)
         : undefined;
@@ -629,7 +635,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     async 'test-connection'(body, response) {
       const tenantId = str(body.tenantId);
       if (!tenantId) return sendError(response, 'bad_request', 'tenantId is required');
-      const stored = await resolveConfig(tenantId);
+      const connector = str(body.connector) || ONBASE_CONNECTOR;
+      const stored = await resolveConfig(tenantId, connector);
       const unsaved = isRecord(body.unsaved) ? body.unsaved : {};
       const allowInsecureHttp =
         unsaved.allowInsecureHttp === true ||
@@ -657,9 +664,12 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
           : { ok: true as const, tokenEndpoint: endpoints.tokenEndpoint };
 
       // Unauthenticated on purpose; a 401 IS the healthy answer — it proves
-      // an OnBase API server is listening and demanding auth.
+      // an OnBase API server is listening and demanding auth. The probe
+      // path differs by connector: the Administration API's document-types
+      // list lives under /api, the Document API's does not.
+      const pingPath = connector === ONBASE_ADMIN_CONNECTOR ? '/api/document-types' : '/document-types';
       const ping = await timedFetch(
-        `${apiBaseUrl}/document-types`,
+        `${apiBaseUrl}${pingPath}`,
         { headers: { accept: 'application/json' } },
         IDP_TIMEOUT_MS
       );
@@ -699,7 +709,9 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     }
     if (!/^\d+$/.test(filePart))
       return sendError(response, 'bad_request', 'filePart must be a number');
-    const config = await resolveConfig(tenantId);
+    // Uploads exist only on the Document API — there is no admin-connector
+    // upload path, so this always resolves the 'onbase' row.
+    const config = await resolveConfig(tenantId, ONBASE_CONNECTOR);
     if (!config.ok) return sendError(response, config.err.type);
 
     const limit = await transferLimit(tenantId);

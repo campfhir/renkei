@@ -50,7 +50,7 @@ Knowledge indexing is explicitly deferred — this connector is retrieval-only i
 
 Exports: `parseDiscoveryDocument`/`oidcDiscoveryUrl`, `resolveKeywordTypeRef`/`mergeKeywordCollections`, `buildQueryInformation`, `CatalogCache`. See [`onbase-connector-design.md`](./onbase-connector-design.md), which has an "As built (v1)" section documenting the final decisions.
 
-`onbase_admin_*` tools (`apps/web/lib/mcp-tools/onbase/admin-tools.ts`) wrap a second, separately-configured product — the Administration API (`docs/onbase-administration-openapi-spec.json`), which is where document types and keyword types are actually created and configured; the Document API above only ever reads that vocabulary. Optional per tenant (`adminApiBaseUrl`), reached through the same `apps/worker-onbase` egress seam via a new `admin` op. See the design doc's "Admin tools" section.
+`onbase_admin_*` tools (`apps/web/lib/mcp-tools/onbase/admin-tools.ts`) wrap a SECOND, SEPARATE connector — `onbase-admin` — for OnBase's Administration API (`docs/onbase-administration-openapi-spec.json`), which is where document types and keyword types are actually created and configured; the Document API above only ever reads that vocabulary. Same relationship as Jira/JSM/Confluence/Bitbucket under `connector-atlassian`: a different Hyland OAuth client, its own `connector_configs` row, its own `provider_grants` provider (`ONBASE_ADMIN`), its own capability gate — connecting `onbase` does not connect `onbase-admin`, or the reverse. `apps/worker-onbase` serves both from the same process; every op takes an optional `connector` field naming which row to resolve. See the design doc's "Admin tools" section.
 
 ## connector-sandbox
 

@@ -363,8 +363,10 @@ type groups, file types, plus users, user groups, password policies, EVM,
 Insight Discovery, key providers and the change-control audit log — live on
 a **different product**: the Administration API
 (`docs/onbase-administration-openapi-spec.json`, `{server}/onbase/administration`,
-sibling to the Document API's `{server}/onbase/core`). Same Bearer auth,
-same IdP, different base URL.
+sibling to the Document API's `{server}/onbase/core`). Same Hyland IdP
+mechanism, but ordinarily registered as its own OAuth client — so it shipped
+as its own connector, `onbase-admin`, not a mode of the existing `onbase`
+one. See "Reachability" below for what that means concretely.
 
 ### What shipped
 
@@ -390,36 +392,63 @@ in this cut, matching the Document API tools' own restraint:
 - **No PATCH update for document type groups or file types** — only
   document types and keyword types, the two things this cut is for.
 
-### Reachability: a second, optional base URL
+### Reachability: a SEPARATE connector, not a bolt-on field
 
-`connector_configs` settings gained one field, `adminApiBaseUrl` — optional,
-because a tenant that connects OnBase for document retrieval need not also
-grant configuration access. Unset, the `onbase_admin_*` tools answer a plain
-refusal ("The OnBase Administration API is not configured for this
-organization") the same way any other missing-config path does; nothing
-about the Document API tools changes. `apps/worker-onbase` gained one op,
-`admin`, sharing its request-forwarding with `api` (factored into
-`callUpstreamApi`) but never touching the document-session cookie —
-the Administration API is a different product with no such session/licence
-concept, so `admin` calls carry a bearer token and nothing else.
+The first pass of this work tried a shortcut — one extra `adminApiBaseUrl`
+setting on the existing `onbase` connector row, reusing its grant and
+worker op. That was wrong: a document-access consent and a
+configuration-access consent are different things to authorize, on Hyland
+IdPs commonly registered as different OAuth clients entirely — exactly the
+shape `connector-atlassian` already solved by treating Jira, JSM,
+Confluence and Bitbucket as four separate connectors rather than one (see
+`docs/connectors.md`). So `onbase-admin` shipped as its own connector,
+mirroring that precedent line for line:
 
-One correctness fix rode in with this: PATCH bodies are JSON Patch documents,
-and OnBase requires `Content-Type: application/json-patch+json` for them —
-plain `application/json` was what the worker sent before, because nothing
-had called PATCH yet. `callUpstreamApi` now switches on method.
+- its own `connector_configs` row (`onbase-admin`, same shape as `onbase`:
+  `apiBaseUrl`, `idpIssuer`, `clientId`, `clientSecret`, `idpScopeName`,
+  `allowInsecureHttp`) and its own admin-UI card
+  (`OnBaseAdminForm`/`.../connectors/onbase-admin/route.ts`);
+- its own `provider_grants` provider (`ONBASE_ADMIN` /
+  `OnBaseAdminAdapter` in `@renkei/provider-grants`) and its own connect
+  flow (`/api/onbase-admin/[tenantId]/authorize` and `/grant`, dispatched
+  in the shared `/api/oauth/callback` route by `pendingSignIn.provider`);
+  its own capability gate (`onbase-admin`, `registerOnbaseAdminTools`
+  registered separately in `registry.ts`, gated on its own grant);
+  its own card on the Connectors page, grouped with OnBase under one
+  "Hyland" heading (`hyland-connector.tsx`, mirroring
+  `atlassian-connector.tsx`) — connect/disconnect stays on each product,
+  never a shared suite-level control, for the same reason Atlassian's does.
 
-### Name resolution stays cheap
+`apps/worker-onbase` did NOT grow a second op for this. Every existing op
+(`api`, `content`, `discover`, `token`, `revoke`, `test-connection`) gained
+one optional field, `connector` (default `onbase`), naming which
+`connector_configs` row to resolve — `resolveOnBaseConfig` and
+`OnBaseServerDeps.resolveConfig` both take it as a second parameter. The
+one behavioral difference the worker still encodes: the OnBase
+document-session cookie is read/sent/remembered only when `connector` is
+`onbase` — the Administration API has no such session/licence concept.
 
-Document types, keyword types, document/keyword type groups and file types
-are all things the **Document API already lists** (`GET /document-types`,
-`/keyword-types`, `/document-type-groups`, `/keyword-type-groups`,
-`/file-types` — same ids as the Administration API's own). The admin tools
-resolve names against those existing `loadCatalog`/`resolveRef` calls in
-`index.ts` rather than requiring the admin base URL just to turn "Vendor"
-into an id — only the actual write, and disk groups/display types (which
-have no Document API equivalent), touch `adminApi`. A create or rename
-invalidates the shared cache for that catalog kind, so a document type
-created this turn resolves by name on the very next tool call.
+One correctness fix rode in with this: PATCH bodies are JSON Patch
+documents, and OnBase requires `Content-Type: application/json-patch+json`
+for them — plain `application/json` was what the worker sent before,
+because nothing had called PATCH yet. `callUpstreamApi` now switches on
+method.
+
+### Name resolution is self-contained, per connector
+
+Because `onbase` and `onbase-admin` are independent connectors — a caller
+may have one without the other — `onbase_admin_*` tools do NOT resolve
+names through the Document API tools' cache in `index.ts`. Document types,
+keyword types, document/keyword type groups, file types and disk groups all
+resolve against the Administration API's own `GET /api/{kind}` listings, in
+`admin-tools.ts`'s own `loadAdminCatalog`/`resolveAdminRef`, with its own
+`CatalogCache` instance. This cost two extra Read tools
+(`onbase_admin_list_document_types`, `onbase_admin_list_keyword_types`)
+that the Document API tools already had equivalents of, but a caller who
+only ever connects `onbase-admin` — never `onbase` — still gets a fully
+working connector. A create or rename invalidates this file's own cache for
+that catalog kind, so a document type created this turn resolves by name on
+the very next tool call.
 
 ### The same trap, twice
 

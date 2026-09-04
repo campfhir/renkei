@@ -90,7 +90,6 @@ function scriptedAuth(
           body: JSON.stringify(routed.body),
         });
       },
-      adminApi: () => Promise.resolve('no admin calls in this suite'),
       content: () => Promise.resolve('no content in this suite'),
       access: () => Promise.resolve({ accessToken: 'at', accountId: 'acct' }),
     },

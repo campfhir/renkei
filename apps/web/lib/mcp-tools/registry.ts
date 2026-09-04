@@ -27,6 +27,7 @@ import {
   MICROSOFT,
   ZOOM,
   ONBASE,
+  ONBASE_ADMIN,
 } from '@renkei/provider-grants';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { registerAllTools } from '@/lib/mcp-tools';
@@ -53,8 +54,11 @@ import { resolveToolExposure } from '@renkei/connector-fileshares';
 import { registerFileshareTools, FILESHARES_MCP_CONNECTOR } from '@/lib/mcp-tools/fileshares';
 import { userFileshareAuth } from '@/lib/mcp-tools/fileshares/fileshare-auth';
 import { registerOnbaseTools, ONBASE_MCP_CONNECTOR } from '@/lib/mcp-tools/onbase';
-import { registerOnbaseAdminTools } from '@/lib/mcp-tools/onbase/admin-tools';
-import { oauthOnbaseAuth } from '@/lib/mcp-tools/onbase/onbase-auth';
+import {
+  registerOnbaseAdminTools,
+  ONBASE_ADMIN_MCP_CONNECTOR,
+} from '@/lib/mcp-tools/onbase/admin-tools';
+import { oauthOnbaseAuth, oauthOnbaseAdminAuth } from '@/lib/mcp-tools/onbase/onbase-auth';
 import {
   registerSandboxTools,
   SANDBOX_MCP_CONNECTOR,
@@ -92,6 +96,8 @@ export interface ConnectorAvailability {
   fileshareWrite: boolean;
   fileshareDelete: boolean;
   onbaseAvailable: boolean;
+  /** A SEPARATE connector/grant from onbaseAvailable — see registerRenkeiTools. */
+  onbaseAdminAvailable: boolean;
   sandboxAvailable: boolean;
 }
 
@@ -200,6 +206,11 @@ export async function resolveConnectorAvailability(
   const onbaseGrantRow = await grantRow(db, tenantId, ONBASE, subject);
   const onbaseAvailable = onbaseGrantRow !== undefined;
 
+  // onbase-admin is a separate Hyland OAuth client with its own grant —
+  // connecting one does not connect the other.
+  const onbaseAdminGrantRow = await grantRow(db, tenantId, ONBASE_ADMIN, subject);
+  const onbaseAdminAvailable = onbaseAdminGrantRow !== undefined;
+
   // The sandbox has no external account to grant — it's Renkei's own
   // scratch space — so "available" just means this deployment runs the
   // worker at all (a deployment-level env check, not a per-caller lookup).
@@ -223,6 +234,7 @@ export async function resolveConnectorAvailability(
     fileshareWrite,
     fileshareDelete,
     onbaseAvailable,
+    onbaseAdminAvailable,
     sandboxAvailable,
   };
 }
@@ -257,6 +269,7 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.bitbucketAvailable ? [BITBUCKET_MCP_CONNECTOR] : []),
     ...(availability.filesharesAvailable ? [FILESHARES_MCP_CONNECTOR] : []),
     ...(availability.onbaseAvailable ? [ONBASE_MCP_CONNECTOR] : []),
+    ...(availability.onbaseAdminAvailable ? [ONBASE_ADMIN_MCP_CONNECTOR] : []),
     ...(availability.sandboxAvailable ? [SANDBOX_MCP_CONNECTOR] : []),
   ];
 }
@@ -295,6 +308,7 @@ export async function registerRenkeiTools(
     bitbucketAvailable,
     filesharesAvailable,
     onbaseAvailable,
+    onbaseAdminAvailable,
     sandboxAvailable,
   } = availability;
 
@@ -495,14 +509,22 @@ export async function registerRenkeiTools(
     // No scope gate: the Hyland IdP mints one opaque Document Management
     // scope, so there is nothing finer to gate on — document-level
     // authorization is OnBase's own, per request under the user's token.
-    const gatedOnbase = withCapabilityGate(server, projection, ONBASE_MCP_CONNECTOR);
-    const onbaseAuth = oauthOnbaseAuth(context);
-    registerOnbaseTools(gatedOnbase, context, onbaseAuth);
-    // onbase_admin_* tools too: same capability gate and grant, same auth —
-    // adminApi itself answers a plain refusal when the tenant has not
-    // configured an Administration API base URL, so there is nothing
-    // further to check before registering them.
-    registerOnbaseAdminTools(gatedOnbase, context, onbaseAuth);
+    registerOnbaseTools(
+      withCapabilityGate(server, projection, ONBASE_MCP_CONNECTOR),
+      context,
+      oauthOnbaseAuth(context)
+    );
+  }
+  if (onbaseAdminAvailable) {
+    // A SEPARATE connector from onbaseAvailable above — its own Hyland
+    // OAuth client, its own grant, its own capability gate — exactly as
+    // Jira/JSM/Confluence/Bitbucket are four separate Atlassian connectors
+    // rather than one. A caller may have either without the other.
+    registerOnbaseAdminTools(
+      withCapabilityGate(server, projection, ONBASE_ADMIN_MCP_CONNECTOR),
+      context,
+      oauthOnbaseAdminAuth(context)
+    );
   }
   if (sandboxAvailable) {
     // No scope gate and no per-caller grant to check: every signed-in

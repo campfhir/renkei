@@ -98,10 +98,18 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     capabilityKey: 'onbase',
     configKey: 'onbase',
     label: 'OnBase',
-    summary:
-      "Documents, keywords and custom queries on your organization's Hyland OnBase, plus " +
-      'admin configuration (document types, keyword types) where the operator has enabled it.',
+    summary: "Documents, keywords and custom queries on your organization's Hyland OnBase.",
     toolPrefix: 'onbase_*',
+  },
+  {
+    capabilityKey: 'onbase-admin',
+    configKey: 'onbase-admin',
+    label: 'OnBase Administration',
+    summary:
+      'Create and configure document types, keyword types, keyword assignments and their ' +
+      "groups on your organization's Hyland OnBase. A separate connection from OnBase above " +
+      '(its own Hyland OAuth client) — connecting one does not connect the other.',
+    toolPrefix: 'onbase_admin_*',
   },
   {
     capabilityKey: 'fileshares',

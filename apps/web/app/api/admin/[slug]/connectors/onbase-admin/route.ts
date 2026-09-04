@@ -1,11 +1,16 @@
 /**
- * Org-admin configuration of the OnBase connector. Unlike the SaaS
- * connectors there is no vendor console: the customer runs their own
- * OnBase API Server and Hyland IdP, so this row holds the API server base
- * URL, the IdP issuer, the client registered for Renkei on that IdP, and
- * the IdP scope name the API Server is configured to require. GET reports
- * presence only — the client secret never leaves the server — and a public
- * PKCE client (no secret at all) is a valid configuration.
+ * Org-admin configuration of the OnBase Administration connector — a
+ * SEPARATE connector from ../onbase (see lib/onbase-app.ts), because it is
+ * a separate Hyland OAuth client on the customer's IdP: the Administration
+ * API (docs/onbase-administration-openapi-spec.json) is a different
+ * product from the Document Management API, with its own client
+ * registration, its own scope, and often its own consent. This route is
+ * therefore a near-duplicate of ../onbase/route.ts rather than a shared
+ * one, mirroring how ../atlassian-confluence and ../atlassian-bitbucket
+ * each get their own admin-config route alongside ../atlassian.
+ *
+ * GET reports presence only — the client secret never leaves the server —
+ * and a public PKCE client (no secret at all) is a valid configuration.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -17,7 +22,7 @@ import {
   setConnectorConfig,
   invalidateConnectorConfigCache,
 } from '@renkei/connector-config';
-import { ONBASE_CONNECTOR } from '@/lib/onbase-app';
+import { ONBASE_ADMIN_CONNECTOR } from '@/lib/onbase-app';
 
 export async function GET(
   _request: NextRequest,
@@ -38,7 +43,7 @@ export async function GET(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(tenantRef.id, ONBASE_CONNECTOR, keyResult.val);
+  const configResult = await getConnectorConfig(tenantRef.id, ONBASE_ADMIN_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
@@ -49,7 +54,7 @@ export async function GET(
     return typeof value === 'string' ? value : null;
   };
   return NextResponse.json({
-    connector: ONBASE_CONNECTOR,
+    connector: ONBASE_ADMIN_CONNECTOR,
     configured: config !== null,
     enabled: config?.enabled ?? false,
     apiBaseUrl: setting('apiBaseUrl'),
@@ -126,7 +131,7 @@ export async function PUT(
   // Secrets survive settings-only saves: a blank/omitted secret keeps the
   // stored one. Unlike the SaaS connectors no secret is required at all —
   // a Hyland IdP client may be public (PKCE only).
-  const existing = await getConnectorConfig(tenantRef.id, ONBASE_CONNECTOR, keyResult.val);
+  const existing = await getConnectorConfig(tenantRef.id, ONBASE_ADMIN_CONNECTOR, keyResult.val);
   const storedSecrets = existing.ok && existing.val ? existing.val.secrets : {};
   const mergedClientSecret =
     typeof clientSecret === 'string' && clientSecret.length > 0
@@ -140,7 +145,7 @@ export async function PUT(
 
   const writeResult = await setConnectorConfig(
     tenantRef.id,
-    ONBASE_CONNECTOR,
+    ONBASE_ADMIN_CONNECTOR,
     {
       enabled,
       settings: { apiBaseUrl, idpIssuer, clientId, idpScopeName, allowInsecureHttp },
@@ -152,9 +157,9 @@ export async function PUT(
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 
-  invalidateConnectorConfigCache(tenantRef.id, ONBASE_CONNECTOR);
+  invalidateConnectorConfigCache(tenantRef.id, ONBASE_ADMIN_CONNECTOR);
   return NextResponse.json({
-    connector: ONBASE_CONNECTOR,
+    connector: ONBASE_ADMIN_CONNECTOR,
     configured: true,
     enabled,
     hasClientSecret: Boolean(secrets.clientSecret),

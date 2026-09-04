@@ -27,6 +27,12 @@
  * the whole story. Authorization inside OnBase — which document types and
  * documents this user may see — is OnBase's own, enforced by the API
  * server per request under the user's token (RENKEI.md Decision #2).
+ *
+ * Creating or configuring document types and keyword types is a SEPARATE
+ * connector, `onbase-admin` (`./admin-tools.ts`) — a different Hyland OAuth
+ * client against a different product (the Administration API), connected
+ * and revoked independently of this one. Nothing here reaches it, and
+ * nothing there reaches this.
  */
 
 import { z } from 'zod';
@@ -144,30 +150,16 @@ export function displayName(thing: NamedThing): string {
 }
 
 /**
- * Vocabulary caches, per tenant per kind. Five minutes of staleness on
+ * Vocabulary cache, per tenant per kind. Five minutes of staleness on
  * admin-curated configuration is a fine trade against a catalog fetch on
  * every search. Only successes are cached (the CatalogCache contract).
- *
- * 'keyword-type-groups' and 'file-types' are read here even though the
- * onbase_admin_* tools are the main consumer of them by name — both are
- * plain GETs already exposed on the Document API (same ids as the
- * Administration API's own), so resolving them costs no admin-base-URL
- * dependency and reuses this one cache and this one merge/candidate-listing
- * behavior instead of a second implementation.
  */
 const catalogCache = new CatalogCache<NamedThing[]>();
 
 export async function loadCatalog(
   context: MCPToolContext,
   auth: OnBaseAuth,
-  kind:
-    | 'keyword-types'
-    | 'document-types'
-    | 'document-type-groups'
-    | 'keyword-type-groups'
-    | 'file-types'
-    | 'custom-queries'
-    | 'note-types'
+  kind: 'keyword-types' | 'document-types' | 'document-type-groups' | 'custom-queries' | 'note-types'
 ): Promise<NamedThing[] | string> {
   const cacheKey = `${context.tenantId}:${kind}`;
   const cached = catalogCache.get(cacheKey);
@@ -177,16 +169,6 @@ export async function loadCatalog(
   const items = namedList(result.json);
   catalogCache.set(cacheKey, items);
   return items;
-}
-
-/**
- * Drop a cached catalog page so the next resolveRef re-fetches it. The
- * onbase_admin_* create/update tools call this after writing, so a document
- * type or keyword type created this turn resolves by name on the very next
- * tool call instead of waiting out the cache's five minutes.
- */
-export function invalidateCatalog(context: MCPToolContext, kind: Parameters<typeof loadCatalog>[2]): void {
-  catalogCache.invalidate(`${context.tenantId}:${kind}`);
 }
 
 export async function resolveRef(

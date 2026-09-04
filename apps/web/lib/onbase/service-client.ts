@@ -14,6 +14,13 @@
  * Errors keep the worker's tag + message so each surface phrases its own
  * refusals; `onbaseClientFailure` gives the REST routes one shared
  * status+string mapping so a person and a model hear the same answer.
+ *
+ * One worker, two connectors: `onbase` (Document Management API) and
+ * `onbase-admin` (Administration API) are separate Hyland OAuth clients
+ * with separate `connector_configs` rows, exactly as Jira/JSM/Confluence/
+ * Bitbucket are four separate Atlassian connectors. Every function here
+ * takes an optional `connector`, forwarded verbatim to the worker, which
+ * uses it to pick which row to resolve; omitted defaults to `onbase` there.
  */
 
 import type { OnBaseIdpEndpoints } from '@renkei/connector-onbase';
@@ -143,6 +150,8 @@ async function callJson(op: string, body: unknown): Promise<OnBaseClientResult<u
 
 export async function obDiscover(input: {
   tenantId: string;
+  /** 'onbase' (default) or 'onbase-admin' — which connector's IdP issuer. */
+  connector?: string;
   issuer?: string;
   allowInsecureHttp?: boolean;
 }): Promise<OnBaseClientResult<OnBaseIdpEndpoints>> {
@@ -183,12 +192,14 @@ function tokenResponseOf(value: unknown): OnBaseClientResult<WireTokenResponse> 
 
 export async function obExchangeCode(input: {
   tenantId: string;
+  connector?: string;
   code: string;
   redirectUri: string;
   codeVerifier: string;
 }): Promise<OnBaseClientResult<WireTokenResponse>> {
   const result = await callJson('token', {
     tenantId: input.tenantId,
+    ...(input.connector ? { connector: input.connector } : {}),
     grant: {
       type: 'authorization_code',
       code: input.code,
@@ -202,10 +213,12 @@ export async function obExchangeCode(input: {
 
 export async function obRefreshToken(input: {
   tenantId: string;
+  connector?: string;
   refreshToken: string;
 }): Promise<OnBaseClientResult<WireTokenResponse>> {
   const result = await callJson('token', {
     tenantId: input.tenantId,
+    ...(input.connector ? { connector: input.connector } : {}),
     grant: { type: 'refresh_token', refreshToken: input.refreshToken },
   });
   if (!result.ok) return result;
@@ -214,6 +227,7 @@ export async function obRefreshToken(input: {
 
 export async function obRevoke(input: {
   tenantId: string;
+  connector?: string;
   token: string;
   tokenTypeHint?: string;
 }): Promise<OnBaseClientResult<{ revoked: boolean }>> {
@@ -225,10 +239,13 @@ export async function obRevoke(input: {
 
 export async function obApi(input: {
   tenantId: string;
+  /** 'onbase' (default) or 'onbase-admin' — which connector's config/session. */
+  connector?: string;
   /**
-   * Who the call is for. The worker keys the OnBase session cookie on this,
-   * so a missing subject means a new session (and a new license) per call —
-   * never a session shared with the wrong person.
+   * Who the call is for. The worker keys the OnBase session cookie on this
+   * for the `onbase` connector, so a missing subject means a new session
+   * (and a new license) per call — never a session shared with the wrong
+   * person. Meaningless for `onbase-admin`, which has no session concept.
    */
   subject?: string;
   accessToken: string;
@@ -254,40 +271,9 @@ export async function obApi(input: {
   };
 }
 
-/**
- * One Administration API request — same envelope as `obApi`, against the
- * tenant's separately-configured Administration API base. No `subject`: the
- * worker never attaches a document-session cookie for this op (the
- * Administration API has no such session/licence concept), so there is
- * nothing to key a cookie on.
- */
-export async function obAdminApi(input: {
-  tenantId: string;
-  accessToken: string;
-  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-  path: string;
-  query?: Record<string, string | string[]>;
-  body?: unknown;
-  accept?: string;
-}): Promise<OnBaseClientResult<WireApiResponse>> {
-  const result = await callJson('admin', input);
-  if (!result.ok) return result;
-  const value = result.val;
-  if (!isRecord(value) || typeof value.status !== 'number' || typeof value.body !== 'string') {
-    return malformed();
-  }
-  return {
-    ok: true,
-    val: {
-      status: value.status,
-      contentType: optStr(value.contentType) ?? null,
-      body: value.body,
-    },
-  };
-}
-
 export async function obContent(input: {
   tenantId: string;
+  connector?: string;
   /** See obApi: keys the worker's session cookie. */
   subject?: string;
   accessToken: string;
@@ -343,6 +329,7 @@ export async function obPutBytes(input: {
 
 export async function obTestConnection(input: {
   tenantId: string;
+  connector?: string;
   unsaved?: { apiBaseUrl?: string; idpIssuer?: string; allowInsecureHttp?: boolean };
 }): Promise<OnBaseClientResult<WireTestConnection>> {
   const result = await callJson('test-connection', input);

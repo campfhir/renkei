@@ -18,6 +18,7 @@ import {
   MICROSOFT,
   ZOOM,
   ONBASE,
+  ONBASE_ADMIN,
 } from '@renkei/provider-grants';
 import { getOnBaseApp } from '@/lib/onbase-app';
 import { obExchangeCode, onbaseClientFailure } from '@/lib/onbase/service-client';
@@ -241,7 +242,22 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes,
-        pendingSignIn.code_verifier
+        pendingSignIn.code_verifier,
+        ONBASE_SPEC
+      );
+    }
+    if (pendingSignIn.provider === 'onbase-admin') {
+      // A SEPARATE Hyland OAuth client from 'onbase' above — see
+      // lib/onbase-app.ts's header — so it rides the identical callback
+      // logic with a different connector key, grant provider and label.
+      return handleOnBaseCallback(
+        request,
+        tenant,
+        pendingSignIn.subject,
+        code,
+        pendingSignIn.scopes,
+        pendingSignIn.code_verifier,
+        ONBASE_ADMIN_SPEC
       );
     }
 
@@ -1510,15 +1526,36 @@ async function handleAtlassianBitbucketCallback(
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }
 
+/** Which of the two Hyland connectors handleOnBaseCallback is completing. */
+interface OnBaseCallbackSpec {
+  /** connector_configs key AND pending_oidc_signin.provider — same string. */
+  connector: string;
+  /** provider_grants.provider to store the resulting grant under. */
+  grantProvider: string;
+  /** For log/error prose: "OnBase" or "OnBase Administration". */
+  label: string;
+}
+
+const ONBASE_SPEC: OnBaseCallbackSpec = { connector: 'onbase', grantProvider: ONBASE, label: 'OnBase' };
+const ONBASE_ADMIN_SPEC: OnBaseCallbackSpec = {
+  connector: 'onbase-admin',
+  grantProvider: ONBASE_ADMIN,
+  label: 'OnBase Administration',
+};
+
 /**
- * Complete an OnBase connect. The token exchange runs through the OnBase
- * worker — the customer's Hyland IdP usually lives on a private network
- * this process must not dial — presenting the PKCE code_verifier the
- * authorize step stored on the state row. Identity comes from the
- * id_token's `sub` claim, decoded locally: the token arrived over TLS from
- * the IdP's own token endpoint via our trusted worker, which is exactly
- * the case where the OIDC code flow needs no signature check — and it
- * works even when the IdP exposes no userinfo endpoint.
+ * Complete an OnBase connect — either connector, per `spec`: 'onbase' (the
+ * Document Management API) and 'onbase-admin' (the Administration API) are
+ * separate Hyland OAuth clients (lib/onbase-app.ts's header), but the token
+ * exchange and grant-storage logic is identical between them. The token
+ * exchange runs through the OnBase worker — the customer's Hyland IdP
+ * usually lives on a private network this process must not dial —
+ * presenting the PKCE code_verifier the authorize step stored on the state
+ * row. Identity comes from the id_token's `sub` claim, decoded locally: the
+ * token arrived over TLS from the IdP's own token endpoint via our trusted
+ * worker, which is exactly the case where the OIDC code flow needs no
+ * signature check — and it works even when the IdP exposes no userinfo
+ * endpoint.
  */
 async function handleOnBaseCallback(
   request: NextRequest,
@@ -1526,51 +1563,59 @@ async function handleOnBaseCallback(
   subject: string | null,
   code: string,
   requestedScopes: string | null,
-  codeVerifier: string | null
+  codeVerifier: string | null,
+  spec: OnBaseCallbackSpec
 ): Promise<NextResponse> {
   if (!subject) {
-    logger.error('OnBase pending flow has no subject; cannot assign grant owner', {
+    logger.error('{label} pending flow has no subject; cannot assign grant owner', {
       component: 'auth/oauth',
       tenantId: tenant.id,
+      label: spec.label,
     });
-    return NextResponse.json({ error: 'Sign in again before connecting OnBase' }, { status: 400 });
+    return NextResponse.json(
+      { error: `Sign in again before connecting ${spec.label}` },
+      { status: 400 }
+    );
   }
   if (!codeVerifier) {
     // Every OnBase authorize stores one; a row without it is not ours.
-    logger.error('OnBase pending flow carries no code_verifier', {
+    logger.error('{label} pending flow carries no code_verifier', {
       component: 'auth/oauth',
       tenantId: tenant.id,
+      label: spec.label,
     });
-    return NextResponse.json({ error: 'Start the OnBase connect again' }, { status: 400 });
+    return NextResponse.json({ error: `Start the ${spec.label} connect again` }, { status: 400 });
   }
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
-  const app = await getOnBaseApp(tenant.id, originResult.val);
+  const app = await getOnBaseApp(tenant.id, originResult.val, spec.connector);
   if (!app) {
     return NextResponse.json(
-      { error: 'OnBase integration not configured for this organization' },
+      { error: `${spec.label} integration not configured for this organization` },
       { status: 503 }
     );
   }
 
   const exchanged = await obExchangeCode({
     tenantId: tenant.id,
+    connector: spec.connector,
     code,
     redirectUri: app.redirectUri,
     codeVerifier,
   });
   if (!exchanged.ok) {
     const failure = onbaseClientFailure(exchanged.err);
-    logger.error('OnBase token exchange failed: {message}', {
+    logger.error('{label} token exchange failed: {message}', {
       component: 'auth/oauth',
       tenantId: tenant.id,
+      label: spec.label,
       message: failure.message,
     });
     return NextResponse.json(
-      { error: 'OnBase token exchange failed', error_description: failure.message },
+      { error: `${spec.label} token exchange failed`, error_description: failure.message },
       { status: 502 }
     );
   }
@@ -1583,14 +1628,15 @@ async function handleOnBaseCallback(
   const accountId = typeof idClaims?.sub === 'string' ? idClaims.sub : null;
   if (!accountId) {
     // Without a subject there is no durable key to store the grant under.
-    logger.error('OnBase id_token carried no sub claim; cannot identify grantor', {
+    logger.error('{label} id_token carried no sub claim; cannot identify grantor', {
       component: 'auth/oauth',
       tenantId: tenant.id,
+      label: spec.label,
       hadIdToken: typeof tokens.id_token === 'string',
     });
     return NextResponse.json(
       {
-        error: 'Could not identify OnBase user',
+        error: `Could not identify ${spec.label} user`,
         error_description:
           "The IdP's token response carried no usable id_token. Ensure the client registered " +
           'for Renkei on the Hyland IdP allows the openid scope, then reconnect.',
@@ -1605,15 +1651,16 @@ async function handleOnBaseCallback(
 
   const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store OnBase grant', {
+    logger.error('TOKEN_ENCRYPTION_KEY missing or malformed; cannot store {label} grant', {
       component: 'auth/oauth',
       tenantId: tenant.id,
+      label: spec.label,
     });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
   const stored = await setGrant(
-    ONBASE,
+    spec.grantProvider,
     tenant.id,
     {
       accountId,
@@ -1630,28 +1677,38 @@ async function handleOnBaseCallback(
     keyResult.val
   );
   if (!stored.ok) {
-    logger.error('Failed to store OnBase grant', { component: 'auth/oauth', tenantId: tenant.id });
-    return NextResponse.json({ error: 'Failed to store OnBase grant' }, { status: 500 });
+    logger.error('Failed to store {label} grant', {
+      component: 'auth/oauth',
+      tenantId: tenant.id,
+      label: spec.label,
+    });
+    return NextResponse.json({ error: `Failed to store ${spec.label} grant` }, { status: 500 });
   }
 
   // No refresh token means the connection dies with this access token —
   // an IdP-side setting (offline_access), worth a log line now instead of
   // a mystery disconnect later.
   if (!refreshToken) {
-    logger.warn('OnBase grant stored without a refresh token (offline_access not granted?)', {
+    logger.warn('{label} grant stored without a refresh token (offline_access not granted?)', {
       component: 'auth/oauth',
       tenantId: tenant.id,
+      label: spec.label,
       subject,
     });
   }
 
-  logger.info('OnBase grant stored', { component: 'auth/oauth', tenantId: tenant.id, subject });
+  logger.info('{label} grant stored', {
+    component: 'auth/oauth',
+    tenantId: tenant.id,
+    label: spec.label,
+    subject,
+  });
   recordAuditEvent({
     tenantId: tenant.id,
     actorSubject: subject,
     action: 'connector.connected',
     targetKind: 'connector',
-    targetLabel: ONBASE,
+    targetLabel: spec.grantProvider,
   });
   return NextResponse.redirect(new URL(`/${tenant.slug}/connectors`, originResult.val));
 }

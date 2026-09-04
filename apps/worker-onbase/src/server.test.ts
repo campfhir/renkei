@@ -16,7 +16,7 @@ import type { OnBaseTenantConfig } from './config';
 
 const API_KEY = 'test-worker-key';
 const TENANT = '11111111-1111-1111-1111-111111111111';
-/** Configured like TENANT but with no Administration API base URL. */
+/** Has the Document connector configured, but never connected onbase-admin. */
 const TENANT_NO_ADMIN = '33333333-3333-3333-3333-333333333333';
 
 function listen(server: Server): Promise<string> {
@@ -147,6 +147,15 @@ function fakeOnBase(): Server {
       response.end(JSON.stringify({ id: '901' }));
       return;
     }
+    if (url.pathname === '/onbase/administration/api/document-types' && request.method === 'GET') {
+      // Unauthenticated on purpose, mirroring /onbase/core/document-types
+      // below: a 401 here is test-connection's healthy answer for the
+      // onbase-admin connector, and proves it probed THIS path (under
+      // /api), not the Document API's /document-types.
+      response.writeHead(401, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({}));
+      return;
+    }
     if (url.pathname === '/onbase/administration/api/document-types' && request.method === 'POST') {
       if (!authenticated) {
         response.writeHead(401, { 'content-type': 'application/json' });
@@ -175,30 +184,36 @@ describe('worker-onbase server', () => {
     encryptionKey: Buffer.alloc(32),
     apiKeys: [API_KEY],
     maxTransferBytes: () => Promise.resolve(64),
-    resolveConfig: (tenantId) =>
-      Promise.resolve(
-        tenantId === TENANT
-          ? ok<OnBaseTenantConfig>({
-              apiBaseUrl: `${onbaseUrl}/onbase/core`,
-              idpIssuer: `${idpUrl}/identity`,
-              clientId: 'renkei-client',
-              clientSecret: 'shh',
-              idpScopeName: 'onbase-api',
-              allowInsecureHttp: true,
-              adminApiBaseUrl: `${onbaseUrl}/onbase/administration`,
-            })
-          : tenantId === TENANT_NO_ADMIN
-            ? ok<OnBaseTenantConfig>({
-                apiBaseUrl: `${onbaseUrl}/onbase/core`,
-                idpIssuer: `${idpUrl}/identity`,
-                clientId: 'renkei-client',
-                clientSecret: 'shh',
-                idpScopeName: 'onbase-api',
-                allowInsecureHttp: true,
-                adminApiBaseUrl: null,
-              })
-            : err('not_configured' as const)
-      ),
+    resolveConfig: (tenantId, connector) => {
+      const documentConfig: OnBaseTenantConfig = {
+        apiBaseUrl: `${onbaseUrl}/onbase/core`,
+        idpIssuer: `${idpUrl}/identity`,
+        clientId: 'renkei-client',
+        clientSecret: 'shh',
+        idpScopeName: 'onbase-api',
+        allowInsecureHttp: true,
+      };
+      const adminConfig: OnBaseTenantConfig = {
+        apiBaseUrl: `${onbaseUrl}/onbase/administration`,
+        idpIssuer: `${idpUrl}/identity`,
+        clientId: 'renkei-admin-client',
+        clientSecret: 'shh-admin',
+        idpScopeName: 'onbase-admin-api',
+        allowInsecureHttp: true,
+      };
+      if (tenantId === TENANT) {
+        return Promise.resolve(ok(connector === 'onbase-admin' ? adminConfig : documentConfig));
+      }
+      // TENANT_NO_ADMIN has the Document connector configured, but never
+      // set up the Administration one — the common real-world case, since
+      // they are separately connected Hyland OAuth clients.
+      if (tenantId === TENANT_NO_ADMIN) {
+        return Promise.resolve(
+          connector === 'onbase-admin' ? err('not_configured' as const) : ok(documentConfig)
+        );
+      }
+      return Promise.resolve(err('not_configured' as const));
+    },
   });
 
   let idpUrl = '';
@@ -500,9 +515,10 @@ describe('worker-onbase server', () => {
     expect(await second.json()).toEqual({ disconnected: false });
   });
 
-  it('proxies an admin call against the Administration API base, not the Document API', async () => {
-    const response = await post('admin', {
+  it('proxies an api call for the onbase-admin connector against its own base, not the Document API', async () => {
+    const response = await post('api', {
       tenantId: TENANT,
+      connector: 'onbase-admin',
       accessToken: 'good-token',
       method: 'POST',
       path: '/api/document-types',
@@ -514,7 +530,7 @@ describe('worker-onbase server', () => {
     expect(JSON.parse(envelope.body)).toMatchObject({ id: '901', name: 'Employee Profile' });
   });
 
-  it('sends no OnBase session cookie on an admin call, even for a subject with a live session', async () => {
+  it('sends no OnBase session cookie for onbase-admin, even for a subject with a live Document session', async () => {
     // Prime a Document API session for this subject first.
     await post('api', {
       tenantId: TENANT,
@@ -524,8 +540,9 @@ describe('worker-onbase server', () => {
       path: '/document-types',
     });
     cookiesSeen.length = 0;
-    await post('admin', {
+    await post('api', {
       tenantId: TENANT,
+      connector: 'onbase-admin',
       subject: 'subject-admin',
       accessToken: 'good-token',
       method: 'POST',
@@ -537,8 +554,9 @@ describe('worker-onbase server', () => {
 
   it('sends PATCH bodies as application/json-patch+json, not plain JSON', async () => {
     lastContentType = null;
-    const response = await post('admin', {
+    const response = await post('api', {
       tenantId: TENANT,
+      connector: 'onbase-admin',
       accessToken: 'good-token',
       method: 'PATCH',
       path: '/api/document-types/901',
@@ -548,9 +566,10 @@ describe('worker-onbase server', () => {
     expect(lastContentType).toBe('application/json-patch+json');
   });
 
-  it('refuses admin calls for a tenant with no Administration API configured', async () => {
-    const response = await post('admin', {
+  it('refuses onbase-admin calls for a tenant that never connected it', async () => {
+    const response = await post('api', {
       tenantId: TENANT_NO_ADMIN,
+      connector: 'onbase-admin',
       accessToken: 'good-token',
       method: 'GET',
       path: '/api/document-types',
@@ -559,5 +578,23 @@ describe('worker-onbase server', () => {
     expect(((await response.json()) as { error: { type: string } }).error.type).toBe(
       'not_configured'
     );
+  });
+
+  it('tests the onbase-admin connection against its own /api/document-types probe path', async () => {
+    const response = await post('test-connection', {
+      tenantId: TENANT,
+      connector: 'onbase-admin',
+      unsaved: {
+        apiBaseUrl: `${onbaseUrl}/onbase/administration`,
+        idpIssuer: `${idpUrl}/identity`,
+        allowInsecureHttp: true,
+      },
+    });
+    expect(response.status).toBe(200);
+    const result = (await response.json()) as { api: { ok: boolean; status?: number } };
+    // 401 on /api/document-types (not the Document API's /document-types,
+    // which would 401 too but is the wrong host path entirely) proves the
+    // onbase-admin probe used the Administration API's own vocabulary path.
+    expect(result.api).toEqual({ ok: true, status: 401 });
   });
 });
