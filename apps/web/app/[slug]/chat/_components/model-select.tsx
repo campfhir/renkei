@@ -50,7 +50,7 @@ export default function ModelSelect({
         <span className="truncate">{current?.label ?? 'Choose a model'}</span>
         {thinkingOn ? (
           <span title="Extended thinking is on" className="flex shrink-0 text-violet-500">
-            <Icon path={ICONS.sparkle} className="h-3.5 w-3.5" />
+            <Icon path={ICONS.brain} className="h-3.5 w-3.5" />
           </span>
         ) : null}
         <Icon

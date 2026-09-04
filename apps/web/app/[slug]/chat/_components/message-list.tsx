@@ -308,7 +308,7 @@ function WorkFold({
     <details className={`chat-fold ${failed ? 'chat-fold-error' : ''}`}>
       <summary>
         <Icon
-          path={thought && calls.length === 0 ? ICONS.sparkle : ICONS.tool}
+          path={thought && calls.length === 0 ? ICONS.brain : ICONS.tool}
           className="h-3.5 w-3.5"
         />
         {label}
