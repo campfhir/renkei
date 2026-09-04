@@ -317,7 +317,10 @@ function Reply({
 /**
  * One collapsed line for a run of thinking and tool calls. Shut by
  * default — the reply is what the person came for — but while the run is
- * still live the line itself says what is happening right now.
+ * still live the line itself says what is happening right now. A thinking
+ * block with no text (a provider that signals thinking but returns none of
+ * it, or one that has only just started) has nothing to unfold, so a run
+ * made of nothing else is a plain line rather than an empty fold.
  */
 function WorkFold({
   steps,
@@ -328,8 +331,9 @@ function WorkFold({
   pendingToolCalls: string[];
   live: boolean;
 }) {
-  const calls = steps.filter((step) => step.kind === 'call');
-  const thought = steps.some((step) => step.kind !== 'call');
+  const shown = steps.filter((step) => step.kind !== 'thinking' || step.text.trim() !== '');
+  const calls = shown.filter((step) => step.kind === 'call');
+  const thought = shown.some((step) => step.kind !== 'call');
   const failed = calls.some((step) => step.result?.isError);
   const isPending = (step: Extract<WorkStep, { kind: 'call' }>) =>
     !step.result && (live || pendingToolCalls.includes(step.block.id));
@@ -356,26 +360,38 @@ function WorkFold({
     const parts: string[] = [];
     if (thought) parts.push('Thought');
     if (calls.length > 0) parts.push(`${calls.length} tool call${calls.length === 1 ? '' : 's'}`);
-    label = parts.join(' · ');
+    label = parts.length > 0 ? parts.join(' · ') : 'Thought';
+  }
+
+  const icon = (
+    <Icon path={calls.length === 0 ? ICONS.brain : ICONS.tool} className="h-3.5 w-3.5" />
+  );
+
+  if (shown.length === 0) {
+    return (
+      <div className="chat-fold">
+        <p className="chat-fold-static">
+          {icon}
+          {label}
+        </p>
+      </div>
+    );
   }
 
   return (
     <details className={`chat-fold ${failed ? 'chat-fold-error' : ''}`}>
       <summary>
-        <Icon
-          path={thought && calls.length === 0 ? ICONS.brain : ICONS.tool}
-          className="h-3.5 w-3.5"
-        />
+        {icon}
         {label}
       </summary>
       <ol className="space-y-2">
-        {steps.map((step, index) => {
+        {shown.map((step, index) => {
           switch (step.kind) {
             case 'thinking':
               return (
                 <li key={index} className="whitespace-pre-wrap text-gray-600 dark:text-gray-400">
                   {step.text}
-                  {live && index === steps.length - 1 ? <Cursor /> : null}
+                  {live && index === shown.length - 1 ? <Cursor /> : null}
                 </li>
               );
             case 'redacted':
