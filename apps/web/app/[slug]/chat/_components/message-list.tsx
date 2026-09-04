@@ -45,6 +45,18 @@ export default function MessageList({
     element.scrollTop = element.scrollHeight;
   }, [messages, pinned]);
 
+  // The box itself shrinks when a phone's keyboard opens (chat-frame.tsx);
+  // a reader at the bottom should still be at the bottom afterwards.
+  useEffect(() => {
+    const element = scroller.current;
+    if (!element || !pinned || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      element.scrollTop = element.scrollHeight;
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [pinned]);
+
   const results = useMemo(() => {
     const map = new Map<string, Extract<ChatBlock, { type: 'tool_result' }>>();
     for (const message of messages) {
