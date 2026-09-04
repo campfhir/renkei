@@ -353,19 +353,6 @@ export interface BatchJobs {
   updated_at: Generated<Timestamp>;
 }
 
-export interface BatchProcessedFiles {
-  batch_id: string | null;
-  content_hash: string;
-  document_key: string | null;
-  id: string;
-  modified_at: Timestamp | null;
-  path: string;
-  processed_at: Generated<Timestamp>;
-  share_id: string;
-  size: number;
-  tenant_id: string;
-}
-
 export interface BatchJobSchedules {
   config: Generated<Json>;
   created_at: Generated<Timestamp>;
@@ -379,6 +366,112 @@ export interface BatchJobSchedules {
   schedule_config: Generated<Json>;
   subject: string;
   tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface BatchProcessedFiles {
+  batch_id: string | null;
+  content_hash: string;
+  document_key: string | null;
+  id: string;
+  modified_at: Timestamp | null;
+  path: string;
+  processed_at: Generated<Timestamp>;
+  share_id: string;
+  size: number;
+  tenant_id: string;
+}
+
+export interface ChatAttachments {
+  blob_key: string;
+  chat_id: string | null;
+  content_type: string;
+  created_at: Generated<Timestamp>;
+  extract_status: Generated<string>;
+  extracted_text: string | null;
+  filename: string;
+  id: Generated<string>;
+  message_id: string | null;
+  owner_subject: string;
+  project_id: string | null;
+  size_bytes: Int8;
+  tenant_id: string;
+}
+
+export interface ChatMessages {
+  chat_id: string;
+  content: string;
+  created_at: Generated<Timestamp>;
+  error: string | null;
+  id: Generated<string>;
+  kind: string;
+  llm_model_id: string | null;
+  model: string | null;
+  provider: string | null;
+  role: string;
+  seq: number;
+  status: Generated<string>;
+  stop_reason: string | null;
+  tenant_id: string;
+  turn_id: string | null;
+  updated_at: Generated<Timestamp>;
+  usage: Json | null;
+}
+
+export interface ChatProjectMemories {
+  author_subject: string | null;
+  chat_id: string | null;
+  content: string;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  kind: Generated<string>;
+  project_id: string;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface ChatProjects {
+  created_at: Generated<Timestamp>;
+  description: string | null;
+  id: Generated<string>;
+  instructions: string | null;
+  name: string;
+  owner_subject: string;
+  published_to_org: Generated<boolean>;
+  tenant_id: string;
+  tool_config: Json | null;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface Chats {
+  archived_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<string>;
+  last_message_at: Timestamp | null;
+  llm_model_id: string | null;
+  owner_subject: string;
+  project_id: string | null;
+  tenant_id: string;
+  thinking_enabled: Generated<boolean>;
+  title: string | null;
+  tool_config: Json | null;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface ChatTurns {
+  cancel_requested_at: Timestamp | null;
+  chat_id: string;
+  error: string | null;
+  finished_at: Timestamp | null;
+  id: Generated<string>;
+  input_tokens: Generated<number>;
+  iterations: Generated<number>;
+  llm_model_id: string | null;
+  output_tokens: Generated<number>;
+  started_at: Generated<Timestamp>;
+  status: Generated<string>;
+  tenant_id: string;
+  thinking_budget: number | null;
   updated_at: Generated<Timestamp>;
 }
 
@@ -781,6 +874,30 @@ export interface PlatformSettings {
   value: Json;
 }
 
+export interface PromptLibraries {
+  created_at: Generated<Timestamp>;
+  description: string | null;
+  id: Generated<string>;
+  name: string;
+  owner_subject: string;
+  published_to_org: Generated<boolean>;
+  tenant_id: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface Prompts {
+  body: string;
+  created_at: Generated<Timestamp>;
+  created_by_subject: string;
+  id: Generated<string>;
+  library_id: string;
+  position: Generated<number>;
+  tenant_id: string;
+  title: string;
+  updated_at: Generated<Timestamp>;
+  updated_by_subject: string;
+}
+
 export interface ProviderGrants {
   client_id: string;
   created_at: Generated<Timestamp>;
@@ -812,6 +929,18 @@ export interface PushSubscriptions {
   id: string;
   p256dh: string;
   subject: string;
+  tenant_id: string;
+}
+
+export interface ResourceAccessGrants {
+  created_at: Generated<Timestamp>;
+  expires_at: Timestamp | null;
+  grantee_subject: string;
+  id: Generated<string>;
+  owner_subject: string;
+  resource_id: string;
+  resource_kind: string;
+  role: Generated<string>;
   tenant_id: string;
 }
 
@@ -999,6 +1128,12 @@ export interface DB {
   batch_job_schedules: BatchJobSchedules;
   batch_jobs: BatchJobs;
   batch_processed_files: BatchProcessedFiles;
+  chat_attachments: ChatAttachments;
+  chat_messages: ChatMessages;
+  chat_project_memories: ChatProjectMemories;
+  chat_projects: ChatProjects;
+  chat_turns: ChatTurns;
+  chats: Chats;
   connector_configs: ConnectorConfigs;
   content_watches: ContentWatches;
   email_classification_log: EmailClassificationLog;
@@ -1030,9 +1165,12 @@ export interface DB {
   pending_oidc_signin: PendingOidcSignin;
   platform_audit_log: PlatformAuditLog;
   platform_settings: PlatformSettings;
+  prompt_libraries: PromptLibraries;
+  prompts: Prompts;
   provider_grants: ProviderGrants;
   provider_refresh_locks: ProviderRefreshLocks;
   push_subscriptions: PushSubscriptions;
+  resource_access_grants: ResourceAccessGrants;
   sandbox_files: SandboxFiles;
   sandbox_secrets: SandboxSecrets;
   schedule_calendars: ScheduleCalendars;

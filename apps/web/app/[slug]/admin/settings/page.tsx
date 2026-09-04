@@ -75,6 +75,7 @@ export default async function SettingsPage({
     logRetentionDays: settings.logRetentionDays,
     agentNotificationRetentionDays: settings.agentNotificationRetentionDays,
     agentUsageRetentionDays: settings.agentUsageRetentionDays,
+    chatRetentionDays: settings.chatRetentionDays,
     agentOptimizerWindowDays: settings.agentOptimizerWindowDays,
     knowledgeKeywordEnrichment: settings.knowledgeKeywordEnrichment,
     knowledgeKeywordMinChars: settings.knowledgeKeywordMinChars,

@@ -12,7 +12,8 @@ import DesktopNotifications from '@/components/desktop-notifications';
 import AppNav from './nav';
 
 /**
- * The shell every tenant page shares: top bar, slide-in menu, sign-out.
+ * The shell every tenant page shares: top bar, the menu (a column beside
+ * the page on a wide screen, a drawer below it), sign-out.
  *
  * Resolves the slug once and passes ids down through the nav; pages resolve it
  * again for their own data — cheap, and it keeps each page correct when
@@ -55,6 +56,8 @@ export default async function TenantLayout({
   */
   const shell = (
     <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
+      {/* The nav frames the page: it owns the <main> so the menu column can
+          stand beside it on a wide screen. */}
       <AppNav
         slug={tenant.slug}
         tenantId={tenant.id}
@@ -62,10 +65,9 @@ export default async function TenantLayout({
         userEmail={identity?.email ?? null}
         isOperator={isOperator}
         signInHref={signInUrl(tenant.id, `/${tenant.slug}`)}
-      />
-      {/* Wide enough for the log and grant tables; narrow pages center a
-          max-w-3xl block of their own inside it. */}
-      <main className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6">{children}</main>
+      >
+        {children}
+      </AppNav>
       {session ? (
         <NotificationCorner
           tenantId={tenant.id}

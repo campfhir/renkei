@@ -23,6 +23,7 @@ export interface EditableSettings {
   logRetentionDays: number;
   agentNotificationRetentionDays: number;
   agentUsageRetentionDays: number;
+  chatRetentionDays: number;
   agentOptimizerWindowDays: number;
   knowledgeKeywordEnrichment: boolean;
   knowledgeKeywordMinChars: number;
@@ -229,6 +230,12 @@ export function SettingsForm({ slug, initial }: { slug: string; initial: Editabl
           hint="How long the record behind 'My usage' is kept: one row per agent run (status, timing, cost; on failure the step and a short message) and one per model call (token counts). Default a year — longer than run history on purpose, so usage stays readable after the runs are pruned."
         >
           {numberInput('agentUsageRetentionDays', '1–1,825')}
+        </Row>
+        <Row
+          label="Chat retention (days)"
+          hint="How long a chat — its messages and uploaded files — is kept after its last activity before it is deleted, files first. 0 keeps chats until their owner deletes them."
+        >
+          {numberInput('chatRetentionDays', '0–3,650')}
         </Row>
         <Row
           label="Log retention (days)"

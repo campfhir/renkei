@@ -8,14 +8,14 @@ Five long-running/deployable units, all built from one monorepo (`docker/Dockerf
 
 | Process | Entry point | What it does |
 | --- | --- | --- |
-| `apps/web` | Next.js App Router | Every user- and agent-facing surface: the tenant web UI, the MCP gateway, both OAuth/OIDC layers, the admin UI, and webhook **receipt** (verify signature, insert an `events` row, return 200 — no processing here). |
+| `apps/web` | Next.js App Router | Every user- and agent-facing surface: the tenant web UI, the MCP gateway, both OAuth/OIDC layers, the admin UI, the first-party chat (`/[slug]/chat`, which runs its LLM turns in this process and calls back into its **own** MCP endpoint over loopback for tool calls — see [`chat.md`](./chat.md)), and webhook **receipt** (verify signature, insert an `events` row, return 200 — no processing here). |
 | `apps/worker` (`index.ts`) | Node | Consumes the `events` queue: per-connector webhook handlers, a `domain:{provider}` dispatch step that fans events out to knowledge indexing and agent triggers, and periodic sweeps (webhook health, subscription renewal, grant expiry, log retention, agent trigger firing). |
 | `apps/worker` (`embeddings-worker.ts`) | Node, separate process from the above, same image | Consumes the `embedding_jobs` queue only: knowledge ingest/delete/purge/reconcile/enrich. Isolated so a slow org-configured embeddings endpoint can never stall an event reply. |
-| `apps/worker-agents` | Node | Consumes the `agent_jobs` queue: runs agents step-by-step (`engine.ts`), turns prose into agent drafts, and fires schedule- and approval-timeout-driven runs. Talks back into `apps/web`'s own MCP endpoint (`RENKEI_WEB_INTERNAL_URL`) to execute tool calls as the run's owner. |
+| `apps/worker-agents` | Node | Consumes the `agent_jobs` queue: runs agents step-by-step (`engine.ts`), turns prose into agent drafts, and fires schedule- and approval-timeout-driven runs. Talks back into `apps/web`'s own MCP endpoint (`RENKEI_WEB_INTERNAL_URL`) to execute tool calls as the run's owner. Also hosts the chat sweeps (`chat-sweep.ts`): the turn janitor that marks a crashed turn `interrupted`, the retention sweep that deletes attachment blobs and then chats, and the orphan-grant prune. |
 | `apps/worker-fileshares` | Bearer-authenticated HTTP server | Owns every SMB/SFTP session and is the only process besides the admin save path that decrypts fileshare credentials. Isolated because file-share I/O is slow and fragile relative to a request handler. |
 | `apps/worker-onbase` | Bearer-authenticated HTTP server | Owns all traffic to a tenant's on-prem OnBase API Server / Hyland IdP, which typically lives in private address space that `apps/web`'s SSRF guard refuses to reach by design. Holds no long-lived tokens of its own (per-user tokens ride each request); does hold the tenant's connector config. |
 
-All five share one Postgres 16 instance (Kysely via `packages/db`) — see Decision #11 in `RENKEI.md`. There is no other datastore: pgvector lives in the same database as the relational tables.
+All five share one Postgres 16 instance (Kysely via `packages/db`) — see Decision #11 in `RENKEI.md`. pgvector lives in the same database as the relational tables. The one datastore beyond Postgres is the **object store for chat attachments** (`packages/blob-store`, Azure Blob Storage today; the dev compose file runs Azurite in its place) — bytes only, every row describing them stays in Postgres, and the app is fully functional with it unconfigured (uploads are simply off).
 
 `apps/worker` and `apps/worker-agents` both run their poll loop and sweeps through the shared `packages/worker-loop` (`createEventLoop`, `schedulePeriodicSweep`) rather than duplicating that logic.
 
@@ -30,6 +30,8 @@ All five share one Postgres 16 instance (Kysely via `packages/db`) — see Decis
 
 **An inbound provider event** (WebEx message, Graph change notification, Zoom recording-ready webhook):
 webhook route in `apps/web` verifies the signature and inserts an `events` row → `apps/worker` claims it, runs the connector-specific handler, normalizes it into a `domain:{provider}` event → `domain-dispatch.ts` fans that out in fixed order: (1) knowledge indexing, if the event type is in the static `KNOWLEDGE_SUBSCRIBERS` map, enqueued onto `embedding_jobs`; (2) agent triggers, via `fanOutAgentEvents` from `@renkei/agents`, enqueued onto `agent_jobs`. A lightweight heuristic classifier (`pipeline/classify.ts`) can also propose a suggested action (e.g. "this WebEx message looks like an issue report" → draft a `jira_create_issue` card) — this is the cheapest tier of a pluggable classify step, not an LLM call.
+
+**A chat turn** (a person talking to the org's model roster in the web UI): `POST …/chat/chats/[chatId]/turns` inserts the turn and message rows and answers 202 → the rest runs in the web process after the response (`after()`), streaming the model's text, thinking and tool calls into the message rows and onto a per-turn in-process channel the SSE route forwards to the browser → each tool call goes through the same MCP gateway with a token minted for the turn (application `agent`, no agent id, the person's roles), so the projection, read-only mode, usage tracking and redaction that apply to any MCP client apply here too. See [`chat.md`](./chat.md).
 
 **An agent run**: triggered by event fan-out above, a cron/recurrence sweep, an approval/question timing out or being answered, or a manual `agent_run_now` call → `apps/worker-agents` claims the `agent_jobs` message → `engine.ts` walks the agent's step document, writing one `agent_run_steps` row per attempt *before* running the LLM loop (so a redelivered job resumes instead of double-acting) → tool calls go back through the MCP gateway in `apps/web` using a minted per-run token. See [`agents.md`](./agents.md).
 
@@ -49,6 +51,8 @@ Everything not in `apps/*` lives under `packages/*` and is consumed by more than
 - **`email-sanitizer`** — a deterministic classify → route → clean/extract/exclude pipeline that runs ahead of embedding for mail, including a sandboxed per-org cleaner-script runtime.
 - **`document-text`** — dependency-light OOXML (docx/xlsx/pptx) and PDF text extraction for the knowledge index; deliberately does no OCR.
 - **`worker-loop`** — the shared poll-loop and independent-sweep-timer logic used identically by `apps/worker` and `apps/worker-agents`.
+- **`mcp-client`** — the HTTP JSON-RPC client (`HttpMcpClient`) and per-run/per-turn token minting (`mintRunToken`, `revokeRunToken`) that `apps/worker-agents` and the chat both use to call the MCP gateway in `apps/web` as a specific person; it used to live inside the agents worker.
+- **`blob-store`** — the `BlobStore` interface (put/get/stream/delete/ensureContainer, keys built from ids only) behind `BLOB_STORE_PROVIDER`, with an Azure Blob backend hand-rolled over `fetch` (Shared Key auth). Other providers are an empty slot in `config.ts`; nothing hands out signed URLs — downloads stream through the app under a session check.
 
 ## What's out of date elsewhere
 

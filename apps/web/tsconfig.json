@@ -48,7 +48,9 @@
       "@renkei/gates": ["../../packages/gates/src/index.ts"],
       "@renkei/redaction": ["../../packages/redaction/src/index.ts"],
       "@renkei/document-text": ["../../packages/document-text/src/index.ts"],
-      "@renkei/knowledge": ["../../packages/knowledge/src/index.ts"]
+      "@renkei/knowledge": ["../../packages/knowledge/src/index.ts"],
+      "@renkei/mcp-client": ["../../packages/mcp-client/src/index.ts"],
+      "@renkei/blob-store": ["../../packages/blob-store/src/index.ts"]
     }
   },
   "include": [

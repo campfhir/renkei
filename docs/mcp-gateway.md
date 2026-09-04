@@ -6,7 +6,7 @@ Everything here lives in `apps/web`. See [`architecture.md`](./architecture.md) 
 
 Route: `app/api/mcp/[tenantId]/[transport]/route.ts`, built on `mcp-handler`'s `createMcpHandler`. Per request:
 
-1. Resolve the bearer token to a caller — either an MCP-client subject or an agent-run token — via `lib/mcp-token.ts`.
+1. Resolve the bearer token to a caller — either an MCP-client subject or an agent-run token — via `lib/mcp-token.ts`. The first-party chat is a third caller in the second shape: each turn mints a short-lived `agent` token with no agent id and the person's own roles (`@renkei/mcp-client`), and the web process calls this endpoint over loopback with it, so a chat is gated exactly like any external MCP client (see [`chat.md`](./chat.md)).
 2. Load the caller's connector grants (Jira/JSM, Microsoft, WebEx, Zoom, OnBase, Bitbucket — whichever are provisioned).
 3. Apply org settings (`@renkei/settings`: read-only mode, disabled connectors) and the per-user capability projection (`@renkei/capability-registry`, see [`knowledge-and-security.md`](./knowledge-and-security.md)).
 4. `registerRenkeiTools` (`lib/mcp-tools/registry.ts`) registers only the tools that survive that projection — the tool list returned to a given MCP client is a genuine per-user, per-org filter, never a static catalog.
@@ -28,7 +28,7 @@ OnBase is the one exception to "Renkei-registered SaaS OAuth app": the IdP itsel
 
 ## Admin UI
 
-Under `app/[slug]/admin/`, an org-admin can configure: connector enable/disable (`connectors/`), agent oversight and run history (`agents/`, `agents/[agentId]/runs`), the user roster (`people/`), provider grants (`grants/`), SharePoint sites and calendars (`sites/`, `calendars/`), fileshare registration (`file-shares/`), redaction policy (`redaction/`), outbound email cleaning rules (`email-sanitizer/`), agent LLM model configuration (`llm-models/`), and org-wide policy such as read-only mode and capability flags (`settings/`). Audit/event visibility lives at `audit/`, `events/`, and a top-level `logs` page.
+Under `app/[slug]/admin/`, reached as **Organization** from the account menu (the landing page at `admin/page.tsx` lists every area; the app menu does not), an org-admin can configure: connector enable/disable (`connectors/`), agent oversight and run history (`agents/`, `agents/[agentId]/runs`), the user roster (`people/`), provider grants (`grants/`), SharePoint sites and calendars (`sites/`, `calendars/`), fileshare registration (`file-shares/`), redaction policy (`redaction/`), outbound email cleaning rules (`email-sanitizer/`), agent LLM model configuration (`llm-models/`), and org-wide policy such as read-only mode and capability flags (`settings/`). Audit/event visibility lives at `audit/`, `events/`, and a top-level `logs` page.
 
 This is the concrete implementation of `RENKEI.md`'s "org-admins own the platform's policy surface" — org defaults, connector limits, and capability flags are all admin-console-editable rows, not code.
 

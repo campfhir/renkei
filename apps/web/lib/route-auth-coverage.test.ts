@@ -26,8 +26,17 @@ import { join, relative, sep } from 'node:path';
 
 const APP_DIR = join(__dirname, '..', 'app');
 
-/** Symbols that resolve a signed-in user's session. The default expectation. */
-const SESSION_GUARDS = ['checkAccess', 'getSessionFromCookies', 'getSessionFromRequest'];
+/**
+ * Symbols that resolve a signed-in user's session. The default expectation.
+ * `chatRequestContext` (lib/chat/route-support.ts) is the chat routes' one
+ * wrapper around getSessionFromRequest — the same decision, made once.
+ */
+const SESSION_GUARDS = [
+  'checkAccess',
+  'getSessionFromCookies',
+  'getSessionFromRequest',
+  'chatRequestContext',
+];
 
 /**
  * Reachable without a session, but NOT unauthenticated: each carries its own

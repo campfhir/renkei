@@ -43,6 +43,54 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: null,
+    heading: "Chat with your organization's models",
+    entries: [
+      {
+        kind: 'added',
+        title: 'A chat, under "Chat" in the menu',
+        detail:
+          "Talk to the models your organization has configured, with your own tool access: the model's reply streams in as it is written, its reasoning and every tool call it makes show up inline, and you can stop it mid-answer. Chats are kept, grouped by day in the menu, and can be renamed, archived or deleted. Switch models at any point in a conversation.",
+      },
+      {
+        kind: 'added',
+        title: 'Files in chats',
+        detail:
+          'Drop, paste or pick files into a message. The model reads documents, spreadsheets and PDFs, and can stage a file into your sandbox to work on it. Files can be downloaded back from the chat at any time.',
+      },
+      {
+        kind: 'added',
+        title: 'Projects: shared context across chats',
+        detail:
+          'A project holds instructions, files and a memory that every chat inside it sees, and its members each chat with that same context. Share a project with named people as viewers or editors, or publish it to the whole organization. Move an existing chat into a project (or back out) whenever you like.',
+      },
+      {
+        kind: 'added',
+        title: 'Prompt libraries',
+        detail:
+          'Save the prompts you keep retyping into a library, share it with named people or the whole organization, and insert any prompt into a chat by typing "/" in an empty message box.',
+      },
+      {
+        kind: 'added',
+        title: 'Share a chat read-only',
+        detail:
+          'Share a chat with named people the way you share an agent. They can read it and watch it live, but only you can continue it.',
+      },
+      {
+        kind: 'added',
+        title: 'Choose which tools a chat may use',
+        detail:
+          'Each chat starts with a small core (knowledge search and the sandbox) and you switch other connectors on per chat or per project. Everything a chat does with a tool is done as you, under the same limits and logging as any other tool call.',
+      },
+      {
+        kind: 'added',
+        title: 'A retention window for chats',
+        detail:
+          'Admins can set how many days chats are kept (Settings). The default keeps them until deleted.',
+      },
+    ],
+  },
+  {
     date: '2026-09-04',
     heading: 'OnBase Administration joins the connectors',
     entries: [

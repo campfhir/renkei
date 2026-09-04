@@ -12,6 +12,9 @@
  * Translation notes (the contract's blocks are Anthropic-shaped):
  *   - tool_use → assistant `tool_calls` entries (arguments JSON-encoded);
  *     tool_result → its own `role: 'tool'` message keyed by tool_call_id.
+ *   - thinking blocks have no wire form in this dialect and are dropped
+ *     from history; a model that streams `reasoning_content` (DeepSeek and
+ *     several gateways) has it surfaced as an unsigned thinking block.
  *   - `max_completion_tokens`, not the deprecated `max_tokens`: the newer
  *     reasoning models reject the old name, and current chat models accept
  *     the new one everywhere this adapter targets.
@@ -19,7 +22,9 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import { summarizeWireRequest } from './wire-summary';
-import { looksLikeCredentialFailure } from './contract';
+import { looksLikeCredentialFailure, transportErrorKind } from './contract';
+import { readSseEvents } from './sse-reader';
+import { createAccumulator } from './stream-accumulator';
 import type { Result } from '@campfhir/safe-functions/types';
 import type {
   LlmContentBlock,
@@ -28,10 +33,21 @@ import type {
   LlmProvider,
   LlmRequest,
   LlmResponse,
+  LlmStreamEvent,
+  LlmStreamOptions,
+  LlmUsage,
 } from './contract';
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const REQUEST_TIMEOUT_MS = 120_000;
+const STREAM_TIMEOUT_MS = 300_000;
+const STREAM_IDLE_MS = 90_000;
+/** Content-index layout for a streamed reply: the dialect has no block
+ *  indices of its own, so text, reasoning and each tool call get fixed
+ *  slots that sort into the order a reader expects. */
+const TEXT_INDEX = 0;
+const REASONING_INDEX = 1;
+const TOOL_INDEX_BASE = 100;
 
 export interface OpenAiConfig {
   apiKey: string;
@@ -66,6 +82,7 @@ function toWireMessages(message: LlmMessage): WireMessage[] {
           ]
         : []
     );
+    // thinking / redacted_thinking: no wire form here — dropped.
     return [
       {
         role: 'assistant',
@@ -159,6 +176,25 @@ function fromWireToolCall(call: WireToolCall): LlmContentBlock | null {
   return { type: 'tool_use', id: call.id, name, input };
 }
 
+function stopReasonOf(value: unknown): LlmResponse['stopReason'] {
+  return value === 'tool_calls' ? 'tool_use' : value === 'length' ? 'max_tokens' : 'end_turn';
+}
+
+function usageOf(value: unknown): Partial<LlmUsage> {
+  const usage: {
+    prompt_tokens?: unknown;
+    completion_tokens?: unknown;
+    prompt_tokens_details?: { cached_tokens?: unknown };
+  } = typeof value === 'object' && value !== null ? value : {};
+  const out: Partial<LlmUsage> = {};
+  if (typeof usage.prompt_tokens === 'number') out.inputTokens = usage.prompt_tokens;
+  if (typeof usage.completion_tokens === 'number') out.outputTokens = usage.completion_tokens;
+  if (typeof usage.prompt_tokens_details?.cached_tokens === 'number') {
+    out.cacheReadInputTokens = usage.prompt_tokens_details.cached_tokens;
+  }
+  return out;
+}
+
 export class OpenAiProvider implements LlmProvider {
   /**
    * Which token-limit parameter this endpoint accepts. OpenAI's newer
@@ -173,16 +209,24 @@ export class OpenAiProvider implements LlmProvider {
 
   constructor(private readonly config: OpenAiConfig) {}
 
-  async complete(request: LlmRequest): Promise<Result<LlmResponse, LlmErrorKind>> {
+  private endpoint(): { baseUrl: string; url: string } {
     // Tolerate a pasted FULL endpoint: the adapter appends /chat/completions
     // itself, so a base URL already ending in it would double the path.
     const baseUrl = (this.config.baseUrl || DEFAULT_BASE_URL)
       .replace(/\/+$/, '')
       .replace(/\/chat\/completions$/, '');
-    const baseBody = {
+    const version = this.config.apiVersion
+      ? `?api-version=${encodeURIComponent(this.config.apiVersion)}`
+      : '';
+    return { baseUrl, url: `${baseUrl}/chat/completions${version}` };
+  }
+
+  private baseBody(request: LlmRequest, stream: boolean): Record<string, unknown> {
+    return {
       model: this.config.model,
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
       ...(this.config.reasoningEffort ? { reasoning_effort: this.config.reasoningEffort } : {}),
+      ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
       messages: [
         { role: 'system', content: request.system },
         ...request.messages.flatMap(toWireMessages),
@@ -201,8 +245,21 @@ export class OpenAiProvider implements LlmProvider {
         : {}),
       ...(toolChoiceOf(request) !== undefined ? { tool_choice: toolChoiceOf(request) } : {}),
     };
+  }
 
-    let response: Response;
+  /**
+   * POST with the max-tokens fallback: a 400 naming max_completion_tokens
+   * flips the instance to the legacy field and retries once. Only the
+   * response is returned; parsing differs between the two verbs.
+   */
+  private async post(
+    request: LlmRequest,
+    stream: boolean,
+    signal: AbortSignal,
+    callerSignal?: AbortSignal
+  ): Promise<Result<Response, LlmErrorKind>> {
+    const { baseUrl, url } = this.endpoint();
+    const baseBody = this.baseBody(request, stream);
     for (;;) {
       const body = {
         ...baseBody,
@@ -210,11 +267,9 @@ export class OpenAiProvider implements LlmProvider {
           ? { max_tokens: request.maxTokens }
           : { max_completion_tokens: request.maxTokens }),
       };
+      let response: Response;
       try {
-        const version = this.config.apiVersion
-          ? `?api-version=${encodeURIComponent(this.config.apiVersion)}`
-          : '';
-        response = await fetch(`${baseUrl}/chat/completions${version}`, {
+        response = await fetch(url, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
@@ -222,12 +277,12 @@ export class OpenAiProvider implements LlmProvider {
             'api-key': this.config.apiKey,
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(request.timeoutMs ?? REQUEST_TIMEOUT_MS),
+          signal,
         });
       } catch (error) {
-        const kind: LlmErrorKind =
-          error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'network';
-        return err(kind, { message: error instanceof Error ? error.message : String(error) });
+        return err(transportErrorKind(error, callerSignal), {
+          message: error instanceof Error ? error.message : String(error),
+        });
       }
 
       if (!response.ok) {
@@ -247,17 +302,24 @@ export class OpenAiProvider implements LlmProvider {
           cause: summarizeWireRequest(`${baseUrl}/chat/completions`, body),
         });
       }
-      break;
+      return ok(response);
     }
+  }
 
-    const raw: unknown = await response.json().catch(() => ({}));
-    const payload: {
-      choices?: unknown;
-      usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
-    } = typeof raw === 'object' && raw !== null ? raw : {};
+  async complete(request: LlmRequest): Promise<Result<LlmResponse, LlmErrorKind>> {
+    const posted = await this.post(
+      request,
+      false,
+      AbortSignal.timeout(request.timeoutMs ?? REQUEST_TIMEOUT_MS)
+    );
+    if (!posted.ok) return posted;
+
+    const raw: unknown = await posted.val.json().catch(() => ({}));
+    const payload: { choices?: unknown; usage?: unknown } =
+      typeof raw === 'object' && raw !== null ? raw : {};
 
     const choice: {
-      message?: { content?: unknown; tool_calls?: unknown };
+      message?: { content?: unknown; tool_calls?: unknown; reasoning_content?: unknown };
       finish_reason?: unknown;
     } =
       Array.isArray(payload.choices) &&
@@ -267,6 +329,9 @@ export class OpenAiProvider implements LlmProvider {
         : {};
 
     const content: LlmContentBlock[] = [];
+    if (typeof choice.message?.reasoning_content === 'string' && choice.message.reasoning_content) {
+      content.push({ type: 'thinking', thinking: choice.message.reasoning_content });
+    }
     if (typeof choice.message?.content === 'string' && choice.message.content) {
       content.push({ type: 'text', text: choice.message.content });
     }
@@ -278,24 +343,150 @@ export class OpenAiProvider implements LlmProvider {
       }
     }
 
-    const stopReason =
-      choice.finish_reason === 'tool_calls'
-        ? 'tool_use'
-        : choice.finish_reason === 'length'
-          ? 'max_tokens'
-          : 'end_turn';
-
     return ok({
       content,
-      stopReason,
-      usage: {
-        inputTokens:
-          typeof payload.usage?.prompt_tokens === 'number' ? payload.usage.prompt_tokens : 0,
-        outputTokens:
-          typeof payload.usage?.completion_tokens === 'number'
-            ? payload.usage.completion_tokens
-            : 0,
-      },
+      stopReason: stopReasonOf(choice.finish_reason),
+      usage: { inputTokens: 0, outputTokens: 0, ...usageOf(payload.usage) },
     });
+  }
+
+  async stream(
+    request: LlmRequest,
+    options: LlmStreamOptions
+  ): Promise<Result<LlmResponse, LlmErrorKind>> {
+    const timeout = AbortSignal.timeout(request.timeoutMs ?? STREAM_TIMEOUT_MS);
+    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    const posted = await this.post(request, true, signal, options.signal);
+    if (!posted.ok) return posted;
+    if (!posted.val.body) {
+      return err('provider_error' as const, { message: 'The endpoint returned no stream body.' });
+    }
+
+    const accumulator = createAccumulator();
+    const emit = (event: LlmStreamEvent) => {
+      accumulator.apply(event);
+      options.onEvent(event);
+    };
+    const open = new Set<number>();
+    const openBlock = (index: number, block: LlmContentBlock) => {
+      if (open.has(index)) return;
+      open.add(index);
+      emit({ type: 'block_start', index, block });
+    };
+    // Tool calls are keyed by the dialect's own per-message index; a chunk
+    // may carry the id/name once and arguments many times.
+    const toolIndexes = new Map<number, number>();
+
+    let stopReason: LlmResponse['stopReason'] | null = null;
+    let usage: LlmUsage = { inputTokens: 0, outputTokens: 0 };
+    let done = false;
+    emit({ type: 'message_start' });
+
+    try {
+      for await (const message of readSseEvents(posted.val.body, { idleMs: STREAM_IDLE_MS })) {
+        if (signal.aborted) break;
+        if (message.data.trim() === '[DONE]') {
+          done = true;
+          break;
+        }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(message.data);
+        } catch {
+          continue;
+        }
+        const chunk: { choices?: unknown; usage?: unknown; error?: { message?: unknown } } =
+          typeof parsed === 'object' && parsed !== null ? parsed : {};
+        if (chunk.error) {
+          const text = typeof chunk.error.message === 'string' ? chunk.error.message : '';
+          return err(looksLikeCredentialFailure(text) ? 'auth' : 'provider_error', {
+            message: `OpenAI-compatible stream error: ${text.slice(0, 500)}`,
+          });
+        }
+        if (chunk.usage) usage = { ...usage, ...usageOf(chunk.usage) };
+
+        const choice: {
+          delta?: {
+            content?: unknown;
+            reasoning_content?: unknown;
+            reasoning?: unknown;
+            tool_calls?: unknown;
+          };
+          finish_reason?: unknown;
+        } =
+          Array.isArray(chunk.choices) &&
+          typeof chunk.choices[0] === 'object' &&
+          chunk.choices[0] !== null
+            ? chunk.choices[0]
+            : {};
+        const delta = choice.delta ?? {};
+
+        const reasoning =
+          typeof delta.reasoning_content === 'string'
+            ? delta.reasoning_content
+            : typeof delta.reasoning === 'string'
+              ? delta.reasoning
+              : '';
+        if (reasoning) {
+          openBlock(REASONING_INDEX, { type: 'thinking', thinking: '' });
+          emit({ type: 'thinking_delta', index: REASONING_INDEX, thinking: reasoning });
+        }
+        if (typeof delta.content === 'string' && delta.content) {
+          openBlock(TEXT_INDEX, { type: 'text', text: '' });
+          emit({ type: 'text_delta', index: TEXT_INDEX, text: delta.content });
+        }
+        if (Array.isArray(delta.tool_calls)) {
+          for (const call of delta.tool_calls) {
+            const entry: {
+              index?: unknown;
+              id?: unknown;
+              function?: { name?: unknown; arguments?: unknown };
+            } = typeof call === 'object' && call !== null ? call : {};
+            const callIndex = typeof entry.index === 'number' ? entry.index : toolIndexes.size;
+            let index = toolIndexes.get(callIndex);
+            if (index === undefined) {
+              index = TOOL_INDEX_BASE + callIndex;
+              toolIndexes.set(callIndex, index);
+            }
+            if (typeof entry.id === 'string' && typeof entry.function?.name === 'string') {
+              openBlock(index, {
+                type: 'tool_use',
+                id: entry.id,
+                name: entry.function.name,
+                input: {},
+              });
+            }
+            if (typeof entry.function?.arguments === 'string' && entry.function.arguments) {
+              // Arguments before the id/name chunk would be lost on the
+              // wire anyway; the accumulator buffers them by index.
+              emit({ type: 'input_json_delta', index, partialJson: entry.function.arguments });
+            }
+          }
+        }
+        if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
+          stopReason = stopReasonOf(choice.finish_reason);
+          for (const index of [...open].sort((a, b) => a - b)) {
+            emit({ type: 'block_stop', index });
+          }
+          open.clear();
+        }
+      }
+    } catch (error) {
+      return err(transportErrorKind(error, options.signal), {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    if (stopReason === null && !done) {
+      if (options.signal?.aborted) return err('aborted' as const, { message: 'Canceled.' });
+      if (timeout.aborted) return err('timeout' as const, { message: 'The stream timed out.' });
+      return err('provider_error' as const, {
+        message: 'The stream ended before the message was complete.',
+      });
+    }
+    // Some gateways end without a finish_reason; treat [DONE] as end_turn.
+    for (const index of [...open].sort((a, b) => a - b)) emit({ type: 'block_stop', index });
+    emit({ type: 'message_end', stopReason: stopReason ?? 'end_turn', usage });
+    return ok(accumulator.response());
   }
 }
