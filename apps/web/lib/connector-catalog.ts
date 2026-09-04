@@ -102,6 +102,16 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     toolPrefix: 'onbase_*',
   },
   {
+    capabilityKey: 'onbase-admin',
+    configKey: 'onbase-admin',
+    label: 'OnBase Administration',
+    summary:
+      'Create and configure document types, keyword types, keyword assignments and their ' +
+      "groups on your organization's Hyland OnBase. A separate connection from OnBase above " +
+      '(its own Hyland OAuth client) — connecting one does not connect the other.',
+    toolPrefix: 'onbase_admin_*',
+  },
+  {
     capabilityKey: 'fileshares',
     // No connector_configs row: shares are many-per-tenant rows in
     // file_shares, and each person connects with their own credentials —

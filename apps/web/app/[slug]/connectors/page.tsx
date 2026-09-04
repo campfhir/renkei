@@ -8,7 +8,7 @@ import AtlassianConnector from './atlassian-connector';
 import WebexUserConnector from './webex-user-connector';
 import MicrosoftConnector from './microsoft-connector';
 import ZoomConnector from './zoom-connector';
-import OnBaseConnector from './onbase-connector';
+import HylandConnector from './hyland-connector';
 import McpEndpoint from './mcp-endpoint';
 import FilesharesConnector from './fileshares-connector';
 import SandboxSecrets from './sandbox-secrets';
@@ -23,11 +23,12 @@ import {
   MICROSOFT,
   ZOOM,
   ONBASE,
+  ONBASE_ADMIN,
 } from '@renkei/provider-grants';
 import { WEBEX_USER_CONNECTOR } from '@/lib/webex-app';
 import { MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
 import { ZOOM_CONNECTOR } from '@/lib/zoom-app';
-import { ONBASE_CONNECTOR } from '@/lib/onbase-app';
+import { ONBASE_CONNECTOR, ONBASE_ADMIN_CONNECTOR } from '@/lib/onbase-app';
 import { DEFAULT_WEBEX_USER_SCOPES } from '@/lib/webex-scopes';
 import { DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-scopes';
 import { DEFAULT_ZOOM_SCOPES } from '@/lib/zoom-scopes';
@@ -148,6 +149,7 @@ export default async function ConnectorsPage({
     microsoftGrant,
     zoomGrant,
     onbaseGrant,
+    onbaseAdminGrant,
   ] = dbResult.ok
     ? await Promise.all([
         enabled.has('atlassian')
@@ -222,8 +224,27 @@ export default async function ConnectorsPage({
               .where('subject', '=', session.subject)
               .executeTakeFirst()
           : Promise.resolve(undefined),
+        enabled.has(ONBASE_ADMIN_CONNECTOR)
+          ? dbResult.val
+              .selectFrom('provider_grants')
+              .select(['display_name'])
+              .where('tenant_id', '=', tenant.id)
+              .where('provider', '=', ONBASE_ADMIN)
+              .where('subject', '=', session.subject)
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
       ])
-    : [undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined];
+    : [
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ];
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -377,12 +398,26 @@ export default async function ConnectorsPage({
             </div>
           )}
 
-          {enabled.has(ONBASE_CONNECTOR) && (
+          {(enabled.has(ONBASE_CONNECTOR) || enabled.has(ONBASE_ADMIN_CONNECTOR)) && (
             <div className="mb-6 break-inside-avoid">
-              <OnBaseConnector
+              <HylandConnector
                 tenantId={tenant.id}
-                connected={onbaseGrant !== undefined && onbaseGrant !== null}
-                displayName={onbaseGrant?.display_name ?? null}
+                onbase={
+                  enabled.has(ONBASE_CONNECTOR)
+                    ? {
+                        connected: onbaseGrant !== undefined && onbaseGrant !== null,
+                        displayName: onbaseGrant?.display_name ?? null,
+                      }
+                    : undefined
+                }
+                onbaseAdmin={
+                  enabled.has(ONBASE_ADMIN_CONNECTOR)
+                    ? {
+                        connected: onbaseAdminGrant !== undefined && onbaseAdminGrant !== null,
+                        displayName: onbaseAdminGrant?.display_name ?? null,
+                      }
+                    : undefined
+                }
               />
             </div>
           )}

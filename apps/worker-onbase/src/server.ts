@@ -19,10 +19,22 @@
  *                     issuer, for test-connection), cached ~10 minutes.
  *   token           — authorization-code (PKCE) exchange or refresh.
  *   revoke          — best-effort token revocation on disconnect.
- *   api             — one Document API request; JSON envelope back.
+ *   api             — one API request; JSON envelope back.
  *   content         — rendition bytes, streamed within the org's cap.
  *   put-bytes       — one file part into an OnBase upload staging slot.
  *   test-connection — reachability of IdP and API server, saved or unsaved.
+ *
+ * This worker serves TWO connectors, not one: `onbase` (the Document
+ * Management API) and `onbase-admin` (the Administration API) are separate
+ * Hyland OAuth clients, resolved from separate `connector_configs` rows —
+ * see config.ts. Every op above takes an optional `connector` field
+ * (default `onbase`) naming which row to resolve; there is no third op for
+ * the second connector, because every op's SHAPE (discover an issuer,
+ * exchange a code, proxy a request) is identical between them. The one
+ * behavioral difference is the OnBase document-session cookie: it belongs
+ * to the Document API's session/licence model, which the Administration
+ * API has no equivalent of, so `api`/`content` only read or write it when
+ * `connector` is `onbase`.
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -34,6 +46,8 @@ import {
   type OnBaseIdpEndpoints,
 } from '@renkei/connector-onbase';
 import {
+  ONBASE_ADMIN_CONNECTOR,
+  ONBASE_CONNECTOR,
   parseHttpUrl,
   resolveOnBaseConfig,
   type ConfigError,
@@ -66,7 +80,10 @@ export interface OnBaseServerDeps {
   /** Injected in tests; production uses orgTransferLimit. */
   maxTransferBytes?: (tenantId: string) => Promise<number>;
   /** Injected in tests; production reads connector_configs. */
-  resolveConfig?: (tenantId: string) => Promise<Result<OnBaseTenantConfig, ConfigError>>;
+  resolveConfig?: (
+    tenantId: string,
+    connector: string
+  ) => Promise<Result<OnBaseTenantConfig, ConfigError>>;
   /** Injected clock for discovery-cache tests. */
   now?: () => number;
 }
@@ -208,7 +225,9 @@ interface DiscoveryCacheEntry {
 export function createOnBaseServer(deps: OnBaseServerDeps): Server {
   const transferLimit = deps.maxTransferBytes ?? orgTransferLimit;
   const resolveConfig =
-    deps.resolveConfig ?? ((tenantId: string) => resolveOnBaseConfig(tenantId, deps.encryptionKey));
+    deps.resolveConfig ??
+    ((tenantId: string, connector: string) =>
+      resolveOnBaseConfig(tenantId, deps.encryptionKey, connector));
   const now = deps.now ?? Date.now;
   // Only successes are cached: an error remembered as endpoints would not
   // heal on its own.
@@ -259,13 +278,16 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       sendError(response, 'bad_request', 'tenantId is required');
       return null;
     }
-    const config = await resolveConfig(tenantId);
+    // Which connector_configs row: 'onbase' (default, Document API) or
+    // 'onbase-admin' (Administration API) — see the top-of-file note.
+    const connector = str(body.connector) || ONBASE_CONNECTOR;
+    const config = await resolveConfig(tenantId, connector);
     if (!config.ok) {
       sendError(
         response,
         config.err.type,
         config.err.type === 'not_configured'
-          ? 'OnBase is not configured for this organization.'
+          ? `OnBase (${connector}) is not configured for this organization.`
           : undefined
       );
       return null;
@@ -279,6 +301,89 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       client_id: config.clientId,
       ...(config.clientSecret ? { client_secret: config.clientSecret } : {}),
     };
+  }
+
+  /**
+   * The shared body of the `api` and `content` handlers: validate
+   * method/path, forward to `baseUrl + path` with the caller's bearer
+   * token, and envelope the upstream status back (never passthrough — the
+   * web side's 401 refresh-and-retry depends on seeing the real upstream
+   * status rather than this worker's own). `withSession` is false for the
+   * `onbase-admin` connector: the Administration API has no
+   * document-session/licence concept, so no cookie is read, sent, or
+   * remembered for it.
+   */
+  async function callUpstreamApi(
+    baseUrl: string,
+    body: Record<string, unknown>,
+    response: ServerResponse,
+    withSession: boolean
+  ): Promise<void> {
+    const accessToken = str(body.accessToken);
+    const method = str(body.method).toUpperCase();
+    const path = str(body.path);
+    if (!accessToken) return sendError(response, 'bad_request', 'accessToken is required');
+    if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      return sendError(response, 'bad_request', 'method is not one of GET/POST/PUT/PATCH/DELETE');
+    }
+    if (!validApiPath(path))
+      return sendError(response, 'bad_request', 'path is not a usable API path');
+
+    const url = new URL(baseUrl + path);
+    if (isRecord(body.query)) {
+      for (const [key, value] of Object.entries(body.query)) {
+        if (typeof value === 'string') url.searchParams.append(key, value);
+        else if (Array.isArray(value)) {
+          for (const item of value)
+            if (typeof item === 'string') url.searchParams.append(key, item);
+        }
+      }
+    }
+
+    // The session cookie is what stops every call building a NEW OnBase
+    // session and taking another license — see sessions.ts. Absent
+    // `subject` the cookie cannot be attributed safely, so the call goes
+    // out without one rather than risk reusing someone else's session.
+    const subject = withSession ? str(body.subject) : '';
+    const cookie = subject ? sessionCookie(str(body.tenantId), subject) : undefined;
+
+    const upstream = await timedFetch(
+      url.toString(),
+      {
+        method,
+        headers: {
+          authorization: `Bearer ${accessToken}`,
+          accept: str(body.accept) || 'application/json',
+          ...(cookie ? { cookie } : {}),
+          // PATCH bodies are JSON Patch documents; OnBase requires that
+          // media type explicitly, not plain application/json.
+          ...(body.body !== undefined
+            ? { 'content-type': method === 'PATCH' ? 'application/json-patch+json' : 'application/json' }
+            : {}),
+        },
+        ...(body.body !== undefined ? { body: JSON.stringify(body.body) } : {}),
+      },
+      API_TIMEOUT_MS
+    );
+    if ('failed' in upstream) {
+      return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`);
+    }
+    if (withSession && subject) {
+      // 401 is ambiguous between a dead token and a dead session; dropping
+      // the cookie makes the web side's retry build a fresh session rather
+      // than present a stale one again.
+      if (upstream.status === 401) forgetSession(str(body.tenantId), subject);
+      else rememberSession(str(body.tenantId), subject, setCookies(upstream));
+    }
+    // An envelope, not passthrough: the web side needs the upstream status
+    // (401 drives its refresh-and-retry) without confusing it with this
+    // worker's own statuses.
+    const text = await upstream.text();
+    sendJson(response, 200, {
+      status: upstream.status,
+      contentType: upstream.headers.get('content-type'),
+      body: text,
+    });
   }
 
   type Handler = (body: Record<string, unknown>, response: ServerResponse) => Promise<void>;
@@ -467,67 +572,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     async api(body, response) {
       const config = await configFor(body, response);
       if (!config) return;
-      const accessToken = str(body.accessToken);
-      const method = str(body.method).toUpperCase();
-      const path = str(body.path);
-      if (!accessToken) return sendError(response, 'bad_request', 'accessToken is required');
-      if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-        return sendError(response, 'bad_request', 'method is not one of GET/POST/PUT/PATCH/DELETE');
-      }
-      if (!validApiPath(path))
-        return sendError(response, 'bad_request', 'path is not a usable API path');
-
-      const url = new URL(config.apiBaseUrl + path);
-      if (isRecord(body.query)) {
-        for (const [key, value] of Object.entries(body.query)) {
-          if (typeof value === 'string') url.searchParams.append(key, value);
-          else if (Array.isArray(value)) {
-            for (const item of value)
-              if (typeof item === 'string') url.searchParams.append(key, item);
-          }
-        }
-      }
-
-      // The session cookie is what stops every call building a NEW OnBase
-      // session and taking another license — see sessions.ts. Absent
-      // `subject` the cookie cannot be attributed safely, so the call goes
-      // out without one rather than risk reusing someone else's session.
-      const subject = str(body.subject);
-      const cookie = subject ? sessionCookie(str(body.tenantId), subject) : undefined;
-
-      const upstream = await timedFetch(
-        url.toString(),
-        {
-          method,
-          headers: {
-            authorization: `Bearer ${accessToken}`,
-            accept: str(body.accept) || 'application/json',
-            ...(cookie ? { cookie } : {}),
-            ...(body.body !== undefined ? { 'content-type': 'application/json' } : {}),
-          },
-          ...(body.body !== undefined ? { body: JSON.stringify(body.body) } : {}),
-        },
-        API_TIMEOUT_MS
-      );
-      if ('failed' in upstream) {
-        return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`);
-      }
-      if (subject) {
-        // 401 is ambiguous between a dead token and a dead session; dropping
-        // the cookie makes the web side's retry build a fresh session rather
-        // than present a stale one again.
-        if (upstream.status === 401) forgetSession(str(body.tenantId), subject);
-        else rememberSession(str(body.tenantId), subject, setCookies(upstream));
-      }
-      // An envelope, not passthrough: the web side needs the upstream status
-      // (401 drives its refresh-and-retry) without confusing it with this
-      // worker's own statuses.
-      const text = await upstream.text();
-      sendJson(response, 200, {
-        status: upstream.status,
-        contentType: upstream.headers.get('content-type'),
-        body: text,
-      });
+      const connector = str(body.connector) || ONBASE_CONNECTOR;
+      await callUpstreamApi(config.apiBaseUrl, body, response, connector === ONBASE_CONNECTOR);
     },
 
     async content(body, response) {
@@ -539,7 +585,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       if (!validApiPath(path))
         return sendError(response, 'bad_request', 'path is not a usable API path');
 
-      const contentSubject = str(body.subject);
+      const connector = str(body.connector) || ONBASE_CONNECTOR;
+      const contentSubject = connector === ONBASE_CONNECTOR ? str(body.subject) : '';
       const contentCookie = contentSubject
         ? sessionCookie(str(body.tenantId), contentSubject)
         : undefined;
@@ -588,7 +635,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     async 'test-connection'(body, response) {
       const tenantId = str(body.tenantId);
       if (!tenantId) return sendError(response, 'bad_request', 'tenantId is required');
-      const stored = await resolveConfig(tenantId);
+      const connector = str(body.connector) || ONBASE_CONNECTOR;
+      const stored = await resolveConfig(tenantId, connector);
       const unsaved = isRecord(body.unsaved) ? body.unsaved : {};
       const allowInsecureHttp =
         unsaved.allowInsecureHttp === true ||
@@ -616,9 +664,12 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
           : { ok: true as const, tokenEndpoint: endpoints.tokenEndpoint };
 
       // Unauthenticated on purpose; a 401 IS the healthy answer — it proves
-      // an OnBase API server is listening and demanding auth.
+      // an OnBase API server is listening and demanding auth. The probe
+      // path differs by connector: the Administration API's document-types
+      // list lives under /api, the Document API's does not.
+      const pingPath = connector === ONBASE_ADMIN_CONNECTOR ? '/api/document-types' : '/document-types';
       const ping = await timedFetch(
-        `${apiBaseUrl}/document-types`,
+        `${apiBaseUrl}${pingPath}`,
         { headers: { accept: 'application/json' } },
         IDP_TIMEOUT_MS
       );
@@ -658,7 +709,9 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     }
     if (!/^\d+$/.test(filePart))
       return sendError(response, 'bad_request', 'filePart must be a number');
-    const config = await resolveConfig(tenantId);
+    // Uploads exist only on the Document API — there is no admin-connector
+    // upload path, so this always resolves the 'onbase' row.
+    const config = await resolveConfig(tenantId, ONBASE_CONNECTOR);
     if (!config.ok) return sendError(response, config.err.type);
 
     const limit = await transferLimit(tenantId);

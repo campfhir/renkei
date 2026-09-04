@@ -43,6 +43,36 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-09-04',
+    heading: 'OnBase Administration joins the connectors',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Create and configure document types and keyword types',
+        detail:
+          'New tools create document types, keyword types, and the groups they belong to, and change which keywords a document type has — reading current values first and merging your change in, so naming one keyword to update never erases the others.',
+      },
+      {
+        kind: 'added',
+        title: 'A configuration change history',
+        detail:
+          'See who changed what and when — a document type renamed, a keyword type’s settings adjusted — filterable by item, person, or date.',
+      },
+      {
+        kind: 'added',
+        title: 'Connect with your own OnBase Administration account',
+        detail:
+          'A separate connection from OnBase document access above, on its own card under Hyland: sign in on your organization’s identity provider and every configuration change is made as you. Connecting one does not connect the other.',
+      },
+      {
+        kind: 'added',
+        title: 'OnBase Administration setup for administrators',
+        detail:
+          'Operators register a second Hyland client for configuration access, alongside the one for documents, with the same connection test before saving.',
+      },
+    ],
+  },
+  {
     date: '2026-09-03',
     heading: 'Getting unstuck',
     entries: [

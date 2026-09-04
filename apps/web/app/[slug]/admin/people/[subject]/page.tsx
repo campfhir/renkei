@@ -34,6 +34,7 @@ const PROVIDER_ICON_KEY: Record<string, string> = {
   webex: 'webex',
   zoom: 'zoom',
   onbase: 'onbase',
+  'onbase-admin': 'onbase-admin',
 };
 
 function formatMs(ms: number): string {

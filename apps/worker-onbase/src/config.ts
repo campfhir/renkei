@@ -1,11 +1,17 @@
 /**
- * Tenant OnBase configuration, as this worker reads it. The single
- * `connector_configs` row keyed `onbase` is the only place the customer's
- * API server URL and IdP registration live; resolving it HERE — never
+ * Tenant OnBase configuration, as this worker reads it. Two separate
+ * `connector_configs` rows — keyed `onbase` (Document Management API) and
+ * `onbase-admin` (Administration API) — are the only place a customer's API
+ * server URLs and IdP registrations live; resolving them HERE — never
  * accepting a host from the request body — is what keeps the bearer seam
- * from becoming an open proxy: a caller can name a tenant, not a URL.
- * (`test-connection` is the one deliberate exception, and it re-validates
- * the unsaved values with the same parser.)
+ * from becoming an open proxy: a caller can name a tenant and a connector,
+ * not a URL. (`test-connection` is the one deliberate exception, and it
+ * re-validates the unsaved values with the same parser.)
+ *
+ * The two rows are independent Hyland OAuth clients with independent
+ * configuration, mirroring how connector-atlassian resolves a separate row
+ * per Atlassian product — there is no sharing to be had here, because a
+ * tenant may configure and connect one without the other.
  */
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
@@ -13,6 +19,7 @@ import type { Result } from '@campfhir/safe-functions/types';
 import { getConnectorConfig } from '@renkei/connector-config';
 
 export const ONBASE_CONNECTOR = 'onbase';
+export const ONBASE_ADMIN_CONNECTOR = 'onbase-admin';
 
 export interface OnBaseTenantConfig {
   /** Normalized, no trailing slash — paths append directly. */
@@ -47,11 +54,18 @@ export function parseHttpUrl(value: unknown, allowInsecureHttp: boolean): string
   return url.origin + url.pathname.replace(/\/+$/, '');
 }
 
+/**
+ * @param connector Which `connector_configs` row to resolve — `onbase`
+ *   (default, the Document Management API) or `onbase-admin` (the
+ *   Administration API). Both rows have the identical shape, so this one
+ *   function and one `OnBaseTenantConfig` type serve either.
+ */
 export async function resolveOnBaseConfig(
   tenantId: string,
-  encryptionKey: Buffer
+  encryptionKey: Buffer,
+  connector: string = ONBASE_CONNECTOR
 ): Promise<Result<OnBaseTenantConfig, ConfigError>> {
-  const config = await getConnectorConfig(tenantId, ONBASE_CONNECTOR, encryptionKey);
+  const config = await getConnectorConfig(tenantId, connector, encryptionKey);
   if (!config.ok) return err('store' as const);
   if (!config.val || !config.val.enabled) return err('not_configured' as const);
 

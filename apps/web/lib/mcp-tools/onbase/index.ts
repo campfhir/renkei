@@ -27,6 +27,12 @@
  * the whole story. Authorization inside OnBase — which document types and
  * documents this user may see — is OnBase's own, enforced by the API
  * server per request under the user's token (RENKEI.md Decision #2).
+ *
+ * Creating or configuring document types and keyword types is a SEPARATE
+ * connector, `onbase-admin` (`./admin-tools.ts`) — a different Hyland OAuth
+ * client against a different product (the Administration API), connected
+ * and revoked independently of this one. Nothing here reaches it, and
+ * nothing there reaches this.
  */
 
 import { z } from 'zod';
@@ -51,24 +57,24 @@ import type { OnBaseAuth } from './onbase-auth';
 /** The connector key the OnBase capabilities register under. */
 export const ONBASE_MCP_CONNECTOR = 'onbase';
 
-function textResult(text: string) {
+export function textResult(text: string) {
   return { content: [{ type: 'text' as const, text }] };
 }
 
-function errText(text: string) {
+export function errText(text: string) {
   return { content: [{ type: 'text' as const, text }], isError: true as const };
 }
 
-function str(value: unknown): string {
+export function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** A documentId safe to place in an API path. */
-function idSegment(value: unknown): string | null {
+/** A documentId (or any other API-path segment) safe to place in a path. */
+export function idSegment(value: unknown): string | null {
   const id = str(value).trim();
   if (!id || /[/?#\s]/.test(id)) return null;
   return encodeURIComponent(id);
@@ -80,12 +86,15 @@ function idSegment(value: unknown): string | null {
  * carrying the server's problem+json detail — OnBase's own words beat a
  * generic failure.
  */
-async function apiJson(
-  auth: OnBaseAuth,
+export async function apiJson(
+  // Structural, not OnBaseAuth itself, so the admin tools can pass
+  // `{ api: auth.adminApi }` and reuse this exact envelope/error handling
+  // against the Administration API instead of the Document API.
+  caller: Pick<OnBaseAuth, 'api'>,
   request: Parameters<OnBaseAuth['api']>[0],
   what: string
 ): Promise<{ status: number; json: unknown } | string> {
-  const response = await auth.api(request);
+  const response = await caller.api(request);
   if (typeof response === 'string') return response;
   let json: unknown = null;
   if (response.body) {
@@ -111,13 +120,16 @@ async function apiJson(
   return `Could not ${what}: OnBase answered ${response.status}${detail ? ` — ${detail}` : ''}.`;
 }
 
-interface NamedThing {
+export interface NamedThing {
   id: string;
   name?: string;
   systemName?: string;
 }
 
-function namedList(value: unknown, extra?: (item: Record<string, unknown>) => NamedThing): NamedThing[] {
+export function namedList(
+  value: unknown,
+  extra?: (item: Record<string, unknown>) => NamedThing
+): NamedThing[] {
   if (!isRecord(value) || !Array.isArray(value.items)) return [];
   const out: NamedThing[] = [];
   for (const item of value.items) {
@@ -133,18 +145,18 @@ function namedList(value: unknown, extra?: (item: Record<string, unknown>) => Na
   return out;
 }
 
-function displayName(thing: NamedThing): string {
+export function displayName(thing: NamedThing): string {
   return thing.name ?? thing.systemName ?? '(unnamed)';
 }
 
 /**
- * Vocabulary caches, per tenant per kind. Five minutes of staleness on
+ * Vocabulary cache, per tenant per kind. Five minutes of staleness on
  * admin-curated configuration is a fine trade against a catalog fetch on
  * every search. Only successes are cached (the CatalogCache contract).
  */
 const catalogCache = new CatalogCache<NamedThing[]>();
 
-async function loadCatalog(
+export async function loadCatalog(
   context: MCPToolContext,
   auth: OnBaseAuth,
   kind: 'keyword-types' | 'document-types' | 'document-type-groups' | 'custom-queries' | 'note-types'
@@ -159,7 +171,7 @@ async function loadCatalog(
   return items;
 }
 
-async function resolveRef(
+export async function resolveRef(
   context: MCPToolContext,
   auth: OnBaseAuth,
   kind: Parameters<typeof loadCatalog>[2],
