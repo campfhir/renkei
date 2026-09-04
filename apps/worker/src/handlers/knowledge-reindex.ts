@@ -15,6 +15,16 @@
  * against the same failing endpoint while the admin's status read
  * "running"; a failed run with its error visible, and a button that starts
  * a fresh (idempotent) run once the cause is fixed, is the honest shape.
+ *
+ * A rate limit (429) is the one exception: unlike a broken endpoint or bad
+ * config, it is expected to clear on its own, and a fresh run would only
+ * redo every chunk this one already embedded (kind: 'embed' has no way to
+ * resume a failed run's cursor — POST always starts a new row at cursor
+ * null). So that case throws instead, same as knowledge-ingest.ts, and lets
+ * the queue's own backoff (packages/queue's retry policy) redeliver this
+ * one link — the run stays "running", the cursor is untouched because
+ * nothing here was persisted, and the chain picks back up once the
+ * provider does.
  */
 
 import { sql } from 'kysely';
@@ -139,6 +149,13 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
       }
       const batch = await reembedBatch(tenantId, embedder, key, cursor, BATCH_LIMIT.embed);
       if (!batch.ok) {
+        if (batch.err.type === 'EMBEDDING_FAILED' && batch.err.cause === 429) {
+          // Rate limited — nack for the queue's own retry/backoff rather
+          // than failing the run; see the module doc comment.
+          throw new Error(
+            `embeddings endpoint rate limited (429): ${batch.err.message ?? 'unknown'}`
+          );
+        }
         await fail(
           batch.err.type === 'EMBEDDING_FAILED'
             ? `the embeddings endpoint failed: ${batch.err.message ?? 'unknown'}`

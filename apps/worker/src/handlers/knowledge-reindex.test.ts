@@ -182,6 +182,24 @@ describe('reindex.batch', () => {
     expect(enqueue).not.toHaveBeenCalled();
   });
 
+  it('throws on a 429 instead of failing the run, so the queue retries the same link', async () => {
+    const updates = stubDb('running');
+    mockResolveEmbedder.mockResolvedValue({ embed: jest.fn() });
+    mockEmbed.mockResolvedValue(
+      err('EMBEDDING_FAILED' as const, { message: 'endpoint returned 429', cause: 429 })
+    );
+    const enqueue = jest.fn(async () => undefined);
+
+    await expect(
+      createKnowledgeReindexBatchHandler({ enqueue })(event({ runId: 'run-4b', kind: 'embed' }))
+    ).rejects.toThrow('429');
+    // Only the queued→running transition landed — no failure recorded, no
+    // progress overwritten, no next link enqueued. The thrown error is what
+    // gets this link redelivered with backoff.
+    expect(updates.every((update) => update.status !== 'failed')).toBe(true);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
   it('fails plainly when the org has no embedder or enrichment is off', async () => {
     let updates = stubDb('queued');
     mockResolveEmbedder.mockResolvedValue(null);

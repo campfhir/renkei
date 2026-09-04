@@ -54,6 +54,14 @@ describe('OpenAiCompatibleEmbeddings', () => {
     expect((await provider.embed(['a'])).ok).toBe(false);
   });
 
+  it('carries the HTTP status in cause, so a caller can tell a 429 from anything else', async () => {
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(429, { error: 'rate' }));
+    const provider = new OpenAiCompatibleEmbeddings('https://llm.example.com', 'k', 'm');
+    const result = await provider.embed(['a']);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.err.cause).toBe(429);
+  });
+
   it('fails when the response has the wrong number of embeddings', async () => {
     jest
       .spyOn(globalThis, 'fetch')
