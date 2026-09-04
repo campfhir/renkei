@@ -161,6 +161,7 @@ describe('buildSystemPrompt', () => {
       },
       chatFiles: [],
       hasTools: true,
+      hasKnowledge: false,
       hasSandbox: true,
       filesAllowed: true,
       now: new Date('2026-09-04T10:00:00Z'),
@@ -181,6 +182,7 @@ describe('buildSystemPrompt', () => {
       project: null,
       chatFiles: [],
       hasTools: true,
+      hasKnowledge: false,
       hasSandbox: false,
       filesAllowed: true,
       now: new Date('2026-09-04T10:00:00Z'),
@@ -193,6 +195,30 @@ describe('buildSystemPrompt', () => {
   });
 });
 
+describe('buildSystemPrompt with search_knowledge', () => {
+  const base = {
+    personName: null,
+    orgName: null,
+    project: null,
+    chatFiles: [],
+    hasTools: true,
+    hasSandbox: false,
+    filesAllowed: true,
+    now: new Date('2026-09-04T00:00:00Z'),
+  };
+
+  it('says when a search is worth it and to search once, only when the tool is offered', () => {
+    const withKnowledge = buildSystemPrompt({ ...base, hasKnowledge: true });
+    expect(withKnowledge).toMatch(/search_knowledge finds what the organization has indexed/);
+    expect(withKnowledge).toMatch(/Do not use it for general knowledge/);
+    expect(withKnowledge).toMatch(/Make one well-aimed search/);
+    expect(withKnowledge).toMatch(/not a rephrasing of the same one/);
+
+    const without = buildSystemPrompt({ ...base, hasKnowledge: false });
+    expect(without).not.toMatch(/search_knowledge/);
+  });
+});
+
 describe('buildSystemPrompt without file storage', () => {
   it('tells the model not to produce files, and where storage is set up', () => {
     const prompt = buildSystemPrompt({
@@ -201,6 +227,7 @@ describe('buildSystemPrompt without file storage', () => {
       project: null,
       chatFiles: [],
       hasTools: true,
+      hasKnowledge: false,
       hasSandbox: true,
       filesAllowed: false,
       now: new Date('2026-09-04T00:00:00Z'),

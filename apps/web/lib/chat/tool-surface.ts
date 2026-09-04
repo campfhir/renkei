@@ -51,6 +51,18 @@ export function selectChatTools(
   return selected.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/**
+ * Which of the offered tools only read, by the catalog's word for it
+ * (`kind`, from the tool's readOnlyHint). The runner runs those side by
+ * side within a round; anything not named here runs alone and in order.
+ */
+export function readOnlyToolNames(catalog: ToolDescriptor[], tools: LlmToolDef[]): Set<string> {
+  const reads = new Set(
+    catalog.filter((descriptor) => descriptor.kind === 'read').map((descriptor) => descriptor.name)
+  );
+  return new Set(tools.map((tool) => tool.name).filter((name) => reads.has(name)));
+}
+
 export interface ConnectorOption {
   key: string;
   count: number;
@@ -77,6 +89,8 @@ export async function listChatConnectors(
 
 export interface ChatToolSurface {
   tools: LlmToolDef[];
+  /** The subset of `tools` that only read — see readOnlyToolNames. */
+  readOnlyTools: ReadonlySet<string>;
   mcp: McpClient | null;
   /** Revokes the turn's token; safe to call more than once. */
   release(): Promise<void>;
@@ -100,7 +114,9 @@ export async function resolveChatToolSurface(
       (CHAT_ALWAYS_TOOLS.includes(descriptor.name) ||
         (descriptor.connector !== null && input.config.connectors.includes(descriptor.connector)))
   );
-  if (candidates.length === 0) return { tools: [], mcp: null, release: async () => {} };
+  if (candidates.length === 0) {
+    return { tools: [], readOnlyTools: new Set(), mcp: null, release: async () => {} };
+  }
 
   const token = await mintRunToken(db, {
     tenantId: input.tenantId,
@@ -121,7 +137,8 @@ export async function resolveChatToolSurface(
   try {
     await mcp.initialize();
     const live = await mcp.listTools();
-    return { tools: selectChatTools(candidates, live, input.config), mcp, release };
+    const tools = selectChatTools(candidates, live, input.config);
+    return { tools, readOnlyTools: readOnlyToolNames(candidates, tools), mcp, release };
   } catch (error) {
     // The endpoint being unreachable is a deployment fault, not the
     // person's: the turn proceeds without tools and says so in the log.
@@ -131,6 +148,6 @@ export async function resolveChatToolSurface(
       error: error instanceof Error ? error.message : String(error),
     });
     await release();
-    return { tools: [], mcp: null, release: async () => {} };
+    return { tools: [], readOnlyTools: new Set(), mcp: null, release: async () => {} };
   }
 }

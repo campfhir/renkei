@@ -377,12 +377,17 @@ function renderHits(
     }
   }
   // Said even when nothing came back: "no results" and "only weak results,
-  // hidden" call for different next moves (rephrase vs. give up).
+  // hidden" call for different next moves (rephrase vs. give up). But the
+  // advice to rephrase is for the empty case only — beside a list of good
+  // hits it reads as "search again", and a model that obeys it searches
+  // again on every call, since some candidate is always past the cutoff.
   if (weak > 0) {
     lines.push(
       '',
-      `${weak} weaker match(es) omitted: beyond the organization's relevance cutoff. ` +
-        'Rephrase, quote an exact identifier, or narrow with `sources` to see closer matches.'
+      `${weak} weaker match(es) omitted: beyond the organization's relevance cutoff.` +
+        (hits.length === 0
+          ? ' Rephrase, quote an exact identifier, or narrow with `sources` to see closer matches.'
+          : '')
     );
   }
   // Refusal and timeout are different facts and are worded differently; the
@@ -406,7 +411,8 @@ export async function registerKnowledgeTools(
         'each has been indexed — plus your own notes (knowledge_create_note). Matches by ' +
         "meaning AND by exact words, so a ticket key, file name or person's name in the " +
         'query finds the item that carries it; quote a phrase to require it. One result ' +
-        'per document, best match first. Results are ' +
+        'per document, best match first; ask for as many as you need in one call (k up ' +
+        'to 10) rather than searching repeatedly. Results are ' +
         'verified against the source system for YOUR access before disclosure — ' +
         'anything you cannot open at the source is withheld and reported as a count.',
       annotations: { readOnlyHint: true },
@@ -543,6 +549,19 @@ export async function registerKnowledgeTools(
             : 'The knowledge store could not be searched.';
         return { content: [{ type: 'text' as const, text: reason }], isError: true };
       }
+      // Where the time went, per search. A slow search is one of three
+      // things — the embedding endpoint, the query (an exact scan, until
+      // the corpus earns an ANN index) or a provider's access check — and
+      // only the split says which; the tool_calls row keeps the total.
+      logger.info('search_knowledge timings', {
+        component: 'mcp/tool',
+        tenantId: context.tenantId,
+        k,
+        hits: searched.val.hits.length,
+        elided: searched.val.elided,
+        weak: searched.val.weak,
+        ...searched.val.timings,
+      });
 
       return {
         content: [

@@ -1,4 +1,4 @@
-import { selectChatTools } from './tool-surface';
+import { readOnlyToolNames, selectChatTools } from './tool-surface';
 import { effectiveToolConfig, parseToolConfig } from './tool-config';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 
@@ -60,6 +60,27 @@ describe('selectChatTools', () => {
       { connectors: [] }
     );
     expect(tools.map((tool) => tool.name)).toEqual(['whoami']);
+  });
+});
+
+describe('readOnlyToolNames', () => {
+  it('names the offered tools the catalog calls reads, and nothing else', () => {
+    const catalog = [
+      descriptor({ name: 'search_knowledge', connector: 'knowledge', kind: 'read' }),
+      descriptor({ name: 'jira_search_issues', connector: 'jira', kind: 'read' }),
+      descriptor({ name: 'jira_create_issue', connector: 'jira', kind: 'act' }),
+      descriptor({ name: 'not_offered', connector: 'jira', kind: 'read' }),
+    ];
+    const tools = [
+      { name: 'search_knowledge', description: '', inputSchema: {} },
+      { name: 'jira_search_issues', description: '', inputSchema: {} },
+      { name: 'jira_create_issue', description: '', inputSchema: {} },
+      { name: 'unknown_tool', description: '', inputSchema: {} },
+    ];
+    expect([...readOnlyToolNames(catalog, tools)].sort()).toEqual([
+      'jira_search_issues',
+      'search_knowledge',
+    ]);
   });
 });
 
