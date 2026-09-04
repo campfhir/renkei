@@ -41,7 +41,20 @@ test('app menu column: open by default, toggles and is remembered', async ({ pag
 
   await expect(column).toBeVisible();
   await expect(column.getByRole('link', { name: 'Projects' })).toBeVisible();
+  await expect(column.getByRole('link', { name: 'Connectors' })).toHaveCount(0);
   await shot('nav-column.png');
+
+  // What a person configures for themselves sits behind the avatar, and so
+  // does the operator's way to the Organization page.
+  await page.getByRole('button', { name: 'Account menu' }).click();
+  const menu = page.getByRole('menu');
+  await expect(menu.getByRole('menuitem', { name: 'Connectors' })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'My usage' })).toBeVisible();
+  await shot('account-menu.png');
+  await menu.getByRole('menuitem', { name: 'Organization' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Organization' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Agent oversight/ })).toBeVisible();
+  await shot('organization.png');
 
   await page.getByRole('button', { name: 'Hide menu' }).click();
   await expect(column).toBeHidden();

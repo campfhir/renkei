@@ -77,9 +77,10 @@ interface NavGroup {
  * with the sections stacked. On a wide screen the menu is a column that
  * stays open beside the page (the hamburger tucks it away, and the choice
  * is remembered in this browser); below `lg` it is the drawer that slides
- * in from the left edge. Admin entries appear only for operators — the
- * pages behind them still guard themselves, the nav just does not
- * advertise doors the user cannot open.
+ * in from the left edge. The account menu behind the avatar holds the
+ * person's own settings and records, and — for operators only — the way
+ * to the Organization page; the pages behind it still guard themselves,
+ * the nav just does not advertise doors the user cannot open.
  */
 export default function AppNav({
   slug,
@@ -159,14 +160,17 @@ export default function AppNav({
     return () => document.removeEventListener('keydown', onKey);
   }, [open]);
 
+  // The column carries the places a person works; what they configure
+  // for themselves is behind their avatar, and what they run for the
+  // organization is the Organization page.
   const groups: NavGroup[] = [
     {
       label: 'Workspace',
       items: [
         { href: `/${slug}`, label: 'Home', exact: true },
-        { href: `/${slug}/connectors`, label: 'Connectors' },
-        { href: `/${slug}/files`, label: 'Files' },
+        { href: `/${slug}/agents`, label: 'Agents' },
         { href: `/${slug}/knowledge`, label: 'Knowledge' },
+        { href: `/${slug}/files`, label: 'Files' },
       ],
     },
     {
@@ -182,46 +186,28 @@ export default function AppNav({
       ],
       extra: chatExtra,
     },
-    {
-      label: 'Automation',
-      items: [
-        { href: `/${slug}/agents`, label: 'Agents' },
-        { href: `/${slug}/batch-jobs`, label: 'Batch Jobs' },
-      ],
-    },
-    {
-      label: 'Insight',
-      items: [
-        { href: `/${slug}/usage`, label: 'Tools' },
-        { href: `/${slug}/utilization`, label: 'My usage' },
-        // Mail review is deliberately unlinked, not removed: it is the only
-        // place a person can correct how their own mail was classified, and
-        // there is no admin equivalent by design. The route still works for
-        // anyone who has it bookmarked or is sent there.
-        { href: `/${slug}/logs`, label: 'Activity' },
-      ],
-    },
-    ...(isOperator
-      ? [
-          {
-            label: 'Organization',
-            items: [
-              { href: `/${slug}/admin/connectors`, label: 'Connector setup' },
-              { href: `/${slug}/admin/file-shares`, label: 'File shares' },
-              { href: `/${slug}/admin/agents`, label: 'Agent oversight' },
-              { href: `/${slug}/admin/llm-models`, label: 'Agent models' },
-              { href: `/${slug}/admin/calendars`, label: 'Holiday calendars' },
-              { href: `/${slug}/admin/email-sanitizer`, label: 'Email sanitizer' },
-              { href: `/${slug}/admin/redaction`, label: 'Sensitive data' },
-              { href: `/${slug}/admin/people`, label: 'People' },
-              { href: `/${slug}/admin/sites`, label: 'Sites' },
-              { href: `/${slug}/admin/audit`, label: 'Audit' },
-              { href: `/${slug}/admin/events`, label: 'Events' },
-              { href: `/${slug}/admin/settings`, label: 'Settings' },
-            ],
-          },
-        ]
-      : []),
+  ];
+
+  // The account menu: the person's own settings and records, then the
+  // organization console for operators. Groups are separated by rules.
+  const accountGroups: NavItem[][] = [
+    [
+      { href: `/${slug}/notifications`, label: 'Notifications' },
+      { href: `/${slug}/preferences`, label: 'Preferences' },
+      { href: `/${slug}/connectors`, label: 'Connectors' },
+    ],
+    [
+      { href: `/${slug}/batch-jobs`, label: 'Batch jobs' },
+      { href: `/${slug}/usage`, label: 'Tools' },
+      { href: `/${slug}/utilization`, label: 'My usage' },
+      // Mail review is deliberately unlinked, not removed: it is the only
+      // place a person can correct how their own mail was classified, and
+      // there is no admin equivalent by design. The route still works for
+      // anyone who has it bookmarked or is sent there.
+      { href: `/${slug}/logs`, label: 'Activity' },
+    ],
+    ...(isOperator ? [[{ href: `/${slug}/admin`, label: 'Organization' }]] : []),
+    [{ href: `/${slug}/about`, label: 'About' }],
   ];
 
   async function signOut() {
@@ -365,38 +351,36 @@ export default function AppNav({
                       </p>
                     )}
                   </div>
-                  <Link
-                    href={`/${slug}/notifications`}
-                    role="menuitem"
-                    className="flex w-full items-center justify-between px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
-                  >
-                    Notifications
-                    {unread > 0 ? (
-                      <span className="rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
-                        {unread > 9 ? '9+' : unread}
-                      </span>
-                    ) : null}
-                  </Link>
-                  <Link
-                    href={`/${slug}/preferences`}
-                    role="menuitem"
-                    className="block w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
-                  >
-                    Preferences
-                  </Link>
-                  <Link
-                    href={`/${slug}/about`}
-                    role="menuitem"
-                    className="block w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
-                  >
-                    About
-                  </Link>
+                  {accountGroups.map((group, index) => (
+                    <div
+                      key={index}
+                      className={
+                        index > 0 ? 'border-t border-gray-200 dark:border-gray-800' : undefined
+                      }
+                    >
+                      {group.map((item) => (
+                        <Link
+                          key={item.href}
+                          href={item.href}
+                          role="menuitem"
+                          className="flex w-full items-center justify-between px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900"
+                        >
+                          {item.label}
+                          {item.label === 'Notifications' && unread > 0 ? (
+                            <span className="rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                              {unread > 9 ? '9+' : unread}
+                            </span>
+                          ) : null}
+                        </Link>
+                      ))}
+                    </div>
+                  ))}
                   <button
                     type="button"
                     role="menuitem"
                     onClick={() => void signOut()}
                     disabled={signingOut}
-                    className="block w-full px-4 py-2 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:hover:bg-gray-900"
+                    className="block w-full border-t border-gray-200 px-4 py-2 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-800 dark:hover:bg-gray-900"
                   >
                     {signingOut ? 'Signing out…' : 'Sign out'}
                   </button>
