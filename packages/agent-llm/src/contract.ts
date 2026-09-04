@@ -1,5 +1,6 @@
 /**
- * The provider-agnostic chat contract the agent engine runs against.
+ * The provider-agnostic chat contract the agent engine and the chat run
+ * against.
  *
  * Content blocks mirror Anthropic's Messages API shapes because they are
  * the most structured of the majors — OpenAI's flat `tool_calls` array and
@@ -11,12 +12,31 @@
  * differs by kind (an `auth` failure aborts the run — retrying cannot
  * help; a `rate_limit` nacks the queue job for backoff; a `timeout` costs
  * an attempt), so the kind IS the interface.
+ *
+ * Streaming is the second verb on the same contract. `stream()` delivers
+ * the response as typed events while it is being generated and STILL
+ * resolves with the assembled `LlmResponse`, so a consumer that wants to
+ * show tokens as they arrive and a consumer that only wants the answer
+ * read the same shape at the end. It is optional on the interface so the
+ * request/response doubles the agent engine's tests use keep compiling;
+ * `streamOrComplete` (stream-fallback.ts) papers over its absence.
  */
 
 import type { Result } from '@campfhir/safe-functions/types';
 
 export type LlmContentBlock =
   | { type: 'text'; text: string }
+  /**
+   * The model's extended thinking. `signature` is the provider's
+   * attestation of the block (Anthropic issues one per thinking block);
+   * a thinking block must be sent back to the SAME provider with its
+   * signature intact when a tool-use turn continues, and a block that has
+   * none (an interrupted stream, another provider's reasoning summary) is
+   * dropped at the wire rather than rejected by the provider.
+   */
+  | { type: 'thinking'; thinking: string; signature?: string }
+  /** Thinking the provider withheld and returns only as an opaque blob. */
+  | { type: 'redacted_thinking'; data: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; toolUseId: string; content: string; isError?: boolean }
   /**
@@ -57,11 +77,30 @@ export interface LlmRequest {
    * bounded tighter than an interactive drafting session.
    */
   timeoutMs?: number;
+  /**
+   * Ask for extended thinking with this token budget. Anthropic honors it
+   * (`thinking: {type: 'enabled', budget_tokens}`); the OpenAI dialect has
+   * no per-request equivalent — reasoning effort is a per-model-config
+   * setting there — so the adapter ignores it.
+   */
+  thinking?: { budgetTokens: number };
+  /**
+   * Mark the system prompt and the tool list as cacheable. Anthropic's
+   * prompt cache needs an explicit `cache_control` marker; other providers
+   * cache implicitly or not at all and ignore the hint. Only worth setting
+   * when the same prefix is re-sent turn after turn — the chat — because
+   * a cache write costs more than a plain read.
+   */
+  promptCache?: boolean;
 }
 
 export interface LlmUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Prompt tokens served from the provider's cache (billed at a discount). */
+  cacheReadInputTokens?: number;
+  /** Prompt tokens written to the cache this call (billed at a premium). */
+  cacheWriteInputTokens?: number;
 }
 
 export interface LlmResponse {
@@ -77,10 +116,48 @@ export type LlmErrorKind =
   | 'overloaded'
   | 'provider_error'
   | 'timeout'
-  | 'network';
+  | 'network'
+  /** The caller's own AbortSignal fired — a cancel, not a fault. */
+  | 'aborted';
+
+/**
+ * What a streaming call reports as it goes. Blocks are addressed by the
+ * provider's own content index so deltas for a text block and a tool call
+ * that interleave (Anthropic emits blocks strictly in order; the OpenAI
+ * dialect can interleave text and tool_calls deltas) land on the right
+ * block. `block_start` carries the block's skeleton — an empty text, an
+ * empty thinking, a tool_use with `{}` input whose JSON arrives in
+ * `input_json_delta` pieces — and `block_stop` closes it; a consumer that
+ * only wants finished blocks can ignore everything between the two.
+ */
+export type LlmStreamEvent =
+  | { type: 'message_start'; usage?: Partial<LlmUsage> }
+  | { type: 'block_start'; index: number; block: LlmContentBlock }
+  | { type: 'text_delta'; index: number; text: string }
+  | { type: 'thinking_delta'; index: number; thinking: string }
+  | { type: 'signature_delta'; index: number; signature: string }
+  | { type: 'input_json_delta'; index: number; partialJson: string }
+  | { type: 'block_stop'; index: number }
+  | { type: 'message_end'; stopReason: LlmResponse['stopReason']; usage: LlmUsage };
+
+export interface LlmStreamOptions {
+  onEvent: (event: LlmStreamEvent) => void;
+  /** Cancels the call; the result is then `err('aborted')`. */
+  signal?: AbortSignal;
+}
 
 export interface LlmProvider {
   complete(request: LlmRequest): Promise<Result<LlmResponse, LlmErrorKind>>;
+  /**
+   * Stream the same call. Resolves with the assembled response after the
+   * last event — identical to what `complete` would have returned — or
+   * with the error kind; on a mid-stream failure the events already
+   * delivered stand and the caller decides what to keep.
+   */
+  stream?(
+    request: LlmRequest,
+    options: LlmStreamOptions
+  ): Promise<Result<LlmResponse, LlmErrorKind>>;
 }
 
 /**
@@ -116,4 +193,18 @@ export function looksLikeCredentialFailure(body: string): boolean {
   if (!body) return false;
   const haystack = body.toLowerCase();
   return CREDENTIAL_FAILURE_PHRASES.some((phrase) => haystack.includes(phrase));
+}
+
+/**
+ * The error kind for a thrown fetch/read failure: the caller's own cancel,
+ * a deadline, or the network. Shared by both adapters so "the user clicked
+ * Stop" is never reported as a timeout.
+ */
+export function transportErrorKind(error: unknown, signal?: AbortSignal): LlmErrorKind {
+  if (signal?.aborted) return 'aborted';
+  if (error instanceof Error) {
+    if (error.name === 'TimeoutError' || error.name === 'IdleTimeoutError') return 'timeout';
+    if (error.name === 'AbortError') return 'aborted';
+  }
+  return 'network';
 }

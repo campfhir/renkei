@@ -127,7 +127,7 @@ describe('AnthropicProvider.complete', () => {
         content: [
           { type: 'text', text: 'Calling now.' },
           { type: 'tool_use', id: 'tu_9', name: 'finish_step', input: { outcome: 'success' } },
-          { type: 'thinking', thinking: 'dropped' },
+          { type: 'thinking', thinking: 'kept', signature: 'sig_1' },
         ],
         stop_reason: 'tool_use',
         usage: { input_tokens: 100, output_tokens: 42 },
@@ -139,6 +139,9 @@ describe('AnthropicProvider.complete', () => {
     expect(result.val.content).toEqual([
       { type: 'text', text: 'Calling now.' },
       { type: 'tool_use', id: 'tu_9', name: 'finish_step', input: { outcome: 'success' } },
+      // Thinking survives the wire now that the chat renders it; the
+      // engine ignores block types it has no use for.
+      { type: 'thinking', thinking: 'kept', signature: 'sig_1' },
     ]);
     expect(result.val.usage).toEqual({ inputTokens: 100, outputTokens: 42 });
   });
