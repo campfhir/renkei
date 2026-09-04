@@ -40,7 +40,33 @@ async function snapshotOf(
   const turn = await getTurn(db, tenantId, chatId, turnId);
   if (!turn) return null;
   const messages = await listTurnMessages(db, tenantId, turnId);
-  return { type: 'snapshot', turn: toTurnView(turn), messages: messages.map(toMessageView) };
+  const produced =
+    messages.length > 0
+      ? await db
+          .selectFrom('chat_attachments')
+          .select(['id', 'filename', 'content_type', 'size_bytes', 'extract_status'])
+          .where('tenant_id', '=', tenantId)
+          .where('origin', '=', 'model')
+          .where(
+            'message_id',
+            'in',
+            messages.map((message) => message.id)
+          )
+          .orderBy('created_at', 'asc')
+          .execute()
+      : [];
+  return {
+    type: 'snapshot',
+    turn: toTurnView(turn),
+    messages: messages.map(toMessageView),
+    artifacts: produced.map((row) => ({
+      id: row.id,
+      filename: row.filename,
+      contentType: row.content_type,
+      sizeBytes: Number(row.size_bytes),
+      extractStatus: row.extract_status,
+    })),
+  };
 }
 
 export async function GET(

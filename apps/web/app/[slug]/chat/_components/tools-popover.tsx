@@ -69,11 +69,12 @@ export default function ToolsPopover({
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
+        aria-label="Tools"
         title="Which tools the assistant may use"
         className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
       >
         <Icon path={ICONS.tool} className="h-4 w-4" />
-        Tools
+        <span className="hidden sm:inline">Tools</span>
         {count !== null ? <span className="text-gray-400">{count}</span> : null}
       </button>
       {open ? (

@@ -20,6 +20,7 @@
 
 import type { LlmUsage } from '@renkei/agent-llm';
 import type {
+  AttachmentView,
   ChatBlock,
   ChatMessageView,
   MessageKind,
@@ -58,14 +59,34 @@ export type ChatStreamEvent =
     }
   /** The runner is executing this tool call (between block_stop and the results message). */
   | { type: 'tool_call_start'; messageId: string; toolUseId: string; name: string }
-  | { type: 'snapshot'; turn: TurnView; messages: ChatMessageView[] }
-  | { type: 'turn_end'; turnId: string; status: TurnStatus; error: string | null };
+  /** A tool handed back a file; it is stored and listed under Artifacts. */
+  | { type: 'artifact'; messageId: string; attachment: AttachmentView }
+  | {
+      type: 'snapshot';
+      turn: TurnView;
+      messages: ChatMessageView[];
+      artifacts?: AttachmentView[];
+    }
+  | { type: 'turn_end'; turnId: string; status: TurnStatus; error: string | null }
+  /**
+   * Raised by the page, never by the server: a prompt was resent, so this
+   * row and everything after it are gone, along with the files those
+   * replies produced.
+   */
+  | { type: 'truncate'; fromSeq: number; removedArtifactIds: string[] };
 
 export interface ThreadState {
   messages: ChatMessageView[];
   /** Tool calls currently executing, by tool_use id. */
   pendingToolCalls: string[];
   turn: TurnView | null;
+  /** Files tools produced in this chat, oldest first. */
+  artifacts: AttachmentView[];
+}
+
+function withArtifacts(current: AttachmentView[], added: AttachmentView[]): AttachmentView[] {
+  const known = new Set(current.map((artifact) => artifact.id));
+  return [...current, ...added.filter((artifact) => !known.has(artifact.id))];
 }
 
 function replaceMessage(
@@ -188,6 +209,8 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
       return state.pendingToolCalls.includes(event.toolUseId)
         ? state
         : { ...state, pendingToolCalls: [...state.pendingToolCalls, event.toolUseId] };
+    case 'artifact':
+      return { ...state, artifacts: withArtifacts(state.artifacts, [event.attachment]) };
     case 'snapshot': {
       const turnId = event.turn.id;
       const others = state.messages.filter((message) => message.turnId !== turnId);
@@ -195,6 +218,16 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
         messages: [...others, ...event.messages].sort((a, b) => a.seq - b.seq),
         pendingToolCalls: [],
         turn: event.turn,
+        artifacts: withArtifacts(state.artifacts, event.artifacts ?? []),
+      };
+    }
+    case 'truncate': {
+      const removed = new Set(event.removedArtifactIds);
+      return {
+        messages: state.messages.filter((message) => message.seq < event.fromSeq),
+        pendingToolCalls: [],
+        turn: null,
+        artifacts: state.artifacts.filter((artifact) => !removed.has(artifact.id)),
       };
     }
     case 'turn_end':
@@ -232,7 +265,8 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
 /** Where a fresh page starts: the persisted rows, no turn in flight. */
 export function initialThreadState(
   messages: ChatMessageView[],
-  activeTurn: TurnView | null
+  activeTurn: TurnView | null,
+  artifacts: AttachmentView[] = []
 ): ThreadState {
-  return { messages, pendingToolCalls: [], turn: activeTurn };
+  return { messages, pendingToolCalls: [], turn: activeTurn, artifacts };
 }

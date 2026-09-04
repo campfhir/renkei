@@ -33,15 +33,23 @@ export async function loadChatView(
           .executeTakeFirst(),
     db
       .selectFrom('chat_attachments')
-      .select(['id', 'filename', 'content_type', 'size_bytes', 'extract_status', 'message_id'])
+      .select([
+        'id',
+        'filename',
+        'content_type',
+        'size_bytes',
+        'extract_status',
+        'message_id',
+        'origin',
+      ])
       .where('tenant_id', '=', tenantId)
       .where('chat_id', '=', chat.id)
       .orderBy('created_at', 'asc')
       .execute(),
   ]);
   const byMessage = new Map<string, AttachmentView[]>();
+  const artifacts: AttachmentView[] = [];
   for (const row of attachments) {
-    if (!row.message_id) continue;
     const view: AttachmentView = {
       id: row.id,
       filename: row.filename,
@@ -49,6 +57,11 @@ export async function loadChatView(
       sizeBytes: Number(row.size_bytes),
       extractStatus: row.extract_status,
     };
+    if (row.origin === 'model') {
+      artifacts.push(view);
+      continue;
+    }
+    if (!row.message_id) continue;
     byMessage.set(row.message_id, [...(byMessage.get(row.message_id) ?? []), view]);
   }
   return {
@@ -67,6 +80,7 @@ export async function loadChatView(
       createdAt: chat.createdAt.toISOString(),
       updatedAt: chat.updatedAt.toISOString(),
       activeTurn: active ? toTurnView(active) : null,
+      artifacts,
     },
     messages: rows.map((row) => ({
       ...toMessageView(row),

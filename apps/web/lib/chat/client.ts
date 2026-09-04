@@ -53,6 +53,19 @@ export const chatClient = {
       input
     ),
 
+  /** Resend a prompt (text null = as it was), removing the replies after it. */
+  resend: (
+    tenantId: string,
+    chatId: string,
+    messageId: string,
+    input: { text: string | null; attachmentIds: string[]; llmModelId?: string | null }
+  ) =>
+    sendJsonFull<StartedTurn & { fromSeq: number; removedArtifactIds: string[]; code?: string }>(
+      `${base(tenantId)}/chats/${chatId}/messages/${messageId}/resend`,
+      'POST',
+      input
+    ),
+
   cancelTurn: (tenantId: string, chatId: string, turnId: string) =>
     sendJsonFull(`${base(tenantId)}/chats/${chatId}/turns/${turnId}/cancel`, 'POST'),
 

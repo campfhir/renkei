@@ -182,7 +182,7 @@ export default function AppNav({
           href: `/${slug}/chat`,
           label: 'Chat',
           except: [`/${slug}/chat/projects`, `/${slug}/chat/prompts`],
-          plus: { href: `/${slug}/chat`, label: 'New chat' },
+          plus: { href: `/${slug}/chat/new`, label: 'New chat' },
         },
         { href: `/${slug}/chat/projects`, label: 'Projects' },
         { href: `/${slug}/chat/prompts`, label: 'Prompt libraries' },

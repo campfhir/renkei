@@ -21,9 +21,31 @@ test.use({
   },
 });
 
-const CHAT_ID = '77777777-7777-4777-8777-777777777771';
-const TURN_ID = '77777777-7777-4777-8777-777777777772';
-const MODEL_ID = '77777777-7777-4777-8777-777777777773';
+/**
+ * Fixture ids differ per Playwright project: the projects run in parallel
+ * against one database, and a project cleaning up must not pull the chat
+ * out from under another one mid-test.
+ */
+function idsFor(project: string): {
+  chatId: string;
+  projectId: string;
+  turnId: string;
+  modelId: string;
+  title: string;
+  modelLabel: string;
+} {
+  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
+  return {
+    chatId: `77777777-7777-4777-8777-7777777777${digit}1`,
+    projectId: `77777777-7777-4777-8777-7777777777${digit}4`,
+    turnId: `77777777-7777-4777-8777-7777777777${digit}2`,
+    modelId: `77777777-7777-4777-8777-7777777777${digit}3`,
+    // The menu lists every project's chat; a shared title would match twice.
+    title: `${CHAT_TITLE} (${digit})`,
+    modelLabel: `E2E model ${digit}3`,
+  };
+}
+type Ids = ReturnType<typeof idsFor>;
 const CHAT_TITLE = 'Which sprint issues slipped?';
 const TOOL_USE_ID = 'toolu_e2e_0001';
 
@@ -77,18 +99,29 @@ const REPLY_MARKDOWN = [
   'Want me to **move them** into the next sprint?',
 ].join('\n');
 
-async function seedChat(client: Client): Promise<void> {
+async function seedChat(
+  client: Client,
+  { chatId: CHAT_ID, projectId, turnId: TURN_ID, modelId: MODEL_ID, title, modelLabel }: Ids
+): Promise<void> {
   await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
   await client.query('DELETE FROM llm_model_configs WHERE id = $1', [MODEL_ID]);
   await client.query(
     `INSERT INTO llm_model_configs (id, tenant_id, label, provider, model, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, 'E2E model', 'anthropic', 'e2e-model', $3, true, true)`,
-    [MODEL_ID, E2E_TENANT_ID, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
+     VALUES ($1, $2, $4, 'anthropic', 'e2e-model', $3, true, false)`,
+    // Labels and the default flag are unique per tenant, and the projects
+    // seed side by side; the chat pins its model, so none need be default.
+    [MODEL_ID, E2E_TENANT_ID, sealSecret(JSON.stringify({ apiKey: 'e2e' })), modelLabel]
+  );
+  await client.query('DELETE FROM chat_projects WHERE id = $1', [projectId]);
+  await client.query(
+    `INSERT INTO chat_projects (id, tenant_id, owner_subject, name)
+     VALUES ($1, $2, $3, 'Sprint hygiene')`,
+    [projectId, E2E_TENANT_ID, E2E_SUBJECT]
   );
   await client.query(
-    `INSERT INTO chats (id, tenant_id, owner_subject, title, llm_model_id, thinking_enabled, last_message_at)
-     VALUES ($1, $2, $3, $4, $5, true, NOW())`,
-    [CHAT_ID, E2E_TENANT_ID, E2E_SUBJECT, CHAT_TITLE, MODEL_ID]
+    `INSERT INTO chats (id, tenant_id, owner_subject, project_id, title, llm_model_id, thinking_enabled, last_message_at)
+     VALUES ($1, $2, $3, $6, $4, $5, true, NOW())`,
+    [CHAT_ID, E2E_TENANT_ID, E2E_SUBJECT, title, MODEL_ID, projectId]
   );
   await client.query(
     `INSERT INTO chat_turns (id, tenant_id, chat_id, status, llm_model_id, iterations, input_tokens, output_tokens, finished_at)
@@ -148,6 +181,14 @@ async function seedChat(client: Client): Promise<void> {
       blocks: [{ type: 'text', text: REPLY_MARKDOWN }],
     },
   ];
+  // A file a tool produced, as the runner keeps it: metadata under origin
+  // 'model' (the bytes would sit in the blob store, which the list never
+  // reads).
+  await client.query(
+    `INSERT INTO chat_attachments (tenant_id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin)
+     VALUES ($1, $2, $3, $4, 'sprint-report.pdf', 'application/pdf', 48213, 'done', 'model')`,
+    [E2E_TENANT_ID, E2E_SUBJECT, CHAT_ID, `chat/${E2E_TENANT_ID}/${TURN_ID}`]
+  );
   for (const row of rows) {
     const assistant = row.role === 'assistant';
     await client.query(
@@ -191,18 +232,23 @@ function shot(
 test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testInfo) => {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
   await client.connect();
+  const ids = idsFor(testInfo.project.name);
+  const CHAT_ID = ids.chatId;
+  const title = ids.title;
   try {
-    await seedChat(client);
+    await seedChat(client, ids);
 
     await page.goto(`/${E2E_SLUG}/chat/${CHAT_ID}`);
-    await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+    // The project the chat sits in reads as a subheading under the name.
+    await expect(page.getByRole('link', { name: 'Sprint hygiene' })).toBeVisible();
 
     // The app menu's Chat section lists the chat: in the column beside the
     // page on a desktop, behind the hamburger on a phone.
     const mobile = testInfo.project.name === 'mobile';
     if (mobile) await page.getByRole('button', { name: 'Open menu' }).click();
     await expect(
-      page.getByRole('navigation', { name: 'Chats' }).getByRole('link', { name: CHAT_TITLE })
+      page.getByRole('navigation', { name: 'Chats' }).getByRole('link', { name: title })
     ).toBeVisible();
     await expect(page.getByRole('link', { name: 'Prompt libraries' })).toBeVisible();
     if (mobile) await page.keyboard.press('Escape');
@@ -230,19 +276,58 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     await expect(markdown.locator('pre code')).toContainText('closedSprints()');
     await expect(markdown.locator('strong', { hasText: 'move them' })).toBeVisible();
 
+    // The owner renames the chat in place; the menu follows.
+    await page.getByRole('button', { name: 'Rename chat' }).click();
+    const nameField = page.getByRole('textbox', { name: 'Chat name' });
+    await nameField.fill(`${title} — renamed`);
+    await nameField.press('Enter');
+    await expect(page.getByRole('heading', { level: 1, name: `${title} — renamed` })).toBeVisible();
+    await expect(
+      page
+        .getByRole('navigation', { name: 'Chats' })
+        .getByRole('link', { name: `${title} — renamed` })
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Rename chat' }).click();
+    await page.getByRole('textbox', { name: 'Chat name' }).fill(title);
+    await page.getByRole('textbox', { name: 'Chat name' }).press('Enter');
+    await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+
+    // Files the assistant produced sit behind Artifacts, each a download.
+    await page.getByRole('button', { name: /Artifacts/ }).click();
+    const artifact = page.getByRole('menuitem', { name: /sprint-report\.pdf/ });
+    await expect(artifact).toBeVisible();
+    await expect(artifact).toHaveAttribute('href', /\/chat\/attachments\/[0-9a-f-]{36}$/);
+    await shot(page, testInfo, 'chat-artifacts.png');
+    await page.keyboard.press('Escape');
+
     // The owner gets a composer with the model menu, thinking switch inside.
     await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
     await page.getByRole('button', { name: 'Model' }).click();
-    await expect(page.getByRole('menuitemradio', { name: /E2E model/ })).toHaveAttribute(
-      'aria-checked',
-      'true'
-    );
+    await expect(
+      page.getByRole('menuitemradio', { name: new RegExp(`^${ids.modelLabel}`) })
+    ).toHaveAttribute('aria-checked', 'true');
     await expect(page.getByRole('menuitemcheckbox', { name: /Extended thinking/ })).toHaveAttribute(
       'aria-checked',
       'true'
     );
     await shot(page, testInfo, 'chat-model-menu.png');
     await page.keyboard.press('Escape');
+
+    // The owner can rewrite a prompt: Edit fills the box with its text and
+    // says what sending will do; Cancel empties it again. Resend asks first.
+    const bubble = page.getByText('Which issues slipped out of the last OPS sprint?');
+    await bubble.hover();
+    await page.getByRole('button', { name: 'Edit' }).click();
+    const box = page.getByRole('textbox', { name: 'Message' });
+    await expect(box).toHaveValue('Which issues slipped out of the last OPS sprint?');
+    await expect(page.getByText(/Editing an earlier message/)).toBeVisible();
+    await shot(page, testInfo, 'chat-edit.png');
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(box).toHaveValue('');
+    await bubble.hover();
+    await page.getByRole('button', { name: 'Resend' }).click();
+    await expect(page.getByRole('heading', { name: 'Resend this message?' })).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel' }).click();
 
     // On a phone every field is set at 16px or more, so focusing one never
     // zooms the page (iOS Safari zooms for anything smaller).
@@ -265,9 +350,17 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({ page }, testIn
     expect(fits).toBe(true);
 
     await shot(page, testInfo, 'chat-thread.png');
+
+    // "Chat" lands on the most recent chat; "+ New" on an empty one.
+    // (Some chat — another project's fixture may be newer than this one's.)
+    await page.goto(`/${E2E_SLUG}/chat`);
+    await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}/chat/[0-9a-f-]{36}$`));
+    await page.goto(`/${E2E_SLUG}/chat/new`);
+    await expect(page.getByRole('heading', { level: 1, name: 'New chat' })).toBeVisible();
   } finally {
     await client.query('DELETE FROM chats WHERE id = $1', [CHAT_ID]);
-    await client.query('DELETE FROM llm_model_configs WHERE id = $1', [MODEL_ID]);
+    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
+    await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
     await client.end();
   }
 });

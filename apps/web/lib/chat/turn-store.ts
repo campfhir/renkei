@@ -8,10 +8,16 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@renkei/db';
 import { recordLlmCall } from '@renkei/agents/runs';
+import { logger } from '@/lib/logger';
+import { createAttachment, toAttachmentView } from './attachments';
 import { insertMessage, updateMessageContent } from './messages';
 import { finishTurn, heartbeatTurn } from './turns';
 import { touchChat } from './store';
 import type { TurnStore } from './turn-runner';
+import type { AttachmentView } from './views';
+
+/** A tool's file beyond this is not kept; the model saw what it saw. */
+const ARTIFACT_MAX_BYTES = 25_000_000;
 
 export function createTurnStore(
   db: Kysely<DB>,
@@ -50,6 +56,34 @@ export function createTurnStore(
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
       });
+    },
+    async storeArtifacts(messageId, files) {
+      const kept: AttachmentView[] = [];
+      for (const file of files) {
+        const created = await createAttachment(db, {
+          tenantId: scope.tenantId,
+          ownerSubject: scope.subject,
+          chatId: scope.chatId,
+          projectId: null,
+          filename: file.filename,
+          contentType: file.mediaType,
+          bytes: Buffer.from(file.dataBase64, 'base64'),
+          maxBytes: ARTIFACT_MAX_BYTES,
+          // Tool output was redacted at the MCP boundary already.
+          redactor: null,
+          origin: 'model',
+          messageId,
+        });
+        if (created.ok) {
+          kept.push(toAttachmentView(created.val));
+        } else if (created.err.type !== 'UNCONFIGURED') {
+          logger.warn('chat artifact not stored: {reason} {message}', {
+            reason: created.err.type,
+            message: created.err.message ?? '',
+          });
+        }
+      }
+      return kept;
     },
   };
 }

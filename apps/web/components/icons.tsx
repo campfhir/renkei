@@ -45,6 +45,7 @@ export const ICONS = {
   folder: 'M3 19V5h6l2 3h10v11z',
   folderPlus: 'M3 19V5h6l2 3h10v11zM12 10.5v5M9.5 13h5',
   upload: 'M12 16V4M8 8l4-4 4 4M5 16v4h14v-4',
+  download: 'M12 4v12M8 12l4 4 4-4M5 16v4h14v-4',
   /** The chat: a plus for "new", a hamburger for the drawer, and the composer's verbs. */
   plus: 'M12 5v14M5 12h14',
   menu: 'M4 7h16M4 12h16M4 17h16',

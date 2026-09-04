@@ -128,4 +128,31 @@ describe('applyStreamEvent', () => {
     expect(state.turn?.status).toBe('interrupted');
     expect(state.turn?.error).toBe('gone');
   });
+
+  it('lists a produced file once, and drops it with the rows a resend removes', () => {
+    const artifact = {
+      id: 'f1',
+      filename: 'shot.png',
+      contentType: 'image/png',
+      sizeBytes: 10,
+      extractStatus: 'none',
+    };
+    const withFile = reduce([
+      start('p', 1),
+      start('a', 2),
+      { type: 'artifact', messageId: 'a', attachment: artifact },
+      { type: 'artifact', messageId: 'a', attachment: artifact },
+    ]);
+    expect(withFile.artifacts).toEqual([artifact]);
+    expect(withFile.messages.map((message) => message.id)).toEqual(['p', 'a']);
+
+    const truncated = applyStreamEvent(withFile, {
+      type: 'truncate',
+      fromSeq: 2,
+      removedArtifactIds: ['f1'],
+    });
+    expect(truncated.messages.map((message) => message.id)).toEqual(['p']);
+    expect(truncated.artifacts).toEqual([]);
+    expect(truncated.turn).toBeNull();
+  });
 });
