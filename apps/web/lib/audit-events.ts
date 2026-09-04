@@ -35,6 +35,8 @@ export type AuditAction =
   | 'agent.copied'
   | 'settings.updated'
   | 'knowledge.reindex.started'
+  | 'knowledge.reindex.paused'
+  | 'knowledge.reindex.resumed'
   | 'sanitizer.script_saved'
   | 'sanitizer.script_deleted'
   | 'fileshare.created'
