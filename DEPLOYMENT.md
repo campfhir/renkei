@@ -720,8 +720,12 @@ Renkei's server, not a browser.
 3. **A dedicated domain and route** — never the app's route, since storage
    paths would collide with the app's URL space. A custom domain such as
    `files.<your-domain>` (or a second endpoint on the profile) with a
-   route on `/*`, HTTPS only, origin path empty, **caching disabled**
-   (uploads are `PUT`s and downloads are per-session).
+   route on `/*`, HTTPS only, origin path empty, **caching disabled**.
+   Caching is not just pointless here (uploads are `PUT`s, downloads are
+   per-session): with caching on, Front Door fetches origin content in
+   chunks by adding a `Range` header to its `GET`, and `Range` is one of
+   the headers in the Shared Key string-to-sign — Storage then rejects
+   every read with 403 `AuthenticationFailed` while writes still pass.
 4. **A second WAF policy** for that domain (e.g. `renkeistoragewaf`),
    attached through the profile's Security policy: Prevention mode, DRS
    2.1, **no Bot Manager rule set** (it classifies the server's `fetch`
@@ -760,16 +764,19 @@ step that failed and who refused it:
   WAF logs (Front Door → Monitoring → Logs, or the policy's diagnostics)
   to see the rule id; then either exclude that rule for the storage domain
   or, the usual fix, move storage to its own domain and policy as above.
-  This is also what you get when the endpoint is the **app's own Front
-  Door host**: that host's default route and WAF policy apply to storage
-  traffic too, and the app's browser-oriented rules refuse the server's
-  requests. The endpoint must be a route that forwards to the account.
+  A policy in _Detection_ mode never blocks, so this answer means a
+  policy in _Prevention_ mode or a route that does not reach the account
+  (an endpoint shared with the app, for instance). The endpoint must be a
+  route that forwards to the account.
 - _Azure Blob 403 AuthenticationFailed: … string to sign …_ — the account
   answered and rejected the signature, so the request was altered on the
-  way: a rewritten path (an origin path on the route), a stripped or added
-  `x-ms-*` header, or caching on the route. The quoted string-to-sign is
-  what the service saw; compare it with the path Renkei sent
-  (`/{container}/probe/{tenant}/{time}` for the test).
+  way. Writes passing while reads fail means **caching is on** for the
+  route: the quoted string-to-sign will show a `Range: bytes=…` line that
+  Renkei never sent (Front Door's object chunking). Turn caching off on
+  the route. Otherwise look for a rewritten path (an origin path on the
+  route) or a stripped or added `x-ms-*` header, comparing the quoted
+  string with the path Renkei sent (`/{container}/probe/{tenant}/{time}`
+  for the test).
 - _Azure Blob 403 AuthorizationFailure_ — the account's network rules
   refused the source (public access off without the private link
   approved, or the wrong sub-resource).
