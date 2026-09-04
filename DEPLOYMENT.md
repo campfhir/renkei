@@ -687,3 +687,66 @@ uploads are simply off — closed, never open, like the worker keys above.
 `docker-compose.yml` (dev) runs the Azurite emulator instead of a real
 account, with Azurite's published development account and key; nothing in
 that configuration is a secret.
+
+An organization can also configure its own account on **Organization →
+Storage** in the app (the row lives in `connector_configs`, the key sealed
+like any connector secret); when one is saved and enabled it takes
+precedence over these variables for that organization.
+
+### Storage behind Azure Front Door
+
+The storage account can sit behind the same Azure Front Door (Premium)
+profile that fronts the app, so it accepts no public traffic and every
+byte crosses the WAF. Nothing in Renkei changes for this beyond the
+endpoint: the client builds every URL from the configured endpoint plus
+the resource path, and Shared Key signing canonicalizes by account name
+and path (`/{account}/{container}/{blob}`), never by host — so any
+hostname that forwards the path, query and `x-ms-*`/`Authorization`
+headers to the account untouched works. What has to be right is the Front
+Door and WAF configuration, because the only client of that hostname is
+Renkei's server, not a browser.
+
+1. **Storage account** — Networking → Public network access _Disabled_
+   (keep it enabled from selected networks while cutting over). Keep the
+   account key; Renkei keeps using Shared Key.
+2. **Origin group** (e.g. `renkei-storage`) on the Front Door profile:
+   one origin of type _Storage (Azure Blobs)_, host
+   `{account}.blob.core.windows.net`, origin host header the same, HTTPS
+   only. **Enable private link** to the account, target sub-resource
+   `blob`, then approve the pending connection on the storage account
+   (Networking → Private endpoint connections). Health probes _off_ for
+   this single-origin group: a probe against a private blob endpoint has
+   nothing anonymous to hit, and a 4xx would mark the origin unhealthy.
+3. **A dedicated domain and route** — never the app's route, since storage
+   paths would collide with the app's URL space. A custom domain such as
+   `files.<your-domain>` (or a second endpoint on the profile) with a
+   route on `/*`, HTTPS only, origin path empty, **caching disabled**
+   (uploads are `PUT`s and downloads are per-session).
+4. **A second WAF policy** for that domain (e.g. `renkeistoragewaf`),
+   attached through the profile's Security policy: Prevention mode, DRS
+   2.1, **no Bot Manager rule set** (it classifies the server's `fetch`
+   as an unknown bot and blocks it), and two custom rules: priority 1
+   _Allow_ only Renkei's egress IPs (the web app's and `worker-agents`'
+   outbound addresses — the platform's outbound IPs or the NAT gateway),
+   priority 2 _Block_ everything else. The allow-list is the real
+   protection; the managed rules are belt and braces. Two managed-rule
+   effects to expect on raw binary `PUT` bodies: the WAF inspects only the
+   first 128 KB of a body, and DRS can flag an unparseable body (the
+   200000-group "failed to parse request body" rules). If the connection
+   test or a real upload comes back 403/413, add a rule exclusion for the
+   storage domain on those rule ids rather than weakening the policy.
+5. **Renkei** — Organization → Storage → _Endpoint_
+   `https://files.<your-domain>` (account, key and container unchanged) →
+   **Test connection** → Save. The test writes, reads and deletes a probe
+   through the new path, so it exercises Front Door, the private link and
+   the WAF in one go. Deployments configured through the environment set
+   `AZURE_BLOB_ENDPOINT` to the same value.
+
+Cutover order: origin group with private link, approved → domain, route
+and WAF policy → test from Renkei with public access still enabled →
+disable public access → test again. A 403 from the test with public access
+still on points at the WAF (Front Door → Monitoring → WAF logs name the
+rule); a 5xx points at the origin or private link (pending approval, wrong
+sub-resource, or a health probe left on). From a machine outside the
+allow-list, `curl -I https://files.<your-domain>/renkei-chat/` must come
+back blocked by Front Door.

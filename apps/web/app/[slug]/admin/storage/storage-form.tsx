@@ -154,7 +154,10 @@ export default function StorageForm({
               onChange={(event) => setEndpoint(event.target.value)}
               placeholder="https://contosofiles.blob.core.windows.net"
             />
-            <p className={hintClass}>Only for a sovereign cloud or an emulator.</p>
+            <p className={hintClass}>
+              For a sovereign cloud, an emulator, or a Front Door / private domain that forwards to
+              the account (see DEPLOYMENT.md, &ldquo;Storage behind Azure Front Door&rdquo;).
+            </p>
           </div>
         </div>
         <label className="flex items-center gap-2 text-sm">
