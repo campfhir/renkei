@@ -46,7 +46,12 @@ import { readProjectMemory, renderProjectMemory } from './memory';
 
 export const USER_MESSAGE_MAX_CHARS = 100_000;
 
-/** Thinking spends part of the output budget; keep room for the answer. */
+/**
+ * Thinking spends part of the output budget; keep room for the answer.
+ * Only the older Anthropic models take a budget — the 4.6-and-later
+ * generations decide their own depth, and the adapter turns the switch
+ * into adaptive thinking with its summary returned instead.
+ */
 const THINKING_SHARE = 0.6;
 const THINKING_MAX = 16_000;
 

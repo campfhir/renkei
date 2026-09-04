@@ -7,7 +7,7 @@
  * something backoff should have absorbed.
  */
 
-import { AnthropicProvider } from './anthropic';
+import { AnthropicProvider, anthropicGeneration } from './anthropic';
 import type { LlmRequest } from './contract';
 
 const fetchSpy = jest.fn();
@@ -38,6 +38,118 @@ function jsonResponse(status: number, body: unknown): Response {
 
 beforeEach(() => {
   fetchSpy.mockReset();
+});
+
+describe('anthropicGeneration', () => {
+  it.each([
+    // The budget generation: enabled + budget_tokens, sampling allowed.
+    ['claude-haiku-4-5', 'budget', false, true],
+    ['claude-sonnet-4-5-20250929', 'budget', false, true],
+    ['claude-opus-4-5@20251101', 'budget', false, true],
+    ['claude-opus-4-1-20250805', 'budget', false, true],
+    // A date suffix right after the major is not a minor version.
+    ['claude-sonnet-4-20250514', 'budget', false, true],
+    ['claude-3-5-sonnet-20241022', 'budget', false, true],
+    // 4.6: adaptive, but sampling still allowed and text summarized by default.
+    ['claude-opus-4-6', 'adaptive', false, true],
+    ['claude-sonnet-4-6', 'adaptive', false, true],
+    // 4.7 and later: adaptive only, display needed, no sampling.
+    ['claude-opus-4-7', 'adaptive', true, false],
+    ['claude-opus-4-8', 'adaptive', true, false],
+    ['claude-opus-5', 'adaptive', true, false],
+    ['claude-sonnet-5', 'adaptive', true, false],
+    ['claude-fable-5-1', 'adaptive', true, false],
+    ['claude-mythos-5-1', 'adaptive', true, false],
+    // Vendor prefixes and context-window suffixes around the id.
+    ['anthropic.claude-sonnet-5', 'adaptive', true, false],
+    ['claude-opus-5[1m]', 'adaptive', true, false],
+    ['Claude-Sonnet-5', 'adaptive', true, false],
+    // A gateway deployment name that names no family: the oldest shape.
+    ['my-chat-deployment', 'budget', false, true],
+  ])('%s', (model, thinking, thinkingDisplay, sampling) => {
+    expect(anthropicGeneration(model)).toEqual({ thinking, thinkingDisplay, sampling });
+  });
+});
+
+describe('AnthropicProvider thinking by generation', () => {
+  const okResponse = () =>
+    jsonResponse(200, {
+      content: [{ type: 'text', text: 'ok' }],
+      stop_reason: 'end_turn',
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+  const thinkingRequest: LlmRequest = {
+    ...request,
+    toolChoice: 'auto',
+    maxTokens: 8_000,
+    temperature: 0.2,
+    thinking: { budgetTokens: 4_000 },
+  };
+  const bodyOf = () =>
+    JSON.parse(String((fetchSpy.mock.calls[0] as [string, RequestInit])[1].body));
+
+  it('sends enabled + budget_tokens on the budget generation', async () => {
+    fetchSpy.mockResolvedValue(okResponse());
+    await new AnthropicProvider({ apiKey: 'k', model: 'claude-haiku-4-5' }).complete(
+      thinkingRequest
+    );
+    const body = bodyOf();
+    expect(body.thinking).toEqual({ type: 'enabled', budget_tokens: 4_000 });
+    // Thinking runs at temperature 1 only.
+    expect(body.temperature).toBeUndefined();
+  });
+
+  it('sends adaptive without display on 4.6, where summarized is the default', async () => {
+    fetchSpy.mockResolvedValue(okResponse());
+    await new AnthropicProvider({ apiKey: 'k', model: 'claude-sonnet-4-6' }).complete(
+      thinkingRequest
+    );
+    const body = bodyOf();
+    expect(body.thinking).toEqual({ type: 'adaptive' });
+    expect(body.temperature).toBeUndefined();
+  });
+
+  it('sends adaptive + summarized display on Sonnet 5, and no budget', async () => {
+    // Without `display`, Sonnet 5 streams thinking blocks with empty text
+    // and the chat shows an empty "Thought"; with a budget it 400s.
+    fetchSpy.mockResolvedValue(okResponse());
+    await new AnthropicProvider({ apiKey: 'k', model: 'claude-sonnet-5' }).complete(
+      thinkingRequest
+    );
+    const body = bodyOf();
+    expect(body.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+    expect(body.thinking.budget_tokens).toBeUndefined();
+    expect(body.temperature).toBeUndefined();
+  });
+
+  it('drops temperature on the newest generation even with thinking off', async () => {
+    fetchSpy.mockResolvedValue(okResponse());
+    await new AnthropicProvider({ apiKey: 'k', model: 'claude-opus-5' }).complete({
+      ...request,
+      temperature: 0.2,
+    });
+    const body = bodyOf();
+    expect(body.thinking).toBeUndefined();
+    expect(body.temperature).toBeUndefined();
+  });
+
+  it('keeps temperature on older generations with thinking off', async () => {
+    fetchSpy.mockResolvedValue(okResponse());
+    await new AnthropicProvider({ apiKey: 'k', model: 'claude-sonnet-4-6' }).complete({
+      ...request,
+      temperature: 0.2,
+    });
+    expect(bodyOf().temperature).toBe(0.2);
+  });
+
+  it('still thinks in the open under a forced tool_choice, on every generation', async () => {
+    fetchSpy.mockResolvedValue(okResponse());
+    await new AnthropicProvider({ apiKey: 'k', model: 'claude-sonnet-5' }).complete({
+      ...thinkingRequest,
+      toolChoice: 'any',
+    });
+    expect(bodyOf().thinking).toBeUndefined();
+  });
 });
 
 describe('AnthropicProvider.complete', () => {
