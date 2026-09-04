@@ -171,11 +171,14 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
   const prefs = await getNotificationPrefs(batch.tenant_id, batch.subject);
   const key: BatchEvent = phase === 'started' ? 'batchStarted' : batchEventForStatus(batch.status);
   const wanted = prefs[key];
-  if (!wanted.app && !wanted.email && !wanted.webex) return;
+
+  // Ensure wanted exists and has the expected properties
+  if (!wanted || (!wanted.app && !wanted.email && !wanted.webex)) return;
 
   const headline = headlineFor(batch, phase);
   const kindLabel = batchKindLabel(batch.kind);
 
+  // Only persist to app if user has app notifications enabled for this event
   if (wanted.app) {
     const id = randomUUID();
     try {
@@ -194,9 +197,7 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
         })
         .execute();
 
-      // Fire-and-forget, the same reasoning as worker-agents' write(): a
-      // push service's latency must never add to the batch handler's, and
-      // the row above is already the record.
+      // Fire-and-forget push notification — respects app preference
       const keyResult = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
       if (keyResult.ok) {
         void sendPush(
@@ -218,6 +219,7 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
     }
   }
 
+  // Send email/WebEx if preferred (independent of app preference)
   if (wanted.email || wanted.webex) {
     const base = await registrationUrl(batch.tenant_id);
     const link = base ? `${base}/batch-jobs/${batch.id}` : null;

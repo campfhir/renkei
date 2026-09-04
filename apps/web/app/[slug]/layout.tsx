@@ -11,6 +11,7 @@ import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { NotificationCenter } from '@/components/notification-center';
 import NotificationCorner from '@/components/notification-corner';
 import DesktopNotifications from '@/components/desktop-notifications';
+import { getVersionInfo } from '@/lib/version-info';
 import AppNav from './nav';
 
 /**
@@ -52,6 +53,8 @@ export default async function TenantLayout({
   const chats =
     session && dbResult.ok ? await loadChatSidebar(dbResult.val, tenant.id, session.subject) : null;
 
+  const version = getVersionInfo();
+
   /*
     The notification centre wraps the nav AND the page, because both read
     the same poll: the nav wants the unread count, the toast stack wants
@@ -73,6 +76,7 @@ export default async function TenantLayout({
         isOperator={isOperator}
         signInHref={signInUrl(tenant.id, `/${tenant.slug}`)}
         chats={chats}
+        version={version}
       >
         {children}
       </AppNav>
